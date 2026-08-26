@@ -244,7 +244,7 @@ identity-bound, revision-CAS'd, restart-safe, and auditable in `space_goal_event
 
 | Coupling | Mechanism | Enforced by |
 | --- | --- | --- |
-| Hard artifact gate (B's task cannot start without A's artifact) | Gated task with `depends_on` (standalone, or atomic via a Forge proposal — shapes below), created only after the setup protocol has run **and** the pause is confirmed to belong to this gate (an unrelated human, judgment, or durable-wait hold defers gated-task creation entirely — gated shapes neither claim B's pointer nor consult its paused status, so A reaching `done` would start and publish B's task under the unresolved hold), with one further drain immediately before the gated shape is created (the setup cancellation itself produces outcomes) | Runtime: blocked until the dependency is exactly `done` (`approved`/`review` do not release it); a cancelled dependency cascade-cancels dependents; a failed one blocks **running** dependents with `dependency_failed`, while a pre-start dependent merely stays `open` but unschedulable (§5 rebinding covers it). The pause is required doctrine: gated shapes never claim B's active-task pointer, so a B check-in fire could otherwise spawn a separate ungated goal task and perform the release the gate exists to prevent. The launcher releases B **only when the gated step completes successfully** — a `blocked`/`cancelled` gated step keeps B paused for retry or escalation. A successful **final** step (the §2 release itself) completes goal B instead of resuming it (resuming with a cadence would schedule more work after the release shipped); an **intermediate** step resumes B — for the **Forge** shape only after that outcome is reviewed (the notification records at the paused goal's revision, and a `resume_goal` in between bumps the revision so the review fails `stale_revision`); only the standalone shape (no goal outcome) may resume immediately after terminal inspection. For a retained-cadence B, the cadence additionally stays cleared until that task's outcome is reviewed (Forge shape) or its terminal state inspected (standalone shape — it produces no outcome to review) — restoring earlier reactivates the schedule while the gated shape leaves `activeTaskId` empty, letting a scheduled fire claim the pointer and run a second B task concurrently |
+| Hard artifact gate (B's task cannot start without A's artifact) | Gated task with `depends_on` (standalone, or atomic via a Forge proposal — shapes below), created only after the setup protocol has run **and** the pause is confirmed to belong to this gate (an unrelated human, judgment, or durable-wait hold defers gated-task creation entirely — gated shapes neither claim B's pointer nor consult its paused status, so A reaching `done` would start and publish B's task under the unresolved hold), with one further drain immediately before the gated shape is created (the setup cancellation itself produces outcomes) | Runtime: blocked until the dependency is exactly `done` (`approved`/`review` do not release it); a cancelled dependency cascade-cancels dependents; a failed one blocks **running** dependents with `dependency_failed`, while a pre-start dependent merely stays `open` but unschedulable (§5 rebinding covers it). The pause is required doctrine: gated shapes never claim B's active-task pointer, so a B check-in fire could otherwise spawn a separate ungated goal task and perform the release the gate exists to prevent. The launcher releases B **only when the gated step completes successfully** — a `blocked`/`cancelled` gated step keeps B paused for retry or escalation. A successful **final** step (the §2 release itself) completes goal B instead of resuming it (resuming with a cadence would schedule more work after the release shipped); an **intermediate** step resumes B — for the **Forge** shape only after that outcome is reviewed (the notification records at the paused goal's revision, and a `resume_goal` in between bumps the revision so the review fails `stale_revision`); only the standalone shape (no goal outcome) may resume immediately after terminal inspection. For a retained-cadence B, the cadence additionally stays cleared through the next reviewed outcome (Forge shape) or through the explicitly triggered follow-up's reviewed outcome (standalone shape — terminal inspection authorizes release, not restoration), since restoring earlier reactivates the schedule against the empty pointer and a scheduled fire can claim it before the launcher's own trigger |
 | Judgment gate (partial completion quality must be reviewed) | Hold B paused with the condition recorded in B's `nextSteps`, using the setup protocol below; release per the release protocol once the gating outcome is reviewed | Prompt doctrine. A withheld `trigger_goal_task` alone does **not** hold: with a check-in schedule configured, the scheduled fire creates a goal task and claims B's empty active-task pointer without consulting `nextSteps` — pausing suspends that schedule too |
 | Durable wait (A slipped/blocked indefinitely) | Hold B paused with the wait recorded, using the setup protocol below; release per the release protocol when A recovers | Prompt doctrine; visible in goal state/UI |
 | Milestone release (partial completion of A releases B) | Milestones listed in A's `nextSteps`/`metrics`; B's gate names the milestone; launcher reviews A's terminal outcome against it | Prompt doctrine |
@@ -266,15 +266,19 @@ gate's hold lifecycle):
   replace `nextSteps` wholesale, so a marker recorded only there is erased before
   release revalidates it). Operational state lives as **one keyed record per goal**
   (holds and saved cadence values in a single payload), refreshed as a whole on every
-  change. **Storage gap, stated honestly:** agent memory does not currently qualify —
-  the consolidation job's duplicate admission compares content regardless of key (so
-  structurally similar per-goal records can merge and lose one goal's state) and its
-  TTL prunes a long-lived hold record — so the launcher template slice must add a
-  consolidation exemption or a dedicated non-consolidated store for this state
-  (§7 records the revisit trigger). Then
+  change. **Storage prerequisite, stated honestly:** agent memory does not currently
+  qualify — the consolidation job's duplicate admission compares content regardless of
+  key (so structurally similar per-goal records can merge and lose one goal's state)
+  and its TTL prunes a long-lived hold record — so a consolidation-exempt store (or an
+  explicit exemption) is a **prerequisite enabler** of the launcher template slice,
+  tracked in §7/§8; until it ships, only the zero-code instructions path is usable, with
+  hold/cadence durability limited accordingly. Then
   pause — `pause_goal` only if B is active; an
   already-paused goal instead records the additional hold and marks that this sequence
-  does **not** own the pause. Then cancel what
+  does **not** own the pause. Ownership transfers: when every other recorded hold later
+  clears and a deferred hard gate is the sole remaining hold, it takes ownership and
+  creates its gated shape — otherwise deferral would deadlock the gate behind a
+  resolved hold. Then cancel what
   the hold must stop: every active goal task for a judgment gate **or a hard gate**, and
   for a durable wait only dependency-sensitive ones (independent work may deliberately
   continue under the wait) — plus, for either hold, any tracked gated task (both gated shapes bypass
@@ -394,15 +398,20 @@ queued-follow-up shape already prevents overlap storms; the launcher adds no pol
 
 ## 7. Decision
 
-**Prompt-only.** Build no new runtime primitive or behavior. The follow-up spawned from
-this RFC is prompt content — a launcher template registered in the daemon's existing
-`LONG_HORIZON_AGENT_TEMPLATES` array, contract embedded in the template's `instructions`
-(§4; `create_agent_from_template` copies them, and no shared session-builder append is
-needed) — plus a section in #2537's usage doc. Once the workspace creation parameters ship
-(#2531/#2535), the doctrine is also usable zero-code via any LH agent's `instructions`
-(§4). No new pipeline logic is introduced, so the
-epic's superpipe guidance (ADR 0004) does not engage; if a deferred primitive below is
-ever built, its admission/binding logic composes as a direct superpipe pipeline.
+**Prompt-only** — scoped: build no new *orchestration* runtime primitive or behavior.
+The follow-up spawned from this RFC is prompt content — a launcher template registered in
+the daemon's existing `LONG_HORIZON_AGENT_TEMPLATES` array, contract embedded in the
+template's `instructions` (§4; `create_agent_from_template` copies them, and no shared
+session-builder append is needed) — plus a section in #2537's usage doc. One scoped,
+non-orchestration exception is required for safety: the **consolidation-exempt
+operational-state store** of §5 must land before or with the launcher template slice,
+because without it the doctrine has nowhere durable to keep hold ownership and saved
+cadence values (consolidating agent memory silently loses them). It is an enabling
+prerequisite tracked in §8, not an orchestration primitive; until it ships only the
+zero-code path is usable, with hold/cadence durability limited accordingly. No new
+pipeline logic is introduced, so the epic's superpipe guidance (ADR 0004) does not
+engage; if a deferred primitive below is ever built, its admission/binding logic composes
+as a direct superpipe pipeline.
 
 **Why.** Every load-bearing mechanism is verified shipped or in-flight (§3): per-repo
 goal/task binding, serial per-goal execution, durable owner wakes with CAS disposal,
@@ -433,8 +442,9 @@ ADR 0004 applies to new combinators.
    revisit when concurrent human/agent goal edits cause a real lost update.
 7. **Consolidation-exempt operational state store** for launcher hold records and
    saved cadence values (§5's storage gap: agent memory's duplicate admission compares
-   content regardless of key and its TTL prunes long-lived holds) — needed by the
-   launcher template slice unless an exemption lands there first.
+   content regardless of key and its TTL prunes long-lived holds) — a **prerequisite
+   enabler** of the template slice rather than a revisit-triggered primitive; it ships
+   with the template slice or blocks it.
 
 **Rejected alternatives.**
 
@@ -451,7 +461,9 @@ ADR 0004 applies to new combinators.
 
 ## 8. Follow-ups (out of scope here)
 
-Implementation issues spawned from this decision: the launcher prompt template slice
-(template registration + contract append, mechanical per §7), the usage-doc section
-(with #2537), and — only on hitting a §7 revisit trigger — a primitive proposal. Nothing
-in this RFC requires new daemon behavior.
+Implementation issues spawned from this decision: the consolidation-exempt
+operational-state store (§5/§7 prerequisite — lands before or with the template slice),
+the launcher prompt template slice (template registration, mechanical per §7), the
+usage-doc section (with #2537), and — only on hitting a §7 revisit trigger — a primitive
+proposal. Nothing in this RFC requires new daemon *orchestration* behavior; the store is
+the one scoped daemon change.
