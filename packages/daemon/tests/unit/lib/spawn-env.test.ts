@@ -90,6 +90,7 @@ describe('buildOsBaselineEnv', () => {
     expect(env.HOME).toBe(SOURCE.HOME);
     expect(env.USERNAME).toBe(SOURCE.USERNAME);
     expect(env.CI).toBe(SOURCE.CI);
+    expect(env.JAVA_HOME).toBe(SOURCE.JAVA_HOME);
     expect(env.ProgramFiles).toBe(SOURCE.ProgramFiles);
     expect(env['ProgramFiles(x86)']).toBe(SOURCE['ProgramFiles(x86)']);
     expect(env.ProgramW6432).toBe(SOURCE.ProgramW6432);
@@ -111,6 +112,7 @@ describe('buildCommandEnv', () => {
     expect(env.https_proxy).toBe(SOURCE.https_proxy);
     expect(env.SSL_CERT_FILE).toBe(SOURCE.SSL_CERT_FILE);
     expect(env.CURL_CA_BUNDLE).toBe(SOURCE.CURL_CA_BUNDLE);
+    expect(env.REQUESTS_CA_BUNDLE).toBe(SOURCE.REQUESTS_CA_BUNDLE);
     expect(env.GIT_SSL_CAPATH).toBe(SOURCE.GIT_SSL_CAPATH);
     expect(env.GIT_SSL_VERSION).toBe(SOURCE.GIT_SSL_VERSION);
     expect(env.GIT_SSL_CIPHER_LIST).toBe(SOURCE.GIT_SSL_CIPHER_LIST);
@@ -143,6 +145,7 @@ describe('buildGitCommandEnv', () => {
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
     expect(env.GIT_CEILING_DIRECTORIES).toBe(SOURCE.GIT_CEILING_DIRECTORIES);
     expect(env.GIT_DISCOVERY_ACROSS_FILESYSTEM).toBe(SOURCE.GIT_DISCOVERY_ACROSS_FILESYSTEM);
+    expect(env.GIT_ALLOW_PROTOCOL).toBe(SOURCE.GIT_ALLOW_PROTOCOL);
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBe('1');
@@ -286,6 +289,11 @@ describe('buildWorkflowConditionEnv', () => {
     expect(env.DOCKER_AUTH_CONFIG).toBeUndefined();
     expect(env.DOCKER_CONFIG).toBeUndefined();
     expect(env.MY_TOOL_FLAG).toBe('1');
+  });
+
+  test('rejects inline git configuration carriers', () => {
+    const env = buildWorkflowConditionEnv(['GIT_CONFIG_PARAMETERS'], SOURCE);
+    expect(env.GIT_CONFIG_PARAMETERS).toBeUndefined();
   });
 });
 
