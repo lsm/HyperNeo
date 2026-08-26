@@ -86,11 +86,13 @@ function deferredRow(
 
 describe('QueryModeHandler deferred external-event digest flush', () => {
   let handler: QueryModeHandler;
+  let handlerContext: QueryModeHandlerContext;
   let deferredRows: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
   let savedRows: Array<{ message: SDKUserMessage; sendStatus: string }>;
   let statusUpdates: Array<{ dbIds: string[]; status: string }>;
   let enqueued: Array<{ uuid: string; content: unknown }>;
   let published: Array<{ messageIds: string[]; status: string }>;
+  let warnMessages: unknown[];
   let v2Previous: string | undefined;
 
   beforeEach(() => {
@@ -101,6 +103,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
     statusUpdates = [];
     enqueued = [];
     published = [];
+    warnMessages = [];
 
     const session = {
       id: SESSION_ID,
@@ -161,7 +164,9 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
 
     const logger = {
       log: mock(() => {}),
-      warn: mock(() => {}),
+      warn: mock((message: unknown) => {
+        warnMessages.push(message);
+      }),
       error: mock(() => {}),
       debug: mock(() => {}),
       info: mock(() => {}),
@@ -175,6 +180,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       logger,
       ensureQueryStarted: mock(async () => {}),
     };
+    handlerContext = context;
     handler = new QueryModeHandler(context);
   });
 
@@ -299,6 +305,93 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
     expect(statusUpdates).toContainEqual({
       dbIds: ['db-envelope', 'db-fresh'],
       status: 'consumed',
+    });
+  });
+
+  describe('events delivery v2 turn-end digest pull', () => {
+    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
+    let previousFlag: string | undefined;
+    let pullCalls: string[];
+    let pullError: Error | null;
+
+    beforeEach(() => {
+      previousFlag = process.env[FLAG_ENV];
+      process.env[FLAG_ENV] = '1';
+      pullCalls = [];
+      pullError = null;
+      handlerContext.renderPendingDigest = async (sessionId) => {
+        pullCalls.push(sessionId);
+        if (pullError) throw pullError;
+        deferredRows.push(
+          deferredRow(
+            'db-pulled-digest',
+            'uuid-pulled-digest',
+            'External events while you were working (2 events, PR #2828):'
+          )
+        );
+        return { action: 'delivered' };
+      };
+    });
+
+    afterEach(() => {
+      if (previousFlag === undefined) {
+        delete process.env[FLAG_ENV];
+      } else {
+        process.env[FLAG_ENV] = previousFlag;
+      }
+    });
+
+    it('flag on: appends the pulled digest to the flush batch without touching the task input', async () => {
+      deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(2);
+      expect(pullCalls).toEqual([SESSION_ID]);
+      expect(savedRows).toHaveLength(0);
+      expect(enqueued).toHaveLength(2);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      expect(enqueued[0]?.content).toBe('─── Message from coder ───');
+      const digestDelivery = enqueued[1]!;
+      expect(digestDelivery.uuid).toBe('uuid-pulled-digest');
+      expect(String(digestDelivery.content)).toContain('(2 events, PR #2828):');
+    });
+
+    it('flag on: a failing digest pull logs and flushes without the digest', async () => {
+      pullError = new Error('ledger unavailable');
+      deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(1);
+      expect(warnMessages.some((message) => String(message).includes('turn-end digest pull'))).toBe(
+        true
+      );
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+    });
+
+    it('flag off: the turn-end flush never asks for a pending digest', async () => {
+      delete process.env[FLAG_ENV];
+      deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(pullCalls).toHaveLength(0);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
     });
   });
 });

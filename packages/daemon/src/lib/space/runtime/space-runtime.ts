@@ -122,6 +122,11 @@ import {
   deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
 } from './immediate-event-delivery-pipeline.ts';
+import {
+  type RenderPendingDigestDeps,
+  type RenderPendingDigestOutcome,
+  runRenderPendingDigest,
+} from './render-pending-digest-pipeline.ts';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import {
@@ -1884,6 +1889,61 @@ export class SpaceRuntime {
     state.timestamps.push(now);
     this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
     return state.timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN;
+  }
+
+  async renderPendingDigestForSession(
+    sessionId: string
+  ): Promise<RenderPendingDigestOutcome | null> {
+    const store = this.config.externalEventStore;
+    if (!store) return null;
+    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+    if (!execution) return null;
+    const pendingForTarget = () =>
+      store
+        .listPendingDeliveries(execution.workflowRunId)
+        .filter(
+          (row) => row.nodeId === execution.workflowNodeId && row.agentName === execution.agentName
+        );
+    const firstPending = pendingForTarget()[0];
+    if (!firstPending) return null;
+    const messages = this.getSdkMessageRepo();
+    const deps: RenderPendingDigestDeps = {
+      listPendingDeliveries: () => pendingForTarget(),
+      getEventById: (eventId) => store.getById(eventId),
+      saveDigestMessageIfAbsent: async (targetSessionId, message) => {
+        const uuid = String(message.uuid);
+        const existing =
+          messages.getMessageByStatusAndUuid(targetSessionId, 'deferred', uuid) ??
+          messages.getMessageByStatusAndUuid(targetSessionId, 'enqueued', uuid);
+        if (existing) return { dbId: existing.dbId, replayed: true };
+        const dbId = messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
+        return { dbId, replayed: false };
+      },
+      appendDigest: async (targetSessionId, message) => {
+        const uuid = String(message.uuid);
+        const row = messages.getDeliveryContent(targetSessionId, uuid);
+        if (!row) return false;
+        if (row.sendStatus === 'failed') {
+          return messages.reopenDeliveryByUuid(targetSessionId, uuid) !== null;
+        }
+        return true;
+      },
+      markDeliveriesDelivered: (marks) => {
+        for (const mark of marks) {
+          store.markDeliveryDelivered(mark.eventId, mark.deliveryKey);
+          store.markEventDeliveredIfAllDeliveriesDelivered(mark.eventId);
+        }
+      },
+    };
+    return runRenderPendingDigest(deps, {
+      sessionId,
+      target: {
+        workflowRunId: execution.workflowRunId,
+        taskId: firstPending.taskId,
+        nodeId: execution.workflowNodeId,
+        agentName: execution.agentName,
+      },
+    });
   }
 
   private async deliverToLiveSessionTarget(

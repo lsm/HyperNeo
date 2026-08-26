@@ -350,6 +350,8 @@ export class AgentSession
 
   slotResetsContext?: () => boolean;
 
+  renderPendingDigest?: (sessionId: string) => Promise<unknown>;
+
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository.ts').McpEnablementRepository {
     return this.db.mcpEnablement;
   }
