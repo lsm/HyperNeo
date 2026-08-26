@@ -444,10 +444,9 @@ anywhere in this plan.
   executions against `liveBySession`, and the finalize/post-approval
   stages need the slot order and declared-slot set): `liveBySession`
   (the exec-authoritative session map), `sessionByExecId`, the slot-order
-  index, `declaredSlotNamesExact`, plus the terminal
-  `liveSessions: NodeLiveSession[]`, `unstartedSlots: string[]`,
-  `outcome: NodeClickOutcome | null`. The `normalize` resolution
-  slot-order index, `declaredSlotNamesExact`, plus the terminal
+  index, `declaredSlotNamesExact`, `normalize: (name: string) => string`
+  (codex round 24 — the resolved normalizer is a DECLARED ctx field), plus
+  the terminal
   `liveSessions: NodeLiveSession[]`, `unstartedSlots: string[]`,
   `outcome: NodeClickOutcome | null`. The `normalize` resolution is a
   LEADING stage (codex round 21: `stageResolveNormalizer` stamps the
@@ -1576,11 +1575,13 @@ optional router phase 2. No per-site section is left uncovered.
   cross-stage indexes threaded explicitly (codex round 13+14: `liveBySession`,
   `sessionByExecId`, the slot-order index, `declaredSlotNamesExact` —
   `stageMergeActivityMembers` consults `sessionByExecId` for authoritative
-  filtering; the finalize/post-approval stages consume the slot state) plus
-  `liveSessions` / `unstartedSlots` / `outcome`; `resolveLabel` port and the
-  a LEADING `stageResolveNormalizer` stamping the resolved normalizer onto
-  ctx (`args.normalizeSlotName ?? normalizeSlotName` — codex round 21);
-  `resolveLabel` port and the resolution stay per-call;
+  filtering; the finalize/post-approval stages consume the slot state),
+  `normalize: (name: string) => string` stamped by a LEADING
+  `stageResolveNormalizer`
+  (`args.normalizeSlotName ?? normalizeSlotName`, codex rounds 21+24:
+  declared ctx field, consumed by every later stage) plus
+  `liveSessions` / `unstartedSlots` / `outcome`; the
+  `resolveLabel` port stays per-call;
   daemon `as PipelineAPI` cast idiom.
 - **Budget**: prod Δ ≈ 110 — over the soft line because the four phases are
   meaty; if it will not fit, split as ➕ (exported stages unwired, imported
