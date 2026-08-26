@@ -27,7 +27,7 @@ This plan covers the hand-rolled decision/effect cascades in the Space runtime, 
 | `packages/daemon/src/lib/space/goals/goal-automation-schedule-sync.ts:syncGoalAutomationSelfNagScheduleForScope` | List schedules, pause/update/create schedule records | Direct sync `superpipe` (`.end`) inside the optional `db` transaction (review correction: `stagedRun` is async-only) | Effects on `ScheduleService`; must commit atomically with the sync transaction. |
 | `packages/daemon/src/lib/space/goals/goal-service.ts:claimOutcomeNotification` | Inside `runAtomic`; snapshot notification/goal, `decideClaimAdmission`, `apply`, update status | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Atomic claim; effect stage is the goal update and notification status flip. |
 | `packages/daemon/src/lib/space/goals/goal-service.ts:handleTaskTerminal` | Inside `runAtomic`; decide reportable terminal, update task, clear active, next task, record notification | Direct sync `superpipe` (`.end`) inside `runAtomic` — `stagedRun` is async-only and would commit early | Most complex goal effect chain; needs gather/decide/effect stages. |
-| `packages/daemon/src/lib/space/runtime/space-runtime.ts:registerSubscription` | Validate topic, validate task, check limit, trie insert, repo upsert, redispatch | Direct sync `superpipe` (`.end`) — review correction: `registerSubscription` completes synchronously and callers like `registerRunInterests` inspect `result.success` immediately in a loop; `stagedRun` (`endAsync`) would change that contract to a Promise and add await gaps between the interest-count snapshot and trie mutations | In-memory rollback on repo failure stays; redispatch stays the pipeline's final best-effort effect with an in-stage catch (round 5). |
+| `packages/daemon/src/lib/space/runtime/space-runtime.ts:registerSubscription` | Validate topic, validate task, check limit, trie insert, repo upsert, redispatch | Direct sync `superpipe` (`.end`) — review correction: `registerSubscription` completes synchronously and callers like `registerRunInterests` inspect `result.success` immediately in a loop; `stagedRun` (`endAsync`) would change that contract to a Promise and add await gaps between the interest-count snapshot and trie mutations | In-memory rollback on repo failure stays; redispatch stays the pipeline's final effect with its errors PROPAGATING as today's caller contract requires (rounds 5/27). |
 | `packages/daemon/src/lib/space/runtime/space-runtime.ts:validateSubscriptionTargetTask` | Pure check: task exists, belongs to run, not terminal | Ordinary pure helper or direct branches of the synchronous registration pipeline (review correction: not a separate `decisionRun`, and no `stagedRun` — see the corrected `registerSubscription` design) | Trivial target gate. |
 | `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:decideGenericAddressRouting` | Pure multi-branch routing by `ParsedAddress` kind | Ordinary pure helper or direct gates of the message-routing operation (review correction: no standalone runner — it runs once per target after `send` already entered message routing) | Precedence stays testable via direct helper unit tests. |
 | `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:resolveNodeAgentTargets` | Pure multi-branch target resolution | Stays an ORDINARY PURE HELPER (restructured into named linear gates) consumed by `agent-message-router.ts` until the COMPLETE `deliverMessage` operation migrates as one pipeline in a future plan — no standalone runner, and no folding into the current admission-only `decisionRun` (review correction PR #2983 round 2) | Wiring its stages into `agent-message-routing-pipeline.ts` today would still leave `deliverMessage`'s channel/activation/inject/queue effects imperative behind the runner — a split composition. |
@@ -611,7 +611,13 @@ The repo already has several proven pipelines. Use these as the model for each s
   }
   ```
 - **Pure core design**:
-  - `decideReviewGoalOutcomeMode`: branches `discover` (no `notification_id` and no updates) or `claim`.
+  - `decideReviewGoalOutcomeMode`: branches on `notification_id` PRESENCE
+    ALONE (review correction PR #2983 round 28: `discover` is defined by
+    notification absence — a request without one but WITH goal-update fields
+    stays in discovery, where it receives the exact
+    `goal-state updates require notification_id...` rejection
+    (space-agent-tools.ts:3063-3069) instead of reaching claim-only
+    identifier validation) — `discover` or `claim`.
   - Inside `claim`, call `goalService.claimOutcomeNotification` as one effect; do NOT re-inline `decideClaimAdmission` from `claim-admission-gates.ts` outside the service's atomic boundary.
 - **Shell/effect wiring**: Effects: `goalService.listClaimableOutcomeNotifications`, `goalService.claimOutcomeNotification` (or, after migration, an inline effect that invokes the same sync claim pipeline).
 - **Step-by-step migration**:
@@ -920,11 +926,17 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring**: Effects call `pauseScheduleStrict(scheduleService, id)` for EVERY pause arm — orphan pauses, pause-all, and pause-no-cron — plus `scheduleService.updateSchedule`, `resumeSchedule`, `createGoalSchedule` (review correction PR #2983 round 4: `pauseScheduleStrict` treats an already missing/non-active schedule as benign (its `not found|not active` catch) but THROWS when a CAS-losing `pauseSchedule` returns anything but `paused`, so a concurrently fired/rescheduled schedule aborts the transaction instead of letting both the stale and the replacement self-nag schedules run; a bare `pauseSchedule` stage would either abort on benign disappearances or continue after a lost CAS). Review correction — when `db` is supplied, the flow composes as a direct SYNCHRONOUS `superpipe` pipeline with `.end` executed inside `db.transaction(fn)()`: `stagedRun` executes through `endAsync`, so wrapping it in the synchronous SQLite transaction would commit as soon as the Promise is returned, leaving the normal tool paths (which pass `config.db`) with orphan pauses committed without the replacement schedule. When `db` is absent the same sync pipeline runs best-effort.
 - **Step-by-step migration**:
   1. Define the direct sync pipeline `selfNagScheduleSyncRun` (`superpipe` + `.end`, effect functions synchronous).
-  2. Gather stage lists schedules and reads policy; the GOAL READ is a
-     guarded stage AFTER the absent-reference `pauseAllNoGoal` branch
-     (review correction PR #2983 round 23: matching the corrected P41
-     scope — no goal read without a valid `spaceGoalId`).
-  3. Effect stage `pause-orphan-schedules` pauses stale schedules unconditionally (preliminary, nonterminal).
+  2. Gather stage lists schedules and reads policy.
+  3. Effect stage `pause-orphan-schedules` pauses stale schedules
+     unconditionally (preliminary, nonterminal) and runs BEFORE the
+     referenced-goal read — review correction PR #2983 round 28: when `db`
+     is omitted and `goalRepo.getById` throws for a scope WITH a goal
+     reference, the current function has already paused orphans
+     (goal-automation-schedule-sync.ts:50-57 before :68), so orphan cleanup
+     must not be lost to a throwing lookup; a no-transaction
+     throwing-lookup ordering row is pinned in P42. The goal read itself is
+     still a guarded stage AFTER the absent-reference branch (round 23:
+     no goal read without a valid `spaceGoalId`).
   4. Decide stage selects the current-schedule branch and stores it in ctx
      (review correction: NO `!branchDecided` halt — a `!dep` halt exits the
      whole pipeline, so none of the guarded effects could run and an active
@@ -954,7 +966,11 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring**: Effects: `params.apply(goal)` (if `mutatesGoalState`), `outcomeNotificationRepo.updateStatus`. The shell is the `runAtomic` block; the sync pipeline runs inside it.
 - **Step-by-step migration** (review correction — sync pipeline stages, not `stagedRun` steps):
   1. Replace the inline `decideClaimAdmission` call with the sync `superpipe` pipeline whose gates IMPORT the authorization/identity/revision gate functions directly (review correction round 18: do NOT wrap-and-invoke `claimAdmissionRun` from inside this atomic pipeline — that nests a runner within one claim operation).
-  2. Gather stage loads notification and goal, computes `authorizedAgentIds`
+  2. Gather stages are SPLIT (review correction PR #2983 round 28): the
+     NOTIFICATION is loaded first and halts `{ status: 'not_found' }` if
+     absent; only then does the GOAL gather stage run with its own
+     missing-goal gate — never one combined stage, since an unknown ID has
+     no authoritative `notification.goalId` to look up.
      — preceded by the ordered MISSING-NOTIFICATION and MISSING-GOAL terminal
      gates returning `{ status: 'not_found' }` (review correction
      PR #2983 round 15: an unknown ID or a deleted goal must never reach the
@@ -1056,7 +1072,12 @@ The repo already has several proven pipelines. Use these as the model for each s
   16. `halt` returns `{ goal, nextTask, terminalGeneration, notification }`.
   17. Post-commit shell (review correction): AFTER `runAtomic` resolves, the
       shell invokes `emitTaskCreated` (when a next task was created) and
-      `onOutcomeNotification` (when a notification was recorded), deferring
+      `onOutcomeNotification` (when a notification was recorded) — the latter
+      inside its EXISTING local catch/log boundary (goal-service.ts:475-482;
+      review correction PR #2983 round 28: an unguarded invocation would
+      report failure after the terminal task/goal event/notification have
+      already committed, and an unguarded deferred one can escape from
+      `setImmediate`; a throwing-callback parity row is pinned in P52) — deferring
       both via `setImmediate` when `transition.deferPostCommitEffects` is set
       — carry that flag in the pipeline state and retain this step; without it
       migrated goal progress stops waking subscribers or announcing the next
@@ -1478,7 +1499,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P20 — `refactor(tools): run archive_task on the archive pipeline`
 
 - 🔧 apply — prod Δ ≲50, test Δ ≲100
-- **Scope**: The `archive_task` tool in `space-agent-tools.ts` runs the P19 pipeline and maps the routing reject to its error response; the tool shell RETAINS its success audit — `logAudit('archive_task', { previousStatus }, task_id)` from the admission snapshot (review correction PR #2983 round 6, same discipline as the publish/approve slices).
+- **Scope**: The `archive_task` tool in `space-agent-tools.ts` runs the P19 pipeline with its current `taskRepo.getTask` AND `isWorkflowRunActive` reads INJECTED AS GUARDED SNAPSHOT STAGES of that pipeline (review correction PR #2983 round 28: space-agent-tools.ts:2283-2291 — task and active-run admission belong inside the composition with their precedence rows, not left in the shell) and maps the routing reject to its error response; the tool shell RETAINS its success audit — `logAudit('archive_task', { previousStatus }, task_id)` from the admission snapshot (review correction PR #2983 round 6, same discipline as the publish/approve slices).
 - **Lands**: the tool's archive operation is one complete pipeline with its audit trail intact.
 - **Excludes**: `onArchiveTask` (P21).
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts` including an audit-retention row.
@@ -1669,7 +1690,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P41 — `feat(goals): add synchronous self-nag schedule-sync pipeline (unwired)`
 
 - ➕ additive core — prod Δ ≲120, test Δ ≲250
-- **Scope**: Direct sync `selfNagScheduleSyncRun` (`superpipe` + `.end`, synchronous effects) for `syncGoalAutomationSelfNagScheduleForScope`: gather lists schedules/policy, with the GOAL READ GUARDED behind the absent-reference branch (review correction PR #2983 round 22: `goalRepo.getById` runs only AFTER the `!scope.spaceGoalId` check — for a scope without a goal reference the pipeline pauses all active scope schedules via the `pauseAllNoGoal` arm and returns WITHOUT ever reading the goal, matching goal-automation-schedule-sync.ts:60-68, so an eager read either has no valid ID or lets an unnecessary failure prevent that cleanup); PRELIMINARY unconditional `pause-orphan-schedules` effect (not a decision branch — it coexists with `update`/`create`); decide stage selects the current-schedule branch (`pauseAllNoGoal`, `missingGoalNoOp`, `pauseNoCron`, `update`, `create`, `noOp`) with goal-reference state carried separately and NO `!branchDecided` halt (a `!dep` halt would skip the guarded mutations after orphan cleanup); guarded mutation effects call `scheduleService` — with EVERY pause arm routed through `pauseScheduleStrict` (review correction PR #2983 round 4: benign on an already missing/non-active schedule, THROWING when a lost pause CAS leaves it active, so the transaction cannot proceed to update/create and run two self-nag schedules at once — a bare `pauseSchedule` stage loses that concurrency contract). Parallel-safe leaf.
+- **Scope**: Direct sync `selfNagScheduleSyncRun` (`superpipe` + `.end`, synchronous effects) for `syncGoalAutomationSelfNagScheduleForScope`: gather lists schedules/policy, with the GOAL READ GUARDED behind BOTH the absent-reference check AND the preliminary `pause-orphan-schedules` effect (review corrections PR #2983 rounds 22/28: `goalRepo.getById` runs only after `!scope.spaceGoalId` is excluded AND after orphan cleanup has already run — goal-automation-schedule-sync.ts:50-57 then :68 — so a throwing goal lookup can never leave stale orphan schedules active; pinned by a no-transaction throwing-lookup ordering row); PRELIMINARY unconditional `pause-orphan-schedules` effect (not a decision branch — it coexists with `update`/`create`); decide stage selects the current-schedule branch (`pauseAllNoGoal`, `missingGoalNoOp`, `pauseNoCron`, `update`, `create`, `noOp`) with goal-reference state carried separately and NO `!branchDecided` halt (a `!dep` halt would skip the guarded mutations after orphan cleanup); guarded mutation effects call `scheduleService` — with EVERY pause arm routed through `pauseScheduleStrict` (review correction PR #2983 round 4: benign on an already missing/non-active schedule, THROWING when a lost pause CAS leaves it active, so the transaction cannot proceed to update/create and run two self-nag schedules at once — a bare `pauseSchedule` stage loses that concurrency contract). Parallel-safe leaf.
 - **Lands**: the schedule-sync flow exists as one sync composition ready to run inside the transaction.
 - **Excludes**: wiring the service (P42).
 - **Tests**: branch rows including orphan-plus-update coexistence and missing-vs-absent goal distinction, plus a concurrent-fire/reschedule row (a pause CAS lost to a concurrent fire throws; a benign disappearance does not).
@@ -1770,7 +1791,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P52 — `feat(goals): add synchronous handleTaskTerminal pipeline core (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
-- **Scope**: Direct sync `handleTaskTerminalRun` (`superpipe` + `.end`, synchronous effects, shaped to run inside `runAtomic` — never `stagedRun`): admission gates (missing task/goal halt; goal-space mismatch returns `null`; nonterminal stamps the structured result BEFORE halting); the PLAIN terminal-status check as the decide stage (NOT `decideReportableTerminal`, which is invoked only at the notification stage); `update-task` → resnapshot → `already-notified` halt → `clear-active-task` → goal RESNAPSHOT (round 10: the fresh goal feeds `recordGoalEvent` so the `task_terminal` event's `newState`/diff carry the cleared `activeTaskId` and bumped revision) → `record-goal-event`, best-effort `capture-evidence`/`run-automation` (local catch boundaries retained), best-effort `create-next-task` INSIDE its existing NESTED `db.transaction` savepoint (review correction PR #2983 round 3: a caught failure without the savepoint still commits the creation's partial task/goal writes into the outer transaction — orphan task or inconsistent active-task pointer), resnapshot, `record-outcome-notification`; state carries `deferPostCommitEffects`.
+- **Scope**: Direct sync `handleTaskTerminalRun` (`superpipe` + `.end`, synchronous effects): its ADMISSION GATES RUN OUTSIDE/BEFORE `runAtomic` (review correction PR #2983 round 28: missing task, foreign-space goal, and nonterminal transitions return BEFORE the transaction in today's code — goal-service.ts:380-392, pinned by P51's foreign-space ordering row — so these stable early exits must not open and commit a DB transaction whose failure could replace the existing `null`/structured result; P53 wires only the POST-admission remainder inside `runAtomic`, with rows asserting `runAtomic` is NOT entered on any of these exits). Inside the atomic segment: the PLAIN terminal-status check as the decide stage (NOT `decideReportableTerminal`, which is invoked only at the notification stage); `update-task` → resnapshot → `already-notified` halt → `clear-active-task` → goal RESNAPSHOT (round 10: the fresh goal feeds `recordGoalEvent` so the `task_terminal` event's `newState`/diff carry the cleared `activeTaskId` and bumped revision) → `record-goal-event`, best-effort `capture-evidence`/`run-automation` (local catch boundaries retained), best-effort `create-next-task` INSIDE its existing NESTED `db.transaction` savepoint (review correction PR #2983 round 3: a caught failure without the savepoint still commits the creation's partial task/goal writes into the outer transaction — orphan task or inconsistent active-task pointer), resnapshot, `record-outcome-notification`; state carries `deferPostCommitEffects`.
 - **Lands**: the complete terminal bookkeeping chain exists as one sync composition.
 - **Excludes**: wiring inside `runAtomic` and the post-commit shell (P53); any `runAtomic` async conversion (off the table).
 - **Tests**: stage rows for every arm, the idempotent-retry halt, the best-effort catch boundaries, and a next-task savepoint row (a creation that throws mid-way leaves no partial task/goal writes behind).
@@ -1779,7 +1800,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P53 — `refactor(goals): run handleTaskTerminal on the sync atomic pipeline`
 
 - 🔧 apply — prod Δ ≲80, test Δ ≸200
-- **Scope**: The `runAtomic` block executes the P52 pipeline using transaction-bound repo methods; the post-commit shell keeps `emitTaskCreated` and `onOutcomeNotification` with the `setImmediate` deferral when `transition.deferPostCommitEffects` is set.
+- **Scope**: The shell runs P52's PRE-ATOMIC admission segment first (missing task/foreign-space/nonterminal exits return WITHOUT entering `runAtomic` — rows assert this — review correction PR #2983 round 28), then the `runAtomic` block executes only the POST-admission atomic remainder of the P52 pipeline using transaction-bound repo methods; the post-commit shell keeps `emitTaskCreated` and `onOutcomeNotification` (the latter inside its existing catch/log boundary, goal-service.ts:475-482 — round 28, with a throwing-callback parity row) with the `setImmediate` deferral when `transition.deferPostCommitEffects` is set.
 - **Lands**: terminal transitions are one atomic named composition; migrated goal progress keeps waking subscribers.
 - **Excludes**: in-flow retries.
 - **Tests**: `space-goal-service.test.ts`, `goal-outcome-wake-flip.test.ts`, plus nonterminal and already-notified parity rows.
