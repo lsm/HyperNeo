@@ -84,6 +84,8 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  db.prepare(`DELETE FROM space_workflow_nodes`).run();
+  db.prepare(`DELETE FROM space_workflows`).run();
   db.prepare(`DELETE FROM space_agents`).run();
   db.prepare(`DELETE FROM spaces`).run();
 });
@@ -110,6 +112,46 @@ describe('migration 220 — reviewer de-poll-polling contract restamp', () => {
     expect(row.custom_prompt).not.toContain('Poll the gate every 60 seconds');
     expect(row.template_hash).toBe(computeAgentTemplateHash(REVIEWER_PRESET));
     expect(row.description).toBe(REVIEWER_PRESET.description);
+  });
+
+  test('skips a pristine Reviewer row used by a workflow without eventInterests', () => {
+    const spaceId = 'space-m217-unsubscribed';
+    insertSpace(db, spaceId);
+    const workflowId = 'wf-unsubscribed';
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, description, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(workflowId, spaceId, 'Unsubscribed Reviewer Workflow', '', now, now);
+    db.prepare(
+      `INSERT INTO space_workflow_nodes
+       (id, workflow_id, name, config, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      'node-unsubscribed',
+      workflowId,
+      'Review',
+      JSON.stringify({
+        agents: [{ agentId: 'Reviewer', name: 'reviewer' }],
+      }),
+      now,
+      now
+    );
+    insertAgent(db, {
+      id: 'agent-unsubscribed-reviewer',
+      spaceId,
+      name: 'Reviewer',
+      customPrompt: OLD_REVIEWER_PROMPT_PRE_DE_POLL,
+      description: REVIEWER_PRESET.description,
+      templateName: 'Reviewer',
+      templateHash: 'stale-hash',
+    });
+
+    runMigration220(db);
+
+    const row = getAgentRow(db, 'agent-unsubscribed-reviewer');
+    expect(row.custom_prompt).toBe(OLD_REVIEWER_PROMPT_PRE_DE_POLL);
+    expect(row.template_hash).toBe('stale-hash');
   });
 
   test('the frozen pre-de-poll contract kept the 60-second liveness loop the restamp removes', () => {

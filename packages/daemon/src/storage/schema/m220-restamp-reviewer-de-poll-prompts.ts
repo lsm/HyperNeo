@@ -21,6 +21,52 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
     .get(columnName);
 }
 
+interface NodeConfigJson {
+  agents?: Array<{
+    agentId?: string;
+    name?: string;
+    eventInterests?: unknown[];
+  }>;
+}
+
+function hasUnsubscribedReviewerSlot(db: BunDatabase, spaceId: string): boolean {
+  if (!tableExists(db, 'space_workflows') || !tableExists(db, 'space_workflow_nodes')) {
+    return false;
+  }
+  if (!tableHasColumn(db, 'space_workflows', 'space_id')) return false;
+  if (!tableHasColumn(db, 'space_workflow_nodes', 'config')) return false;
+
+  const workflows = db
+    .prepare(`SELECT id FROM space_workflows WHERE space_id = ?`)
+    .all(spaceId) as Array<{ id: string }>;
+
+  const nodeStmt = db.prepare(`SELECT config FROM space_workflow_nodes WHERE workflow_id = ?`);
+
+  for (const workflow of workflows) {
+    const nodes = nodeStmt.all(workflow.id) as Array<{ config: string | null }>;
+    for (const node of nodes) {
+      if (!node.config) continue;
+      let cfg: NodeConfigJson | undefined;
+      try {
+        cfg = JSON.parse(node.config) as NodeConfigJson;
+      } catch {
+        continue;
+      }
+      for (const agent of cfg?.agents ?? []) {
+        if (!agent) continue;
+        const isReviewer =
+          agent.agentId?.trim().toLowerCase() === 'reviewer' ||
+          agent.name?.trim().toLowerCase() === 'reviewer';
+        if (isReviewer && (!agent.eventInterests || agent.eventInterests.length === 0)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 export function runMigration220(db: BunDatabase): void {
   if (!tableExists(db, 'space_agents')) return;
 
@@ -41,12 +87,13 @@ export function runMigration220(db: BunDatabase): void {
 
   const rows = db
     .prepare(
-      `SELECT id, custom_prompt, description, tools
+      `SELECT id, space_id, custom_prompt, description, tools
        FROM space_agents
        WHERE template_name = 'Reviewer' OR (template_name IS NULL AND name = 'Reviewer')`
     )
     .all() as Array<{
     id: string;
+    space_id: string;
     custom_prompt: string | null;
     description: string | null;
     tools: string | null;
@@ -72,6 +119,13 @@ export function runMigration220(db: BunDatabase): void {
       row.description === reviewer.description &&
       [...storedTools].sort().join('\u0000') === [...(reviewer.tools ?? [])].sort().join('\u0000');
     if (!pristine) continue;
+
+    if (hasUnsubscribedReviewerSlot(db, row.space_id)) {
+      log.info(
+        `[backfill] Skipping Reviewer row ${row.id} because its space has an unsubscribed Reviewer slot.`
+      );
+      continue;
+    }
 
     update.run(reviewer.customPrompt, computeAgentTemplateHash(reviewer), row.id);
     updated++;
