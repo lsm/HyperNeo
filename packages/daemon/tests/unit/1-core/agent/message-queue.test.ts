@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
-import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import { generateUUID } from '@hyperneo/shared';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 
 describe('MessageQueue', () => {
   let queue: MessageQueue;
@@ -1070,6 +1070,44 @@ describe('MessageQueue', () => {
       expect(q.hasOutstandingInternalCompaction()).toBe(false);
       expect(q.hasOutstandingNonCompactionMessages()).toBe(false);
     });
+
+    it('counts a durable internal compaction delivered but unacknowledged until its timeout', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      q.start();
+
+      const delivery = q.enqueueWithId('compact-timeout', '/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      await generator.next();
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+
+      await delivery;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
+      q.stop();
+    });
+
+    it('acknowledges one delivered compaction per compact boundary', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const first = q.enqueueWithId('compact-a', '/compact', true, { durable: true });
+      const second = q.enqueueWithId('compact-b', '/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const a = await generator.next();
+      a.value.onSent();
+      await first;
+      const b = await generator.next();
+      b.value.onSent();
+      await second;
+
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      q.stop();
+    });
   });
 
   describe('sent-prompt lifecycle', () => {
@@ -1134,6 +1172,32 @@ describe('MessageQueue', () => {
       expect(q.getSentPromptContent(ids[0])).toBeUndefined();
       expect(q.getSentPromptContent(ids[1])).toBe('prompt-1');
       expect(q.getSentPromptContent(ids[32])).toBe('prompt-32');
+      q.stop();
+    });
+
+    it('treats a resent prompt id as the most recent entry', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const deliveries: Array<Promise<void>> = [];
+      for (let i = 0; i < 33; i++) {
+        deliveries.push(q.enqueueWithId(`prompt-${i}`, `text-${i}`, false, { durable: true }));
+      }
+      const generator = q.messageGenerator(testSessionId);
+      for (let i = 0; i < 33; i++) {
+        const result = await generator.next();
+        result.value.onSent();
+      }
+      await Promise.all(deliveries);
+      expect(q.getSentPromptContent('prompt-0')).toBeUndefined();
+
+      const resend = q.enqueueWithId('prompt-0', 'text-0-retry', false, { durable: true });
+      const resent = await generator.next();
+      resent.value.onSent();
+      await resend;
+
+      expect(q.getSentPromptContent('prompt-0')).toBe('text-0-retry');
+      expect(q.getSentPromptContent('prompt-1')).toBeUndefined();
       q.stop();
     });
   });
@@ -1208,6 +1272,23 @@ describe('MessageQueue', () => {
       result.value.onSent();
       await delivery;
       q.stop();
+    });
+
+    it('stop ends the generator even while a delivery gate never settles', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.setDeliveryGate(new Promise<void>(() => {}));
+      const delivery = q.enqueue('gated', false, { durable: true });
+
+      const generator = q.messageGenerator(testSessionId);
+      const pending = generator.next();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      q.stop();
+
+      const outcome = await pending;
+      expect(outcome.done).toBe(true);
+      q.clear();
+      delivery.catch(() => {});
     });
   });
 

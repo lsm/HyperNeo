@@ -1,7 +1,7 @@
-import type { UUID } from 'crypto';
 import type { MessageContent, ToolResultContent } from '@hyperneo/shared';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { generateUUID } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { UUID } from 'crypto';
 import { buildQueueTimeoutError, resolveQueueTimeout } from './message-queue-timeout-policy.ts';
 
 function isToolResultContent(content: MessageContent): content is ToolResultContent {
@@ -69,6 +69,7 @@ export class MessageQueue {
       this.internalCompactionsAwaitingBoundary += 1;
     } else {
       this.nonCompactionSentSinceBoundary = true;
+      this.recentSentPrompts.delete(message.id);
       this.recentSentPrompts.set(message.id, message.content);
       if (this.recentSentPrompts.size > 32) {
         const oldest = this.recentSentPrompts.keys().next().value;
@@ -100,7 +101,9 @@ export class MessageQueue {
   }
 
   acknowledgeCompactionsAwaitingBoundary(): void {
-    this.internalCompactionsAwaitingBoundary = 0;
+    if (this.internalCompactionsAwaitingBoundary > 0) {
+      this.internalCompactionsAwaitingBoundary -= 1;
+    }
     this.recentSentPrompts.clear();
   }
 
@@ -251,6 +254,9 @@ export class MessageQueue {
         this.yielded.delete(queuedMessage);
       }
       if (decision.action === 'resolve') {
+        if (decision.removeFrom === 'yielded') {
+          this.noteInternalCompactionSent(queuedMessage);
+        }
         queuedMessage.resolve(queuedMessage.id);
         return;
       }
@@ -504,7 +510,13 @@ export class MessageQueue {
       }
 
       while (this.deliveryGate) {
-        await this.deliveryGate.catch(() => {});
+        await Promise.race([
+          this.deliveryGate.catch(() => {}),
+          new Promise<void>((resolve) => {
+            this.waiters.push(resolve);
+          }),
+        ]);
+        if (!this.running) return null;
       }
 
       if (!this.running) return null;
