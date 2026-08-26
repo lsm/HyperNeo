@@ -585,6 +585,30 @@ export class GitHubEventExtensionRepository {
         continue;
       }
     }
+    const hookRows = this.db
+      .prepare(
+        `SELECT local_state
+         FROM workflow_hook_state h
+         JOIN space_workflow_runs r ON r.id = h.run_id
+         WHERE r.space_id = ? AND r.status IN ('pending', 'in_progress')`
+      )
+      .all(spaceId) as Array<{ local_state: string }>;
+    for (const { local_state } of hookRows) {
+      try {
+        const state = JSON.parse(local_state) as { prUrl?: string; pr_url?: string };
+        const parsed = parsePrUrl(state.prUrl ?? state.pr_url ?? '');
+        if (
+          parsed &&
+          parsed.owner.toLowerCase() === lowerOwner &&
+          parsed.repo.toLowerCase() === lowerRepo
+        ) {
+          numbers.add(Number(parsed.number));
+        }
+      } catch {
+        continue;
+      }
+    }
+
     const subRows = this.db
       .prepare(
         `SELECT s.topic

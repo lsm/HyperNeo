@@ -59,7 +59,6 @@ const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 120_000;
 const GITHUB_API_BASE = 'https://api.github.com';
 const REACTION_POLL_PR_LIMIT = 10;
-const MAX_REACTION_PAGES = 10;
 const REACTION_POLL_RATE_LIMIT_FLOOR = 100;
 const RATE_LIMIT_LOW_REMAINING_THRESHOLD = 10;
 const RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
@@ -3046,7 +3045,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       let reactionScanSinglePage = false;
       let reactionNotModified = false;
       let reactionPendingEtag: string | null = null;
-      while (reactionPage <= MAX_REACTION_PAGES) {
+      while (true) {
         const reactionQuery = new URLSearchParams({ per_page: '100' });
         if (reactionPage > 1) reactionQuery.set('page', String(reactionPage));
         const reactionHeaders = gitHubPollingHeaders(token);
@@ -3146,11 +3145,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         if (reactions.length < 100) {
           reactionScanComplete = true;
           reactionScanSinglePage = reactionPage === 1;
-          break;
-        }
-        if (reactionPage === MAX_REACTION_PAGES) {
-          reactionsFullyPolled = false;
-          partialScan = true;
           break;
         }
         if (!canPollReactions(reactionRateLimit.remaining)) {
