@@ -2099,7 +2099,7 @@ SELECT
   parentToolUseId,
   insOrder
 FROM joined
-ORDER BY createdAt ASC, insOrder ASC
+ORDER BY createdAt ASC, insOrder ASC, kind ASC, id ASC
 `.trim();
 
 export const SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS = 100;
@@ -2574,7 +2574,9 @@ ranked_rows AS (
 ordinary_ranked AS (
   SELECT
     id,
-    ROW_NUMBER() OVER (ORDER BY createdAt DESC, insOrder DESC) AS ordinaryRank
+    ROW_NUMBER() OVER (
+      ORDER BY createdAt DESC, insOrder DESC, kind DESC, id DESC
+    ) AS ordinaryRank
   FROM ranked_rows
   WHERE NOT pinned
     AND id NOT IN (SELECT id FROM active_session_tails)
@@ -2600,7 +2602,7 @@ FROM ranked_rows
 WHERE pinned
   OR id IN (SELECT id FROM active_session_tails)
   OR id IN (SELECT id FROM ordinary_ranked WHERE ordinaryRank <= ?)
-ORDER BY createdAt ASC, insOrder ASC
+ORDER BY createdAt ASC, insOrder ASC, kind ASC, id ASC
 `.trim();
 
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `

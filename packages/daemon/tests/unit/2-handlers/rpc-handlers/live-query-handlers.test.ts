@@ -3740,6 +3740,51 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(queryCompact(taskId, 2).map((r) => r.id)).toEqual(['gh-tie-a', 'gh-tie-b']);
       });
 
+      test('breaks cross-source same-millisecond rowid ties deterministically', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'tie-sdk',
+          sessionId,
+          now + 1000,
+          { type: 'user', uuid: 'u-tie-sdk', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        db.exec(`
+					INSERT INTO space_github_events (
+						id, space_id, task_id, source, delivery_id, event_type, action,
+						repo_owner, repo_name, pr_number, pr_url, actor, actor_type,
+						body, summary, external_url, external_id, occurred_at, dedupe_key,
+						raw_payload, state, created_at, updated_at
+					) VALUES (
+						'tie-gh', '${spaceId}', '${taskId}', 'webhook', 'delivery-tie-gh',
+						'pull_request', 'opened', 'lsm', 'neokai', 1965,
+						'https://github.com/lsm/neokai/pull/1965', 'reviewer', 'User', '',
+						'PR #1965 tie', 'https://github.com/lsm/neokai/pull/1965',
+						'ext-tie-gh', ${now + 1000}, 'tie-gh', '{}', 'routed',
+						${now + 1000}, ${now + 1000}
+					)
+				`);
+        insertSdkMessageAt(
+          'tie-mid',
+          sessionId,
+          now + 1500,
+          { type: 'user', uuid: 'u-tie-mid', message: { role: 'user', content: 'mid' } },
+          'user'
+        );
+        insertSdkMessageAt('tie-newer', sessionId, now + 2000, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'newest' }] },
+        });
+
+        const ids = queryCompact(taskId, 2).map((r) => r.id as string);
+        expect(ids).toContain('tie-newer');
+        expect(ids).toContain('tie-mid');
+        expect(ids).toContain('tie-sdk');
+        expect(ids).not.toContain('tie-gh');
+      });
+
       test('keeps Write/Edit/TodoWrite tool rows even when the segment has assistant text (#2338)', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
