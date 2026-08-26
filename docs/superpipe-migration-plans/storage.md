@@ -146,6 +146,17 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 
 No `decisionRun`, no `stagedRun`, and no new `transformRun` combinator.
 
+Review correction (PR #2978): the named pipelines are the THREE COMPLETE SAVE
+OPERATIONS — `saveSDKMessage`, `saveUserMessageCore`, and
+`saveHyperNeoActionMessage` — each composing its admission derivation and its
+persist/sequence/publication effects as stages of one business path.
+`decideMessageAdmission` itself stays a PLAIN EXPORTED HELPER (a leaf
+consumed by each save pipeline's admission stage, and directly by
+`sdk-message-badge.ts:planAdmissionBadgeUpdate` and the drift suite). A
+standalone admission-only pipeline invoked by imperative save shells would be
+exactly the decision/effect split the composition rule forbids: the save
+method is the business path, so the pipeline owns it.
+
 #### Input/output snapshot design
 
 **Public input** (unchanged at the wrapper):
@@ -159,46 +170,38 @@ No `decisionRun`, no `stagedRun`, and no new `transformRun` combinator.
 }
 ```
 
-**Internal context** (`MessageAdmissionCtx`) — the working object threaded
-through each stage:
+**Internal contexts** — review correction (PR #2978): the INITIAL input type
+and the progressively enriched stage contexts are DISTINCT; the pipeline input
+contains only what the snapshot provides, and a derived field is ABSENT (not
+`null`-filled) until its producing stage has run, so a missing or reordered
+stage dependency fails the typecheck instead of being hidden behind a
+`PipelineAPI` cast:
 
 ```ts
-interface MessageAdmissionCtx extends MessageAdmissionOptions {
+interface SaveSdkMessageInput {          // pipeline input: snapshot only
   message: SDKMessage;
-  messageType: string;
-  messageSubtype: string | null;
-  parentToolUseId: string | null;
-  sdkUuid: string | null;
-  replacementEdges: SDKMessageReplacementEdge[];
-  isRenderable: 0 | 1;
-  isTerminal: 0 | 1;
-  isConversationAnchor: boolean;
-  countsTowardsBadge: boolean;
+  variant: MessageAdmissionVariant;
+  sendStatus: SendStatus | null;
+  origin?: MessageOrigin;                // carried; consumed by the persist stage
 }
+type AdmittedSdkMessage = SaveSdkMessageInput & {
+  admission: MessageAdmissionRecord;     // + the admission stage's output
+};
+// ...each later stage's context adds exactly the fields it produces
+// (allocated sequence, inserted row id, publication flags) until the final
+// `.end(...)` result.
 ```
 
-**Output**: `MessageAdmissionRecord`, returned from `.end('record')`.
-
-The wrapper coerces the two-argument public signature into the single context
-object that superpipe expects:
-
-```ts
-export function decideMessageAdmission(
-  input: NormalizedMessageAdmissionInput,
-  options: MessageAdmissionOptions
-): MessageAdmissionRecord {
-  return messageAdmissionPipeline({ ...input, ...options });
-}
-```
-
-`origin` is preserved in the context because callers pass it, but no stage
-consumes it; this keeps the options contract intact without adding noise to the
-record.
+`MessageAdmissionRecord` remains the admission stage's output, produced by
+calling the plain `decideMessageAdmission` leaf. `origin` rides the input
+because the persist stages consume it; it never enters the record.
 
 #### Pure core design
 
-Keep the existing pure helpers as implementation primitives. Reorganize the
-function body into explicit, named, testable stages:
+Keep the existing pure helpers as implementation primitives. The six named
+steps below document `decideMessageAdmission`'s internal structure (and the
+admission stage each save pipeline runs by CALLING that plain leaf — review
+correction: the leaf is not itself converted into a separately-run pipeline):
 
 1. `extractMessageIdentity(ctx)`
    - Populate `messageType`, `messageSubtype`, `parentToolUseId`, `sdkUuid`,
@@ -225,48 +228,52 @@ function body into explicit, named, testable stages:
 6. `buildRecord(ctx)`
    - Return `MessageAdmissionRecord`.
 
-Each of stages 1–5 returns the full updated context (`MessageAdmissionCtx`).
-Stage 6 returns the record. The pipeline ends with `.end('record')`.
-
-Pipeline sketch:
+Save-pipeline sketch (one per save method; `saveSDKMessage` shown):
 
 ```ts
-const messageAdmissionPipeline = (
-  superpipe({})('sdk-message-admission') as PipelineAPI
-)
-  .input(['ctx'])
-  .pipe(extractMessageIdentity, 'ctx', 'ctx')
-  .pipe(computeRenderability, 'ctx', 'ctx')
-  .pipe(computeTerminal, 'ctx', 'ctx')
-  .pipe(computeConversationAnchor, 'ctx', 'ctx')
-  .pipe(computeBadgeVisibility, 'ctx', 'ctx')
-  .pipe(buildRecord, 'ctx', 'record')
-  .end('record');
+const saveSdkMessage = superpipe(deps)('save-sdk-message')
+  .pipe(snapshotMessage, 'message', 'ctx')        // + variant/sendStatus/origin
+  .pipe(admitMessage, 'ctx', 'ctx')               // calls the plain decideMessageAdmission leaf
+  .pipe(persistMessage, 'ctx', 'ctx')             // existing insert effects, in-transaction
+  .pipe(allocateConsumedSeq, 'ctx', 'ctx')        // existing sequence rules, unchanged
+  .pipe(publishAdmissions, 'ctx', 'result');      // existing notifications/publications
 ```
 
-`superpipe({})` is used with an empty dependency object because no external
-predicates are required. If the type checker rejects an empty generic, prefer
-`superpipe<Record<string, never>>({})` or an equivalent empty `Dependencies`
-subtype; verify at implementation time.
+Each save pipeline is a synchronous `.end` run executed INSIDE the method's
+existing `db.transaction(...)` boundary (the same pattern the space-runtime
+plan uses inside `runAtomic`), so transaction semantics are unchanged.
 
 #### Shell/effect wiring
 
-No effects. The three `SDKMessageRepository` save methods remain the shell:
+Review correction (PR #2978): each save method's COMPLETE operation becomes
+one named pipeline — admission, persist, sequence allocation, and
+notifications/publications are its stages, so no save path keeps an imperative
+shell interpreting a derivation helper:
 
-- `saveSDKMessage` computes admission **before** its `db.transaction(...)`.
-- `saveUserMessageCore` computes admission **inside** the transaction that
-  `message-delivery-outbox.ts` composes (`packages/daemon/src/lib/agent/message-delivery-outbox.ts:60-81`).
-- `saveHyperNeoActionMessage` computes admission before its local transaction.
+- `saveSDKMessage` → `save-sdk-message`: its `db.transaction(...)` body
+  becomes the pipeline's effect stages (the sync `.end` run happens inside
+  the transaction).
+- `saveUserMessageCore` → `save-user-message-core`: same shape, running
+  inside the transaction that `message-delivery-outbox.ts` composes
+  (`packages/daemon/src/lib/agent/message-delivery-outbox.ts:60-81`).
+- `saveHyperNeoActionMessage` → `save-hyperneo-action-message`: same shape
+  inside its local transaction.
+
+The method bodies reduce to snapshot → run; `decideMessageAdmission` remains
+the plain exported leaf the admission stages call.
 
 `planAdmissionBadgeUpdate` continues to receive the record and return a
 `BadgeUpdateInstruction`. `SendStatus` must remain exported from
 `sdk-message-admission.ts` because `sdk-message-status-plan.ts` and
 `delivery-status-routing.ts` import it.
 
-Do **not** move any DB write, `nextConsumedSeq`, or notification logic into the
-pipeline. The record is intentionally decoupled from `consumed_seq` allocation
-(see the storage survey B2/B4 notes). The `isTerminal` field is only an
-admission flag; the repo still decides when to allocate a consumed sequence.
+With the complete-save-path correction (PR #2978), the DB writes,
+`nextConsumedSeq` allocation, and notifications MOVE INTO each save pipeline
+as stages — but they keep their exact current boundaries and rules: the
+admission record stays decoupled from `consumed_seq` allocation (see the
+storage survey B2/B4 notes; allocation is its own stage, unchanged), and
+`isTerminal` remains only an admission flag feeding that stage's existing
+decision.
 
 #### Step-by-step migration
 
@@ -284,23 +291,33 @@ admission flag; the repo still decides when to allocate a consumed sequence.
      `model_refusal_fallback` subtype gate.
    - `HyperNeoActionMessage` normalization.
 
-2. **Extract the pure helpers if not already tested.** The helpers
-   `computeIsRenderable`, `computeIsTerminal`, `extractParentToolUseId`,
-   `extractSdkUuid`, `extractReplacementEdges`, and `isVisibleBadgeRow` are
-   already exported and should keep their own isolated tests. Any gaps
-   (e.g. `extractReplacementEdges` retraction gate, `isVisibleBadgeRow` null
-   sendStatus default) should be covered before the pipeline refactor.
+2. **Distinguish existing helper coverage from wrapper coverage.**
+   Review correction (PR #2978): `computeIsRenderable`, `computeIsTerminal`,
+   `extractParentToolUseId`, `extractSdkUuid`, and `extractReplacementEdges`
+   are exported with direct helper-level tests already in
+   `sdk-message-repository-helpers.test.ts` (including the retraction gates)
+   — those stay green, untouched. `isVisibleBadgeRow` is module-private with
+   no isolated tests, so its null-`sendStatus` default is pinned at WRAPPER
+   level via `countsTowardsBadge` decision-table rows in the admission suite;
+   do not export it just for testing.
 
-3. **Define context types.** Add `MessageAdmissionCtx` and the `MessageAdmissionInput`
-   union inside `sdk-message-admission.ts`. Do not change exported public types
-   (`MessageAdmissionRecord`, `SendStatus`, `MessageAdmissionVariant`,
-   `MessageAdmissionOptions`, `NormalizedMessageAdmissionInput`).
+3. **Define context types.** Add the per-save input types
+   (`SaveSdkMessageInput` et al.) and their progressively enriched stage
+   contexts in `sdk-message-repository.ts` (review correction: the pipeline
+   input holds only snapshot fields; derived fields join the context only
+   after their producing stage — no `PipelineAPI` cast). Do not change
+   exported public types (`MessageAdmissionRecord`, `SendStatus`,
+   `MessageAdmissionVariant`, `MessageAdmissionOptions`,
+   `NormalizedMessageAdmissionInput`).
 
-4. **Implement the named stages and pipeline.** Replace the body of
-   `decideMessageAdmission` with the six stages and the `messageAdmissionPipeline`
-   builder. Keep `decideMessageAdmission` itself as the public wrapper so callers
-   do not change. Optionally export `runMessageAdmission` or keep the pipeline
-   private depending on whether the test file wants stage-level assertions.
+4. **Implement the save pipelines.** Compose one named pipeline per save
+   method (admission stage calling the unchanged `decideMessageAdmission`
+   leaf, followed by the method's existing persist/sequence/publication
+   effects as stages), and reduce each method body to snapshot → run inside
+   its existing transaction boundary. `decideMessageAdmission` keeps its
+   current plain body and public signature; export each pipeline's runner
+   (`runSaveSdkMessage` et al.) for stage-level assertions if the suites want
+   them.
 
 5. **Run targeted tests.**
    - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
@@ -309,11 +326,14 @@ admission flag; the repo still decides when to allocate a consumed sequence.
    - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository-live-query.test.ts`
 
 6. **Optional microbenchmark.** Add or extend
-   `packages/daemon/scripts/benchmark/decision-pipeline.ts` to compare the
-   current hand-rolled function against the new raw superpipe pipeline on a
-   representative message set. The ADR benchmark expects ~2–3 µs per pipeline
-   run vs ~75–194 ns for an if-cascade. For this site the neighbor cost is a
-   SQLite INSERT, so the overhead should be well under 3%.
+   `packages/daemon/scripts/benchmark/decision-pipeline.ts` to measure BOTH
+   the save-pipeline overhead on a representative message set AND a
+   representative SQLite INSERT against the same database setup, so any
+   overhead ratio is grounded in a measured denominator (review correction
+   PR #2978: without the insert measurement the ~3% claim cannot be
+   established — if the insert cannot be measured faithfully in the script,
+   report ONLY the isolated per-run pipeline overhead and drop the percentage
+   claim).
 
 7. **Lint/type check.** Run `bun run check` (or `bun run typecheck`) from the
    repo root. The file lives under `packages/daemon`, so it is covered by the
@@ -390,8 +410,9 @@ admission flag; the repo still decides when to allocate a consumed sequence.
 
 ## Suggested migration order
 
-1. **This P1 pipeline (`sdk-message-admission.ts`)** — it is the smallest,
-   purest storage transform and sets the pattern for future P1 work.
+1. **The three save-path pipelines (`sdk-message-repository.ts`, admission
+   via the `sdk-message-admission.ts` leaf)** — the complete persist business
+   paths; they set the pattern for future storage P1 work.
 2. **Message-search admission (`message-search-admission.ts`)** — already uses
    `decisionRun`; consider whether it should stay a combinator or be inlined to
    a direct superpipe guard chain. Not in this plan.
@@ -414,9 +435,9 @@ core (pure module landed unwired) → 🔧 apply (wire call sites) → cleanup (
 trailing slice); tiny phases may combine. Decompose at authoring time and split
 a slice further before opening it rather than growing a PR past budget
 mid-review; every slice leaves the repo compiling with tests green when it
-lands, and no slice folds in unrelated fixes. This single-site plan decomposes
-into four slices: two pin dimension families, the combined additive-plus-apply
-pipeline slice, and a trailing benchmark.
+lands, and no slice folds in unrelated fixes. This plan decomposes
+into six slices: two pin dimension families, one complete save-path pipeline
+per save method (three), and a trailing benchmark.
 
 ### PR 1 — `test(storage): pin admission-flag matrix for decideMessageAdmission`
 
@@ -430,8 +451,10 @@ pipeline slice, and a trailing benchmark.
   non-renderable user content (tool result); terminal `result` messages; hidden
   subtypes (`task_started`, `thinking_tokens`, etc.); and the resulting
   `isRenderable` / `isTerminal` / `isConversationAnchor` / `countsTowardsBadge`
-  values. Close the `isVisibleBadgeRow` null `sendStatus` default helper gap
-  (step 2) within the same dimension family.
+  values. Pin the module-private `isVisibleBadgeRow` null `sendStatus`
+  default at WRAPPER level via `countsTowardsBadge` decision-table rows (the
+  helper has no isolated tests and stays unexported — review correction PR
+  #2978).
 - **Lands**: The flag derivations of the current hand-rolled
   `decideMessageAdmission` are pinned by a decision-table parity oracle before
   any refactor touches production code.
@@ -451,11 +474,12 @@ pipeline slice, and a trailing benchmark.
   dimensions of `decideMessageAdmission`: assistant messages with
   `parent_tool_use_id` (`parentToolUseId`), `sdkUuid` extraction, superseded and
   retracted replacement edges including the `model_refusal_fallback` subtype
-  gate, and `HyperNeoActionMessage` normalization. Close the
-  `extractReplacementEdges` retraction-gate helper gap (step 2) and keep the
-  isolated helper tests for `computeIsRenderable`, `computeIsTerminal`,
-  `extractParentToolUseId`, `extractSdkUuid`, `extractReplacementEdges`, and
-  `isVisibleBadgeRow` green.
+  gate, and `HyperNeoActionMessage` normalization. Review correction (PR
+  #2978): the exported helpers already have direct helper-level coverage in
+  `sdk-message-repository-helpers.test.ts` (including the retraction gates) —
+  that suite stays green and untouched; this slice adds only WRAPPER-level
+  extraction rows through the admission decision table, and claims no helper
+  gap to close.
 - **Lands**: The extraction and normalization half of the admission record is
   pinned alongside PR 1's flag family, completing the parity oracle with
   production code still untouched.
@@ -466,68 +490,80 @@ pipeline slice, and a trailing benchmark.
 - **Depends on**: none (PR 1 touches the same file; land sequentially to avoid
   same-file churn, not for correctness).
 
-### PR 3 — `refactor(storage): convert decideMessageAdmission to a raw superpipe pipeline`
+### PR 3 — `refactor(storage): compose the complete save-sdk-message pipeline`
 
-➕ additive core + 🔧 apply — prod Δ ≲100, test Δ ≲100
+🔧 apply — prod Δ ≲100, test Δ ≲150
 
-- **Scope**: `packages/daemon/src/storage/repositories/sdk-message-admission.ts`
-  only (steps 3–4, verified by steps 5 and 7). Add the internal
-  `MessageAdmissionCtx` and the `MessageAdmissionInput` union without changing
-  exported public types; implement the six named stages
-  `extractMessageIdentity`, `computeRenderability`, `computeTerminal`,
-  `computeConversationAnchor`, `computeBadgeVisibility`, and `buildRecord`, each
-  reusing the existing pure helpers; register them on
-  `superpipe({})('sdk-message-admission')` with `.input(['ctx'])`,
-  `.pipe(fn, 'ctx', 'ctx')` threading, and `.end('record')`; and reduce
-  `decideMessageAdmission` to the two-argument wrapper
-  `messageAdmissionPipeline({ ...input, ...options })`, exporting
-  `runMessageAdmission` for stage-level tests per the open-questions
-  recommendation. The additive core and apply phases combine here because the
-  wrapper delegation is the only wiring — no external call site changes — and
-  the production delta stays within the types-dominated budget. Verify the
-  empty dependency object at implementation time (fallback:
-  `superpipe<Record<string, never>>({})` or a no-op dependency).
-- **Lands**: `decideMessageAdmission` returns the identical
-  `MessageAdmissionRecord` through the daemon's first raw P1 superpipe
-  pipeline; every caller keeps its signature and call site
-  (`sdk-message-repository.ts:521`, `:974`, `:1678`, plus
-  `sdk-message-badge.ts:planAdmissionBadgeUpdate`), `SendStatus` stays exported
-  for `sdk-message-status-plan.ts` and `delivery-status-routing.ts`, and
-  `bun run check` passes.
-- **Excludes**: Folding `normalizeMessageAdmissionInput` into the pipeline (open
-  question 1 keeps them separate); any `transformRun`-style combinator; changing
-  the two-argument public signature; tightening the `as` casts; moving
-  `consumed_seq`, `nextConsumedSeq`, or notification logic into the pipeline;
-  the benchmark extension (PR 4); and all later items in "Suggested migration
-  order" (message-search admission, `sdk-message-status-plan.ts`,
-  delivery-status routing, read projections).
-- **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
-  (PR 1 + PR 2 parity oracle, plus the optional
-  `describe('messageAdmissionPipeline')` stage-level block as this slice's only
-  test delta),
-  `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-save-admission-drift.test.ts`,
-  `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`,
-  and
-  `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository-live-query.test.ts` —
-  the latter three are pre-existing gates, re-run unchanged.
+- **Scope**: `packages/daemon/src/storage/repositories/sdk-message-repository.ts`
+  (`saveSDKMessage`, call site `:521`) only (steps 3–4 for this method).
+  Compose the `save-sdk-message` pipeline — snapshot → admission stage calling
+  the unchanged plain `decideMessageAdmission` leaf → the method's existing
+  insert/sequence/notification effects as stages — executed as a sync `.end`
+  run inside the method's existing `db.transaction(...)` boundary; the method
+  body reduces to snapshot → run. Review correction (PR #2978): converting
+  only `decideMessageAdmission` while the save methods stay imperative shells
+  would wire a derivation helper pipeline under the forbidden decision/effect
+  split; the save operation is the business path, so the pipeline owns it.
+- **Lands**: `saveSDKMessage` runs as one complete named pipeline;
+  `decideMessageAdmission` keeps its plain body, two-argument signature, and
+  every caller (`:974`, `:1678`, `sdk-message-badge.ts`); `bun run check`
+  passes.
+- **Excludes**: The other two save paths (PRs 4–5); folding
+  `normalizeMessageAdmissionInput` in (open question 1); any
+  `transformRun`-style combinator; the benchmark extension (PR 6); later
+  "Suggested migration order" items.
+- **Tests**: `sdk-message-save-admission-drift.test.ts`,
+  `sdk-message-repository.test.ts`, and
+  `sdk-message-repository-live-query.test.ts` re-run unchanged (pre-existing
+  gates for this save path).
 - **Depends on**: PR 1, PR 2.
 
-### PR 4 — `test(storage): benchmark messageAdmissionPipeline overhead`
+### PR 4 — `refactor(storage): compose the complete save-user-message-core pipeline`
+
+🔧 apply — prod Δ ≲100, test Δ ≲150
+
+- **Scope**: `sdk-message-repository.ts` (`saveUserMessageCore`, call site
+  `:974`) only. Same composition as PR 3 for the user-message save path; the
+  sync `.end` run executes inside the transaction that
+  `packages/daemon/src/lib/agent/message-delivery-outbox.ts:60-81` composes —
+  that caller is untouched (it hands the transaction in exactly as today).
+- **Lands**: The user-message save path runs as one complete pipeline; the
+  outbox composer's contract is unchanged.
+- **Excludes**: `message-delivery-outbox.ts` changes (none needed);
+  PRs 3 and 5.
+- **Tests**: The same three repository suites re-run unchanged.
+- **Depends on**: PR 3 (same file; sequenced for same-file churn, not
+  correctness).
+
+### PR 5 — `refactor(storage): compose the complete save-hyperneo-action-message pipeline`
+
+🔧 apply — prod Δ ≲100, test Δ ≲150
+
+- **Scope**: `sdk-message-repository.ts` (`saveHyperNeoActionMessage`, call
+  site `:1678`) only. Same composition as PR 3 inside the method's local
+  transaction.
+- **Lands**: All three storage save business paths run as complete named
+  pipelines; `decideMessageAdmission` remains the plain shared leaf.
+- **Excludes**: PRs 3–4; the benchmark (PR 6).
+- **Tests**: The same three repository suites re-run unchanged.
+- **Depends on**: PR 4 (same file; sequenced).
+
+### PR 6 — `test(storage): benchmark save-pipeline overhead against a measured insert`
 
 **cleanup** (trailing measurement slice) — prod Δ = 0, benchmark-script Δ ≲150
 
 - **Scope**: `packages/daemon/scripts/benchmark/decision-pipeline.ts` only
-  (step 6, optional per the plan). Extend the benchmark to run the six-stage
-  `ctx -> ctx` pipeline over a representative message set against the
-  hand-rolled baseline, re-measuring this pipeline instead of reusing the ADR's
-  `decisionRun` numbers.
-- **Lands**: Measured per-run overhead for `messageAdmissionPipeline`,
-  confirming the expected ~2–3 µs range stays well under 3% of the neighboring
-  SQLite INSERT before the P1 pattern is copied to other sites.
+  (step 6, optional per the plan). Extend the benchmark to measure the
+  save-pipeline per-run overhead AND a representative SQLite INSERT against
+  the same database setup, so the ratio's denominator is measured, not assumed
+  (review correction PR #2978).
+- **Lands**: Grounded numbers — isolated save-pipeline overhead plus the
+  insert it neighbors — or, if a faithful insert measurement is not feasible
+  in the script, ONLY the isolated overhead with no percentage claim.
 - **Excludes**: Any production-code change and any CI wiring for the benchmark.
 - **Tests**: `packages/daemon/scripts/benchmark/decision-pipeline.ts` itself,
   run manually; no unit-test files change in this slice.
-- **Depends on**: PR 3.
+- **Depends on**: PR 3 (any one save pipeline suffices to measure).
 
 ## Open questions
 
@@ -548,15 +584,13 @@ pipeline slice, and a trailing benchmark.
    `computeUserRenderability` and `computeAssistantRenderability` could improve
    unit-test clarity but is optional.
 
-4. **Should the pipeline be exported for direct testing?** Options:
-   - Keep the pipeline private and test only the public wrapper.
-   - Export `runMessageAdmission` (the pipeline executor) for direct
+4. **Should the save pipelines be exported for direct testing?** Options:
+   - Keep each pipeline private and test only through its save method.
+   - Export the pipeline runners (`runSaveSdkMessage` et al.) for direct
      stage-level tests.
-   - Export the individual stage functions for unit testing.
-   Recommendation: export `runMessageAdmission` and the stage functions from
-   the module, but keep them as non-public (`_` prefix or `internal` comments
-   not allowed; rely on naming and test-only use). This gives test coverage
-   without changing the public API.
+   Recommendation: export the runners only if the suites need stage-level
+   assertions; the drift and repository suites already pin behavior through
+   the public methods, so start private.
 
 5. **Is `superpipe({})` valid with an empty dependency object?** The superpipe
    docs and existing combinators always pass non-empty dependency objects.
