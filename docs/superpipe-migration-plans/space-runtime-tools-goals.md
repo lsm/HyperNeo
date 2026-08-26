@@ -16,7 +16,7 @@ This plan covers the hand-rolled decision/effect cascades in the Space runtime, 
 | `packages/daemon/src/lib/space/tools/space-agent-tools.ts:approve_pending_completion` | Validate caller, snapshot task, branch (approve/reject), effect status change + post-approval dispatch | `stagedRun` (shared with `spaceTask.approvePendingCompletion`) | Tool and RPC share the same state machine. The approve branch is an effect followed by resnapshot and a blocked-reason effect on dispatch failure. |
 | `packages/daemon/src/lib/space/tools/space-agent-tools.ts:review_goal_outcome` | Discovery or claim path; claim uses `claimOutcomeNotification` | Discovery is a snapshot stage; claim calls `goalService.claimOutcomeNotification` as ONE effect (its inner sync pipeline stays atomic inside `runAtomic`) → halt with its result. |
 | `packages/daemon/src/lib/space/tools/space-agent-tools.ts:get_task_detail` | Identifier/lookup/space check/return | `decisionRun` | Pure target-resolution and return; no effects. |
-| `packages/daemon/src/lib/space/tools/space-agent-tools.ts:list_task_members` | Identifier/lookup/space check/workflow run check/list executions | `decisionRun` (admission), shell reads executions | Pure admission, then a read-only list. Can share the target gate with `get_task_detail`. |
+| `packages/daemon/src/lib/space/tools/space-agent-tools.ts:list_task_members` | Identifier/lookup/space check/workflow run check/list executions | ONE complete `list-task-members` pipeline — shared target-resolution logic, the workflow-run branch, and the execution read as its stages (review correction round 23) | The lookup is part of the tool operation, not a shell follow-on. Shares the target-resolution core with `get_task_detail`. |
 | `packages/daemon/src/lib/space/tools/node-agent-tools.ts:get_task` | Same pattern as `get_task_detail` | `decisionRun` (shared `task-target-resolution` core) | Node-agent and Space-agent lookups should converge on one `decisionRun`. |
 | `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:validateWorkflowModelOverrides` | Validation rules as ordinary helpers / direct early stages of the single `spaceTask.update` RPC pipeline (review correction round 22) | No effects; returns normalized map or reject. |
 | `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:spaceTask.update` | Large if-cascade around status transitions, dependency block, override validation | ONE direct RPC pipeline — override validation, `routeTaskUpdate` (shared plain helper or inline gates), and the effect flow composed together (review correction round 22: no `routeTaskUpdate` `decisionRun`, no imported tool decision runner before a staged shell) | Single composition for the whole update operation; parity with the tool path. |
@@ -32,7 +32,7 @@ This plan covers the hand-rolled decision/effect cascades in the Space runtime, 
 | `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:decideGenericAddressRouting` | Pure multi-branch routing by `ParsedAddress` kind | Ordinary pure helper or direct gates of the message-routing operation (review correction: no standalone runner — it runs once per target after `send` already entered message routing) | Precedence stays testable via direct helper unit tests. |
 | `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts:resolveNodeAgentTargets` | Pure multi-branch target resolution | Resolution/authorization stages live directly in `agent-message-routing-pipeline.ts` (or stay an ordinary pure helper consumed there) — no standalone runner | Keeps one pipeline per message-routing operation. |
 | `packages/daemon/src/lib/space/runtime/activation-routing.ts:decideActivationRouting` | Pure multi-branch decision | Classification stages/plain helpers of the ONE complete `activateTargetSessionsForMessage` mixed pipeline (reset/activation/resnapshot/spawn effects included) | A standalone runner would execute three nested pipelines per activation while leaving the imperative cascade. |
-| `packages/daemon/src/lib/space/runtime/last-message-classifier.ts:classifyLastMessageForIdleAgent` | Pure multi-branch classification of last SDK message | `decisionRun` | First classification wins; map to gates. |
+| `packages/daemon/src/lib/space/runtime/last-message-classifier.ts:classifyLastMessageForIdleAgent` | Pure multi-branch classification of last SDK message | Ordinary pure helper or gates composed into each complete idle-detection/recovery caller operation (review correction round 23) | The three SpaceRuntime callers act on the classification; a standalone nested pipeline migrates no complete path. |
 | `packages/daemon/src/lib/space/runtime/task-agent-manager.ts:onArchiveTask` | Active-run guard, archive, emit | ONE complete mixed pipeline (routing + `archiveTask` effect + event emission), sharing `routeArchiveTask` as plain logic (review correction round 22) | Not a shared admission runner; the callback operation composes whole. |
 | `packages/daemon/src/lib/space/runtime/task-agent-manager.ts:onPublishTask` | Publish, emit | ONE complete mixed pipeline (routing + `publishTask` effect + event emission), sharing `routePublishTask` as plain logic (review correction round 22) | Same as above. |
 
@@ -273,9 +273,14 @@ The repo already has several proven pipelines. Use these as the model for each s
      correction — resnapshot-after-spawn cannot prevent concurrent dispatch:
      two callers can both pass admission, spawn separate sessions, and only
      then discover one task update lost). Its `compensate` releases the
-     reservation ONLY while no session has been spawned — the compensate is
-     guarded on the state's `spawnedSessionId` being unset, so a later-stage
-     failure can never unwind the claim after spawning.
+     reservation ONLY while no session has been spawned — and because
+     `stagedRun` invokes the compensation with the view captured when
+     `reserve-dispatch` completed (BEFORE the spawn, so its captured
+     `spawnedSessionId` is permanently unset), the guard must consult the
+     EXTERNAL spawn box and the verified-termination result, never its
+     captured stage view (review correction round 23: a view-captured guard
+     releases the claim even while the spawned session is live or its
+     termination is unverified, letting a retry spawn a second session).
   8. `effect` `spawn-post-approval-sub-session` catches and classifies the
      EXPECTED failures in-stage (review correction round 8:
      `isSpawnSupersededError` and `isTransientSpawnError` are caught by the
@@ -395,27 +400,35 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring**:
   - Tool shell: validates `callerRole === 'coordinator' | 'legacy_task_agent'`, sets `callerMayApprove`, runs the pipeline, maps to `jsonResult`.
   - RPC shell: sets `callerMayApprove = true`, runs the pipeline, returns the final task.
-  - Effects: `taskManager.setTaskStatus` (`approved` or `in_progress`), `runtime.dispatchPostApproval`, `taskManager.updateTask` (blocked reason or approval reason), `taskRepo.getTask` (resnapshot), and the final `space.task.updated` publication stage (review correction round 22 — see step 10).
+  - Effects: `taskManager.setTaskStatus` (`approved` or `in_progress`), `runtime.dispatchPostApproval`, `taskManager.updateTask` (blocked reason or approval reason), `taskRepo.getTask` (resnapshot), and the final `space.task.updated` publication stage (review correction rounds 22/23 — see step 9, ordered before the halt).
 - **Step-by-step migration**:
   1. Extract the function into `packages/daemon/src/lib/space/runtime/approve-pending-completion-pipeline.ts`.
   2. `snapshot` loads task.
   3. `decide` admission.
   4. Guarded `effect` `set-approved` (when `approve`) calls `taskManager.setTaskStatus(task.id, 'approved')` — review correction: do NOT call this before `dispatchPostApproval` and then rely on dispatch to observe it; `dispatchPostApproval` skips its own status transition when it sees `approved`, and that transition is where `approvalSource`/`approvalReason` are stamped. Either keep `runtime.dispatchPostApproval` as the approval primitive (preferred — the pipeline records intent and dispatch performs the stamping) or include `approvalSource`/`approvalReason` in this initial write; the shared pipeline state must carry the source either way.
-  5. `effect` `dispatch-post-approval` calls `runtime.dispatchPostApproval` with an IN-STAGE catch (review correction: a dispatch throw AFTER the task is committed `approved` is an EXPECTED post-commit failure in the current tool/RPC paths — they catch it, verify the approved status, and persist `postApprovalBlockedReason`; an uncaught effect throw would terminate and unwind the `stagedRun`, so the resnapshot and blocked-reason stages could never run). The stage stores the error in a `dispatchError` side box instead of rethrowing, and the guarded steps 6–7 branch on it.
-  6. `resnapshot` task.
+  5. `effect` `dispatch-post-approval` calls `runtime.dispatchPostApproval` with an IN-STAGE catch (review correction: a dispatch throw AFTER the task is committed `approved` is an EXPECTED post-commit failure in the current tool/RPC paths — they catch it, verify the approved status, and persist `postApprovalBlockedReason`; an uncaught effect throw would terminate and unwind the `stagedRun`, so the resnapshot and blocked-reason stages could never run). The stage stores the error in a `dispatchError` external box instead of rethrowing (a `stagedRun` effect cannot merge the assignment into its copied view).
+  6. `resnapshot` refreshes the task AND materializes the caught dispatch
+     error out of the external box into ctx (a post-dispatch `decide` stage
+     then selects the blocked-reason path) — the guarded step 7 branches on
+     the RESNAPSHOTTED error/flag, never on the box (review correction
+     round 23: a resnapshot that only refreshes the task leaves the guarded
+     stage with nothing to branch on, so the blocked reason is silently
+     skipped).
   7. `effect` `record-blocked-reason` (when dispatch threw) updates `postApprovalBlockedReason`.
   8. Guarded `effect` `set-rejected` (when `reject`) calls `taskManager.setTaskStatus` then `updateTask` with reason.
-  9. `halt` returns final `SpaceTask`.
-  10. Guarded `effect` `publish-task-updated` emits `space.task.updated`
-      with the final refreshed task after approving OR rejecting (review
-      correction round 22: the publication is a stage of the SHARED
-      pipeline, not a shell effect — keeping the tool's `emitTaskUpdated`
-      and the RPC's event publication in the shells duplicates the same
-      business event per caller and lets a future caller of the shared
-      pipeline skip it, leaving `SpaceStore` stale: rejected tasks stay
-      displayed in `review` and dispatch-failure metadata goes missing).
-      The shells keep only caller-specific result mapping (`jsonResult` for
-      the tool, the final task for the RPC).
+  9. Guarded `effect` `publish-task-updated` emits `space.task.updated`
+      with the final refreshed task after approving OR rejecting, BEFORE the
+      halt (review correction rounds 22/23: the publication is a stage of
+      the SHARED pipeline ordered before the terminal `halt` — a stage after
+      the halt never executes, so `SpaceStore` would stay stale; and it is
+      not a shell effect, because keeping the tool's `emitTaskUpdated` and
+      the RPC's event publication in the shells duplicates the same business
+      event per caller and lets a future caller of the shared pipeline skip
+      it — rejected tasks would stay displayed in `review` and
+      dispatch-failure metadata would go missing). The shells keep only
+      caller-specific result mapping (`jsonResult` for the tool, the final
+      task for the RPC).
+  10. `halt` returns final `SpaceTask`.
 - **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts` and `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`. Add a shared test module for the pipeline that runs the same inputs through both shells, including a row asserting `approvalSource`/`approvalReason` survive both shells.
 - **Risks/caveats**: Unification is the main goal: do not leave the tool and RPC with slightly different error messages or preconditions. The dispatch-failure path must still leave the task `approved`; the pipeline must not roll that back. Audit metadata (`approvalSource`, `approvalReason`) must not be silently dropped by the approval-order change above.
 
@@ -456,7 +469,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/tools/space-agent-tools.ts:get_task_detail` and `packages/daemon/src/lib/space/tools/space-agent-tools.ts:list_task_members`
 
 - **Current summary**: `get_task_detail` looks up a task by `task_id` or `task_number`, checks space, and returns it. `list_task_members` does the same plus requires a workflow run and lists its `NodeExecution`s.
-- **Proposed combinator**: `decisionRun` shared core (`task-target-resolution`) plus shell reads.
+- **Proposed combinator**: `decisionRun` shared core (`task-target-resolution`); `get_task_detail` maps its decision to `jsonResult`, while `list_task_members` composes those gates INTO its complete pipeline (review correction round 23 — no admission-only fragment with a shell-side execution read).
 - **Input snapshot design**:
   ```ts
   interface TaskTargetResolutionCtx {
@@ -468,7 +481,8 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Pure core design**: `decideTaskTargetResolution` with branches: `missingIdentifier`, `notFound`, `spaceMismatch`, `resolved`. Review correction: the node-agent `get_task` shell must MAP `spaceMismatch` to `notFound` (or normalize an out-of-space task to `null` before the decision) — the current handler deliberately masks a valid foreign-space task as the same `Task not found` response as an unknown UUID, and exposing `spaceMismatch` would reveal that the foreign task exists, changing the tool contract.
 - **Shell/effect wiring**:
   - `get_task_detail` shell: runs the `decisionRun`, returns `jsonResult`.
-  - `list_task_members` shell: runs the `decisionRun`, then if
+  - `list_task_members`: ONE complete pipeline — shared target-resolution
+    stages, then if
     `task.workflowRunId` is null returns `success: true, executions: []`
     PLUS the existing `task_id` and the message `This task has no associated
     workflow run.` (review correction: returning only the bare shape changes
@@ -478,7 +492,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/tools/task-target-resolution-pipeline.ts` exporting `decideTaskTargetResolution`.
   2. Replace the inline if-cascades in both tools with the `decisionRun`.
-  3. `list_task_members` adds a post-decision read for the executions.
+  3. `list_task_members` composes the workflow-run branch and the `nodeExecutionRepo.listByWorkflowRun` read as stages of its complete pipeline (review correction round 23 — not a post-decision shell read).
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`. Add tests for missing identifier, not found, and space mismatch.
 - **Risks/caveats**: `get_task_detail` is currently `await taskManager.getTaskByNumber` (async), while `taskRepo.getTaskByNumber` is sync. The `decisionRun` should accept a `getTaskByNumber` function returning a `Promise` or `SpaceTask`? `decisionRun` is sync; gather the task in the shell before calling the pipeline, or use a `stagedRun` if the lookup must be in the pipeline. Because lookups are fast and the rest is pure, gather in the shell and pass `task`/`taskInSpace` to the `decisionRun`.
 
@@ -561,7 +575,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   2. Have both callers consume those routing predicates as direct stages/helpers of their own complete update operations.
   3. Rewrite `spaceTask.update` handler as ONE direct RPC pipeline (review correction: workflow-override validation, task-update routing, and effects must not run as separate pipelines — retain the shared predicates as pure helpers or inline their gates into this single pipeline, then execute the effect flow within it; no two `decisionRun`s before a `stagedRun`), branching on `plan.action` inside.
   4. Unify dependency-block logic with the tool's `park_stopped` and `recover_transition` paths.
-  5. Move `emitTaskUpdated` and `emitCascadedTasks` into the `stagedRun` `halt` or as a post-pipeline shell step.
+  5. `emitTaskUpdated` and `emitCascadedTasks` run as guarded effect stages INSIDE the pipeline before its final halt (review correction round 23 — not a post-pipeline shell step, which splits the operation at its publication boundary and lets future exits or callers omit subscriber updates).
 - **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts` and `packages/daemon/tests/unit/5-space/tools/space-tool-pipeline.test.ts`. Add parity tests that feed the same `TaskUpdateRoutingInput` to both the tool and the RPC.
 - **Risks/caveats**: This is the biggest unification site. The RPC has extra preconditions (e.g., rejecting direct `review`/`approved` transitions) that the tool also enforces through `routeTaskUpdate`, but the wording is slightly different. Align the messages. The dependency-added path is unique to the RPC and must be preserved.
 
@@ -579,7 +593,7 @@ The repo already has several proven pipelines. Use these as the model for each s
   }
   ```
 - **Pure core design**: `decideTaskPublish` using the existing `routePublishTask` in `task-transition-routing.ts`. Branches: `reject` (not found / not in space / not draft), `publish`.
-- **Shell/effect wiring**: `effect` `publish` calls `taskManager.publishTask`; `halt` returns the task. The RPC and tool shells map to their response shapes and emit events.
+- **Shell/effect wiring**: `effect` `publish` calls `taskManager.publishTask`, and the `space.task.updated` emission is an effect stage INSIDE each complete publish pipeline before its halt (review correction round 23 — not a shell effect; callers of the shared flow must not be able to skip it); `halt` returns the task. The RPC and tool shells keep only response-shape mapping.
 - **Step-by-step migration**:
   1. Compose each caller's complete publish operation as ONE mixed pipeline: admission stages (`routePublishTask` as shared plain logic) → `publishTask` effect stage → event-emission stage.
   2. Do NOT replace all three paths with calls to an admission-only `decisionRun` while `publishTask`/emission stay in shells — that splits the operation at its central effect boundary.
@@ -898,7 +912,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/runtime/last-message-classifier.ts:classifyLastMessageForIdleAgent`
 
 - **Current summary**: Classifies the last SDK message for an idle agent as terminal or not, with a reason. Handles `result`, `assistant`, errors, content blocks, and `end_turn`.
-- **Proposed combinator**: `decisionRun`.
+- **Proposed combinator**: Ordinary pure helper (or gates composed directly into each caller's complete idle-detection/recovery pipeline — review correction round 23: no standalone `last-message-classifier` runner; the three callers perform the terminal action, so a nested classification pipeline adds a runner without migrating any complete path).
 - **Input snapshot design**:
   ```ts
   interface LastMessageClassificationCtx {
@@ -907,20 +921,23 @@ The repo already has several proven pipelines. Use these as the model for each s
   }
   ```
 - **Pure core design**: `decideLastMessageForIdleAgent` with gates: `missingMessage`, `hollowResultMessage` (review correction: `isHollowTaskNotificationResult` is checked BEFORE the terminal result classification — zero-token, empty task-notification wakeups return NONTERMINAL so the follow-up turn can arrive; a generic result arm would mark an idle agent finished prematurely; keep the existing error/text/usage exceptions), `resultMessage`, `nonAssistantMessage`, `assistantError`, `contentBlockClassification`, `endTurn`, `defaultNotTerminal`. The content-block gate can be a single helper that scans the blocks and returns the appropriate `LastMessageClassification`.
-- **Shell/effect wiring**: The caller (`SpaceRuntime` idle detection) consumes `LastMessageClassification` and acts on `terminal`.
+- **Shell/effect wiring**: The callers (`SpaceRuntime` idle detection and recovery paths) consume `LastMessageClassification` and act on `terminal` — compose these gates directly into those complete caller operations when those operations migrate; until then the helper stays a plain function.
 - **Step-by-step migration**:
-  1. Create `packages/daemon/src/lib/space/runtime/last-message-classifier-pipeline.ts`.
-  2. Define `decisionRun('last-message-classifier', [...])`.
-  3. Replace the inline function with the `decisionRun` call.
+  1. Keep `classifyLastMessageForIdleAgent` as a plain synchronous helper
+     with its branch order unit-tested directly (no new pipeline module —
+     review correction round 23).
+  2. When a caller's complete idle-detection/recovery operation migrates to
+     a pipeline, compose these gates as stages of THAT pipeline.
+  3. Replace the inline function with the helper call where extracted.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/hidden-subtype-idle-detection.test.ts` and `packages/daemon/tests/unit/5-space/runtime/last-message-classifier.test.ts` if it exists.
-- **Risks/caveats**: The classifier is called when the runtime checks for idle agents. Keep it synchronous (`decisionRun`) to avoid microtask interleaving with the tick. The content-block scan is a small loop; it can live inside one gate.
+- **Risks/caveats**: The classifier is called when the runtime checks for idle agents. Keep it a synchronous plain helper to avoid microtask interleaving with the tick. The content-block scan is a small loop; it stays inside the helper.
 
 ---
 
 ## Suggested migration order
 
 1. **Phase 0 — Pure decisionRun extractions (no effects)**
-   - `last-message-classifier.ts`
+   - `last-message-classifier.ts` (plain-helper extraction of `classifyLastMessageForIdleAgent` — review correction round 23: no standalone runner)
    - `agent-message-routing-gates.ts` (`decideGenericAddressRouting` and `resolveNodeAgentTargets` as plain helpers/stages — no standalone runners)
    - `validateWorkflowModelOverrides` (plain validation helpers destined for the `spaceTask.update` pipeline)
    - `task-target-resolution-pipeline.ts` (for `get_task` / `get_task_detail` / `list_task_members`)
@@ -944,6 +961,629 @@ The repo already has several proven pipelines. Use these as the model for each s
    - `handleTaskTerminal`
    - `send_message_to_task`
    - `foldDeferredExternalEventsAtFlush` and `foldDeferredExternalEventOverflow`
+
+---
+
+## Focused PR breakdown
+
+Every slice below obeys the standing two-tier review budget: production Δ ≲100 lines per slice (hard cap ~150 only for types-dominated additive cores), and test Δ ≲350 counted separately from production code. Pins are split by dimension family (decision tables vs effect/publication behavior), never by truncating a table mid-family. If a slice outgrows its budget while being authored or reviewed, split it further BEFORE opening it — never grow a PR past budget mid-review — and never fold unrelated fixes or drive-by import/formatting churn into a file a slice touches.
+
+Each slice carries a phase label: 📌 **pins** (production Δ = 0; characterization/decision-table rows of current behavior, i.e. the contract later slices intentionally change), ➕ **additive core** (pure module/pipeline landed unwired from production), 🔧 **apply** (wire call sites; one arm/route/site per slice), and trailing **cleanup**. Tiny slices may combine 📌+🔧. Ordering follows the rules above: pins before extraction, primitives (shared helpers/cores) before consumers. Pin and additive-core slices are parallel-safe leaves across disjoint file families; apply slices chain on their cores. An additive core may land unwired only as a TEMPORARY landing state — its apply slice wires the COMPLETE business operation, never an admission-only or classifier-only pipeline whose effects stay imperative (the review corrections forbid that end state).
+
+The slices follow the `Suggested migration order` phases and together cover every site in `Per-site detailed plans` exactly once: pins characterize the site, one additive core builds its pipeline, one apply slice (per call site) wires it — except the sites the review corrections keep as plain helpers (generic address routing, the last-message classifier), which pin and extract without ever shipping a standalone runner.
+
+**Phase 0 — pure extractions and their pins**
+
+### P1 — `test(space): pin last-message classification decision table`
+
+- 📌 pins — prod Δ = 0, test Δ ≲200
+- **Scope**: Characterization rows for `classifyLastMessageForIdleAgent` in `packages/daemon/src/lib/space/runtime/last-message-classifier.ts`: `missingMessage`, hollow task-notification results (nonterminal), terminal `result` with the error/text/usage exceptions, `assistant` errors, content-block scan, `end_turn`, default nonterminal. Parallel-safe leaf.
+- **Lands**: the classification table the P2 core must reproduce is pinned before any extraction.
+- **Excludes**: any production change.
+- **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/hidden-subtype-idle-detection.test.ts`; `packages/daemon/tests/unit/5-space/runtime/last-message-classifier.test.ts` if it exists.
+- **Depends on**: none.
+
+### P2 — `refactor(space): extract and pin the plain last-message classification helper`
+
+- 🔧 apply — prod Δ ≲40, test Δ ≲100
+- **Scope**: `classifyLastMessageForIdleAgent` stays an ORDINARY synchronous plain helper in `packages/daemon/src/lib/space/runtime/last-message-classifier.ts` with its branch order (`missingMessage`, `hollowResultMessage`, `resultMessage`, `nonAssistantMessage`, `assistantError`, `contentBlockClassification`, `endTurn`, `defaultNotTerminal`) extracted/named and unit-tested directly — review correction round 23: NO standalone `last-message-classifier` pipeline module (the three SpaceRuntime callers perform the terminal action; a nested classification runner migrates no complete path). The content-block scan stays inside the helper. Parallel-safe leaf.
+- **Lands**: the classification table is a directly unit-tested plain helper; no pipeline module exists.
+- **Excludes**: composing the gates into caller operations (P3).
+- **Tests**: the P1 rows against the extracted helper.
+- **Depends on**: P1.
+
+### P3 — `refactor(space): compose the classification gates into caller idle-detection pipelines when they migrate`
+
+- 🔧 apply (deferred) — prod Δ ≲50, test Δ ≲100
+- **Scope**: When a `SpaceRuntime` caller's complete idle-detection/recovery operation migrates to a pipeline, compose the P2 classification gates as DIRECT stages of THAT pipeline (review correction round 23 — the gates live inside each complete caller operation, never a standalone runner); until such a caller migration lands, the helper stays a plain function.
+- **Lands**: no standalone classifier pipeline ever ships; the gates join a complete operation only when that operation itself migrates.
+- **Excludes**: creating a `last-message-classifier-pipeline.ts` module (forbidden by round 23).
+- **Tests**: the P1 suites stay green through the caller migration.
+- **Depends on**: P2.
+
+### P4 — `test(space): pin generic address routing helper branches`
+
+- 📌 pins — prod Δ = 0, test Δ ≲200
+- **Scope**: Direct unit rows for `decideGenericAddressRouting` in `packages/daemon/src/lib/space/runtime/agent-message-routing-gates.ts`: branch order, the `decodeURIComponent` catch as `failInvalidWorker`, and the `notFound` fall-through carrying `target`. Per the review corrections this helper STAYS a plain function — these pins are the complete migration for this site. Parallel-safe leaf.
+- **Lands**: the per-target routing contract is pinned with zero pipeline overhead added.
+- **Excludes**: any runner wrapper (forbidden by the corrections).
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/agent-message-routing-pipeline.test.ts`, `packages/daemon/tests/unit/5-space/agent/agent-message-router.test.ts`.
+- **Depends on**: none.
+
+### P5 — `test(space): pin node-agent target resolution outcomes`
+
+- 📌 pins — prod Δ = 0, test Δ ≸250
+- **Scope**: Characterization rows for `resolveNodeAgentTargets`: `target === []` and empty node groups resolve to `{ status: 'resolved', targetAgentNames: [] }`; `'*'` with empty `permittedTargets` returns the distinct `noPermittedTargets` outcome; `canSend` authorization applies AFTER resolution (an unauthorized resolved target must not bypass the check). Parallel-safe leaf.
+- **Lands**: the resolution contract the P6 stages must reproduce is pinned.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/agent-message-routing-gates.test.ts`.
+- **Depends on**: none.
+
+### P6 — `feat(space): add linear node-agent target-resolution stages to the routing pipeline (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types/stage-signature dominated), test Δ ≲300
+- **Scope**: Resolution stages (`starPermitted`, `arrayTarget`, `spaceAgentTarget`, `peerTarget`, `nodeGroupTarget`, `declaredTarget`, `topologyTarget`) composed DIRECTLY in `packages/daemon/src/lib/space/runtime/agent-message-routing-pipeline.ts` — linear, self-guarding via a `resolutionMatched` boolean (NOT `targetAgentNames.length`), no `!dep` halts between resolution stages; only terminal stages set `decision` (`noPermittedTargets`, `unknownTarget`, `unauthorized`, `resolved`). Export as `decideNodeAgentTargets`; keep a deprecated `resolveNodeAgentTargets` re-export for the transition. `targetAgentNames` stays an explicit side field. Parallel-safe leaf.
+- **Lands**: one directly composed resolution+authorization stage group exists inside the single routing pipeline module; no production caller yet.
+- **Excludes**: a separate `node-agent-target-resolution-pipeline.ts` (forbidden) and router wiring (P7).
+- **Tests**: the P5 rows re-run against the stages, plus empty-array/empty-node-group parity rows.
+- **Depends on**: P5.
+
+### P7 — `refactor(space): wire the message router to in-pipeline node-agent target resolution`
+
+- 🔧 apply — prod Δ ≲60, test Δ ≲100
+- **Scope**: `agent-message-router.ts` (and test callers) consume the P6 stages inside the one message-routing pipeline; the hand-rolled resolver body is deleted; the deprecated re-export remains until P67.
+- **Lands**: `send`'s generic delivery path resolves targets inside its single pipeline; one nested runner per target is never introduced.
+- **Excludes**: `decideGenericAddressRouting` (already final per P4).
+- **Tests**: `agent-message-routing-gates.test.ts`, `agent-message-routing-pipeline.test.ts`, `agent-message-router.test.ts`.
+- **Depends on**: P6.
+
+### P8 — `test(tools): pin task-lookup tool response contracts`
+
+- 📌 pins — prod Δ = 0, test Δ ≲200
+- **Scope**: Pin the response shapes of `get_task_detail`, `list_task_members` (including the no-workflow-run arm returning `success: true`, `executions: []`, the `task_id`, and the `This task has no associated workflow run.` message), and node-agent `get_task` — including its masking of a valid foreign-space task to the same `Task not found` response as an unknown UUID. Parallel-safe leaf.
+- **Lands**: the tool contracts the shared core must preserve (and the `spaceMismatch` mapping rule) are pinned.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`, `packages/daemon/tests/unit/5-space/agent/node-agent-tools.test.ts`.
+- **Depends on**: none.
+
+### P9 — `feat(tools): add task-target-resolution decisionRun core (unwired)`
+
+- ➕ additive core — prod Δ ≲80, test Δ ≲150
+- **Scope**: New `packages/daemon/src/lib/space/tools/task-target-resolution-pipeline.ts` exporting `decideTaskTargetResolution` with branches `missingIdentifier`, `notFound`, `spaceMismatch`, `resolved`; the shell gathers the task (async lookup stays outside) and passes `task`/`taskInSpace` in. Parallel-safe leaf.
+- **Lands**: the shared lookup admission core exists; no tool uses it yet.
+- **Excludes**: tool rewiring (P10, P11).
+- **Tests**: branch rows for the three rejection arms in the P8 suites' style.
+- **Depends on**: P8.
+
+### P10 — `refactor(tools): run get_task_detail on task-target-resolution and list_task_members as a complete pipeline`
+
+- 🔧 apply — prod Δ ≲100, test Δ ≲150
+- **Scope**: In `packages/daemon/src/lib/space/tools/space-agent-tools.ts`: `get_task_detail` runs the P9 `decisionRun` and maps its decision to `jsonResult`; `list_task_members` composes the shared target-resolution gates INTO its ONE complete `list-task-members` pipeline, with the workflow-run branch (null run → `success: true, executions: []` plus the existing `task_id` and the `This task has no associated workflow run.` message) and the `nodeExecutionRepo.listByWorkflowRun` read as STAGES — no admission-only fragment with a shell-side execution read (review correction round 23).
+- **Lands**: both lookup tools share one admission core, and `list_task_members` is a single complete pipeline; P8 pins stay green.
+- **Excludes**: `send_message_to_task` (P59–P61) and the node-agent tool (P11).
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts` (missing identifier / not found / space mismatch rows).
+- **Depends on**: P9.
+
+### P11 — `refactor(tools): route node-agent get_task through task-target-resolution`
+
+- 🔧 apply — prod Δ ≲40, test Δ ≲80
+- **Scope**: `get_task` in `packages/daemon/src/lib/space/tools/node-agent-tools.ts` imports `decideTaskTargetResolution` and maps `spaceMismatch` to the pinned `Task not found` response; the inline `taskRepo` checks are deleted.
+- **Lands**: node-agent and Space-agent lookups converge on one `decisionRun` with identical error messages and `success` shapes.
+- **Excludes**: other node-agent tools.
+- **Tests**: `packages/daemon/tests/unit/5-space/agent/node-agent-tools.test.ts`.
+- **Depends on**: P9 (parallel-safe with P10).
+
+### P12 — `test(handlers): pin workflow-override validation gates`
+
+- 📌 pins — prod Δ = 0, test Δ ≲250
+- **Scope**: Decision-table rows for `validateWorkflowModelOverrides` in `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts`: `overridesUndefined`, `lockedAfterStart` (task already started), `nullOverrides`, `invalidMap`, `noWorkflow`, `workflowDisabled`, `invalidKey` (`nodeId:agentName`), `valid` normalization. Parallel-safe leaf.
+- **Lands**: the validation contract the P13 helpers and P23 pipeline stages must reproduce is pinned.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts`.
+- **Depends on**: none.
+
+### P13 — `feat(handlers): add plain workflow-override validation helpers (unwired)`
+
+- ➕ additive core — prod Δ ≲90, test Δ ≲200
+- **Scope**: The validation rules as ordinary SYNCHRONOUS pure helpers (no standalone `decisionRun` module, per review correction round 22); the workflow is passed in as a snapshot value — `workflowManager.getWorkflow` stays a shell read. The handler keeps its current path. Parallel-safe leaf; wired as early stages by P23/P24.
+- **Lands**: the gate table is directly unit-testable and ready to compose into the single `spaceTask.update` pipeline.
+- **Excludes**: changing `validateWorkflowModelOverrides`'s current callers.
+- **Tests**: the P12 table re-run against the helpers.
+- **Depends on**: P12.
+
+**Phase 1 — shared task-mutation cores and unifications**
+
+### P14 — `test(space): pin task-transition routing core contracts`
+
+- 📌 pins — prod Δ = 0, test Δ ≲250
+- **Scope**: Pin the plain-helper contracts in `packages/daemon/src/lib/space/tools/task-transition-routing.ts`: `routeTaskUpdate` precedence (including the `review_to_done` rejection the tool enforces and the RPC deliberately bypasses), `routePublishTask` not-draft rejection, `routeArchiveTask` rejects — and the exact error message `onArchiveTask` throws for active runs, which P15 must match. Parallel-safe leaf.
+- **Lands**: the shared predicates the complete pipelines consume are pinned before any change.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/5-space/tools/space-tool-pipeline.test.ts`.
+- **Depends on**: none.
+
+### P15 — `refactor(space): add active-run admission to routeArchiveTask`
+
+- 🔧 apply (primitive) — prod Δ ≲40, test Δ ≲150
+- **Scope**: `routeArchiveTask` gains the `runActive` check and becomes the canonical archive admission core; the reject message matches the pinned `onArchiveTask` throw. No new runner module — it stays an ordinary pure helper (review corrections round 21/22).
+- **Lands**: the archive admission primitive the P20 core consumes exists.
+- **Excludes**: rewiring `onArchiveTask` or the `archive_task` tool (P21, P22).
+- **Tests**: `space-tool-pipeline.test.ts` routing rows plus the active-run reject row (message parity with the P14 pin).
+- **Depends on**: P14.
+
+### P16 — `feat(space): add complete task publish pipeline core (unwired)`
+
+- ➕ additive core — prod Δ ≲100, test Δ ≸200
+- **Scope**: One complete mixed publish pipeline (admission stages running `routePublishTask` as shared plain logic → `publishTask` effect stage → `space.task.updated` emission stage INSIDE the pipeline before its halt, all in the same composition, deps injected). NOT an admission-only runner with publications left in shells (review corrections rounds 21/23 — a shell effect would let callers skip the emission). Parallel-safe leaf.
+- **Lands**: the complete publish operation exists as a named pipeline; no caller wired.
+- **Excludes**: RPC/tool/callback wiring (P17–P19).
+- **Tests**: branch rows (reject not-found / not-in-space / not-draft; publish effect + emission ordering).
+- **Depends on**: P14.
+
+### P17 — `refactor(handlers): run spaceTask.publish on the publish pipeline`
+
+- 🔧 apply — prod Δ ≲50, test Δ ≲100
+- **Scope**: The `spaceTask.publish` handler in `space-task-handlers.ts` runs the P16 pipeline and maps its halt to the RPC response.
+- **Lands**: the RPC publish operation is one complete pipeline.
+- **Excludes**: tool and callback callers.
+- **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts`.
+- **Depends on**: P16.
+
+### P18 — `refactor(tools): run publish_task on the publish pipeline`
+
+- 🔧 apply — prod Δ ≲50, test Δ ≲100
+- **Scope**: The `publish_task` tool in `space-agent-tools.ts` runs the P16 pipeline; align its sync `taskRepo.getTask` lookup with the RPC's `taskManager.getTask` (pick one, per the doc's caveat).
+- **Lands**: tool and RPC publish share the same complete composition.
+- **Excludes**: `onPublishTask` (P19).
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
+- **Depends on**: P16 (parallel-safe with P17).
+
+### P19 — `refactor(space): run onPublishTask on the publish pipeline`
+
+- 🔧 apply — prod Δ ≲40, test Δ ≲100
+- **Scope**: The `onPublishTask` callback in `packages/daemon/src/lib/space/runtime/task-agent-manager.ts` runs the P16 pipeline (routing + publish effect + emission inside the composition).
+- **Lands**: all three publish caller operations are complete pipelines; no shell duplicates the event emission.
+- **Excludes**: the `space-task-operations.ts` shared-shell question (open question 5).
+- **Tests**: `packages/daemon/tests/unit/5-space/agent/task-agent-manager-*.test.ts`.
+- **Depends on**: P16.
+
+### P20 — `feat(space): add complete task archive pipeline core (unwired)`
+
+- ➕ additive core — prod Δ ≲90, test Δ ≲150
+- **Scope**: One complete mixed archive pipeline consuming the P15 `routeArchiveTask` (with `runActive`) as plain-logic admission stages → `archiveTask` effect stage → `space.task.updated` emission stage. Parallel-safe leaf.
+- **Lands**: the complete archive operation exists as a named pipeline; no caller wired.
+- **Excludes**: tool and callback wiring (P21, P22).
+- **Tests**: branch rows including the active-run reject with message parity.
+- **Depends on**: P15.
+
+### P21 — `refactor(tools): run archive_task on the archive pipeline`
+
+- 🔧 apply — prod Δ ≲50, test Δ ≲100
+- **Scope**: The `archive_task` tool in `space-agent-tools.ts` runs the P20 pipeline and maps the routing reject to its error response.
+- **Lands**: the tool's archive operation is one complete pipeline.
+- **Excludes**: `onArchiveTask` (P22).
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
+- **Depends on**: P20.
+
+### P22 — `refactor(space): run onArchiveTask on the archive pipeline`
+
+- 🔧 apply — prod Δ ≲40, test Δ ≲100
+- **Scope**: The `onArchiveTask` callback in `task-agent-manager.ts` runs the P20 pipeline; its active-run throw becomes the routing reject with the pinned message.
+- **Lands**: both archive callers are complete pipelines.
+- **Excludes**: `space-task-operations.ts` shared shells.
+- **Tests**: `packages/daemon/tests/unit/5-space/agent/task-agent-manager-*.test.ts`.
+- **Depends on**: P20 (parallel-safe with P21).
+
+### P23 — `feat(handlers): add the one-pipeline spaceTask.update core (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
+- **Scope**: ONE direct RPC update pipeline: the P13 validation helpers as early rejection/normalization stages; the RPC human-approval branch (`status: 'done'` on a `review` task stamps `approvalSource: 'human'`) AHEAD of the shared `routeTaskUpdate` predicates (kept as plain helper logic or inline gates — no routing `decisionRun`, no imported tool runner); branch effects `park_stopped`, `recover_transition`, `stop_for_status`, `set_status`, `fields_only` via injected deps; a fresh-task resnapshot + lock gate before EVERY effect that can persist `workflowModelOverrides`; `emitTaskUpdated`/`emitCascadedTasks` as guarded effect stages INSIDE the pipeline before its final halt (review correction round 23 — not a post-pipeline shell step, which splits the operation at its publication boundary). Parallel-safe leaf.
+- **Lands**: the complete update operation exists as one composition; the handler still runs its old path.
+- **Excludes**: handler rewiring (P24) and tool gate-order alignment (P25).
+- **Tests**: branch/parity rows for every `plan.action` and the re-check-lock rows.
+- **Depends on**: P13, P14.
+
+### P24 — `refactor(handlers): run spaceTask.update on its single pipeline`
+
+- 🔧 apply — prod Δ ≲100, test Δ ≸250
+- **Scope**: Rewrite the `spaceTask.update` handler to execute the P23 pipeline; unify the dependency-added blocked-transition logic with the tool's `park_stopped`/`recover_transition` paths; align tool/RPC error wording; preserve the RPC-only preconditions.
+- **Lands**: the whole update operation runs as one named pipeline.
+- **Excludes**: `space-tool-pipeline.ts` changes (P25).
+- **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts`.
+- **Depends on**: P23.
+
+### P25 — `refactor(tools): align space-tool-pipeline gate order with the RPC update pipeline`
+
+- 🔧 apply — prod Δ ≲40, test Δ ≲250
+- **Scope**: `packages/daemon/src/lib/space/tools/space-tool-pipeline.ts` consumes the shared routing predicates/gate order after its autonomy gate instead of calling `routeTaskUpdate` directly.
+- **Lands**: tool and RPC share gate order, pinned by parity tests feeding the same `TaskUpdateRoutingInput` to both callers.
+- **Excludes**: publish/archive/approve flows.
+- **Tests**: `packages/daemon/tests/unit/5-space/tools/space-tool-pipeline.test.ts` parity rows.
+- **Depends on**: P24.
+
+**Phase 2 — staged effect flows with clear atomicity**
+
+### P26 — `test(space): pin approve/reject behavior across tool and RPC shells`
+
+- 📌 pins — prod Δ = 0, test Δ ≲250
+- **Scope**: Pin the current dual-shell contract: approve sets `approved` then dispatches; a dispatch failure AFTER commit leaves the task `approved` with `postApprovalBlockedReason`; reject restores `in_progress` with a reason; `approvalSource`/`approvalReason` survive both shells; each shell publishes `space.task.updated`. Parallel-safe leaf.
+- **Lands**: the state machine the shared pipeline must preserve is pinned before unification.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts`, `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
+- **Depends on**: none.
+
+### P27 — `feat(space): add shared approve-pending-completion pipeline core (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲300
+- **Scope**: New `packages/daemon/src/lib/space/runtime/approve-pending-completion-pipeline.ts`: `stagedRun('approve-pending-completion')` with DIRECT decide stages (`unauthorized`, `notFound`, `spaceMismatch`, `notPending`, `notReview`, approve/reject — no separately composed admission runner); `runtime.dispatchPostApproval` kept as the approval primitive (or `approvalSource`/`approvalReason` stamped in the initial write — state carries the source either way); an IN-STAGE catch on dispatch storing the error in a `dispatchError` external box; a resnapshot that refreshes the task AND materializes the caught error into ctx so later guarded stages branch on the resnapshotted flag, never the box; guarded `record-blocked-reason`; the reject-path effects; and a guarded shared `publish-task-updated` stage emitting `space.task.updated` after approving OR rejecting, ordered BEFORE the halt (review correction rounds 22/23 — a stage after the halt never executes, and a shell effect lets callers skip the publication). Parallel-safe leaf.
+- **Lands**: the one approval/rejection state machine exists; both shells still run their old paths.
+- **Excludes**: shell rewiring (P28, P29); post-approval routing internals (P44–P48).
+- **Tests**: stagedRun contract rows for every branch, the dispatch-failure path, and the shared publication.
+- **Depends on**: P26.
+
+### P28 — `refactor(tools): run approve_pending_completion on the shared pipeline`
+
+- 🔧 apply — prod Δ ≲60, test Δ ≲100
+- **Scope**: The tool shell validates `callerRole === 'coordinator' | 'legacy_task_agent'`, sets `callerMayApprove`, runs the P27 pipeline, maps to `jsonResult`; its `emitTaskUpdated` moves into the pipeline's publication stage.
+- **Lands**: the tool approval path runs the shared pipeline.
+- **Excludes**: the RPC shell (P29).
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
+- **Depends on**: P27.
+
+### P29 — `refactor(handlers): run spaceTask.approvePendingCompletion on the shared pipeline`
+
+- 🔧 apply — prod Δ ≲50, test Δ ≸200
+- **Scope**: The RPC shell sets `callerMayApprove = true`, runs the P27 pipeline, returns the final task; add the shared test module running identical inputs through BOTH shells (including the `approvalSource`/`approvalReason` row).
+- **Lands**: tool and RPC share one state machine with no divergent preconditions or messages.
+- **Excludes**: new shell-specific publications (they now live in the pipeline).
+- **Tests**: `packages/daemon/tests/unit/2-handlers/rpc-handlers/space-task-handlers.test.ts` plus the shared cross-shell module.
+- **Depends on**: P28 (for the cross-shell module).
+
+### P30 — `test(space): pin registerSubscription's synchronous contract`
+
+- 📌 pins — prod Δ = 0, test Δ ≲200
+- **Scope**: Pin the current `registerSubscription` behavior in `packages/daemon/src/lib/space/runtime/space-runtime.ts`: synchronous completion with `result.success` inspected immediately by `registerRunInterests`; the `cannot register more than 10 event interests` throw; in-memory rollback on repo failure; replacement-at-capacity allowed (displaced entry removed before counting). Parallel-safe leaf.
+- **Lands**: the sync API and rollback contract the pipeline must preserve are pinned.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-runtime-list-subscriptions.test.ts`, `packages/daemon/tests/unit/5-space/runtime/space-runtime-workflow-subscription-persistence.test.ts`.
+- **Depends on**: none.
+
+### P31 — `feat(space): add synchronous registration pipeline and target gates (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types-dominated cap), test Δ ≲300
+- **Scope**: New `packages/daemon/src/lib/space/runtime/subscription-target-gates.ts` exporting `decideSubscriptionTarget` (`invalidTopic`, `missingRun`, `invalidTask`, `limitReached`, `proceed` — extracted from `validateSubscriptionTargetTask`, as direct branches not a separate runner), plus the direct SYNCHRONOUS `registerSubscriptionRun` (`superpipe` + `.end`; NOT `stagedRun`, which is async-only and would change the sync contract): snapshot gathers run/task/displaced/interest count MINUS the displaced entry; stages `remove-existing-trie-entry` → `insert-trie-entry` → `persist-subscription` with a shell-rollback hook (the sync pipeline has no compensation stack); `.end` returns `{ success: false, error }` for every validation branch and `limitReached` throws after rollback. Parallel-safe leaf.
+- **Lands**: the sync registration pipeline and its target gates exist unwired.
+- **Excludes**: wiring `space-runtime.ts` and the redispatch move (P32).
+- **Tests**: gate table rows plus limit/replacement rows.
+- **Depends on**: P30.
+
+### P32 — `refactor(space): run registerSubscription on the sync registration pipeline`
+
+- 🔧 apply — prod Δ ≲60, test Δ ≲150
+- **Scope**: `space-runtime.ts:registerSubscription` executes the P31 pipeline inside its shell's explicit in-memory rollback; `redispatchRetainedExternalEvents` moves to a post-success best-effort shell step (swallow-and-log) — it is a delivery nudge, not a consistency write.
+- **Lands**: registration stays synchronous with its exception contract; a redispatch throw can no longer leave a persisted-but-trie-missing subscription.
+- **Excludes**: CAS-guarding `workflowEventSubscriptionRepo.upsert` beyond current behavior.
+- **Tests**: the P30 suites plus a redispatch-throw row (subscription stays persisted and in the trie).
+- **Depends on**: P31.
+
+### P33 — `test(goals): pin outcome-claim admission semantics`
+
+- 📌 pins — prod Δ = 0, test Δ ≲200
+- **Scope**: Pin `claimOutcomeNotification` in `packages/daemon/src/lib/space/goals/goal-service.ts`: the already-applied check (`notification.status === params.dispositionStatus`) runs BEFORE admission and returns `already_applied` after authorization/identity checks; `deny`/`superseded` outcomes; admit applies the goal update and flips the notification status exactly once. Parallel-safe leaf.
+- **Lands**: the claim contract (including idempotent retry) is pinned before the sync pipeline replaces the inline logic.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts`.
+- **Depends on**: none.
+
+### P34 — `feat(goals): add synchronous atomic claim pipeline (unwired)`
+
+- ➕ additive core — prod Δ ≲120, test Δ ≲250
+- **Scope**: Direct sync `superpipe` pipeline with `.end` shaped to run inside the existing `runAtomic` (never `stagedRun` — `endAsync` would commit the transaction early): gather loads notification/goal/`authorizedAgentIds`; decide runs the already-applied gate then the authorization/identity/revision gates IMPORTED directly from `claim-admission-gates.ts` (no `claimAdmissionRun` nesting), halting ONLY on `deny` (a blanket `!decided` halt would no-op every admitted claim); guarded effect `apply-goal-update` (when `admit` and `mutatesGoalState`); `update-notification-status` guarded to `admit` only. Parallel-safe leaf.
+- **Lands**: the atomic claim pipeline exists; `goal-service.ts` still runs its inline path.
+- **Excludes**: wiring inside `runAtomic` (P35).
+- **Tests**: gate-order rows, admit/deny/already-applied arms, no-redundant-write row.
+- **Depends on**: P33.
+
+### P35 — `refactor(goals): run claimOutcomeNotification on the sync claim pipeline`
+
+- 🔧 apply — prod Δ ≲60, test Δ ≲100
+- **Scope**: The `runAtomic` block in `goal-service.ts` executes the P34 pipeline; `params.apply` is not awaited if synchronous.
+- **Lands**: the claim runs as one atomic named composition; P33 pins stay green.
+- **Excludes**: `handleTaskTerminal` (P55–P57).
+- **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts`.
+- **Depends on**: P34.
+
+### P36 — `feat(tools): add review-goal-outcome staged core (unwired)`
+
+- ➕ additive core — prod Δ ≸90, test Δ ≸200
+- **Scope**: `stagedRun('review-goal-outcome')`: snapshot validates `hasGoalUpdate` vs `disposition` rules; `decideReviewGoalOutcomeMode` branches `discover`/`claim`; the claim branch performs ONE effect calling `goalService.claimOutcomeNotification` (after P35, the same sync claim pipeline) — never re-inlining `decideClaimAdmission` outside the service's atomic boundary; `discover` lists claimable notifications and halts. Parallel-safe leaf.
+- **Lands**: the discovery/claim tool flow exists as one staged composition.
+- **Excludes**: tool rewiring (P37).
+- **Tests**: mode rows plus claim delegation rows.
+- **Depends on**: P35.
+
+### P37 — `refactor(tools): run review_goal_outcome on its staged pipeline`
+
+- 🔧 apply — prod Δ ≲60, test Δ ≲100
+- **Scope**: The `review_goal_outcome` handler in `space-agent-tools.ts` executes the P36 pipeline; atomicity stays inside the service's `runAtomic`.
+- **Lands**: both tool modes run one named composition.
+- **Excludes**: changes to the service's claim internals (already final in P35).
+- **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-claim.test.ts`, `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
+- **Depends on**: P36.
+
+### P38 — `test(goals): pin goal-automation admission and schedule-sync behavior`
+
+- 📌 pins — prod Δ = 0, test Δ ≲350 (split by family: admission decision table rows vs schedule-sync behavior rows)
+- **Scope**: Pin `onTaskCompleted` (admission table; `ambiguous_scope` returned BEFORE `resolveScopeForTask` when no explicit scope and multiple scopes exist; `below_threshold` carries `count`), `onSelfNag` (first-scope fallback — `resolveScopeForGoal` never returns null for multiple scopes; explicit-scope validation only), and `syncGoalAutomationSelfNagScheduleForScope` (`pauseAllNoGoal` only when `scope.spaceGoalId` is absent; missing/inactive referenced goal is a NO-OP; stale-schedule orphan pause coexists with `update`/`create`). Parallel-safe leaf.
+- **Lands**: the admission tables and schedule-sync semantics the pipelines must preserve are pinned.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/5-space/goal-automation-service.test.ts`, `packages/daemon/tests/unit/2-handlers/job-handlers/task-schedule-fire.handler.test.ts`.
+- **Depends on**: none.
+
+### P39 — `feat(goals): add goal-automation admission pipelines with enqueue effects (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types-dominated cap), test Δ ≲300
+- **Scope**: New `goal-automation-admission-pipeline.ts` with TWO complete mixed pipelines: `onTaskCompleted` (snapshot reads evidence/cursor inputs; admission gates `notApplicable`, `disabled`, `ambiguousScope` (ambiguity flag snapshotted separately, winning over `missingScope`), `missingScope`, `belowThreshold` (carries `count`), `proceed`; guarded `enqueue` effect stage in the SAME composition) and `onSelfNag` (gates `disabled`, `missingScope`, `notApplicable`, `proceed`; guarded `enqueue` stage). No admission-only variant with an imperative `if (proceed) enqueue` outside (review corrections). Parallel-safe leaf.
+- **Lands**: both automation operations exist as one-pipeline compositions with their job-queue effects.
+- **Excludes**: service rewiring (P40, P41).
+- **Tests**: the P38 admission tables re-run against the pipelines, independent of the job queue.
+- **Depends on**: P38.
+
+### P40 — `refactor(goals): run onTaskCompleted on its complete pipeline (admission + enqueue effect)`
+
+- 🔧 apply — prod Δ ≲50, test Δ ≲100
+- **Scope**: `goal-automation-service.ts:onTaskCompleted` gathers inputs, runs the P39 pipeline once, returns its `GoalAutomationEnqueueResult`.
+- **Lands**: the completed-task automation enqueue is one named composition.
+- **Excludes**: `onSelfNag` (P41).
+- **Tests**: `packages/daemon/tests/unit/5-space/goal-automation-service.test.ts`.
+- **Depends on**: P39.
+
+### P41 — `refactor(goals): run onSelfNag on its complete pipeline (admission + enqueue effect)`
+
+- 🔧 apply — prod Δ ≲50, test Δ ≲100
+- **Scope**: `goal-automation-service.ts:onSelfNag` gathers inputs and runs its P39 pipeline; the first-scope fallback contract from P38 is preserved.
+- **Lands**: both automation paths are migrated.
+- **Excludes**: schedule sync (P42, P43).
+- **Tests**: `packages/daemon/tests/unit/5-space/goal-automation-service.test.ts`.
+- **Depends on**: P39 (parallel-safe with P40).
+
+### P42 — `feat(goals): add synchronous self-nag schedule-sync pipeline (unwired)`
+
+- ➕ additive core — prod Δ ≲120, test Δ ≲250
+- **Scope**: Direct sync `selfNagScheduleSyncRun` (`superpipe` + `.end`, synchronous effects) for `syncGoalAutomationSelfNagScheduleForScope`: gather lists schedules/goal/policy; PRELIMINARY unconditional `pause-orphan-schedules` effect (not a decision branch — it coexists with `update`/`create`); decide stage selects the current-schedule branch (`pauseAllNoGoal`, `missingGoalNoOp`, `pauseNoCron`, `update`, `create`, `noOp`) with goal-reference state carried separately and NO `!branchDecided` halt (a `!dep` halt would skip the guarded mutations after orphan cleanup); guarded mutation effects call `scheduleService`. Parallel-safe leaf.
+- **Lands**: the schedule-sync flow exists as one sync composition ready to run inside the transaction.
+- **Excludes**: wiring the service (P43).
+- **Tests**: branch rows including orphan-plus-update coexistence and missing-vs-absent goal distinction.
+- **Depends on**: P38.
+
+### P43 — `refactor(goals): run schedule sync on the sync pipeline inside its transaction`
+
+- 🔧 apply — prod Δ ≲60, test Δ ≲150
+- **Scope**: `goal-automation-schedule-sync.ts` composes the P42 pipeline inside the optional `db.transaction` (`.end` executes synchronously within it — `stagedRun` would commit when its Promise is returned); best-effort when `db` is absent.
+- **Lands**: orphan pauses can no longer commit without the replacement schedule.
+- **Excludes**: new CAS semantics on `scheduleService`.
+- **Tests**: the P38 suites plus a mid-flow-throw-with-`db` row (no partial pause/update commits).
+- **Depends on**: P42.
+
+**Phase 3 — heavyweight staged flows**
+
+### P44 — `test(space): pin post-approval routing branches`
+
+- 📌 pins — prod Δ = 0, test Δ ≲300
+- **Scope**: Pin `PostApprovalRouter.route` branch behavior: `multiRoutes` WARNS and continues with the first route (never a terminal branch); `no-route` terminalization via `goalService.handleTaskTerminal`; dead-previous-session fall-through that spawns a replacement overwriting the stale ID; expected spawn failures (`isSpawnSupersededError`/`isTransientSpawnError`) clearing pending-completion fields and recording `postApprovalBlockedReason`. Parallel-safe leaf.
+- **Lands**: the routing contract (including the concurrency gaps the CAS will close) is pinned.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/post-approval-router.test.ts`, `packages/daemon/tests/unit/5-space/runtime/post-approval-routing-integration.test.ts`.
+- **Depends on**: none.
+
+### P45 — `feat(space): add claimPostApprovalDispatch reservation CAS primitive (unwired)`
+
+- ➕ additive core — prod Δ ≲80, test Δ ≲200
+- **Scope**: New task-repo primitive `claimPostApprovalDispatch`: a conditional update where `status = 'approved'` AND `postApprovalSessionId` is either NULL or the EXACT dead session ID observed by the caller's liveness probe (so dead-session retries do not lose the CAS forever); plus the conditional (token-scoped) release. Parallel-safe leaf.
+- **Lands**: the reservation primitive the route pipeline requires exists and is tested in isolation.
+- **Excludes**: any caller.
+- **Tests**: CAS unit rows: win, lose, dead-ID clear-and-claim, token-scoped release.
+- **Depends on**: P44.
+
+### P46 — `feat(space): add post-approval route stages for admission and reservation (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲250
+- **Scope**: First stage set of the route pipeline: `PostApprovalRouteState`; routing branches as DIRECT decide stages (`notApproved`, `noRoutes`, `alreadyRouted`, `missingWorkflow`, `emptyInstructions`, `proceed`) with `multiRoutes` stamped as a nonterminal `warnings` annotation carrying `routes[0]`; `terminalize-no-route` delegating to `goalService.handleTaskTerminal` with the direct update + fallback evidence capture ONLY on a `null` return; `reserve-dispatch` running the P45 CAS BEFORE any spawn, with `compensate` releasing the claim ONLY pre-spawn — the guard consults the EXTERNAL spawn box and the verified-termination result, never its captured stage view (review correction round 23: `stagedRun` compensations receive the view captured when `reserve-dispatch` completed, before the spawn, so a view-captured guard would release the claim while the spawned session is live or its termination is unverified).
+- **Lands**: the admission and reservation half of the route flow exists as pipeline stages.
+- **Excludes**: spawn/dispatch stages and the composed `stagedRun` (P47); router wiring (P48).
+- **Tests**: branch rows for every decide stage and the reservation compensation guard.
+- **Depends on**: P45.
+
+### P47 — `feat(space): add post-approval spawn/dispatch stages and compose the route pipeline (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
+- **Scope**: Remaining stages plus the SINGLE `stagedRun('post-approval-route')` composition (one pipeline per business path — it lands whole here): `spawn-post-approval-sub-session` catching EXPECTED failures in-stage (diverting to the clear/block/skip branch) and compensating UNEXPECTED failures by terminating the spawned session (the claim is non-releasable post-spawn); the spawned session ID/start time written to a `SpawnAttemptBox`-style EXTERNAL mutable box; `resnapshot` copying them into ctx; `record-dispatched-session` converting the reservation via the same CAS, whose loss terminates THIS caller's session and CONDITIONALLY RELEASES the claim after verified termination.
+- **Lands**: the complete post-approval route pipeline exists unwired, with its asymmetric compensations.
+- **Excludes**: router wiring (P48).
+- **Tests**: contract rows — concurrent-caller race (second caller halts at `reserve-dispatch`, no session spawned), dead-session replacement, spawn compensation, and the round-4 conditional release (claim never left durably held with no live session).
+- **Depends on**: P46.
+
+### P48 — `refactor(space): run PostApprovalRouter.route on the staged pipeline`
+
+- 🔧 apply — prod Δ ≲80, test Δ ≲150
+- **Scope**: The `PostApprovalRouter` shell gathers the snapshot and executes the P47 pipeline with its deps; the imperative if-cascade is deleted.
+- **Lands**: the most effect-heavy routing site is one named composition; P44 pins stay green.
+- **Excludes**: changes to `goalService.handleTaskTerminal` itself (P55–P57).
+- **Tests**: `post-approval-router.test.ts`, `post-approval-routing-integration.test.ts`.
+- **Depends on**: P47.
+
+### P49 — `test(space): pin activation routing classification`
+
+- 📌 pins — prod Δ = 0, test Δ ≲250
+- **Scope**: Pin `decideActivationRouting` in `packages/daemon/src/lib/space/runtime/activation-routing.ts`: `reuseInProgressOrBlocked` returns `reuse_existing` ONLY with a LIVE `agentSessionId` (dead `in_progress`/`blocked` executions must classify toward reset, not spawn); `rejectUndeclared`; `returnEmpty`; `spawn`; plus the caller's three invocation points around reset/activation/resnapshot/spawn. Parallel-safe leaf.
+- **Lands**: the classification table — including the dead-worker recovery row — is pinned before the operation migrates.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts`.
+- **Depends on**: none.
+
+### P50 — `feat(space): add the complete activation operation pipeline (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲300
+- **Scope**: New `packages/daemon/src/lib/space/runtime/activation-routing-pipeline.ts` hosting the COMPLETE `activateTargetSessionsForMessage` operation as ONE mixed/resnapshot pipeline (reset, workflow activation, resnapshot, and spawn effects included); `decideActivationRouting` is RETAINED as the exported plain classification helper the pipeline's stages call (with the dead-worker `reset_pending_and_continue` behavior) — no standalone `activation-routing` `decisionRun` executing three nested runners. The normalized-to-`null` `existing` fact is preserved in the input snapshot.
+- **Lands**: the complete activation business path exists as one composition.
+- **Excludes**: `TaskAgentManager` wiring (P51); the `activateNode` effect inside `send_message_to_task` (P59–P61).
+- **Tests**: stage rows for reset/activation/spawn arms reusing the P49 table.
+- **Depends on**: P49.
+
+### P51 — `refactor(space): run activateTargetSessionsForMessage on its pipeline`
+
+- 🔧 apply — prod Δ ≲80, test Δ ≲150
+- **Scope**: `task-agent-manager.ts` activation logic delegates to the P50 pipeline; the imperative outer cascade is deleted.
+- **Lands**: activation is one named composition; the P49 pins stay green.
+- **Excludes**: direct-steer flush (P52–P54).
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts` extended to the wired operation.
+- **Depends on**: P50.
+
+### P52 — `test(space): pin direct-steer flush contract`
+
+- 📌 pins — prod Δ = 0, test Δ ≲250
+- **Scope**: Pin `deliverDirectSteerUnderCoordination` (`#1398 continuation`): the resnapshot between passenger save and steer save; passenger preservation when the session leaves `processing`; the consumed-row `messages.statusChanged` publication on that race branch; the failed-row publication on enqueue throw; the `recordDirectSteerEnqueued`/per-class metric counters; the `{ enqueued: true, eventCount }` result. Parallel-safe leaf.
+- **Lands**: the exact resnapshot timing and publication contract is pinned.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/task-agent-manager-direct-steer.test.ts`.
+- **Depends on**: none.
+
+### P53 — `feat(space): add direct-steer-flush staged core (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
+- **Scope**: `stagedRun('direct-steer-flush')` per the per-site steps: admission branches (`sessionMissing`, `sessionNotProcessing`, `parentTaskLimited`, `noDeferredRows`, `noSteerEssences`, `proceed`) as direct decide stages; `save-passenger-copy` with the `discardPassengerCopy` compensation; resnapshot; the second decide aborting only AFTER a guarded `consume-passenger-copy` cleanup effect (including the consumed row's publication — `stagedRun` does not unwind compensations on a successful halt); `save-steer-row` writing into its OWN external mutable box with a resnapshot so failure handling consumes the SAVED row; `enqueue-steer-delivery` marking/publishing the failed row on throw and triggering the passenger compensation; `consume-source-rows`; `record-steer-metrics`; `publish-status-transitions`. No retries (ADR).
+- **Lands**: the complete flush flow exists as one staged composition.
+- **Excludes**: manager wiring (P54); the outer flush loop (stays outside).
+- **Tests**: per-stage rows with mocked `saveUserMessage`, `deliverMessage`, `updateMessageStatus`, covering the race branch and both publication points.
+- **Depends on**: P52.
+
+### P54 — `refactor(space): run deliverDirectSteerUnderCoordination on the staged pipeline`
+
+- 🔧 apply — prod Δ ≲80, test Δ ≲200
+- **Scope**: `task-agent-manager.ts` runs the P53 pipeline via `runDirectSteerFlush({ sessionId, bufferedEntries })`; add the parity harness `task-agent-manager-direct-steer-pipeline.test.ts`.
+- **Lands**: the `#1398` flow is one named composition with identical timing and telemetry.
+- **Excludes**: retry logic (forbidden).
+- **Tests**: `task-agent-manager-direct-steer.test.ts` plus the new parity/per-stage suite.
+- **Depends on**: P53.
+
+### P55 — `test(goals): pin handleTaskTerminal contract`
+
+- 📌 pins — prod Δ = 0, test Δ ≲300
+- **Scope**: Pin `handleTaskTerminal` in `goal-service.ts`: foreign-space goal returns `null` before `runAtomic`; nonterminal transitions return the structured result (current goal, `nextTask: null`, `terminalGeneration`, `notification: null`); an existing `terminalGeneration` notification makes the retry return BEFORE clearing the active task or repeating any bookkeeping; Forge evidence capture and goal automation are best-effort with local catches; post-commit `emitTaskCreated`/`onOutcomeNotification` honoring `deferPostCommitEffects`. Parallel-safe leaf.
+- **Lands**: the most complex goal chain's contract is pinned.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-service.test.ts`, `packages/daemon/tests/unit/5-space/runtime/goal-outcome-wake-flip.test.ts`.
+- **Depends on**: none.
+
+### P56 — `feat(goals): add synchronous handleTaskTerminal pipeline core (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
+- **Scope**: Direct sync `handleTaskTerminalRun` (`superpipe` + `.end`, synchronous effects, shaped to run inside `runAtomic` — never `stagedRun`): admission gates (missing task/goal halt; goal-space mismatch returns `null`; nonterminal stamps the structured result BEFORE halting); the PLAIN terminal-status check as the decide stage (NOT `decideReportableTerminal`, which is invoked only at the notification stage); `update-task` → resnapshot → `already-notified` halt → `clear-active-task`, `record-goal-event`, best-effort `capture-evidence`/`run-automation` (local catch boundaries retained), best-effort `create-next-task`, resnapshot, `record-outcome-notification`; state carries `deferPostCommitEffects`.
+- **Lands**: the complete terminal bookkeeping chain exists as one sync composition.
+- **Excludes**: wiring inside `runAtomic` and the post-commit shell (P57); any `runAtomic` async conversion (off the table).
+- **Tests**: stage rows for every arm, the idempotent-retry halt, and the best-effort catch boundaries.
+- **Depends on**: P55.
+
+### P57 — `refactor(goals): run handleTaskTerminal on the sync atomic pipeline`
+
+- 🔧 apply — prod Δ ≲80, test Δ ≸200
+- **Scope**: The `runAtomic` block executes the P56 pipeline using transaction-bound repo methods; the post-commit shell keeps `emitTaskCreated` and `onOutcomeNotification` with the `setImmediate` deferral when `transition.deferPostCommitEffects` is set.
+- **Lands**: terminal transitions are one atomic named composition; migrated goal progress keeps waking subscribers.
+- **Excludes**: in-flow retries.
+- **Tests**: `space-goal-service.test.ts`, `goal-outcome-wake-flip.test.ts`, plus nonterminal and already-notified parity rows.
+- **Depends on**: P56.
+
+### P58 — `test(tools): pin send_message_to_task delivery arms`
+
+- 📌 pins — prod Δ = 0, test Δ ≲350 (split by family: target-resolution arms vs delivery-mode arms)
+- **Scope**: Pin `send_message_to_task` in `space-agent-tools.ts`: target disambiguation (`task_id`/`task_number`), long-horizon handle resolution, worker activation, queue fallback, the stale-live-session `inject` throw falling through `activateNode` → reinject, the caught `activateNode` failure returning `{ success: false, error }`, and the `replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName)` entry worker replies depend on. Parallel-safe leaf.
+- **Lands**: every delivery arm — especially the reply-routing pin — is characterized before the cascade is replaced.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
+- **Depends on**: none.
+
+### P59 — `feat(tools): add deliver-task-message target-admission core (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲250
+- **Scope**: First half of the ONE `deliver-task-message` pipeline: `DeliverTaskMessageState`; snapshot stages running the target parse (`ParsedAddress`), handle resolution, and execution resolution; the target-admission gates (`task_id`/`task_number`, space, archived, target presence, workflow run) as direct inline stages; and the effect recording `replyRoutingRegistry.set(...)` BEFORE all worker delivery branches.
+- **Lands**: the admission half of the delivery business path exists as pipeline stages.
+- **Excludes**: delivery-mode gates and effect arms (P60); tool wiring (P61).
+- **Tests**: admission rows plus the reply-routing parity pin.
+- **Depends on**: P58.
+
+### P60 — `feat(tools): add deliver-task-message delivery-mode stages and compose the pipeline (unwired)`
+
+- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≸350
+- **Scope**: Remaining stages plus the single composed `deliver-task-message` pipeline (ONE pipeline — no nested `decisionRun`s): self-guarding delivery-mode gates (`injectLive`, `activateAndInject`, `queue`, `deliverLongTerm`, first match wins); guarded effect arms `deliverToSpaceAgent`, `injectLive` (a stale-live-session throw diverts into activation via an `inject-failed` branch or in-stage catch), `activate` with an explicit caught-failure branch, `resnapshot` after activation, `injectAfterActivation`, `queue`; `halt` returning `DeliverTaskMessageResult`. Activation is not compensable — current fallback semantics are preserved.
+- **Lands**: the complete delivery pipeline exists unwired.
+- **Excludes**: folding `AgentMessageRouter` into the pipeline (long-term delivery keeps delegating); tool wiring (P61).
+- **Tests**: arm rows for inject/activate/queue fallback and the stale-live-session divert.
+- **Depends on**: P59.
+
+### P61 — `refactor(tools): run send_message_to_task on the deliver-task-message pipeline`
+
+- 🔧 apply — prod Δ ≲100, test Δ ≲150
+- **Scope**: The tool handler executes the P60 pipeline; `auditing` and `jsonResult` mapping stay in the shell.
+- **Lands**: the tool's if-cascade is one named composition; P58 pins stay green.
+- **Excludes**: the task-lookup admission core (already final in P10/P11).
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
+- **Depends on**: P60.
+
+### P62 — `test(events): pin deferred fold behaviors`
+
+- 📌 pins — prod Δ = 0, test Δ ≲250
+- **Scope**: Pin both folds in `packages/daemon/src/lib/external-events/deferred-event-digest.ts`: the no-digest-rows halt; deterministic-UUID idempotency (a re-run finds the existing fold row); the supersede-then-save-then-mark ordering; the overflow cap boundary; fold-vs-raw selection. Parallel-safe leaf.
+- **Lands**: the idempotency and ordering contracts are pinned.
+- **Excludes**: production changes.
+- **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/deferred-event-digest.test.ts`.
+- **Depends on**: none.
+
+### P63 — `feat(events): add fold-deferred-at-flush staged core (unwired)`
+
+- ➕ additive core — prod Δ ≲120, test Δ ≲250
+- **Scope**: `stagedRun('fold-deferred-at-flush')` with `FlushFoldState`: `partitionDeferredExternalEventRows` as the first decide stage (halts `no-fold` on empty `digestRows`); effects `supersede-stale-folds` → `save-fold-row` (idempotent, deterministic UUID, return stored via an EXTERNAL MUTABLE BOX followed by a `resnapshot` — `stagedRun` effects return only `void`/`won`/`superseded` and receive a shallow-copied view) → `mark-sources-superseded`; `halt` returns `DeferredEventDigestFlushResult`.
+- **Lands**: the flush fold exists as one staged composition.
+- **Excludes**: wiring (P64); the optional single `foldDeferredRows` repo primitive (open question 4).
+- **Tests**: staged rows — no digest rows, duplicate deterministic UUID, failure after save before mark.
+- **Depends on**: P62.
+
+### P64 — `refactor(events): run flush folding on the staged pipeline`
+
+- 🔧 apply — prod Δ ≲60, test Δ ≲100
+- **Scope**: `foldDeferredExternalEventsAtFlush` executes the P63 pipeline with `DeferredEventDigestRowOps` injected as a dep; the flush loop stays outside.
+- **Lands**: the flush fold is one named composition; P62 pins stay green.
+- **Excludes**: the overflow fold (P65, P66).
+- **Tests**: `deferred-event-digest.test.ts` including the overflow interaction row.
+- **Depends on**: P63.
+
+### P65 — `feat(events): add fold-deferred-overflow staged core (unwired)`
+
+- ➕ additive core — prod Δ ≲100, test Δ ≸200
+- **Scope**: `stagedRun('fold-deferred-overflow')` with `OverflowFoldState`: `planDeferredExternalEventOverflow` as the decide stage (`noOverflow` halts with `null`); `save-overflow-envelope` storing the saved envelope (`dbId` + UUID-adjusted message) in an external mutable box declared OUTSIDE the run; `mark-overflow-superseded`; a `resnapshot` copying the saved envelope back into ctx; `halt` returns `DeferredEventOverflowFoldResult`.
+- **Lands**: the overflow fold exists as one staged composition with the same external-box discipline.
+- **Excludes**: wiring (P66).
+- **Tests**: cap-boundary and fold-vs-raw rows.
+- **Depends on**: P63 (shares the box pattern and module).
+
+### P66 — `refactor(events): run overflow folding on the staged pipeline`
+
+- 🔧 apply — prod Δ ≲50, test Δ ≲80
+- **Scope**: `foldDeferredExternalEventOverflow` executes the P65 pipeline.
+- **Lands**: both deferred folds are named compositions; P62 pins stay green.
+- **Excludes**: the transactional repo primitive (open question 4).
+- **Tests**: `deferred-event-digest.test.ts`.
+- **Depends on**: P65.
+
+**Trailing cleanup**
+
+### P67 — `chore(space): remove migration shims and superseded helpers`
+
+- cleanup — prod Δ ≲100, test Δ ≲50
+- **Scope**: Delete the deprecated `resolveNodeAgentTargets` re-export, the superseded `validateWorkflowModelOverrides` body, and any imperative remnants the applies left behind (e.g. `validateSubscriptionTargetTask` if still exported); sweep for orphaned helpers. Add an ADR note only if one of the doc's open questions (4 or 5) resolves into a decision during implementation.
+- **Lands**: only the pipeline-based paths remain.
+- **Excludes**: behavior changes.
+- **Tests**: full affected suites stay green.
+- **Depends on**: P57, P61, P66 (the last applies in each file family).
 
 ---
 

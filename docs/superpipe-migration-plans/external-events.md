@@ -1070,6 +1070,592 @@ function validateRemoteHook(watched: GitHubWatchedRepo, hook: GitHubHookResponse
 8. `github/github-normalizer.ts` normalizer family — largest and most
    caller-heavy; do it last after the patterns are established.
 
+## Focused PR breakdown
+
+The slices below decompose this plan into a sequence of small, focused,
+independently shippable PRs that a future implementer can open directly.
+Two-tier review budget per slice: production Δ ≲100 lines (hard cap ~150 only
+for types-dominated additive cores) and test Δ ≲350, counted SEPARATELY from
+production code — if a slice would exceed either tier, split it further before
+opening it; never grow a PR past budget mid-review. Pin slices split by
+dimension family, never by truncating a family's rows.
+
+Phase convention (stated on the first line of each slice): 📌 pins — prod
+Δ = 0; characterization/decision-table tests of CURRENT behavior. ➕ additive
+core — pure module/pipeline landed UNWIRED from production. 🔧 apply — wire
+call sites; ONE arm/route/site per slice. cleanup — small trailing slice.
+Tiny slices may combine 📌+🔧. Every slice leaves the repo compiling with
+tests green when it lands, keeps its diff surgical (no drive-by import-block
+or formatting churn in files it touches), and folds in no unrelated fixes.
+Slice ordering follows the "Suggested migration order" phases above: pins land
+before extraction, plain helpers before the pipelines that consume them, and
+per-kind normalizer exports stay callable until the cleanup slice rewires
+their consumers. Parallel-safe leaves are noted explicitly and may proceed
+concurrently.
+
+Every site in "Per-site detailed plans" is covered:
+
+- `event-tiers.ts:classifyExternalEventDirectSteer` — PR 1
+- `deferred-event-digest.ts:renderDigestGroup` — PR 2
+- `deferred-event-digest.ts:buildExternalEventDigestMessage` — PRs 3-4
+- `deferred-event-digest.ts:parseDeferredExternalEventText` — PRs 5-6
+- `event-essence.ts:formatExternalEventEssence` — PRs 7-9
+- `github-subscription-pattern.ts:composeGitHubSubscriptionPattern` — PR 10
+- `github/github-event-extension.ts:validateRemoteHook` — PRs 11-12
+- `github/github-normalizer.ts` normalizer family — PRs 13-26
+
+### PR 1 — `refactor(external-events): rewrite direct-steer classification as an ordered helper`
+
+📌 pins + 🔧 apply — prod Δ ≲20, test Δ ≲120
+
+- **Scope**: `packages/daemon/src/lib/external-events/event-tiers.ts` — replace
+  the hand-rolled body of `classifyExternalEventDirectSteer` with the ordered
+  classifier (`review_submitted` → `review_comment_polled` → `check_failed` →
+  `merge_conflict` → `null`); the export keeps its exact signature and remains
+  a plain function called once per essence from `partitionDirectSteerEssences`.
+- **Lands**: classification is a plain leaf helper of
+  `external-event-steer-admission` — no `decisionRun`, no nested runner
+  invocation per buffered event; behavior identical and precedence-pinned.
+- **Excludes**: any edit to
+  `packages/daemon/src/lib/space/runtime/external-event-steer-admission-pipeline.ts`;
+  the batch/benchmark contingency from the site's risks.
+- **Tests**:
+  `packages/daemon/tests/unit/5-space/runtime/task-agent-manager-direct-steer.test.ts`
+  — keep the existing `classifyExternalEventDirectSteer` block as parity; add
+  precedence rows (first matching branch wins; fall-through returns `null`).
+- **Depends on**: none. Parallel-safe leaf.
+
+---
+
+### PR 2 — `refactor(external-events): extract digest group renderers as pure helpers`
+
+📌 pins + 🔧 apply — prod Δ ≲120 (move-only churn), test Δ ≲300
+
+- **Scope**: `packages/daemon/src/lib/external-events/deferred-event-digest.ts`
+  — move each `switch (group.kind)` case body of `renderDigestGroup` into an
+  exported `buildXGroupLine` pure helper (`check`, `review`, `pr_comment`,
+  `state`, `reaction`, `other`); `renderDigestGroup` stays the private
+  exhaustive switch calling those helpers; `digestGroupKind`, `digestGroupKey`,
+  `digestTimestamp`, `digestSnippet`, `digestLinkSuffix`, `digestDetailSuffix`,
+  `digestActionLabel`, `digestStateMarkers`, and `essenceScopeLabel` remain
+  pure helpers.
+- **Lands**: behavior-identical helper extraction; the kind switch is a plain
+  leaf ready to be called from the `renderGroups` stage in PR 3.
+- **Excludes**: the `build-external-event-digest-message` pipeline and
+  `BuildDigestMessageCtx` (PR 3); `parseDeferredExternalEventText` (PR 5).
+- **Tests**:
+  `packages/daemon/tests/unit/4-space-storage/storage/deferred-event-digest.test.ts`
+  — add a `describe('renderDigestGroup')` block covering every
+  `DigestGroupKind` plus `renderAllReviewBodies`/`snippetMaxChars`.
+- **Depends on**: none. Parallel-safe outside the digest file.
+
+---
+
+### PR 3 — `refactor(external-events): add digest-message superpipe core unwired`
+
+➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
+
+- **Scope**: `packages/daemon/src/lib/external-events/deferred-event-digest.ts`
+  — add `BuildDigestMessageCtx`, the `isDone` helper, and the
+  `build-external-event-digest-message` raw transform: `guardEmpty` (sets
+  `result = ''`, halts via `!isDone`), `computeOptions`, `sortEvents` (stable,
+  `orderTime` with index tie-break), `decideIncludeDate`, `groupEvents`
+  (`digestGroupKind`/`digestGroupKey` into a `Map`), `renderGroups` (iterates
+  `DIGEST_GROUP_ORDER`, calls the PR-2 `renderDigestGroup` helper directly —
+  no nested runner), `assembleMessage` (header + lines + footer). The export
+  still runs its old body; the pipeline is UNWIRED.
+- **Lands**: the digest pipeline exists with stage-level tests; production
+  behavior unchanged.
+- **Excludes**: wiring `buildExternalEventDigestMessage` (PR 4); envelope text
+  or line-break format changes.
+- **Tests**:
+  `packages/daemon/tests/unit/4-space-storage/storage/deferred-event-digest.test.ts`
+  — stage tests: empty input returns `''` before sort/group; multi-date input
+  sets `includeDate = true`; groups render in `DIGEST_GROUP_ORDER`;
+  `renderAllReviewBodies` propagates into `renderDigestGroup`; stable-sort
+  tie-break.
+- **Depends on**: PR 2.
+
+---
+
+### PR 4 — `refactor(external-events): route digest message through the pipeline`
+
+🔧 apply — prod Δ ≲20, test Δ ≲0 (PR 2-3 pins stay green)
+
+- **Scope**: same file — the body of `buildExternalEventDigestMessage` becomes
+  the shell that seeds the ctx and unwraps `result!`.
+- **Lands**: digest building runs as one raw superpipe transform for this
+  business path; the parity suite is green unchanged.
+- **Excludes**: `parseDeferredExternalEventText` (PR 5-6); further changes to
+  the `buildXGroupLine` helpers.
+- **Tests**: `deferred-event-digest.test.ts` parity suite, unchanged.
+- **Depends on**: PR 3.
+
+---
+
+### PR 5 — `refactor(external-events): add deferred-text parse pipeline unwired`
+
+➕ additive core — prod Δ ≲120, test Δ ≲350
+
+- **Scope**: same file — add `ParseDeferredTextCtx`, the `hasEntry` helper,
+  and the `parse-deferred-external-event-text` transform: `tryJsonParse`,
+  `populateRecord` (object-valued `json` becomes `record`), `!hasEntry` halts,
+  `guardExternalEventJson` (calls `parseEssenceEntry`), `guardDigestJson`
+  (validates the events array, sets `droppedCount`), `tryRateLimitText` (calls
+  `parseRateLimitDigestText`); `parseEssenceEntry`,
+  `parseRateLimitDigestText`, `parseRateLimitIdEntries`, and `scopeFromTopic`
+  stay private pure helpers. UNWIRED: the export keeps its old body.
+- **Lands**: the parse pipeline exists with stage-level tests; production
+  behavior unchanged.
+- **Excludes**: wiring (PR 6); restructuring `RATE_LIMIT_DIGEST_PATTERN`.
+- **Tests**: `deferred-event-digest.test.ts` — stage rows: invalid JSON halts
+  after `tryJsonParse` and enters the rate-limit stage; `record.type ===
+  'external_event'` never reaches the rate-limit stage; malformed
+  `external_event_digest` with empty events returns `null`.
+- **Depends on**: PR 4 (same-file sequencing within the digest pass).
+
+---
+
+### PR 6 — `refactor(external-events): route deferred-text parsing through the pipeline`
+
+📌 pins + 🔧 apply — prod Δ ≲10, test Δ ≲200
+
+- **Scope**: same file — the body of `parseDeferredExternalEventText` becomes
+  the shell returning `.entry`; `parseDeferredDeliveryRow` unchanged; add the
+  decision-table pins of CURRENT precedence (JSON event → JSON digest →
+  rate-limit annotated/legacy/structured → `null`).
+- **Lands**: untrusted-text parsing runs as one pipeline with `!hasEntry`
+  halts; valid envelopes never fall through to the rate-limit parser.
+- **Excludes**: essence formatting (PR 7-9).
+- **Tests**: `deferred-event-digest.test.ts` — precedence decision table plus
+  the existing JSON event/digest and rate-limit rows as parity.
+- **Depends on**: PR 5.
+
+---
+
+### PR 7 — `test(external-events): pin essence formatting per eventType and topic suffix`
+
+📌 pins — prod Δ = 0, test Δ ≲350
+
+- **Scope**: expand
+  `packages/daemon/tests/unit/2-handlers/github/external-event-essence-contract.test.ts`
+  into a decision table of the CURRENT formatted output: every `eventType`
+  branch's field set, the mandatory `type: 'external_event'` discriminator and
+  base fields, the `.check_failed`/`.suite_failed` topic-suffix overrides
+  (reading `event.topic`), and round trips through
+  `parseDeferredExternalEventText`.
+- **Lands**: current essence output is fully pinned before any extraction.
+- **Excludes**: any production change.
+- **Tests**: the contract test file only.
+- **Depends on**: PR 6 (parse precedence pinned first so round-trip rows are
+  stable). Parallel-safe with everything outside `event-essence.ts`.
+- **Size guard**: if the table would exceed test Δ ≲350, split by dimension
+  family (eventType field-selection table vs topic-suffix + round-trip) before
+  opening — never truncate rows.
+
+---
+
+### PR 8 — `refactor(external-events): add essence formatting pipeline unwired`
+
+➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
+
+- **Scope**: `packages/daemon/src/lib/external-events/event-essence.ts` — add
+  `FormatExternalEventEssenceCtx` and the `format-external-event-essence`
+  transform: `buildBaseEssence` (the mandatory `type: 'external_event'`
+  discriminator plus `eventId`, `topic`, `eventType`, `action`, `actor`,
+  `repo`, `prNumber`, `prUrl`, `externalUrl`, `occurredAt`, `body`),
+  `decideFieldSet` (ordinary pure helper — never a `decisionRun`),
+  `copyCommonFields`, `copyEventTypeFields` (also reads `event.topic` for the
+  `.check_failed`/`.suite_failed` suffixes), `omitUndefinedAndStringify`
+  (`omitUndefinedExternalEventFields` + `JSON.stringify(..., null, 2)`).
+  UNWIRED: the export keeps its old body.
+- **Lands**: the formatting pipeline exists with per-stage tests; production
+  behavior unchanged.
+- **Excludes**: wiring (PR 9); key renames or `undefined`-omission changes
+  that would break the round trip.
+- **Tests**: add
+  `packages/daemon/tests/unit/1-core/external-events/event-essence-pipeline.test.ts`
+  with per-stage tests for `buildBaseEssence`, `decideFieldSet`, and
+  `omitUndefinedAndStringify`.
+- **Depends on**: PR 7.
+
+---
+
+### PR 9 — `refactor(external-events): route essence formatting through the pipeline`
+
+🔧 apply — prod Δ ≲15, test Δ ≲0 (PR 7 pins stay green)
+
+- **Scope**: same file — the body of `formatExternalEventEssence` becomes the
+  shell unwrapping `result!`; callers in `space-runtime.ts` and
+  `task-agent-manager.ts` are untouched.
+- **Lands**: essence formatting runs as one synchronous transform; the
+  contract pins are green unchanged.
+- **Excludes**: any edit under `packages/daemon/src/lib/space/`.
+- **Tests**: the expanded contract test, unchanged.
+- **Depends on**: PR 8.
+
+---
+
+### PR 10 — `refactor(external-events): compose subscription pattern via decisionRun`
+
+🔧 apply — prod Δ ≲110, test Δ ≲150 (the existing exhaustive suite is the pin)
+
+- **Scope**:
+  `packages/daemon/src/lib/external-events/github-subscription-pattern.ts` —
+  replace the body of `composeGitHubSubscriptionPattern` with the
+  `compose-github-subscription-pattern` `decisionRun`:
+  `gateSlashSeparatedAction`, `guardTooManySegments`, `guardFullyQualified`,
+  `guardOwnerRepoResourceAction`, `guardSourcePrefixedThreeSegments`,
+  `guardOwnerRepoThreeSegments`, `guardTwoSegments`, `guardOneSegment`, and
+  the always-`ok` `buildFallbackPattern` (catch-all `github/*/*/${topic}`);
+  the shell keeps the throw-on-error contract with identical messages;
+  `splitDottedGitHubResource`, `isGitHubEventResource`,
+  `thirdIsOwnerRepoResourceShape`, `ensureGitHubEntityAction`, and
+  `ensureGitHubEventResource` stay pure helpers. Single-function rewire — no
+  separate additive slice needed.
+- **Lands**: every invalid shape becomes an `invalid` decision that halts the
+  run; `long-horizon-subscription-pattern.ts` keeps catching the same thrown
+  errors.
+- **Excludes**: exposing a decision-shaped result to callers (open question 4
+  stays open); edits to `long-horizon-subscription-pattern.ts`.
+- **Tests**:
+  `packages/daemon/tests/unit/5-space/runtime/github-subscription-pattern.test.ts`
+  — keep as parity; add "first invalid gate halts" rows, a fallback-pattern
+  test, and stage-level tests for `guardFullyQualified` and the repo-resource
+  special cases (including an owner literally named `repo`).
+- **Depends on**: none. Parallel-safe leaf.
+
+---
+
+### PR 11 — `test(external-events): pin remote-hook validation failure modes`
+
+📌 pins — prod Δ = 0, test Δ ≲350
+
+- **Scope**: add
+  `packages/daemon/tests/unit/2-handlers/github/validate-remote-hook.test.ts`
+  characterizing the CURRENT behavior of the private `validateRemoteHook`
+  through its callers: `hook.active === false`, URL mismatch, content type not
+  `json`, missing required events, wildcard `events: ['*']`, and the valid
+  case; add `webhookLastError` string assertions per failure mode in
+  `github-event-extension.test.ts`.
+- **Lands**: the validation contract (including exact error strings) is pinned
+  before the rewrite.
+- **Excludes**: any production change.
+- **Depends on**: none. Parallel-safe leaf.
+- **Size guard**: if both files exceed test Δ ≲350 together, keep the unit
+  characterization file in this slice and move the `webhookLastError`
+  integration rows into PR 12 rather than truncating either.
+
+---
+
+### PR 12 — `refactor(external-events): validate remote hook via decisionRun`
+
+🔧 apply — prod Δ ≲110, test Δ ≲0 (PR 11 pins stay green)
+
+- **Scope**:
+  `packages/daemon/src/lib/external-events/github/github-event-extension.ts` —
+  convert the private `validateRemoteHook` to the
+  `validate-github-remote-hook` `decisionRun` with `gateHookActive`,
+  `gateWebhookUrlMatch`, `gateContentType`, `gateRequiredEvents`, and
+  `gateValid`; `missingRequiredEvents` and `isOnlyMissingEvents` remain pure
+  helpers (`isOnlyMissingEvents` unaltered); the shell preserves the
+  `string | null` contract used by `checkWebhook` (~lines 1874/1908) and
+  `reconcileSharedHook` (~line 2056); gates are exported for tests while
+  `validateRemoteHook` stays module-private. Single-function rewire.
+- **Lands**: hook validation is a precedence-ordered gate chain; stored
+  `webhookLastError` strings are preserved.
+- **Excludes**: normalizer work in the same file (PR 13-26); any
+  decision-shape contract change.
+- **Tests**: the PR 11 suite, green unchanged.
+- **Depends on**: PR 11.
+
+---
+
+### PR 13 — `test(external-events): pin webhook check/status normalization family`
+
+📌 pins — prod Δ = 0, test Δ ≲350
+
+- **Scope**: grow
+  `packages/daemon/tests/unit/2-handlers/github/github-normalizer.test.ts`
+  with characterization rows for the CI/status family of CURRENT normalizers:
+  `normalizeGitHubCheckRun` (including the rejection row: `action !==
+  'completed'` must return `null`), `normalizeGitHubCheckSuite`, and
+  `normalizeGitHubStatus`.
+- **Lands**: the check/status family — including rejection halts — is pinned
+  before any ingest pipeline exists.
+- **Excludes**: any production change; other kind families (PR 14-16).
+- **Tests**: `github-normalizer.test.ts` only.
+- **Depends on**: none. Parallel-safe with PR 1-12 and with PR 14-16.
+
+---
+
+### PR 14 — `test(external-events): pin webhook review/comment/PR normalization family`
+
+📌 pins — prod Δ = 0, test Δ ≲350
+
+- **Scope**: same test file — characterization rows for the review/comment/PR
+  family: `normalizeGitHubReview`, issue-comment-on-PR vs plain-issue
+  dispatch, review comment, review thread, `pull_request`, and `merge_group`
+  (a doc-named gap kind).
+- **Lands**: the review/comment/PR dispatch and output shapes are pinned.
+- **Excludes**: production changes; other families.
+- **Tests**: `github-normalizer.test.ts` only.
+- **Depends on**: none. Parallel-safe with PR 13/15/16.
+
+---
+
+### PR 15 — `test(external-events): pin webhook deployment/config normalization family`
+
+📌 pins — prod Δ = 0, test Δ ≲350
+
+- **Scope**: same test file — characterization rows for the
+  deployment/repo-config family: `normalizeGitHubDeployment`,
+  `normalizeGitHubDeploymentStatus` (a doc-named gap kind), and
+  `normalizeGitHubBranchProtectionRule` (including the branch-aware
+  `repo/<branch>.<action>` resource shape; a doc-named gap kind).
+- **Lands**: the deployment/config family — consumed directly by
+  `github-event-extension.ts` — is pinned.
+- **Excludes**: production changes; other families.
+- **Tests**: `github-normalizer.test.ts` only.
+- **Depends on**: none. Parallel-safe with PR 13/14/16.
+
+---
+
+### PR 16 — `test(external-events): pin polling-row normalization family`
+
+📌 pins — prod Δ = 0, test Δ ≲350
+
+- **Scope**: same test file — characterization rows for polling rows:
+  `normalizeGitHubPollingRow` per `endpointKey` (`issue_comments`,
+  `review_comments`, `pulls`), plus the polled kinds `normalizeGitHubReaction`
+  and `normalizeGitHubMergeConflict` (both doc-named gap kinds).
+- **Lands**: endpoint dispatch and polled-kind outputs are pinned before the
+  polling ingest pipeline exists.
+- **Excludes**: production changes; webhook families (PR 13-15).
+- **Tests**: `github-normalizer.test.ts` only.
+- **Depends on**: none. Parallel-safe with PR 13-15.
+
+---
+
+### PR 17 — `refactor(external-events): add normalizer outcome types and base snapshots`
+
+➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
+
+- **Scope**:
+  `packages/daemon/src/lib/external-events/github/github-normalizer.ts` — add
+  the `NormalizedOutcome` terminal, the `GitHubWebhookDispatchCtx`/`WebhookBase`
+  types (and the polling counterpart `PollingBase`), and extract the
+  `WebhookBase`/`PollingBase` snapshot helpers (shared
+  repo/sender/`occurredAt`/`deliveryId`/`rawPayload` extraction) as pure
+  functions. UNWIRED: no pipeline consumes them yet; no behavior change.
+- **Lands**: the shared scaffolding exists with snapshot-helper unit tests,
+  ready for both ingest pipelines.
+- **Excludes**: the ingest pipelines (PR 18+); edits to callers.
+- **Tests**: `github-normalizer.test.ts` — snapshot-helper unit tests.
+- **Depends on**: PR 13-16 (pins before extraction).
+
+---
+
+### PR 18 — `refactor(external-events): add github webhook ingest skeleton with dispatch stages`
+
+➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
+
+- **Scope**: same file — add the `ingest-github-webhook` raw superpipe
+  skeleton: the initial `snapshotBase` stage filling `WebhookBase`, then the
+  inline self-guarding dispatch stages (`stageCheckRun`, `stageCheckSuite`,
+  `stageBranchProtectionRule`, `stageMergeGroup`, `stageIssueComment` with the
+  issue-is-a-PR guard, `stagePullRequestReview`,
+  `stagePullRequestReviewComment`, `stagePullRequestReviewThread`,
+  `stagePullRequest`, `stageIgnoreUnknown` — first match wins, no separate
+  `decisionRun` dispatcher). Per-kind transforms initially delegate to the
+  existing per-kind exports. UNWIRED: `normalizeGitHubWebhook` keeps its old
+  body.
+- **Lands**: dispatch precedence is independently testable while production
+  behavior is unchanged.
+- **Excludes**: inline per-kind conversion (PR 19-21); wiring (PR 22).
+- **Tests**: add
+  `packages/daemon/tests/unit/2-handlers/github/github-normalizer-pipeline.test.ts`
+  — dispatch-order rows (e.g. `issue_comment` dispatches only when the issue
+  is a PR; unknown events leave `kind` unset so the shell returns `null`).
+- **Depends on**: PR 17.
+
+---
+
+### PR 19 — `refactor(external-events): inline check/status transforms in webhook ingest`
+
+➕ additive core — prod Δ ≲120 (move-heavy), test Δ ≲350
+
+- **Scope**: same file — convert the check/status family (`check_run`,
+  `check_suite`, `status`) from delegated exports into inline boxed-outcome
+  stages inside `ingest-github-webhook` (`guardRequiredShape` → `!isDone` →
+  `extractPrimaryFields` → `!isDone` → `extractPayload` →
+  `assembleNormalizedEvent`); guards that reject set
+  `outcome = { status: 'rejected' }`; the per-kind exports stay callable as
+  thin wrappers over their stage groups. Stages stay synchronous (no
+  `endAsync`) and never mutate `payload`. Still UNWIRED.
+- **Lands**: the CI kinds run as pipeline stages with first-class rejection
+  halts, verified against the PR 13 pins.
+- **Excludes**: other families (PR 20-21); wiring (PR 22).
+- **Tests**: `github-normalizer-pipeline.test.ts` — stage-order rows (e.g.
+  the `check_run` guard halts before payload parsing when
+  `action !== 'completed'`).
+- **Depends on**: PR 18, PR 13.
+- **Size guard**: prod Δ is move-heavy; if two kinds exceed the tier, split by
+  kind before opening.
+
+---
+
+### PR 20 — `refactor(external-events): inline review/comment/PR transforms in webhook ingest`
+
+➕ additive core — prod Δ ≲120 (move-heavy), test Δ ≲350
+
+- **Scope**: same file — inline the review/comment/PR family
+  (`pull_request_review`, review comment, review thread, issue-comment-on-PR,
+  `pull_request`, `merge_group`) into `ingest-github-webhook` using the same
+  boxed-outcome template; per-kind exports stay callable wrappers. Still
+  UNWIRED.
+- **Lands**: the review/comment/PR kinds run as stages, verified against the
+  PR 14 pins.
+- **Excludes**: other families; wiring (PR 22).
+- **Tests**: `github-normalizer-pipeline.test.ts` — stage rows for this
+  family.
+- **Depends on**: PR 18, PR 14.
+- **Size guard**: move-heavy; split by kind before opening if over tier.
+
+---
+
+### PR 21 — `refactor(external-events): inline deployment/config transforms in webhook ingest`
+
+➕ additive core — prod Δ ≲120 (move-heavy), test Δ ≲350
+
+- **Scope**: same file — inline the deployment/config family (`deployment`,
+  `deployment_status`, `branch_protection_rule` with its branch-aware
+  `repo/<branch>.<action>` resource) into `ingest-github-webhook`; per-kind
+  exports stay callable wrappers. Still UNWIRED.
+- **Lands**: the deployment/config kinds run as stages, verified against the
+  PR 15 pins; every webhook kind is now inline.
+- **Excludes**: wiring (PR 22); the polling pipeline (PR 23).
+- **Tests**: `github-normalizer-pipeline.test.ts` — stage rows for this
+  family, including the branch-protection resource shape.
+- **Depends on**: PR 18, PR 15.
+- **Size guard**: move-heavy; split by kind before opening if over tier.
+
+---
+
+### PR 22 — `refactor(external-events): route webhook normalization through ingest pipeline`
+
+🔧 apply — prod Δ ≲30, test Δ ≲0 (PR 13-21 pins stay green)
+
+- **Scope**: same file — the body of `normalizeGitHubWebhook` becomes the
+  thin shell seeding the ctx and unwrapping
+  `outcome.status === 'done' ? value : null`. ONE site wired;
+  `handleWebhook`, `handleStatusWebhook`, and `handleDeploymentWebhook` are
+  untouched, and every per-kind export remains callable as a wrapper over its
+  stage group.
+- **Lands**: webhook normalization (dispatch + per-kind transforms as stages
+  of one pipeline) is live; the full parity suite is green unchanged.
+- **Excludes**: `normalizeGitHubPollingRow` (PR 23-24); `toExternalEvent`
+  (PR 25); deleting wrappers or rewiring direct consumers (PR 26).
+- **Tests**: `github-normalizer.test.ts` and
+  `github-normalizer-pipeline.test.ts`, unchanged and green.
+- **Depends on**: PR 19, PR 20, PR 21.
+
+---
+
+### PR 23 — `refactor(external-events): add github polling ingest pipeline unwired`
+
+➕ additive core — prod Δ ≲150 (types-dominated), test Δ ≲350
+
+- **Scope**: same file — add the `ingest-github-polling-row` pipeline: the
+  `PollingBase` snapshot (PR 17) and dispatch stages keyed on `endpointKey`
+  (`issue_comments`, `review_comments`, `pulls`, etc.) with the
+  endpoint-specific transform stages inline under the same boxed-outcome
+  template (including the polled check-run, status, deployment,
+  deployment-status, merge-conflict, review, and reaction kinds). UNWIRED:
+  `normalizeGitHubPollingRow` keeps its old body; per-kind exports stay
+  callable.
+- **Lands**: the polling ingest pipeline exists with endpoint dispatch-order
+  and rejection-halt tests, verified against the PR 16 pins; production
+  behavior unchanged.
+- **Excludes**: wiring (PR 24); consumer rewiring (PR 26).
+- **Tests**: extend `github-normalizer-pipeline.test.ts` with endpoint
+  dispatch-order and rejection-halt rows; `github-normalizer.test.ts` parity
+  rows stay green.
+- **Depends on**: PR 17, PR 16, PR 22 (same-file sequencing after the webhook
+  pattern is live).
+- **Size guard**: if all endpoints exceed the prod tier, split by endpoint
+  family (comment endpoints vs `pulls` vs remaining kinds) before opening.
+
+---
+
+### PR 24 — `refactor(external-events): route polling normalization through ingest pipeline`
+
+🔧 apply — prod Δ ≲30, test Δ ≲0 (pins stay green)
+
+- **Scope**: same file — the body of `normalizeGitHubPollingRow` becomes the
+  thin shell over `ingest-github-polling-row`. ONE site wired; the polling
+  loops in `github-event-extension.ts` are untouched and the per-kind exports
+  they call remain callable wrappers.
+- **Lands**: both GitHub ingest paths (webhook and polling row) are single
+  pipelines; the parity suites are green unchanged.
+- **Excludes**: `toExternalEvent` (PR 25); deleting wrappers or rewiring
+  direct consumers (PR 26).
+- **Tests**: `github-normalizer.test.ts` and
+  `github-normalizer-pipeline.test.ts`, unchanged and green.
+- **Depends on**: PR 23.
+
+---
+
+### PR 25 — `refactor(external-events): project external events per space via superpipe transform`
+
+🔧 apply — prod Δ ≲110 (types-dominated transform + one-line shell), test Δ ≲0
+
+- **Scope**: same file — add the `project-external-event` raw transform
+  covering `canonicalizeRepo`, `selectTopicParts` (`mapEventType` stays a
+  lookup-table helper), `buildPayload`, and `assembleExternalEvent`
+  (`crypto.randomUUID()` only in the final stage — one fresh UUID per space),
+  and wire the exported `toExternalEvent(spaceId, event)` to wrap it. ONE
+  site wired; the `publishEvent` per-space call site is unchanged; the ingest
+  pipelines still end at `NormalizedGitHubEvent` — projection stages never
+  append to them. The transform is small enough to land wired rather than as
+  a separate additive slice.
+- **Lands**: the normalize-once / project-per-space boundary is explicit; each
+  watched space gets its own event id.
+- **Excludes**: optional `id` injection for tests (open question 6);
+  `publishEvent` logic; consumer rewiring (PR 26).
+- **Tests**:
+  `packages/daemon/tests/unit/2-handlers/github/external-event-essence-contract.test.ts`
+  — end-to-end `toExternalEvent` round trips, green.
+- **Depends on**: PR 22, PR 24 (`NormalizedGitHubEvent` stable; same-file
+  sequencing).
+
+---
+
+### PR 26 — `refactor(external-events): rewire per-kind normalizer consumers and drop legacy bodies`
+
+cleanup — prod Δ ≲200 net (deletions dominate), test Δ ≲0 (all pins stay green)
+
+- **Scope**:
+  `packages/daemon/src/lib/external-events/github/github-event-extension.ts`
+  — rewire the DIRECT per-kind consumers to the ingest pipelines:
+  `normalizeGitHubDeployment`/`normalizeGitHubDeploymentStatus` (~lines
+  825-834), `normalizeGitHubStatus` (~line 925), and the check-run,
+  merge-conflict, review, and reaction normalizers invoked from the polling
+  loops; then in `github-normalizer.ts` delete the old bodies/wrappers and
+  rename the pipeline runners to the original export names; update
+  `github/index.ts` so the public export surface is unchanged.
+- **Lands**: one composition boundary per business path with no duplicate
+  normalization paths; every per-kind export either remains callable or had
+  its consumers rewired in the same commit, per the site's review correction.
+- **Excludes**: behavior changes to webhook/polling processing;
+  `validateRemoteHook` (already landed in PR 12).
+- **Tests**: the full `github-normalizer.test.ts`,
+  `external-event-essence-contract.test.ts`, and
+  `github-normalizer-pipeline.test.ts` suites, plus
+  `github-event-extension` integration coverage for the deployment, status,
+  check-run, merge-conflict, review, and reaction event classes.
+- **Depends on**: PR 12 (same-file sequencing), PR 22, PR 24, PR 25.
+
 ## Open questions
 
 1. **Optional stage prefix `?dep` in raw superpipe**: The ADR mentions `?dep`

@@ -19,6 +19,12 @@ designs, shell/effect wiring, tests, risks, migration order, and open
 questions. Sites deliberately excluded from migration (state machines, folds,
 hot per-row paths) are listed in the inventory artifact, not here.
 
+Each plan also ends with a **Focused PR breakdown**: the slicing of that area
+into small, independently shippable implementation PRs (scope, tests, and
+dependencies per slice), following the standing budget of ≤ ~1.5k changed
+lines / ≤ 8 source files per PR — split further before opening rather than
+growing past budget mid-review.
+
 ## Composition rule (from review)
 
 Pipelines are composed per **complete business path**, not per helper

@@ -315,7 +315,7 @@ admission flag; the repo still decides when to allocate a consumed sequence.
    run vs ~75–194 ns for an if-cascade. For this site the neighbor cost is a
    SQLite INSERT, so the overhead should be well under 3%.
 
-7. **Lint/type check.** Run `bun run check` (or `bun run check:types`) from the
+7. **Lint/type check.** Run `bun run check` (or `bun run typecheck`) from the
    repo root. The file lives under `packages/daemon`, so it is covered by the
    daemon type/lint pass.
 
@@ -402,6 +402,132 @@ admission flag; the repo still decides when to allocate a consumed sequence.
    separate plan.
 5. **Read projections** — the storage survey already recommends keeping read
    projection row loops as plain function calls. Do not apply superpipe there.
+
+## Focused PR breakdown
+
+Budget rule (owner's PR-sizing decomposition playbook): production Δ ≲100 lines
+per slice — hard cap ~150 only for types-dominated additive cores — with test
+Δ ≲350 counted separately from production code. Pin slices split by dimension
+family, never by truncation. Every slice carries a phase label as its first
+line: 📌 pins (characterization of current behavior, prod Δ = 0) → ➕ additive
+core (pure module landed unwired) → 🔧 apply (wire call sites) → cleanup (small
+trailing slice); tiny phases may combine. Decompose at authoring time and split
+a slice further before opening it rather than growing a PR past budget
+mid-review; every slice leaves the repo compiling with tests green when it
+lands, and no slice folds in unrelated fixes. This single-site plan decomposes
+into four slices: two pin dimension families, the combined additive-plus-apply
+pipeline slice, and a trailing benchmark.
+
+### PR 1 — `test(storage): pin admission-flag matrix for decideMessageAdmission`
+
+📌 pins — prod Δ = 0, test Δ ≲350
+
+- **Scope**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
+  only (steps 1–2, flag dimension family). Add or confirm characterization
+  coverage for the admission-flag dimensions of `decideMessageAdmission`:
+  `sdk` / `user` / `hyperneo_action` variants; all five `SendStatus` values for
+  `user`; `sendStatus: null` for `sdk` and `hyperneo_action`; renderable vs
+  non-renderable user content (tool result); terminal `result` messages; hidden
+  subtypes (`task_started`, `thinking_tokens`, etc.); and the resulting
+  `isRenderable` / `isTerminal` / `isConversationAnchor` / `countsTowardsBadge`
+  values. Close the `isVisibleBadgeRow` null `sendStatus` default helper gap
+  (step 2) within the same dimension family.
+- **Lands**: The flag derivations of the current hand-rolled
+  `decideMessageAdmission` are pinned by a decision-table parity oracle before
+  any refactor touches production code.
+- **Excludes**: Identity/replacement-edge/normalization dimensions (PR 2), any
+  edit to `sdk-message-admission.ts` itself, the pipeline stages, and the
+  benchmark extension.
+- **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
+  (this slice is test-only).
+- **Depends on**: none.
+
+### PR 2 — `test(storage): pin identity and replacement-edge admission extraction`
+
+📌 pins — prod Δ = 0, test Δ ≲350
+
+- **Scope**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
+  only (steps 1–2, identity dimension family). Characterize the extraction
+  dimensions of `decideMessageAdmission`: assistant messages with
+  `parent_tool_use_id` (`parentToolUseId`), `sdkUuid` extraction, superseded and
+  retracted replacement edges including the `model_refusal_fallback` subtype
+  gate, and `HyperNeoActionMessage` normalization. Close the
+  `extractReplacementEdges` retraction-gate helper gap (step 2) and keep the
+  isolated helper tests for `computeIsRenderable`, `computeIsTerminal`,
+  `extractParentToolUseId`, `extractSdkUuid`, `extractReplacementEdges`, and
+  `isVisibleBadgeRow` green.
+- **Lands**: The extraction and normalization half of the admission record is
+  pinned alongside PR 1's flag family, completing the parity oracle with
+  production code still untouched.
+- **Excludes**: Flag-dimension cases (PR 1), any edit to
+  `sdk-message-admission.ts`, the pipeline stages, and the benchmark extension.
+- **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
+  (test-only).
+- **Depends on**: none (PR 1 touches the same file; land sequentially to avoid
+  same-file churn, not for correctness).
+
+### PR 3 — `refactor(storage): convert decideMessageAdmission to a raw superpipe pipeline`
+
+➕ additive core + 🔧 apply — prod Δ ≲100, test Δ ≲100
+
+- **Scope**: `packages/daemon/src/storage/repositories/sdk-message-admission.ts`
+  only (steps 3–4, verified by steps 5 and 7). Add the internal
+  `MessageAdmissionCtx` and the `MessageAdmissionInput` union without changing
+  exported public types; implement the six named stages
+  `extractMessageIdentity`, `computeRenderability`, `computeTerminal`,
+  `computeConversationAnchor`, `computeBadgeVisibility`, and `buildRecord`, each
+  reusing the existing pure helpers; register them on
+  `superpipe({})('sdk-message-admission')` with `.input(['ctx'])`,
+  `.pipe(fn, 'ctx', 'ctx')` threading, and `.end('record')`; and reduce
+  `decideMessageAdmission` to the two-argument wrapper
+  `messageAdmissionPipeline({ ...input, ...options })`, exporting
+  `runMessageAdmission` for stage-level tests per the open-questions
+  recommendation. The additive core and apply phases combine here because the
+  wrapper delegation is the only wiring — no external call site changes — and
+  the production delta stays within the types-dominated budget. Verify the
+  empty dependency object at implementation time (fallback:
+  `superpipe<Record<string, never>>({})` or a no-op dependency).
+- **Lands**: `decideMessageAdmission` returns the identical
+  `MessageAdmissionRecord` through the daemon's first raw P1 superpipe
+  pipeline; every caller keeps its signature and call site
+  (`sdk-message-repository.ts:521`, `:974`, `:1678`, plus
+  `sdk-message-badge.ts:planAdmissionBadgeUpdate`), `SendStatus` stays exported
+  for `sdk-message-status-plan.ts` and `delivery-status-routing.ts`, and
+  `bun run check` passes.
+- **Excludes**: Folding `normalizeMessageAdmissionInput` into the pipeline (open
+  question 1 keeps them separate); any `transformRun`-style combinator; changing
+  the two-argument public signature; tightening the `as` casts; moving
+  `consumed_seq`, `nextConsumedSeq`, or notification logic into the pipeline;
+  the benchmark extension (PR 4); and all later items in "Suggested migration
+  order" (message-search admission, `sdk-message-status-plan.ts`,
+  delivery-status routing, read projections).
+- **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
+  (PR 1 + PR 2 parity oracle, plus the optional
+  `describe('messageAdmissionPipeline')` stage-level block as this slice's only
+  test delta),
+  `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-save-admission-drift.test.ts`,
+  `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`,
+  and
+  `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository-live-query.test.ts` —
+  the latter three are pre-existing gates, re-run unchanged.
+- **Depends on**: PR 1, PR 2.
+
+### PR 4 — `test(storage): benchmark messageAdmissionPipeline overhead`
+
+**cleanup** (trailing measurement slice) — prod Δ = 0, benchmark-script Δ ≲150
+
+- **Scope**: `packages/daemon/scripts/benchmark/decision-pipeline.ts` only
+  (step 6, optional per the plan). Extend the benchmark to run the six-stage
+  `ctx -> ctx` pipeline over a representative message set against the
+  hand-rolled baseline, re-measuring this pipeline instead of reusing the ADR's
+  `decisionRun` numbers.
+- **Lands**: Measured per-run overhead for `messageAdmissionPipeline`,
+  confirming the expected ~2–3 µs range stays well under 3% of the neighboring
+  SQLite INSERT before the P1 pattern is copied to other sites.
+- **Excludes**: Any production-code change and any CI wiring for the benchmark.
+- **Tests**: `packages/daemon/scripts/benchmark/decision-pipeline.ts` itself,
+  run manually; no unit-test files change in this slice.
+- **Depends on**: PR 3.
 
 ## Open questions
 
