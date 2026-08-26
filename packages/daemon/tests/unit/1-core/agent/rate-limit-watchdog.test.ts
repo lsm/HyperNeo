@@ -1713,7 +1713,7 @@ describe('RateLimitWatchdog', () => {
       ).fireCooldownRetry('429');
 
       expect(retryCallback).not.toHaveBeenCalled();
-      expect(notifyResume).not.toHaveBeenCalled();
+      expect(notifyResume).toHaveBeenCalledTimes(1);
       watchdog.cancel();
     });
 

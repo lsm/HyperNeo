@@ -350,6 +350,14 @@ export class ModelSwitchHandler {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`Model switch failed:`, error);
 
+      if (querySuperseded()) {
+        logger.info(
+          'Model switch failure after commit with a replacement query owning the session; ' +
+            'keeping the committed configuration.'
+        );
+        return { success: true, model: session.config.model };
+      }
+
       session.config.model = previousModel;
       session.config.provider = originalProvider;
       session.acpSessionId = previousAcpSessionId;

@@ -453,8 +453,10 @@ export class RateLimitWatchdog {
       this.deps.getQueryGeneration() !== this.cooldownQueryGeneration
     ) {
       this.logger.info(
-        'Cooldown retry aborted at fire time: the originating query was superseded.'
+        'Cooldown retry aborted at fire time: the originating query was superseded. ' +
+          'Retiring its published pause.'
       );
+      this.notifyResume();
       return;
     }
     const entryGeneration = this.generation;
@@ -619,8 +621,8 @@ export class RateLimitWatchdog {
     }
     const canonical =
       (await this.deps.resolveModelId?.(entry.provider, entry.model)) ?? entry.model;
-    if (episodeGeneration !== this.generation) {
-      this.logger.info('Fallback re-entry aborted after canonical resolve (episode superseded).');
+    if (episodeGeneration !== this.generation || querySuperseded()) {
+      this.logger.info('Fallback re-entry aborted after canonical resolve (superseded).');
       return;
     }
     this.triedKeys.add(`${entry.provider}/${canonical}`);
