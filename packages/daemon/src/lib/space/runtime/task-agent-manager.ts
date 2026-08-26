@@ -2394,7 +2394,7 @@ export class TaskAgentManager {
       workspacePath: string | null;
     }
     await this.withSessionInjectLock(sessionId, async () => {
-      await stagedRun<SyncLiveWorkspaceState>(
+      const outcome = await stagedRun<SyncLiveWorkspaceState>(
         'sync-live-session-workspace',
         (s) => [
           s.snapshot({
@@ -2413,7 +2413,7 @@ export class TaskAgentManager {
           s.decide({
             name: 'sync-gates',
             reads: ['currentTask', 'workspacePath'],
-            branches: ['skip', 'perform'],
+            branches: ['skip', 'perform', 'reject'],
             run: (view) => {
               const currentTask = view.currentTask;
               const workspacePath = view.workspacePath!;
@@ -2422,20 +2422,19 @@ export class TaskAgentManager {
                 : null;
               const live = this.getSubSession(sessionId);
               let skipReason: string | null = null;
+              let rejectMessage: string | null = null;
               if (terminalStatus) skipReason = `task/run is terminal (${terminalStatus})`;
               else if (!live) skipReason = 'session is no longer live';
-              else if (currentTask.spaceId !== space.id)
-                skipReason = 'task belongs to another space';
-              else if (
-                currentTask.workflowRunId &&
-                currentTask.workflowRunId !== execution.workflowRunId
-              ) {
-                skipReason = `task moved to workflow run ${currentTask.workflowRunId}`;
+              else if (currentTask.spaceId !== space.id) {
+                rejectMessage = `Task ${currentTask.id} moved to space ${currentTask.spaceId}; refusing to sync live session ${sessionId} for space ${space.id}`;
+              } else if (currentTask.workflowRunId !== execution.workflowRunId) {
+                rejectMessage = `Task ${currentTask.id} is no longer attached to workflow run ${execution.workflowRunId} (now ${currentTask.workflowRunId ?? 'detached'}); refusing to reuse its live session ${sessionId}`;
               } else if (!workspacePath) skipReason = 'no workspace resolved';
               else if (live.getSessionData().workspacePath === workspacePath) {
                 skipReason = 'workspace already matches';
               }
-              const decision = { skipReason };
+              const decision = { skipReason, rejectMessage };
+              if (rejectMessage) return { decision, reject: true };
               return skipReason ? { decision, skip: true } : { decision, perform: true };
             },
           }),
@@ -2448,6 +2447,14 @@ export class TaskAgentManager {
                 `TaskAgentManager.syncLiveSessionWorkspace: skipping live session ${sessionId} — ${(view.decision as { skipReason: string }).skipReason}`
               );
               return { skipped: true };
+            },
+          }),
+          s.halt({
+            name: 'reject-sync',
+            when: 'reject',
+            reads: ['decision'],
+            run: (view) => {
+              throw new Error((view.decision as { rejectMessage: string }).rejectMessage);
             },
           }),
           s.effect({
@@ -2482,6 +2489,7 @@ export class TaskAgentManager {
         ],
         { input: ['sessionId', 'workspacePath'] }
       )({ sessionId, workspacePath: null });
+      if (outcome.status === 'error') throw outcome.error;
     });
   }
 
