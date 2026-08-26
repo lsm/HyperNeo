@@ -181,7 +181,14 @@ The repo already has several proven pipelines. Use these as the model for each s
   4. `effect` `supersede-stale-folds` calls `ops.supersedeStaleFolds(keepUuid)`.
   5. `effect` `save-fold-row` calls `saveFoldRowIdempotently` with deterministic
      UUID and stores its return via an EXTERNAL MUTABLE BOX (a
-     `SpawnAttemptBox`-style holder owned by the shell), followed by a
+     `SpawnAttemptBox`-style holder owned by the shell) ALLOCATED PER
+     INVOCATION — created inside the exported per-call shell and captured by
+     that invocation, NEVER at module/runner scope (review correction
+     PR #2983 round 3: a reusable `stagedRun` runner shares a module-scope
+     box, so two concurrent query flushes for different sessions overwrite
+     it between save and resnapshot and one session receives the other's
+     digest row and database ID — same discipline as the overflow fold's
+     envelope box), followed by a
      `resnapshot` stage that provides `saved` to later stages and the halt
      (review correction round 21: `stagedRun` invokes effects with
      `stripUnwind(view)` — a shallow copy — and merges only `$unwind`, so
@@ -268,13 +275,18 @@ The repo already has several proven pipelines. Use these as the model for each s
   6. Branch `missingWorkflow`/`emptyInstructions` → `effect` `clear-pending-state`, `halt`.
   7. Branch `proceed` → `effect` `reserve-dispatch` FIRST: an atomic
      `claimPostApprovalDispatch` CAS on the task (conditional update where
-     `status = 'approved'` AND `postApprovalSessionId` is either NULL or the
-     EXACT DEAD session ID observed by this snapshot's liveness probe —
+     `status = 'approved'` AND `postApprovalSessionId` is either NULL, the
+     EXACT DEAD session ID observed by this snapshot's liveness probe, or
+     backed by an EXPIRED reservation token —
      review correction: when a previous dispatch's session is present but
      dead, the current router deliberately falls through and spawns a
      replacement overwriting the stale ID; requiring `IS NULL` alone would
      make every such retry lose the CAS forever, so the claim atomically
-     clear-and-claims the stale ID. Add a dead-session replacement test) that stamps a
+     clear-and-claims the stale ID. Review correction PR #2983 round 3: a
+     process death between this reservation and the spawn/release leaves a
+     durable token no compensation ever releases, so an expired token is
+     likewise atomically takeable — only a LIVE token blocks. Add a
+     dead-session replacement test and an expired-token takeover test) that stamps a
      reservation (dispatch claim) BEFORE any session is spawned (review
      correction — resnapshot-after-spawn cannot prevent concurrent dispatch:
      two callers can both pass admission, spawn separate sessions, and only
@@ -383,7 +395,14 @@ The repo already has several proven pipelines. Use these as the model for each s
        resnapshot → reinject. Model it as an `inject-failed` branch (or an
        in-stage catch that diverts) so the flow continues into activation;
        pin it with a stale-live-session test.
-     - `activate`: `activateNode` — with an explicit CAUGHT-FAILURE branch
+     - `activate`: an AVAILABILITY GATE first (review correction PR #2983
+       round 3: when the resolved node has no live session and `activateNode`
+       is not configured, the current tool returns the specific
+       `activation_callback_missing` failure — `Node "<agent>" has no live
+       session and no activation callback is configured.` — without
+       attempting activation or queueing; the pipeline models this as a gate
+       branch with that exact response, never a call into an absent
+       dependency), then `activateNode` — with an explicit CAUGHT-FAILURE branch
        (review correction: when `activateNode` throws, or the refreshed
        session injection throws, the current tool catches the error, audits
        it, and returns a specific `{ success: false, error: ... }` result; an
@@ -511,9 +530,9 @@ The repo already has several proven pipelines. Use these as the model for each s
     task: SpaceTask | null;
   }
   ```
-- **Pure core design**: `decideTaskTargetResolution` with branches: `missingIdentifier`, `notFound`, `spaceMismatch`, `resolved`. Review correction: the node-agent `get_task` shell must MAP `spaceMismatch` to `notFound` (or normalize an out-of-space task to `null` before the decision) — the current handler deliberately masks a valid foreign-space task as the same `Task not found` response as an unknown UUID, and exposing `spaceMismatch` would reveal that the foreign task exists, changing the tool contract.
+- **Pure core design**: `decideTaskTargetResolution` with branches: `missingIdentifier`, `notFound`, `spaceMismatch`, `resolved`. Review correction: the node-agent `get_task` shell must MAP `spaceMismatch` to `notFound` (or normalize an out-of-space task to `null` before the decision) — the current handler deliberately masks a valid foreign-space task as the same `Task not found` response as an unknown UUID, and exposing `spaceMismatch` would reveal that the foreign task exists, changing the tool contract. Review correction PR #2983 round 3: `get_task_detail` masks the SAME way — its current `SpaceTaskManager.getTask`/`getTaskByNumber` lookups already normalize a foreign-space task to `null`, so the migrated shell maps `spaceMismatch` to the identical `Task not found` response (P10); only `list_task_members` keeps its existing explicit `does not belong to this space` mismatch response, which it emits today.
 - **Shell/effect wiring**:
-  - `get_task_detail` shell: runs the `decisionRun`, returns `jsonResult`.
+  - `get_task_detail` shell: runs the `decisionRun`, maps `spaceMismatch` to the same `Task not found` response as `notFound` (round-3 correction above), returns `jsonResult`.
   - `list_task_members`: ONE complete pipeline — shared target-resolution
     stages, then if
     `task.workflowRunId` is null returns `success: true, executions: []`
@@ -593,13 +612,19 @@ The repo already has several proven pipelines. Use these as the model for each s
     stages, then the selected `plan.action` mutation effects
     (`park_stopped`, `recover_transition`, `stop_for_status`, `set_status`,
     `fields_only`), the cascaded-task publications (today's
-    `onCascadedTasks` emissions), and the final `emitTaskUpdated` — all
+    `onCascadedTasks` emissions), and the final publication stage — all
     before its halt; `space-agent-tools.ts:update_task`'s imperative
     `switch` cascade after `decideUpdateTask` is deleted and the tool shell
     keeps only `jsonResult` mapping and audit. Merely aligning the existing
     admission runner's gate order would leave the tool operation split
     across the `decideUpdateTask` `decisionRun` and imperative shell
     effects — exactly the split the one-direct-pipeline rule forbids.
+    Review correction PR #2983 round 3: the final publication stage is
+    guarded by the routing action's `emitTaskUpdated` metadata
+    (`always`/`only_with_field_updates`/`never`) — the park/recover/stop
+    runtime methods already emit `space.task.updated` via `safeOnTaskUpdated`,
+    so an unconditional final emission duplicates the event and reruns
+    lifecycle subscribers.
 - **Shell/effect wiring**: The RPC handler's shell executes the selected branch:
   - `reject` → throw.
   - `park_stopped` → `spaceRuntimeService.parkStoppedWorkflowTask` then optional field update.
@@ -815,7 +840,15 @@ The repo already has several proven pipelines. Use these as the model for each s
       implementation catches creation failures at `goal-service.ts:445-461`
       and continues to record the outcome notification; an uncaught stage
       throw would abort and roll back the terminal bookkeeping transaction.
-      Keep the local catch/log boundary.
+      Keep the local catch/log boundary. Review correction PR #2983 round 3:
+      the stage ALSO retains the NESTED `db.transaction` savepoint the
+      current code wraps around `createImmediateTaskInternal`
+      (`goal-service.ts:446-454`) — calling the helper directly inside the
+      OUTER transaction means a mid-creation throw, though caught, has
+      already committed its partial task/goal writes into the outer
+      transaction, which can leave an orphan task or an inconsistent
+      active-task pointer; the savepoint rolls the failed creation back to
+      its pre-call state before the catch records the notification.
   13. `resnapshot` goal.
   14. `effect` `record-outcome-notification`.
   15. `halt` returns `{ goal, nextTask, terminalGeneration, notification }`.
@@ -938,7 +971,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 ### `packages/daemon/src/lib/space/runtime/activation-routing.ts:decideActivationRouting`
 
 - **Current summary**: Given existing execution facts and workflow resolvability, decides whether to reuse, reset, reject, spawn, or return empty.
-- **Proposed combinator**: Review correction round 20 — migrate the COMPLETE activation business path (`activateTargetSessionsForMessage`, which invokes the classifier three times around reset, workflow activation, resnapshot, and spawn effects) to ONE mixed/resnapshot pipeline; these classifications become its stages or plain helpers. Converting only the classifier into a standalone runner would execute a new pipeline three times while preserving the imperative outer cascade.
+- **Proposed combinator**: Review correction round 20 — migrate the COMPLETE activation business path (`activateTargetSessionsForMessage`, which invokes the classifier three times around resume/rehydration, reset, workflow activation, resnapshot, and spawn effects) to ONE mixed/resnapshot pipeline; these classifications become its stages or plain helpers. Converting only the classifier into a standalone runner would execute a new pipeline three times while preserving the imperative outer cascade. Review correction PR #2983 round 3: the effect inventory explicitly includes the leading `tryResumeNodeAgentSession` rehydration/pending-flush effect with a FRESH execution/liveness snapshot before classification, and the spawn stage keeps its bounded shape — the 30-second `unref`'ed timeout race with `clearTimeout` in `finally`, timeout and superseded spawn errors mapping to the logged benign empty result, other errors rethrown.
 - **Input snapshot design**:
   ```ts
   interface ActivationRoutingCtx {
@@ -954,7 +987,7 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring**: The caller (`TaskAgentManager` activation logic) interprets the decision and executes the chosen action.
 - **Step-by-step migration**:
   1. Create `packages/daemon/src/lib/space/runtime/activation-routing-pipeline.ts`.
-  2. Review correction round 21 — migrate the COMPLETE activation operation (`activateTargetSessionsForMessage`, which invokes this classification three times around reset, workflow activation, resnapshot, and spawn effects) to ONE mixed/resnapshot pipeline; these branches are its stages (not a standalone `activation-routing` `decisionRun`, which would execute three nested runners while leaving the imperative outer cascade intact).
+  2. Review correction round 21 — migrate the COMPLETE activation operation (`activateTargetSessionsForMessage`, which invokes this classification three times around resume/rehydration, reset, workflow activation, resnapshot, and spawn effects — see the round-3 note above) to ONE mixed/resnapshot pipeline; these branches are its stages (not a standalone `activation-routing` `decisionRun`, which would execute three nested runners while leaving the imperative outer cascade intact).
   3. Keep `decideActivationRouting` exported as the plain classification helper the complete activation pipeline's stages call.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts`.
 - **Risks/caveats**: The current `existing` fact object is normalized to `null`. Preserve that normalization in the pipeline's input snapshot.
@@ -1090,8 +1123,8 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P8 — `test(tools): pin task-lookup tool response contracts`
 
 - 📌 pins — prod Δ = 0, test Δ ≲200
-- **Scope**: Pin the response shapes of `get_task_detail`, `list_task_members` (including the no-workflow-run arm returning `success: true`, `executions: []`, the `task_id`, and the `This task has no associated workflow run.` message), and node-agent `get_task` — including its masking of a valid foreign-space task to the same `Task not found` response as an unknown UUID. Parallel-safe leaf.
-- **Lands**: the tool contracts the shared core must preserve (and the `spaceMismatch` mapping rule) are pinned.
+- **Scope**: Pin the response shapes of `get_task_detail`, `list_task_members` (including the no-workflow-run arm returning `success: true`, `executions: []`, the `task_id`, and the `This task has no associated workflow run.` message; and its explicit `does not belong to this space` mismatch response), and node-agent `get_task` — including the masking of a valid foreign-space task to the same `Task not found` response as an unknown UUID, which BOTH `get_task` and `get_task_detail` perform today (review correction PR #2983 round 3: `get_task_detail`'s `taskManager.getTask` normalizes a foreign-space task to `null`, so the migrated shell must keep mapping `spaceMismatch` to the identical masked response — only `list_task_members` exposes the explicit mismatch). Parallel-safe leaf.
+- **Lands**: the tool contracts the shared core must preserve (and the `spaceMismatch` mapping rules) are pinned.
 - **Excludes**: production changes.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`, `packages/daemon/tests/unit/5-space/agent/node-agent-tools.test.ts`.
 - **Depends on**: none.
@@ -1108,7 +1141,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P10 — `refactor(tools): run get_task_detail on task-target-resolution and list_task_members as a complete pipeline`
 
 - 🔧 apply — prod Δ ≲100, test Δ ≲150
-- **Scope**: In `packages/daemon/src/lib/space/tools/space-agent-tools.ts`: `get_task_detail` runs the P9 `decisionRun` and maps its decision to `jsonResult`; `list_task_members` composes the shared target-resolution gates INTO its ONE complete `list-task-members` pipeline, with the workflow-run branch (null run → `success: true, executions: []` plus the existing `task_id` and the `This task has no associated workflow run.` message) and the `nodeExecutionRepo.listByWorkflowRun` read as STAGES — no admission-only fragment with a shell-side execution read (review correction round 23).
+- **Scope**: In `packages/daemon/src/lib/space/tools/space-agent-tools.ts`: `get_task_detail` runs the P9 `decisionRun` and maps its decision to `jsonResult`, mapping `spaceMismatch` to the same masked `Task not found` response as `notFound` (review correction PR #2983 round 3 — the current `taskManager` lookup already normalizes foreign-space tasks to `null`; surfacing a distinct mismatch would reveal foreign-task existence); `list_task_members` composes the shared target-resolution gates INTO its ONE complete `list-task-members` pipeline, with its EXPLICIT mismatch response retained, the workflow-run branch (null run → `success: true, executions: []` plus the existing `task_id` and the `This task has no associated workflow run.` message) and the `nodeExecutionRepo.listByWorkflowRun` read as STAGES — no admission-only fragment with a shell-side execution read (review correction round 23).
 - **Lands**: both lookup tools share one admission core, and `list_task_members` is a single complete pipeline; P8 pins stay green.
 - **Excludes**: `send_message_to_task` (P55–P57) and the node-agent tool (P11).
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts` (missing identifier / not found / space mismatch rows).
@@ -1236,10 +1269,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P24 — `refactor(tools): run update_task as the tool's one complete pipeline`
 
 - 🔧 apply — prod Δ ≲100, test Δ ≸250
-- **Scope**: Review correction PR #2983 round 2 — REDEFINED from "align the admission runner's gate order": `space-tool-pipeline.ts` becomes the tool's COMPLETE update operation as ONE direct pipeline (autonomy gate → shared `routeTaskUpdate` predicates as early stages → the selected `plan.action` mutation effects `park_stopped`/`recover_transition`/`stop_for_status`/`set_status`/`fields_only` → the cascaded-task publications of today's `onCascadedTasks` emissions → the final `emitTaskUpdated`, all before its halt). `space-agent-tools.ts:update_task`'s imperative `switch` cascade after `decideUpdateTask` is deleted; the shell keeps `jsonResult` mapping and audit. Leaving the admission-only `decideUpdateTask` runner in place would keep the tool operation split across a `decisionRun` and imperative shell effects.
+- **Scope**: Review correction PR #2983 round 2 — REDEFINED from "align the admission runner's gate order": `space-tool-pipeline.ts` becomes the tool's COMPLETE update operation as ONE direct pipeline (autonomy gate → shared `routeTaskUpdate` predicates as early stages → the selected `plan.action` mutation effects `park_stopped`/`recover_transition`/`stop_for_status`/`set_status`/`fields_only` → the cascaded-task publications of today's `onCascadedTasks` emissions → the final publication stage, all before its halt). Review correction PR #2983 round 3: the final publication is NOT unconditional — it is guarded by the routing action's existing `emitTaskUpdated` metadata (`always` for `set_status`/`fields_only`, `only_with_field_updates` for `park_stopped`/`recover_transition`, `never` for `stop_for_status`), because the park/recover/stop runtime methods already publish `space.task.updated` via `safeOnTaskUpdated` themselves and an unconditional final stage would emit duplicate events and rerun lifecycle subscribers. `space-agent-tools.ts:update_task`'s imperative `switch` cascade after `decideUpdateTask` is deleted; the shell keeps `jsonResult` mapping and audit. Leaving the admission-only `decideUpdateTask` runner in place would keep the tool operation split across a `decisionRun` and imperative shell effects.
 - **Lands**: the tool's whole update operation is one named composition; tool and RPC share gate order, pinned by parity tests feeding the same `TaskUpdateRoutingInput` to both callers.
 - **Excludes**: publish/archive/approve flows.
-- **Tests**: `packages/daemon/tests/unit/5-space/tools/space-tool-pipeline.test.ts` parity rows plus per-`plan.action` effect/publication rows.
+- **Tests**: `packages/daemon/tests/unit/5-space/tools/space-tool-pipeline.test.ts` parity rows plus per-`plan.action` effect/publication rows, including the per-action emission-guard rows (no duplicate publication on park/recover/stop without field updates; none at all on `stop_for_status`).
 - **Depends on**: P23.
 
 **Phase 2 — staged effect flows with clear atomicity**
@@ -1420,10 +1453,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P44 — `feat(space): add claimPostApprovalDispatch reservation CAS primitive (unwired)`
 
 - ➕ additive core — prod Δ ≲80, test Δ ≲200
-- **Scope**: New task-repo primitive `claimPostApprovalDispatch`: a conditional update where `status = 'approved'` AND `postApprovalSessionId` is either NULL or the EXACT dead session ID observed by the caller's liveness probe (so dead-session retries do not lose the CAS forever); plus the conditional (token-scoped) release. Review correction (PR #2983): the reservation token must be stored in a SEPARATE durable field (e.g. `post_approval_dispatch_token` + expiry) with its schema migration — NEVER in `postApprovalSessionId`: a token stored there is observed by concurrent callers as a session with no live process, satisfies the "exact dead session ID" replacement condition, and lets the second caller overwrite the first claim and spawn a second session — the exact race this primitive closes. Reservation-form values are ineligible for dead-session replacement by construction.
+- **Scope**: New task-repo primitive `claimPostApprovalDispatch`: a conditional update where `status = 'approved'` AND the dispatch slot is claimable — `postApprovalSessionId` is NULL, OR it holds the EXACT dead session ID observed by the caller's liveness probe (so dead-session retries do not lose the CAS forever), OR any existing reservation token is EXPIRED (past its expiry timestamp — review correction PR #2983 round 3: a holder that dies between `reserve-dispatch` and spawn/release never runs its compensation, and the durable token stays; rejecting on any existing token leaves the approved task permanently blocked, while ignoring tokens entirely permits concurrent spawns, so an expired token must be ATOMICALLY replaceable by a fresh claim); plus the conditional (token-scoped) release. Review correction (PR #2983): the reservation token must be stored in a SEPARATE durable field (e.g. `post_approval_dispatch_token` + expiry) with its schema migration — NEVER in `postApprovalSessionId`: a token stored there is observed by concurrent callers as a session with no live process, satisfies the "exact dead session ID" replacement condition, and lets the second caller overwrite the first claim and spawn a second session — the exact race this primitive closes. Reservation-form values are ineligible for dead-session replacement by construction (only by expiry).
 - **Lands**: the reservation primitive the route pipeline requires exists and is tested in isolation.
 - **Excludes**: any caller.
-- **Tests**: CAS unit rows: win, lose, dead-ID clear-and-claim, token-scoped release, and a row proving a LIVE reservation token is NOT treated as a dead session ID (no replacement while the claim is in flight).
+- **Tests**: CAS unit rows: win, lose, dead-ID clear-and-claim, token-scoped release, a row proving a LIVE reservation token is NOT treated as a dead session ID (no replacement while the claim is in flight), and an EXPIRED-RESERVATION TAKEOVER row (a token past its expiry is atomically replaced by the new claim with no concurrent-spawn window — review correction PR #2983 round 3).
 - **Depends on**: P43.
 
 ### P45 — `feat(space): add post-approval route stages for admission and reservation (unwired)`
@@ -1456,34 +1489,34 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P48 — `test(space): pin activation routing classification`
 
 - 📌 pins — prod Δ = 0, test Δ ≲250
-- **Scope**: Pin `decideActivationRouting` in `packages/daemon/src/lib/space/runtime/activation-routing.ts`: `reuseInProgressOrBlocked` returns `reuse_existing` ONLY with a LIVE `agentSessionId` (dead `in_progress`/`blocked` executions must classify toward reset, not spawn); `rejectUndeclared`; `returnEmpty`; `spawn`; plus the caller's three invocation points around reset/activation/resnapshot/spawn. Parallel-safe leaf.
-- **Lands**: the classification table — including the dead-worker recovery row — is pinned before the operation migrates.
+- **Scope**: Pin `decideActivationRouting` in `packages/daemon/src/lib/space/runtime/activation-routing.ts`: `reuseInProgressOrBlocked` returns `reuse_existing` ONLY with a LIVE `agentSessionId` (dead `in_progress`/`blocked` executions must classify toward reset, not spawn); `rejectUndeclared`; `returnEmpty`; `spawn`; plus the caller's three invocation points around reset/activation/resnapshot/spawn. Review correction PR #2983 round 3 — ALSO pin the operation-level facts the complete pipeline must preserve: the operation AWAITS `tryResumeNodeAgentSession` FIRST (an indexed persisted session gets its pending messages flushed; an unindexed one is rehydrated) BEFORE the execution/liveness snapshot that feeds classification, so a restorable session classifies as reusable rather than dead; and the spawn arm races `spawnWorkflowNodeAgentForExecution` against a 30-second `unref`'ed timeout (`clearTimeout` in `finally`), mapping BOTH the timeout and a superseded spawn error to the benign empty result (logged), with other spawn errors rethrown. Parallel-safe leaf.
+- **Lands**: the classification table — including the dead-worker recovery row and the resume-first/timeout/supersession outcome rows — is pinned before the operation migrates.
 - **Excludes**: production changes.
-- **Tests**: `packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts`.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts` plus the activation-timeout/resume suites that exist today (retained verbatim by P50).
 - **Depends on**: none.
 
 ### P49 — `feat(space): add the complete activation operation pipeline (unwired)`
 
-- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲300
-- **Scope**: New `packages/daemon/src/lib/space/runtime/activation-routing-pipeline.ts` hosting the COMPLETE `activateTargetSessionsForMessage` operation as ONE mixed/resnapshot pipeline (reset, workflow activation, resnapshot, and spawn effects included); `decideActivationRouting` is RETAINED as the exported plain classification helper the pipeline's stages call (with the dead-worker `reset_pending_and_continue` behavior) — no standalone `activation-routing` `decisionRun` executing three nested runners. The normalized-to-`null` `existing` fact is preserved in the input snapshot.
+- ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≸300
+- **Scope**: New `packages/daemon/src/lib/space/runtime/activation-routing-pipeline.ts` hosting the COMPLETE `activateTargetSessionsForMessage` operation as ONE mixed/resnapshot pipeline. Review correction PR #2983 round 3 — the effect inventory is: (a) the RESUME/REHYDRATION effect first (`tryResumeNodeAgentSession`: flush pending messages for an indexed persisted session, or rehydrate the unindexed one) followed by a FRESH execution/liveness snapshot before any classification — omitting it lets a restorable session classify as dead, get reset, and be replaced by a duplicate spawn; (b) the reset CAS (`casExecutionStatus` to `pending`, superseded → benign empty), (c) workflow activation, (d) resnapshot, and (e) the BOUNDED spawn stage: race the spawn against the 30-second `unref`'ed timeout with `clearTimeout` in `finally`, map timeout AND superseded spawn errors to the logged benign empty result, rethrow other spawn errors — never an unqualified await. `decideActivationRouting` is RETAINED as the exported plain classification helper the pipeline's stages call (with the dead-worker `reset_pending_and_continue` behavior) — no standalone `activation-routing` `decisionRun` executing three nested runners. The normalized-to-`null` `existing` fact is preserved in the input snapshot.
 - **Lands**: the complete activation business path exists as one composition.
 - **Excludes**: `TaskAgentManager` wiring (P50); the `activateNode` effect inside `send_message_to_task` (P55–P57).
-- **Tests**: stage rows for reset/activation/spawn arms reusing the P48 table.
+- **Tests**: stage rows for reset/activation/spawn arms reusing the P48 table, plus rows for the resume-before-classification ordering and the timeout/supersession spawn outcomes.
 - **Depends on**: P48.
 
 ### P50 — `refactor(space): run activateTargetSessionsForMessage on its pipeline`
 
-- 🔧 apply — prod Δ ≲80, test Δ ≲150
-- **Scope**: `task-agent-manager.ts` activation logic delegates to the P49 pipeline; the imperative outer cascade is deleted.
+- 🔧 apply — prod Δ ≲80, test Δ ≸150
+- **Scope**: `task-agent-manager.ts` activation logic delegates to the P49 pipeline; the imperative outer cascade is deleted. Review correction PR #2983 round 3: the apply RETAINS the existing activation-timeout and resume/rehydration suites verbatim — they are the contract that the pipeline's bounded spawn and resume-first stages must keep satisfying.
 - **Lands**: activation is one named composition; the P48 pins stay green.
 - **Excludes**: direct-steer flush (already migrated — no slices; review correction PR #2983).
-- **Tests**: `packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts` extended to the wired operation.
+- **Tests**: `packages/daemon/tests/unit/5-space/runtime/activation-routing.test.ts` extended to the wired operation, plus the retained activation-timeout suite.
 - **Depends on**: P49.
 
 ### P51 — `test(goals): pin handleTaskTerminal contract`
 
 - 📌 pins — prod Δ = 0, test Δ ≲300
-- **Scope**: Pin `handleTaskTerminal` in `goal-service.ts`: foreign-space goal returns `null` before `runAtomic`; nonterminal transitions return the structured result (current goal, `nextTask: null`, `terminalGeneration`, `notification: null`); an existing `terminalGeneration` notification makes the retry return BEFORE clearing the active task or repeating any bookkeeping; Forge evidence capture and goal automation are best-effort with local catches; post-commit `emitTaskCreated`/`onOutcomeNotification` honoring `deferPostCommitEffects`. Parallel-safe leaf.
+- **Scope**: Pin `handleTaskTerminal` in `goal-service.ts`: foreign-space goal returns `null` before `runAtomic`; nonterminal transitions return the structured result (current goal, `nextTask: null`, `terminalGeneration`, `notification: null`); an existing `terminalGeneration` notification makes the retry return BEFORE clearing the active task or repeating any bookkeeping; Forge evidence capture and goal automation are best-effort with local catches; next-task creation runs inside its NESTED `db.transaction` savepoint, so a mid-creation failure rolls back its own partial writes while the notification is still recorded (review correction PR #2983 round 3); post-commit `emitTaskCreated`/`onOutcomeNotification` honoring `deferPostCommitEffects`. Parallel-safe leaf.
 - **Lands**: the most complex goal chain's contract is pinned.
 - **Excludes**: production changes.
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/space-goal-service.test.ts`, `packages/daemon/tests/unit/5-space/runtime/goal-outcome-wake-flip.test.ts`.
@@ -1492,10 +1525,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P52 — `feat(goals): add synchronous handleTaskTerminal pipeline core (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≲350
-- **Scope**: Direct sync `handleTaskTerminalRun` (`superpipe` + `.end`, synchronous effects, shaped to run inside `runAtomic` — never `stagedRun`): admission gates (missing task/goal halt; goal-space mismatch returns `null`; nonterminal stamps the structured result BEFORE halting); the PLAIN terminal-status check as the decide stage (NOT `decideReportableTerminal`, which is invoked only at the notification stage); `update-task` → resnapshot → `already-notified` halt → `clear-active-task`, `record-goal-event`, best-effort `capture-evidence`/`run-automation` (local catch boundaries retained), best-effort `create-next-task`, resnapshot, `record-outcome-notification`; state carries `deferPostCommitEffects`.
+- **Scope**: Direct sync `handleTaskTerminalRun` (`superpipe` + `.end`, synchronous effects, shaped to run inside `runAtomic` — never `stagedRun`): admission gates (missing task/goal halt; goal-space mismatch returns `null`; nonterminal stamps the structured result BEFORE halting); the PLAIN terminal-status check as the decide stage (NOT `decideReportableTerminal`, which is invoked only at the notification stage); `update-task` → resnapshot → `already-notified` halt → `clear-active-task`, `record-goal-event`, best-effort `capture-evidence`/`run-automation` (local catch boundaries retained), best-effort `create-next-task` INSIDE its existing NESTED `db.transaction` savepoint (review correction PR #2983 round 3: a caught failure without the savepoint still commits the creation's partial task/goal writes into the outer transaction — orphan task or inconsistent active-task pointer), resnapshot, `record-outcome-notification`; state carries `deferPostCommitEffects`.
 - **Lands**: the complete terminal bookkeeping chain exists as one sync composition.
 - **Excludes**: wiring inside `runAtomic` and the post-commit shell (P53); any `runAtomic` async conversion (off the table).
-- **Tests**: stage rows for every arm, the idempotent-retry halt, and the best-effort catch boundaries.
+- **Tests**: stage rows for every arm, the idempotent-retry halt, the best-effort catch boundaries, and a next-task savepoint row (a creation that throws mid-way leaves no partial task/goal writes behind).
 - **Depends on**: P51.
 
 ### P53 — `refactor(goals): run handleTaskTerminal on the sync atomic pipeline`
@@ -1510,7 +1543,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P54 — `test(tools): pin send_message_to_task delivery arms`
 
 - 📌 pins — prod Δ = 0, test Δ ≲350 (split by family: target-resolution arms vs delivery-mode arms)
-- **Scope**: Pin `send_message_to_task` in `space-agent-tools.ts`: target disambiguation (`task_id`/`task_number`), long-horizon handle resolution, worker activation, queue fallback, the stale-live-session `inject` throw falling through `activateNode` → reinject, the caught `activateNode` failure returning `{ success: false, error }`, and the `replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName)` entry worker replies depend on — INCLUDING that it is written only on the node-execution arms and NOT on the long-term `@handle`/`@role` arm, whose replies ride the envelope's `replyToSessionId`/`replyTargetHandle` instead (review correction PR #2983 round 2). Parallel-safe leaf.
+- **Scope**: Pin `send_message_to_task` in `space-agent-tools.ts`: target disambiguation (`task_id`/`task_number`), long-horizon handle resolution, worker activation, queue fallback, the stale-live-session `inject` throw falling through `activateNode` → reinject, the MISSING-ACTIVATION-CALLBACK arm (no live session and no `activateNode` configured → the specific `activation_callback_missing` failure with no activation attempt and no queueing — review correction PR #2983 round 3), the caught `activateNode` failure returning `{ success: false, error }`, and the `replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName)` entry worker replies depend on — INCLUDING that it is written only on the node-execution arms and NOT on the long-term `@handle`/`@role` arm, whose replies ride the envelope's `replyToSessionId`/`replyTargetHandle` instead (review correction PR #2983 round 2). Parallel-safe leaf.
 - **Lands**: every delivery arm — especially the reply-routing pin — is characterized before the cascade is replaced.
 - **Excludes**: production changes.
 - **Tests**: `packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts`.
@@ -1528,10 +1561,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P56 — `feat(tools): add deliver-task-message delivery-mode stages and compose the pipeline (unwired)`
 
 - ➕ additive core — prod Δ ≲150 (types/stage-dominated cap), test Δ ≸350
-- **Scope**: Remaining stages plus the single composed `deliver-task-message` pipeline (ONE pipeline — no nested `decisionRun`s): self-guarding delivery-mode gates (`injectLive`, `activateAndInject`, `queue`, `deliverLongTerm`, first match wins); guarded effect arms `deliverToSpaceAgent`, `injectLive` (a stale-live-session throw diverts into activation via an `inject-failed` branch or in-stage catch), `activate` with an explicit caught-failure branch, `resnapshot` after activation, `injectAfterActivation`, `queue`; `halt` returning `DeliverTaskMessageResult`. Activation is not compensable — current fallback semantics are preserved.
+- **Scope**: Remaining stages plus the single composed `deliver-task-message` pipeline (ONE pipeline — no nested `decisionRun`s): self-guarding delivery-mode gates (`injectLive`, `activateAndInject`, `queue`, `deliverLongTerm`, first match wins); guarded effect arms `deliverToSpaceAgent`, `injectLive` (a stale-live-session throw diverts into activation via an `inject-failed` branch or in-stage catch), an `activate` AVAILABILITY GATE (no live session AND no `activateNode` configured → the exact `activation_callback_missing` failure response, no activation attempt, no queueing — review correction PR #2983 round 3) ahead of the `activate` arm with its explicit caught-failure branch, `resnapshot` after activation, `injectAfterActivation`, `queue`; `halt` returning `DeliverTaskMessageResult`. Activation is not compensable — current fallback semantics are preserved.
 - **Lands**: the complete delivery pipeline exists unwired.
 - **Excludes**: folding `AgentMessageRouter` into the pipeline (long-term delivery keeps delegating); tool wiring (P57).
-- **Tests**: arm rows for inject/activate/queue fallback and the stale-live-session divert.
+- **Tests**: arm rows for inject/activate/queue fallback, the stale-live-session divert, and the missing-callback gate row.
 - **Depends on**: P55.
 
 ### P57 — `refactor(tools): run send_message_to_task on the deliver-task-message pipeline`
@@ -1555,10 +1588,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P59 — `feat(events): add fold-deferred-at-flush staged core (unwired)`
 
 - ➕ additive core — prod Δ ≲120, test Δ ≲250
-- **Scope**: `stagedRun('fold-deferred-at-flush')` with `FlushFoldState`: `partitionDeferredExternalEventRows` as the first decide stage (halts `no-fold` on empty `digestRows`); effects `supersede-stale-folds` → `save-fold-row` (idempotent, deterministic UUID, return stored via an EXTERNAL MUTABLE BOX followed by a `resnapshot` — `stagedRun` effects return only `void`/`won`/`superseded` and receive a shallow-copied view) → `mark-sources-superseded`; `halt` returns `DeferredEventDigestFlushResult`.
+- **Scope**: `stagedRun('fold-deferred-at-flush')` with `FlushFoldState`: `partitionDeferredExternalEventRows` as the first decide stage (halts `no-fold` on empty `digestRows`); effects `supersede-stale-folds` → `save-fold-row` (idempotent, deterministic UUID, return stored via an EXTERNAL MUTABLE BOX ALLOCATED PER INVOCATION — created inside the exported per-call shell, never module/runner scope, per review correction PR #2983 round 3 — followed by a `resnapshot` — `stagedRun` effects return only `void`/`won`/`superseded` and receive a shallow-copied view) → `mark-sources-superseded`; `halt` returns `DeferredEventDigestFlushResult`.
 - **Lands**: the flush fold exists as one staged composition.
 - **Excludes**: wiring (P60); the optional single `foldDeferredRows` repo primitive (open question 4).
-- **Tests**: staged rows — no digest rows, duplicate deterministic UUID, failure after save before mark.
+- **Tests**: staged rows — no digest rows, duplicate deterministic UUID, failure after save before mark, and an overlapping-flush row proving two concurrent invocations never cross-return each other's saved digest row through the box (review correction PR #2983 round 3).
 - **Depends on**: P58.
 
 ### P60 — `refactor(events): run flush folding on the staged pipeline`
