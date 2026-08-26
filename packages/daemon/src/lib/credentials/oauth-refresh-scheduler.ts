@@ -124,6 +124,12 @@ export class OAuthRefreshScheduler {
         persistenceFailed = true;
       }
       if (persistenceFailed) {
+        const onPreRecovery = this.onPreRecoveryInvalidate;
+        if (onPreRecovery) {
+          try {
+            await onPreRecovery(provider.id);
+          } catch {}
+        }
         const retries = (this.retryCounts.get(retryKey) ?? 0) + 1;
         this.retryCounts.set(retryKey, retries);
         if (retries >= this.maxRetries) {

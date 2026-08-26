@@ -608,7 +608,13 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         return { success: false, reason: 'superseded' };
       }
 
-      const truncated = persistLastGoodDiscoveredModels(providerRepo, currentRecord!, discovered);
+      let truncated = false;
+      try {
+        truncated = persistLastGoodDiscoveredModels(providerRepo, currentRecord!, discovered);
+      } catch (persistError) {
+        provider.clearModelCache?.();
+        throw persistError;
+      }
       const persistedConfig = {
         baseUrl: savedConfig.baseUrl,
         configJson: providerRepo.getProvider(request.id)?.configJson,
