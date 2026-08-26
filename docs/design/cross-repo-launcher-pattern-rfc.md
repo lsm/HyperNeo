@@ -278,15 +278,23 @@ gate's hold lifecycle):
   explicit exemption transparently usable through existing memory tools) **with an
   agent-facing read/write surface** is a **prerequisite enabler** of the launcher
   template slice — without the surface the template cannot follow its own safety
-  protocol — tracked in §7/§8; until it ships, only the zero-code instructions path is
+  protocol — tracked in §7/§8; its read/write surface must also support an
+  **idempotency key or a combined create-and-record operation**, since a standalone
+  gated task's ID exists only after `create_standalone_task` returns and a crash
+  between creating the task and persisting its identity would strand it untracked —
+  able to run under a stale contract when the dependency completes, and duplicated by
+  recovery; until it ships, only the zero-code instructions path is
   usable, with
   hold/cadence durability limited accordingly. Then
   pause — `pause_goal` only if B is active; an
   already-paused goal instead records the additional hold and marks that this sequence
-  does **not** own the pause. Ownership transfers: when every other recorded hold later
-  clears and a deferred hard gate is the sole remaining hold, it takes ownership and
-  creates its gated shape — otherwise deferral would deadlock the gate behind a
-  resolved hold. Then cancel what
+  does **not** own the pause. Ownership transfers between launcher holds: when the
+  owning hold resolves while other recorded launcher holds remain, it transfers pause
+  ownership to a surviving hold before deleting its own record — a sole remaining
+  deferred hard gate additionally takes ownership and creates its gated shape.
+  Otherwise the first hold's release leaves B paused under an ownerless pause that no
+  surviving hold may lift, or deadlocks a deferred gate behind a resolved hold. Then
+  cancel what
   the hold must stop: every active goal task for a judgment gate **or a hard gate**, and
   for a durable wait only dependency-sensitive ones (independent work may deliberately
   continue under the wait) — plus, for either hold, any tracked gated task (both gated shapes bypass
@@ -350,8 +358,12 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   outcome loop — nothing wakes the launcher when it finishes or fails (`space.task.updated`
   is not an LH wake source, and polling is forbidden), so the launcher must arm a durable
   reminder (`create_agent_reminder`, one-shot by construction) when the dependency can
-  release the task, and **re-arm after every nonterminal inspection** until the task
-  terminalizes — bounded, escalating to the human instead of re-arming forever. Prefer
+  release the task, and **arm the next one before each inspection** — arm-then-inspect,
+  not inspect-then-arm: a launcher turn or daemon death between reading the task and
+  re-arming would otherwise leave it terminal with no pending wake. A fired reminder is
+  consumed by arming the replacement; when the inspection finds a terminal state the
+  new reminder simply expires harmlessly. Bounded — escalate to the human instead of
+  re-arming forever. Prefer
   the Forge shape when the goal has a scope: its goal link produces a real outcome wake.
 - **Forge-proposal gated task** (atomic, goal-linked): when the dependent goal has a
   linked Forge scope (`create_forge_scope_from_goal`), `create_forge_task_proposal` →
@@ -368,7 +380,11 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   gated B task stays bound to the dead ID — a pre-start gated task is not even visibly
   blocked (it remains `open` but unschedulable, since only running dependents get
   `dependency_failed`). Rebind B with `update_task(depends_on=…)` when B is still
-  `open`/`blocked` — that path only reopens `blocked` dependency-reason tasks, so a
+  `open`/`blocked` — and rewrite the persisted contract to match: B's `nextSteps`
+  condition and its operational-store hold/gate record must name the replacement
+  prerequisite ID, since recovery deriving the gate from stale text keeps B paused or
+  escalates after the replacement already succeeded — that path only reopens `blocked`
+  dependency-reason tasks, so a
   **cascade-cancelled** B (A was cancelled) must instead be recreated. If the cancelled
   gated task had **started**, dispose its outcome notification first (an active-work
   cancellation produces one; a pre-start cancellation produces none — the
@@ -406,7 +422,7 @@ prompt-only, accepted deliberately (§7 records the revisit trigger).
 | Daemon restart mid-loop | Unconsumed notifications persist in the terminal transaction and are recovered at startup; an **acknowledged** notification is terminal and never redelivered — so a restart inside a multi-call sequence (acknowledge-then-cancel, acknowledge-then-trigger) loses the wake with work half-done | Arm a durable reminder **before the first cross-goal mutation** of any multi-call sequence — setup (pause/cancel/create-gate) as well as acknowledge-then-act loops: a pre-start cancellation produces no notification at all, so a restart after it leaves B paused with no pending wake. An interrupted loop then still wakes the launcher to re-derive state from goals and tasks; do not treat any multi-tool sequence as transactionally restart-safe |
 | A's task fails or blocks | Reportable-terminal outcome wake reaches launcher; the terminal seam has already cleared the goal's active-task pointer — unless `autoTriggerNext` had a queued successor, which is auto-created and claimed inside the terminal transaction (§4 disables this; reconcile through the drift sequence if found) | **Dispose the failed outcome first** — acknowledge it with the retry reason as its goal-state update — and inspect and cancel any workflow run the blocked transition left executing (the terminal seam clears the pointer without stopping the run; the old agents would otherwise mutate repo A concurrently with the retry), disposing the resulting outcome — then re-trigger: claiming the replacement task bumps the revision, so a review attempted after the trigger is rejected `stale_revision`. Re-trigger with `trigger_goal_task` (the goal-linked path that reclaims the pointer via CAS), at most twice with recorded reasons — **not** `retry_task`: it reopens the task without reclaiming the pointer, so a check-in or later trigger can start a concurrent task and break serial execution. Rebind any gated dependent task to the fresh prerequisite ID (§5). A retained check-in cadence follows the §6 rule — snapshotted to agent memory and cleared before triggering — and **stays cleared across the whole retry chain**, restored only after an outcome that will not be retried (the success, or exhaustion), since restoring between attempts exposes the empty pointer to a scheduled fire. On the exhaustion branch A's cadence is never restored. If retries are exhausted: (0) ensure A's goal is paused and its cadence left cleared **before** any teardown — A's pointer is empty and a firing check-in would launch a third attempt beyond the limit; (1) settle B's active task, drain its existing outcomes (reconciling a racing completion; anything still racing uses the stale-review resubmission path), then ensure B is paused (a hard gate will have paused it already, and `pauseGoal` accepts only active goals — an existing paused state satisfies this); (2) cancel B's active task (`cancel_workflow_run: true` where applicable) **and the tracked gated task** — a still-open gated task survives the pause and auto-starts if a human later retries A to `done`; (3) dispose every pending notification the cancellations produce — only **started** goal-linked cancellations yield one; a pre-start cancellation is administrative and yields none, so never wait for it; (4) record in `nextSteps` and escalate (below). (`reassign_task` is also currently inert — it ignores its assignment arguments.) |
 | Contract drift after B started | A's follow-up outcome wakes launcher; the revision gate protects **A's** rolling state only when the review carries a goal-state update (§4 requires one) | Validate A first, drain B's existing outcomes, then pause B, cancel its active **and tracked gated** tasks (`cancel_workflow_run: true` for workflow-backed ones), dispose all resulting notifications — consolidating concurrent cancellation outcomes into **one** update-bearing review (two sequential update-bearing claims make each other stale) — record the fresh contract, release per §4's hold-reason rules. Known limitation: the CAS does not extend to B — updating B goes through `update_goal`, which has no observed-revision parameter, so a concurrent human edit to B can be overwritten (last-writer-wins; §7) |
-| Deadlock (every goal waiting on another) | None — this is a judgment state | Doctrine: set an agent reminder (`create_agent_reminder`) **before** pausing — `pause_goal` also pauses the goal's check-in schedule, so check-ins cannot serve as the safety net while paused — then settle each affected goal's active tasks, drain their pending outcomes (reconciling completions racing the pause; anything still racing uses the stale-review resubmission path), **re-run the deadlock predicate** (a drained outcome may itself release a dependency and dissolve the cycle), and only if it still holds pause the goals and escalate to the human; never spin |
+| Deadlock (every goal waiting on another) | None — this is a judgment state | Doctrine: set an agent reminder (`create_agent_reminder`) **before** pausing — `pause_goal` also pauses the goal's check-in schedule, so check-ins cannot serve as the safety net while paused — then settle each affected goal's active tasks, drain their pending outcomes (reconciling completions racing the pause; anything still racing uses the stale-review resubmission path), **re-run the deadlock predicate** (a drained outcome may itself release a dependency and dissolve the cycle), and only if it still holds: persist a deadlock hold record (with ownership) per goal in the operational store, pause the goals, and escalate to the human — releasing later through the normal protocol; never spin |
 | Human decision needed | `send_session_message` to the Space chat / coordinator session (checks the **minimum of the Space and launcher-agent autonomy levels — both must be ≥4**; template creation assigns the template's suggested level capped by the creator's, so a fresh launcher can silently be below it); below that: durable high-priority draft task + the decision recorded in goal `nextSteps` | Escalate by pausing the blocked goals and stating the decision needed in one place; do not hold blocked work "in flight". Treat Space and launcher autonomy ≥4 as deployment prerequisites for the messaging path |
 
 Backoff policy: cross-goal re-evaluation rides the launcher's own reminders and the
