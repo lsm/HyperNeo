@@ -167,13 +167,17 @@ repository pipeline's `atomic` stage delegates to a transaction-owning
 repository primitive (`saveSDKMessageWithAdmission`, `saveUserMessageWithAdmission`,
 `saveHyperNeoActionMessageWithAdmission`); the `admit` stage's precomputed
 `admission` is passed to that primitive. `saveUserMessageCoreWithAdmission` is
-an in-transaction helper shared by the two user paths and called by the outbox
-inside its transaction. The public `saveUserMessageCore` stays a compatibility
-wrapper that calls `decideMessageAdmission` and then
-`saveUserMessageCoreWithAdmission`. `decideMessageAdmission` also stays a PLAIN
-EXPORTED HELPER (a leaf consumed by each save pipeline's admission stage, and
-directly by `sdk-message-badge.ts:planAdmissionBadgeUpdate` and the drift suite).
-A standalone admission-only pipeline invoked by imperative save shells would be
+an in-transaction helper shared by the two user paths.
+`saveSDKMessageWithAdmission`, `saveUserMessageWithAdmission`, and
+`saveHyperNeoActionMessageWithAdmission` are transaction-owning repository
+primitives; `persistAndEnqueueAdmittedUserMessage` is the transaction-owning
+outbox primitive; each `atomic` stage delegates to its primitive. The public
+`saveUserMessageCore` stays a compatibility wrapper that calls
+`decideMessageAdmission` and then `saveUserMessageCoreWithAdmission`.
+`decideMessageAdmission` also stays a PLAIN EXPORTED HELPER (a leaf consumed by
+each save pipeline's admission stage, and directly by
+`sdk-message-badge.ts:planAdmissionBadgeUpdate` and the drift suite). A
+standalone admission-only pipeline invoked by imperative save shells would be
 exactly the decision/effect split the composition rule forbids: the save
 method is the business path, so the pipeline owns it.
 
@@ -317,13 +321,12 @@ blanket best-effort catch:
 - `persistAndEnqueueDelivery` → `persist-and-enqueue-delivery`: snapshot →
   `validateMessageUuid` (the missing-UUID guard at `:40-42`) →
   `arbitrateDeliveryRole` (`planDeliveryRoleArbitration` and `basePayload`
-  construction at `:43-58`) → `admit` → `atomic` (the existing `:60-81`
-  `db.transaction(...)` body, calling the accessible
+  construction at `:43-58`) → `admit` → `atomic` (a new transaction-owning outbox
+  primitive `persistAndEnqueueAdmittedUserMessage` that wraps the existing
+  `:60-81` `db.transaction(...)` body, calling the accessible
   `saveUserMessageCoreWithAdmission` in-transaction helper and then
-  `jobQueue.enqueue` with the UNIQUE-conflict fallback; the outbox's `atomic`
-  stage is the transaction boundary because it must coordinate the repository
-  insert with the queue write) → `runPostSaveSideEffects` (`:84`, post-commit,
-  ignored by the existing empty `catch {}` at `:83-89`).
+  `jobQueue.enqueue` with the UNIQUE-conflict fallback) → `runPostSaveSideEffects`
+  (`:84`, post-commit, ignored by the existing empty `catch {}` at `:83-89`).
 - `saveHyperNeoActionMessage` → `save-hyperneo-action-message`: snapshot →
   `admit` (variant `hyperneo_action`, `sendStatus: null`) → `atomic` (a new
   transaction-owning repository primitive `saveHyperNeoActionMessageWithAdmission`
@@ -406,10 +409,10 @@ that stage's existing decision.
    - `saveUserMessage` → `saveUserMessageWithAdmission` (wraps
      `withBusyRetry(() => db.transaction(() => saveUserMessageCoreWithAdmission(...)))`
      and returns `{ id, countsTowardsBadge }`).
-   - `persistAndEnqueueDelivery` → its `atomic` stage is the existing
-     `db.transaction(...)` body calling `saveUserMessageCoreWithAdmission` then
-     `jobQueue.enqueue` (the outbox must own this transaction because it
-     coordinates the repository insert with the queue write).
+   - `persistAndEnqueueDelivery` → its `atomic` stage calls a new
+     transaction-owning outbox primitive `persistAndEnqueueAdmittedUserMessage`
+     that wraps the existing `db.transaction(...)` body calling
+     `saveUserMessageCoreWithAdmission` then `jobQueue.enqueue`.
    - `saveHyperNeoActionMessage` → `saveHyperNeoActionMessageWithAdmission`
      (wraps the existing `db.transaction(...)` body and returns the inserted
      row id).
@@ -538,11 +541,10 @@ that stage's existing decision.
 
 - **The `atomic` stage delegates to a repository/outbox primitive; it does not
   own the transaction.** ADR 0004 requires persistent effect stages to write
-  through repository primitives. `saveSDKMessageWithAdmission`,
-  `saveUserMessageWithAdmission`, and `saveHyperNeoActionMessageWithAdmission`
-  own their transactions; `persistAndEnqueueDelivery`'s `atomic` stage is the
-  outbox transaction because it must coordinate the repository insert with the
-  queue `enqueue`.
+  through transaction-owning primitives. `saveSDKMessageWithAdmission`,
+  `saveUserMessageWithAdmission`, `saveHyperNeoActionMessageWithAdmission`, and
+  `persistAndEnqueueDelivery`'s `persistAndEnqueueAdmittedUserMessage` each own
+  their transaction; the pipeline `atomic` stage is just a call to the primitive.
 
 - **Keep `withBusyRetry` around the transaction-owning primitive.**
   `saveSDKMessage` and `saveUserMessage` currently retry on `SQLITE_BUSY`
