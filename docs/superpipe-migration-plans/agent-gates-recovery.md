@@ -343,7 +343,12 @@ none of these sites needs its compensation machinery.
   submitted-message settlement stage (`agent-session.ts:2884-2905`) in its
   own coordinated-lock stage — settlement is NOT under reset coordination
   today, and the prefix is not literally "the same" as the standalone
-  variant's. The V2-flag predicate is shared. The
+  variant's — closing with the guarded summary-log stage
+  (`if (reEnqueued > 0 || settled > 0)` log at `:2906-2909`; review
+  correction PR #2981: it runs after both counts are known, inside the
+  pipeline — dropping it loses the operational signal, leaving it in the
+  caller keeps a decision-dependent effect outside the operation). The
+  V2-flag predicate is shared. The
   session-state update and settlement publication effect stages carry
   today's per-row failure containment (review correction PR #2981:
   `message-delivery.ts:221-225` and `agent-session.ts:2875-2879` catch each
@@ -843,7 +848,7 @@ none of these sites needs its compensation machinery.
   charging `retryCount`, scheduling cooldown, firing LLM refinement for
   ladder arms). Extracted as pure gates in #2779; pinned by
   `rate-limit-watchdog-gates.test.ts` + `rate-limit-watchdog.test.ts`.
-- **proposed combinator.** Review correction round 22 + PR #2981: the trip classification is helper/direct-stage logic of the ONE complete rate-limit scheduling pipeline covering the FULL `scheduleRetry` flow (initialization — cancel the cooldown timer, record the error/hint — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → `lastUserMessage` state write (`:152`, the value the cooldown timer's retry callback later reads at `:412`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording → chain resolution → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger; revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
+- **proposed combinator.** Review correction round 22 + PR #2981: the trip classification is helper/direct-stage logic of the ONE complete rate-limit scheduling pipeline covering the FULL `scheduleRetry` flow (initialization — cancel the cooldown timer, record the error/hint — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → `lastUserMessage` state write (`:152`, the value the cooldown timer's retry callback later reads at `:412`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording (generation fence `:168-173`) → chain resolution (fence `:178-183`) → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (fence before the immediate-fallback launch, `:206-211`; the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger; revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
 - **input/output snapshot design.**
   ```ts
   interface RateLimitTripCtx {
@@ -879,7 +884,12 @@ none of these sites needs its compensation machinery.
   model-ID resolution (`resolveModelId`) plus availability checks,
   `selectNextFallback` with its immediate-fallback arm and the
   canonical-key selector that lets `triedKeys` exclude the same physical
-  model under an alias (`:187-203`) —
+  model under an alias (`:187-203`) — with each of today's generation
+  fences carried in position (`:168-173` after current-model resolution,
+  `:178-183` after chain resolution, `:206-211` before the
+  immediate-fallback launch; review correction PR #2981: without them a
+  superseded invocation can add stale `triedKeys`, overwrite the new
+  episode's chain, or launch a fallback after cancellation) —
   `rate-limit-watchdog.ts:142-223`) FIRST, then the trip-classification
   gates plus generation revalidation (`:246-251`), retry charging,
   `scheduleCooldown`,
@@ -892,7 +902,9 @@ none of these sites needs its compensation machinery.
   scopes below compose exactly this full path.
 - **step-by-step migration.** 1) Gates + effect stages + complete
   scheduling pipeline covering the FULL flow — initialization and
-  no-user-message gate and the `lastUserMessage` write first, then the prefix (chain resolve → canonical
+  no-user-message gate and the `lastUserMessage` write first, then the
+  prefix (chain resolve with the generation fences `:168-173,178-183,206-211`
+  → canonical
   resolution → availability → fallback select), then cooldown
   classification as
   helper/direct stage logic with generation revalidation BEFORE retry
@@ -1144,7 +1156,9 @@ none of these sites needs its compensation machinery.
   PRs touching `sdk-message-handler.ts`). When it lands:
   `handleMessageYielded` replaces its probe chain with row snapshots →
   `decideYieldedAckRow` → per-arm interpretation. EVERY consumed arm —
-  enqueued, submitted, AND deferred (review correction) — publishes ALL
+  enqueued, submitted, AND deferred (review correction) — writes the
+  supplied `consumedAt` in the same transactional status-plus-timestamp
+  batch (`sdk-message-handler.ts:655-658,691-694`) and publishes ALL
   THREE events the current handler publishes after changing status:
   `state.sdkMessages.delta`, `sdk.message`, and the tool-result-consumed
   event; restricting SDK-delta publication to the deferred arm makes
@@ -1354,7 +1368,9 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   watchdog's collaborators and invokes the complete pipeline —
   initialization, the no-user-message gate, and the `lastUserMessage`
   write, chain
-  resolution, canonical resolution, availability, fallback selection,
+  resolution (each of today's generation fences carried in position —
+  `rate-limit-watchdog.ts:168-173,178-183,206-211`), canonical
+  resolution, availability, fallback selection,
   classification, generation revalidation, retry
   charging, `scheduleCooldown`, and LLM-refinement
   triggering all run as stages of the same operation; no imperative
@@ -1534,7 +1550,9 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `processingStatus`, so its busy-status admission stage runs); its
   selection/enqueue stages keep the `withSessionResetCoordination` envelope
   around the coordinated lock (`:2867-2883`, review correction PR #2981),
-  and the settlement stage keeps its own lock-only stage.
+  and the settlement stage keeps its own lock-only stage; the variant ends
+  with the guarded summary-log stage (`:2906-2909`) after both counts are
+  known.
 - **lands.** The duplicated three-check preamble is gone from both
   consumers.
 - **excludes.** Everything else in `agent-session.ts`.
@@ -1622,9 +1640,14 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   a DIRECT superpipe pipeline `tool-call-loop-admission` (review correction
   PR #2981: NOT `decisionRun` — it appends `!hasDecided` after every gate
   (`decision-pipeline.ts:14-16`), so the first gate to stamp a decision
-  would halt execution before the state-effect stages; place the first-match
-  `!decided` halts BETWEEN the decision gates only, so the guarded effects
-  below always run after classification) — `applyPreToolUseEventGate`,
+  would halt execution before the state-effect stages; the first-match
+  semantics come from IN-STAGE skip guards (`if (ctx.decision !== null)
+  return ctx;` at the top of each later decision gate), NOT from `!decided`
+  halts — ADR 0004 `!dep` terminates the run, so a halt between gates would
+  still keep the effect tail from running; with in-stage guards every gate
+  passes through and the guarded effects
+  below always run after classification, keyed on the stamped decision) —
+  `applyPreToolUseEventGate`,
   `applyDisabledGate` (`allow` + explicit `resetLedger`),
   `applyArgKeyStage`, `applyStreakAdvanceStage`, bash-guarded
   `applyBashRingStage`, delegating `applyBashDeadLoopGate` and
@@ -1913,7 +1936,15 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `packages/daemon/src/lib/agent/sdk-message-handler.ts:647-660`
   (`handleMessageYielded`): probe chain replaced by row snapshots →
   `decideYieldedAckRow` → per-arm interpretation where EVERY consumed arm —
-  enqueued, submitted, AND deferred — publishes all three events
+  enqueued, submitted, AND deferred — carries the supplied `consumedAt`
+  through the transactional status-plus-timestamp batch
+  (`withDbChangeBatch` writing `updateMessageStatus` AND
+  `updateMessageTimestamp(dbId, consumedAt)`,
+  `sdk-message-handler.ts:655-658,691-694`; review correction PR #2981:
+  the send-status tests assert that timestamp update — omitting it leaves
+  the persisted row at its enqueue time while the published replay carries
+  the later yield time, corrupting timestamp-ordered snapshots) and
+  publishes all three events
   (`state.sdkMessages.delta`, `sdk.message`, tool-result-consumed);
   consumption, ownership revalidation, and publications run as stages of the
   same operation, not an outer imperative handler cascade. The publication
