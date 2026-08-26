@@ -14,13 +14,20 @@ const gitMocks = vi.hoisted(() => {
   };
   return mocks;
 });
+const simpleGitCalls = vi.hoisted(() => ({ list: [] as unknown[][] }));
 const mockGitRaw = gitMocks.raw;
 const mockGitRevparse = gitMocks.revparse;
 const mockGitBranch = gitMocks.branch;
 
 vi.mock('simple-git', () => ({
-  default: () => gitMocks,
-  simpleGit: () => gitMocks,
+  default: (...args: unknown[]) => {
+    simpleGitCalls.list.push(args);
+    return gitMocks;
+  },
+  simpleGit: (...args: unknown[]) => {
+    simpleGitCalls.list.push(args);
+    return gitMocks;
+  },
 }));
 
 const fsOsMocks = vi.hoisted(() => ({
@@ -81,6 +88,7 @@ describe('WorktreeManager', () => {
   beforeEach(() => {
     manager = new WorktreeManager();
     existsSyncResults = new Map();
+    simpleGitCalls.list.length = 0;
 
     mockGitRaw.mockReset();
     mockGitRevparse.mockReset();
@@ -400,6 +408,36 @@ describe('WorktreeManager', () => {
       expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'session/session-123']);
     });
 
+    it('should give the LFS pull its own extended command timeout', async () => {
+      const shortKey = shortKeyFor('/test/repo');
+      existsSyncResults.set('/test/repo/.git', true);
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/.hyperneo-repo-root`,
+        true
+      );
+      existsSyncResults.set(`/home/testuser/.hyperneo/projects/${shortKey}/worktrees`, true);
+      existsSyncResults.set(
+        `/home/testuser/.hyperneo/projects/${shortKey}/worktrees/session-123`,
+        false
+      );
+      mockGitRevparse.mockResolvedValue('.git');
+      readFileSyncSpy.mockReturnValue('/test/repo' as any);
+
+      const result = await manager.createWorktree({
+        sessionId: 'session-123',
+        repoPath: '/test/repo',
+      });
+
+      expect(result?.worktreePath).toBeTruthy();
+      expect(
+        simpleGitCalls.list.some(
+          (args) =>
+            (args[1] as { timeout?: { block?: number } } | undefined)?.timeout?.block === 1_800_000
+        )
+      ).toBe(true);
+    });
+
     it('should fail worktree creation when LFS detection fails in an LFS-declaring repo', async () => {
       const shortKey = shortKeyFor('/test/repo');
       existsSyncResults.set('/test/repo/.git', true);
@@ -516,11 +554,18 @@ describe('WorktreeManager', () => {
           cb(
             null,
             args[0] === 'grep'
-              ? { stdout: 'asset.bin', stderr: '' }
-              : {
-                  stdout: `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234`,
-                  stderr: '',
-                }
+              ? { stdout: Buffer.from('asset.bin\0', 'binary'), stderr: '' }
+              : args[0] === 'ls-files'
+                ? {
+                    stdout: Buffer.from(`100644 ${'c'.repeat(64)} 0\tasset.bin\0`),
+                    stderr: '',
+                  }
+                : args[1] === '-s'
+                  ? { stdout: '40\n', stderr: '' }
+                  : {
+                      stdout: `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234`,
+                      stderr: '',
+                    }
           )
       );
       mockGitRaw.mockImplementation(async (args: string[]) => {
@@ -559,12 +604,19 @@ describe('WorktreeManager', () => {
           cb(
             null,
             args[0] === 'grep'
-              ? { stdout: 'docs/lfs.md', stderr: '' }
-              : {
-                  stdout:
-                    'See version https://git-lfs.github.com/spec/v1 for the pointer format used by LFS.',
-                  stderr: '',
-                }
+              ? { stdout: Buffer.from('docs/lfs.md\0', 'binary'), stderr: '' }
+              : args[0] === 'ls-files'
+                ? {
+                    stdout: Buffer.from(`100644 ${'c'.repeat(64)} 0\tdocs/lfs.md\0`),
+                    stderr: '',
+                  }
+                : args[1] === '-s'
+                  ? { stdout: '40\n', stderr: '' }
+                  : {
+                      stdout:
+                        'See version https://git-lfs.github.com/spec/v1 for the pointer format used by LFS.',
+                      stderr: '',
+                    }
           )
       );
       mockGitRaw.mockImplementation(async (args: string[]) => {
@@ -601,11 +653,18 @@ describe('WorktreeManager', () => {
           cb(
             null,
             args[0] === 'grep'
-              ? { stdout: 'fixture.bin', stderr: '' }
-              : {
-                  stdout: `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234\nThis file documents the pointer format.`,
-                  stderr: '',
-                }
+              ? { stdout: Buffer.from('fixture.bin\0', 'binary'), stderr: '' }
+              : args[0] === 'ls-files'
+                ? {
+                    stdout: Buffer.from(`100644 ${'c'.repeat(64)} 0\tfixture.bin\0`),
+                    stderr: '',
+                  }
+                : args[1] === '-s'
+                  ? { stdout: '40\n', stderr: '' }
+                  : {
+                      stdout: `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234\nThis file documents the pointer format.`,
+                      stderr: '',
+                    }
           )
       );
       mockGitRaw.mockImplementation(async (args: string[]) => {

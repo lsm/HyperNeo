@@ -1,6 +1,8 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { worktreeDeclaresLfsAttributes } from './worktree-lfs.ts';
 
+export const LFS_PULL_TIMEOUT_MS = 1_800_000;
+
 export interface WorktreeLfsHydrationDeps {
   listLfsTrackedFiles(): Promise<string>;
   listAttrLfsPaths(): Promise<string>;

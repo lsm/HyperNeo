@@ -16,11 +16,9 @@ import {
   LFS_ATTR_PATHSPEC,
   indexContainsLfsPointer,
 } from '../../worktree-lfs.ts';
-import { runWorktreeLfsHydration } from '../../worktree-lfs-hydration.ts';
+import { LFS_PULL_TIMEOUT_MS, runWorktreeLfsHydration } from '../../worktree-lfs-hydration.ts';
 
 const execFileAsync = promisify(execFile);
-
-const LFS_PULL_TIMEOUT_MS = 1_800_000;
 
 export interface SpaceWorktreeInfo {
   slug: string;

@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { dirname, join, normalize } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { LFS_ATTR_PATHSPEC, indexContainsLfsPointer } from './worktree-lfs.ts';
-import { runWorktreeLfsHydration } from './worktree-lfs-hydration.ts';
+import { LFS_PULL_TIMEOUT_MS, runWorktreeLfsHydration } from './worktree-lfs-hydration.ts';
 import type {
   WorktreeMetadata,
   CommitInfo,
@@ -776,7 +776,10 @@ export class WorktreeManager {
         await networkGit.raw(['submodule', 'update', '--init', '--recursive']);
         /* v8 ignore next 2 */
       } catch {}
-      await hydrateLfsObjects(networkGit, worktreePath);
+      const lfsPullGit = simpleGit(worktreePath, {
+        timeout: { block: LFS_PULL_TIMEOUT_MS },
+      }).env(buildGitSshEnv());
+      await hydrateLfsObjects(lfsPullGit, worktreePath);
 
       return {
         isWorktree: true,

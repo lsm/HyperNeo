@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 const LFS_POINTER_SIGNATURE = 'version https://git-lfs.github.com/spec/v1';
-const LFS_EXT_LINE_PATTERN = /^ext-(\d)-\w[\w.-]* sha256:[0-9a-f]{64}$/;
+const LFS_EXT_LINE_PATTERN = /^ext-(\d)-\w\S* sha256:[0-9a-f]{64}$/;
 const LFS_PROBE_TIMEOUT_MS = 60_000;
 
 export const GIT_PROBE_MAX_BUFFER_BYTES = 32 * 1024 * 1024;
@@ -31,10 +31,16 @@ function scanExtensionRun(
 }
 
 function isLfsPointerContent(content: string): boolean {
-  const lines = content
+  let lines = content
     .replace(/\r\n/g, '\n')
     .split('\n')
     .filter((line) => line !== '');
+  let start = 0;
+  while (start < lines.length && lines[start].trim() === '') start++;
+  let end = lines.length;
+  while (end > start && lines[end - 1].trim() === '') end--;
+  lines = lines.slice(start, end);
+  if (lines.length === 0) return false;
   const seenPriorities = new Set<number>();
 
   const beforeVersion = scanExtensionRun(lines, 0, seenPriorities);
@@ -56,22 +62,32 @@ function isLfsPointerContent(content: string): boolean {
   return beforeSize + 1 === lines.length;
 }
 
-function splitCandidatePaths(stdout: string | Buffer): string[] {
+function nulSeparatedSegments(stdout: string | Buffer): Buffer[] {
   const buf = typeof stdout === 'string' ? Buffer.from(stdout, 'utf8') : stdout;
-  const paths: string[] = [];
+  const segments: Buffer[] = [];
   let start = 0;
   for (let index = 0; index <= buf.length; index++) {
     if (index !== buf.length && buf[index] !== 0) continue;
-    if (index > start) {
-      const segment = buf.subarray(start, index);
-      const utf8 = segment.toString('utf8');
-      paths.push(utf8);
-      const raw = segment.toString('latin1');
-      if (raw !== utf8) paths.push(raw);
-    }
+    if (index > start) segments.push(buf.subarray(start, index));
     start = index + 1;
   }
-  return paths;
+  return segments;
+}
+
+function indexBlobOids(stdout: Buffer): Map<string, string[]> {
+  const oidsByPath: Map<string, string[]> = new Map();
+  for (const record of nulSeparatedSegments(stdout)) {
+    const tab = record.indexOf(9);
+    if (tab <= 0) continue;
+    const meta = record.subarray(0, tab).toString('utf8').split(' ');
+    const oid = meta[1];
+    if (!oid) continue;
+    const pathKey = record.subarray(tab + 1).toString('latin1');
+    const existing = oidsByPath.get(pathKey);
+    if (existing) existing.push(oid);
+    else oidsByPath.set(pathKey, [oid]);
+  }
+  return oidsByPath;
 }
 
 export async function indexContainsLfsPointer(
@@ -97,27 +113,37 @@ export async function indexContainsLfsPointer(
     if (code === 1) return false;
     throw err;
   }
-  for (const rel of splitCandidatePaths(candidates)) {
-    const spec = `:./${rel}`;
-    try {
-      const { stdout: sizeOut } = await execFileAsync('git', ['cat-file', '-s', spec], {
-        cwd,
-        encoding: 'utf8',
-        timeout: LFS_PROBE_TIMEOUT_MS,
-        env,
-        maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-      });
-      if (Number(sizeOut.trim()) > LFS_CANDIDATE_MAX_BYTES) continue;
-      const { stdout } = await execFileAsync('git', ['show', spec], {
-        cwd,
-        encoding: 'utf8',
-        timeout: LFS_PROBE_TIMEOUT_MS,
-        env,
-        maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-      });
-      if (isLfsPointerContent(stdout)) return true;
-    } catch {
-      continue;
+  const { stdout: indexOut } = await execFileAsync('git', ['ls-files', '-z', '-s'], {
+    cwd,
+    encoding: 'buffer',
+    timeout: LFS_PROBE_TIMEOUT_MS,
+    env,
+    maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+  });
+  const oidsByPath = indexBlobOids(indexOut);
+  for (const segment of nulSeparatedSegments(candidates)) {
+    const oids = [...new Set(oidsByPath.get(segment.toString('latin1')) ?? [])];
+    for (const oid of oids) {
+      try {
+        const { stdout: sizeOut } = await execFileAsync('git', ['cat-file', '-s', oid], {
+          cwd,
+          encoding: 'utf8',
+          timeout: LFS_PROBE_TIMEOUT_MS,
+          env,
+          maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+        });
+        if (Number(sizeOut.trim()) > LFS_CANDIDATE_MAX_BYTES) continue;
+        const { stdout } = await execFileAsync('git', ['show', oid], {
+          cwd,
+          encoding: 'utf8',
+          timeout: LFS_PROBE_TIMEOUT_MS,
+          env,
+          maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
+        });
+        if (isLfsPointerContent(stdout)) return true;
+      } catch {
+        continue;
+      }
     }
   }
   return false;
