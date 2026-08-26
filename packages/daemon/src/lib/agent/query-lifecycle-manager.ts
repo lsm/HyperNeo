@@ -586,7 +586,7 @@ export class QueryLifecycleManager {
     messageId: string,
     messageContent: string | MessageContent[],
     episodeGeneration?: number,
-    options?: { prepend?: boolean }
+    options?: { prepend?: boolean; queryGeneration?: number }
   ): Promise<void> {
     const { session, messageQueue, stateManager, internalEventBus } = this.ctx;
 
@@ -651,6 +651,17 @@ export class QueryLifecycleManager {
     }
 
     await stateManager.setQueued(messageId);
+
+    if (
+      options?.queryGeneration !== undefined &&
+      this.ctx.getQueryGeneration?.() !== options.queryGeneration
+    ) {
+      messageQueue.remove(messageId);
+      this.logger.info(
+        `startQueryAndEnqueue: aborted re-enqueue of ${messageId} (the originating query was superseded).`
+      );
+      return;
+    }
 
     try {
       void messageQueue

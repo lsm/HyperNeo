@@ -793,7 +793,7 @@ export class AgentSession
     messageId: string,
     messageContent: string | MessageContent[],
     episodeGeneration?: number,
-    options?: { prepend?: boolean }
+    options?: { prepend?: boolean; queryGeneration?: number }
   ): Promise<void> {
     if (episodeGeneration === undefined) {
       this.rateLimitWatchdog.cancel();
@@ -1083,7 +1083,7 @@ export class AgentSession
         lastUserMessage.uuid,
         lastUserMessage.content,
         episodeGeneration,
-        { prepend: true }
+        { prepend: true, queryGeneration }
       );
       return true;
     } catch (error) {

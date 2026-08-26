@@ -530,7 +530,10 @@ export class RateLimitWatchdog {
       this.deps.getQueryGeneration != null &&
       this.deps.getQueryGeneration() !== queryGeneration;
     if (querySupersededAfterCallback) {
-      this.logger.info('Cooldown retry failed but the originating query was superseded; aborting.');
+      this.logger.info(
+        'Cooldown retry failed but the originating query was superseded; retiring its pause.'
+      );
+      this.notifyResume();
       return;
     }
 

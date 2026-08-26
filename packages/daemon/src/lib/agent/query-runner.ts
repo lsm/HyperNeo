@@ -1270,6 +1270,7 @@ export class QueryRunner {
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
       if (!isStaleQuery) {
+        const queryPromiseBeforeFinalizerIdle = this.ctx.queryPromise;
         const timer = this.ctx.startupTimeoutTimer;
         if (timer) {
           clearTimeout(timer);
@@ -1304,7 +1305,6 @@ export class QueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
-        const queryPromiseBeforeFinalizerIdle = this.ctx.queryPromise;
         if (
           this.ctx.getQueryGeneration() === queryGeneration &&
           this.ctx.queryAbortController === runAbortController &&
