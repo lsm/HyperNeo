@@ -4978,7 +4978,7 @@ export class SpaceRuntime {
         spaceChatSessionId: `space:chat:${run.spaceId}`,
         resolveReplySession: (row) => extractReplyToSessionId(formatPendingRowForSpaceAgent(row)),
         probeDeliveryStatus: (sessionId, messageId) =>
-          this.sdkMessageRepo?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+          this.getSdkMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus,
       }),
     });
     const hasQueuedNodeHandoff =
@@ -6670,7 +6670,7 @@ export class SpaceRuntime {
         spaceChatSessionId: `space:chat:${run.spaceId}`,
         resolveReplySession: (row) => extractReplyToSessionId(formatPendingRowForSpaceAgent(row)),
         probeDeliveryStatus: (sessionId, messageId) =>
-          this.sdkMessageRepo?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+          this.getSdkMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus,
       })
     );
     const pending = repo.listPendingForRun(runId).filter((row) => row.targetKind === 'node_agent');

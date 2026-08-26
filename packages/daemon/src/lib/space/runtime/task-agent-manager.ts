@@ -1530,8 +1530,10 @@ export class TaskAgentManager {
         if (outcome.state === 'delivered') {
           settleDelivered(outcome.sessionId);
         } else if (outcome.state === 'failed') {
-          log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}`);
-          repo.markAttemptFailed(row.id, outcome.error);
+          log.warn(
+            `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}; ` +
+              `the attempt is charged at the next drain's reconciliation`
+          );
         } else {
           repo.deferExpiration([row.id]);
           log.info(

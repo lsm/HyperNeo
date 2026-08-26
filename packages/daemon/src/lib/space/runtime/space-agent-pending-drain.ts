@@ -2,6 +2,8 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
 
+const LATE_DEAD_LETTER_ERROR = 'late delivery dead-lettered';
+
 export type SpaceAgentPendingDrainOutcome =
   | { action: 'skip' }
   | { action: 'drain'; rows: PendingAgentMessageRecord[] };
@@ -12,6 +14,7 @@ export interface SpaceAgentPendingDrainDeps {
     listByRunAndStatus?(workflowRunId: string, status: string): PendingAgentMessageRecord[];
     getById(id: string): { status: string } | null | undefined;
     markDelivered(id: string, sessionId: string): void;
+    markAttemptFailed(id: string, error: string): unknown;
     deferExpiration(ids: string[], ttlMs?: number): void;
     enforceRetention(options: { runId?: string | null; excludeIds?: string[] }): unknown;
     expireStale(runId: string, excludeIds?: string[]): unknown;
@@ -44,6 +47,7 @@ function listRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
 function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const settledIds = new Set<string>();
   const activeDeliveryIds: string[] = [];
+  const lateDeadLetterIds = new Set<string>();
   for (const row of ctx.listedRows ?? []) {
     if (settledIds.has(row.id)) continue;
     const replyTo = ctx.deps.resolveReplySession(row);
@@ -58,17 +62,27 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
         consumedAt = sessionId;
         break;
       }
+      let failedSeen = false;
+      if (sendStatus === 'failed') failedSeen = true;
       if (
         (sendStatus === 'enqueued' || sendStatus === 'submitted') &&
         !activeDeliveryIds.includes(row.id)
       ) {
         activeDeliveryIds.push(row.id);
       }
+      if (failedSeen) lateDeadLetterIds.add(row.id);
     }
     if (consumedAt) {
       if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
         ctx.deps.repo.markDelivered(row.id, consumedAt);
         ctx.deps.onSettled(row, consumedAt);
+      }
+      settledIds.add(row.id);
+      continue;
+    }
+    if (lateDeadLetterIds.has(row.id)) {
+      if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
+        ctx.deps.repo.markAttemptFailed(row.id, LATE_DEAD_LETTER_ERROR);
       }
       settledIds.add(row.id);
       continue;
