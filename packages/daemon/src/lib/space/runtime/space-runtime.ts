@@ -124,6 +124,7 @@ import {
 } from './external-event-delivery-pipeline.ts';
 import {
   deliverImmediateEvent,
+  IMMEDIATE_EVENT_MESSAGE_UUID_PREFIX,
   type ImmediateEventDeliveryDeps,
 } from './immediate-event-delivery-pipeline.ts';
 import {
@@ -1950,26 +1951,40 @@ export class SpaceRuntime {
     const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
     if (run && this.pausedSpaceIds.has(run.spaceId)) return null;
     const messages = this.getSdkMessageRepo();
-    const durableEventIds = new Set(
+    const legacyDurableEventIds = new Set(
       [
         ...messages.getUserMessagesByStatus(sessionId, 'deferred').messages,
         ...messages.getUserMessagesByStatus(sessionId, 'enqueued').messages,
+        ...messages.getUserMessagesByStatus(sessionId, 'submitted').messages,
+        ...messages.listUserMessagesByUuidPrefix(sessionId, IMMEDIATE_EVENT_MESSAGE_UUID_PREFIX),
       ]
         .map((row) => parseDeferredDeliveryRow(row))
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
         .flatMap((entry) => deferredExternalEventEntryEvents(entry).map((event) => event.eventId))
     );
+    const digestMemberships: Array<Set<string>> = [];
+    const digestMembershipEventIds = new Set<string>();
     for (const row of messages.listUserMessagesByUuidPrefix(
       sessionId,
       DETERMINISTIC_DIGEST_UUID_PREFIX
     )) {
       const membership = (row as { externalEventIds?: unknown }).externalEventIds;
-      if (Array.isArray(membership)) {
-        for (const eventId of membership) {
-          if (typeof eventId === 'string') durableEventIds.add(eventId);
-        }
-      }
+      if (!Array.isArray(membership) || membership.length === 0) continue;
+      const ids = new Set(membership.filter((id): id is string => typeof id === 'string'));
+      digestMemberships.push(ids);
+      for (const eventId of ids) digestMembershipEventIds.add(eventId);
     }
+    const pendingEventIdSet = new Set(
+      scopedPending()
+        .filter((row) => store.getById(row.eventId) !== null)
+        .map((row) => row.eventId)
+    );
+    const replayable =
+      pendingEventIdSet.size > 0 &&
+      digestMemberships.some(
+        (ids) =>
+          ids.size === pendingEventIdSet.size && [...ids].every((id) => pendingEventIdSet.has(id))
+      );
     const claimedRows: ExternalEventDeliveryRecord[] = [];
     for (const row of scopedPending()) {
       if (claimedRows.length >= TURN_END_DIGEST_PENDING_ROW_CAP) break;
@@ -1979,7 +1994,8 @@ export class SpaceRuntime {
       ) {
         continue;
       }
-      if (durableEventIds.has(row.eventId)) continue;
+      if (legacyDurableEventIds.has(row.eventId)) continue;
+      if (!replayable && digestMembershipEventIds.has(row.eventId)) continue;
       const record = store.getById(row.eventId);
       if (
         record &&
@@ -2043,13 +2059,11 @@ export class SpaceRuntime {
         return true;
       },
       markDeliveriesDelivered: (marks) => {
-        this.config.db.transaction(() => {
-          for (const mark of marks) {
-            store.markDeliveryDelivered(mark.eventId, mark.deliveryKey);
-            store.markEventDeliveredIfAllDeliveriesDelivered(mark.eventId);
-            store.markEventFailedIfAllDeliveriesTerminal(mark.eventId);
-          }
-        })();
+        store.markDeliveriesDeliveredAtomic(marks);
+        for (const mark of marks) {
+          store.markEventDeliveredIfAllDeliveriesDelivered(mark.eventId);
+          store.markEventFailedIfAllDeliveriesTerminal(mark.eventId);
+        }
         for (const mark of marks) {
           this.clearExternalEventRetry(mark.deliveryKey);
           this.clearQueuedDelivery(target, mark.deliveryKey);

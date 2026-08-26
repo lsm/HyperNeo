@@ -1082,7 +1082,7 @@ export class SDKMessageRepository {
     sessionId: string,
     prefix: string,
     limit = 100
-  ): Array<SDKMessage & { dbId: string; timestamp: number }> {
+  ): Array<SDKUserMessage & { dbId: string; timestamp: number }> {
     const rows = this.db
       .prepare(
         `SELECT id, sdk_message, timestamp FROM sdk_messages
@@ -1097,7 +1097,9 @@ export class SDKMessageRepository {
       sdk_message: string;
       timestamp: string;
     }>;
-    return rows.map(inflatePersistedMessage);
+    return rows.map(
+      (row) => inflatePersistedMessage(row) as SDKUserMessage & { dbId: string; timestamp: number }
+    );
   }
 
   getMessageByStatusAndUuid(

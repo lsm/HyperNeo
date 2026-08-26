@@ -364,7 +364,7 @@ export class ExternalEventStore {
     return row.event_id;
   }
 
-  markDeliveryDelivered(eventId: string, deliveryKey: string): void {
+  private applyDeliveryDelivered(eventId: string, deliveryKey: string): boolean {
     const now = Date.now();
     const result = this.db
       .prepare(
@@ -374,11 +374,31 @@ export class ExternalEventStore {
 				 AND state NOT IN ('delivered', 'failed')`
       )
       .run(now, now, eventId, deliveryKey);
-    if (result.changes > 0) {
-      this.notify();
-      if (this.deliveryTerminalHook) {
-        this.deliveryTerminalHook({ eventId, deliveryKey, outcome: 'delivered', reason: null });
+    return result.changes > 0;
+  }
+
+  private emitDeliveryDelivered(eventId: string, deliveryKey: string): void {
+    this.notify();
+    if (this.deliveryTerminalHook) {
+      this.deliveryTerminalHook({ eventId, deliveryKey, outcome: 'delivered', reason: null });
+    }
+  }
+
+  markDeliveryDelivered(eventId: string, deliveryKey: string): void {
+    if (this.applyDeliveryDelivered(eventId, deliveryKey)) {
+      this.emitDeliveryDelivered(eventId, deliveryKey);
+    }
+  }
+
+  markDeliveriesDeliveredAtomic(marks: Array<{ eventId: string; deliveryKey: string }>): void {
+    const changed: Array<{ eventId: string; deliveryKey: string }> = [];
+    this.db.transaction(() => {
+      for (const mark of marks) {
+        if (this.applyDeliveryDelivered(mark.eventId, mark.deliveryKey)) changed.push(mark);
       }
+    })();
+    for (const mark of changed) {
+      this.emitDeliveryDelivered(mark.eventId, mark.deliveryKey);
     }
   }
 
