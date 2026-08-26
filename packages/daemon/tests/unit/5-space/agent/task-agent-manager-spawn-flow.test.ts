@@ -307,19 +307,27 @@ interface LiveSyncProbe {
   state: { id: string; workspacePath: string | null };
   metadataUpdates: Array<Record<string, unknown>>;
   reinjections: Array<Record<string, unknown>>;
+  serverRestores: Array<Record<string, unknown>>;
 }
 
 function bindLiveSessionForSync(tam: TaskAgentManager, failReinjectWith?: Error): LiveSyncProbe {
   const state = { id: 'live-session', workspacePath: '/old/ws' as string | null };
   const metadataUpdates: Array<Record<string, unknown>> = [];
   const reinjections: Array<Record<string, unknown>> = [];
+  const serverRestores: Array<Record<string, unknown>> = [];
   const live = {
-    session: { id: 'live-session' },
+    session: {
+      id: 'live-session',
+      config: { mcpServers: { 'node-agent': { __role: 'old-node-agent' } } },
+    },
     getProcessingState: () => ({ status: 'idle' }),
     getSessionData: () => state,
     updateMetadata: (u: Record<string, unknown>) => {
       metadataUpdates.push(u);
       if ('workspacePath' in u) state.workspacePath = u.workspacePath as string | null;
+    },
+    mergeRuntimeMcpServers: (servers: Record<string, unknown>) => {
+      serverRestores.push(servers);
     },
   } as unknown as AgentSession;
   const internal = tam as unknown as {
@@ -336,7 +344,7 @@ function bindLiveSessionForSync(tam: TaskAgentManager, failReinjectWith?: Error)
     reinjections.push(ctx);
     if (failReinjectWith) throw failReinjectWith;
   };
-  return { state, metadataUpdates, reinjections };
+  return { state, metadataUpdates, reinjections, serverRestores };
 }
 
 function fireLongTimersImmediately(): () => void {
@@ -451,7 +459,7 @@ describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () =
     expect(probe.metadataUpdates).toEqual([]);
   });
 
-  test('reuse_live propagates migrate-workspace failures and rolls the session workspace back', async () => {
+  test('reuse_live propagates migrate-workspace failures, rolls back, and reverts the execution rebind', async () => {
     const h = makeSpawnFlowHarness({
       execution: makeExecution({ agentSessionId: 'live-session', status: 'idle' }),
     });
@@ -464,6 +472,13 @@ describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () =
       { workspacePath: '/old/ws' },
     ]);
     expect(probe.state.workspacePath).toBe('/old/ws');
+    expect(probe.serverRestores).toEqual([{ 'node-agent': { __role: 'old-node-agent' } }]);
+    expect(h.casCalls[1]).toEqual({
+      id: 'exec-1',
+      expected: ['in_progress'],
+      next: 'idle',
+      payload: { agentSessionId: 'live-session', startedAt: null, completedAt: null },
+    });
   });
 
   test('reuse_live clears no reservation: a concurrent peer keeps its in-flight spawn guard', async () => {

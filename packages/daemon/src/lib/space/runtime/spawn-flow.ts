@@ -74,6 +74,7 @@ export interface SpawnExecutionFlowDeps {
     execution: NodeExecution,
     sessionId: string
   ): void | Promise<void>;
+  revertLiveExecutionRebind?(execution: NodeExecution, sessionId: string): void;
   raiseSpawnRejection(
     freshTask: SpaceTask,
     execution: NodeExecution,
@@ -202,12 +203,17 @@ export function runSpawnExecutionFlow(
           }
           const rebind = deps.rebindLiveExecution(view.execution, sessionId);
           if (rebind === 'won') {
-            await deps.syncReuseLiveWorkspace?.(
-              view.freshTask,
-              view.space,
-              view.execution,
-              sessionId
-            );
+            try {
+              await deps.syncReuseLiveWorkspace?.(
+                view.freshTask,
+                view.space,
+                view.execution,
+                sessionId
+              );
+            } catch (err) {
+              deps.revertLiveExecutionRebind?.(view.execution, sessionId);
+              throw err;
+            }
           }
           return rebind;
         },

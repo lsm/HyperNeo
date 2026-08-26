@@ -858,6 +858,18 @@ export class TaskAgentManager {
       },
       syncReuseLiveWorkspace: (task, space, execution, sessionId) =>
         this.syncLiveSessionWorkspace(task, space, execution, sessionId),
+      revertLiveExecutionRebind: (execution, sessionId) => {
+        this.config.nodeExecutionRepo.casExecutionStatus(
+          execution.id,
+          ['in_progress'],
+          execution.status,
+          {
+            agentSessionId: sessionId,
+            startedAt: execution.startedAt,
+            completedAt: execution.completedAt,
+          }
+        );
+      },
       raiseSpawnRejection: (freshTask, rejectedExecution, rejectedWorkflow) => {
         validateTaskAllowsSpawn(freshTask);
         assertExecutionValidAgainstWorkflow(rejectedExecution, rejectedWorkflow);
@@ -1273,6 +1285,7 @@ export class TaskAgentManager {
                   workflowNodeId: reuseNodeId,
                 };
                 const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
+                const previousNodeAgentServer = this.captureNodeAgentServer(existing);
                 const workspaceChanged =
                   !!reuseWorkspacePath && previousReuseWorkspacePath !== reuseWorkspacePath;
                 if (workspaceChanged) {
@@ -1284,6 +1297,7 @@ export class TaskAgentManager {
                   if (workspaceChanged) {
                     existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
                   }
+                  this.restoreNodeAgentServer(existing, previousNodeAgentServer);
                   throw err;
                 }
                 await this.ensureRequiredMcpServersAttached(existing, {
@@ -1708,6 +1722,22 @@ export class TaskAgentManager {
 
   private withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
     return withSessionResetCoordination(sessionId, fn);
+  }
+
+  private captureNodeAgentServer(session: AgentSession): McpServerConfig | undefined {
+    const servers = session.session.config?.mcpServers as
+      | Record<string, McpServerConfig>
+      | undefined;
+    return servers?.['node-agent'];
+  }
+
+  private restoreNodeAgentServer(
+    session: AgentSession,
+    previous: McpServerConfig | undefined
+  ): void {
+    if (previous) {
+      session.mergeRuntimeMcpServers({ 'node-agent': previous });
+    }
   }
 
   private async withSessionRestoreLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -2480,6 +2510,7 @@ export class TaskAgentManager {
               if (!live) return;
               const workspacePath = view.workspacePath!;
               const previousWorkspacePath = live.getSessionData().workspacePath;
+              const previousNodeAgentServer = this.captureNodeAgentServer(live);
               live.updateMetadata({ workspacePath });
               try {
                 await this.reinjectNodeAgentMcpServer(live, {
@@ -2495,6 +2526,7 @@ export class TaskAgentManager {
                 if (previousWorkspacePath !== undefined) {
                   live.updateMetadata({ workspacePath: previousWorkspacePath });
                 }
+                this.restoreNodeAgentServer(live, previousNodeAgentServer);
                 throw err;
               }
             },
@@ -4462,6 +4494,7 @@ export class TaskAgentManager {
                 agentSession.getSessionData().workspacePath !== healWorkspacePath
               ) {
                 const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
+                const previousNodeAgentServer = this.captureNodeAgentServer(agentSession);
                 agentSession.updateMetadata({ workspacePath: healWorkspacePath });
                 try {
                   await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
@@ -4469,6 +4502,7 @@ export class TaskAgentManager {
                   if (previousHealWorkspacePath !== undefined) {
                     agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
                   }
+                  this.restoreNodeAgentServer(agentSession, previousNodeAgentServer);
                   throw err;
                 }
               }
@@ -5048,6 +5082,7 @@ export class TaskAgentManager {
         }).workspacePath;
         if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
           const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
+          const previousNodeAgentServer = this.captureNodeAgentServer(existing);
           existing.updateMetadata({ workspacePath: reuseWorkspacePath });
           try {
             await this.reinjectNodeAgentMcpServer(existing, {
@@ -5063,6 +5098,7 @@ export class TaskAgentManager {
             if (previousReuseWorkspacePath !== undefined) {
               existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
             }
+            this.restoreNodeAgentServer(existing, previousNodeAgentServer);
             throw err;
           }
         }
