@@ -834,6 +834,21 @@ describe('ProcessingStateManager', () => {
 
       expect(resolvedB).toBe(true);
     });
+
+    test('a rate-limit cooldown bound to a stale generation is not persisted', async () => {
+      manager.noteQueryOwnerGeneration(2);
+      await manager.setRateLimitCooldown(
+        { retryCount: 1, maxRetries: 3, retryAt: Date.now() + 60_000 },
+        1
+      );
+      expect(manager.getState().status).toBe('idle');
+
+      await manager.setRateLimitCooldown(
+        { retryCount: 1, maxRetries: 3, retryAt: Date.now() + 60_000 },
+        2
+      );
+      expect(manager.getState().status).toBe('rate_limit_cooldown');
+    });
   });
 
   describe('onIdleCallback ordering (deferred restart)', () => {

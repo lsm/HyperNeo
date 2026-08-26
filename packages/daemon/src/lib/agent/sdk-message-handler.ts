@@ -770,7 +770,7 @@ export class SDKMessageHandler {
       return;
     }
 
-    if (isSDKAPIRetryMessage(message) && !invocationStale) {
+    if (isSDKAPIRetryMessage(message) && !this.isInvocationStale(invocationGeneration)) {
       this.logger.warn(
         `API retry: attempt ${message.attempt}/${message.max_retries}, ` +
           `delay ${message.retry_delay_ms}ms, status ${message.error_status ?? 'n/a'}, ` +

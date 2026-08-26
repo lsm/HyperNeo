@@ -365,11 +365,14 @@ export class RateLimitWatchdog {
           rollbackHintAndKind();
           if (this.cooldownTimer === timerAtFire && this.currentRetryAt !== null) {
             await this.stateManager
-              .setRateLimitCooldown({
-                retryCount: this.retryCount,
-                maxRetries: this.config.maxAutoRetries,
-                retryAt: this.currentRetryAt,
-              })
+              .setRateLimitCooldown(
+                {
+                  retryCount: this.retryCount,
+                  maxRetries: this.config.maxAutoRetries,
+                  retryAt: this.currentRetryAt,
+                },
+                queryGeneration
+              )
               .catch(() => {});
           }
         }
@@ -402,11 +405,14 @@ export class RateLimitWatchdog {
     );
 
     const timerAtEntry = this.cooldownTimer;
-    await this.stateManager.setRateLimitCooldown({
-      retryCount: displayRetryCount ?? this.retryCount,
-      maxRetries: this.config.maxAutoRetries,
-      retryAt,
-    });
+    await this.stateManager.setRateLimitCooldown(
+      {
+        retryCount: displayRetryCount ?? this.retryCount,
+        maxRetries: this.config.maxAutoRetries,
+        retryAt,
+      },
+      queryGeneration
+    );
 
     const cooldownQuerySuperseded =
       queryGeneration !== undefined &&
@@ -536,11 +542,14 @@ export class RateLimitWatchdog {
       `Cooldown retry did not start the query; startup retry ${this.startupRetries}/${MAX_STARTUP_RETRIES} in ${STARTUP_RETRY_DELAY_MS}ms.`
     );
     try {
-      await this.stateManager.setRateLimitCooldown({
-        retryCount: this.retryCount,
-        maxRetries: this.config.maxAutoRetries,
-        retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
-      });
+      await this.stateManager.setRateLimitCooldown(
+        {
+          retryCount: this.retryCount,
+          maxRetries: this.config.maxAutoRetries,
+          retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
+        },
+        queryGeneration
+      );
     } catch (err) {
       this.logger.warn('Failed to restore rate_limit_cooldown before startup retry:', err);
     }

@@ -393,11 +393,17 @@ export class ProcessingStateManager {
     await this.setState({ status: 'waiting_for_input', pendingQuestion });
   }
 
-  async setRateLimitCooldown(state: {
-    retryCount: number;
-    maxRetries: number;
-    retryAt: number;
-  }): Promise<void> {
+  async setRateLimitCooldown(
+    state: {
+      retryCount: number;
+      maxRetries: number;
+      retryAt: number;
+    },
+    ownerGeneration?: number
+  ): Promise<void> {
+    if (ownerGeneration !== undefined && this.queryOwnerGeneration !== ownerGeneration) {
+      return;
+    }
     await this.setState({
       status: 'rate_limit_cooldown',
       retryCount: state.retryCount,
