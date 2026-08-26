@@ -532,7 +532,12 @@ none of these sites needs its compensation machinery.
   guardrail classifies BEFORE the per-error loop and immediately `reset()`s
   success blocks or error-free content, so the operation must start there,
   not at the error rows), then the per-error classification stages followed
-  by effect stages for state mutation (`this.state.lastError = …`),
+  by effect stages for the keyed `lastInterventionByKey` intervention
+  timestamp write (`repeated-tool-error-guardrail.ts:127-132`, read by
+  later classifications at `:97-99`; review correction PR #2981: without
+  it the same key re-crosses the threshold within
+  `interventionCooldownMs` and re-emits evidence/recovery instead of taking
+  `cooldown_reset`), state mutation (`this.state.lastError = …`),
   `reset()`, Forge evidence emission, and recovery-message routing — with
   the error-row iteration and `triggered` OR-aggregation INSIDE the pipeline
   (review correction PR #2981: the shell does not retain per-block
@@ -1183,7 +1188,12 @@ none of these sites needs its compensation machinery.
   `acknowledgePersistedUserMessage` (`:396-427`) routes through
   `decidePersistedAckRow`, with per-row ownership revalidation immediately
   before every acknowledgement (snapshot-then-await-consume — C3b's Phase 0
-  guarded transition); the turn-end batch acknowledgment (`:464-523`) is
+  guarded transition), consuming via the same transactional
+  `withDbChangeBatch` status-plus-`updateMessageTimestamp` write
+  (`:435-438`; review correction PR #2981: the send-status tests assert the
+  timestamp call for all three statuses — omitting it leaves the consumed
+  row ordered at its enqueue time in later timestamp-based snapshots);
+  the turn-end batch acknowledgment (`:464-523`) is
   NOT a status-priority cascade — it scans only `enqueued` users, applies
   the durable/yielded/pending ownership filters, expands batch UUIDs,
   computes strictly increasing `consumedAt` values and persists them via
@@ -1192,7 +1202,14 @@ none of these sites needs its compensation machinery.
   timestamp computation and DB update leaves persisted rows at their old
   enqueue times while publishing newly timed replays, so later
   timestamp-ordered snapshots misplace those user messages), and
-  consumes them at turn end — so it composes as its OWN complete pipeline
+  consumes them at turn end, acknowledging yielded queue entries via
+  `messageQueue.acknowledgeYielded(messageId)` — which removes the entry
+  from `MessageQueue.yielded` and resolves its enqueue promise
+  (`message-queue.ts:226-231`) — and signaling consumption ONLY for the
+  returned-consumed UUIDs when it succeeds (`:495-499`; review correction
+  PR #2981: without that guarded stage a yielded entry stays tracked and
+  its producer promise unresolved after the DB row is consumed) — so it
+  composes as its OWN complete pipeline
   (`ack-turn-end-batch`), never through the persisted selector (routing it
   through `decidePersistedAckRow` would make deferred/submitted/consumed
   rows eligible where they are currently ignored and would conflate the
@@ -1579,7 +1596,9 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   there, not at the error rows), the gates (`applyInterventionCooldownGate`,
   transform `applyStreakCountGate`, `applyThresholdGate`,
   `applyCountFinalGate`) plus the effect stages the guardrail performs
-  imperatively today — state mutation, `reset()`, Forge evidence emission on
+  imperatively today — the keyed `lastInterventionByKey` timestamp write
+  (`:127-132`, review correction PR #2981), state mutation, `reset()`,
+  Forge evidence emission on
   `intervene`, recovery-message routing, and the error-row iteration with
   `triggered` OR-aggregation over the deduplicated `classification.errors`
   (review correction PR #2981: iteration and aggregation are pipeline
@@ -1915,7 +1934,8 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   turn-end batch core `ack-turn-end-batch` (review correction PR #2981):
   scan `enqueued` users → durable/yielded/pending ownership filters →
   batch-UUID expansion → monotonic `consumedAt` computation with
-  `updateMessageTimestamp` → turn-end consumption and publications — a
+  `updateMessageTimestamp` → turn-end consumption, the guarded
+  `messageQueue.acknowledgeYielded` stage, and publications — a
   complete operation of its own, never routed through the persisted
   selector; `selectPersistedAckRow`/`selectYieldedAckRow` stay exported;
   lands unwired-but-green (tests consume the wrappers immediately; knip
@@ -1982,7 +2002,9 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   acknowledgment (`acknowledgePersistedUserMessage`, `:396-427`) routes
   through `decidePersistedAckRow` with per-row ownership revalidation
   immediately before every acknowledgement (snapshot-then-await-consume,
-  C3b's Phase 0 guarded transition), publishing `messages.statusChanged`,
+  C3b's Phase 0 guarded transition), consuming via the same transactional
+  `withDbChangeBatch` status-plus-`updateMessageTimestamp` write
+  (`:435-438`, review correction PR #2981), publishing `messages.statusChanged`,
   `state.sdkMessages.delta`, `sdk.message`, and tool-result-consumed after
   consumption (`:440-461`) — an effect list of only
   `markDeliveryConsumed*`/`messages.statusChanged`/`signalDeliveryConsumed`
@@ -1992,6 +2014,10 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   batch-UUID expansion, monotonic `consumedAt` computation with
   `updateMessageTimestamp` (`:478-500`),
   `markDeliveriesConsumedAtTurnEnd`,
+  the guarded `messageQueue.acknowledgeYielded` stage
+  (`:495-499`, `message-queue.ts:226-231` — consumption is signaled only
+  for the returned-consumed UUIDs when it succeeds; review correction PR
+  #2981),
   `signalDeliveryConsumed`, `messages.statusChanged`,
   `state.sdkMessages.delta`, and tool-result-consumed, the replays timed
   with the computed values per `:508-511`) — NEVER the persisted
