@@ -85,12 +85,7 @@ function makeHarness(
     getParkCount: mock((_id: string) => 0),
     requeue: mock((_id: string, _runAt: number, _token: string | null) => null),
     requeueParked: mock(
-      (
-        _id: string,
-        _runAt: number,
-        _token: string | null,
-        _opts?: { reason?: string }
-      ) => null
+      (_id: string, _runAt: number, _token: string | null, _opts?: { reason?: string }) => null
     ),
     requeueAs: mock((_id: string, _role: string, _runAt: number, _token: string | null) => null),
   };
@@ -347,9 +342,10 @@ describe('createMessageDeliveryHandler', () => {
       if (row.requeueParked) {
         expect(result.retryAt).toBeGreaterThan(Date.now());
         expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
-          reason: (row.drive as { outcome: string }).outcome === 'blocked'
-            ? 'sdk_resume_choice'
-            : 'limit_recovery',
+          reason:
+            (row.drive as { outcome: string }).outcome === 'blocked'
+              ? 'sdk_resume_choice'
+              : 'limit_recovery',
         });
       }
       expect(session.settleCalls).toEqual(row.settle ? ['uuid-1'] : []);
@@ -404,12 +400,9 @@ describe('createMessageDeliveryHandler', () => {
       expect(jobQueue.requeueParked).toHaveBeenCalledTimes(row.park === 'requeueParked' ? 1 : 0);
       if (row.park === 'requeueParked') {
         expect(result.retryAt).toBeGreaterThan(Date.now());
-        expect(jobQueue.requeueParked).toHaveBeenCalledWith(
-          'job-1',
-          result.retryAt,
-          'claim-1',
-          { reason: row.expected.parked }
-        );
+        expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
+          reason: row.expected.parked,
+        });
       }
       if (row.promoteRole) {
         expect(jobQueue.requeueAs).toHaveBeenCalledWith(

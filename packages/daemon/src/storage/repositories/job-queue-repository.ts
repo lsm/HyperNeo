@@ -299,9 +299,7 @@ export class JobQueueRepository {
     opts?: { parkReason?: string }
   ): number {
     const reasonFilter =
-      opts?.parkReason !== undefined
-        ? `AND json_extract(payload, '$.__parkReason') = ?`
-        : '';
+      opts?.parkReason !== undefined ? `AND json_extract(payload, '$.__parkReason') = ?` : '';
     const stmt = this.db.prepare(
       `UPDATE job_queue
           SET run_at = ?, started_at = NULL, heartbeat_at = NULL
