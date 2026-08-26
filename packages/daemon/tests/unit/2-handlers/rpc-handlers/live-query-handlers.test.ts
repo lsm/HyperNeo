@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
@@ -103,7 +104,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
     expect(NAMED_QUERY_REGISTRY.get('sessionGroupMessages.byGroup')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('spaceTaskActivity.byTask')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.paramCount).toBe(1);
-    expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!.paramCount).toBe(1);
+    expect(NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!.paramCount).toBe(2);
     expect(NAMED_QUERY_REGISTRY.get('spaceTaskActiveTurn.byTask')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!.paramCount).toBe(1);
     expect(NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!.paramCount).toBe(3);
@@ -1746,7 +1747,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
         'spaceTaskActiveTurn.byTask',
       ]) {
         const entry = NAMED_QUERY_REGISTRY.get(name)!;
-        const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(taskId) as Array<{
+        const params = entry.paramCount === 2 ? [taskId, 20] : [taskId];
+        const plan = db.prepare(`EXPLAIN QUERY PLAN ${entry.sql}`).all(...params) as Array<{
           detail: string;
         }>;
         const details = plan.map((row) => row.detail).join('\n');
@@ -3086,10 +3088,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
         );
       }
 
-      function queryCompact(taskId: string): Record<string, unknown>[] {
+      function queryCompact(taskId: string, limit = 1000): Record<string, unknown>[] {
         backfillConversationTurns();
         const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
-        const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const rows = db.prepare(entry.sql).all(taskId, limit) as Record<string, unknown>[];
         return entry.mapRow ? rows.map(entry.mapRow) : rows;
       }
 
@@ -3143,6 +3145,333 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const queued = rows.find((r) => r.id === 'a-queued');
         expect(queued).toBeTruthy();
         expect((queued as Record<string, unknown>).deliveryState).toBe('queued');
+      });
+
+      test('keeps latest artifact state rows outside the ordinary window', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('old-write', sessionId, now + 1000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-old-write',
+                name: 'Write',
+                input: { file_path: '/a.txt', content: 'v1' },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('old-todo', sessionId, now + 1100, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-old-todo',
+                name: 'TodoWrite',
+                input: { todos: [] },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('new-write', sessionId, now + 1200, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-new-write',
+                name: 'Write',
+                input: { file_path: '/a.txt', content: 'v2' },
+              },
+            ],
+          },
+        });
+        for (let i = 0; i < 5; i += 1) {
+          insertSdkMessageAt(
+            `f-anchor-${i}`,
+            sessionId,
+            now + 2000 + i * 2,
+            { type: 'user', uuid: `u-f-anchor-${i}`, message: { role: 'user', content: `a${i}` } },
+            'user'
+          );
+          insertSdkMessageAt(`flood-${i}`, sessionId, now + 2001 + i * 2, {
+            type: 'assistant',
+            message: { role: 'assistant', content: [{ type: 'text', text: `flood ${i}` }] },
+          });
+        }
+
+        const ids = queryCompact(taskId, 1).map((r) => r.id as string);
+        expect(ids).toContain('new-write');
+        expect(ids).toContain('old-todo');
+        expect(ids).not.toContain('old-write');
+        expect(ids.filter((id) => id.startsWith('flood-'))).toHaveLength(1);
+      });
+
+      test('admits artifact state rows older than the recent-turn cutoff', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('old-todo', sessionId, now + 1000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-cutoff-todo',
+                name: 'TodoWrite',
+                input: { todos: [] },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('old-text', sessionId, now + 1050, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'stale' }] },
+        });
+
+        const sessionB = 'sess-artifact-cutoff';
+        insertSession(sessionB, 'worker', '{"status":"processing"}');
+        sessionTaskIds.set(sessionB, taskId);
+        for (let i = 0; i < 100; i += 1) {
+          insertSdkMessageAt(
+            `b-anchor-${i}`,
+            sessionB,
+            now + 3000 + i,
+            { type: 'user', uuid: `u-b-art-${i}`, message: { role: 'user', content: `b${i}` } },
+            'user'
+          );
+        }
+
+        const ids = queryCompact(taskId).map((r) => r.id as string);
+        expect(ids).toContain('old-todo');
+        expect(ids).not.toContain('old-text');
+      });
+
+      test('skips malformed mutations when ranking artifact state per path', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('good-write', sessionId, now + 1000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-good-write',
+                name: 'Write',
+                input: { file_path: '/a.txt', content: 'v1' },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('bad-edit', sessionId, now + 1100, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-bad-edit',
+                name: 'Edit',
+                input: { file_path: '/a.txt', old_string: 'x' },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('bad-multiedit', sessionId, now + 1150, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-bad-multiedit',
+                name: 'MultiEdit',
+                input: { file_path: '/b.txt', edits: ['bad'] },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('bad-todo', sessionId, now + 1200, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-bad-todo',
+                name: 'TodoWrite',
+                input: {},
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('first-bad-multiedit', sessionId, now + 1250, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-first-bad-me',
+                name: 'MultiEdit',
+                input: { file_path: '/c.txt', edits: [{}, { old_string: 'a', new_string: 'b' }] },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('null-todo', sessionId, now + 1300, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-null-todo',
+                name: 'TodoWrite',
+                input: { todos: [null] },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('no-id-write', sessionId, now + 1350, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                name: 'Write',
+                input: { file_path: '/d.txt', content: 'v' },
+              },
+            ],
+          },
+        });
+        insertSdkMessageAt('prim-block', sessionId, now + 1400, {
+          type: 'assistant',
+          message: { role: 'assistant', content: ['tool_use'] },
+        });
+        for (let i = 0; i < 3; i += 1) {
+          insertSdkMessageAt(
+            `m-anchor-${i}`,
+            sessionId,
+            now + 2000 + i * 2,
+            { type: 'user', uuid: `u-m-${i}`, message: { role: 'user', content: `a${i}` } },
+            'user'
+          );
+          insertSdkMessageAt(`m-flood-${i}`, sessionId, now + 2001 + i * 2, {
+            type: 'assistant',
+            message: { role: 'assistant', content: [{ type: 'text', text: `flood ${i}` }] },
+          });
+        }
+
+        const ids = queryCompact(taskId, 1).map((r) => r.id as string);
+        expect(ids).toContain('good-write');
+        for (const malformed of [
+          'bad-edit',
+          'bad-multiedit',
+          'bad-todo',
+          'first-bad-multiedit',
+          'null-todo',
+          'no-id-write',
+          'prim-block',
+        ]) {
+          expect(ids).not.toContain(malformed);
+        }
+      });
+
+      test('caps pinned artifact rows at the newest paths', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        for (let i = 0; i < 105; i += 1) {
+          insertSdkMessageAt(`w-${i}`, sessionId, now + 1000 + i, {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'tool_use',
+                  id: `tu-w-${i}`,
+                  name: 'Write',
+                  input: { file_path: `/f-${i}.txt`, content: `v${i}` },
+                },
+              ],
+            },
+          });
+        }
+        insertSdkMessageAt(
+          'cap-anchor',
+          sessionId,
+          now + 1200,
+          { type: 'user', uuid: 'u-cap-anchor', message: { role: 'user', content: 'wrap' } },
+          'user'
+        );
+        insertSdkMessageAt('cap-text', sessionId, now + 1300, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'latest ordinary' }] },
+        });
+
+        const ids = queryCompact(taskId, 1).map((r) => r.id as string);
+        const writes = ids.filter((id) => id.startsWith('w-'));
+        expect(writes).toHaveLength(100);
+        expect(writes).toContain('w-104');
+        expect(writes).not.toContain('w-4');
+        expect(ids).toContain('cap-text');
+      });
+
+      test('artifact admission does not reopen completed sessions in active turns', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('done-write', sessionId, now + 1000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-done-write',
+                name: 'Write',
+                input: { file_path: '/done.txt', content: 'done' },
+              },
+            ],
+          },
+        });
+        insertResultMessageAt('done-result', sessionId, now + 1100, 'success');
+
+        const sessionB = 'sess-active-turn-flood';
+        insertSession(sessionB, 'worker', '{"status":"processing"}');
+        sessionTaskIds.set(sessionB, taskId);
+        for (let i = 0; i < 100; i += 1) {
+          insertSdkMessageAt(
+            `at-anchor-${i}`,
+            sessionB,
+            now + 3000 + i,
+            {
+              type: 'user',
+              uuid: `u-at-${i}`,
+              message: { role: 'user', content: `b${i}` },
+            },
+            'user'
+          );
+        }
+
+        const ids = queryCompact(taskId).map((r) => r.id as string);
+        expect(ids).toContain('done-write');
+
+        const activeTurnSql = NAMED_QUERY_REGISTRY.get('spaceTaskActiveTurn.byTask')!.sql;
+        const activeRows = db.prepare(activeTurnSql).all(taskId) as Record<string, unknown>[];
+        expect(activeRows.every((r) => r.sessionId !== sessionId)).toBe(true);
       });
 
       test('maps user-message send_status to the delivery lifecycle + retrying (compact feed)', () => {
@@ -3525,6 +3854,103 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(gh!.kind).toBe('github');
         expect(gh!.messageType).toBe('github_pr_activity');
         expect(rows.map((r) => r.id)).toEqual(['u1', 'a1', 'gh-compact-1', 'r1']);
+      });
+
+      test('breaks same-timestamp GitHub rows at the window boundary by insertion order', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        const insertGithubEvent = (id: string): void => {
+          db.exec(`
+					INSERT INTO space_github_events (
+						id, space_id, task_id, source, delivery_id, event_type, action,
+						repo_owner, repo_name, pr_number, pr_url, actor, actor_type,
+						body, summary, external_url, external_id, occurred_at, dedupe_key,
+						raw_payload, state, created_at, updated_at
+					) VALUES (
+						'${id}', '${spaceId}', '${taskId}', 'webhook', 'delivery-${id}',
+						'pull_request', 'opened', 'lsm', 'neokai', 1965,
+						'https://github.com/lsm/neokai/pull/1965', 'reviewer', 'User', '',
+						'PR #1965 ${id}', 'https://github.com/lsm/neokai/pull/1965',
+						'ext-${id}', ${now + 2500}, '${id}', '{}', 'routed',
+						${now + 2500}, ${now + 2500}
+					)
+				`);
+        };
+        insertGithubEvent('gh-tie-a');
+        insertGithubEvent('gh-tie-b');
+
+        expect(queryCompact(taskId, 1).map((r) => r.id)).toEqual(['gh-tie-b']);
+        expect(queryCompact(taskId, 2).map((r) => r.id)).toEqual(['gh-tie-a', 'gh-tie-b']);
+      });
+
+      test('breaks cross-source same-millisecond rowid ties deterministically', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'tie-sdk',
+          sessionId,
+          now + 1000,
+          { type: 'user', uuid: 'u-tie-sdk', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        db.exec(`
+					INSERT INTO space_github_events (
+						id, space_id, task_id, source, delivery_id, event_type, action,
+						repo_owner, repo_name, pr_number, pr_url, actor, actor_type,
+						body, summary, external_url, external_id, occurred_at, dedupe_key,
+						raw_payload, state, created_at, updated_at
+					) VALUES (
+						'tie-gh', '${spaceId}', '${taskId}', 'webhook', 'delivery-tie-gh',
+						'pull_request', 'opened', 'lsm', 'neokai', 1965,
+						'https://github.com/lsm/neokai/pull/1965', 'reviewer', 'User', '',
+						'PR #1965 tie', 'https://github.com/lsm/neokai/pull/1965',
+						'ext-tie-gh', ${now + 1000}, 'tie-gh', '{}', 'routed',
+						${now + 1000}, ${now + 1000}
+					)
+				`);
+        insertSdkMessageAt(
+          'tie-mid',
+          sessionId,
+          now + 1500,
+          { type: 'user', uuid: 'u-tie-mid', message: { role: 'user', content: 'mid' } },
+          'user'
+        );
+        insertSdkMessageAt('tie-newer', sessionId, now + 2000, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'newest' }] },
+        });
+
+        const ids = queryCompact(taskId, 2).map((r) => r.id as string);
+        expect(ids).toContain('tie-newer');
+        expect(ids).toContain('tie-mid');
+        expect(ids).toContain('tie-sdk');
+        expect(ids).not.toContain('tie-gh');
+      });
+
+      test('derives full-feed turn attribution by insertion order', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt(
+          'b-user',
+          sessionId,
+          now + 1000,
+          { type: 'user', uuid: 'u-tf-user', message: { role: 'user', content: 'go' } },
+          'user'
+        );
+        insertSdkMessageAt('a-assist', sessionId, now + 1000, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+        });
+
+        backfillConversationTurns();
+        const sql = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask')!.sql;
+        const rows = db.prepare(sql).all(taskId) as Record<string, unknown>[];
+        expect(rows.map((r) => r.id)).toEqual(['b-user', 'a-assist']);
+        const assist = rows.find((r) => r.id === 'a-assist');
+        expect(assist?.turnUserMessageId).toBe('b-user');
       });
 
       test('keeps Write/Edit/TodoWrite tool rows even when the segment has assistant text (#2338)', () => {
@@ -3969,9 +4395,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
         ]);
         expect(fullRows.map((row) => row.id)).toEqual([
           'visible',
-          'operational-commands_changed',
-          'operational-session_state_changed',
           'operational-thinking_tokens',
+          'operational-session_state_changed',
+          'operational-commands_changed',
         ]);
       });
 
@@ -4901,6 +5327,231 @@ describe('NAMED_QUERY_REGISTRY', () => {
       });
     });
 
+    test('compact query respects the window limit and returns the newest rows', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      for (let i = 0; i < 5; i += 1) {
+        insertSdkMessageAt(`u-${i}`, sessionId, now + 1000 + i * 100, 'user');
+        insertSdkMessageAt(`a-${i}`, sessionId, now + 1000 + i * 100 + 50, 'assistant');
+      }
+
+      backfillConversationTurns();
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
+      const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+      expect(rows.map((r) => String(r.id))).toEqual(['u-3', 'a-3', 'u-4', 'a-4']);
+    });
+
+    test('compact window keeps unresolved action rows and in-flight deliveries when they age out', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+      insertSession('quiet-agent-session', 'worker', '{"status":"processing"}');
+      sessionTaskIds.set('quiet-agent-session', taskId);
+
+      insertSdkMessageAt(
+        'action-old-unresolved',
+        sessionId,
+        now,
+        'hyperneo_action',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'hyperneo_action',
+          uuid: 'action-old-unresolved',
+          action: 'sdk_resume_choice',
+          resolved: false,
+        }
+      );
+      insertSdkMessageAt(
+        'action-old-resolved',
+        sessionId,
+        now + 10,
+        'hyperneo_action',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'hyperneo_action',
+          uuid: 'action-old-resolved',
+          action: 'sdk_resume_choice',
+          resolved: true,
+        }
+      );
+      insertSdkMessageAt('queued-old', sessionId, now + 20, 'user', 'enqueued', 'human');
+      for (let i = 0; i < 5; i += 1) {
+        insertSdkMessageAt(`u-${i}`, sessionId, now + 1000 + i * 100, 'user');
+        insertSdkMessageAt(`a-${i}`, sessionId, now + 1000 + i * 100 + 50, 'assistant');
+      }
+      insertSdkMessageAt('quiet-only-row', 'quiet-agent-session', now + 500, 'assistant');
+
+      backfillConversationTurns();
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
+      const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+      const ids = rows.map((r) => r.id);
+      expect(ids).toContain('action-old-unresolved');
+      expect(ids).toContain('queued-old');
+      expect(ids).toContain('quiet-only-row');
+      expect(ids).not.toContain('action-old-resolved');
+      expect(rows.length).toBe(7);
+    });
+
+    test('pinned rows do not consume the ordinary-row window slots', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      for (let i = 0; i < 4; i += 1) {
+        insertSdkMessageAt(`u-${i}`, sessionId, now + 1000 + i * 100, 'user');
+        insertSdkMessageAt(`a-${i}`, sessionId, now + 1000 + i * 100 + 50, 'assistant');
+      }
+      for (let i = 0; i < 3; i += 1) {
+        insertSdkMessageAt(
+          `action-new-${i}`,
+          sessionId,
+          now + 5000 + i * 10,
+          'hyperneo_action',
+          'consumed',
+          'system',
+          null,
+          {
+            type: 'hyperneo_action',
+            uuid: `action-new-${i}`,
+            action: 'sdk_resume_choice',
+            resolved: false,
+          }
+        );
+      }
+
+      backfillConversationTurns();
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const rawRows = db.prepare(entry.sql).all(taskId, 3) as Record<string, unknown>[];
+      const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+      const ids = rows.map((r) => String(r.id));
+      expect(ids.filter((id) => id.startsWith('action-new-'))).toHaveLength(3);
+      expect(ids).toContain('a-3');
+      expect(ids).toContain('u-3');
+      expect(ids).toContain('a-2');
+      expect(rows.length).toBe(6);
+    });
+
+    test('unresolved action cards survive the recent-turn cutoff', () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      insertSdkMessageAt(
+        'action-ancient-unresolved',
+        sessionId,
+        now,
+        'hyperneo_action',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'hyperneo_action',
+          uuid: 'action-ancient-unresolved',
+          action: 'sdk_resume_choice',
+          resolved: false,
+        }
+      );
+      insertSdkMessageAt(
+        'action-ancient-resolved',
+        sessionId,
+        now + 10,
+        'hyperneo_action',
+        'consumed',
+        'system',
+        null,
+        {
+          type: 'hyperneo_action',
+          uuid: 'action-ancient-resolved',
+          action: 'sdk_resume_choice',
+          resolved: true,
+        }
+      );
+      for (let i = 0; i < 105; i += 1) {
+        insertSdkMessageAt(`cu-${i}`, sessionId, now + 1000 + i * 10, 'user');
+        insertSdkMessageAt(`ca-${i}`, sessionId, now + 1000 + i * 10 + 5, 'assistant');
+      }
+
+      backfillConversationTurns();
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const rawRows = db.prepare(entry.sql).all(taskId, 5) as Record<string, unknown>[];
+      const rows = entry.mapRow ? rawRows.map(entry.mapRow) : rawRows;
+      const ids = rows.map((r) => r.id);
+      expect(ids).toContain('action-ancient-unresolved');
+      expect(ids).not.toContain('action-ancient-resolved');
+      expect(rows.length).toBe(7);
+    });
+
+    test('windowed compact feed emits delta removals when rows age out', async () => {
+      const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+      insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+      for (let i = 0; i < 5; i += 1) {
+        insertSdkMessageAt(`u-${i}`, sessionId, now + 1000 + i * 100, 'user');
+        insertSdkMessageAt(`a-${i}`, sessionId, now + 1000 + i * 100 + 50, 'assistant');
+      }
+
+      const reactiveDb: ReactiveDatabase = {
+        db: undefined as unknown as Database,
+        on: (event, listener) => emitter.on(event, listener as never),
+        off: (event, listener) => emitter.off(event, listener as never),
+        getTableVersion: (table) => tableVersions[table] ?? 0,
+        beginTransaction: () => {},
+        commitTransaction: () => {},
+        abortTransaction: () => {},
+        notifyChange: (table, scope) => {
+          tableVersions[table] = (tableVersions[table] ?? 0) + 1;
+          emitter.emit('change', {
+            tables: [table],
+            versions: { [table]: tableVersions[table] },
+            scope,
+          });
+        },
+        willEmitTableChange: () => true,
+        resolveTaskIdForSession: () => null,
+      };
+      const emitter = new EventEmitter();
+      const tableVersions: Record<string, number> = {};
+
+      backfillConversationTurns();
+      const engine = new LiveQueryEngine(db, reactiveDb);
+      const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+      const diffs: QueryDiff<Record<string, unknown>>[] = [];
+
+      const handle = engine.subscribe(entry.sql, [taskId, 3], (diff) => diffs.push(diff), {
+        debounceMs: 0,
+        scopeFilter: entry.buildScopeFilter?.([taskId], db),
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0].type).toBe('snapshot');
+
+      for (let i = 5; i < 8; i += 1) {
+        insertSdkMessageAt(`u-${i}`, sessionId, now + 2000 + i * 100, 'user');
+        insertSdkMessageAt(`a-${i}`, sessionId, now + 2000 + i * 100 + 50, 'assistant');
+      }
+
+      backfillConversationTurns();
+      reactiveDb.notifyChange('sdk_messages', { taskId });
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(diffs.length).toBeGreaterThanOrEqual(2);
+      const delta = diffs[diffs.length - 1];
+      expect(delta.type).toBe('delta');
+      expect(delta.removed?.length).toBeGreaterThan(0);
+
+      handle.dispose();
+      engine.dispose();
+    });
+
     describe('compact-feed cap and active-turn-summary decoupling', () => {
       function insertSdkMessageAt(
         id: string,
@@ -4935,10 +5586,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
 				`);
       }
 
-      function queryCompact(taskId: string): Record<string, unknown>[] {
+      function queryCompact(taskId: string, limit = 1000): Record<string, unknown>[] {
         backfillConversationTurns();
         const entry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
-        const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+        const rows = db.prepare(entry.sql).all(taskId, limit) as Record<string, unknown>[];
         return entry.mapRow ? rows.map(entry.mapRow) : rows;
       }
 
@@ -4961,7 +5612,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         return mod.buildActiveTurnSummariesFromRows(rows);
       }
 
-      test('compact feed excludes hook_* system rows (roster-only via active-turn summary)', () => {
+      test('compact feed excludes mid-turn hook_* system rows (roster-only via active-turn summary)', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
         insertSdkMessageAt('a1', sessionId, now + 1000, {
@@ -4969,6 +5620,17 @@ describe('NAMED_QUERY_REGISTRY', () => {
           uuid: 'a1',
           message: { content: [{ type: 'text', text: 'hi' }] },
         });
+        insertSdkMessageAt(
+          'u-mid',
+          sessionId,
+          now + 1500,
+          {
+            type: 'user',
+            uuid: 'u-mid',
+            message: { role: 'user', content: 'again' },
+          },
+          'user'
+        );
         for (const [sub, id] of [
           ['hook_started', 'hs'],
           ['hook_progress', 'hp'],
@@ -4990,43 +5652,168 @@ describe('NAMED_QUERY_REGISTRY', () => {
             'system'
           );
         }
+        insertSdkMessageAt('a2', sessionId, now + 3000, {
+          type: 'assistant',
+          uuid: 'a2',
+          message: { content: [{ type: 'text', text: 'after hooks' }] },
+        });
 
         const ids = queryCompact(taskId).map((r) => String(r.id));
-        expect(ids).toContain('a1');
-        expect(ids).not.toContain('hs');
-        expect(ids).not.toContain('hp');
-        expect(ids).not.toContain('hr');
+        expect(ids).toEqual(['a1', 'u-mid', 'a2']);
       });
 
-      test('hook burst does not consume the compact tail (excluded before ranking)', () => {
+      test('compact feed admits the session-tail hook row of a hook-only working turn', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
-        insertSdkMessageAt('a-old', sessionId, now + 1000, {
-          type: 'assistant',
-          uuid: 'a-old',
-          message: { content: [{ type: 'text', text: 'real work' }] },
-        });
-        for (let i = 0; i < 6; i += 1) {
+        insertSdkMessageAt(
+          'u1',
+          sessionId,
+          now + 1000,
+          {
+            type: 'user',
+            uuid: 'u1',
+            message: { role: 'user', content: 'go' },
+          },
+          'user'
+        );
+        for (const [sub, id] of [
+          ['hook_started', 'hs'],
+          ['hook_progress', 'hp'],
+        ] as const) {
           insertSdkMessageAt(
-            `hp${i}`,
+            id,
             sessionId,
-            now + 2000 + i,
+            now + 2000,
             {
               type: 'system',
-              subtype: 'hook_progress',
-              uuid: `hp${i}`,
+              subtype: sub,
+              uuid: id,
               hook_id: 'h1',
               hook_name: 'lint',
-              hook_event: 'PreToolUse',
-              stdout: `phase ${i}`,
+              hook_event: 'SessionStart',
             },
             'system'
           );
         }
 
         const ids = queryCompact(taskId).map((r) => String(r.id));
-        expect(ids).toContain('a-old');
-        for (let i = 0; i < 6; i += 1) expect(ids).not.toContain(`hp${i}`);
+        expect(ids).toContain('u1');
+        expect(ids).not.toContain('hs');
+        expect(ids).toContain('hp');
+      });
+
+      test('compact feed admits the newest hook row after a prior terminal result', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSdkMessageAt(
+          'r1',
+          sessionId,
+          now + 1000,
+          {
+            type: 'result',
+            subtype: 'success',
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            total_cost_usd: 0,
+            usage: {
+              input_tokens: 1,
+              cached_input_tokens: 0,
+              output_tokens: 1,
+              reasoning_output_tokens: 0,
+              total_tokens: 2,
+            },
+          },
+          'result'
+        );
+        insertSdkMessageAt(
+          'hs2',
+          sessionId,
+          now + 2000,
+          {
+            type: 'system',
+            subtype: 'hook_started',
+            uuid: 'hs2',
+            hook_id: 'h2',
+            hook_name: 'setup',
+            hook_event: 'SessionStart',
+          },
+          'system'
+        );
+
+        const ids = queryCompact(taskId).map((r) => String(r.id));
+        expect(ids).toContain('r1');
+        expect(ids).toContain('hs2');
+      });
+
+      test('failed user delivery after a result does not pin an idle session tail', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+        insertSession('working-session', 'worker', '{"status":"processing"}');
+        sessionTaskIds.set('working-session', taskId);
+        insertSession('finished-session', 'worker', '{"status":"processing"}');
+        sessionTaskIds.set('finished-session', taskId);
+
+        insertSdkMessageAt(
+          'idle-r',
+          sessionId,
+          now + 1000,
+          {
+            type: 'result',
+            subtype: 'success',
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            total_cost_usd: 0,
+            usage: {
+              input_tokens: 1,
+              cached_input_tokens: 0,
+              output_tokens: 1,
+              reasoning_output_tokens: 0,
+              total_tokens: 2,
+            },
+          },
+          'result'
+        );
+        insertSdkMessageAt(
+          'idle-failed-user',
+          sessionId,
+          now + 2000,
+          { type: 'user', uuid: 'idle-failed-user', message: { role: 'user', content: 'retry' } },
+          'user'
+        );
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'failed' WHERE id = 'idle-failed-user'`
+        ).run();
+        insertSdkMessageAt('working-tail', 'working-session', now + 3000, {
+          type: 'assistant',
+          uuid: 'working-tail',
+          message: { content: [{ type: 'text', text: 'still working' }] },
+        });
+        insertSdkMessageAt(
+          'finished-r',
+          'finished-session',
+          now + 4000,
+          {
+            type: 'result',
+            subtype: 'success',
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            total_cost_usd: 0,
+            usage: {
+              input_tokens: 1,
+              cached_input_tokens: 0,
+              output_tokens: 1,
+              reasoning_output_tokens: 0,
+              total_tokens: 2,
+            },
+          },
+          'result'
+        );
+
+        const ids = queryCompact(taskId, 1).map((r) => String(r.id));
+        expect(ids).toEqual(['working-tail', 'finished-r']);
       });
 
       test('malformed system sdk_message does not break the compact feed', () => {
