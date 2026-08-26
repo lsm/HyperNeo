@@ -217,3 +217,51 @@ describe('publish — bus semantics', () => {
     expect(received).toHaveLength(1);
   });
 });
+
+describe('publish — ingest wiring', () => {
+  test('freshly published event persists non-NULL urgency and render', async () => {
+    const event = makeEvent();
+    const result = await service.publish(event);
+
+    expect(result.outcome).toBe('published');
+    const rec = store.getById(event.id);
+    expect(rec!.event.urgency).toBe('queued');
+    expect(typeof rec!.event.render).toBe('string');
+    expect(rec!.event.render!.length).toBeGreaterThan(0);
+  });
+
+  test('immediate-tier event persists immediate urgency and check render', async () => {
+    const event = makeEvent({
+      topic: 'github/lsm/neokai/pull_request/42.check_failed',
+      payload: {
+        eventType: 'check_run',
+        action: 'completed',
+        actor: 'github-actions[bot]',
+        repoOwner: 'lsm',
+        repoName: 'neokai',
+        prNumber: 42,
+        checkName: 'build-linux',
+        conclusion: 'failure',
+      },
+    });
+    await service.publish(event);
+
+    const rec = store.getById(event.id);
+    expect(rec!.event.urgency).toBe('immediate');
+    expect(rec!.event.render).toContain('CI check "build-linux"');
+  });
+
+  test('retryable duplicate leaves canonical urgency and render untouched', async () => {
+    const event = makeEvent();
+    await service.publish(event);
+    const before = store.getById(event.id)!.event;
+
+    const dup = makeEvent({ id: 'evt-wire-dup', dedupeKey: event.dedupeKey });
+    const result = await service.publish(dup);
+
+    expect(result.outcome).toBe('retryable_duplicate');
+    const after = store.getById(event.id)!.event;
+    expect(after.urgency).toBe(before.urgency);
+    expect(after.render).toBe(before.render);
+  });
+});
