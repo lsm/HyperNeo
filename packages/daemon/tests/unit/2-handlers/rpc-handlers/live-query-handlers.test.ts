@@ -3265,13 +3265,24 @@ describe('NAMED_QUERY_REGISTRY', () => {
             },
           });
         }
+        insertSdkMessageAt(
+          'cap-anchor',
+          sessionId,
+          now + 1200,
+          { type: 'user', uuid: 'u-cap-anchor', message: { role: 'user', content: 'wrap' } },
+          'user'
+        );
+        insertSdkMessageAt('cap-text', sessionId, now + 1300, {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'latest ordinary' }] },
+        });
 
         const ids = queryCompact(taskId, 1).map((r) => r.id as string);
         const writes = ids.filter((id) => id.startsWith('w-'));
         expect(writes).toHaveLength(100);
         expect(writes).toContain('w-104');
         expect(writes).not.toContain('w-4');
-        expect(writes).not.toContain('w-0');
+        expect(writes).toContain('cap-text');
       });
 
       test('artifact admission does not reopen completed sessions in active turns', () => {
