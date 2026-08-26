@@ -997,7 +997,7 @@ export class SDKMessageHandler {
       await this.handleAssistantMessage(message);
     }
 
-    if (isSDKStatusMessage(message)) {
+    if (isSDKStatusMessage(message) && !this.isInvocationStale(invocationGeneration)) {
       await this.handleStatusMessage(message);
     }
 
@@ -1016,7 +1016,7 @@ export class SDKMessageHandler {
       await this.handleSessionStateChangedMessage(message, invocationGeneration);
     }
 
-    if (isSDKCompactBoundary(message)) {
+    if (isSDKCompactBoundary(message) && !this.isInvocationStale(invocationGeneration)) {
       await this.handleCompactBoundary(message);
     }
 

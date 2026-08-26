@@ -520,6 +520,10 @@ export class RateLimitWatchdog {
     episodeGeneration: number,
     queryGeneration?: number
   ): Promise<void> {
+    const querySuperseded = (): boolean =>
+      queryGeneration !== undefined &&
+      this.deps.getQueryGeneration != null &&
+      this.deps.getQueryGeneration() !== queryGeneration;
     if (episodeGeneration !== this.generation) {
       this.logger.info('Immediate fallback aborted before start (episode superseded).');
       this.fallbackPending = false;
@@ -579,7 +583,7 @@ export class RateLimitWatchdog {
         );
         if (!scheduled) {
           if (this.lastHint?.billingTerminal) {
-            if (episodeGeneration !== this.generation) {
+            if (episodeGeneration !== this.generation || querySuperseded()) {
               this.logger.info(
                 'Billing surfacing aborted (episode superseded) after fallback re-entry failed.'
               );
@@ -596,7 +600,7 @@ export class RateLimitWatchdog {
               maxRetries: this.config.maxAutoRetries,
               retryAt: Date.now(),
             });
-            if (episodeGeneration !== this.generation) {
+            if (episodeGeneration !== this.generation || querySuperseded()) {
               this.logger.info(
                 'Episode superseded during billing pause state write; not publishing pause.'
               );
@@ -611,7 +615,9 @@ export class RateLimitWatchdog {
             await this.scheduleCooldown(
               this.lastErrorMessage,
               computeCooldown(this.lastErrorMessage, this.retryCount),
-              episodeGeneration
+              episodeGeneration,
+              undefined,
+              queryGeneration
             );
           }
         }
@@ -621,7 +627,9 @@ export class RateLimitWatchdog {
           await this.scheduleCooldown(
             this.lastErrorMessage,
             computeCooldown(this.lastErrorMessage, this.retryCount),
-            episodeGeneration
+            episodeGeneration,
+            undefined,
+            queryGeneration
           );
         } catch {}
       }

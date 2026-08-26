@@ -1652,6 +1652,32 @@ describe('RateLimitWatchdog', () => {
       expect(receivedQueryGen).toBe(3);
     });
 
+    it('skips the re-entry deferred cooldown when the query moved after a rejected switch (B5e)', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let switchCalls = 0;
+      let queryGeneration = 3;
+      const { deps, notifyPause } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.switchAndRetry = mock(async () => {
+        switchCalls += 1;
+        if (switchCalls === 1) {
+          queryGeneration = 9;
+          throw new Error('switch rejected');
+        }
+        return false;
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      await flush();
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(notifyPause).not.toHaveBeenCalled();
+      watchdog.cancel();
+    });
+
     it('threads the captured episode generation into the retry callback', async () => {
       let receivedGen: number | undefined;
       const { deps } = createMockDeps({ chain: [] });

@@ -956,6 +956,33 @@ describe('SDKMessageHandler', () => {
       expect(detectPhaseFromMessageSpy).not.toHaveBeenCalled();
     });
 
+    it('a stale compacting status does not set the successor compaction flag (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+
+      await handler.handleMessage(
+        {
+          type: 'status',
+          status: 'compacting',
+          uuid: 'stale-status-uuid',
+          session_id: 'test-session-id',
+        } as unknown as SDKMessage,
+        2
+      );
+      await handler.handleMessage(
+        {
+          type: 'system',
+          subtype: 'compact_boundary',
+          uuid: 'stale-boundary-uuid',
+          session_id: 'test-session-id',
+        } as unknown as SDKMessage,
+        2
+      );
+
+      expect(setCompactingSpy).not.toHaveBeenCalled();
+    });
+
     it('a stale model_refusal_no_fallback does not persist refusal rewind state (B5e)', async () => {
       (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
         () => 9
