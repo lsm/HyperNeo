@@ -208,6 +208,17 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         expectedCachedPath: CACHED_PATH,
         expectedWarning: '',
       },
+      {
+        name: 'blank task workspace is treated as absent and falls back to the space workspace',
+        taskWorkspacePath: '',
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: false,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: SPACE_WORKSPACE },
+        expectedCreateCalled: false,
+        expectedCachedPath: undefined,
+        expectedWarning: '',
+      },
     ] as Row[])('%s', async (row: Row) => {
       await runRow(row);
     });

@@ -21,10 +21,12 @@ const SUB_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:exec:${EXEC_ID}`;
 interface FakeSessionState {
   session: {
     id: string;
+    workspacePath?: string | null;
     config: { mcpServers?: Record<string, McpServerConfig> };
   };
   onMissingWorkflowMcpServers?: AgentSessionType['onMissingWorkflowMcpServers'];
   calls: string[];
+  metadataUpdates: Array<Record<string, unknown>>;
   startSawCallback: boolean;
 }
 
@@ -35,6 +37,7 @@ function makeFakeAgentSession(
   const state: FakeSessionState = {
     session: { id, config: {} },
     calls: [],
+    metadataUpdates: [],
     startSawCallback: false,
   };
   const agentSession = {
@@ -76,6 +79,12 @@ function makeFakeAgentSession(
       }
     },
     getSessionData: () => state.session,
+    updateMetadata: (updates: Record<string, unknown>) => {
+      state.metadataUpdates.push(updates);
+      if ('workspacePath' in updates) {
+        state.session.workspacePath = updates.workspacePath as string | null;
+      }
+    },
     getProcessingState: () => ({ status: 'idle' }),
     getSDKMessageCount: () => 0,
     replayPendingMessagesForImmediateMode: async () => {
@@ -404,5 +413,43 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     );
 
     expect(dbId).toBe('db-id');
+  });
+
+  test('task.workspacePath outranks the stale session workspace and syncs the restored session (WS10)', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    fake.state.session.workspacePath = '/old/workspace';
+    (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo.getTask = () => ({
+      id: TASK_ID,
+      spaceId: SPACE_ID,
+      workflowRunId: RUN_ID,
+      status: 'in_progress',
+      title: 'Rehydrate MCP task',
+      workspacePath: '/task/rehydrate-override',
+    });
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fake.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await rehydrateOf(tam)(SUB_SESSION_ID);
+
+    expect(fake.state.metadataUpdates).toContainEqual({
+      workspacePath: '/task/rehydrate-override',
+    });
+    expect(fake.state.session.workspacePath).toBe('/task/rehydrate-override');
+  });
+
+  test('without a task workspace the restored session keeps its own workspace (no behavior change)', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    fake.state.session.workspacePath = '/old/workspace';
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fake.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await rehydrateOf(tam)(SUB_SESSION_ID);
+
+    expect(fake.state.metadataUpdates).toEqual([]);
+    expect(fake.state.session.workspacePath).toBe('/old/workspace');
   });
 });

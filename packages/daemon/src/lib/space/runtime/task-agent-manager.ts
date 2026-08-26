@@ -865,7 +865,7 @@ export class TaskAgentManager {
       resolveWorkspacePath: async (task, space) => {
         const workspace = resolveSpawnWorkspace({
           cachedTaskWorktreePath:
-            this.taskWorktreePaths.get(task.id) ?? task.workspacePath ?? undefined,
+            this.taskWorktreePaths.get(task.id) ?? (task.workspacePath || undefined),
           hasWorktreeManager: task.workspacePath ? false : Boolean(this.config.worktreeManager),
           spaceWorkspacePath: space.workspacePath,
         });
@@ -2026,6 +2026,9 @@ export class TaskAgentManager {
         { autoReplayPendingMessages: false }
       );
     if (!agentSession) return null;
+    if (workspacePath && agentSession.getSessionData().workspacePath !== workspacePath) {
+      agentSession.updateMetadata({ workspacePath: workspacePath });
+    }
 
     let slotInit: AgentSessionInit | null = null;
     if (matchedSlot?.agentId && matchedNode) {
@@ -3213,11 +3216,15 @@ export class TaskAgentManager {
     const workspacePath = resolveSpawnWorkspace({
       cachedTaskWorktreePath:
         this.getTaskWorktreePath(taskId) ??
+        (parentTask.workspacePath || undefined) ??
         agentSession.getSessionData().workspacePath ??
         undefined,
       hasWorktreeManager: false,
-      spaceWorkspacePath: resolveTaskWorkspace(space, parentTask),
+      spaceWorkspacePath: space.workspacePath,
     }).workspacePath;
+    if (workspacePath && agentSession.getSessionData().workspacePath !== workspacePath) {
+      agentSession.updateMetadata({ workspacePath: workspacePath });
+    }
 
     const currentInit = this.resolveCurrentNodeAgentInitForExecution({
       task: parentTask,
