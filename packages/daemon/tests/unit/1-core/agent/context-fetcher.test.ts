@@ -265,6 +265,31 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(disabledEarlierInfo.daemonBackstopActive).toBe(true);
   });
 
+  it('shows the configured threshold for percents above the SDK default', () => {
+    const response = baseResponse({
+      totalTokens: 185000,
+      maxTokens: 211112,
+      rawMaxTokens: 211112,
+      percentage: 93,
+      model: 'custom-model',
+      autoCompactThreshold: 190000,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 185000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'custom-model',
+      alias: 'custom-model',
+      contextWindow: 200000,
+      autoCompactPercent: 95,
+      provider: 'custom:test',
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.autoCompactThreshold).toBe(190000);
+    expect(info.daemonBackstopActive).toBe(true);
+  });
+
   it('derives the threshold from reserved autocompact breakdown tokens without including the buffer as a usage row', () => {
     const response = baseResponse({
       totalTokens: 226963,

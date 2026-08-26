@@ -196,6 +196,7 @@ describe('Custom Endpoint RPC handlers', () => {
       await handler(withPercent(100), {});
       await expect(handler(withPercent(49), {})).rejects.toThrow(/autoCompactPercent/);
       await expect(handler(withPercent(101), {})).rejects.toThrow(/autoCompactPercent/);
+      await expect(handler(withPercent(99.9), {})).rejects.toThrow(/autoCompactPercent/);
     });
 
     it('accepts the three supported endpoint types', async () => {

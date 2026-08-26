@@ -223,7 +223,10 @@ export function validateEditor(state: EditorState): string | null {
     const pct = m.resolved.autoCompactPercent;
     if (
       pct !== undefined &&
-      (!Number.isFinite(pct) || pct < AUTO_COMPACT_PERCENT_MIN || pct > AUTO_COMPACT_PERCENT_MAX)
+      (!Number.isFinite(pct) ||
+        !Number.isInteger(pct) ||
+        pct < AUTO_COMPACT_PERCENT_MIN ||
+        pct > AUTO_COMPACT_PERCENT_MAX)
     ) {
       return `Model '${id}': auto-compact percent must be between ${AUTO_COMPACT_PERCENT_MIN} and ${AUTO_COMPACT_PERCENT_MAX}`;
     }

@@ -137,6 +137,7 @@ export function validateCustomEndpoint(config: CustomEndpointConfig): void {
       pct !== undefined &&
       (typeof pct !== 'number' ||
         !Number.isFinite(pct) ||
+        !Number.isInteger(pct) ||
         pct < AUTO_COMPACT_PERCENT_MIN ||
         pct > AUTO_COMPACT_PERCENT_MAX)
     ) {

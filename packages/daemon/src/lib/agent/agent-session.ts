@@ -195,6 +195,11 @@ import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
 import { QueryAttemptRegistry } from './query-attempt-token.ts';
 import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
+import { NATIVE_CONTEXT_WINDOW_PROVIDER_IDS } from './query-options-builder.ts';
+import {
+  contextBudgetThreshold,
+  decideContextBudgetCompaction,
+} from './context-budget-decision.ts';
 import {
   type OriginalEnvVars,
   QueryRunner,
@@ -518,6 +523,7 @@ export class AgentSession
 
     if (session.metadata?.lastContextInfo) {
       this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);
+      this.enforceRestoredContextBudget();
     }
     this.stateManager.restoreFromDatabase();
 
@@ -1200,6 +1206,44 @@ export class AgentSession
       return;
     }
     this.syncRuntimeMcpServersToActiveQuery('reconcile', []);
+  }
+
+  private enforceRestoredContextBudget(): void {
+    const providerId = this.session.config.provider;
+    if (!providerId || providerId === 'acp') {
+      return;
+    }
+    if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
+      return;
+    }
+    const restored = this.contextTracker.getContextInfo();
+    if (!restored || restored.totalUsed <= 0) {
+      return;
+    }
+    const configuredWindow = restored.totalCapacity > 0 ? restored.totalCapacity : undefined;
+    const decision = decideContextBudgetCompaction({
+      totalUsed: restored.totalUsed,
+      configuredWindow,
+      autoCompactPercent: restored.autoCompactPercent,
+      sdkAutoCompactEnabled: restored.isAutoCompactEnabled,
+      sdkAutoCompactThreshold: restored.sdkAutoCompactThreshold,
+      cooldownActive: false,
+      compactingActive: false,
+    });
+    if (decision.action !== 'compact') {
+      return;
+    }
+    const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, restored.autoCompactPercent);
+    this.contextTracker.markCompactionTriggered(budgetKey);
+    this.logger.info(
+      `Daemon context-budget compaction for restored session ${this.session.id} ` +
+        `(provider=${providerId}, reason=${decision.reason}, ` +
+        `${restored.totalUsed} >= ${budgetKey} of ${configuredWindow ?? 0} tokens)`
+    );
+    void this.messageQueue.enqueue('/compact', true).catch((error) => {
+      this.logger.warn(`restored compaction enqueue failed for session ${this.session.id}:`, error);
+      this.contextTracker.clearCompactionCooldown();
+    });
   }
 
   private syncRuntimeMcpServersToActiveQuery(
