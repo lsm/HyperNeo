@@ -761,7 +761,11 @@ none of these sites needs its compensation machinery.
   classifier runners — `extractErrorPattern` and `buildTripMessage` stay
   plain helpers consumed by the ONE complete breaker-check pipeline
   (`ApiErrorCircuitBreaker.checkMessage`: message-type gate → rapid-fire
-  check → pattern
+  check → message-text extraction with its empty-text false-return gate
+  (`extractMessageText(msg.message?.content)`,
+  `api-error-circuit-breaker.ts:69-73` — review correction PR #2981: the
+  pattern classifiers consume the FLATTENED string, not raw SDK block-array
+  content) → pattern
   classification → occurrence recording → `trip()` — cooldown release is
   EXCLUDED from `checkMessage`, see the wiring note below), as the
   corrected migration steps below prescribe.
@@ -795,7 +799,11 @@ none of these sites needs its compensation machinery.
   FIRST stage, BEFORE any timestamp mutation — `sdk-message-handler.ts:764`
   sends every SDK message through `checkMessage`, and without this gate
   assistant messages would enter rapid-fire accounting and trip falsely) →
-  rapid-fire check → pattern
+  rapid-fire check → message-text extraction with its empty-text
+  false-return gate (`extractMessageText(msg.message?.content)`,
+  `api-error-circuit-breaker.ts:69-73` — the pattern classifiers consume
+  the flattened string, not raw block-array content; review correction PR
+  #2981) → pattern
   classification → occurrence recording (`recentErrors`,
   `messageTimestampsByAgent`, `state`) → `trip()` (with its async `onTrip`
   effect) as ONE mixed business operation, instead of swapping only the
@@ -811,7 +819,8 @@ none of these sites needs its compensation machinery.
   stays a SEPARATE entry-point operation (its own small pipeline or the
   existing method).
 - **step-by-step migration.** 1) Compose ONE complete breaker-check pipeline
-  (`ApiErrorCircuitBreaker.checkMessage`): rapid-fire check → pattern
+  (`ApiErrorCircuitBreaker.checkMessage`): rapid-fire check → message-text
+  extraction and its empty-text exit (`:69-73`) → pattern
   classification → occurrence recording → `trip()` as its stages (cooldown
   release stays out of `checkMessage` entirely — see the wiring note above),
   with the text classifiers kept as plain helpers (review correction
@@ -1269,7 +1278,13 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   `query-runner.ts:1704-1715`; `markMessageAccepted` before its consumed
   query per `sdk-message-handler.ts:551-559`; the registration adapter
   returning the promise per `:140-142` and the ACP `onAccepted` contract
-  per `acp-query-adapter.ts:29`/`acp-client.ts:272,286`) — while each
+  per `acp-query-adapter.ts:29`/`acp-client.ts:272,286`, with the producer
+  at `acp-query-runner.ts:739-742` setting `accepted` only after
+  settlement and a shared IN-FLIGHT acceptance promise serializing the
+  synchronously dispatched notifications (`acp-client.ts:479-483`,
+  `:283-287`; review correction PR #2981), and `messageGenerator`
+  rechecking claim ownership before `claimed.delete`/`yielded.add`
+  (`:361-362`)) — while each
   individual
   PUBLICATION promise keeps its today-style `.catch` containment AND
   fire-and-forget scheduling (await only the transactional
@@ -1868,6 +1883,8 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   the complete breaker-check pipeline, landed unwired — message-type gate
   (`msg.type !== 'user'`, `api-error-circuit-breaker.ts:49-51`, first —
   review correction PR #2981) → rapid-fire check →
+  message-text extraction with its empty-text false-return gate
+  (`:69-73`, flattened-string input; review correction PR #2981) →
   pattern classification → occurrence recording (`recentErrors`,
   `messageTimestampsByAgent`, `state`) → `trip()` (async `onTrip`) as mixed
   stages over ctx-injected collaborators. Review correction (PR #2981):
@@ -2145,7 +2162,15 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   (`message-queue.ts:347-359`: today a synchronous throw there removes the
   claim and rejects the enqueue; an async pipeline swallowed behind the
   void callback would let the queue move the message into `yielded` despite
-  the failed acknowledgment and leave a rejected promise unhandled);
+  the failed acknowledgment and leave a rejected promise unhandled).
+  After the await, `MessageQueue.messageGenerator` RECHECKS that the
+  message is still claimed before its unconditional
+  `claimed.delete`/`yielded.add` (`message-queue.ts:361-362`; review
+  correction PR #2981: a `clear()`/`remove()` during the pending
+  acknowledgment would otherwise resurrect an interrupted prompt into
+  `yielded` and feed it to the SDK after its enqueue promise already
+  settled), and the suppressed-callback wrapper performs the equivalent
+  yielded-ownership check after ITS await;
   `QueryRunner.createMessageGeneratorWrapper` — which suppresses the queue
   callback and invokes `onMessageYielded` itself
   (`query-runner.ts:1704-1715`) — awaits or handles the rejection;
@@ -2162,7 +2187,14 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `accepted = true` only after the acknowledgment settles (review
   correction PR #2981: otherwise TypeScript is free to discard the
   promise and a transactional rejection stays unhandled while ACP
-  processing continues as accepted) — while
+  processing continues as accepted). Because `AcpClient` dispatches
+  subscribers SYNCHRONOUSLY (`handleNotification`, `acp-client.ts:479-483`)
+  while the `accept()` guard holds only a boolean with no in-flight state
+  (`:283-287`), making the chain async requires a shared IN-FLIGHT
+  acceptance promise that back-to-back `session/update` notifications
+  reuse, that the response path awaits before completing, and that RESETS
+  after a rejection so a later notification can retry (review correction
+  PR #2981) — while
   the individual PUBLICATION promises keep
   today's per-publication `.catch` containment AND today's
   FIRE-AND-FORGET scheduling (review correction PR #2981: the handler
