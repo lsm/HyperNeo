@@ -540,7 +540,15 @@ anywhere in this plan.
   (codex round 15: the pre-run snapshot of the CURRENT space — the
   conditional canonical-route clear needs it to decide whether the routed
   space differs from the current one; without the declared field the write
-  stage must read the signal directly or clear unconditionally), decision
+  stage must read the signal directly or clear unconditionally) PLUS a
+  typed per-run PORTS object (codex round 18):
+  `ports: { pushPath: (path, state, replace) => void;
+  setSessionRouteId: (id: string | null) => void; setCurrentSpaceRouteId:
+  (spaceId: string) => void; clearCanonicalSpaceId: () => void; ...one
+  write function per signal the current cascade writes }` — supplied fresh
+  per run by the shell so the effect stages never close over module-scope
+  signal functions or reach undeclared fields through casts, and pipeline
+  tests substitute the writes, decision
   `SpaceRouteMatch` union (`session | spaceTask | spaceSession |
   spaceAgentDetail | spaceAgentList | spaceGoals | spaceMemories |
   spaceEvolve | spaceTasks | spaceSessions | spaceConfigure | spaceRoot |
@@ -606,8 +614,12 @@ anywhere in this plan.
      permanent whenever phase 2 is declined); if open question 3 declines
      phase 2, the parsers STAY ordinary pure helpers and the pins are all
      that lands.
-  3. Optionally fold `getSpaceEvolveFromPath` / `getSpaceTasksTabFromPath`
-     into the same gate style (small, independent).
+  3. The sibling parser conversions (`getSpaceEvolveFromPath` /
+     `getSpaceTasksTabFromPath`) are NOT an independent step (codex round
+     18): they fold into gate style only inside the PR 15 change, together
+     with `getSpaceIdFromPath` and the complete route pipeline — converting
+     them while imperative `applyPathToSignals` still calls them recreates
+     the nested pipeline boundaries step 2 prohibits.
   4. Phase 2 (separate PR): compose the complete `apply-space-route`
      pipeline — redirect effects, match gates, and per-arm signal-write
      stages — replacing the `applyPathToSignals` cascade in one change; the
@@ -948,7 +960,8 @@ anywhere in this plan.
   pure core design). Step 2 extends ctx with ports: `{ getHub: () =>
   Hub | null, request: (hub: Hub, payload) => Promise<{ messageId?: string }>,
   enqueue: (label, executor: () => Promise<void>, options?: {
-  executeImmediately?: boolean }) => void, onSendStart, onSendComplete, onError,
+  executeImmediately?: boolean }) => Promise<void>, onSendStart,
+  onSendComplete, onError,
   onMessageAccepted, armTimeout: () => SendTimeoutHandle, toastError,
   toastInfo }` and
   `outcome: boolean | null`, AND `payload?: SendMessagePayload` (codex round
@@ -988,7 +1001,14 @@ anywhere in this plan.
   reconciliation for QUEUED sends must survive the migration (a queued
   message whose live update is missed otherwise never triggers
   ChatContainer's visibility check and store refresh), and the queue tests
-  must EXECUTE the queued actions to assert it.
+  must EXECUTE the queued actions to assert it. Review correction (codex
+  round 18): the port RETURNS `enqueueAction`'s promise
+  (`outbound-queue.ts:19-34`) and the queue-arm effect stage AWAITS it —
+  when the offline snapshot races a reconnection, `enqueueAction` executes
+  the queued request immediately and can reject, and a `void` port would
+  discard that rejection into an unhandled promise while the hook returns
+  `true`; awaiting keeps the whole-sequence stage-level error handling
+  effective.
 - **Pure core design.** Step 1 gates: `gateContentPresent` (decides
   `rejectEmpty` on blank/`isSending && !allowQueueWhileProcessing`) →
   `gateSessionArchived` → `gateOffline` → `gateSend` (terminal — when the
@@ -1541,10 +1561,12 @@ optional router phase 2. No per-site section is left uncovered.
   dropped.
 - **Scope**: `packages/web/src/lib/session-utils.ts` — special-case rows
   FIRST (`kimi-k3`, `kimi-k2.7-code(-highspeed)`, claude date-suffix,
-  single-part families), then a LEADING `gateEmptyModelId` decides `''`
-  for nullish/empty ids (codex round 16 — inside the runner, not a wrapper
-  guard) before
-  invoking the pipeline and gates `gateClaudeLabel` → `gateGlmLabel` →
+  single-part families), then a LEADING `gateEmptyModelId` deciding `''`
+  for nullish/empty ids, followed by `stageDeriveLower` computing the safe
+  lowercased value (codex rounds 16+18 — both INSIDE the runner, in that
+  order: the empty arm never lowercases a null and the provider gates
+  consume `ctx.lower` instead of recomputing), then
+  gates `gateClaudeLabel` → `gateGlmLabel` →
   `gateKimiLabel` → `gateMoonshotLabel` → `gateGenericLabel` (terminal); all
   string surgery verbatim.
 - **Budget**: prod Δ ≈ 50; test Δ ≈ 70.
