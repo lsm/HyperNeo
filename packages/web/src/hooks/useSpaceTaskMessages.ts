@@ -6,7 +6,7 @@ import type {
   LiveQuerySnapshotEvent,
   MessageDeliveryStatus,
 } from '@hyperneo/shared';
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import {
   createLiveQueryLifecycleState,
   type LiveQueryLifecycleEffect,
@@ -35,9 +35,6 @@ export interface SpaceTaskThreadMessageRow {
   insOrder?: number | null;
   turnHiddenMessageCount?: number;
   sessionMessageCount?: number;
-  contentTruncated?: boolean;
-  contentBytes?: number;
-  contentHash?: number;
 }
 
 interface ActiveTurnEntryRow {
@@ -56,7 +53,6 @@ export interface UseSpaceTaskMessagesResult {
   isLoading: boolean;
   error: string | null;
   isReconnecting: boolean;
-  expandMessage: (messageId: string | number) => Promise<void>;
 }
 
 const SPACE_TASK_MESSAGES_COMPACT_DEFAULT_LIMIT = 20;
@@ -101,37 +97,6 @@ function activeTurnRowPosition(id: string): [number, number] {
   return [Number.isNaN(rowId) ? 0 : rowId, Number.isNaN(blockIdx) ? 0 : blockIdx];
 }
 
-function isSameServerContent(
-  prev: SpaceTaskThreadMessageRow,
-  incoming: SpaceTaskThreadMessageRow
-): boolean {
-  if (typeof prev.contentHash === 'number' && typeof incoming.contentHash === 'number') {
-    return prev.contentHash === incoming.contentHash;
-  }
-  return prev.contentBytes === incoming.contentBytes;
-}
-
-function mergeIncomingRow(
-  prev: SpaceTaskThreadMessageRow | undefined,
-  incoming: SpaceTaskThreadMessageRow
-): SpaceTaskThreadMessageRow {
-  const keepsExpansion =
-    prev &&
-    prev.contentTruncated === false &&
-    incoming.contentTruncated === true &&
-    isSameServerContent(prev, incoming);
-  if (keepsExpansion && prev) {
-    return {
-      ...incoming,
-      content: prev.content,
-      contentBytes: prev.contentBytes,
-      contentHash: prev.contentHash,
-      contentTruncated: false,
-    };
-  }
-  return incoming;
-}
-
 function applyDelta(
   currentRows: SpaceTaskThreadMessageRow[],
   event: LiveQueryDeltaEvent
@@ -141,10 +106,10 @@ function applyDelta(
     next.delete(String(row.id));
   }
   for (const row of (event.updated ?? []) as SpaceTaskThreadMessageRow[]) {
-    next.set(String(row.id), mergeIncomingRow(next.get(String(row.id)), row));
+    next.set(String(row.id), row);
   }
   for (const row of (event.added ?? []) as SpaceTaskThreadMessageRow[]) {
-    next.set(String(row.id), mergeIncomingRow(next.get(String(row.id)), row));
+    next.set(String(row.id), row);
   }
   return sortRows(Array.from(next.values()));
 }
@@ -273,13 +238,7 @@ export function useSpaceTaskMessages(
         }
         if (effect.emission.type === 'snapshot') {
           const snapshot = payload as LiveQuerySnapshotEvent | null;
-          setRows((prev) => {
-            const incoming = (snapshot?.rows as SpaceTaskThreadMessageRow[]) ?? [];
-            const prevById = new Map(prev.map((row) => [String(row.id), row]));
-            return sortRows(
-              incoming.map((row) => mergeIncomingRow(prevById.get(String(row.id)), row))
-            );
-          });
+          setRows(sortRows((snapshot?.rows as SpaceTaskThreadMessageRow[]) ?? []));
           setLoadedForTaskId(taskId);
           continue;
         }
@@ -384,38 +343,11 @@ export function useSpaceTaskMessages(
   const isLoading = taskId !== null && isConnected && loadedForTaskId !== taskId;
   const error = messageError ?? activeTurnError;
 
-  const expandMessage = useCallback(
-    async (messageId: string | number) => {
-      if (!taskId) return;
-      const hub = getHub();
-      if (!hub) return;
-      try {
-        const { sdkMessage } = await hub.request<{ sdkMessage: string }>('spaceTaskMessage.get', {
-          taskId,
-          messageId: String(messageId),
-        });
-        setRows((prev) =>
-          prev.map((row) =>
-            String(row.id) === String(messageId)
-              ? {
-                  ...row,
-                  content: sdkMessage,
-                  contentTruncated: false,
-                }
-              : row
-          )
-        );
-      } catch {}
-    },
-    [taskId, getHub]
-  );
-
   return {
     rows: sortedRows,
     activeTurnSummaries,
     isLoading,
     error,
     isReconnecting: !isConnected && taskId !== null,
-    expandMessage,
   };
 }

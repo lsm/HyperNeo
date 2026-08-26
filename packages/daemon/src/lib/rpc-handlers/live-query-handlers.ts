@@ -21,9 +21,7 @@ import type { TableChangeScope } from '../../storage/reactive-database.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { humanSessionColumnsPredicate } from '../../storage/schema/session-counters.ts';
 import { Logger } from '../logger.ts';
-import { hashString32 } from '../runtime-hash.ts';
 import { mapActiveTurnEntryRow } from './activity-preview.ts';
-import { runSpaceTaskMessageExpansion } from './space-task-message-expansion-pipeline.ts';
 
 export { buildActiveTurnSummariesFromRows } from './activity-preview.ts';
 
@@ -61,75 +59,6 @@ const SESSION_LIST_EXCLUDED_TYPES = new Set<string>([
 ]);
 
 const MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW = 100;
-const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD = 2048;
-const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX = 1200;
-const SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS = '…';
-
-function capPreviewString(value: string): string {
-  return value.length <= SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX
-    ? value
-    : `${value.slice(0, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_STRING_MAX)}${SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS}`;
-}
-
-function projectCompactPreview(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') {
-    return typeof value === 'string' ? capPreviewString(value) : value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(projectCompactPreview);
-  }
-  const obj = value as Record<string, unknown>;
-  if (
-    obj.type === 'image' &&
-    obj.source &&
-    typeof obj.source === 'object' &&
-    typeof (obj.source as Record<string, unknown>).data === 'string'
-  ) {
-    return {
-      ...obj,
-      source: { ...(obj.source as Record<string, unknown>), data: '' },
-    };
-  }
-  const out: Record<string, unknown> = {};
-  for (const [key, v] of Object.entries(obj)) {
-    out[key] = projectCompactPreview(v);
-  }
-  return out;
-}
-
-function buildCompactMessagePreview(raw: string): {
-  preview: string;
-  contentBytes: number;
-  contentHash: number;
-  contentTruncated: boolean;
-} {
-  const contentBytes = raw.length;
-  if (contentBytes <= SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD) {
-    return { preview: raw, contentBytes, contentHash: hashString32(raw), contentTruncated: false };
-  }
-  const parsed = parseJsonOptional<Record<string, unknown>>(raw);
-  if (!parsed) {
-    return {
-      preview: `${raw.slice(0, SPACE_TASK_MESSAGES_COMPACT_PREVIEW_KEEP_THRESHOLD)}${SPACE_TASK_MESSAGES_COMPACT_PREVIEW_ELLIPSIS}`,
-      contentBytes,
-      contentHash: hashString32(raw),
-      contentTruncated: true,
-    };
-  }
-  const preview = JSON.stringify(projectCompactPreview(parsed));
-  return { preview, contentBytes, contentHash: hashString32(raw), contentTruncated: true };
-}
-
-function mapSpaceTaskMessageCompactRow(row: Record<string, unknown>): Record<string, unknown> {
-  const rawContent = typeof row.content === 'string' ? row.content : String(row.content ?? '');
-  const { preview, contentBytes, contentHash, contentTruncated } =
-    buildCompactMessagePreview(rawContent);
-  const mapped = mapSpaceTaskMessageRow({ ...row, content: preview });
-  mapped.contentBytes = contentBytes;
-  mapped.contentHash = contentHash;
-  mapped.contentTruncated = contentTruncated;
-  return mapped;
-}
 
 function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const sourceType = row.sourceType;
@@ -3645,7 +3574,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       sql: SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL,
       paramCount: 2,
       debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
-      mapRow: mapSpaceTaskMessageCompactRow,
+      mapRow: mapSpaceTaskMessageRow,
       buildScopeFilter: buildTaskScopeFilter,
     },
   ],
@@ -4142,42 +4071,6 @@ export function setupLiveQueryHandlers(
     }
 
     return { ok: true } satisfies LiveQueryUnsubscribeResponse;
-  });
-
-  const stmtSpaceTaskMessage = db.prepare(
-    'SELECT sdk_message FROM sdk_messages WHERE id = ? AND task_id = ?'
-  );
-  const stmtSpaceGithubEvent = db.prepare(
-    'SELECT id, summary, external_url FROM space_github_events WHERE id = ? AND task_id = ?'
-  );
-  const stmtSpaceTaskScope = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?');
-
-  messageHub.onRequest('spaceTaskMessage.get', (data) => {
-    const { taskId, messageId } = data as { taskId?: unknown; messageId?: unknown };
-    const outcome = runSpaceTaskMessageExpansion({
-      taskId: typeof taskId === 'string' ? taskId : '',
-      messageId: typeof messageId === 'string' ? messageId : '',
-      findSpaceTaskScope: (id) => stmtSpaceTaskScope.get(id),
-      findSdkMessage: (id, task) =>
-        (stmtSpaceTaskMessage.get(id, task) as { sdk_message: string } | undefined)?.sdk_message,
-      findGithubEvent: (id, task) =>
-        stmtSpaceGithubEvent.get(id, task) as
-          | { id: string; summary: string; external_url: string }
-          | undefined,
-    });
-    switch (outcome.status) {
-      case 'invalidInput':
-        throw new Error('spaceTaskMessage.get requires taskId and messageId');
-      case 'unauthorized':
-        throw new Error(`Unauthorized: space task "${taskId}" not found`);
-      case 'notFound':
-        throw new Error('Message not found');
-      case 'tooLarge':
-        throw new Error(
-          `spaceTaskMessage.get: message "${outcome.messageId}" exceeds the expansion size limit`
-        );
-    }
-    return { sdkMessage: outcome.sdkMessage };
   });
 
   const unsubDisconnect = messageHub.onClientDisconnect((disconnectedClientId) => {

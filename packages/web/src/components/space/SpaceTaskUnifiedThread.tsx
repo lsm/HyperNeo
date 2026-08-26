@@ -55,8 +55,11 @@ export function SpaceTaskUnifiedThread({
   onScrollToBottomChange,
   onScrollerChange,
 }: SpaceTaskUnifiedThreadProps) {
-  const { rows, activeTurnSummaries, isLoading, error, isReconnecting, expandMessage } =
-    useSpaceTaskMessages(taskId, 'compact', 20);
+  const { rows, activeTurnSummaries, isLoading, error, isReconnecting } = useSpaceTaskMessages(
+    taskId,
+    'compact',
+    20
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -180,7 +183,6 @@ export function SpaceTaskUnifiedThread({
             activeTurnSummaries={activeTurnSummaries}
             overlayTaskId={overlayTaskId}
             overlayTaskReadonly={overlayTaskReadonly}
-            onExpandMessage={expandMessage}
           />
           <div ref={messagesEndRef} />
         </div>

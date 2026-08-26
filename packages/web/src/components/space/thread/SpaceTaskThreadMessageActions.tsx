@@ -21,8 +21,6 @@ interface SpaceTaskThreadMessageActionsProps {
   openSessionTitle?: string;
   sessionInit?: SystemInitMessage;
   resultInfo?: ResultMessage;
-  isTruncated?: boolean;
-  onExpand?: () => void;
 }
 
 function formatTime(timestamp: number): string {
@@ -44,8 +42,6 @@ export function SpaceTaskThreadMessageActions({
   openSessionTitle,
   sessionInit,
   resultInfo,
-  isTruncated,
-  onExpand,
 }: SpaceTaskThreadMessageActionsProps) {
   const [copied, setCopied] = useState(false);
 
@@ -112,18 +108,6 @@ export function SpaceTaskThreadMessageActions({
         )}
       </IconButton>
 
-      {isTruncated && onExpand && (
-        <IconButton size="md" onClick={onExpand} title="Show full message">
-          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M19 13l-7 7-7-7m14-8l-7 7-7-7"
-            />
-          </svg>
-        </IconButton>
-      )}
       {onOpenSession && (
         <IconButton size="md" onClick={onOpenSession} title={openSessionTitle ?? 'Open in session'}>
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
