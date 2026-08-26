@@ -1528,6 +1528,7 @@ export class SDKMessageHandler {
       }
       const pending = this.pendingContextRefresh;
       this.pendingContextRefresh = pending.then(() => this.refreshContextUsage(reason));
+      this.ctx.messageQueue.setDeliveryGate(this.pendingContextRefresh.catch(() => {}));
       return this.pendingContextRefresh;
     }
 
