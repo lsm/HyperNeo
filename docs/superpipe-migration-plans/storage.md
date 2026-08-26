@@ -179,6 +179,7 @@ stage dependency fails the typecheck instead of being hidden behind a
 
 ```ts
 interface SaveSdkMessageInput {          // pipeline input: snapshot only
+  sessionId: string;                     // every persist/publication stage needs it
   message: SDKMessage;
   variant: MessageAdmissionVariant;
   sendStatus: SendStatus | null;
@@ -195,6 +196,11 @@ type AdmittedSdkMessage = SaveSdkMessageInput & {
 `MessageAdmissionRecord` remains the admission stage's output, produced by
 calling the plain `decideMessageAdmission` leaf. `origin` rides the input
 because the persist stages consume it; it never enters the record.
+`sessionId` rides every save input (review correction PR #2978): the
+INSERT, task/turn resolution, replacement edges, badge updates, and
+notifications all need it — capturing it in a closure or bypassing the
+declared input would undermine the reusable typed runner. Each method's
+input names the fields ITS stages consume.
 
 #### Pure core design
 
@@ -239,9 +245,17 @@ const saveSdkMessage = superpipe(deps)('save-sdk-message')
   .pipe(publishAdmissions, 'ctx', 'result');      // existing notifications/publications
 ```
 
-Each save pipeline is a synchronous `.end` run executed INSIDE the method's
-existing `db.transaction(...)` boundary (the same pattern the space-runtime
-plan uses inside `runAtomic`), so transaction semantics are unchanged.
+Each save pipeline is a synchronous `.end` run executed AROUND the method's
+existing `db.transaction(...)` boundary (review correction PR #2978): the
+atomic write block — insert, sequence allocation, replacement-edge writes,
+whatever the method currently performs inside its transaction — is ONE
+in-transaction stage, and the session notifications / superseded-index
+deletion / post-save side effects are POST-COMMIT stages with a local
+`.catch(...)`. Today's `saveSDKMessage` COMMITS before notifying the session
+and deleting superseded-index entries, and failures there are only logged —
+moving them into the transaction would roll back or retry an otherwise
+successful insert. The transaction semantics are unchanged because the
+transaction body moves as a unit into one stage.
 
 #### Shell/effect wiring
 
@@ -250,14 +264,22 @@ one named pipeline — admission, persist, sequence allocation, and
 notifications/publications are its stages, so no save path keeps an imperative
 shell interpreting a derivation helper:
 
-- `saveSDKMessage` → `save-sdk-message`: its `db.transaction(...)` body
-  becomes the pipeline's effect stages (the sync `.end` run happens inside
-  the transaction).
-- `saveUserMessageCore` → `save-user-message-core`: same shape, running
-  inside the transaction that `message-delivery-outbox.ts` composes
-  (`packages/daemon/src/lib/agent/message-delivery-outbox.ts:60-81`).
+- `saveSDKMessage` → `save-sdk-message`: ONE `atomic-write` stage internally
+  runs the existing `db.transaction(...)` body; session notification and
+  superseded-index deletion are post-commit best-effort stages (local catch +
+  log — a publication failure must NOT fail the committed insert).
+- `saveUserMessageCore` → `save-user-message-core`: the pipeline boundary is
+  the OUTER persist/enqueue/post-commit flow that
+  `message-delivery-outbox.ts:60-91` composes (review correction PR #2978):
+  the transaction stage covers persist AND the queue `enqueue` (both are in
+  the transaction today), and `runPostSaveSideEffects` (`:84`, invoked only
+  after commit) is the post-commit stage. The outbox caller is rewired in
+  the SAME slice — converting only the transaction-free core would leave
+  publications outside the claimed complete pipeline, or announce a message
+  a later enqueue failure rolls back.
 - `saveHyperNeoActionMessage` → `save-hyperneo-action-message`: same shape
-  inside its local transaction.
+  as `save-sdk-message` inside its local transaction, publications
+  post-commit.
 
 The method bodies reduce to snapshot → run; `decideMessageAdmission` remains
 the plain exported leaf the admission stages call.
@@ -269,7 +291,8 @@ the plain exported leaf the admission stages call.
 
 With the complete-save-path correction (PR #2978), the DB writes,
 `nextConsumedSeq` allocation, and notifications MOVE INTO each save pipeline
-as stages — but they keep their exact current boundaries and rules: the
+as stages — post-commit publications as best-effort stages, per the boundary
+rules above — and they keep their exact current semantics: the
 admission record stays decoupled from `consumed_seq` allocation (see the
 storage survey B2/B4 notes; allocation is its own stage, unchanged), and
 `isTerminal` remains only an admission flag feeding that stage's existing
@@ -436,8 +459,10 @@ trailing slice); tiny phases may combine. Decompose at authoring time and split
 a slice further before opening it rather than growing a PR past budget
 mid-review; every slice leaves the repo compiling with tests green when it
 lands, and no slice folds in unrelated fixes. This plan decomposes
-into six slices: two pin dimension families, one complete save-path pipeline
-per save method (three), and a trailing benchmark.
+into five slices: one pin dimension family, one complete save-path pipeline
+per save method (three), and a trailing benchmark (review correction PR
+#2978: the former identity/extraction pin slice was removed — the existing
+wrapper suite already characterizes those dimensions).
 
 ### PR 1 — `test(storage): pin admission-flag matrix for decideMessageAdmission`
 
@@ -458,39 +483,15 @@ per save method (three), and a trailing benchmark.
 - **Lands**: The flag derivations of the current hand-rolled
   `decideMessageAdmission` are pinned by a decision-table parity oracle before
   any refactor touches production code.
-- **Excludes**: Identity/replacement-edge/normalization dimensions (PR 2), any
-  edit to `sdk-message-admission.ts` itself, the pipeline stages, and the
-  benchmark extension.
+- **Excludes**: Any edit to `sdk-message-admission.ts` itself, the pipeline
+  stages, and the benchmark extension. (The identity/replacement-edge
+  dimensions are already characterized by the existing wrapper suite — no
+  pin slice needed for them; review correction PR #2978.)
 - **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
   (this slice is test-only).
 - **Depends on**: none.
 
-### PR 2 — `test(storage): pin identity and replacement-edge admission extraction`
-
-📌 pins — prod Δ = 0, test Δ ≲350
-
-- **Scope**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
-  only (steps 1–2, identity dimension family). Characterize the extraction
-  dimensions of `decideMessageAdmission`: assistant messages with
-  `parent_tool_use_id` (`parentToolUseId`), `sdkUuid` extraction, superseded and
-  retracted replacement edges including the `model_refusal_fallback` subtype
-  gate, and `HyperNeoActionMessage` normalization. Review correction (PR
-  #2978): the exported helpers already have direct helper-level coverage in
-  `sdk-message-repository-helpers.test.ts` (including the retraction gates) —
-  that suite stays green and untouched; this slice adds only WRAPPER-level
-  extraction rows through the admission decision table, and claims no helper
-  gap to close.
-- **Lands**: The extraction and normalization half of the admission record is
-  pinned alongside PR 1's flag family, completing the parity oracle with
-  production code still untouched.
-- **Excludes**: Flag-dimension cases (PR 1), any edit to
-  `sdk-message-admission.ts`, the pipeline stages, and the benchmark extension.
-- **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
-  (test-only).
-- **Depends on**: none (PR 1 touches the same file; land sequentially to avoid
-  same-file churn, not for correctness).
-
-### PR 3 — `refactor(storage): compose the complete save-sdk-message pipeline`
+### PR 2 — `refactor(storage): compose the complete save-sdk-message pipeline`
 
 🔧 apply — prod Δ ≲100, test Δ ≲150
 
@@ -508,9 +509,9 @@ per save method (three), and a trailing benchmark.
   `decideMessageAdmission` keeps its plain body, two-argument signature, and
   every caller (`:974`, `:1678`, `sdk-message-badge.ts`); `bun run check`
   passes.
-- **Excludes**: The other two save paths (PRs 4–5); folding
+- **Excludes**: The other two save paths (PRs 3–5); folding
   `normalizeMessageAdmissionInput` in (open question 1); any
-  `transformRun`-style combinator; the benchmark extension (PR 6); later
+  `transformRun`-style combinator; the benchmark extension (PR 5); later
   "Suggested migration order" items.
 - **Tests**: `sdk-message-save-admission-drift.test.ts`,
   `sdk-message-repository.test.ts`, and
@@ -518,37 +519,37 @@ per save method (three), and a trailing benchmark.
   gates for this save path).
 - **Depends on**: PR 1, PR 2.
 
-### PR 4 — `refactor(storage): compose the complete save-user-message-core pipeline`
+### PR 3 — `refactor(storage): compose the complete save-user-message-core pipeline`
 
 🔧 apply — prod Δ ≲100, test Δ ≲150
 
 - **Scope**: `sdk-message-repository.ts` (`saveUserMessageCore`, call site
-  `:974`) only. Same composition as PR 3 for the user-message save path; the
+  `:974`) only. Same composition as PR 2 for the user-message save path; the
   sync `.end` run executes inside the transaction that
   `packages/daemon/src/lib/agent/message-delivery-outbox.ts:60-81` composes —
   that caller is untouched (it hands the transaction in exactly as today).
 - **Lands**: The user-message save path runs as one complete pipeline; the
   outbox composer's contract is unchanged.
 - **Excludes**: `message-delivery-outbox.ts` changes (none needed);
-  PRs 3 and 5.
+  PRs 2 and 5.
 - **Tests**: The same three repository suites re-run unchanged.
-- **Depends on**: PR 3 (same file; sequenced for same-file churn, not
+- **Depends on**: PR 2 (same file; sequenced for same-file churn, not
   correctness).
 
-### PR 5 — `refactor(storage): compose the complete save-hyperneo-action-message pipeline`
+### PR 4 — `refactor(storage): compose the complete save-hyperneo-action-message pipeline`
 
 🔧 apply — prod Δ ≲100, test Δ ≲150
 
 - **Scope**: `sdk-message-repository.ts` (`saveHyperNeoActionMessage`, call
-  site `:1678`) only. Same composition as PR 3 inside the method's local
+  site `:1678`) only. Same composition as PR 2 inside the method's local
   transaction.
 - **Lands**: All three storage save business paths run as complete named
   pipelines; `decideMessageAdmission` remains the plain shared leaf.
-- **Excludes**: PRs 3–4; the benchmark (PR 6).
+- **Excludes**: PRs 2–4; the benchmark (PR 5).
 - **Tests**: The same three repository suites re-run unchanged.
-- **Depends on**: PR 4 (same file; sequenced).
+- **Depends on**: PR 3 (same file; sequenced).
 
-### PR 6 — `test(storage): benchmark save-pipeline overhead against a measured insert`
+### PR 5 — `test(storage): benchmark save-pipeline overhead against a measured insert`
 
 **cleanup** (trailing measurement slice) — prod Δ = 0, benchmark-script Δ ≲150
 
@@ -563,7 +564,7 @@ per save method (three), and a trailing benchmark.
 - **Excludes**: Any production-code change and any CI wiring for the benchmark.
 - **Tests**: `packages/daemon/scripts/benchmark/decision-pipeline.ts` itself,
   run manually; no unit-test files change in this slice.
-- **Depends on**: PR 3 (any one save pipeline suffices to measure).
+- **Depends on**: PR 2 (any one save pipeline suffices to measure).
 
 ## Open questions
 
