@@ -2,33 +2,46 @@
 
 ## Scope and combinator fit
 
-This plan covers a single storage admission seam:
+This plan covers the four complete message-write/delivery business paths in the
+storage layer:
 
-- `packages/daemon/src/storage/repositories/sdk-message-admission.ts:decideMessageAdmission`
+- `packages/daemon/src/storage/repositories/sdk-message-repository.ts:saveSDKMessage`
+- `packages/daemon/src/storage/repositories/sdk-message-repository.ts:saveUserMessage`
+- `packages/daemon/src/storage/repositories/sdk-message-repository.ts:saveHyperNeoActionMessage`
+- `packages/daemon/src/lib/agent/message-delivery-outbox.ts:persistAndEnqueueDelivery`
 
-`decideMessageAdmission` is a **pure, synchronous, side-effect-free transform**: it takes a
-`NormalizedMessageAdmissionInput` plus `MessageAdmissionOptions` and returns a
-`MessageAdmissionRecord`. It has no early-exit guards, no `decision` field, no
-asynchronous work, and no external effects.
+`decideMessageAdmission` in
+`packages/daemon/src/storage/repositories/sdk-message-admission.ts` is a **pure,
+synchronous, side-effect-free leaf**: it takes a `NormalizedMessageAdmissionInput`
+plus `MessageAdmissionOptions` and returns a `MessageAdmissionRecord`. It is **not**
+the migration target. It remains a plain exported helper consumed by the `admit`
+stage of each save pipeline and directly by
+`sdk-message-badge.ts:planAdmissionBadgeUpdate`.
+
+Each save path becomes a **mixed transform/effect superpipe pipeline** named for
+the business operation:
+
+- The `admit` stage is a pure transform (P1: `pipe -> end`, no early exit).
+- The `atomic` stage is a single in-transaction effect stage wrapping the existing
+  `db.transaction(...)` body (insert, sequence allocation, replacement-edge writes,
+  badge update, and — for `persistAndEnqueueDelivery` — the queue `enqueue`).
+- The post-commit stages run after the transaction commits and keep their existing
+  per-method error policy.
 
 Per ADR 0004 (`docs/adr/0004-superpipe-pipelines.md`, current revision 2026-08-25),
-this is the **P1 pure sync transform** pattern:
-
-> `pipe -> end`, early exit via `!dep`
-
-In this case the "early exit" clause does not apply, so the pipeline is simply a
-straight chain of named transform stages. It must **not** be forced into
-`decisionRun` (which requires a `decision` field and a `hasDecided` halting guard)
-and it must **not** use `stagedRun` (which is for async, multi-snapshot, effectful
-flows). It should be a **raw `superpipe` pipeline** named for the business
-operation.
+the `admit` stage is the **P1 pure sync transform** pattern (`pipe -> end`, no
+early exit). Each complete path is a **mixed transform/effect superpipe
+pipeline** — a business-named `superpipe(...)('...')` with `.pipe` and `.end`,
+where `!dep` may halt for early-exit guards (none apply here). No `decisionRun`,
+no `stagedRun`, and no new `transformRun` combinator.
 
 The storage survey (`docs/reports/sdk-message-repository-superpipe-survey.md`)
-already extracted this admission record in Chain B2 and explicitly warned against
-`decisionRun` for this site because the derivations are independent, not a
-precedence chain. Converting it to a direct P1 superpipe pipeline is the natural
-next ADR-0004 step: it makes the stage order declarative and unit-testable
-without adding a mismatched combinator.
+already extracted the admission record in Chain B2 and explicitly warned against
+`decisionRun` for the admission derivation because the derivations are independent,
+not a precedence chain. Converting the surrounding save operations to direct
+superpipe pipelines is the natural next ADR-0004 step: it makes the mixed
+transform/effect stage order declarative and unit-testable without adding a
+mismatched combinator.
 
 ## Existing superpipe examples to emulate
 
@@ -69,19 +82,19 @@ it is designed for async flows with snapshots, effect stages, and compensation
 unwinding. `decideMessageAdmission` does not await and does not write, so
 `stagedRun` is inappropriate.
 
-### Pure transform example
-
-There is currently **no P1 direct superpipe pipeline in the daemon**. This
-migration will be the first one. A generic `transformRun` combinator must **not**
-be introduced: ADR 0004 requires ~3 direct uses before extracting a combinator,
-and the roadmap explicitly lists `transformRun` as an observation, not a build
-queue item.
 
 ## Per-site detailed plan
 
-### `packages/daemon/src/storage/repositories/sdk-message-admission.ts:decideMessageAdmission`
+### Save business paths
 
-#### Current summary
+The migration targets are the four complete save/delivery operations in
+`packages/daemon/src/storage/repositories/sdk-message-repository.ts` and
+`packages/daemon/src/lib/agent/message-delivery-outbox.ts`.
+`packages/daemon/src/storage/repositories/sdk-message-admission.ts:decideMessageAdmission`
+remains a plain exported helper consumed by the `admit` stage of each save
+pipeline.
+
+#### Admission leaf
 
 A 27-line hand-rolled function:
 
@@ -136,7 +149,7 @@ Consumers:
 All call sites consume the record synchronously and immediately use its fields
 for SQL INSERT values, badge planning, or replacement-edge writes.
 
-#### Proposed combinator
+#### Pipeline shape
 
 None. Use raw `superpipe` directly:
 
@@ -204,12 +217,13 @@ notifications all need it — capturing it in a closure or bypassing the
 declared input would undermine the reusable typed runner. Each method's
 input names the fields ITS stages consume.
 
-#### Pure core design
+#### Save-pipeline design
 
-Keep the existing pure helpers as implementation primitives. The six named
-steps below document `decideMessageAdmission`'s internal structure (and the
-admission stage each save pipeline runs by CALLING that plain leaf — review
-correction: the leaf is not itself converted into a separately-run pipeline):
+Keep the existing pure helpers as implementation primitives. The `admit` stage
+of each save pipeline is a **single** `superpipe` stage that calls the plain
+`decideMessageAdmission` leaf and stores its `MessageAdmissionRecord` on the
+context. The leaf's internal derivations are listed below for reference only;
+they are **not** separately-run superpipe stages.
 
 1. `extractMessageIdentity(ctx)`
    - Populate `messageType`, `messageSubtype`, `parentToolUseId`, `sdkUuid`,
@@ -241,15 +255,15 @@ Save-pipeline sketch (one per save method; `saveSDKMessage` shown):
 ```ts
 const saveSdkMessage = superpipe(deps)('save-sdk-message')
   .pipe(snapshotMessage, 'message', 'ctx')        // + variant/sendStatus/origin
-  .pipe(admitMessage, 'ctx', 'ctx')               // calls the plain decideMessageAdmission leaf
-  .pipe(persistMessage, 'ctx', 'ctx')             // existing insert effects, in-transaction
-  .pipe(allocateConsumedSeq, 'ctx', 'ctx')        // existing sequence rules, unchanged
-  .pipe(publishAdmissions, 'ctx', 'result');      // existing notifications/publications
+  .pipe(admitMessage, 'ctx', 'ctx')               // single stage: calls the plain decideMessageAdmission leaf
+  .pipe(atomicWrite, 'ctx', 'ctx')                // existing db.transaction(...) body: insert, allocate consumed_seq for terminal results, replacement edges, search index, badge
+  .pipe(publishAdmissions, 'ctx', 'result');      // existing notifications/publications, post-commit, with the method's existing error policy
 ```
 
 Each save pipeline is a synchronous `.end` run executed AROUND the method's
 existing `db.transaction(...)` boundary (review correction PR #2978): the
 atomic write block — insert, sequence allocation, replacement-edge writes,
+badge update, and — for `persistAndEnqueueDelivery` — the queue `enqueue`,
 whatever the method currently performs inside its transaction — is ONE
 in-transaction stage, and the session notifications / superseded-index
 deletion / post-save side effects are POST-COMMIT stages that keep the
@@ -264,42 +278,47 @@ a unit into one stage.
 #### Shell/effect wiring
 
 Review correction (PR #2978): each save/delivery method's COMPLETE operation
-becomes one named pipeline — admission, persist, sequence allocation, and
-notifications/publications are its stages, so no save path keeps an imperative
+becomes one named pipeline — preflight (validation/arbitration for the outbox),
+admission, a single in-transaction `atomic` stage, and post-commit
+publications/side effects are its stages, so no save path keeps an imperative
 shell interpreting a derivation helper. The runner SURROUNDS the method's
 existing `db.transaction(...)` block (that block is ONE in-transaction stage)
 and runs post-commit stages AFTER the transaction commits. Post-commit error
 handling is per-operation, not a blanket best-effort catch:
 
-- `saveSDKMessage` → `save-sdk-message`: the `atomic` stage runs the existing
-  `db.transaction(...)` body (`packages/daemon/src/storage/repositories/sdk-message-repository.ts:540-572`)
-  unchanged; session notification and superseded-index deletion are post-commit
-  best-effort stages (local catch + log — a publication failure must NOT fail
-  the committed insert, matching the current `saveSDKMessage` contract at
-  `:573-579`).
-- `saveUserMessage` → `save-user-message`: the `atomic` stage is the existing
-  `this.db.transaction(() => this.saveUserMessageCore(...))()` call
-  (`:960-962`); the shared `saveUserMessageCore` leaf performs the INSERT,
-  replacement edges, search-index scheduling, and badge update. `runPostSaveSideEffects`
-  (`:963`) is the post-commit stage and is NOT caught, so if it throws the
-  caller receives the error even though the insert is committed (matching the
-  current `saveUserMessage` contract).
-- `persistAndEnqueueDelivery` → `persist-and-enqueue-delivery`:
-  the `atomic` stage is the existing `db.transaction(...)` at
-  `packages/daemon/src/lib/agent/message-delivery-outbox.ts:60-81`, containing
-  `saveUserMessageCore` followed by `jobQueue.enqueue` and the UNIQUE-conflict
-  fallback. `runPostSaveSideEffects` (`:84`) is the post-commit stage and is
-  wrapped by the existing empty `catch {}` at `:83-89`, so a publication failure
-  is ignored (matching the current outbox contract).
-- `saveHyperNeoActionMessage` → `save-hyperneo-action-message`: the `atomic`
-  stage runs the existing `db.transaction(...)` body (`:1707-1710`);
-  `notifySessionsChanged` and `scheduleMessageSearchIndex` at `:1711-1712` are
-  post-commit stages that are NOT caught, so a failure there propagates to the
-  caller while the insert remains committed (matching the current
-  `saveHyperNeoActionMessage` contract).
+- `saveSDKMessage` → `save-sdk-message`: snapshot → `admit` (calls the plain
+  `decideMessageAdmission` leaf) → `atomic` (the existing `:540-572`
+  `db.transaction(...)` body, now reading `admission` from context; it inserts
+  and, if `isTerminal`, allocates and writes `consumed_seq`, then writes
+  replacement edges, schedules the search index, and applies the badge update,
+  all inside the transaction) → `notifySession` + `deleteSupersededIndex`
+  (post-commit, caught+log at `:573-579`).
+- `saveUserMessage` → `save-user-message`: snapshot → `admit` → `atomic`
+  (the existing `db.transaction(...)` body, now calling a new private
+  `saveUserMessageCoreWithAdmission` primitive; this helper performs the INSERT,
+  replacement edges, search-index scheduling, and badge update using the
+  precomputed `admission` on the context). The public `saveUserMessageCore`
+  method remains a compatibility wrapper that calls `decideMessageAdmission` then
+  the private helper, so existing tests and callers continue to work. →
+  `runPostSaveSideEffects` (`:963`, post-commit, NOT caught).
+- `persistAndEnqueueDelivery` → `persist-and-enqueue-delivery`: snapshot →
+  `validateMessageUuid` (the missing-UUID guard at `:40-42`) →
+  `arbitrateDeliveryRole` (`planDeliveryRoleArbitration` and `basePayload`
+  construction at `:43-58`) → `admit` → `atomic` (the existing `:60-81`
+  `db.transaction(...)` body, calling `saveUserMessageCoreWithAdmission` and
+  then `jobQueue.enqueue` with the UNIQUE-conflict fallback) →
+  `runPostSaveSideEffects` (`:84`, post-commit, ignored by the existing empty
+  `catch {}` at `:83-89`).
+- `saveHyperNeoActionMessage` → `save-hyperneo-action-message`: snapshot →
+  `admit` (variant `hyperneo_action`, `sendStatus: null`) → `atomic` (the
+  existing `:1707-1710` `db.transaction(...)` body, now reading `admission` from
+  context; it inserts and applies the badge update) → `notifySessionsChanged`
+  + `scheduleMessageSearchIndex` (`:1711-1712`, post-commit, NOT caught).
 
-The method bodies reduce to snapshot → run; `decideMessageAdmission` and
-`saveUserMessageCore` remain the plain exported leaves the stages call.
+The method bodies reduce to snapshot → run. `decideMessageAdmission` remains
+the plain admission leaf; `saveUserMessageCore` remains the public wrapper and
+a new private `saveUserMessageCoreWithAdmission` becomes the in-transaction
+primitive shared by both user save pipelines.
 
 `planAdmissionBadgeUpdate` continues to receive the record and return a
 `BadgeUpdateInstruction`. `SendStatus` must remain exported from
@@ -319,7 +338,12 @@ decision.
 
 1. **Pin behavior first.** Add or confirm characterization tests in
    `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
-   covering the full matrix:
+   covering the full admission-flag matrix, and in
+   `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`
+   add explicit post-commit failure-contract cases for `saveUserMessage` and
+   `saveHyperNeoActionMessage` (force `runPostSaveSideEffects` /
+   `notifySessionsChanged` to throw and assert the row is committed and the
+   error propagates).
    - `sdk` / `user` / `hyperneo_action` variants.
    - All five `SendStatus` values for `user`.
    - `sendStatus: null` for `sdk` and `hyperneo_action`.
@@ -351,34 +375,43 @@ decision.
    `NormalizedMessageAdmissionInput`).
 
 4. **Implement the save pipelines.** Compose one named pipeline per
-   business operation (admission stage calling the unchanged `decideMessageAdmission`
-   leaf, followed by the method's existing persist/sequence/publication
-   effects as stages). The runner SURROUNDS the existing `db.transaction(...)`
-   block: reduce each method body to snapshot → run, with the transaction body
-   as ONE in-transaction stage and post-commit stages running AFTER the
-   transaction commits. Do not invoke the full runner inside the transaction;
-   doing so would move notification / index side effects before commit and
-   could roll back the insert when they fail. `decideMessageAdmission` keeps
-   its current plain body and public signature; export each pipeline's runner
-   (`runSaveSdkMessage` et al.) for stage-level assertions if the suites want
-   them.
+   business operation. The `admit` stage is a single `superpipe` stage that
+   calls the plain `decideMessageAdmission` leaf. The `atomic` stage is ONE
+   in-transaction stage wrapping the existing `db.transaction(...)` body (insert,
+   `consumed_seq` allocation for terminal SDK messages, replacement edges, search
+   index, badge update, and — for the outbox — the queue `enqueue`). The
+   post-commit stages run AFTER the transaction commits. For `saveUserMessage`
+   and `persistAndEnqueueDelivery`, introduce a private
+   `saveUserMessageCoreWithAdmission` primitive that performs the in-transaction
+   work using the precomputed `admission` from the context, while the public
+   `saveUserMessageCore` stays a compatibility wrapper that calls
+   `decideMessageAdmission` and then the primitive. For the outbox, add the
+   preflight stages (`validateMessageUuid`, `arbitrateDeliveryRole`) before
+   `admit`. Reduce each method body to snapshot → run; do not invoke the full
+   runner inside the transaction, which would move notification / index side
+   effects before commit and could roll back the insert when they fail.
+   `decideMessageAdmission` keeps its current plain body and public signature;
+   export each pipeline's runner (`runSaveSdkMessage` et al.) for stage-level
+   assertions if the suites want them.
 
 5. **Run targeted tests.**
    - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
    - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-save-admission-drift.test.ts`
    - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`
+     (must now include the post-commit failure-contract cases for
+     `saveUserMessage` and `saveHyperNeoActionMessage`).
    - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository-live-query.test.ts`
    - `packages/daemon/tests/unit/4-space-storage/storage/message-delivery-outbox.test.ts`
 
 6. **Optional microbenchmark.** Add or extend
-   `packages/daemon/scripts/benchmark/decision-pipeline.ts` to measure BOTH
-   the save-pipeline overhead on a representative message set AND a
-   representative SQLite INSERT against the same database setup, so any
-   overhead ratio is grounded in a measured denominator (review correction
-   PR #2978: without the insert measurement the ~3% claim cannot be
-   established — if the insert cannot be measured faithfully in the script,
-   report ONLY the isolated per-run pipeline overhead and drop the percentage
-   claim).
+   `packages/daemon/scripts/benchmark/decision-pipeline.ts` to measure the
+   **complete save-pipeline overhead** (not an admission-only pipeline) on a
+   representative message set AND a representative SQLite INSERT against the
+   same database setup, so any overhead ratio is grounded in a measured
+   denominator (review correction PR #2978: without the insert measurement the
+   ~3% claim cannot be established — if the insert cannot be measured faithfully
+   in the script, report ONLY the isolated per-run pipeline overhead and drop
+   the percentage claim).
 
 7. **Lint/type check.** Run `bun run check` (or `bun run typecheck`) from the
    repo root. The file lives under `packages/daemon`, so it is covered by the
@@ -387,16 +420,20 @@ decision.
 #### Tests
 
 - **Unit: `sdk-message-admission.test.ts`**
-  - Keep all existing `decideMessageAdmission` assertions as the primary parity
-    oracle.
-  - Optionally add a `describe('messageAdmissionPipeline')` block that calls the
-    pipeline directly and asserts each stage contributes the expected field.
-  - If stages are not exported, test through the wrapper and assert the full
-    record shape.
+  - Keep all existing `decideMessageAdmission` assertions as the parity oracle
+    for the admission leaf; do **not** introduce an admission-only pipeline.
+  - If individual pipeline runners are exported, add `describe('saveSdkMessage')`
+    / `describe('saveUserMessage')` / `describe('persistAndEnqueueDelivery')` /
+    `describe('saveHyperNeoActionMessage')` blocks that call the complete
+    business-path pipelines and assert each stage contributes the expected
+    fields.
+  - If stages are not exported, test through the public wrapper and assert the
+    full record/side-effect shape.
 
 - **Drift: `sdk-message-save-admission-drift.test.ts`**
-  - This is the highest-value regression suite for the three save paths
-    (`saveSDKMessage`, `saveUserMessageCore`, `saveHyperNeoActionMessage`).
+  - This is the highest-value regression suite for the four save/delivery paths
+    (`saveSDKMessage`, `saveUserMessage`, `persistAndEnqueueDelivery`,
+    `saveHyperNeoActionMessage`).
   - It already pins the status/anchor/badge/replacement/consumed_seq
     divergences; the pipeline must not change any of these outcomes.
 
@@ -404,9 +441,20 @@ decision.
   - Confirms that the real repo still writes correct `is_renderable`,
     `is_terminal`, `conversation_turn_index`, `sdk_uuid`, and
     `replacement_metadata_normalized` values.
+  - Add explicit post-commit failure-contract cases for `saveUserMessage` and
+    `saveHyperNeoActionMessage`: mock the post-commit effect to throw and
+    assert the database row is present and the error reaches the caller.
+  - For `saveSDKMessage` and the outbox, assert post-commit failures are
+    swallowed/logged and do not roll back the insert.
+
+- **Outbox: `message-delivery-outbox.test.ts`**
+  - Covers the preflight stages (`extractSdkUuid` / missing-UUID guard and
+    `planDeliveryRoleArbitration`), the transactional persist/enqueue,
+    UNIQUE-conflict-to-steer fallback, and the post-commit exception contract.
 
 - **Benchmark: optional `scripts/benchmark/decision-pipeline.ts` extension**
-  - Verifies the pipeline overhead is in the expected ADR range before/after
+  - Measures the complete save-pipeline overhead, not an admission-only
+    pipeline. Verifies the overhead is in the expected ADR range before/after
     merge.
 
 #### Risks/caveats
@@ -437,27 +485,30 @@ decision.
   `saveSDKMessage` but not used in record computation. It must remain part of
   the options contract but can be ignored by the pipeline.
 
-- **Do not introduce a new combinator.** Resist `transformRun`. This site is the
-  first pure transform; there are not yet three direct uses to justify a
-  generic combinator.
+- **Do not introduce a new combinator.** Resist `transformRun` and any
+  admission-only pipeline; the four save/delivery paths are mixed
+  transform/effect business operations.
 
-- **`consumed_seq` must stay out.** The record's `isTerminal` field is not a
-  signal to allocate a consumed sequence. `saveSDKMessage` allocates
-  `consumed_seq` for terminal results after the INSERT; `saveUserMessageCore`
-  leaves `consumed_seq` NULL at insert and allocates it only on the `consumed`
-  status flip. The pipeline must preserve this.
+- **`consumed_seq` must stay inside the atomic stage.** The record's
+  `isTerminal` field is not a signal to allocate a consumed sequence, but for
+  terminal SDK messages the allocation and UPDATE must happen inside the same
+  transaction as the INSERT (`saveSDKMessage`, `sdk-message-repository.ts:560-567`).
+  `saveUserMessageCore` leaves `consumed_seq` NULL at insert and allocates it only
+  on the later `consumed` status flip. The pipeline must preserve this by keeping
+  all current transaction work in the single `atomic` stage.
 
 - **Benchmark caveats.** The ADR numbers were produced by
   `packages/daemon/scripts/benchmark/decision-pipeline.ts` for a `decisionRun`
-  with six early-exit gates. A pure transform with six `ctx -> ctx` stages may
-  have slightly different absolute numbers; the benchmark must be re-run on
-  this pipeline.
+  with six early-exit gates. The save pipelines are mixed transform/effect
+  business paths, so the benchmark must be re-run on the complete
+  save/delivery pipelines rather than on an admission-only transform.
 
 ## Suggested migration order
 
-1. **The three save-path pipelines (`sdk-message-repository.ts`, admission
-   via the `sdk-message-admission.ts` leaf)** — the complete persist business
-   paths; they set the pattern for future storage P1 work.
+1. **The four save/delivery pipelines (`sdk-message-repository.ts` and
+   `message-delivery-outbox.ts`, with admission via the `sdk-message-admission.ts`
+   leaf)** — the complete persist/enqueue business paths; they set the pattern
+   for future storage mixed-transform/effect work.
 2. **Message-search admission (`message-search-admission.ts`)** — already uses
    `decisionRun`; consider whether it should stay a combinator or be inlined to
    a direct superpipe guard chain. Not in this plan.
@@ -481,38 +532,43 @@ trailing slice); tiny phases may combine. Decompose at authoring time and split
 a slice further before opening it rather than growing a PR past budget
 mid-review; every slice leaves the repo compiling with tests green when it
 lands, and no slice folds in unrelated fixes. This plan decomposes
-into five slices: one pin dimension family, one complete save-path pipeline
-per business operation (`saveSDKMessage`, the paired `saveUserMessage` /
-`persistAndEnqueueDelivery` user paths, and `saveHyperNeoActionMessage`), and
+into five slices: one pin dimension family, one complete save/delivery
+pipeline per business operation (`saveSDKMessage`, the paired `saveUserMessage`
+/ `persistAndEnqueueDelivery` user paths, and `saveHyperNeoActionMessage`), and
 a trailing benchmark (review correction PR #2978: the former
 identity/extraction pin slice was removed — the existing wrapper suite already
 characterizes those dimensions).
 
-### PR 1 — `test(storage): pin admission-flag matrix for decideMessageAdmission`
+### PR 1 — `test(storage): pin admission flags and post-commit failure contracts`
 
 📌 pins — prod Δ = 0, test Δ ≲350
 
-- **Scope**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
-  only (steps 1–2, flag dimension family). Add or confirm characterization
-  coverage for the admission-flag dimensions of `decideMessageAdmission`:
-  `sdk` / `user` / `hyperneo_action` variants; all five `SendStatus` values for
-  `user`; `sendStatus: null` for `sdk` and `hyperneo_action`; renderable vs
-  non-renderable user content (tool result); terminal `result` messages; hidden
-  subtypes (`task_started`, `thinking_tokens`, etc.); and the resulting
-  `isRenderable` / `isTerminal` / `isConversationAnchor` / `countsTowardsBadge`
-  values. Pin the module-private `isVisibleBadgeRow` null `sendStatus`
-  default at WRAPPER level via `countsTowardsBadge` decision-table rows (the
-  helper has no isolated tests and stays unexported — review correction PR
-  #2978).
-- **Lands**: The flag derivations of the current hand-rolled
-  `decideMessageAdmission` are pinned by a decision-table parity oracle before
-  any refactor touches production code.
+- **Scope**:
+  - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
+    (steps 1–2, flag dimension family). Add or confirm characterization
+    coverage for the admission-flag dimensions of `decideMessageAdmission`:
+    `sdk` / `user` / `hyperneo_action` variants; all five `SendStatus` values
+    for `user`; `sendStatus: null` for `sdk` and `hyperneo_action`; renderable
+    vs non-renderable user content (tool result); terminal `result` messages;
+    hidden subtypes (`task_started`, `thinking_tokens`, etc.); and the
+    resulting `isRenderable` / `isTerminal` / `isConversationAnchor` /
+    `countsTowardsBadge` values. Pin the module-private `isVisibleBadgeRow`
+    null `sendStatus` default at WRAPPER level via `countsTowardsBadge`
+    decision-table rows (the helper has no isolated tests and stays unexported
+    — review correction PR #2978).
+  - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`
+    (review correction PR #2978): add explicit post-commit failure-contract
+    cases for `saveUserMessage` and `saveHyperNeoActionMessage` (force
+    `runPostSaveSideEffects` / `notifySessionsChanged` to throw and assert the
+    row is committed and the error propagates).
+- **Lands**: The admission derivations and the uncaught post-commit failure
+  contracts are pinned before any production refactor.
 - **Excludes**: Any edit to `sdk-message-admission.ts` itself, the pipeline
   stages, and the benchmark extension. (The identity/replacement-edge
   dimensions are already characterized by the existing wrapper suite — no
   pin slice needed for them; review correction PR #2978.)
-- **Tests**: `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-admission.test.ts`
-  (this slice is test-only).
+- **Tests**: `sdk-message-admission.test.ts` and `sdk-message-repository.test.ts`
+  only (this slice is test-only).
 - **Depends on**: none.
 
 ### PR 2 — `refactor(storage): compose the complete save-sdk-message pipeline`
@@ -521,17 +577,16 @@ characterizes those dimensions).
 
 - **Scope**: `packages/daemon/src/storage/repositories/sdk-message-repository.ts`
   (`saveSDKMessage`, call site `:521`) only (steps 3–4 for this method).
-  Compose the `save-sdk-message` pipeline — snapshot → admission stage calling
-  the unchanged plain `decideMessageAdmission` leaf → ONE `atomic-write` stage
-  running the method's existing `db.transaction(...)` body unchanged →
-  post-commit notification / superseded-index-deletion stages with local
-  catch+log (review correction PR #2978: the current method COMMITS before
-  those operations and only logs their failures; running them in-transaction
-  would roll back successful inserts); the method body reduces to snapshot →
-  run. Review correction (PR #2978): converting
-  only `decideMessageAdmission` while the save methods stay imperative shells
-  would wire a derivation helper pipeline under the forbidden decision/effect
-  split; the save operation is the business path, so the pipeline owns it.
+  Compose the `save-sdk-message` pipeline — snapshot → `admit` stage calling
+  the unchanged plain `decideMessageAdmission` leaf → ONE `atomic` stage
+  running the method's existing `db.transaction(...)` body unchanged (this
+  includes the INSERT, the `consumed_seq` UPDATE for terminal results, the
+  replacement edges, the search index, and the badge update, all in the same
+  transaction) → post-commit notification / superseded-index-deletion stages
+  with local catch+log (review correction PR #2978: the current method COMMITS
+  before those operations and only logs their failures; running them
+  in-transaction would roll back successful inserts); the method body reduces
+  to snapshot → run.
 - **Lands**: `saveSDKMessage` runs as one complete named pipeline;
   `decideMessageAdmission` keeps its plain body, two-argument signature, and
   every caller (`:974`, `:1678`, `sdk-message-badge.ts`); `bun run check`
@@ -555,31 +610,33 @@ characterizes those dimensions).
   `saveUserMessageCore` leaf at `:967`) AND
   `packages/daemon/src/lib/agent/message-delivery-outbox.ts:37-91`.
   Review correction (PR #2978): there are TWO complete user-message
-  business-operation pipelines, both sharing `saveUserMessageCore` as an
-  in-transaction plain stage/helper (not a separately-run pipeline). `saveUserMessage`
-  is the direct repository method used by `query-mode-handler.ts:152`,
-  `message-persistence.ts:204,232`, and other callers; its runner surrounds the
-  existing `this.db.transaction(() => this.saveUserMessageCore(...))()` block
+  business-operation pipelines. `saveUserMessage` is the direct repository
+  method used by `query-mode-handler.ts:152`, `message-persistence.ts:204,232`,
+  and other callers; its runner surrounds the existing
+  `this.db.transaction(() => this.saveUserMessageCore(...))()` block
   (`:960-962`) and the uncaught `runPostSaveSideEffects` call (`:963`).
-  `persistAndEnqueueDelivery` is the outbox's complete persist/enqueue/post-commit
-  flow at `:60-91`; its runner surrounds the existing `db.transaction(...)` block
-  that already calls `saveUserMessageCore` and `jobQueue.enqueue` with the
-  UNIQUE-conflict fallback, and the existing empty `catch {}` around
-  `runPostSaveSideEffects` at `:83-89`. The outbox caller is rewired in this same
-  slice.
+  `persistAndEnqueueDelivery` is the outbox's complete
+  persist/enqueue/post-commit flow at `:37-91`; its pipeline begins with
+  preflight stages (`validateMessageUuid` at `:40-42`, `arbitrateDeliveryRole`
+  at `:43-58`), then `admit`, then an `atomic` stage that calls a new private
+  `saveUserMessageCoreWithAdmission` primitive and `jobQueue.enqueue` with the
+  UNIQUE-conflict fallback. The public `saveUserMessageCore` stays a
+  compatibility wrapper that calls `decideMessageAdmission` and then the
+  private helper, so existing tests and callers continue to work.
 - **Lands**: Both user-message save/delivery paths run as complete named
-  pipelines; `saveUserMessageCore` and `decideMessageAdmission` remain plain
-  helpers; `bun run check` passes.
+  pipelines; `saveUserMessageCore` (public wrapper) and `decideMessageAdmission`
+  remain plain helpers; `bun run check` passes.
 - **Excludes**: `saveSDKMessage` (PR 2) and `saveHyperNeoActionMessage` (PR 4);
   the benchmark (PR 5).
 - **Tests**:
   - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-save-admission-drift.test.ts`
   - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository.test.ts`
+    (must include the post-commit failure-contract case for `saveUserMessage`).
   - `packages/daemon/tests/unit/4-space-storage/storage/sdk-message-repository-live-query.test.ts`
   - `packages/daemon/tests/unit/4-space-storage/storage/message-delivery-outbox.test.ts`
-    (review correction PR #2978: this suite pins the transactional
-    enqueue/rollback, UNIQUE-conflict-to-steer fallback, and post-commit
-    exception contract).
+    (must cover `validateMessageUuid`, `planDeliveryRoleArbitration`, the
+    transactional enqueue/rollback, UNIQUE-conflict-to-steer fallback, and
+    post-commit exception contract).
 - **Depends on**: PR 2 (same file; sequenced for same-file churn, not
   correctness).
 
@@ -598,7 +655,11 @@ characterizes those dimensions).
   `decideMessageAdmission` and `saveUserMessageCore` remain the plain shared
   leaves.
 - **Excludes**: PRs 2–3; the benchmark (PR 5).
-- **Tests**: The same three repository suites re-run unchanged.
+- **Tests**:
+  - `sdk-message-save-admission-drift.test.ts`
+  - `sdk-message-repository.test.ts` (must include the post-commit
+    failure-contract case for `saveHyperNeoActionMessage`)
+  - `sdk-message-repository-live-query.test.ts`
 - **Depends on**: PR 3 (same file; sequenced).
 
 ### PR 5 — `test(storage): benchmark save-pipeline overhead against a measured insert`
