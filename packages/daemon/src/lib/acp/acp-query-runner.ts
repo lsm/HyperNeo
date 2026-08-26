@@ -716,6 +716,18 @@ export class AcpQueryRunner {
 
         await this.applyStoredAcpThinkingLevel(client);
 
+        if (this.ctx.getQueryGeneration() !== queryGeneration) {
+          logger.warn(
+            'ACP prompt loop: run superseded during setup; requeueing the prompt and ' +
+              'leaving the successor query object intact.'
+          );
+          const yieldedUuid = message.uuid;
+          if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
+            logger.warn(`ACP prompt loop: could not requeue superseded prompt ${yieldedUuid}.`);
+          }
+          break;
+        }
+
         const promptContent = prependInstructionsToNextPrompt
           ? [...instructionBlocks, ...toAcpPromptContent(message)]
           : toAcpPromptContent(message);
@@ -767,7 +779,8 @@ export class AcpQueryRunner {
             }
 
             messageCount++;
-            if (messageCount === 1) {
+            const runStillCurrent = this.ctx.getQueryGeneration() === queryGeneration;
+            if (runStillCurrent && messageCount === 1) {
               promptMessageReceived = true;
               receivedAcpMessageDuringRun = true;
               if (shouldPersistInstructionsSent) {
@@ -775,7 +788,9 @@ export class AcpQueryRunner {
               }
               this.clearStartupTimer();
             }
-            this.ctx.firstMessageReceived = true;
+            if (runStillCurrent) {
+              this.ctx.firstMessageReceived = true;
+            }
 
             const sdkMessage = acpMessage as SDKMessage & { user_message_uuid?: string };
             if (sdkMessage.type === 'result' && !sdkMessage.user_message_uuid) {

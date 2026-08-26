@@ -1539,6 +1539,7 @@ export class SDKMessageHandler {
       signalAborted: false,
       guardsIntact,
     });
+    if (this.isInvocationStale(invocationGeneration)) return;
     if (outcome !== 'allowed') {
       if (outcome === 'cancelled') {
         this.logger.warn(

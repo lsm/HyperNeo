@@ -938,7 +938,8 @@ export class QueryRunner {
 
         messageCount++;
 
-        if (messageCount === 1) {
+        const runStillCurrent = this.ctx.getQueryGeneration() === queryGeneration;
+        if (runStillCurrent && messageCount === 1) {
           const timer = this.ctx.startupTimeoutTimer;
           if (timer) {
             clearTimeout(timer);
@@ -947,7 +948,9 @@ export class QueryRunner {
           releaseStartupPermit('first_message');
         }
 
-        this.ctx.firstMessageReceived = true;
+        if (runStillCurrent) {
+          this.ctx.firstMessageReceived = true;
+        }
         if (messageCount === 1) {
           this._consumedUserMessages.delete(queryGeneration);
         }
