@@ -257,7 +257,10 @@ describe('ModelSwitchHandler', () => {
       lifecycleManager: mockLifecycleManager,
       queryObject: { setModel: setModelSpy } as unknown as Query,
       queryPromise: null,
-      messageQueue: { isRunning: mock(() => false) } as unknown as MessageQueue,
+      messageQueue: {
+        isRunning: mock(() => false),
+        removePendingInternalCompactions: mock(() => 0),
+      } as unknown as MessageQueue,
       disposeAcpSessions: mock(async () => {}) as typeof disposeAcpSessions,
       firstMessageReceived: true,
       ...overrides,
