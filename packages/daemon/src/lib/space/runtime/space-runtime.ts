@@ -1953,6 +1953,8 @@ export class SpaceRuntime {
           reason: 'ttl_expired',
         });
         store.markEventFailedIfAllDeliveriesTerminal(row.eventId);
+        this.clearExternalEventRetry(row.deliveryKey);
+        this.clearQueuedDelivery(target, row.deliveryKey);
         continue;
       }
       if (record && !this.isTargetStillSubscribed(target, record.event.topic)) {
@@ -1961,6 +1963,8 @@ export class SpaceRuntime {
           reason: 'subscription_no_longer_active',
         });
         store.markEventFailedIfAllDeliveriesTerminal(row.eventId);
+        this.clearExternalEventRetry(row.deliveryKey);
+        this.clearQueuedDelivery(target, row.deliveryKey);
         continue;
       }
       claimedRows.push(row);
