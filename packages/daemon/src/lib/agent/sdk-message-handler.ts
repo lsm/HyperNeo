@@ -1509,15 +1509,17 @@ export class SDKMessageHandler {
     );
   }
 
-  refreshContextUsage(reason: 'event-tick' | 'turn-end' | 'compact-boundary'): Promise<void> {
+  refreshContextUsage(
+    reason: 'event-tick' | 'turn-end' | 'compact-boundary' | 'mcp-sync'
+  ): Promise<void> {
     this.eventsSinceContextRefresh = 0;
 
     if (this.pendingContextRefresh) {
-      if (reason !== 'turn-end') {
+      if (reason === 'event-tick' || reason === 'compact-boundary') {
         return this.pendingContextRefresh;
       }
       const pending = this.pendingContextRefresh;
-      this.pendingContextRefresh = pending.then(() => this.refreshContextUsage('turn-end'));
+      this.pendingContextRefresh = pending.then(() => this.refreshContextUsage(reason));
       return this.pendingContextRefresh;
     }
 

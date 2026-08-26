@@ -987,7 +987,7 @@ describe('QueryOptionsBuilder', () => {
       });
       expect(buildProviderSettings('openrouter', 200_000, undefined, 100)).toEqual({
         autoCompactEnabled: true,
-        autoCompactWindow: 200_000,
+        autoCompactWindow: 222_223,
       });
       expect(buildProviderSettings('openrouter', 200_000, undefined, 90)).toEqual({
         autoCompactEnabled: true,

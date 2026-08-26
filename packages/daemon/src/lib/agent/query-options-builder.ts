@@ -22,7 +22,6 @@ import type {
 } from '@hyperneo/shared';
 import {
   AUTO_COMPACT_PERCENT_DEFAULT,
-  AUTO_COMPACT_PERCENT_MAX,
   isMcpServerSkillConfig,
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
@@ -223,7 +222,7 @@ export function buildProviderSettings(
 
   const percent = resolveAutoCompactPercent(autoCompactPercent ?? undefined);
   const autoCompactWindow =
-    percent > AUTO_COMPACT_PERCENT_DEFAULT && percent < AUTO_COMPACT_PERCENT_MAX
+    percent > AUTO_COMPACT_PERCENT_DEFAULT
       ? Math.ceil((contextWindow * percent) / AUTO_COMPACT_PERCENT_DEFAULT)
       : contextWindow;
 

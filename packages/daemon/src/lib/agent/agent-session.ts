@@ -1227,7 +1227,7 @@ export class AgentSession
             errors: result.errors,
           })}`
         );
-        void this.messageHandler.refreshContextUsage('event-tick');
+        void this.messageHandler.refreshContextUsage('mcp-sync');
       })
       .catch((error) => {
         this.logger.warn(
