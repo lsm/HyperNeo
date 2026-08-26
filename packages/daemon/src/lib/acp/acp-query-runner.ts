@@ -883,6 +883,7 @@ export class AcpQueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
+        const queryPromiseBeforeFinalizerIdle = this.ctx.queryPromise;
         if (
           !fencedTerminalSettleDone &&
           !this.ctx.messageHandler.consumedTerminalFenceFor(queryGeneration) &&
@@ -896,6 +897,7 @@ export class AcpQueryRunner {
             if (
               turnCompletedNormally &&
               !this.ctx.isCleaningUp() &&
+              this.ctx.getQueryGeneration() === queryGeneration &&
               stateManager.getState().status === 'idle' &&
               session.config.queryMode !== 'manual'
             ) {
@@ -905,7 +907,9 @@ export class AcpQueryRunner {
         }
 
         this._lastConsumedUserMessage = null;
-        this.ctx.queryPromise = null;
+        if (this.ctx.queryPromise === queryPromiseBeforeFinalizerIdle) {
+          this.ctx.queryPromise = null;
+        }
       }
     }
   }

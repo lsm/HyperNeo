@@ -1298,6 +1298,7 @@ export class QueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
+        const queryPromiseBeforeFinalizerIdle = this.ctx.queryPromise;
         if (
           this.ctx.getQueryGeneration() === queryGeneration &&
           this.ctx.queryAbortController === runAbortController &&
@@ -1320,7 +1321,9 @@ export class QueryRunner {
         this._turnConsumedUserMessages = [];
         this._consumedUserMessages.delete(queryGeneration);
 
-        this.ctx.queryPromise = null;
+        if (this.ctx.queryPromise === queryPromiseBeforeFinalizerIdle) {
+          this.ctx.queryPromise = null;
+        }
       }
     }
   }

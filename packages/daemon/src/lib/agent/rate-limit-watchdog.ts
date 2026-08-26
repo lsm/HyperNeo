@@ -402,11 +402,14 @@ export class RateLimitWatchdog {
       queryGeneration !== undefined &&
       this.deps.getQueryGeneration != null &&
       this.deps.getQueryGeneration() !== queryGeneration;
-    if (
-      episodeGeneration !== this.generation ||
-      cooldownQuerySuperseded ||
-      this.cooldownTimer !== timerAtEntry
-    ) {
+    if (cooldownQuerySuperseded) {
+      this.logger.info(
+        'Cooldown state write completed but the originating query was superseded; ' +
+          'leaving cooldown ownership to the replacement query.'
+      );
+      return false;
+    }
+    if (episodeGeneration !== this.generation || this.cooldownTimer !== timerAtEntry) {
       this.logger.info(
         'Cooldown state write completed but a newer action owns the cooldown; ' +
           'not publishing pause or arming.'
@@ -493,6 +496,16 @@ export class RateLimitWatchdog {
       this.logger.info('Cooldown retry completed but episode was superseded; aborting.');
       return;
     }
+    const querySupersededAfterCallback =
+      queryGeneration !== undefined &&
+      this.deps.getQueryGeneration != null &&
+      this.deps.getQueryGeneration() !== queryGeneration;
+    if (querySupersededAfterCallback) {
+      this.logger.info(
+        'Cooldown retry completed but the originating query was superseded; aborting.'
+      );
+      return;
+    }
     if (started) {
       this.startupRetries = 0;
       this.startupExhausted = false;
@@ -527,6 +540,16 @@ export class RateLimitWatchdog {
       );
       return;
     }
+    if (
+      queryGeneration !== undefined &&
+      this.deps.getQueryGeneration != null &&
+      this.deps.getQueryGeneration() !== queryGeneration
+    ) {
+      this.logger.info(
+        'Startup retry aborted after state write (the originating query was superseded); not re-arming.'
+      );
+      return;
+    }
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
       this.currentRetryAt = null;
@@ -552,7 +575,7 @@ export class RateLimitWatchdog {
       queryGeneration !== undefined &&
       this.deps.getQueryGeneration != null &&
       this.deps.getQueryGeneration() !== queryGeneration;
-    if (episodeGeneration !== this.generation) {
+    if (episodeGeneration !== this.generation || querySuperseded()) {
       this.logger.info('Immediate fallback aborted before start (episode superseded).');
       this.fallbackPending = false;
       return;

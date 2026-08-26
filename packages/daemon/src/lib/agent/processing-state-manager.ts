@@ -259,7 +259,9 @@ export class ProcessingStateManager {
     const consumesTerminalFence = fenceOwner !== undefined;
     const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
     const transitionOwner = opts?.owner ?? fenceOwner ?? this.getCurrentIdleOwner();
-    this.lastIdleTransitionOwner = transitionOwner;
+    if (this.isIdleOwnerCurrent(transitionOwner)) {
+      this.lastIdleTransitionOwner = transitionOwner;
+    }
     const fenceStartToken = fenceOwner ? fenceOwner.turnToken : this.turnOwnerToken;
     if (consumesTerminalFence && fenceOwner) {
       if (suppressDrain) {

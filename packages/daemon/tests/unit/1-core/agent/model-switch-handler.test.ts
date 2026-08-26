@@ -654,10 +654,10 @@ describe('ModelSwitchHandler', () => {
         expect(restartSpy).not.toHaveBeenCalled();
       });
 
-      it('rolls back the committed switch when the query moves during publication (B5e)', async () => {
+      it('keeps a committed switch when superseded during publication, without restart (B5e)', async () => {
         let generation = 3;
-        publishSpy.mockImplementation(async () => {
-          generation = 9;
+        emitSpy.mockImplementation(async (topic: string) => {
+          if (topic === 'session.updated') generation = 9;
           return {} as never;
         });
         handler = createHandler({
@@ -667,8 +667,8 @@ describe('ModelSwitchHandler', () => {
 
         const result = await handler.switchModel(VALID_MODEL, 'anthropic', 3);
 
-        expect(result.success).toBe(false);
-        expect(mockSession.config.model).toBe('default');
+        expect(result.success).toBe(true);
+        expect(mockSession.config.model).toBe('opus');
         expect(restartSpy).not.toHaveBeenCalled();
       });
 
