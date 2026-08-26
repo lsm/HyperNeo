@@ -1534,17 +1534,27 @@ export class TaskAgentManager {
           this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
         const handles: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementHandle[] =
           [];
-        let settled = false;
-        const settleFrom = (settledSessionId: string) => {
-          if (settled) return;
-          settled = true;
+        let done = false;
+        const stopWatchers = () => {
+          done = true;
           for (const handle of handles) handle.cancel();
+        };
+        const settleFrom = (settledSessionId: string) => {
+          if (done) return;
+          done = true;
+          stopWatchers();
           if (repo.getById(row.id)?.status !== 'pending') return;
           repo.markDelivered(row.id, settledSessionId);
           this.emitPendingDelivered(row.id, settledSessionId, row);
         };
         const scheduleReconciliation = () => {
           void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
+        };
+        const onWatcherFailed = () => {
+          if (done) return;
+          done = true;
+          stopWatchers();
+          scheduleReconciliation();
         };
         for (const sessionId of candidates) {
           handles.push(
@@ -1555,10 +1565,7 @@ export class TaskAgentManager {
                 settleFrom(settledSessionId);
                 scheduleReconciliation();
               },
-              onFailed: () => {
-                settleFrom('');
-                scheduleReconciliation();
-              },
+              onFailed: onWatcherFailed,
             })
           );
         }
@@ -1587,29 +1594,38 @@ export class TaskAgentManager {
         continue;
       }
       const message = formatPendingRowForSpaceAgent(row);
+      const replyTo = resolveReplySession(row);
+      const candidates =
+        replyTo && replyTo !== spaceChatSessionId
+          ? [replyTo, spaceChatSessionId]
+          : [spaceChatSessionId];
+      const probeStatus = (sessionId: string): string | undefined =>
+        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
       try {
-        if (row.attempts > 0 || row.lastError !== null) {
-          repo.clearLateDeadLetter(row.id);
-        }
-        const replyTo = resolveReplySession(row);
         const deliveredSessionId = replyTo || spaceChatSessionId;
         const settleDelivered = (settledSessionId?: string): void => {
+          const targetSessionId = settledSessionId ?? deliveredSessionId;
           if (repo.getById(row.id)?.status !== 'pending') return;
-          repo.markDelivered(row.id, settledSessionId ?? deliveredSessionId);
-          this.emitPendingDelivered(row.id, settledSessionId ?? deliveredSessionId, row);
+          repo.markDelivered(row.id, targetSessionId);
+          this.emitPendingDelivered(row.id, targetSessionId, row);
+        };
+        const scheduleReconciliation = () => {
+          void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
         };
         const outcome = await inject(spaceId, message, replyTo, row.id, {
           onConsumed: settleDelivered,
           lateSettlement: this.lateSettlements,
           disposeSignal: this.lateSettlements.disposeSignal(),
         });
+        repo.clearLateDeadLetter(row.id);
         if (outcome.state === 'delivered') {
           settleDelivered(outcome.sessionId);
         } else if (outcome.state === 'failed') {
           repo.deferExpiration([row.id]);
+          scheduleReconciliation();
           log.warn(
             `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}; ` +
-              `the attempt is charged at the next drain's reconciliation`
+              `scheduling reconciliation to charge and retry the attempt`
           );
         } else {
           repo.deferExpiration([row.id]);
@@ -1620,10 +1636,13 @@ export class TaskAgentManager {
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        log.warn(
-          `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}; ` +
-            `the attempt is charged at the next drain's reconciliation`
+        const persistedFailure = candidates.some(
+          (sessionId) => probeStatus(sessionId) === 'failed'
         );
+        if (!persistedFailure) {
+          repo.markAttemptFailed(row.id, errMsg);
+        }
+        log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);
       }
     }
   }
