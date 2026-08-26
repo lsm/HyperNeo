@@ -212,6 +212,7 @@ describe('ContextFetcher.toContextInfo', () => {
     });
     expect(atFifty.totalCapacity).toBe(200000);
     expect(atFifty.autoCompactThreshold).toBe(100000);
+    expect(atFifty.breakdown['Free space']).toEqual({ tokens: 10000, percent: 5 });
 
     const atNinety = ContextFetcher.toContextInfo(response, {
       id: 'ce-model',
@@ -220,6 +221,7 @@ describe('ContextFetcher.toContextInfo', () => {
       autoCompactPercent: 90,
     });
     expect(atNinety.autoCompactThreshold).toBe(180000);
+    expect(atNinety.breakdown['Free space']).toEqual({ tokens: 90000, percent: 45 });
   });
 
   it('recalculates free space against the armed window when metadata capacity differs from SDK capacity', () => {

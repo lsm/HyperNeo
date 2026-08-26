@@ -233,7 +233,11 @@ export class ContextFetcher {
         : undefined;
     const thresholdCapacity = armedAutoCompactWindow ?? capacity;
 
-    if (useMetadata && capacity > 0 && sdkCapacityValue !== capacity) {
+    if (
+      useMetadata &&
+      capacity > 0 &&
+      (sdkCapacityValue !== capacity || thresholdCapacity !== capacity)
+    ) {
       const reservedTokens =
         typeof autoCompactReservedTokens === 'number' && autoCompactReservedTokens > 0
           ? autoCompactReservedTokens
