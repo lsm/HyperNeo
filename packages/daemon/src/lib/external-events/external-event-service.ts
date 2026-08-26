@@ -29,6 +29,10 @@ export interface ExternalEventPublisher {
   publish(event: ExternalEvent): Promise<PublishResult>;
 }
 
+export function isExternalEventDeliveryV2Enabled(): boolean {
+  return process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 === '1';
+}
+
 export class ExternalEventService implements ExternalEventPublisher {
   constructor(
     private readonly store: ExternalEventStore,
