@@ -82,7 +82,7 @@ Whenever decomposing a feature, refactor, removal, or change request into tasks/
 
 Standing rules for every slice:
 
-- One task = one PR. An issue may carry multiple tasks (and therefore multiple PRs); a task never carries more than one PR — if the work is two PRs, it is two tasks.
+- One issue = one task = one PR. A non-epic issue maps to exactly one Space task and one PR. When work outgrows that mapping, promote it to an epic (GitHub parent issue) and decompose into child issues — each child is 1:1:1 again. Never attach multiple tasks to a plain issue, and never multiple PRs to one task.
 - Every PR targets `dev` directly — no stacked branches, no stacked PRs. Serial slices are ordered by the task dependency chain: each slice branches from updated `dev` after its dependency merges (rebase if `dev` advances mid-work). Never build on a sibling's unmerged branch — squash-merged stacks also corrupt size measurement (the diff double-counts the merged sibling).
 - Construction, wiring, and deletion do not share a PR. Exception: a trivial build+wire combination is acceptable when the call-site swap is a few lines and the combined diff stays within the slice budget — when in doubt, split. Deletion never combines with anything.
 - Every slice carries a **merge contract** in its task/issue description: one line naming what the PR may and may not touch (e.g. "additive dead code, no call-site changes"), plus a prod/test line budget. If the diff exceeds the budget or starts mixing phases, stop and report the overrun — in Space-managed work set the task to `blocked`; otherwise flag it in the PR — budgets are contracts, not suggestions.
