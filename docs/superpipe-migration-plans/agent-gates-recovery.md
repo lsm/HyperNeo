@@ -900,7 +900,7 @@ none of these sites needs its compensation machinery.
   `rate-limit-watchdog-gates.test.ts` + `rate-limit-watchdog.test.ts`.
 - **proposed combinator.** Review correction round 22 + PR #2981: the trip classification is helper/direct-stage logic of the ONE complete rate-limit scheduling pipeline covering the FULL `scheduleRetry` flow (initialization — cancel the cooldown timer, record the error, record the
 hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
-`:154-164`) — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → `lastUserMessage` state write (`:152`, the value the cooldown timer's retry callback later reads at `:412`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording (generation fence `:168-173`) → chain resolution (fence `:178-183`) → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (fence before the immediate-fallback launch, `:206-211`; the launch stays FIRE-AND-FORGET — `void this.fireImmediateFallback(...)` at `:217` with its internal error containment, the operation returning `true` immediately while `fallbackPending` stays observable; review correction PR #2981: awaiting it would change caller timing and serialize the retry's recursive fallback/cooldown handling; the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification (cooldown resolution reading a FRESH clock per `:230`, with `ctx.retryCount` already overwritten by the per-episode reset stage — `:154-159` precedes the `:228` read today) → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger gated on the armed result (the full `armed && reason === 'backoff-ladder' && classifyUnknownLimit && generation-current` guard, `:257-265`; review correction PR #2981: when a newer timer took ownership with the generation unchanged, `scheduleCooldown` returns `false` and refinement must NOT fire — a stale classification could later replace the newer cooldown); revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
+`:154-164`) — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → `lastUserMessage` state write (`:152`, the value the cooldown timer's retry callback later reads at `:412`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording (generation fence `:168-173`) → chain resolution (fence `:178-183`) → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (fence before the immediate-fallback launch, `:206-211`; the launch stays FIRE-AND-FORGET — `void this.fireImmediateFallback(...)` at `:217` with its internal error containment, the operation returning `true` immediately while `fallbackPending` stays observable; review correction PR #2981: awaiting it would change caller timing and serialize the retry's recursive fallback/cooldown handling; the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification (cooldown resolution reading a FRESH clock per `:230`, with `ctx.retryCount` already overwritten by the per-episode reset stage — `:154-159` precedes the `:228` read today; the `surface-billing` and `give-up` arms carry their guarded warning-log effects before returning `false`, `:230-244` — review correction PR #2981) → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger gated on the armed result (the full `armed && reason === 'backoff-ladder' && classifyUnknownLimit && generation-current` guard, `:257-265`; review correction PR #2981: when a newer timer took ownership with the generation unchanged, `scheduleCooldown` returns `false` and refinement must NOT fire — a stale classification could later replace the newer cooldown); revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
 - **input/output snapshot design.**
   ```ts
   interface RateLimitTripCtx {
@@ -1139,6 +1139,11 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   the existing `assessLimitError` share.
 - **step-by-step migration.** 1) Create both modules with pure functions +
   pipelines (zero QueryRunner imports — they must not import the runner);
+  move `looksLikeRateLimit429` (`query-runner.ts:106-116`) and its tests
+  (`query-runner.test.ts:6396-6430`) into `api-validation-parse.ts`,
+  re-exporting from the runner if compatibility requires (review
+  correction PR #2981: otherwise the exclusion gate needs a circular import
+  or a duplicate nested-JSON 429 parser);
   2) add direct unit tests; 3) swap the two call sites; 4) delete the
   private methods; 5) replace the duplicated-regex test block in
   `query-runner.test.ts:5398-5454` with imports from the new module (those
@@ -1242,9 +1247,11 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   SDK-message consumers. Failure semantics split by kind (review
   correction PR #2981): a transactional status/timestamp stage failure
   PROPAGATES to the queue boundary — `handleMessageYielded` becomes async
-  and `MessageQueue.messageGenerator` awaits it before yielding
-  (`message-queue.ts:347-359`, preserving today's claim-removal and
-  enqueue-rejection on a synchronous throw) — while each individual
+  and EVERY caller sequences the promise
+  (`MessageQueue.messageGenerator` per `message-queue.ts:347-359`;
+  `QueryRunner.createMessageGeneratorWrapper` per
+  `query-runner.ts:1704-1715`; `markMessageAccepted` before its consumed
+  query per `sdk-message-handler.ts:551-559`) — while each individual
   PUBLICATION promise keeps its today-style `.catch` containment so a
   publication failure never becomes an unhandled rejection. EVERY
   successful or already-consumed acknowledgment arm —
@@ -1280,15 +1287,19 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   timestamp computation and DB update leaves persisted rows at their old
   enqueue times while publishing newly timed replays, so later
   timestamp-ordered snapshots misplace those user messages), and
-  consumes them at turn end, acknowledging yielded queue entries via
+  consumes them at turn end — as an acknowledgment ORCHESTRATION owning the
+  row loop per ADR 0004 P6 (review correction PR #2981: the pipeline is the
+  per-row reducer, never the loop — the orchestration scans and iterates
+  the eligible rows, threads `lastConsumedAt`, and continues past
+  unsuccessful marks): each row invokes the per-row acknowledgment
+  pipeline and acknowledges yielded queue entries via
   `messageQueue.acknowledgeYielded(messageId)` — which removes the entry
   from `MessageQueue.yielded` and resolves its enqueue promise
-  (`message-queue.ts:226-231`) — and signaling consumption ONLY for the
+  (`message-queue.ts:226-231`) — signaling consumption ONLY for the
   returned-consumed UUIDs when it succeeds (`:495-499`; review correction
   PR #2981: without that guarded stage a yielded entry stays tracked and
-  its producer promise unresolved after the DB row is consumed) — so it
-  composes as its OWN complete pipeline
-  (`ack-turn-end-batch`), never through the persisted selector (routing it
+  its producer promise unresolved after the DB row is consumed) — never
+  through the persisted selector (routing it
   through `decidePersistedAckRow` would make deferred/submitted/consumed
   rows eligible where they are currently ignored and would conflate the
   batch operation with the single-message acknowledgment). Effects — the
@@ -1473,7 +1484,9 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `rate-limit-watchdog.ts:168-173,178-183,206-211`), canonical
   resolution, availability, fallback selection (the immediate-fallback
   launch staying FIRE-AND-FORGET per `:217`),
-  classification, generation revalidation, retry
+  classification (the `surface-billing` and `give-up` arms keeping their
+  guarded warning-log effects before returning `false`, `:230-244`),
+  generation revalidation, retry
   charging, `scheduleCooldown`, and LLM-refinement
   triggering (gated on the armed result per `:257-265`) all run as stages
   of the same operation; no imperative
@@ -1969,7 +1982,13 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `{ text: null }` halt), `applyJsonBodyGate` (regex match with failing
   `JSON.parse` decides the definitive null — never falls through to the plain
   arm), `applyPlainStatusGate`, `applyInnerJsonGate`, no final decider;
-  wrapper returns `ctx.decision?.text ?? null`.
+  wrapper returns `ctx.decision?.text ?? null`. The module also RECEIVES the
+  `looksLikeRateLimit429` helper moved from `query-runner.ts:106-116` with
+  its tests (`query-runner.test.ts:6396-6430`), re-exporting from
+  `query-runner.ts` if compatibility requires (review correction PR #2981:
+  leaving the helper in the runner forces a circular import or a duplicated
+  nested-JSON 429 parser under the zero-QueryRunner-import constraint, and
+  the retry exclusion must not drift from API-validation parsing).
 - **lands.** The extracted classifier exists unwired with direct parity
   tests.
 - **excludes.** The QueryRunner swap and duplicated-regex test replacement
@@ -2040,14 +2059,17 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   with consumption, ownership-revalidation, and ALL publication stages
   composed into the same operations over ctx-injected collaborators, plus
   `decidePersistedAckRow`/`decideYieldedAckRow` wrappers; ALSO the
-  turn-end batch core `ack-turn-end-batch` (review correction PR #2981):
-  scan `enqueued` users → durable/yielded/pending ownership filters →
-  batch-UUID expansion → monotonic `consumedAt` computation (its DB
+  turn-end batch core `ack-turn-end-batch` (review correction PR #2981,
+  shaped per ADR 0004 P6): the acknowledgment ORCHESTRATION scans
+  `enqueued` users, applies the durable/yielded/pending ownership filters,
+  expands batch UUIDs, threads `lastConsumedAt` for the monotonic
+  `consumedAt` values, and invokes the PER-ROW reducer pipeline —
+  consumption via `markDeliveriesConsumedAtTurnEnd`, the DB
   `updateMessageTimestamp` applied after the successful mark supplies
-  `consumedId`, `:490-500`) →
-  turn-end consumption, the guarded
-  `messageQueue.acknowledgeYielded` stage, and publications — a
-  complete operation of its own, never routed through the persisted
+  `consumedId` (`:490-500`), the guarded `messageQueue.acknowledgeYielded`
+  stage, and the row's publications — continuing past unsuccessful marks;
+  the loop is never a pipeline stage, and the whole thing is never routed
+  through the persisted
   selector; `selectPersistedAckRow`/`selectYieldedAckRow` stay exported;
   lands unwired-but-green (tests consume the wrappers immediately; knip
   satisfied without `@public`).
@@ -2085,11 +2107,18 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   semantics split by kind (review
   correction PR #2981): a transactional status/timestamp stage failure MUST
   PROPAGATE to the queue boundary — `handleMessageYielded` becomes async
-  and `MessageQueue.messageGenerator` awaits it before yielding
+  and EVERY caller sequences the promise:
+  `MessageQueue.messageGenerator` awaits before yielding
   (`message-queue.ts:347-359`: today a synchronous throw there removes the
   claim and rejects the enqueue; an async pipeline swallowed behind the
   void callback would let the queue move the message into `yielded` despite
-  the failed acknowledgment and leave a rejected promise unhandled) — while
+  the failed acknowledgment and leave a rejected promise unhandled);
+  `QueryRunner.createMessageGeneratorWrapper` — which suppresses the queue
+  callback and invokes `onMessageYielded` itself
+  (`query-runner.ts:1704-1715`) — awaits or handles the rejection; and
+  `markMessageAccepted` awaits before its consumed-row query for the ACP
+  acceptance path (`sdk-message-handler.ts:551-559`, where the current
+  synchronous `try/catch` no longer contains an async rejection) — while
   the individual PUBLICATION promises keep
   today's per-publication `.catch` containment, so a publication failure
   never becomes an unhandled rejection or escapes the handler. Every
@@ -2127,9 +2156,12 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   consumption (`:440-461`) — an effect list of only
   `markDeliveryConsumed*`/`messages.statusChanged`/`signalDeliveryConsumed`
   would drop the replay and tool-result publications from the immediate
-  path; the turn-end loop (`:464-523`) runs its OWN `ack-turn-end-batch`
-  pipeline (enqueued-only scan, durable/yielded/pending ownership filters,
-  batch-UUID expansion, monotonic `consumedAt` computation (DB
+  path; the turn-end loop (`:464-523`) becomes the `ack-turn-end-batch`
+  ORCHESTRATION (loop outside the pipeline per ADR 0004 P6, review
+  correction PR #2981: enqueued-only scan, durable/yielded/pending
+  ownership filters, batch-UUID expansion, `lastConsumedAt` threading)
+  invoking the per-row reducer pipeline —
+  monotonic `consumedAt` computation (DB
   `updateMessageTimestamp` applied after the successful mark supplies
   `consumedId`, `:490-500`),
   `markDeliveriesConsumedAtTurnEnd`,
