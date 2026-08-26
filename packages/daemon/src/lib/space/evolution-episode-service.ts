@@ -752,7 +752,7 @@ async function judgeEpisodeWithModel(
   const providerService = getProviderService();
   const { provider, modelId } = await resolveEpisodeJudgeModel(input, spaceRepo);
   const prompt = buildEpisodeJudgePrompt(input);
-  const originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
+  let originalEnv = await providerService.applyEnvVarsToProcessForProvider(provider, modelId);
   try {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const { isSDKAssistantMessage } = await import('@hyperneo/shared/sdk/type-guards');
@@ -761,6 +761,11 @@ async function judgeEpisodeWithModel(
       string | undefined
     >;
     const sdkModelId = provider === 'glm' ? 'haiku' : (providerEnvVars.ANTHROPIC_MODEL ?? modelId);
+    const mergedEnv = mergeProviderEnvVars(providerEnvVars);
+
+    providerService.restoreEnvVars(originalEnv);
+    originalEnv = {};
+
     const agentQuery = query({
       prompt,
       options: {
@@ -774,7 +779,7 @@ async function judgeEpisodeWithModel(
         pathToClaudeCodeExecutable: resolveSDKCliPath(),
         executable: isRunningUnderBun() ? 'bun' : undefined,
         settings: withSdkTranscriptRetention(),
-        env: mergeProviderEnvVars(providerEnvVars),
+        env: mergedEnv,
         thinking:
           provider === 'kimi'
             ? KimiProvider.resolveKimiTitleThinkingConfig(sdkModelId)

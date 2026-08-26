@@ -62,6 +62,9 @@ export async function selectWorkflowWithLlmDefault(
     const mergedEnv = mergeProviderEnvVars(providerEnvVars as Record<string, string | undefined>);
     const cliPath = resolveSDKCliPath();
 
+    providerService.restoreEnvVars(originalEnv);
+    originalEnv = {};
+
     const agentQuery = query({
       prompt,
       options: {
