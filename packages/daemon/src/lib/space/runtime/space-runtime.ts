@@ -123,8 +123,8 @@ import {
   type ExternalEventDeliveryDecision,
 } from './external-event-delivery-pipeline.ts';
 import {
+  buildImmediateEventMessageUuid,
   deliverImmediateEvent,
-  IMMEDIATE_EVENT_MESSAGE_UUID_PREFIX,
   type ImmediateEventDeliveryDeps,
 } from './immediate-event-delivery-pipeline.ts';
 import {
@@ -1956,7 +1956,6 @@ export class SpaceRuntime {
         ...messages.getUserMessagesByStatus(sessionId, 'deferred').messages,
         ...messages.getUserMessagesByStatus(sessionId, 'enqueued').messages,
         ...messages.getUserMessagesByStatus(sessionId, 'submitted').messages,
-        ...messages.listUserMessagesByUuidPrefix(sessionId, IMMEDIATE_EVENT_MESSAGE_UUID_PREFIX),
       ]
         .map((row) => parseDeferredDeliveryRow(row))
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
@@ -1996,6 +1995,14 @@ export class SpaceRuntime {
       }
       if (legacyDurableEventIds.has(row.eventId)) continue;
       if (!replayable && digestMembershipEventIds.has(row.eventId)) continue;
+      if (
+        messages.getDeliveryContent(
+          sessionId,
+          buildImmediateEventMessageUuid(row.eventId, row.deliveryKey)
+        )
+      ) {
+        continue;
+      }
       const record = store.getById(row.eventId);
       if (
         record &&
@@ -2060,10 +2067,6 @@ export class SpaceRuntime {
       },
       markDeliveriesDelivered: (marks) => {
         store.markDeliveriesDeliveredAtomic(marks);
-        for (const mark of marks) {
-          store.markEventDeliveredIfAllDeliveriesDelivered(mark.eventId);
-          store.markEventFailedIfAllDeliveriesTerminal(mark.eventId);
-        }
         for (const mark of marks) {
           this.clearExternalEventRetry(mark.deliveryKey);
           this.clearQueuedDelivery(target, mark.deliveryKey);

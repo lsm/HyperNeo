@@ -396,6 +396,10 @@ export class ExternalEventStore {
       for (const mark of marks) {
         if (this.applyDeliveryDelivered(mark.eventId, mark.deliveryKey)) changed.push(mark);
       }
+      for (const mark of marks) {
+        this.markEventDeliveredIfAllDeliveriesDelivered(mark.eventId);
+        this.markEventFailedIfAllDeliveriesTerminal(mark.eventId);
+      }
     })();
     for (const mark of changed) {
       this.emitDeliveryDelivered(mark.eventId, mark.deliveryKey);
