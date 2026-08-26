@@ -140,13 +140,22 @@ describe('buildGitCommandEnv', () => {
 
 describe('buildGitSshEnv', () => {
   test('adds SSH, askpass, and TLS client inputs plus reindexed http.extraHeader config only', () => {
-    const env = buildGitSshEnv({ ...SOURCE, GIT_ASKPASS: '/usr/local/bin/git-askpass' });
+    const env = buildGitSshEnv({
+      ...SOURCE,
+      GIT_ASKPASS: '/usr/local/bin/git-askpass',
+      GIT_SSL_CERT: '/tmp/client-cert.pem',
+      GIT_SSL_KEY: '/tmp/client-key.pem',
+      GIT_SSL_CERT_PASSWORD_PROTECTED: '1',
+    });
     expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
     expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
     expect(env.GIT_ASKPASS).toBe('/usr/local/bin/git-askpass');
     expect(env.VSCODE_GIT_ASKPASS_NODE).toBe(SOURCE.VSCODE_GIT_ASKPASS_NODE);
     expect(env.VSCODE_GIT_ASKPASS_MAIN).toBe(SOURCE.VSCODE_GIT_ASKPASS_MAIN);
     expect(env.VSCODE_GIT_IPC_HANDLE).toBe(SOURCE.VSCODE_GIT_IPC_HANDLE);
+    expect(env.GIT_SSL_CERT).toBe('/tmp/client-cert.pem');
+    expect(env.GIT_SSL_KEY).toBe('/tmp/client-key.pem');
+    expect(env.GIT_SSL_CERT_PASSWORD_PROTECTED).toBe('1');
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
