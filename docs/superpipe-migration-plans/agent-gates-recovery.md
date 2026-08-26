@@ -785,7 +785,12 @@ none of these sites needs its compensation machinery.
   check — writing the advanced per-agent ring IMMEDIATELY,
   `api-error-circuit-breaker.ts:56-62`, BEFORE the content exits, so
   ordinary non-error messages still persist timestamps and the breaker can
-  trip on normal message loops; review correction PR #2981 → message-text extraction with its empty-text false-return gate
+  trip on normal message loops; review correction PR #2981) → DECIDED HALT
+  when rapid-fire tripped (`trip('rapid_fire', …)` then return immediately,
+  `api-error-circuit-breaker.ts:64-67`; review correction PR #2981:
+  continuing would let a threshold-crossing message that also carries a
+  recognized error repopulate `recentErrors` after `trip()` cleared it, or
+  re-invoke `onTrip` and replace the rapid-fire reason) → message-text extraction with its empty-text false-return gate
   (`extractMessageText(msg.message?.content)`,
   `api-error-circuit-breaker.ts:69-73` — review correction PR #2981: the
   pattern classifiers consume the FLATTENED string, not raw SDK block-array
@@ -827,7 +832,9 @@ none of these sites needs its compensation machinery.
   stage (`:56-62`, before any content exit; review correction PR #2981:
   moving it to occurrence recording after the exits would drop ordinary
   non-error messages' timestamps and break rapid-fire tripping on normal
-  loops) → message-text extraction with its empty-text
+  loops) → DECIDED HALT when rapid-fire tripped (`trip('rapid_fire', …)`
+  then return, `api-error-circuit-breaker.ts:64-67` — no content stages
+  run; review correction PR #2981) → message-text extraction with its empty-text
   false-return gate (`extractMessageText(msg.message?.content)`,
   `api-error-circuit-breaker.ts:69-73` — the pattern classifiers consume
   the flattened string, not raw block-array content; review correction PR
@@ -854,7 +861,8 @@ none of these sites needs its compensation machinery.
   existing method).
 - **step-by-step migration.** 1) Compose ONE complete breaker-check pipeline
   (`ApiErrorCircuitBreaker.checkMessage`): rapid-fire check (per-agent ring
-  written here, `:56-62`, before the content exits) → message-text
+  written here, `:56-62`, before the content exits; DECIDED HALT on trip,
+  `:64-67` returns immediately) → message-text
   extraction and its empty-text exit (`:69-73`) → pattern
   classification → occurrence recording → `trip()` as its stages (cooldown
   release stays out of `checkMessage` entirely — see the wiring note above),
@@ -1337,7 +1345,10 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   fire-and-forget scheduling (await only the transactional
   status/timestamp work; a slow subscriber must never block the yield —
   review correction PR #2981) so a
-  publication failure never becomes an unhandled rejection. EVERY
+  publication failure never becomes an unhandled rejection; a `superseded`
+  transition result is a NON-acknowledged outcome — abort/requeue the
+  entry, return `false` on the immediate path, no publications or flag
+  write (review correction PR #2981). EVERY
   successful or already-consumed acknowledgment arm —
   yielded and immediate alike — also sets the
   `acknowledgedPersistedUserThisTurn` state flag as an effect stage
@@ -1932,7 +1943,9 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   the complete breaker-check pipeline, landed unwired — message-type gate
   (`msg.type !== 'user'`, `api-error-circuit-breaker.ts:49-51`, first —
   review correction PR #2981) → rapid-fire check (per-agent ring written
-  here, `:56-62`, before the content exits; review correction PR #2981) →
+  here, `:56-62`, before the content exits; DECIDED HALT on trip —
+  `:64-67` returns immediately, no content stages run; review correction
+  PR #2981) →
   message-text extraction with its empty-text false-return gate
   (`:69-73`, flattened-string input; review correction PR #2981) →
   pattern classification → occurrence recording (`recentErrors`,
@@ -2236,9 +2249,14 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   cannot couple the two states — a `clear()`/`remove()` between that check
   and the generator's post-await recheck still loses the claim with the
   row left consumed), the plan requires a CLAIM RESERVATION/FINALIZATION
-  protocol — the queue marks the claim as being-finalized so concurrent
-  `clear()`/`remove()` during the window is refused or deferred and the
-  generator's recheck consults the same reservation — or an EXPLICITLY
+  protocol — the queue marks the claim as being-finalized, RECORDS any
+  pending `clear()`/`remove()` rather than refusing them (their callers
+  are synchronous and void — `InterruptHandler` calls `messageQueue.clear()`
+  and continues, `interrupt-handler.ts:108-114`, unable to detect or retry
+  a refusal; review correction PR #2981), and FINALIZATION honors a
+  recorded clear/remove: skip yielding and perform the guarded
+  compensation — with the generator's recheck consulting the same
+  reservation — or use an EXPLICITLY
   GUARDED COMPENSATION: a CAS restore tied to this exact transition
   (status AND epoch must still match what THIS acknowledgment wrote; a
   blind restore could overwrite a concurrent defer/delete/status change),
@@ -2293,7 +2311,13 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   event subscriber block the SDK message from ever being yielded; await
   ONLY the transactional status/timestamp work, launch publications as
   `void …catch(…)`), so a publication failure
-  never becomes an unhandled rejection or escapes the handler. Every
+  never becomes an unhandled rejection or escapes the handler. A
+  `superseded` result from the guarded transition maps to a
+  NON-acknowledged outcome (review correction PR #2981): the queue entry is
+  aborted/requeued — never finalized or sent — with no publications and no
+  `acknowledgedPersistedUserThisTurn` write; the immediate persisted arm
+  likewise treats `superseded` as not-acknowledged, returning `false` so
+  the incoming SDK replay is discarded. Every
   consumed arm also sets
   the `acknowledgedPersistedUserThisTurn` flag (`:666,704`) as an effect
   stage (review correction PR #2981) — the turn-end batch acknowledgment
@@ -2354,7 +2378,10 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   (`:422,445`) as effect stages (review correction PR #2981) — the
   turn-end batch itself only READS that flag at `:1163` to decide whether
   to run, so a missing write would consume an additional queued user
-  message that was not acknowledged during the turn. ALL publications each
+  message that was not acknowledged during the turn. A `superseded`
+  transition result is NOT an acknowledgment (review correction PR #2981):
+  the immediate arm returns `false` so the incoming SDK replay is
+  discarded, with no publications or flag write. ALL publications each
   region performs
   today run as stages of its pipeline.
 - **lands.** Both acknowledgment paths run as complete pipelines; the Chain C
