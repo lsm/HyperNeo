@@ -88,6 +88,10 @@ describe('buildOsBaselineEnv', () => {
     const env = buildOsBaselineEnv(SOURCE);
     expect(env.PATH).toBe(SOURCE.PATH);
     expect(env.HOME).toBe(SOURCE.HOME);
+    expect(env.USERNAME).toBe(SOURCE.USERNAME);
+    expect(env.LC_CTYPE).toBe(SOURCE.LC_CTYPE);
+    expect(env.LC_COLLATE).toBe(SOURCE.LC_COLLATE);
+    expect(env.LC_NUMERIC).toBe(SOURCE.LC_NUMERIC);
     expect(env.TMPDIR).toBe(SOURCE.TMPDIR);
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
@@ -251,6 +255,16 @@ describe('buildWorkflowConditionEnv', () => {
     expect(env.kubeconfig).toBeUndefined();
     expect(isRestrictedEnvName('gh_token')).toBe(true);
     expect(isRestrictedEnvName('MY_TOOL_FLAG')).toBe(false);
+  });
+
+  test('rejects askpass companion variables that could unlock credential prompts', () => {
+    const env = buildWorkflowConditionEnv(
+      ['VSCODE_GIT_ASKPASS_NODE', 'VSCODE_GIT_ASKPASS_MAIN', 'VSCODE_GIT_IPC_HANDLE'],
+      SOURCE
+    );
+    expect(env.VSCODE_GIT_ASKPASS_NODE).toBeUndefined();
+    expect(env.VSCODE_GIT_ASKPASS_MAIN).toBeUndefined();
+    expect(env.VSCODE_GIT_IPC_HANDLE).toBeUndefined();
   });
 });
 
