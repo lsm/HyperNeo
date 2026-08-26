@@ -745,7 +745,29 @@ export class QueryLifecycleManager {
       return;
     }
 
-    await this.restart({ idleOwner: stateManager.getCurrentIdleOwner() });
+    try {
+      await this.restart({ idleOwner: stateManager.getCurrentIdleOwner() });
+    } catch (error) {
+      if (error instanceof IdleRestartSupersededError) {
+        this.ctx.pendingRestartReason = 'settings.local.json';
+        this.scheduleDeferredRestartRetry();
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private scheduleDeferredRestartRetry(): void {
+    const successorOwner = this.ctx.stateManager.getCurrentIdleOwner();
+    const waiter = this.ctx.stateManager.waitForIdleTransition(
+      undefined,
+      undefined,
+      successorOwner
+    );
+    void waiter.promise.then(() => {
+      if (!this.ctx.pendingRestartReason) return;
+      void this.executeDeferredRestartIfPending(successorOwner);
+    });
   }
 
   async executeDeferredRestartIfPending(

@@ -759,7 +759,9 @@ export class SDKMessageHandler {
       return;
     }
 
-    const circuitBreakerTripped = await this.circuitBreaker.checkMessage(message);
+    const circuitBreakerTripped = invocationStale
+      ? false
+      : await this.circuitBreaker.checkMessage(message);
     if (circuitBreakerTripped) {
       return;
     }

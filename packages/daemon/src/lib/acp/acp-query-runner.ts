@@ -426,6 +426,7 @@ export class AcpQueryRunner {
     let proxyBridge: AcpMcpProxyBridge | null = null;
     let terminalManager: AcpTerminalManager | null = null;
     let turnCompletedNormally = false;
+    let fencedTerminalSettleDone = false;
     let runAbortController: AbortController | null = this.ctx.queryAbortController;
 
     try {
@@ -821,7 +822,7 @@ export class AcpQueryRunner {
         startupTimeoutReached && !this.ctx.firstMessageReceived
           ? new Error('ACP startup timeout - query aborted')
           : error;
-      await this.handleRunError(
+      fencedTerminalSettleDone = await this.handleRunError(
         effectiveError,
         queryGeneration,
         isRetry,
@@ -875,6 +876,7 @@ export class AcpQueryRunner {
         }
 
         if (
+          !fencedTerminalSettleDone &&
           !this.ctx.isCleaningUp() &&
           !recoveryState.rateLimitCooldownScheduled &&
           !(this.ctx.isLimitRecoveryPending?.() ?? false) &&
@@ -908,16 +910,16 @@ export class AcpQueryRunner {
     receivedAcpMessageDuringRun = false,
     closeProxyBridge: () => Promise<void> = async () => {},
     recoveryState = { rateLimitCooldownScheduled: false }
-  ): Promise<void> {
+  ): Promise<boolean> {
     const { session, messageQueue, stateManager, errorManager, logger } = this.ctx;
     logger.error('ACP query error:', error);
 
     if (this.ctx.isCleaningUp()) {
-      return;
+      return false;
     }
 
     if (this.ctx.getQueryGeneration() !== queryGeneration) {
-      return;
+      return false;
     }
 
     const errorMessage = String(error);
@@ -972,7 +974,8 @@ export class AcpQueryRunner {
         this.ctx.resetProcessExitedPromise();
       }
 
-      return await this.runQuery(queryGeneration, true, recoveryState);
+      await this.runQuery(queryGeneration, true, recoveryState);
+      return false;
     }
 
     messageQueue.clear();
@@ -1026,7 +1029,7 @@ export class AcpQueryRunner {
       if (!recoveryState.rateLimitCooldownScheduled) {
         if (this.ctx.getQueryGeneration() !== queryGeneration) {
           logger.warn('ACP terminal error abandoned: a replacement query owns the session.');
-          return;
+          return false;
         }
         const terminalFence = stateManager.beginTerminalIdle();
         try {
@@ -1049,8 +1052,10 @@ export class AcpQueryRunner {
           throw reportError;
         }
         await stateManager.setIdle({ fence: terminalFence });
+        return true;
       }
     }
+    return false;
   }
 
   private async handleFsRead(params: AcpFsReadParams, workspace: string): Promise<AcpFsReadResult> {
