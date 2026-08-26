@@ -155,6 +155,7 @@ import {
   resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
+import { stagedRun } from './staged-run.ts';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
@@ -2387,44 +2388,95 @@ export class TaskAgentManager {
     execution: NodeExecution,
     sessionId: string
   ): Promise<void> {
+    interface SyncLiveWorkspaceState {
+      sessionId: string;
+      currentTask: SpaceTask;
+      workspacePath: string | null;
+    }
     await this.withSessionInjectLock(sessionId, async () => {
-      const terminalStatus = execution.workflowRunId
-        ? this.resolveTerminalInjectionStatus(execution.workflowRunId, task.id)
-        : null;
-      if (terminalStatus) {
-        log.warn(
-          `TaskAgentManager.syncLiveSessionWorkspace: skipping live session ${sessionId} — task/run is terminal (${terminalStatus})`
-        );
-        return;
-      }
-      const live = this.getSubSession(sessionId);
-      if (!live) return;
-      const currentTask = this.config.taskRepo.getTask(task.id) ?? task;
-      if (currentTask.spaceId !== space.id) return;
-      const workspacePath = resolveSpawnWorkspace({
-        cachedTaskWorktreePath: this.getTaskWorktreePath(currentTask.id),
-        hasWorktreeManager: false,
-        spaceWorkspacePath: resolveTaskWorkspace(space, currentTask),
-      }).workspacePath;
-      if (!workspacePath || live.getSessionData().workspacePath === workspacePath) return;
-      const previousWorkspacePath = live.getSessionData().workspacePath;
-      live.updateMetadata({ workspacePath });
-      try {
-        await this.reinjectNodeAgentMcpServer(live, {
-          taskId: task.id,
-          subSessionId: sessionId,
-          agentName: execution.agentName,
-          spaceId: space.id,
-          workflowRunId: execution.workflowRunId,
-          workspacePath,
-          workflowNodeId: execution.workflowNodeId,
-        });
-      } catch (err) {
-        if (previousWorkspacePath !== undefined) {
-          live.updateMetadata({ workspacePath: previousWorkspacePath });
-        }
-        throw err;
-      }
+      await stagedRun<SyncLiveWorkspaceState>(
+        'sync-live-session-workspace',
+        (s) => [
+          s.snapshot({
+            name: 'load-current-task',
+            provides: ['currentTask'],
+            run: () => ({ currentTask: this.config.taskRepo.getTask(task.id) ?? task }),
+          }),
+          s.decide({
+            name: 'sync-gates',
+            reads: ['currentTask'],
+            branches: ['skip', 'perform'],
+            run: (view) => {
+              const currentTask = view.currentTask;
+              const terminalStatus = execution.workflowRunId
+                ? this.resolveTerminalInjectionStatus(execution.workflowRunId, currentTask.id)
+                : null;
+              const live = this.getSubSession(sessionId);
+              const workspacePath = resolveSpawnWorkspace({
+                cachedTaskWorktreePath: this.getTaskWorktreePath(currentTask.id),
+                hasWorktreeManager: false,
+                spaceWorkspacePath: resolveTaskWorkspace(space, currentTask),
+              }).workspacePath;
+              let skipReason: string | null = null;
+              if (terminalStatus) skipReason = `task/run is terminal (${terminalStatus})`;
+              else if (!live) skipReason = 'session is no longer live';
+              else if (currentTask.spaceId !== space.id)
+                skipReason = 'task belongs to another space';
+              else if (
+                currentTask.workflowRunId &&
+                currentTask.workflowRunId !== execution.workflowRunId
+              ) {
+                skipReason = `task moved to workflow run ${currentTask.workflowRunId}`;
+              } else if (!workspacePath) skipReason = 'no workspace resolved';
+              else if (live.getSessionData().workspacePath === workspacePath) {
+                skipReason = 'workspace already matches';
+              }
+              return { decision: { skipReason, perform: skipReason === null } };
+            },
+          }),
+          s.halt({
+            name: 'skip-sync',
+            when: 'skip',
+            reads: ['decision'],
+            run: (view) => {
+              log.info(
+                `TaskAgentManager.syncLiveSessionWorkspace: skipping live session ${sessionId} — ${(view.decision as { skipReason: string }).skipReason}`
+              );
+              return { skipped: true };
+            },
+          }),
+          s.effect({
+            name: 'migrate-workspace',
+            when: 'perform',
+            reads: ['currentTask', 'workspacePath'],
+            writes: [],
+            run: async (view) => {
+              const live = this.getSubSession(sessionId);
+              if (!live) return;
+              const workspacePath = view.workspacePath!;
+              const previousWorkspacePath = live.getSessionData().workspacePath;
+              live.updateMetadata({ workspacePath });
+              try {
+                await this.reinjectNodeAgentMcpServer(live, {
+                  taskId: view.currentTask.id,
+                  subSessionId: sessionId,
+                  agentName: execution.agentName,
+                  spaceId: space.id,
+                  workflowRunId: execution.workflowRunId,
+                  workspacePath,
+                  workflowNodeId: execution.workflowNodeId,
+                });
+              } catch (err) {
+                if (previousWorkspacePath !== undefined) {
+                  live.updateMetadata({ workspacePath: previousWorkspacePath });
+                }
+                throw err;
+              }
+            },
+          }),
+        ],
+        { input: ['sessionId', 'workspacePath'] }
+      )({ sessionId, workspacePath: null });
     });
   }
 

@@ -201,12 +201,14 @@ export function runSpawnExecutionFlow(
             );
           }
           const rebind = deps.rebindLiveExecution(view.execution, sessionId);
-          await deps.syncReuseLiveWorkspace?.(
-            view.freshTask,
-            view.space,
-            view.execution,
-            sessionId
-          );
+          if (rebind === 'won') {
+            await deps.syncReuseLiveWorkspace?.(
+              view.freshTask,
+              view.space,
+              view.execution,
+              sessionId
+            );
+          }
           return rebind;
         },
       }),
