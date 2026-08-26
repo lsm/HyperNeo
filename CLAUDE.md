@@ -70,18 +70,18 @@ Prefer unit/component tests; add E2E coverage only when explicitly requested or 
 
 ## Change decomposition procedure (ADR 0004)
 
-Whenever decomposing a feature, refactor, removal, or change request into tasks/PRs, follow the slice ladder below. It is what keeps PRs small and reviewable — construction and integration never share a diff. Reference implementation: the external-events delivery redesign (issues #3013–#3027).
+Whenever decomposing a feature, refactor, removal, or change request into tasks/PRs, follow the slice ladder below. It is what keeps PRs small and reviewable — construction and integration rarely share a diff. Reference implementation: the external-events delivery redesign (issues #3013–#3027).
 
 1. **Pin** — characterization tests for existing behavior that must survive. Pin only what survives; never pin what a later slice deletes (those tests die with the code).
 2. **Extract** — refactor existing logic into pure functions (verbatim moves, zero behavior change); existing suites pass unmodified. Equivalence pins (new ⟺ old classifier, new source ≡ old source) turn semantic changes into reviewable test diffs.
-3. **Build** — new pure functions and the ONE direct superpipe pipeline per business path, with per-stage tests — additive dead code, nothing calls them yet.
-4. **Wire** — integration last: single call-site swaps behind a flag, then flip the default.
+3. **Build** — new pure functions with tests; add ONE direct superpipe pipeline per business path **where a pipeline fits** (per-stage tests) — additive dead code, nothing calls them yet. Hot per-event loops and plain helper extractions stay plain functions (ADR 0004 exclusions).
+4. **Wire** — integration last: single call-site swaps. Use a flag only when behavior genuinely changes and needs a staged rollout (then flip the default and later remove the flag); behavior-preserving rewires swap directly under their characterization pins.
 5. **Delete** — removal-only PRs, zero new logic.
 
 Standing rules for every slice:
 
-- Never mix construction, wiring, and deletion in one PR; a wiring PR touches exactly one live call site.
-- Every slice carries a merge contract and a line budget. If the diff exceeds the budget or starts mixing phases, stop and set the Space task to `blocked` with what grew and why — budgets are contracts, not suggestions.
+- Construction, wiring, and deletion do not share a PR. Exception: a trivial build+wire combination is acceptable when the call-site swap is a few lines and the combined diff stays within the slice budget — when in doubt, split. Deletion never combines with anything.
+- Every slice carries a **merge contract** in its task/issue description: one line naming what the PR may and may not touch (e.g. "additive dead code, no call-site changes"), plus a prod/test line budget. If the diff exceeds the budget or starts mixing phases, stop and report the overrun — in Space-managed work set the task to `blocked`; otherwise flag it in the PR — budgets are contracts, not suggestions.
 - Reuse existing pipelines/gates where they fit; do not rebuild routing or decision logic a sibling already owns.
 
 ## Architecture
