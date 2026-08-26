@@ -6507,6 +6507,136 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(injected[0]!.deliveryMode).toBe('defer');
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
+
+  describe('events delivery v2 immediate tier routing', () => {
+    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
+    let previousFlag: string | undefined;
+
+    beforeEach(() => {
+      previousFlag = process.env[FLAG_ENV];
+      process.env[FLAG_ENV] = '1';
+      db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
+				id TEXT PRIMARY KEY,
+				queue TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+				payload TEXT NOT NULL DEFAULT '{}',
+				result TEXT,
+				error TEXT,
+				priority INTEGER NOT NULL DEFAULT 0,
+				max_retries INTEGER NOT NULL DEFAULT 3,
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				run_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				started_at TEXT,
+				heartbeat_at INTEGER,
+				completed_at TEXT
+			)`);
+    });
+
+    afterEach(() => {
+      if (previousFlag === undefined) {
+        delete process.env[FLAG_ENV];
+      } else {
+        process.env[FLAG_ENV] = previousFlag;
+      }
+    });
+
+    function immediateEvent(): ExternalEvent {
+      return makeEvent({
+        payload: { action: 'review_submitted', prNumber: 42, state: 'CHANGES_REQUESTED' },
+      });
+    }
+
+    async function attachLiveSession(sessionId: string, status: string): Promise<void> {
+      const { run } = await startRunWithSubscription();
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      tam.alive.add(sessionId);
+      tam.processingStates.set(sessionId, status);
+    }
+
+    test('flag on: immediate event delivers one steer message with the render text', async () => {
+      await attachLiveSession('session-immediate-steer', 'processing');
+      const event = immediateEvent();
+      await eventService.publish(event);
+
+      expect(injected).toHaveLength(0);
+      const record = eventStore.getById(event.id)!;
+      expect(record.event.urgency).toBe('immediate');
+      expect(record.state).toBe('delivered');
+      const deliveries = eventStore.listDeliveries(event.id);
+      expect(deliveries).toHaveLength(1);
+      expect(deliveries[0]!.state).toBe('delivered');
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_message FROM sdk_messages WHERE session_id = 'session-immediate-steer'
+           AND send_status = 'enqueued'`
+        )
+        .all() as Array<{ sdk_message: string }>;
+      expect(rows).toHaveLength(1);
+      const saved = JSON.parse(rows[0]!.sdk_message) as {
+        message: { content: Array<{ type: string; text: string }> };
+      };
+      expect(saved.message.content).toHaveLength(1);
+      expect(saved.message.content[0]!.text).toBe(record.event.render);
+      expect(() => JSON.parse(record.event.render!)).toThrow();
+
+      const jobs = db
+        .prepare(
+          `SELECT payload FROM job_queue WHERE queue = 'message_delivery'
+           AND json_extract(payload, '$.sessionId') = 'session-immediate-steer'`
+        )
+        .all() as Array<{ payload: string }>;
+      expect(jobs).toHaveLength(1);
+      expect(JSON.parse(jobs[0]!.payload)).toMatchObject({
+        sessionId: 'session-immediate-steer',
+        role: 'steer',
+        origin: 'space_inject',
+      });
+    });
+
+    test('flag off: immediate event keeps the legacy essence inject path', async () => {
+      await attachLiveSession('session-immediate-legacy', 'idle');
+      delete process.env[FLAG_ENV];
+      const event = immediateEvent();
+      await eventService.publish(event);
+
+      expect(injected).toHaveLength(1);
+      expect(injected[0]!.sessionId).toBe('session-immediate-legacy');
+      expect(JSON.parse(injected[0]!.message).eventId).toBe(event.id);
+      expect(eventStore.getById(event.id)?.state).toBe('delivered');
+      const rows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-immediate-legacy'`
+        )
+        .get() as { n: number };
+      expect(rows.n).toBe(0);
+    });
+
+    test('flag on: rate-budget overflow leaves the ledger pending for the digest tier', async () => {
+      await attachLiveSession('session-immediate-budget', 'processing');
+      const events = Array.from({ length: 11 }, () => immediateEvent());
+      for (const event of events) {
+        await eventService.publish(event);
+      }
+
+      const states = events.map((event) => eventStore.listDeliveries(event.id)[0]!.state);
+      expect(states.filter((state) => state === 'delivered')).toHaveLength(10);
+      expect(states.filter((state) => state === 'pending')).toHaveLength(1);
+      expect(injected).toHaveLength(0);
+    });
+  });
 });
 
 describe('SpaceRuntime queue-health snapshot', () => {

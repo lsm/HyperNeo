@@ -30,6 +30,7 @@ import {
   DEAD_LOOP_WINDOW_MS,
 } from '../../../storage/repositories/channel-cycle-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository.ts';
@@ -41,7 +42,10 @@ import { ToolContinuationRecoveryRepository } from '../../../storage/repositorie
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { formatExternalEventEssence } from '../../external-events/event-essence.ts';
-import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
+import {
+  type ExternalEventPublishedPayload,
+  isExternalEventDeliveryV2Enabled,
+} from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern.ts';
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
@@ -114,6 +118,10 @@ import {
   decidePostActivationDelivery,
   type ExternalEventDeliveryDecision,
 } from './external-event-delivery-pipeline.ts';
+import {
+  deliverImmediateEvent,
+  type ImmediateEventDeliveryDeps,
+} from './immediate-event-delivery-pipeline.ts';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import {
@@ -665,6 +673,7 @@ export class SpaceRuntime {
   private internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined;
 
   private sdkMessageRepo: SDKMessageRepository | null = null;
+  private jobQueueRepo: JobQueueRepository | null = null;
 
   private completionDetector: CompletionDetector;
 
@@ -791,6 +800,13 @@ export class SpaceRuntime {
       this.sdkMessageRepo = new SDKMessageRepository(this.config.db, this.config.reactiveDb);
     }
     return this.sdkMessageRepo;
+  }
+
+  private getJobQueueRepo(): JobQueueRepository {
+    if (!this.jobQueueRepo) {
+      this.jobQueueRepo = new JobQueueRepository(this.config.db);
+    }
+    return this.jobQueueRepo;
   }
 
   private createNodeExecutionOrIgnore(params: CreateNodeExecutionParams): NodeExecution {
@@ -1683,9 +1699,23 @@ export class SpaceRuntime {
       await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
     }
 
+    const immediateRecord = isExternalEventDeliveryV2Enabled()
+      ? store.getById(payload.eventId)
+      : null;
+    const routeImmediateTier = immediateRecord?.event.urgency === 'immediate';
+
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
       if (this.isDeliveryInDeliveryCooldown(deliveryKey)) {
         this.queueHealthMetrics.recordCooldownSkip();
+        continue;
+      }
+      if (routeImmediateTier) {
+        await this.deliverImmediateTierEvent(
+          target,
+          payload,
+          deliveryKey,
+          immediateRecord?.event.render ?? null
+        );
         continue;
       }
       await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
@@ -1783,6 +1813,77 @@ export class SpaceRuntime {
       return;
     }
     await this.deliverViaActivation(resolved, payload, deliveryKey);
+  }
+
+  private async deliverImmediateTierEvent(
+    target: WorkflowSubscriptionTarget,
+    payload: ExternalEventPublishedPayload,
+    deliveryKey: string,
+    render: string | null
+  ): Promise<void> {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    try {
+      const deps: ImmediateEventDeliveryDeps = {
+        getTask: (taskId) => this.config.taskRepo.getTask(taskId),
+        getRun: (workflowRunId) => this.config.workflowRunRepo.getRun(workflowRunId),
+        listExecutions: (workflowRunId) =>
+          this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId),
+        isDeliveryInFlight: (key) => this.externalEventDeliveriesInFlight.has(key),
+        isSubscriptionActive: (candidate, topic) => this.isTargetStillSubscribed(candidate, topic),
+        isTargetSpacePaused: (candidate) => {
+          const run = this.config.workflowRunRepo.getRun(candidate.workflowRunId);
+          return !!run && this.pausedSpaceIds.has(run.spaceId);
+        },
+        isTargetSessionLive: (sessionId) => this.isTargetSessionLive(sessionId),
+        isSessionInterruptInProgress: (sessionId) => this.isTargetSessionInterrupted(sessionId),
+        getSessionStatus: (sessionId) =>
+          this.config.taskAgentManager?.getAgentSessionById(sessionId)?.getProcessingState()
+            .status ?? '',
+        withinRateBudget: () => this.consumeImmediateTierRateBudget(target),
+        setQueuedIfIdle: (sessionId, messageUuid) => {
+          const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
+          return session
+            ? session.stateManager.setQueuedIfIdle(messageUuid)
+            : Promise.resolve(false);
+        },
+        messages: this.getSdkMessageRepo(),
+        jobQueue: this.getJobQueueRepo(),
+        eventStore: store,
+      };
+      const outcome = await deliverImmediateEvent(deps, {
+        event: payload,
+        render,
+        target,
+        deliveryKey,
+      });
+      if (outcome.action === 'skip' && outcome.reason === 'claim_conflict') {
+        this.queueHealthMetrics.recordClaimConflict();
+      }
+      if (outcome.action === 'error') {
+        log.warn(
+          `SpaceRuntime: immediate-tier delivery for ${payload.eventId} failed at ` +
+            `${outcome.stage}: ${formatCommandError(outcome.error)}`
+        );
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: failed to process immediate-tier event ${payload.eventId} for ` +
+          `${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
+      );
+    }
+  }
+
+  private consumeImmediateTierRateBudget(target: WorkflowSubscriptionTarget): boolean {
+    const rateLimitKey = this.buildRateLimitKey(target);
+    const state = this.getExternalEventRateLimitState(rateLimitKey);
+    const now = Date.now();
+    state.timestamps = state.timestamps.filter(
+      (timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
+    );
+    state.timestamps.push(now);
+    this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
+    return state.timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN;
   }
 
   private async deliverToLiveSessionTarget(
@@ -1965,6 +2066,16 @@ export class SpaceRuntime {
     return this.resolveSubscriptionTarget(target);
   }
 
+  private externalEventDeliveryMessage(event: ExternalEventPublishedPayload): string {
+    if (isExternalEventDeliveryV2Enabled()) {
+      const record = this.config.externalEventStore?.getById(event.eventId);
+      if (record?.event.urgency === 'immediate' && record.event.render) {
+        return record.event.render;
+      }
+    }
+    return formatExternalEventEssence(event);
+  }
+
   private async deliverToLongHorizonAgent(
     target: LongHorizonSubscriptionTarget,
     event: ExternalEventPublishedPayload,
@@ -1980,7 +2091,7 @@ export class SpaceRuntime {
       const result = await this.config.deliverLongHorizonExternalEvent({
         spaceId: target.spaceId,
         agentId: target.agentId,
-        message: formatExternalEventEssence(event),
+        message: this.externalEventDeliveryMessage(event),
         idempotencyKey: deliveryKey,
       });
       if (this.cancelledLongHorizonDeliveries.has(deliveryKey)) return;
