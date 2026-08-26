@@ -1,9 +1,10 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, realpathSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceManager', () => {
@@ -83,6 +84,25 @@ describe('SpaceManager', () => {
       await expect(manager.createSpace({ workspacePath: tmpDir, name: 'Second' })).rejects.toThrow(
         'already exists'
       );
+    });
+
+    it('throws if the same repo is claimed through a different symlink alias', async () => {
+      await manager.createSpace({ workspacePath: tmpDir, name: 'First' });
+      const aliasPath = join(tmpDir, 'repo-alias');
+      symlinkSync(tmpDir, aliasPath);
+
+      await expect(
+        manager.createSpace({ workspacePath: aliasPath, name: 'Second' })
+      ).rejects.toThrow('already exists');
+    });
+
+    it('registers the resolved workspace path as the new space claim (findable via getSpaceByPath)', async () => {
+      const space = await manager.createSpace({ workspacePath: tmpDir, name: 'Claimed' });
+      const repo = new SpaceRepository(db as any);
+      const found = repo.getSpaceByPath(space.workspacePath!);
+
+      expect(found).not.toBeNull();
+      expect(found!.id).toBe(space.id);
     });
 
     it('creates a space with autonomy level 1 (supervised)', async () => {
