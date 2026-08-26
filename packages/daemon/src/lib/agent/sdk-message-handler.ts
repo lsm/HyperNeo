@@ -1650,7 +1650,7 @@ export class SDKMessageHandler {
               this.ctx.clearPendingResumeAfterCompaction?.();
             });
         }
-        await publishProjection;
+        await boundedDeliveryGate(publishProjection.then(() => undefined));
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {
