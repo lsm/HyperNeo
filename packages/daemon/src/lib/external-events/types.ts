@@ -1,6 +1,8 @@
 import type { MessageHub } from '@hyperneo/shared/message-hub/message-hub.ts';
 import type { ExternalEventPublisher } from './external-event-service.ts';
 
+export type ExternalEventUrgency = 'immediate' | 'queued';
+
 export interface ExternalEvent {
   id: string;
   spaceId: string;
@@ -13,6 +15,8 @@ export interface ExternalEvent {
   externalUrl?: string;
   payload: Record<string, unknown>;
   dedupeKey: string;
+  urgency?: ExternalEventUrgency;
+  render?: string;
 }
 
 export type ExternalEventState = 'published' | 'delivered' | 'failed' | 'ignored';

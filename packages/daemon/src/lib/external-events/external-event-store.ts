@@ -10,6 +10,7 @@ import {
   type ExternalEventDeliveryState,
   type ExternalEventRecord,
   type ExternalEventState,
+  type ExternalEventUrgency,
   type StoreResult,
   TERMINAL_DELIVERY_STATES,
   TERMINAL_EVENT_STATES,
@@ -29,6 +30,8 @@ interface ExternalEventRow {
   summary: string;
   external_url: string | null;
   payload_json: string;
+  urgency: string | null;
+  render: string | null;
   state: ExternalEventState;
   created_at: number;
   updated_at: number;
@@ -59,6 +62,8 @@ interface ExternalEventDeliveryLogRow extends ExternalEventDeliveryRow {
   summary: string;
   external_url: string | null;
   payload_json: string;
+  urgency: string | null;
+  render: string | null;
   event_state: ExternalEventState;
   event_created_at: number;
   event_updated_at: number;
@@ -98,12 +103,12 @@ export class ExternalEventStore {
       `INSERT INTO space_external_events (
 				id, space_id, source, topic, dedupe_key,
 				occurred_at, ingested_at, source_event_id,
-				summary, external_url, payload_json,
+				summary, external_url, payload_json, urgency, render,
 				state, created_at, updated_at
 			) VALUES (
 				?, ?, ?, ?, ?,
 				?, ?, ?,
-				?, ?, ?,
+				?, ?, ?, ?, ?,
 				'published', ?, ?
 			)
 			ON CONFLICT(space_id, source, dedupe_key) DO NOTHING`
@@ -121,6 +126,8 @@ export class ExternalEventStore {
       event.summary,
       event.externalUrl ?? null,
       JSON.stringify(event.payload ?? {}),
+      event.urgency ?? null,
+      event.render ?? null,
       now,
       now
     );
@@ -455,7 +462,7 @@ export class ExternalEventStore {
            d.event_id, d.delivery_key, d.workflow_run_id, d.task_id, d.node_id, d.agent_name,
            d.state, d.failure_reason, d.delivered_at, d.updated_at,
            e.id, e.space_id, e.source, e.topic, e.dedupe_key, e.occurred_at, e.ingested_at,
-           e.source_event_id, e.summary, e.external_url, e.payload_json,
+           e.source_event_id, e.summary, e.external_url, e.payload_json, e.urgency, e.render,
            e.state AS event_state, e.created_at AS event_created_at, e.updated_at AS event_updated_at
          FROM space_external_event_deliveries d
          INNER JOIN space_external_events e ON e.id = d.event_id
@@ -688,6 +695,8 @@ function rowToRecord(row: ExternalEventRow): ExternalEventRecord {
   };
   if (row.source_event_id !== null) event.sourceEventId = row.source_event_id;
   if (row.external_url !== null) event.externalUrl = row.external_url;
+  if (row.urgency !== null) event.urgency = row.urgency as ExternalEventUrgency;
+  if (row.render !== null) event.render = row.render;
 
   return {
     event,
@@ -725,6 +734,8 @@ function deliveryLogRowToRecord(row: ExternalEventDeliveryLogRow): ExternalEvent
     summary: row.summary,
     external_url: row.external_url,
     payload_json: row.payload_json,
+    urgency: row.urgency,
+    render: row.render,
     state: row.event_state,
     created_at: row.event_created_at,
     updated_at: row.event_updated_at,

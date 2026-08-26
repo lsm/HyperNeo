@@ -829,6 +829,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			summary TEXT NOT NULL,
 			external_url TEXT,
 			payload_json TEXT NOT NULL,
+			urgency TEXT,
+			render TEXT,
 			state TEXT NOT NULL DEFAULT 'published'
 				CHECK(state IN ('published', 'delivered', 'failed', 'ignored')),
 			created_at INTEGER NOT NULL,
