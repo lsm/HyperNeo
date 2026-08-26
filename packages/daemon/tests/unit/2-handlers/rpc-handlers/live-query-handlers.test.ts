@@ -3245,6 +3245,80 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(ids).not.toContain('old-text');
       });
 
+      test('caps pinned artifact rows at the newest paths', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        for (let i = 0; i < 105; i += 1) {
+          insertSdkMessageAt(`w-${i}`, sessionId, now + 1000 + i, {
+            type: 'assistant',
+            message: {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'tool_use',
+                  id: `tu-w-${i}`,
+                  name: 'Write',
+                  input: { file_path: `/f-${i}.txt`, content: `v${i}` },
+                },
+              ],
+            },
+          });
+        }
+
+        const ids = queryCompact(taskId, 1).map((r) => r.id as string);
+        const writes = ids.filter((id) => id.startsWith('w-'));
+        expect(writes).toHaveLength(100);
+        expect(writes).toContain('w-104');
+        expect(writes).not.toContain('w-4');
+        expect(writes).not.toContain('w-0');
+      });
+
+      test('artifact admission does not reopen completed sessions in active turns', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        insertSdkMessageAt('done-write', sessionId, now + 1000, {
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: 'tu-done-write',
+                name: 'Write',
+                input: { file_path: '/done.txt', content: 'done' },
+              },
+            ],
+          },
+        });
+        insertResultMessageAt('done-result', sessionId, now + 1100, 'success');
+
+        const sessionB = 'sess-active-turn-flood';
+        insertSession(sessionB, 'worker', '{"status":"processing"}');
+        sessionTaskIds.set(sessionB, taskId);
+        for (let i = 0; i < 100; i += 1) {
+          insertSdkMessageAt(
+            `at-anchor-${i}`,
+            sessionB,
+            now + 3000 + i,
+            {
+              type: 'user',
+              uuid: `u-at-${i}`,
+              message: { role: 'user', content: `b${i}` },
+            },
+            'user'
+          );
+        }
+
+        const ids = queryCompact(taskId).map((r) => r.id as string);
+        expect(ids).toContain('done-write');
+
+        const activeTurnSql = NAMED_QUERY_REGISTRY.get('spaceTaskActiveTurn.byTask')!.sql;
+        const activeRows = db.prepare(activeTurnSql).all(taskId) as Record<string, unknown>[];
+        expect(activeRows.every((r) => r.sessionId !== sessionId)).toBe(true);
+      });
+
       test('maps user-message send_status to the delivery lifecycle + retrying (compact feed)', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

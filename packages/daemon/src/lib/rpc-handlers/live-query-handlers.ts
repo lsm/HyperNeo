@@ -2106,7 +2106,67 @@ export const SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS = 100;
 
 export const SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT = 3;
 
-const SPACE_TASK_CONV_BASE_CTE = `
+const SPACE_TASK_MESSAGES_COMPACT_ARTIFACT_PIN_LIMIT = 100;
+
+const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_tool_blocks AS (
+  SELECT
+    sm.id AS id,
+    sm.session_id AS sessionId,
+    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+    sm.rowid AS insOrder,
+    json_extract(b.value, '$.name') AS toolName,
+    json_extract(b.value, '$.input.file_path') AS filePath
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+  CROSS JOIN json_each(
+    CASE
+      WHEN json_valid(sm.sdk_message)
+        AND json_type(sm.sdk_message, '$.message.content') = 'array'
+      THEN sm.sdk_message
+    END,
+    '$.message.content'
+  ) b
+  WHERE sm.message_type = 'assistant'
+    AND instr(sm.sdk_message, 'tool_use') > 0
+    AND json_extract(b.value, '$.type') = 'tool_use'
+),
+artifact_state_rows AS (
+  SELECT id FROM (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (ORDER BY createdAt DESC, insOrder DESC) AS pinRank
+    FROM (
+      SELECT id, createdAt, insOrder FROM (
+        SELECT
+          id,
+          createdAt,
+          insOrder,
+          ROW_NUMBER() OVER (
+            PARTITION BY filePath ORDER BY createdAt DESC, insOrder DESC
+          ) AS pathRank
+        FROM artifact_tool_blocks
+        WHERE toolName IN ('Write', 'Edit', 'MultiEdit')
+          AND filePath IS NOT NULL
+      ) WHERE pathRank = 1
+      UNION
+      SELECT id, createdAt, insOrder FROM (
+        SELECT
+          id,
+          createdAt,
+          insOrder,
+          ROW_NUMBER() OVER (
+            PARTITION BY sessionId ORDER BY createdAt DESC, insOrder DESC
+          ) AS sessionRank
+        FROM artifact_tool_blocks
+        WHERE toolName = 'TodoWrite'
+      ) WHERE sessionRank = 1
+    )
+  ) WHERE pinRank <= ${SPACE_TASK_MESSAGES_COMPACT_ARTIFACT_PIN_LIMIT}
+),
+`;
+
+function spaceTaskConvBaseCte(admitArtifactState: boolean): string {
+  return `
 WITH target_task AS (
   SELECT *
   FROM space_tasks
@@ -2182,50 +2242,7 @@ recent_turns AS (
   )
 ),
 ${TASK_SHUTDOWN_BOUNDARY_CTE_SQL},
-artifact_tool_blocks AS (
-  SELECT
-    sm.id AS id,
-    sm.session_id AS sessionId,
-    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
-    sm.rowid AS insOrder,
-    json_extract(b.value, '$.name') AS toolName,
-    json_extract(b.value, '$.input.file_path') AS filePath
-  FROM target_task tt
-  JOIN sdk_messages sm ON sm.task_id = tt.id
-  CROSS JOIN json_each(
-    CASE
-      WHEN json_valid(sm.sdk_message)
-        AND json_type(sm.sdk_message, '$.message.content') = 'array'
-      THEN sm.sdk_message
-    END,
-    '$.message.content'
-  ) b
-  WHERE sm.message_type = 'assistant'
-    AND json_extract(b.value, '$.type') = 'tool_use'
-),
-artifact_state_rows AS (
-  SELECT id FROM (
-    SELECT
-      id,
-      ROW_NUMBER() OVER (
-        PARTITION BY filePath ORDER BY createdAt DESC, insOrder DESC
-      ) AS pathRank
-    FROM artifact_tool_blocks
-    WHERE toolName IN ('Write', 'Edit', 'MultiEdit')
-      AND filePath IS NOT NULL
-  ) WHERE pathRank = 1
-  UNION
-  SELECT id FROM (
-    SELECT
-      id,
-      ROW_NUMBER() OVER (
-        PARTITION BY sessionId ORDER BY createdAt DESC, insOrder DESC
-      ) AS sessionRank
-    FROM artifact_tool_blocks
-    WHERE toolName = 'TodoWrite'
-  ) WHERE sessionRank = 1
-),
-sdk_rows AS (
+${admitArtifactState ? SPACE_TASK_CONV_ARTIFACT_STATE_CTES : ''}sdk_rows AS (
   SELECT
     sm.id AS id,
     sm.session_id AS sessionId,
@@ -2287,7 +2304,7 @@ sdk_rows AS (
         1
       ) = 0
     )
-    OR sm.id IN (SELECT id FROM artifact_state_rows)
+    ${admitArtifactState ? 'OR sm.id IN (SELECT id FROM artifact_state_rows)' : ''}
   )
     AND (
       sm.message_type != 'system'
@@ -2326,10 +2343,11 @@ joined AS (
     insOrder
   FROM sdk_rows
 )
-`.trim();
+  `.trim();
+}
 
 const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
-${SPACE_TASK_CONV_BASE_CTE},
+${spaceTaskConvBaseCte(true)},
 -- Assistant rows with a non-empty text block, ranked newest-first per segment.
 assistant_text AS (
   SELECT sessionId, turnIndex, id,
@@ -2586,7 +2604,7 @@ ORDER BY createdAt ASC, insOrder ASC
 `.trim();
 
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
-${SPACE_TASK_CONV_BASE_CTE},
+${spaceTaskConvBaseCte(false)},
 active_turn AS (
   -- The active roster turn per session = the conversation turn holding the
   -- session's most recent AGENT/operational row, and only when that row is not
