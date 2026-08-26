@@ -575,8 +575,12 @@ ADR 0004 applies to new combinators.
    only goal membership, so an unrelated agent can lift a launcher hold before
    reminder-based reconciliation re-pauses it; resume/trigger handlers must reject work
    under an unresolved launcher hold except for the authorized owner/coordinator, **and
-   pattern-goal triggers stay launcher-only even when no hold is recorded** (sole
-   trigger authority holds throughout the objective, not only during holds); plus
+   pattern-goal triggers stay launcher-only even when no hold is recorded** — including
+   scheduled check-in fires, which create and claim goal tasks directly through
+   `task-schedule-fire.handler` and bypass `trigger_goal_task`, so the firing path
+   enforces the same authority or pattern goals retain no cadence at all (§6 defaults
+   to none). Sole trigger authority holds throughout the objective, not only during
+   holds; plus
    dependency-reopen leases so a retried `done` prerequisite stops its started
    dependents and wakes the launcher instead of silently revoking the gate, and
    **retry rejection or launcher coordination for consumed gates** (`retry_task` on a
