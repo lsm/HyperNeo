@@ -5,14 +5,6 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 
 const execAsync = promisify(exec);
 
-const LOCAL_GIT_ENV_VARS = [
-  'GIT_DIR',
-  'GIT_WORK_TREE',
-  'GIT_INDEX_FILE',
-  'GIT_OBJECT_DIRECTORY',
-  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-];
-
 export const MAX_WORKSPACES_PER_SPACE = 8;
 
 export type WorkspaceClaimSource = 'space_primary_path' | 'registered_workspace';
@@ -84,7 +76,10 @@ export const nodeWorkspaceValidationIo: WorkspaceValidationIo = {
   async isGitRepositoryRoot(path) {
     try {
       const env = { ...process.env };
-      for (const key of LOCAL_GIT_ENV_VARS) delete env[key];
+      const local = await execAsync('git rev-parse --local-env-vars');
+      for (const key of local.stdout.split(/\s+/)) {
+        if (key) delete env[key];
+      }
       const { stdout } = await execAsync('git rev-parse --show-toplevel', { cwd: path, env });
       const topLevel = stdout.replace(/\n$/, '');
       if (topLevel === path) return true;
