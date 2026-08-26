@@ -395,7 +395,6 @@ function fallbackModelsFor(
       family: provider.id,
       provider: provider.id,
       contextWindow: 128000,
-      preferContextWindowMetadata: true,
       description: `${entry.name ?? entry.id} via ${provider.id}`,
       releaseDate: '',
       available: true,
