@@ -772,7 +772,7 @@ The repo already has several proven pipelines. Use these as the model for each s
     runtime methods already emit `space.task.updated` via `safeOnTaskUpdated`,
     so an unconditional final emission duplicates the event and reruns
     lifecycle subscribers.
-- **Shell/effect wiring**: Review correction PR #2983 round 18 — these branches are GUARDED EFFECT STAGES of the single `spaceTask.update` pipeline, not a shell-executed cascade (the shell keeps only RPC result mapping); the pipeline executes the selected branch:
+- **Shell/effect wiring**: Review correction PR #2983 rounds 18/23 — the RPC's resource lookups (`spaceManager.getSpace` then `taskManager.getTask`, preserving the exact `Space not found`/`Task not found` precedence) are INJECTED SNAPSHOT STAGES of the single `spaceTask.update` pipeline, and these branches are GUARDED EFFECT STAGES of that same composition, not a shell-executed cascade (the handler keeps only request/result mapping); the pipeline executes the selected branch:
   - `reject` → throw.
   - `park_stopped` → (runtime-availability gate first, round 9) `spaceRuntimeService.parkStoppedWorkflowTask` then optional field update.
   - `recover_transition` → (runtime-availability gate first, round 9) `spaceRuntimeService.recoverWorkflowBackedTask` then optional field update.
@@ -907,7 +907,10 @@ The repo already has several proven pipelines. Use these as the model for each s
 - **Shell/effect wiring**: Effects call `pauseScheduleStrict(scheduleService, id)` for EVERY pause arm — orphan pauses, pause-all, and pause-no-cron — plus `scheduleService.updateSchedule`, `resumeSchedule`, `createGoalSchedule` (review correction PR #2983 round 4: `pauseScheduleStrict` treats an already missing/non-active schedule as benign (its `not found|not active` catch) but THROWS when a CAS-losing `pauseSchedule` returns anything but `paused`, so a concurrently fired/rescheduled schedule aborts the transaction instead of letting both the stale and the replacement self-nag schedules run; a bare `pauseSchedule` stage would either abort on benign disappearances or continue after a lost CAS). Review correction — when `db` is supplied, the flow composes as a direct SYNCHRONOUS `superpipe` pipeline with `.end` executed inside `db.transaction(fn)()`: `stagedRun` executes through `endAsync`, so wrapping it in the synchronous SQLite transaction would commit as soon as the Promise is returned, leaving the normal tool paths (which pass `config.db`) with orphan pauses committed without the replacement schedule. When `db` is absent the same sync pipeline runs best-effort.
 - **Step-by-step migration**:
   1. Define the direct sync pipeline `selfNagScheduleSyncRun` (`superpipe` + `.end`, effect functions synchronous).
-  2. Gather stage lists schedules, reads goal and policy.
+  2. Gather stage lists schedules and reads policy; the GOAL READ is a
+     guarded stage AFTER the absent-reference `pauseAllNoGoal` branch
+     (review correction PR #2983 round 23: matching the corrected P41
+     scope — no goal read without a valid `spaceGoalId`).
   3. Effect stage `pause-orphan-schedules` pauses stale schedules unconditionally (preliminary, nonterminal).
   4. Decide stage selects the current-schedule branch and stores it in ctx
      (review correction: NO `!branchDecided` halt — a `!dep` halt exits the
@@ -1075,7 +1078,15 @@ The repo already has several proven pipelines. Use these as the model for each s
      (`superpipe` + `.end`; review correction — NOT `stagedRun`, which would
      change the currently synchronous API to a Promise and add await gaps
      between the interest-limit snapshot and trie mutations).
-  3. `snapshot` gathers run, task, displaced, existing interest count MINUS the displaced entry (review correction: the current implementation removes the exact existing entry BEFORE counting, so a replacement at capacity stays allowed; counting the displaced entry would trip `limitReached` on every re-register at the limit). Retain rollback of the displaced entry as before.
+  3. `snapshot` uses the GUARDED READ ORDERING of P30 (review correction
+     PR #2983 round 23): topic validation first, then the run lookup, then —
+     dynamic subscriptions only — the task read, then the displaced entry and
+     interest count MINUS the displaced entry (review correction: the current
+     implementation removes the exact existing entry BEFORE counting, so a
+     replacement at capacity stays allowed; counting the displaced entry
+     would trip `limitReached` on every re-register at the limit). Retain
+     rollback of the displaced entry as before (inside the pipeline's
+     persist-stage catch — round 20).
   4. `decide` runs target/topic/limit gates — the TARGET-TASK gate is
      GUARDED TO DYNAMIC SUBSCRIPTIONS ONLY (review correction PR #2983
      round 14: the current implementation invokes
