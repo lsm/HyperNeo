@@ -523,7 +523,9 @@ export class AgentSession
 
     if (session.metadata?.lastContextInfo) {
       this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);
-      this.restoredBudgetEnforcement = this.enforceRestoredContextBudget();
+      this.restoredBudgetEnforcement = this.enforceRestoredContextBudget().catch((error) => {
+        this.logger.warn('restored context budget enforcement failed:', error);
+      });
       this.messageQueue.setDeliveryGate(this.restoredBudgetEnforcement);
     }
     this.stateManager.restoreFromDatabase();

@@ -62,12 +62,21 @@ export class MessageQueue {
   }
 
   removePendingInternalCompactions(): number {
-    const before = this.queue.length;
-    this.queue = this.queue.filter(
-      (queued) =>
-        !(queued.internal && typeof queued.content === 'string' && queued.content === '/compact')
-    );
-    return before - this.queue.length;
+    const stale: QueuedMessage[] = [];
+    this.queue = this.queue.filter((queued) => {
+      if (queued.internal && typeof queued.content === 'string' && queued.content === '/compact') {
+        stale.push(queued);
+        return false;
+      }
+      return true;
+    });
+    for (const queued of stale) {
+      if (queued.timeoutId) {
+        clearTimeout(queued.timeoutId);
+      }
+      queued.reject(new Error('compaction superseded by model switch'));
+    }
+    return stale.length;
   }
 
   setDeliveryGate(gate: Promise<void>): void {
@@ -341,14 +350,14 @@ export class MessageQueue {
         break;
       }
 
+      if (this.deliveryGate) {
+        await this.deliveryGate.catch(() => {});
+      }
+
       const queuedMessage = await this.waitForNextMessage();
 
       if (!queuedMessage) {
         break;
-      }
-
-      if (this.deliveryGate) {
-        await this.deliveryGate;
       }
 
       if (!this.claimed.has(queuedMessage)) {
