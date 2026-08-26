@@ -55,8 +55,6 @@ export interface UseSpaceTaskMessagesResult {
   isReconnecting: boolean;
 }
 
-const SPACE_TASK_MESSAGES_COMPACT_DEFAULT_LIMIT = 20;
-
 let _taskMessageSubCounter = 0;
 function nextTaskMessageSubId(taskId: string): string {
   _taskMessageSubCounter += 1;
@@ -149,8 +147,7 @@ type LifecycleStorePayload = LiveQuerySnapshotEvent | LiveQueryDeltaEvent | null
 
 export function useSpaceTaskMessages(
   taskId: string | null,
-  variant: SpaceTaskMessagesQueryVariant = 'compact',
-  limit = SPACE_TASK_MESSAGES_COMPACT_DEFAULT_LIMIT
+  variant: SpaceTaskMessagesQueryVariant = 'compact'
 ): UseSpaceTaskMessagesResult {
   const { request, onEvent, getHub, isConnected } = useMessageHub();
   const [rows, setRows] = useState<SpaceTaskThreadMessageRow[]>([]);
@@ -201,9 +198,8 @@ export function useSpaceTaskMessages(
         if (effect.kind === 're-snapshot') {
           const hub = getHub();
           if (!hub) continue;
-          const params = variant === 'full' ? [taskId] : [taskId, limit];
           hub
-            .request('liveQuery.subscribe', { queryName, params, subscriptionId })
+            .request('liveQuery.subscribe', { queryName, params: [taskId], subscriptionId })
             .then(() => {
               executeEffects(dispatch({ type: 'subscribed', generation: effect.generation }));
             })
@@ -332,7 +328,7 @@ export function useSpaceTaskMessages(
         ).catch(() => {});
       }
     };
-  }, [taskId, isConnected, onEvent, request, getHub, queryName, variant, limit]);
+  }, [taskId, isConnected, onEvent, request, getHub, queryName, variant]);
 
   const sortedRows = useMemo(() => sortRows(rows), [rows]);
   const activeTurnSummaries = useMemo(

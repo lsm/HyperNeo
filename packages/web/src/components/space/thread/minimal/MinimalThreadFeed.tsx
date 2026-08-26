@@ -138,7 +138,6 @@ interface CompletedFeedTurn {
   replacementStatus?: MessageReplacementStatus;
   resultInfo?: ResultMessage;
   roster: ActiveRosterEntry[];
-  messageId: string | number;
 }
 
 interface ActiveFeedTurn {
@@ -174,7 +173,6 @@ interface CompactBoundaryFeedTurn {
   durationMs?: number;
   sessionId: string | null;
   highlightMessageUuid?: string;
-  messageId?: string | number;
 }
 
 interface SystemFeedTurn {
@@ -190,7 +188,6 @@ interface SystemFeedTurn {
   sessionId: string | null;
   highlightMessageUuid?: string;
   replacementStatus?: MessageReplacementStatus;
-  messageId?: string | number;
 }
 
 interface MessageFeedTurn {
@@ -210,7 +207,6 @@ interface MessageFeedTurn {
   highlightMessageUuid?: string;
   replacementStatus?: MessageReplacementStatus;
   sessionInit?: SystemInitMessage;
-  messageId: string | number;
 }
 
 type FeedTurn =
@@ -635,7 +631,6 @@ function buildCompletedTurn(
     highlightMessageUuid: highlightUuid,
     replacementStatus: sourceRow?.replacementStatus,
     resultInfo,
-    messageId: sourceRow?.id ?? rows[0]?.id ?? '',
     roster: (() => {
       const base = completedRosterEntries(
         rows,
@@ -906,32 +901,8 @@ function buildOperationalSystemTurn(
     if (consumedStatusRowIds && consumedStatusRowIds.has(String(row.id))) return null;
     if (statusValue !== 'compacting') return null;
   }
-  const highlightUuid =
-    typeof (message as { uuid?: unknown }).uuid === 'string'
-      ? ((message as { uuid: string }).uuid as string)
-      : undefined;
   if (subtype === 'hook_started' || subtype === 'hook_progress' || subtype === 'hook_response') {
-    if (!isSessionTail) return null;
-    const hookName = (message as { hook_name?: unknown }).hook_name;
-    const hookEvent = (message as { hook_event?: unknown }).hook_event;
-    const nameText = typeof hookName === 'string' && hookName.length > 0 ? hookName : 'hook';
-    const eventText =
-      typeof hookEvent === 'string' && hookEvent.length > 0 ? ` (${hookEvent})` : '';
-    return {
-      state: 'system',
-      id: `system-${String(row.id)}`,
-      agent: row.label,
-      agentKind: row.kind,
-      agentRole: row.role,
-      agentNodeExecutionId: row.nodeExecutionId ?? null,
-      createdAt: row.createdAt,
-      title: subtype === 'hook_response' ? 'Hook finished' : 'Running hook',
-      body: `${nameText}${eventText}`,
-      sessionId: row.sessionId,
-      highlightMessageUuid: highlightUuid,
-      replacementStatus: row.replacementStatus,
-      messageId: row.id,
-    };
+    return null;
   }
   if (isFoldedTaskNotification(row, rosteredToolUseIds)) return null;
   if (subtype === 'api_retry' || subtype === 'thinking_tokens' || subtype === 'task_notification')
@@ -942,6 +913,10 @@ function buildOperationalSystemTurn(
     return null;
   }
   if (subtype === 'worker_shutting_down' && !isSessionTail) return null;
+  const highlightUuid =
+    typeof (message as { uuid?: unknown }).uuid === 'string'
+      ? ((message as { uuid: string }).uuid as string)
+      : undefined;
 
   if (subtype === 'session_state_changed') {
     const state = (message as { state?: unknown }).state;
@@ -958,7 +933,6 @@ function buildOperationalSystemTurn(
       sessionId: row.sessionId,
       highlightMessageUuid: highlightUuid,
       replacementStatus: row.replacementStatus,
-      messageId: row.id,
     };
   }
 
@@ -978,7 +952,6 @@ function buildOperationalSystemTurn(
       sessionId: row.sessionId,
       highlightMessageUuid: highlightUuid,
       replacementStatus: row.replacementStatus,
-      messageId: row.id,
     };
   }
 
@@ -1003,7 +976,6 @@ function buildOperationalSystemTurn(
       sessionId: row.sessionId,
       highlightMessageUuid: highlightUuid,
       replacementStatus: row.replacementStatus,
-      messageId: row.id,
     };
   }
 
@@ -1022,7 +994,6 @@ function buildOperationalSystemTurn(
     sessionId: row.sessionId,
     highlightMessageUuid: highlightUuid,
     replacementStatus: row.replacementStatus,
-    messageId: row.id,
   };
 }
 
@@ -1115,7 +1086,6 @@ function buildMessageTurn(
     highlightMessageUuid: highlightUuid,
     replacementStatus: row.replacementStatus,
     sessionInit,
-    messageId: row.id,
   };
 }
 

@@ -404,48 +404,6 @@ describe('MinimalThreadFeed', () => {
     expect(systemRows[0].textContent).toContain('host_exit');
   });
 
-  it('renders the session-tail hook row of a hook-only working turn', () => {
-    const baseTime = new Date('2026-04-25T18:00:00Z').getTime();
-    const hookMessage = (uuid: string, subtype: string) => ({
-      type: 'system',
-      subtype,
-      uuid,
-      session_id: 'test-session',
-      hook_id: 'h1',
-      hook_name: 'lint',
-      hook_event: 'PreToolUse',
-    });
-    const rows = [
-      makeRow({
-        id: 'mid-hook',
-        label: 'Coder Agent',
-        createdAt: baseTime,
-        message: hookMessage('mid-hook-uuid', 'hook_started'),
-      }),
-      makeRow({
-        id: 'newer-work',
-        label: 'Coder Agent',
-        createdAt: baseTime + 1000,
-        message: assistantText('newer-work-uuid', 'continued work'),
-      }),
-      makeRow({
-        id: 'tail-hook',
-        label: 'Reviewer Agent',
-        sessionId: 'reviewer-session',
-        createdAt: baseTime + 2000,
-        message: hookMessage('tail-hook-uuid', 'hook_progress'),
-      }),
-    ];
-
-    render(<MinimalThreadFeed parsedRows={rows} />);
-
-    expect(screen.queryByText('continued work')).not.toBeNull();
-    const systemRows = screen.getAllByTestId('minimal-thread-system');
-    expect(systemRows).toHaveLength(1);
-    expect(systemRows[0].textContent).toContain('Running hook');
-    expect(systemRows[0].textContent).toContain('lint (PreToolUse)');
-  });
-
   it('renders one turn row per agent block with name and clock', () => {
     const baseTime = new Date('2026-04-25T18:00:00Z').getTime();
     const rows = [

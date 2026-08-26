@@ -137,7 +137,7 @@ describe('useSpaceTaskMessages', () => {
     ]);
     expect(subscribeCalls()[0][1]).toMatchObject({
       queryName: 'spaceTaskMessages.byTask.compact',
-      params: ['task-abc', 20],
+      params: ['task-abc'],
     });
     expect(subscribeCalls()[1][1]).toMatchObject({
       queryName: 'spaceTaskActiveTurn.byTask',
@@ -161,15 +161,6 @@ describe('useSpaceTaskMessages', () => {
     expect(subscribeCalls()[0][1]).toMatchObject({
       queryName: 'spaceTaskMessages.byTask',
       params: ['task-abc'],
-    });
-  });
-
-  it('passes the compact window limit to the server', () => {
-    renderHook(() => useSpaceTaskMessages('task-abc', 'compact', 10));
-
-    expect(subscribeCalls()[0][1]).toMatchObject({
-      queryName: 'spaceTaskMessages.byTask.compact',
-      params: ['task-abc', 10],
     });
   });
 

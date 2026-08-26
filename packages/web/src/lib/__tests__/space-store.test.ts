@@ -1897,7 +1897,7 @@ describe('SpaceStore — CRUD methods', () => {
 
     expect(mockHub.request).toHaveBeenCalledWith('liveQuery.subscribe', {
       queryName: 'spaceTaskMessages.byTask.compact',
-      params: ['t1', 20],
+      params: ['t1'],
       subscriptionId: 'spaceTaskMessageActivity-t1',
     });
     fireMockEvent('liveQuery.snapshot', {

@@ -57,29 +57,17 @@ export function SpaceTaskUnifiedThread({
 }: SpaceTaskUnifiedThreadProps) {
   const { rows, activeTurnSummaries, isLoading, error, isReconnecting } = useSpaceTaskMessages(
     taskId,
-    'compact',
-    20
+    'compact'
   );
   const containerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const parsedRows = useMemo(() => rows.map(parseThreadRow), [rows]);
-
-  const newestRowKey = rows.length > 0 ? String(rows[rows.length - 1].id) : '';
-  const newestRowRef = useRef<{ key: string; version: number }>({ key: '', version: 0 });
-  if (newestRowRef.current.key !== newestRowKey) {
-    newestRowRef.current = {
-      key: newestRowKey,
-      version: newestRowKey === '' ? 0 : newestRowRef.current.version + 1,
-    };
-  }
-  const contentVersion = newestRowRef.current.version;
-
   const { showScrollButton, scrollToBottom } = useAutoScroll({
     containerRef,
     endRef: messagesEndRef,
     enabled: autoScrollEnabled,
-    messageCount: isLoading || isReconnecting ? 0 : contentVersion,
+    messageCount: isLoading || isReconnecting ? 0 : rows.length,
     resetKey: taskId,
   });
 

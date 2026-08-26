@@ -3780,7 +3780,8 @@ export function setupLiveQueryHandlers(
   const stmtSession = db.prepare('SELECT id FROM sessions WHERE id = ?');
 
   messageHub.onRequest('liveQuery.subscribe', (data, context) => {
-    const { queryName, params, subscriptionId } = data as LiveQuerySubscribeRequest;
+    const { queryName, subscriptionId } = data as LiveQuerySubscribeRequest;
+    const params = [...((data as LiveQuerySubscribeRequest).params ?? [])];
     const { clientId, sessionId } = context;
 
     if (!clientId) {
@@ -3792,6 +3793,10 @@ export function setupLiveQueryHandlers(
     const namedQuery = activeRegistry.get(queryName);
     if (!namedQuery) {
       throw new Error(`Unknown query name: "${queryName}"`);
+    }
+
+    if (queryName === 'spaceTaskMessages.byTask.compact' && params.length === 1) {
+      params.push(MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW);
     }
 
     if (params.length !== namedQuery.paramCount) {

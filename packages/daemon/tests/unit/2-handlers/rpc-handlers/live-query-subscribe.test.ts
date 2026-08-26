@@ -368,6 +368,17 @@ describe('setupLiveQueryHandlers', () => {
     ).rejects.toThrow('limit');
   });
 
+  test('subscribe spaceTaskMessages.byTask.compact: legacy single-param subscriptions get the default window', async () => {
+    insertSpaceTask(db, taskId);
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceTaskMessages.byTask.compact',
+        params: [taskId],
+        subscriptionId: 'sub-legacy',
+      })
+    ).resolves.toBeDefined();
+  });
+
   test('subscribe actorMessages.byWorkflowRun: mismatched run params rejected', async () => {
     insertWorkflowRun(db, 'workflow-run-valid');
     await expect(
