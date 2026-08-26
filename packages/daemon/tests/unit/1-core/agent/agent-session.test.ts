@@ -3091,6 +3091,80 @@ describe('AgentSession', () => {
       }
     });
 
+    it('executeRateLimitAutoRetry quiet path: a superseded episode releases only its own waiters', async () => {
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        isSuperseded: mock(() => true),
+      };
+      const stateManager = agentSession.stateManager;
+      stateManager.setOnIdleCallback(async () => {});
+      let episodeEnded = false;
+      let episodeResolved = false;
+      let successorResolved = false;
+      void stateManager
+        .waitForIdleTransition(7, () => {
+          episodeEnded = true;
+        })
+        .promise.then(() => {
+          episodeResolved = true;
+        });
+      void stateManager
+        .waitForIdleTransition(9, () => {})
+        .promise.then(() => {
+          successorResolved = true;
+        });
+
+      const result = await (
+        agentSession as unknown as {
+          executeRateLimitAutoRetry: (
+            msg: { uuid: string; content: string } | null,
+            gen?: number
+          ) => Promise<boolean>;
+        }
+      ).executeRateLimitAutoRetry({ uuid: 'msg-1', content: 'hi' }, 7);
+
+      expect(result).toBe(false);
+      expect(episodeResolved).toBe(true);
+      expect(episodeEnded).toBe(true);
+      expect(successorResolved).toBe(false);
+      expect(stateManager.getState().status).toBe('idle');
+      expect(stateManager.isTerminalIdleInFlight()).toBe(false);
+    });
+
+    it('executeRateLimitAutoRetry without a user message settles with a loud unscoped idle', async () => {
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        isSuperseded: mock(() => true),
+      };
+      const stateManager = agentSession.stateManager;
+      stateManager.setOnIdleCallback(async () => {});
+      let aResolved = false;
+      let bResolved = false;
+      void stateManager
+        .waitForIdleTransition(3, () => {})
+        .promise.then(() => {
+          aResolved = true;
+        });
+      void stateManager
+        .waitForIdleTransition(4, () => {})
+        .promise.then(() => {
+          bResolved = true;
+        });
+
+      const result = await (
+        agentSession as unknown as {
+          executeRateLimitAutoRetry: (
+            msg: { uuid: string; content: string } | null,
+            gen?: number
+          ) => Promise<boolean>;
+        }
+      ).executeRateLimitAutoRetry(null, 7);
+
+      expect(result).toBe(false);
+      expect(aResolved).toBe(true);
+      expect(bResolved).toBe(true);
+    });
+
     it('only clears the timer for a recovery re-enqueue (generation provided)', async () => {
       const cancelSpy = mock(() => {});
       const clearSpy = mock(() => {});
