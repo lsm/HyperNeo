@@ -124,6 +124,8 @@ interface GitHubWebhookDispatchCtx {
   base: WebhookBase | null; // shared repo/sender/deliveryId/rawPayload after a snapshot stage
   kind: GitHubEventKind | null;
   input: unknown;
+  primary: Record<string, unknown> | null; // per-kind typed: prNumber, actor, URLs, timestamps, externalId, ...
+  extraPayload: Record<string, unknown> | null;
   outcome: NormalizedOutcome;
 }
 
@@ -140,7 +142,12 @@ interface WebhookBase {
 Per-kind transform context: the SAME unified context — after the dispatch
 stage sets `kind`/`input`, each per-kind stage group treats it as
 `{ input: TInput; outcome: NormalizedOutcome }` (with `TInput` narrowed per
-kind); no second context type exists.
+kind); no second context type exists. The extraction stages thread their
+outputs through the ctx (review correction: `extractPrimaryFields` writes the
+per-kind typed `primary` — prNumber, actor, URLs, timestamps, externalId —
+and `extractPayload` writes `extraPayload`, both seeded `null` by the shell
+and read by `assembleNormalizedEvent`; stages never mutate `payload` or
+recompute each other's extraction).
 
 A plain `result: T | null` with `isDone = result !== null` cannot express
 rejection: seeding with `null` and "rejecting" by assigning `null` leaves the
@@ -210,16 +217,23 @@ object is projected once per matching space at
    ```ts
    .pipe(guardRequiredShape, 'ctx', 'ctx')   // reject -> outcome = { status: 'rejected' }
    .pipe('!isDone', 'ctx')
-   .pipe(extractPrimaryFields, 'ctx', 'ctx')
+   .pipe(extractPrimaryFields, 'ctx', 'ctx') // writes ctx.primary
    .pipe('!isDone', 'ctx')
-   .pipe(extractPayload, 'ctx', 'ctx')
-   .pipe(assembleNormalizedEvent, 'ctx', 'ctx') // outcome = { status: 'done', value }
+   .pipe(extractPayload, 'ctx', 'ctx')       // writes ctx.extraPayload
+   .pipe(assembleNormalizedEvent, 'ctx', 'ctx') // reads primary/extraPayload/base -> outcome = { status: 'done', value }
    ```
 
    `isDone` returns `ctx.outcome.status !== 'running'`. A guard that rejects
    sets `ctx.outcome = { status: 'rejected' }`, which flips the predicate and
    makes `!isDone` halt before extraction/assembly. The pipeline ends with
    `.end('ctx')` and the shell unwraps `outcome.status === 'done' ? value : null`.
+   EVERY per-kind transform stage is SELF-GUARDING on `ctx.kind` (review
+   correction): it no-ops unless the dispatched kind belongs to its family,
+   so a nonmatching family's guard never rejects and its extraction/assembly
+   never run — without this, a `pull_request` delivery flowing past the
+   check-family group would be rejected (or worse, assembled) by the check
+   transform. `!isDone` therefore halts only on a genuine rejection of the
+   MATCHING kind.
 
 4. **`normalizeGitHubPollingRow`** — stays a plain function (review
    correction: it runs once per endpoint row in the polling loops at
@@ -269,6 +283,8 @@ export function normalizeGitHubWebhook(
     base: null,
     kind: null,
     input: null,
+    primary: null,
+    extraPayload: null,
     outcome: { status: 'running' },
   });
   return outcome.status === 'done' ? outcome.value : null;
@@ -290,6 +306,12 @@ export function toExternalEvent(
   }).result!;
 }
 ```
+
+The raw `runToExternalEvent` runner is exported from the module so tests can
+inject `now`/`newId` directly; the public `github/index.ts` surface
+re-exports only `toExternalEvent` (review correction: the pins depend on an
+importable seam — the hardwired two-arg export alone cannot be injected and
+global `crypto`/`Date` mocking is excluded).
 
 Dispatch and per-kind transforms are stages of the single
 `ingest-github-webhook` pipeline (dispatch stage selects the kind; the shared
@@ -404,6 +426,7 @@ interface FormatExternalEventEssenceCtx {
   event: ExternalEventPublishedPayload;
   payload: Record<string, unknown>;
   essence: Record<string, unknown>;
+  selectedFields: string[] | null;
   result: string | null;
 }
 ```
@@ -430,10 +453,12 @@ const formatEssencePipeline = superpipe<{ isDone: (ctx: FormatExternalEventEssen
   cap enforcement, and direct-steer buffering), plus `eventId`, `topic`,
   `eventType`, `action`, `actor`, `repo`, `prNumber`, `prUrl`, `externalUrl`,
   `occurredAt`, `body`. Pin it in the round-trip test.
-- `decideFieldSet` is an ORDINARY PURE HELPER returning the list of extra
-  keys to copy for the current `eventType` (review correction: not an
-  embedded `decisionRun` — field selection is only an internal stage of
-  this formatting operation; do not invoke another runner from the stage).
+- `decideFieldSet` is an ORDINARY PURE HELPER that WRITES the list of extra
+  keys to copy for the current `eventType` onto the ctx's `selectedFields`
+  (seeded `null` by the shell), which `copyEventTypeFields` then consumes
+  without recomputing it (review correction: not an embedded `decisionRun`
+  — field selection is only an internal stage of this formatting operation;
+  do not invoke another runner from the stage).
 - `copyEventTypeFields` applies that list and any topic-suffix special cases
   (`check_failed`, `suite_failed`).
 - `omitUndefinedAndStringify` runs `omitUndefinedExternalEventFields` and
@@ -447,6 +472,7 @@ export function formatExternalEventEssence(event: ExternalEventPublishedPayload)
     event,
     payload: event.payload ?? {},
     essence: {},
+    selectedFields: null,
     result: null,
   }).result!;
 }
@@ -530,8 +556,8 @@ function computeOptions(options?: DigestMessageOptions): ResolvedDigestOptions
 function sortEvents(events: ExternalEventEssenceEntry[]): ExternalEventEssenceEntry[]
 function decideIncludeDate(ordered: ExternalEventEssenceEntry[]): boolean
 function groupEvents(ordered: ExternalEventEssenceEntry[]): Map<string, DigestGroup>
-function renderGroups(groups: Map<string, DigestGroup>, options: ResolvedDigestOptions): string[]
-function assembleMessage(lines: string[], options: ResolvedDigestOptions): string
+function renderGroups(groups: Map<string, DigestGroup>, includeDate: boolean, options: ResolvedDigestOptions): string[]
+function assembleMessage(ordered: ExternalEventEssenceEntry[], lines: string[], options: ResolvedDigestOptions): string
 ```
 
 #### Pure core design
@@ -546,8 +572,8 @@ export function buildExternalEventDigestMessage(
   const ordered = sortEvents(events);
   const includeDate = decideIncludeDate(ordered);
   const groups = groupEvents(ordered);
-  const lines = renderGroups(groups, resolved);
-  return assembleMessage(lines, resolved);
+  const lines = renderGroups(groups, includeDate, resolved);
+  return assembleMessage(ordered, lines, resolved);
 }
 ```
 
@@ -565,8 +591,13 @@ export function buildExternalEventDigestMessage(
   via the kind switch — kept as an ORDINARY PURE HELPER, not a separately-run
   `renderDigestGroup` `decisionRun` (review correction: that would recreate
   a second composition boundary for a private helper inside the one
-  digest-rendering path) — and collect the lines.
-- `assembleMessage`: header + lines + footer joined with `\n`.
+  digest-rendering path) — and collect the lines; it RECEIVES `includeDate`
+  (review correction: `renderDigestGroup(group, includeDate, options)` needs
+  the boolean to render unambiguous timestamps in multi-day digests, so
+  dropping it omits dates).
+- `assembleMessage`: header + lines + footer joined with `\n`; it RECEIVES
+  the ordered events because the header needs the event total and the
+  PR/repository scope (`digestHeader(ordered, droppedEventCount, title)`).
 
 #### Shell/effect wiring
 
@@ -674,8 +705,11 @@ composition boundary the proposed-combinator section rejects).
 1. Move each `case` body into an exported `buildXGroupLine` pure helper.
 2. Keep `renderDigestGroup` as the private exhaustive `switch` over
    `group.kind` calling those helpers; the enclosing
-   `build-external-event-digest-message` pipeline calls it from its
-   `renderGroups` stage.
+   `buildExternalEventDigestMessage` PLAIN FUNCTION calls it from its
+   `renderGroups` helper — no pipeline runner is involved (review
+   correction: a `build-external-event-digest-message` pipeline would
+   recreate the nested composition boundary the proposed-combinator section
+   rejects).
 
 #### Tests
 
@@ -1455,7 +1489,8 @@ rewrite is forbidden)
 - **Scope**:
   `packages/daemon/src/lib/external-events/github/github-normalizer.ts` — add
   the `NormalizedOutcome` terminal, the unified `GitHubWebhookDispatchCtx`
-  (dispatch selection `kind`/`input` AND the boxed `outcome` on ONE context)
+  (dispatch selection `kind`/`input`, the per-kind extraction accumulators
+  `primary`/`extraPayload`, AND the boxed `outcome` — all on ONE context)
   and `WebhookBase` types, and extract the `WebhookBase` snapshot helper
   (shared
   repo/sender/`deliveryId`/`rawPayload` extraction ONLY — review correction PR #2979: no shared `occurredAt` exists; each kind selects different nested timestamps (check completion/update fields, comment timestamps, review submission timestamps, PR timestamps) so timestamp selection stays in each per-kind stage or digest chronology breaks) as pure
@@ -1510,7 +1545,14 @@ rewrite is forbidden)
   `extractPrimaryFields` → `!isDone` → `extractPayload` →
   `assembleNormalizedEvent`); guards that reject set
   `outcome = { status: 'rejected' }`; the per-kind exports stay callable as
-  thin wrappers over their stage groups. Stages stay synchronous (no
+  thin wrappers over their stage groups — EXCEPT `normalizeGitHubCheckRun`,
+  whose wrapper RETAINS its `source === 'polling'` branch as plain logic and
+  delegates only the webhook arm to the stage group (review correction: the
+  polling loop at `github-event-extension.ts:2713` calls it per fanned-out PR
+  with a derived `prNumber` and computed `prScopedDedupe`, so a
+  webhook-stage-group-only wrapper would lose polling dedupe and PR
+  scoping). Every stage self-guards on `ctx.kind` (nonmatching families
+  no-op). Stages stay synchronous (no
   `endAsync`) and never mutate `payload`. Review correction (PR #2979):
   `status` has NO raw webhook-event arm at all — `handleWebhook` routes
   `status` deliveries to `handleStatusWebhook` before
@@ -1622,7 +1664,12 @@ rewrite is forbidden)
   shell wires the real `Date.now`/`crypto.randomUUID`, so the migration can
   neither omit `ingestedAt` nor substitute `occurredAt` unnoticed — the pins
   below fail if it does),
-  and wire the exported `toExternalEvent(spaceId, event)` to wrap it. ONE
+  and wire the exported `toExternalEvent(spaceId, event)` to wrap it. Export
+  the raw runner itself from the module as well (review correction: the
+  nondeterminism pins below inject `now`/`newId` through an importable seam
+  — the hardwired two-arg export cannot be injected and the plan excludes
+  global `crypto`/`Date` mocking; `github/index.ts` re-exports only
+  `toExternalEvent`, so the public surface is unchanged). ONE
   site wired; the `publishEvent` per-space call site is unchanged; the ingest
   pipeline still ends at `NormalizedGitHubEvent` — projection stages never
   append to it. The transform is small enough to land wired rather than as
@@ -1639,7 +1686,8 @@ rewrite is forbidden)
   persist whatever was produced — they never detect a reused id or an
   `occurredAt` substitution): inject a fixed `now` and assert `ingestedAt`
   equals it while differing from `occurredAt`; inject a deterministic
-  `newId` and assert each per-space projection carries its own fresh id.
+  `newId` and assert each per-space projection carries its own fresh id —
+  both via the exported raw runner (the seam this slice adds).
 - **Depends on**: PR 20 (`NormalizedGitHubEvent` stable; same-file
   sequencing).
 
