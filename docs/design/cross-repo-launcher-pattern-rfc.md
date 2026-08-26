@@ -255,8 +255,10 @@ loop (`handleTaskTerminal` ignores them). Two shipped shapes:
   blocked (it remains `open` but unschedulable, since only running dependents get
   `dependency_failed`). Rebind B with `update_task(depends_on=…)` when B is still
   `open`/`blocked` — that path only reopens `blocked` dependency-reason tasks, so a
-  **cascade-cancelled** B (A was cancelled) must instead be recreated as a fresh gated
-  task.
+  **cascade-cancelled** B (A was cancelled) must instead be recreated. Recreation of the
+  Forge shape requires a **new** proposal: re-invoking `create_task_from_forge_proposal`
+  on the already-`created` proposal returns the cancelled task (`created: false`)
+  without producing fresh work.
 
 The tempting alternative — `trigger_goal_task` on B, then attaching `depends_on` with
 `update_task` — is **rejected as unsafe**: if dispatch already started the task, adding
