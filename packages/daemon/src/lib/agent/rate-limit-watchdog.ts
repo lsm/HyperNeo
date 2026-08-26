@@ -148,6 +148,11 @@ export class RateLimitWatchdog {
       this.deps.getQueryGeneration != null &&
       this.deps.getQueryGeneration() !== queryGeneration;
 
+    if (querySuperseded()) {
+      this.logger.info('Rate limit recovery aborted at entry: the query was superseded.');
+      return true;
+    }
+
     this.cancelCooldownTimer();
     this.lastErrorMessage = errorMessage;
     if (hint) this.lastHint = hint;

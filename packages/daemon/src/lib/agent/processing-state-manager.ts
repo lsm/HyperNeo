@@ -35,7 +35,7 @@ export class ProcessingStateManager {
   private terminalIdleTransitions = 0;
   private pendingFenceOwners: IdleOwnerScope[] = [];
   private inFlightFenceOwners: IdleOwnerScope[] = [];
-  private suppressedFenceCarryTokens: number[] = [];
+  private suppressedFenceCarries: IdleOwnerScope[] = [];
   private queryOwnerGeneration = 0;
   private turnOwnerToken = 0;
   private lastIdleTransitionOwner?: IdleOwnerScope;
@@ -261,14 +261,15 @@ export class ProcessingStateManager {
     const transitionOwner = opts?.owner ?? fenceOwner ?? this.getCurrentIdleOwner();
     this.lastIdleTransitionOwner = transitionOwner;
     const fenceStartToken = fenceOwner ? fenceOwner.turnToken : this.turnOwnerToken;
-    if (consumesTerminalFence) {
+    if (consumesTerminalFence && fenceOwner) {
       if (suppressDrain) {
-        this.suppressedFenceCarryTokens.push(fenceStartToken);
+        this.suppressedFenceCarries.push(fenceOwner);
       }
     } else if (!suppressDrain) {
       this.terminalIdleTransitions += 1;
     }
-    const claimCeiling = Math.max(fenceStartToken, ...this.suppressedFenceCarryTokens);
+    const carryTokens = this.suppressedFenceCarries.map((c) => c.turnToken);
+    const claimCeiling = Math.max(fenceStartToken, ...carryTokens);
     let claimed: IdleWaiter[] = [];
     if (!suppressDrain) {
       claimed = [...this.idleWaiters.values()].filter((w) =>
@@ -297,10 +298,9 @@ export class ProcessingStateManager {
       }
     } finally {
       if (!suppressDrain) {
+        const carryTokens = this.suppressedFenceCarries.map((c) => c.turnToken);
         const carryCeiling =
-          this.suppressedFenceCarryTokens.length > 0
-            ? Math.max(...this.suppressedFenceCarryTokens)
-            : Number.NEGATIVE_INFINITY;
+          carryTokens.length > 0 ? Math.max(...carryTokens) : Number.NEGATIVE_INFINITY;
         const drainCeiling = Math.max(fenceStartToken, carryCeiling);
         const drained = [...this.idleWaiters.values()].filter((w) => {
           if (
@@ -309,6 +309,15 @@ export class ProcessingStateManager {
               opts?.owner,
               drainCeiling,
               transitionOwner.queryGeneration
+            )
+          ) {
+            return true;
+          }
+          if (
+            w.owner != null &&
+            this.suppressedFenceCarries.some(
+              (c) =>
+                c.queryGeneration === w.owner!.queryGeneration && c.turnToken === w.owner!.turnToken
             )
           ) {
             return true;
@@ -324,7 +333,7 @@ export class ProcessingStateManager {
           this.idleWaiters.delete(w.id);
           w.endOnce();
         }
-        this.suppressedFenceCarryTokens = [];
+        this.suppressedFenceCarries = [];
       }
       if (ownsTerminalTransition) {
         if (fenceOwner) {

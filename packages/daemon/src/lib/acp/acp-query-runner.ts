@@ -738,6 +738,7 @@ export class AcpQueryRunner {
             onSent();
           },
           onAccepted: () => {
+            if (this.ctx.getQueryGeneration() !== queryGeneration) return;
             this.ctx.messageHandler.markMessageAccepted(message.uuid ?? '');
             accepted = true;
           },
@@ -803,7 +804,7 @@ export class AcpQueryRunner {
             throw new Error('ACP startup timeout - query aborted');
           }
         } finally {
-          if (!accepted) {
+          if (!accepted && this.ctx.getQueryGeneration() === queryGeneration) {
             this.ctx.messageHandler.markACPDeliveryFailed(message.uuid ?? '');
           }
         }

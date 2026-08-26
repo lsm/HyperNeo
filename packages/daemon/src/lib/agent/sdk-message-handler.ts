@@ -787,6 +787,9 @@ export class SDKMessageHandler {
     }
 
     if (isSDKThinkingTokensMessage(message)) {
+      if (this.isInvocationStale(invocationGeneration)) {
+        return;
+      }
       const estimate = message.estimated_tokens;
       if (
         this.lastStampedThinkingTokensEstimate > 0 &&

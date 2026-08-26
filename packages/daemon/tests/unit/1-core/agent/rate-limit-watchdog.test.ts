@@ -1678,6 +1678,26 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it('rejects an already-stale recovery at entry before touching the episode (B5e)', async () => {
+      let queryGeneration = 3;
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.getQueryGeneration = () => queryGeneration;
+      queryGeneration = 9;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const result = await watchdog.scheduleRetry(
+        '429 rate limit',
+        { uuid: 'm1', content: 'hi' },
+        undefined,
+        3
+      );
+      expect(result).toBe(true);
+      expect(watchdog.getState().lastUserMessage).toBeNull();
+      expect(watchdog.getState().retryCount).toBe(0);
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(notifyPause).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+    });
+
     it('threads the captured episode generation into the retry callback', async () => {
       let receivedGen: number | undefined;
       const { deps } = createMockDeps({ chain: [] });

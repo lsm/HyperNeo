@@ -800,6 +800,40 @@ describe('ProcessingStateManager', () => {
       expect(resolvedB).toBe(false);
       waiterB.cancel();
     });
+
+    test('an enclosing drain resolves a carried fence from a later generation by its own owner', async () => {
+      let releaseCallback!: () => void;
+      manager.setOnIdleCallback(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseCallback = resolve;
+          })
+      );
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = manager.waitForIdleTransition(undefined, undefined, ownerA);
+      const fenceA = manager.beginTerminalIdle();
+      const settleA = manager.setIdle({ fence: fenceA });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      manager.noteQueryOwnerGeneration(2);
+      manager.admitDeliveryTurn();
+      const ownerB = manager.getCurrentIdleOwner();
+      const waiterB = manager.waitForIdleTransition(undefined, undefined, ownerB);
+      let resolvedB = false;
+      void waiterB.promise.then(() => {
+        resolvedB = true;
+      });
+      const fenceB = manager.beginTerminalIdle(ownerB);
+      void manager.setIdle({ fence: fenceB });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(resolvedB).toBe(false);
+
+      releaseCallback();
+      await settleA;
+      await waiterA.promise;
+
+      expect(resolvedB).toBe(true);
+    });
   });
 
   describe('onIdleCallback ordering (deferred restart)', () => {

@@ -983,6 +983,28 @@ describe('SDKMessageHandler', () => {
       expect(setCompactingSpy).not.toHaveBeenCalled();
     });
 
+    it('a stale thinking_tokens frame does not move the successor token estimate (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+
+      await handler.handleMessage(
+        {
+          type: 'system',
+          subtype: 'thinking_tokens',
+          estimated_tokens: 4242,
+          uuid: 'stale-thinking-uuid',
+          session_id: 'test-session-id',
+        } as unknown as SDKMessage,
+        2
+      );
+
+      expect(
+        (handler as unknown as { currentThinkingTokensEstimate: number | null })
+          .currentThinkingTokensEstimate
+      ).toBeNull();
+    });
+
     it('a stale model_refusal_no_fallback does not persist refusal rewind state (B5e)', async () => {
       (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
         () => 9
