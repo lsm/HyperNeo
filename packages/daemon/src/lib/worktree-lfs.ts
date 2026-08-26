@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -16,11 +16,13 @@ export const LFS_ATTR_PATHSPEC = ':(attr:filter=lfs)';
 function scanExtensionRun(
   lines: string[],
   start: number,
-  seenPriorities: Set<number>
+  seenPriorities: Set<number>,
+  trim: boolean
 ): number | undefined {
   let index = start;
   while (index < lines.length) {
-    const match = LFS_EXT_LINE_PATTERN.exec(lines[index]);
+    const candidate = trim ? lines[index].trim() : lines[index];
+    const match = LFS_EXT_LINE_PATTERN.exec(candidate);
     if (!match) break;
     const priority = Number(match[1]);
     if (seenPriorities.has(priority)) return undefined;
@@ -31,27 +33,24 @@ function scanExtensionRun(
 }
 
 function isLfsPointerContent(content: string): boolean {
-  let lines = content
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .filter((line) => line !== '');
+  const allLines = content.replace(/\r\n/g, '\n').split('\n');
   let start = 0;
-  while (start < lines.length && lines[start].trim() === '') start++;
-  let end = lines.length;
-  while (end > start && lines[end - 1].trim() === '') end--;
-  lines = lines.slice(start, end);
+  while (start < allLines.length && allLines[start].trim() === '') start++;
+  let end = allLines.length;
+  while (end > start && allLines[end - 1].trim() === '') end--;
+  const lines = allLines.slice(start, end).filter((line) => line !== '');
   if (lines.length === 0) return false;
   const seenPriorities = new Set<number>();
 
-  const beforeVersion = scanExtensionRun(lines, 0, seenPriorities);
+  const beforeVersion = scanExtensionRun(lines, 0, seenPriorities, true);
   if (beforeVersion === undefined) return false;
-  if (lines[beforeVersion] !== LFS_POINTER_SIGNATURE) return false;
+  if (lines[beforeVersion]?.trim() !== LFS_POINTER_SIGNATURE) return false;
 
-  const afterHeadExtensions = scanExtensionRun(lines, beforeVersion + 1, seenPriorities);
+  const afterHeadExtensions = scanExtensionRun(lines, beforeVersion + 1, seenPriorities, false);
   if (afterHeadExtensions === undefined) return false;
   if (!/^oid sha256:[0-9a-f]{64}$/.test(lines[afterHeadExtensions] ?? '')) return false;
 
-  const beforeSize = scanExtensionRun(lines, afterHeadExtensions + 1, seenPriorities);
+  const beforeSize = scanExtensionRun(lines, afterHeadExtensions + 1, seenPriorities, false);
   if (beforeSize === undefined) return false;
   const sizeRecord = /^size \+?(\d+)\s*$/.exec(lines[beforeSize] ?? '');
   if (!sizeRecord) return false;
@@ -74,20 +73,70 @@ function nulSeparatedSegments(stdout: string | Buffer): Buffer[] {
   return segments;
 }
 
-function indexBlobOids(stdout: Buffer): Map<string, string[]> {
+function parseIndexRecord(
+  record: Buffer,
+  candidateKeys: Set<string>,
+  oidsByPath: Map<string, string[]>
+): void {
+  const tab = record.indexOf(9);
+  if (tab <= 0) return;
+  const oid = record.subarray(0, tab).toString('utf8').split(' ')[1];
+  if (!oid) return;
+  const pathKey = record.subarray(tab + 1).toString('latin1');
+  if (!candidateKeys.has(pathKey)) return;
+  const existing = oidsByPath.get(pathKey);
+  if (existing) existing.push(oid);
+  else oidsByPath.set(pathKey, [oid]);
+}
+
+function resolveCandidateOids(
+  cwd: string,
+  env: Record<string, string>,
+  candidateKeys: Set<string>
+): Promise<Map<string, string[]>> {
   const oidsByPath: Map<string, string[]> = new Map();
-  for (const record of nulSeparatedSegments(stdout)) {
-    const tab = record.indexOf(9);
-    if (tab <= 0) continue;
-    const meta = record.subarray(0, tab).toString('utf8').split(' ');
-    const oid = meta[1];
-    if (!oid) continue;
-    const pathKey = record.subarray(tab + 1).toString('latin1');
-    const existing = oidsByPath.get(pathKey);
-    if (existing) existing.push(oid);
-    else oidsByPath.set(pathKey, [oid]);
-  }
-  return oidsByPath;
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn('git', ['ls-files', '-z', '-s'], { cwd, env });
+    let pending = Buffer.alloc(0);
+    let settled = false;
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, LFS_PROBE_TIMEOUT_MS);
+    const settleOnce = () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+      }
+    };
+    const fail = (error: Error) => {
+      const alreadySettled = settled;
+      settleOnce();
+      if (!alreadySettled) rejectPromise(error);
+    };
+    const finish = () => {
+      const alreadySettled = settled;
+      settleOnce();
+      if (!alreadySettled) resolvePromise(oidsByPath);
+    };
+    child.on('error', fail);
+    child.stdout?.on('data', (chunk: Buffer) => {
+      pending = Buffer.concat([pending, chunk]);
+      let nul = pending.indexOf(0);
+      while (nul !== -1) {
+        parseIndexRecord(pending.subarray(0, nul), candidateKeys, oidsByPath);
+        pending = pending.subarray(nul + 1);
+        nul = pending.indexOf(0);
+      }
+    });
+    child.on('close', (code) => {
+      if (code === 0) {
+        parseIndexRecord(pending, candidateKeys, oidsByPath);
+        finish();
+      } else {
+        fail(new Error(`git ls-files exited with code ${code ?? 'signal'}`));
+      }
+    });
+  });
 }
 
 export async function indexContainsLfsPointer(
@@ -113,16 +162,13 @@ export async function indexContainsLfsPointer(
     if (code === 1) return false;
     throw err;
   }
-  const { stdout: indexOut } = await execFileAsync('git', ['ls-files', '-z', '-s'], {
-    cwd,
-    encoding: 'buffer',
-    timeout: LFS_PROBE_TIMEOUT_MS,
-    env,
-    maxBuffer: GIT_PROBE_MAX_BUFFER_BYTES,
-  });
-  const oidsByPath = indexBlobOids(indexOut);
+  const candidateKeys = new Set<string>();
   for (const segment of nulSeparatedSegments(candidates)) {
-    const oids = [...new Set(oidsByPath.get(segment.toString('latin1')) ?? [])];
+    candidateKeys.add(segment.toString('latin1'));
+  }
+  const oidsByPath = await resolveCandidateOids(cwd, env, candidateKeys);
+  for (const key of candidateKeys) {
+    const oids = [...new Set(oidsByPath.get(key) ?? [])];
     for (const oid of oids) {
       try {
         const { stdout: sizeOut } = await execFileAsync('git', ['cat-file', '-s', oid], {

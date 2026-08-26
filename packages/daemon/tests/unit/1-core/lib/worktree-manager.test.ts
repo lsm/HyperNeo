@@ -65,15 +65,45 @@ vi.mock('node:os', async (importOriginal) => {
   };
 });
 
-const childProcessMocks = vi.hoisted(() => ({ execFile: vi.fn() }));
+const childProcessMocks = vi.hoisted(() => ({ execFile: vi.fn(), spawn: vi.fn() }));
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return {
     ...actual,
     execFile: passthrough(childProcessMocks.execFile, actual.execFile),
+    spawn: passthrough(childProcessMocks.spawn, actual.spawn),
   };
 });
+
+interface FakeChild {
+  stdout: { on: (event: 'data', listener: (chunk: Buffer) => void) => void };
+  on: (event: 'close' | 'error', listener: (arg: never) => void) => void;
+  kill: () => void;
+}
+
+function stubLsFilesListing(listing: Buffer): void {
+  childProcessMocks.spawn.mockImplementation(() => {
+    const dataListeners: Array<(chunk: Buffer) => void> = [];
+    const closeListeners: Array<(code: number | null) => void> = [];
+    const child: FakeChild = {
+      stdout: {
+        on: (_event, listener) => {
+          dataListeners.push(listener);
+        },
+      },
+      on: (event, listener) => {
+        if (event === 'close') closeListeners.push(listener as (code: number | null) => void);
+      },
+      kill: () => undefined,
+    };
+    queueMicrotask(() => {
+      for (const listener of dataListeners) listener(listing);
+      for (const listener of closeListeners) listener(0);
+    });
+    return child;
+  });
+}
 
 let existsSyncResults: Map<string, boolean>;
 const mkdirSyncSpy = fsOsMocks.mkdirSync;
@@ -94,6 +124,7 @@ describe('WorktreeManager', () => {
     mockGitRevparse.mockReset();
     mockGitBranch.mockReset();
     childProcessMocks.execFile.mockReset();
+    stubLsFilesListing(Buffer.alloc(0));
 
     mockGitRaw.mockResolvedValue('');
     mockGitRevparse.mockResolvedValue('');
@@ -549,23 +580,19 @@ describe('WorktreeManager', () => {
       );
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      stubLsFilesListing(Buffer.from(`100644 ${'c'.repeat(64)} 0\tasset.bin\0`));
       childProcessMocks.execFile.mockImplementation(
         (_cmd: string, args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
           cb(
             null,
             args[0] === 'grep'
               ? { stdout: Buffer.from('asset.bin\0', 'binary'), stderr: '' }
-              : args[0] === 'ls-files'
-                ? {
-                    stdout: Buffer.from(`100644 ${'c'.repeat(64)} 0\tasset.bin\0`),
+              : args[1] === '-s'
+                ? { stdout: '40\n', stderr: '' }
+                : {
+                    stdout: `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234`,
                     stderr: '',
                   }
-                : args[1] === '-s'
-                  ? { stdout: '40\n', stderr: '' }
-                  : {
-                      stdout: `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234`,
-                      stderr: '',
-                    }
           )
       );
       mockGitRaw.mockImplementation(async (args: string[]) => {
@@ -599,24 +626,20 @@ describe('WorktreeManager', () => {
       );
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      stubLsFilesListing(Buffer.from(`100644 ${'c'.repeat(64)} 0\tdocs/lfs.md\0`));
       childProcessMocks.execFile.mockImplementation(
         (_cmd: string, args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
           cb(
             null,
             args[0] === 'grep'
               ? { stdout: Buffer.from('docs/lfs.md\0', 'binary'), stderr: '' }
-              : args[0] === 'ls-files'
-                ? {
-                    stdout: Buffer.from(`100644 ${'c'.repeat(64)} 0\tdocs/lfs.md\0`),
+              : args[1] === '-s'
+                ? { stdout: '40\n', stderr: '' }
+                : {
+                    stdout:
+                      'See version https://git-lfs.github.com/spec/v1 for the pointer format used by LFS.',
                     stderr: '',
                   }
-                : args[1] === '-s'
-                  ? { stdout: '40\n', stderr: '' }
-                  : {
-                      stdout:
-                        'See version https://git-lfs.github.com/spec/v1 for the pointer format used by LFS.',
-                      stderr: '',
-                    }
           )
       );
       mockGitRaw.mockImplementation(async (args: string[]) => {
@@ -648,23 +671,19 @@ describe('WorktreeManager', () => {
       );
       mockGitRevparse.mockResolvedValue('.git');
       readFileSyncSpy.mockReturnValue('/test/repo' as any);
+      stubLsFilesListing(Buffer.from(`100644 ${'c'.repeat(64)} 0\tfixture.bin\0`));
       childProcessMocks.execFile.mockImplementation(
         (_cmd: string, args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) =>
           cb(
             null,
             args[0] === 'grep'
               ? { stdout: Buffer.from('fixture.bin\0', 'binary'), stderr: '' }
-              : args[0] === 'ls-files'
-                ? {
-                    stdout: Buffer.from(`100644 ${'c'.repeat(64)} 0\tfixture.bin\0`),
+              : args[1] === '-s'
+                ? { stdout: '40\n', stderr: '' }
+                : {
+                    stdout: `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234\nThis file documents the pointer format.`,
                     stderr: '',
                   }
-                : args[1] === '-s'
-                  ? { stdout: '40\n', stderr: '' }
-                  : {
-                      stdout: `version https://git-lfs.github.com/spec/v1\noid sha256:${'a'.repeat(64)}\nsize 1234\nThis file documents the pointer format.`,
-                      stderr: '',
-                    }
           )
       );
       mockGitRaw.mockImplementation(async (args: string[]) => {
