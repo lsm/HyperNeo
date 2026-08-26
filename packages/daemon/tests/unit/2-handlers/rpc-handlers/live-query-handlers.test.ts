@@ -3174,9 +3174,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
                 type: 'tool_use',
                 id: 'tu-old-todo',
                 name: 'TodoWrite',
-                input: {
-                  todos: [{ content: 'ship', status: 'in_progress' }],
-                },
+                input: { todos: [] },
               },
             ],
           },
@@ -3229,9 +3227,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
                 type: 'tool_use',
                 id: 'tu-cutoff-todo',
                 name: 'TodoWrite',
-                input: {
-                  todos: [{ content: 'ship', status: 'in_progress' }],
-                },
+                input: { todos: [] },
               },
             ],
           },

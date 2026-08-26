@@ -2171,7 +2171,7 @@ const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_tool_blocks AS (
     AND (
       json_extract(b.value, '$.name') != 'TodoWrite'
       OR (
-        json_array_length(b.value, '$.input.todos') >= 1
+        json_type(b.value, '$.input.todos') = 'array'
         AND NOT EXISTS (
           SELECT 1 FROM json_each(b.value, '$.input.todos') te
           WHERE CASE
