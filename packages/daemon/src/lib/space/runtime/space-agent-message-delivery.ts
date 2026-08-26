@@ -63,9 +63,10 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     };
     this.timers.add(
       (expiry = setTimeout(() => {
-        this.waiters.delete(key);
-        if (fired) return;
-        fired = true;
+        if (!fired) {
+          fired = true;
+        }
+        release();
         try {
           onFailed?.();
         } catch (error) {
