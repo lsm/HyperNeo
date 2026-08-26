@@ -363,7 +363,7 @@ const SPACE_AGENT_RETRY_DELAY_MS = 30_000;
 
 export class TaskAgentManager {
   private readonly lateSettlements = new SpaceAgentLateSettlements();
-  private readonly spaceAgentRetryTimers = new Set<ReturnType<typeof setTimeout>>();
+  private readonly spaceAgentRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly spaceAgentDrainsInFlight = new Set<string>();
   private readonly spaceAgentDrainRerunQueued = new Set<string>();
 
@@ -1677,11 +1677,14 @@ export class TaskAgentManager {
   }
 
   private scheduleSpaceAgentReconciliation(spaceId: string, workflowRunId: string): void {
+    const key = `${spaceId}\0${workflowRunId}`;
+    const existing = this.spaceAgentRetryTimers.get(key);
+    if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
-      this.spaceAgentRetryTimers.delete(timer);
+      this.spaceAgentRetryTimers.delete(key);
       void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
     }, SPACE_AGENT_RETRY_DELAY_MS);
-    this.spaceAgentRetryTimers.add(timer);
+    this.spaceAgentRetryTimers.set(key, timer);
   }
 
   activeSpaceDeliveryIdsForRun(workflowRunId: string): string[] {
@@ -2819,7 +2822,7 @@ export class TaskAgentManager {
 
   async cleanupAll(): Promise<void> {
     this.lateSettlements.dispose();
-    for (const timer of this.spaceAgentRetryTimers) clearTimeout(timer);
+    for (const [, timer] of this.spaceAgentRetryTimers) clearTimeout(timer);
     this.spaceAgentRetryTimers.clear();
     clearAllRetryableHookActionTimers();
     this.clearDirectSteerState();
