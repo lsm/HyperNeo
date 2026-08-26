@@ -10,6 +10,7 @@ import type {
 import { Logger } from '../logger.ts';
 import { getModelInfo } from '../model-service.js';
 import {
+  buildProviderSettings,
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   PROVIDER_NO_SDK_AUTO_COMPACT,
 } from './query-options-builder.js';
@@ -17,7 +18,13 @@ import {
 type ContextMetadata =
   | Pick<
       ModelInfo,
-      'id' | 'alias' | 'sdkModelIds' | 'contextWindow' | 'preferContextWindowMetadata' | 'provider'
+      | 'id'
+      | 'alias'
+      | 'sdkModelIds'
+      | 'contextWindow'
+      | 'preferContextWindowMetadata'
+      | 'provider'
+      | 'autoCompactPercent'
     >
   | null
   | undefined;
@@ -98,6 +105,12 @@ export class ContextFetcher {
     const providerId = modelMetadata?.provider;
     const responseModel = response.model ? normalizeModelId(response.model) : undefined;
     if (!providerId || !responseModel) return modelMetadata;
+    if (
+      SDK_GENERIC_MODEL_IDS.has(responseModel) &&
+      !NATIVE_CONTEXT_WINDOW_PROVIDERS.has(providerId)
+    ) {
+      return modelMetadata;
+    }
 
     const responseMetadata = await getModelInfo(responseModel, 'global', providerId);
     return responseMetadata ?? modelMetadata;
@@ -212,10 +225,25 @@ export class ContextFetcher {
       }
     }
 
-    if (useMetadata && capacity > 0 && sdkCapacityValue !== capacity) {
-      const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
-        isAutocompactCategory(category.name)
-      )?.tokens;
+    const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
+      isAutocompactCategory(category.name)
+    )?.tokens;
+    const armedAutoCompactWindow =
+      useMetadata && modelMetadata?.provider && positiveInteger(modelMetadata.contextWindow)
+        ? buildProviderSettings(
+            modelMetadata.provider,
+            modelMetadata.contextWindow,
+            modelMetadata.id,
+            modelMetadata.autoCompactPercent
+          )?.autoCompactWindow
+        : undefined;
+    const thresholdCapacity = armedAutoCompactWindow ?? capacity;
+
+    if (
+      useMetadata &&
+      capacity > 0 &&
+      (sdkCapacityValue !== capacity || thresholdCapacity !== capacity)
+    ) {
       const reservedTokens =
         typeof autoCompactReservedTokens === 'number' && autoCompactReservedTokens > 0
           ? autoCompactReservedTokens
@@ -227,7 +255,10 @@ export class ContextFetcher {
         name.toLowerCase().includes('free space')
       );
       if (freeSpaceKey) {
-        const correctedTokens = Math.max(0, capacity - nonFreeSpaceTokens - reservedTokens);
+        const correctedTokens = Math.max(
+          0,
+          thresholdCapacity - reservedTokens - nonFreeSpaceTokens
+        );
         breakdown[freeSpaceKey] = {
           tokens: correctedTokens,
           percent: Math.round((correctedTokens / capacity) * 1000) / 10,
@@ -263,16 +294,13 @@ export class ContextFetcher {
         ? Math.min(100, Math.max(0, Math.round((response.totalTokens / capacity) * 100)))
         : Math.max(0, Math.round(response.percentage));
     let autoCompactThreshold = response.autoCompactThreshold;
-    const autoCompactReservedTokens = (response.categories ?? []).find((category) =>
-      isAutocompactCategory(category.name)
-    )?.tokens;
     if (
       typeof autoCompactReservedTokens === 'number' &&
       autoCompactReservedTokens > 0 &&
-      capacity > 0 &&
-      autoCompactReservedTokens < capacity
+      thresholdCapacity > 0 &&
+      autoCompactReservedTokens < thresholdCapacity
     ) {
-      autoCompactThreshold = capacity - autoCompactReservedTokens;
+      autoCompactThreshold = thresholdCapacity - autoCompactReservedTokens;
     } else if (
       typeof autoCompactThreshold === 'number' &&
       capacity > 0 &&
