@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AcpConfigOption } from '@hyperneo/shared';
 import type { AcpClientOptions } from '../../../../src/lib/acp/acp-client';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 
 const calls: string[] = [];
 let clientOptions: AcpClientOptions | undefined;
@@ -93,6 +94,25 @@ describe('fetchAcpModels', () => {
     expect(provider.getCachedModels()?.map((model) => model.id)).toEqual(['configured-model']);
   });
 
+  test('keeps RPC-triggered model discovery credential-free while retaining TLS inputs', async () => {
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({
+      ...previousBaseline,
+      HYPERNEO_ACP_ENV_KEYS: 'MY_ACP_TOKEN',
+      MY_ACP_TOKEN: 'acp-token',
+      REQUESTS_CA_BUNDLE: '/tmp/requests-ca.pem',
+    });
+    const provider = new AcpProvider({}, async () => {});
+    provider.setAcpCommand('devin acp');
+    try {
+      await fetchAcpModels(provider, { command: 'devin acp', cwd: '/tmp' });
+      expect(clientOptions?.env?.MY_ACP_TOKEN).toBeUndefined();
+      expect(clientOptions?.env?.REQUESTS_CA_BUNDLE).toBe('/tmp/requests-ca.pem');
+    } finally {
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
+  });
+
   test('does not replace an uncurated negotiated model cache', async () => {
     const provider = new AcpProvider({}, async () => {});
     provider.setAcpCommand('devin acp');
@@ -167,13 +187,30 @@ describe('fetchAcpModels', () => {
     expect(calls).toEqual(['initialize', 'authenticate', 'close']);
   });
 
-  test('disposes sessions using the ambient environment', async () => {
+  test('disposes sessions with a credential-bearing replacement environment', async () => {
     clientCanCloseSession = true;
 
     await disposeAcpSessions('devin acp', ['session-a'], undefined);
 
-    expect(clientOptions?.env).toBeUndefined();
-    expect(clientOptions?.replaceEnv).toBeFalsy();
+    expect(clientOptions?.env).toBeDefined();
+    expect(clientOptions?.replaceEnv).toBe(true);
+    expect(clientOptions?.env?.HOME).toBe(process.env.HOME);
+  });
+
+  test('carries startup credentials for non-Anthropic ACP agents in the replacement env', async () => {
+    clientCanCloseSession = true;
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({
+      ...previousBaseline,
+      HYPERNEO_ACP_ENV_KEYS: 'OPENAI_API_KEY',
+      OPENAI_API_KEY: 'openai-key',
+    });
+    try {
+      await disposeAcpSessions('devin acp', ['session-a'], undefined);
+      expect(clientOptions?.env?.OPENAI_API_KEY).toBe('openai-key');
+    } finally {
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
   });
 
   test('closes the disposal client when its signal aborts', async () => {

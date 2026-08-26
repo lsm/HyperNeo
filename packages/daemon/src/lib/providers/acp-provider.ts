@@ -1,15 +1,16 @@
+import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
 import type {
+  CuratedModel,
+  ModelTier,
   Provider,
   ProviderAuthStatusInfo,
   ProviderCapabilities,
   ProviderSdkConfig,
   ProviderSessionConfig,
-  ModelTier,
-  CuratedModel,
 } from '@hyperneo/shared/provider';
-import type { AcpConfigOption, ModelInfo } from '@hyperneo/shared';
-import { buildAcpSafeEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command.ts';
 import { AcpClient } from '../acp/acp-client.ts';
+import { buildAcpClientEnv, getAcpCommandIdentity, parseAcpCommand } from '../acp/acp-command.ts';
+import { envValue } from '../spawn-env.ts';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
 
 const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
@@ -29,7 +30,7 @@ export const defaultAcpCommandProbe: AcpCommandProbe = async (
     command,
     args,
     cwd: process.cwd(),
-    env: buildAcpSafeEnv(),
+    env: buildAcpClientEnv(),
     replaceEnv: true,
     requestTimeoutMs: timeoutMs,
   });
@@ -102,11 +103,11 @@ export class AcpProvider implements Provider {
   }
 
   getAcpCommand(): string | undefined {
-    return this.commandOverride ?? this.env.HYPERNEO_ACP_COMMAND;
+    return this.commandOverride ?? envValue(this.env, 'HYPERNEO_ACP_COMMAND');
   }
 
   setAcpCommand(command: string | undefined): void {
-    const nextCommand = command ?? this.env.HYPERNEO_ACP_COMMAND;
+    const nextCommand = command ?? envValue(this.env, 'HYPERNEO_ACP_COMMAND');
     let nextIdentity: string | undefined;
     try {
       nextIdentity = nextCommand ? getAcpCommandIdentity(nextCommand) : undefined;

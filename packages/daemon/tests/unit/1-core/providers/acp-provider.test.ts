@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { getAcpCredentialEnvBaseline } from '../../../../src/lib/acp/acp-command';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 import {
   recordProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 
 describe('AcpProvider', () => {
   let provider: AcpProvider;
@@ -46,6 +48,76 @@ describe('AcpProvider', () => {
 
       expect(provider.capabilities.maxContextWindow).toBe(123456);
     });
+  });
+
+  describe('getAcpCredentialEnvBaseline', () => {
+    it('carries only explicitly selected credential keys from the startup baseline', () => {
+      const previous: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previous,
+        HYPERNEO_ACP_ENV_KEYS: 'OPENAI_API_KEY, MISSING_KEY',
+        OPENAI_API_KEY: 'openai-key',
+        ANTHROPIC_API_KEY: 'anthropic-key',
+        NOT_A_CREDENTIAL_KEY: 'nope',
+      });
+      try {
+        const baseline = getAcpCredentialEnvBaseline();
+        expect(baseline.OPENAI_API_KEY).toBe('openai-key');
+        expect(baseline.ANTHROPIC_API_KEY).toBeUndefined();
+        expect(baseline.NOT_A_CREDENTIAL_KEY).toBeUndefined();
+        expect(baseline.MISSING_KEY).toBeUndefined();
+        expect(baseline.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+      } finally {
+        _setStartupEnvBaselineForTesting(previous);
+      }
+    });
+
+    it('returns an empty baseline when no ACP env keys are configured', () => {
+      const previous: Record<string, string | undefined> = { ...process.env };
+      const withoutSelector = { ...previous };
+      delete withoutSelector.HYPERNEO_ACP_ENV_KEYS;
+      _setStartupEnvBaselineForTesting({
+        ...withoutSelector,
+        OPENAI_API_KEY: 'openai-key',
+        ANTHROPIC_API_KEY: 'anthropic-key',
+      });
+      try {
+        expect(getAcpCredentialEnvBaseline()).toEqual({});
+      } finally {
+        _setStartupEnvBaselineForTesting(previous);
+      }
+    });
+
+    it('carries explicitly configured credential keys for arbitrary ACP commands', () => {
+      const previous: Record<string, string | undefined> = { ...process.env };
+      _setStartupEnvBaselineForTesting({
+        ...previous,
+        MY_ACP_TOKEN: 'custom-token',
+        HYPERNEO_ACP_ENV_KEYS: 'MY_ACP_TOKEN, MISSING_KEY',
+      });
+      try {
+        const baseline = getAcpCredentialEnvBaseline();
+        expect(baseline.MY_ACP_TOKEN).toBe('custom-token');
+        expect(baseline.MISSING_KEY).toBeUndefined();
+        expect(baseline.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+      } finally {
+        _setStartupEnvBaselineForTesting(previous);
+      }
+    });
+
+    it.skipIf(process.platform !== 'win32')(
+      'resolves credential keys case-insensitively on Windows',
+      () => {
+        const previous: Record<string, string | undefined> = { ...process.env };
+        _setStartupEnvBaselineForTesting({ ...previous, Openai_Api_Key: 'openai-key' });
+        try {
+          const baseline = getAcpCredentialEnvBaseline();
+          expect(baseline.OPENAI_API_KEY).toBe('openai-key');
+        } finally {
+          _setStartupEnvBaselineForTesting(previous);
+        }
+      }
+    );
   });
 
   describe('isAvailable', () => {

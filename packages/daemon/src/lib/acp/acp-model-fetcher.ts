@@ -1,16 +1,14 @@
-import { AcpClient } from './acp-client.ts';
-import { buildAcpSafeEnv, parseAcpCommand } from './acp-command.ts';
-import { type AcpProcessTreeOwner, getAcpProcessTreeOwner } from './acp-process-tree.ts';
 import {
-  flattenModelChoices,
   type AcpConfiguredModel,
   type AcpProvider,
+  flattenModelChoices,
 } from '../providers/acp-provider.ts';
+import { AcpClient } from './acp-client.ts';
+import { buildAcpClientEnv, buildAcpDiscoveryEnv, parseAcpCommand } from './acp-command.ts';
+import { type AcpProcessTreeOwner, getAcpProcessTreeOwner } from './acp-process-tree.ts';
 
 const FETCH_REQUEST_TIMEOUT_MS = 20000;
 const FETCH_OVERALL_TIMEOUT_MS = 9000;
-
-export const buildAcpDiscoveryEnv = buildAcpSafeEnv;
 
 export async function disposeAcpSessions(
   commandLine: string,
@@ -28,6 +26,8 @@ export async function disposeAcpSessions(
     command,
     args,
     cwd: workspace,
+    env: buildAcpClientEnv(),
+    replaceEnv: true,
     requestTimeoutMs: FETCH_REQUEST_TIMEOUT_MS,
     processTreeOwner: owner,
   });

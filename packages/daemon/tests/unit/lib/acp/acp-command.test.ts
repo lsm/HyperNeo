@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildAcpClientEnv,
+  buildAcpDiscoveryEnv,
   buildAcpSafeEnv,
   getAcpCommandIdentity,
   parseAcpCommand,
 } from '../../../../src/lib/acp/acp-command';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 
 describe('buildAcpSafeEnv', () => {
   test('keeps only safe environment variables without unrelated secrets', () => {
@@ -52,6 +55,88 @@ describe('buildAcpSafeEnv', () => {
     };
 
     expect(buildAcpSafeEnv(windowsEnv)).toEqual(windowsEnv);
+  });
+
+  test.skipIf(process.platform !== 'win32')(
+    'resolves case-variant keys through the shared case-insensitive accessor',
+    () => {
+      expect(
+        buildAcpSafeEnv({
+          AppData: 'C:\\Users\\devin\\AppData\\Roaming',
+          ComSpec: 'C:\\Windows\\system32\\cmd.exe',
+        })
+      ).toEqual({
+        APPDATA: 'C:\\Users\\devin\\AppData\\Roaming',
+        COMSPEC: 'C:\\Windows\\system32\\cmd.exe',
+      });
+    }
+  );
+});
+
+describe('buildAcpClientEnv', () => {
+  test('layers selected credentials and proxy TLS inputs over the sanitized baseline', () => {
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    const previousApiKey = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'ambient-secret';
+    _setStartupEnvBaselineForTesting({
+      ...previousBaseline,
+      HYPERNEO_ACP_ENV_KEYS: 'MY_ACP_TOKEN, MISSING_KEY',
+      MY_ACP_TOKEN: 'custom-token',
+      HTTPS_PROXY: 'http://proxy.internal:8080',
+      ANTHROPIC_API_KEY: 'ambient-secret',
+    });
+    try {
+      const env = buildAcpClientEnv();
+
+      expect(env.PATH).toBeDefined();
+      expect(env.MY_ACP_TOKEN).toBe('custom-token');
+      expect(env.HTTPS_PROXY).toBe('http://proxy.internal:8080');
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(env.MISSING_KEY).toBeUndefined();
+      expect(env.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+    } finally {
+      if (previousApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previousApiKey;
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
+  });
+
+  test('returns only the sanitized baseline when no credentials are selected', () => {
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    const withoutSelector = { ...previousBaseline };
+    delete withoutSelector.HYPERNEO_ACP_ENV_KEYS;
+    _setStartupEnvBaselineForTesting({ ...withoutSelector, MY_ACP_TOKEN: 'custom-token' });
+    try {
+      const env = buildAcpClientEnv();
+
+      expect(env.MY_ACP_TOKEN).toBeUndefined();
+      expect(env.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+    } finally {
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
+  });
+});
+
+describe('buildAcpDiscoveryEnv', () => {
+  test('stays credential-free even when HYPERNEO_ACP_ENV_KEYS selects credentials', () => {
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({
+      ...previousBaseline,
+      HYPERNEO_ACP_ENV_KEYS: 'MY_ACP_TOKEN',
+      MY_ACP_TOKEN: 'custom-token',
+      HTTPS_PROXY: 'http://proxy.internal:8080',
+      REQUESTS_CA_BUNDLE: '/tmp/requests-ca.pem',
+    });
+    try {
+      const env = buildAcpDiscoveryEnv();
+
+      expect(env.MY_ACP_TOKEN).toBeUndefined();
+      expect(env.HYPERNEO_ACP_ENV_KEYS).toBeUndefined();
+      expect(env.HTTPS_PROXY).toBe('http://proxy.internal:8080');
+      expect(env.REQUESTS_CA_BUNDLE).toBe('/tmp/requests-ca.pem');
+    } finally {
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
   });
 });
 

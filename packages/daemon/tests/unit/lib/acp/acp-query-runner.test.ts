@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { z } from 'zod';
 import type {
   AcpConfigOption,
   MessageContent,
@@ -11,6 +10,7 @@ import type {
   Session,
 } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
+import { z } from 'zod';
 import type { Database } from '../../../../src/storage/database';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -27,17 +27,18 @@ import {
   convertMcpServersForAcp,
   parseAcpCommand,
 } from '../../../../src/lib/acp/acp-query-runner';
-import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { readFileWithinWorkspace } from '../../../../src/lib/acp/acp-safe-fs';
+import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import {
   clearModelsCache,
   getAvailableModels,
   getModelsCache,
   setModelsCache,
 } from '../../../../src/lib/model-service';
+import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
-import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+import { _setStartupEnvBaselineForTesting } from '../../../../src/lib/spawn-env';
 
 function createMockClient() {
   return {
@@ -820,16 +821,29 @@ describe('AcpQueryRunner', () => {
     expect(handler.markACPDeliveryFailed).toHaveBeenCalledWith('user-message-1');
   });
 
-  test('preserves env-only Anthropic auth for ACP subprocesses', async () => {
+  test('strips ambient Anthropic auth from ACP subprocess environments', async () => {
     process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-acp-token';
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'acp-oauth-token';
+    const previousBaseline: Record<string, string | undefined> = { ...process.env };
+    _setStartupEnvBaselineForTesting({
+      ...previousBaseline,
+      HYPERNEO_ACP_ENV_KEYS: 'ACP_COMMAND_TOKEN',
+      ACP_COMMAND_TOKEN: 'selector-secret',
+    });
     const { runner, ctx, constructorOptions } = createRunnerFixture();
 
-    await runner.start();
-    await ctx.queryPromise;
+    try {
+      await runner.start();
+      await ctx.queryPromise;
 
-    expect(constructorOptions[0].env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-acp-token');
-    expect(constructorOptions[0].env?.CLAUDE_CODE_OAUTH_TOKEN).toBe('acp-oauth-token');
+      expect(constructorOptions[0].env?.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(constructorOptions[0].env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(constructorOptions[0].env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+      expect(constructorOptions[0].env?.ACP_COMMAND_TOKEN).toBe('selector-secret');
+      expect(constructorOptions[0].replaceEnv).toBe(true);
+    } finally {
+      _setStartupEnvBaselineForTesting(previousBaseline);
+    }
   });
 
   test('launches sessions with the provider-configured command over the env command', async () => {
