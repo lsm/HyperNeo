@@ -87,6 +87,14 @@ export class SpaceWorktreeManager {
     const branchName = `space/${slug}`;
 
     if (existsSync(worktreePath)) {
+      if (
+        existsSync(join(worktreePath, '.git')) &&
+        this.isRegisteredWorktree(repo.commandCwd, worktreePath)
+      ) {
+        throw new Error(
+          `Worktree path ${worktreePath} is already in use by a live registered worktree; refusing to recreate it for task ${taskId}`
+        );
+      }
       this.logger.warn(
         `Stale worktree directory detected at ${worktreePath} — removing before recreating`
       );
@@ -178,20 +186,24 @@ export class SpaceWorktreeManager {
 
   private resolveWorktreeRepoRoot(worktreePath: string, fallback: string): string {
     const projectDir = dirname(dirname(worktreePath));
-    const commandCwdSentinel = join(projectDir, '.hyperneo-repo-cwd');
-    if (existsSync(commandCwdSentinel)) {
-      try {
-        const stored = readFileSync(commandCwdSentinel, 'utf8').trim();
-        if (stored && existsSync(stored)) return stored;
-      } catch {}
-    }
+    let storedKey: string | undefined;
     const sentinel = join(projectDir, '.hyperneo-repo-root');
     if (existsSync(sentinel)) {
       try {
         const stored = readFileSync(sentinel, 'utf8').trim();
-        if (stored) return stored;
+        if (stored) storedKey = stored;
       } catch {}
     }
+    const commandCwdSentinel = join(projectDir, '.hyperneo-repo-cwd');
+    if (existsSync(commandCwdSentinel)) {
+      try {
+        const stored = readFileSync(commandCwdSentinel, 'utf8').trim();
+        if (stored && existsSync(stored)) {
+          if (!storedKey || this.resolveRepoRoot(stored).dirKey === storedKey) return stored;
+        }
+      } catch {}
+    }
+    if (storedKey) return storedKey;
     const gitLink = join(worktreePath, '.git');
     if (existsSync(gitLink)) {
       try {
@@ -205,6 +217,36 @@ export class SpaceWorktreeManager {
       } catch {}
     }
     return fallback;
+  }
+
+  private isRegisteredWorktree(commandCwd: string, worktreePath: string): boolean {
+    try {
+      const list = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+        cwd: commandCwd,
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      let target: string | null = null;
+      try {
+        target = realpathSync(worktreePath);
+      } catch {
+        return false;
+      }
+      for (const line of list.split('\n')) {
+        if (!line.startsWith('worktree ')) continue;
+        const candidate = line.slice('worktree '.length).trim();
+        let normalized: string | null = null;
+        try {
+          normalized = realpathSync(candidate);
+        } catch {
+          continue;
+        }
+        if (normalized === target) return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   async removeTaskWorktree(spaceId: string, taskId: string): Promise<void> {
@@ -230,7 +272,7 @@ export class SpaceWorktreeManager {
       this.logger.warn(
         `Failed to remove git worktree at ${record.path} (continuing with cleanup): ${err instanceof Error ? err.message : String(err)}`
       );
-      if (existsSync(record.path)) {
+      if (!existsSync(gitRoot) && existsSync(record.path)) {
         try {
           rmSync(record.path, { recursive: true, force: true });
         } catch {}

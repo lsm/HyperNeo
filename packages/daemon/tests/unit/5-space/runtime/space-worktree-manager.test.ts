@@ -649,6 +649,75 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
     const branches = execSync('git branch --list', { cwd: secondaryDir }).toString();
     expect(branches).not.toContain(`space/${slug}`);
   });
+
+  test('cleanup ignores a recorded cwd that now belongs to a different repository', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-swapped-cwd', 79);
+    const { path, slug } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Swapped Cwd Task',
+      79,
+      undefined,
+      secondaryDir
+    );
+
+    const decoyDir = await makeGitRepo('decoy');
+    const projectDir = join(path, '..', '..');
+    writeFileSync(join(projectDir, '.hyperneo-repo-cwd'), decoyDir);
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    expect(existsSync(path)).toBe(false);
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(secondaryBranches).not.toContain(`space/${slug}`);
+
+    rmSync(decoyDir, { recursive: true, force: true });
+  });
+
+  test('removeTaskWorktree respects a git worktree lock and keeps the checkout', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-locked', 80);
+    const { path } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Locked Task',
+      80,
+      undefined,
+      secondaryDir
+    );
+
+    execSync(`git worktree lock "${path}"`, { cwd: secondaryDir, stdio: 'pipe' });
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    expect(existsSync(path)).toBe(true);
+
+    execSync(`git worktree unlock "${path}"`, { cwd: secondaryDir, stdio: 'pipe' });
+  });
+
+  test('a second daemon database cannot clobber the first live worktree', async () => {
+    const taskA = seedTask(db, spaceId, 'task-ws11-crossdb-a', 81);
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Cross Db Title',
+      81,
+      undefined,
+      secondaryDir
+    );
+
+    const otherSetup = makeDb(secondaryDir);
+    const manager2 = new SpaceWorktreeManager(otherSetup.db);
+    const taskB = seedTask(otherSetup.db, otherSetup.spaceId, 'task-ws11-crossdb-b', 81);
+
+    await expect(
+      manager2.createTaskWorktree(otherSetup.spaceId, taskB, 'Cross Db Title', 81)
+    ).rejects.toThrow('already in use by a live registered worktree');
+    expect(existsSync(a.path)).toBe(true);
+
+    otherSetup.db.close();
+  });
 });
 
 describe('removeTaskWorktree', () => {
