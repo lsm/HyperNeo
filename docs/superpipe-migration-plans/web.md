@@ -44,6 +44,7 @@ Inventory (verified by reading every file and grepping all call sites):
 | `lib/user-error.ts:sanitizeUserError` | decisionRun | error paths + outbound-queue flush loop | low |
 | `lib/session-utils.ts:getModelLabel` | decisionRun | test-only today (SessionsPage has local copy) | low |
 | `lib/provider-brand.ts:shortenModelName` | ordinary pure helper (review correction: per dropdown item per render — a pipeline here is hot-inner-loop; memoization is a prerequisite if ever pipelined) | render body + per dropdown item | low-medium |
+| `hooks/useTargetSessionContext.ts:resolveTargetSessionId` | steer-style direct pipeline (codex round 19: previously missing from this verified inventory despite its detailed design and PR 9) | `useMemo` + pre-config effect target loop | medium |
 
 Caller facts that drive the fits (from the call-site sweep):
 
@@ -513,7 +514,7 @@ anywhere in this plan.
 
 ### `packages/web/src/lib/router.ts` — path parsing functions
 
-- **Current summary.** `getSpaceIdFromPath` is a 14-pattern ordered regex
+- **Current summary.** `getSpaceIdFromPath` is a 16-pattern ordered regex
   cascade (configure-tab → configure → archived-tasks → tasks-tab → goals →
   memories → evolve → forge → tasks → sessions-list → agent-detail →
   task-view → task → space-session → agent-list → bare space). Siblings
@@ -720,18 +721,27 @@ anywhere in this plan.
   `msg` can be `undefined` and reaches `msg || 'Something went wrong.'` —
   the normalization must apply that fallback BEFORE deriving `lower`
   (`lower` derives from the fallback-applied message; eagerly lowercasing an
-  undefined `msg` throws from the error sanitizer). Ctx = `{ msg: string;
-  lower: string; decision: string | null }` where both `msg` and `lower` are
-  POST-fallback values; no terminal gate; wrapper returns `ctx.decision ??
-  'Something went wrong. Please try again.'`. Add a characterization row for
+  undefined `msg` throws from the error sanitizer). Ctx = `{ err: unknown;
+  msg: string; lower: string; decision: string | null }` (codex round 19:
+  the RAW error rides in the input — `stageNormalizeInput` derives the
+  post-fallback `msg` and `lower` from it INSIDE the composition; no
+  wrapper normalization, no undeclared-field casts) where `msg` and `lower`
+  are POST-fallback values; the terminal `gateGenericFallback` decides the
+  generic internal tail (round 19 — replaces the wrapper-side `??`
+  fallback); wrapper returns `ctx.decision`. Add a characterization row for
   the undefined-stringify input (falls through to the empty-message
   fallback).
-- **Pure core design.** Gates: `gatePassThrough` (decides `msg` when NOT
+- **Pure core design.** Gates (codex round 19 — the pipeline classifies ONCE
+  through the shared classifier instead of keeping a second precedence
+  implementation): `gatePassThrough` (decides `msg` when NOT
   `isInternalMessage(msg)` — the `msg || 'Something went wrong.'` empty-string
-  fallback folds in here) → `gateConnectionLost` (websocket / not connected) →
-  `gateTimeout` → `gateEconn` (econnrefused / econnreset) → `gateFetch` →
-  `gateFailedToSend`. Substring lists move verbatim; note current order checks
-  `websocket` before `timeout` before `econn` before `fetch` — preserved.
+  fallback folds in here) → `gateClassifiedArm` (calls
+  `classifyUserErrorArm(lower)` ONCE and decides `armMessage(kind)` when it
+  matches) → `gateGenericFallback` (terminal — decides the generic internal
+  tail). The arm order lives ONLY in `classifyUserErrorArm` (websocket
+  before timeout before econn before fetch — preserved verbatim there);
+  the gates never re-implement precedence, so `sanitizeUserError` and the
+  send stage cannot diverge on multi-arm matches.
   Review correction (codex round 8): the arm predicates land as EXPORTED
   ordinary helpers (`matchesConnectionLost` et al., plus
   `normalizeUserError`) that the gates compose from — the PR 14 send stage
@@ -1008,7 +1018,13 @@ anywhere in this plan.
   the queued request immediately and can reject, and a `void` port would
   discard that rejection into an unhandled promise while the hook returns
   `true`; awaiting keeps the whole-sequence stage-level error handling
-  effective.
+  effective. The QUEUE-ARM stages get that same pipeline-local failure
+  handling (codex round 19: the catch lives in BOTH effect paths, not only
+  `stageSendRequest` — a rejection from the offline/race arm's awaited
+  `enqueueAction` is sanitized, reported (`onError` + toast +
+  `onSendComplete`), and stamped `false` by the arm's stage-level catch, so
+  the `Promise<boolean>` contract holds on every arm now that the shell
+  catch is gone).
 - **Pure core design.** Step 1 gates: `gateContentPresent` (decides
   `rejectEmpty` on blank/`isSending && !allowQueueWhileProcessing`) →
   `gateSessionArchived` → `gateOffline` → `gateSend` (terminal — when the
@@ -1326,9 +1342,12 @@ optional router phase 2. No per-site section is left uncovered.
   exported core helpers — plain functions, no nesting; the NULLISH guard
   and fallback selection happen INSIDE the composition, codex rounds 10+16)
   with the wrapper only running and returning the pipeline
-  (review correction) and gates `gatePassThrough` → `gateConnectionLost` →
-  `gateTimeout` → `gateEconn` → `gateFetch` → `gateFailedToSend` with
-  substring lists and arm order verbatim; `INTERNAL_PATTERNS` untouched.
+  (review correction) and gates `gatePassThrough` → `gateClassifiedArm`
+  (classifying ONCE via `classifyUserErrorArm` and deciding `armMessage(kind)`
+  — codex round 19: no second precedence implementation in the gates) →
+  terminal `gateGenericFallback`, with
+  substring lists and arm order verbatim inside the classifier;
+  `INTERNAL_PATTERNS` untouched.
   Review correction (codex round 8): the module ALSO exports the ordinary
   shared core the gates are composed from — `normalizeUserError(err):
   string` (the NULLISH guard first — `null`/`undefined` →
