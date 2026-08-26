@@ -16,6 +16,7 @@ export interface LateSettlementRequest {
   sessionId: string;
   messageId: string;
   onConsumed: (settledSessionId: string) => void;
+  onFailed?: () => void;
 }
 
 export interface SpaceAgentLateSettlementHandle {
@@ -39,20 +40,38 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     return this.disposeController.signal;
   }
 
-  arm({ sessionId, messageId, onConsumed }: LateSettlementRequest): SpaceAgentLateSettlementHandle {
+  arm({
+    sessionId,
+    messageId,
+    onConsumed,
+    onFailed,
+  }: LateSettlementRequest): SpaceAgentLateSettlementHandle {
     if (this.disposed) return { cancel: () => {} };
     const late = waitForDeliveryConsumption(sessionId, messageId);
     this.waiters.add(late);
+    let fired = false;
     const expiry = setTimeout(() => {
       late.cancel();
       this.timers.delete(expiry);
       this.waiters.delete(late);
+      if (fired) return;
+      fired = true;
+      try {
+        onFailed?.();
+      } catch (error) {
+        log.warn(
+          `late dead letter reconciliation failed for ${sessionId}/${messageId}: ` +
+            `${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }, LATE_SETTLE_HORIZON_MS);
     this.timers.add(expiry);
     void late.promise.then(() => {
       clearTimeout(expiry);
       this.timers.delete(expiry);
       this.waiters.delete(late);
+      if (fired) return;
+      fired = true;
       try {
         onConsumed(sessionId);
       } catch (error) {
@@ -64,6 +83,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     });
     return {
       cancel: () => {
+        fired = true;
         clearTimeout(expiry);
         late.cancel();
         this.timers.delete(expiry);

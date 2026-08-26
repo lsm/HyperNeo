@@ -361,6 +361,7 @@ export function resolvePostApprovalRouteNodeId(
 export class TaskAgentManager {
   private readonly lateSettlements = new SpaceAgentLateSettlements();
   private readonly spaceAgentDrainsInFlight = new Set<string>();
+  private readonly spaceAgentDrainRerunQueued = new Set<string>();
 
   attachToolContinuationRepo(repo: ToolContinuationRecoveryRepository): void {
     this.config.toolContinuationRepo = repo;
@@ -1492,12 +1493,19 @@ export class TaskAgentManager {
     const repo = this.config.pendingMessageRepo;
     const inject = this.config.spaceAgentInjector;
     if (!repo || !inject) return;
-    if (this.spaceAgentDrainsInFlight.has(workflowRunId)) return;
+    if (this.spaceAgentDrainsInFlight.has(workflowRunId)) {
+      this.spaceAgentDrainRerunQueued.add(workflowRunId);
+      return;
+    }
     this.spaceAgentDrainsInFlight.add(workflowRunId);
     try {
-      await this.flushSpaceAgentDrainLocked(spaceId, workflowRunId);
+      do {
+        this.spaceAgentDrainRerunQueued.delete(workflowRunId);
+        await this.flushSpaceAgentDrainLocked(spaceId, workflowRunId);
+      } while (this.spaceAgentDrainRerunQueued.has(workflowRunId));
     } finally {
       this.spaceAgentDrainsInFlight.delete(workflowRunId);
+      this.spaceAgentDrainRerunQueued.delete(workflowRunId);
     }
   }
 
@@ -1535,12 +1543,22 @@ export class TaskAgentManager {
           repo.markDelivered(row.id, settledSessionId);
           this.emitPendingDelivered(row.id, settledSessionId, row);
         };
+        const scheduleReconciliation = () => {
+          void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
+        };
         for (const sessionId of candidates) {
           handles.push(
             this.lateSettlements.arm({
               sessionId,
               messageId: row.id,
-              onConsumed: settleFrom,
+              onConsumed: (settledSessionId) => {
+                settleFrom(settledSessionId);
+                scheduleReconciliation();
+              },
+              onFailed: () => {
+                settleFrom('');
+                scheduleReconciliation();
+              },
             })
           );
         }
