@@ -20,6 +20,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
 
   type Row = {
     name: string;
+    taskSpaceId?: string;
     taskWorkspacePath?: string;
     cachedTaskWorktreePath: string | undefined;
     storedTaskWorktreePath?: string;
@@ -47,10 +48,10 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     unsubscribeLogs();
   });
 
-  function makeTask(workspacePath?: string): SpaceTask {
+  function makeTask(workspacePath?: string, spaceId: string = SPACE_ID): SpaceTask {
     return {
       id: TASK_ID,
-      spaceId: SPACE_ID,
+      spaceId,
       taskNumber: TASK_NUMBER,
       title: TASK_TITLE,
       workspacePath,
@@ -116,11 +117,11 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
 
     if (row.expectedOutcome.kind === 'error') {
       await expect(
-        deps.resolveWorkspacePath(makeTask(row.taskWorkspacePath), makeSpace())
+        deps.resolveWorkspacePath(makeTask(row.taskWorkspacePath, row.taskSpaceId), makeSpace())
       ).rejects.toThrow(row.expectedOutcome.message);
     } else {
       const workspacePath = await deps.resolveWorkspacePath(
-        makeTask(row.taskWorkspacePath),
+        makeTask(row.taskWorkspacePath, row.taskSpaceId),
         makeSpace()
       );
       expect(workspacePath).toBe(row.expectedOutcome.value);
@@ -266,6 +267,25 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         expectedOutcome: { kind: 'path', value: STORED_PATH },
         expectedCreateCalled: false,
         expectedCachedPath: STORED_PATH,
+        expectedWarning: '',
+      },
+    ] as Row[])('%s', async (row: Row) => {
+      await runRow(row);
+    });
+  });
+
+  describe('repoRoot guard family (WS11)', () => {
+    test.each([
+      {
+        name: 'foreign task with an explicit workspace still creates the worktree in the spawning space workspace',
+        taskSpaceId: 'foreign-space',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'success',
+        expectedOutcome: { kind: 'path', value: CREATED_PATH },
+        expectedCreateCalled: true,
+        expectedCachedPath: CREATED_PATH,
         expectedWarning: '',
       },
     ] as Row[])('%s', async (row: Row) => {

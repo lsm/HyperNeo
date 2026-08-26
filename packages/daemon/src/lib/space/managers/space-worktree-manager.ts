@@ -147,6 +147,13 @@ export class SpaceWorktreeManager {
   }
 
   private resolveWorktreeRepoRoot(worktreePath: string, fallback: string): string {
+    const sentinel = join(dirname(dirname(worktreePath)), '.hyperneo-repo-root');
+    if (existsSync(sentinel)) {
+      try {
+        const stored = readFileSync(sentinel, 'utf8').trim();
+        if (stored) return stored;
+      } catch {}
+    }
     const gitLink = join(worktreePath, '.git');
     if (existsSync(gitLink)) {
       try {
@@ -157,13 +164,6 @@ export class SpaceWorktreeManager {
           const repoRoot = dirname(dirname(dirname(absolute)));
           if (repoRoot && repoRoot !== '.') return repoRoot;
         }
-      } catch {}
-    }
-    const sentinel = join(dirname(dirname(worktreePath)), '.hyperneo-repo-root');
-    if (existsSync(sentinel)) {
-      try {
-        const stored = readFileSync(sentinel, 'utf8').trim();
-        if (stored) return stored;
       } catch {}
     }
     return fallback;
@@ -193,6 +193,13 @@ export class SpaceWorktreeManager {
         `Failed to remove git worktree at ${record.path} (continuing with cleanup): ${err instanceof Error ? err.message : String(err)}`
       );
     }
+
+    try {
+      execFileSync('git', ['worktree', 'prune'], {
+        cwd: gitRoot,
+        timeout: 30_000,
+      });
+    } catch {}
 
     const branchName = `space/${record.slug}`;
     try {
@@ -253,14 +260,18 @@ export class SpaceWorktreeManager {
   async cleanupOrphaned(spaceId: string): Promise<void> {
     const records = this.worktreeRepo.listBySpace(spaceId);
     const space = this.spaceRepo.getSpace(spaceId);
-    const pruneRoots = new Set<string>(space ? [space.workspacePath] : []);
 
     for (const record of records) {
       if (!existsSync(record.path)) {
         if (space) {
           const gitRoot = this.resolveWorktreeRepoRoot(record.path, space.workspacePath);
-          pruneRoots.add(gitRoot);
           const branchName = `space/${record.slug}`;
+          try {
+            execFileSync('git', ['worktree', 'prune'], {
+              cwd: gitRoot,
+              timeout: 30_000,
+            });
+          } catch {}
           try {
             execFileSync('git', ['branch', '-D', branchName], {
               cwd: gitRoot,
@@ -275,15 +286,15 @@ export class SpaceWorktreeManager {
       }
     }
 
-    for (const gitRoot of pruneRoots) {
+    if (space) {
       try {
         execFileSync('git', ['worktree', 'prune'], {
-          cwd: gitRoot,
+          cwd: space.workspacePath,
           timeout: 30_000,
         });
       } catch (err) {
         this.logger.warn(
-          `git worktree prune failed for space ${spaceId} in ${gitRoot}: ${err instanceof Error ? err.message : String(err)}`
+          `git worktree prune failed for space ${spaceId}: ${err instanceof Error ? err.message : String(err)}`
         );
       }
     }

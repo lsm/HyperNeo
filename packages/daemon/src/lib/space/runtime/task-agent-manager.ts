@@ -897,7 +897,7 @@ export class TaskAgentManager {
               task.title,
               task.taskNumber,
               undefined,
-              resolveTaskWorkspace(space, task)
+              ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath
             );
             this.taskWorktreePaths.set(task.id, result.path);
             return result.path;
