@@ -174,7 +174,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
           job.id,
           route.requeueRole ?? 'turn',
           route.retryAt ?? Date.now(),
-          job.claimToken
+          job.claimToken,
+          { resetParkCount: route.requeueRole === 'turn' }
         );
         return route.result;
       } catch (err) {

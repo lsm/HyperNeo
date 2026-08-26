@@ -398,7 +398,8 @@ describe('createMessageDeliveryHandler', () => {
           'job-1',
           row.promoteRole,
           expect.any(Number),
-          'claim-1'
+          'claim-1',
+          { resetParkCount: row.promoteRole === 'turn' }
         );
       }
       expect(session.settleCalls).toEqual(row.settle ? ['uuid-1'] : []);
@@ -420,7 +421,8 @@ describe('createMessageDeliveryHandler', () => {
         'job-1',
         'turn',
         expect.any(Number),
-        'claim-1'
+        'claim-1',
+        { resetParkCount: true }
       );
       expect(jobQueue.requeueAs).toHaveBeenCalledWith(
         'job-1',

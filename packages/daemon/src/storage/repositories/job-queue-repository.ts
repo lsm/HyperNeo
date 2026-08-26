@@ -251,11 +251,20 @@ export class JobQueueRepository {
     return this.getJob(jobId);
   }
 
-  requeueAs(jobId: string, role: string, runAt: number, claimToken?: string | null): Job | null {
+  requeueAs(
+    jobId: string,
+    role: string,
+    runAt: number,
+    claimToken?: string | null,
+    opts?: { resetParkCount?: boolean }
+  ): Job | null {
+    const payloadSet = opts?.resetParkCount
+      ? `payload = json_set(payload, '$.role', ?, '$.__parkCount', 0),`
+      : `payload = json_set(payload, '$.role', ?),`;
     const stmt = this.db.prepare(
       `UPDATE job_queue
          SET status = 'pending',
-             payload = json_set(payload, '$.role', ?),
+             ${payloadSet}
              run_at = ?,
              started_at = NULL,
              heartbeat_at = NULL

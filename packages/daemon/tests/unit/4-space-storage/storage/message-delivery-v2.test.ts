@@ -825,6 +825,35 @@ describe('message-delivery v2 — handler (conformance)', () => {
     expect(repo.getParkCount(job.id)).toBe(1);
   });
 
+  it('promoting a heavily parked steer to a turn resets the resume-choice park budget', async () => {
+    const session = new MockSession();
+    session.driveResult = { outcome: 'blocked', retryAt: Date.now() + 12345 };
+    const handler = createMessageDeliveryHandler({
+      jobQueue: repo,
+      getSession: () => session,
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
+    });
+    const anchor = turnJob(repo, 'msg-promote-anchor');
+    repo.complete(anchor.id, { ok: true });
+    deliverMessage(repo, SESSION, 'msg-parked-steer', { origin: 'chat' });
+    let steer = repo.dequeue(MESSAGE_DELIVERY, 1)[0]!;
+    const totalParks = RESUME_CHOICE_PARK_BUDGET + 5;
+    for (let i = 0; i < totalParks; i++) {
+      repo.requeueParked(steer.id, Date.now(), steer.claimToken);
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(steer.id);
+      steer = repo.dequeue(MESSAGE_DELIVERY, 1)[0]!;
+    }
+    expect(repo.getParkCount(steer.id)).toBe(totalParks);
+    repo.requeueAs(steer.id, 'turn', Date.now(), steer.claimToken, { resetParkCount: true });
+    expect(repo.getParkCount(steer.id)).toBe(0);
+    const promoted = repo.dequeue(MESSAGE_DELIVERY, 1)[0]!;
+    const result = await handler(promoted);
+    expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
+    expect(result.retryAt as number).toBeGreaterThan(Date.now());
+    expect(repo.getParkCount(steer.id)).toBe(1);
+    expect(repo.getJob(steer.id)?.status).toBe('pending');
+  });
+
   it('blocked startup past RESUME_CHOICE_PARK_BUDGET → dead-letter error before any further requeue (§13 budget)', async () => {
     const session = new MockSession();
     session.driveResult = { outcome: 'blocked', retryAt: Date.now() + 12345 };
