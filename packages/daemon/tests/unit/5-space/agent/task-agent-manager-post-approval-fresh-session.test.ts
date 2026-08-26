@@ -364,6 +364,48 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(live.metadataUpdates).toEqual([]);
   });
 
+  test('createSubSession reuse keeps the migrated workspace when only the later required-server attach fails', async () => {
+    const tam = makeManager();
+    const live = seedLiveSession(tam);
+    let reloadCount = 0;
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () => {
+        reloadCount += 1;
+        return reloadCount === 1
+          ? { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'Task 850' }
+          : {
+              id: TASK_ID,
+              spaceId: SPACE_ID,
+              workflowRunId: RUN_ID,
+              title: 'Task 850',
+              workspacePath: '/task/late-update',
+            };
+      },
+    };
+    (
+      tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
+    ).reinjectNodeAgentMcpServer = async () => {};
+    (
+      tam as unknown as { ensureRequiredMcpServersAttached: (...a: unknown[]) => Promise<void> }
+    ).ensureRequiredMcpServersAttached = async () => {
+      throw new Error('attach boom');
+    };
+    (
+      tam as unknown as { registerCompletionCallback: (...a: unknown[]) => void }
+    ).registerCompletionCallback = () => {};
+
+    await expect(
+      tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+        agentId: 'agent-reviewer',
+        agentName: REVIEWER_AGENT,
+        nodeId: REVIEWER_NODE_ID,
+      })
+    ).rejects.toThrow('attach boom');
+
+    expect(live.metadataUpdates).toEqual([{ workspacePath: '/task/late-update' }]);
+    expect(live.session.getSessionData().workspacePath).toBe('/task/late-update');
+  });
+
   test('stale co-owner sweep preserves blocked status (only active owners become idle)', async () => {
     const NODE_2 = 'node-2';
     const staleCoOwner = {

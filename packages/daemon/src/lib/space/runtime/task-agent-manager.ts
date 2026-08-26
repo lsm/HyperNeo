@@ -1280,16 +1280,16 @@ export class TaskAgentManager {
                 }
                 try {
                   await this.reinjectNodeAgentMcpServer(existing, reuseCtx);
-                  await this.ensureRequiredMcpServersAttached(existing, {
-                    ...reuseCtx,
-                    phase: 'spawn',
-                  });
                 } catch (err) {
                   if (workspaceChanged) {
                     existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
                   }
                   throw err;
                 }
+                await this.ensureRequiredMcpServersAttached(existing, {
+                  ...reuseCtx,
+                  phase: 'spawn',
+                });
               });
             }
 
@@ -4425,6 +4425,11 @@ export class TaskAgentManager {
             provides: ['currentTask', 'healWorkspacePath'],
             run: () => {
               const currentTask = this.config.taskRepo.getTask(parentTask.id) ?? parentTask;
+              if (currentTask.workflowRunId !== execution.workflowRunId) {
+                throw new Error(
+                  `Task ${currentTask.id} no longer belongs to workflow run ${execution.workflowRunId} (now ${currentTask.workflowRunId ?? 'detached'}); refusing to self-heal session ${sessionId}`
+                );
+              }
               const healWorkspacePath = resolveSpawnWorkspace({
                 cachedTaskWorktreePath:
                   this.getTaskWorktreePath(currentTask.id) ??
