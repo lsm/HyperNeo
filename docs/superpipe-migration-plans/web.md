@@ -114,7 +114,8 @@ Caller facts that drive the fits (from the call-site sweep):
 `staged-run.ts` (738 lines: compensation stacks, CAS outcomes, contract
 validation) exists to discipline persistent daemon writes. No scoped web site
 has compensable multi-stage state writes; the only suggested candidate
-(`sendMessage`) is an admission cascade plus idempotent UI effects, which the
+(`sendMessage`) is an admission cascade plus one non-idempotent awaited
+request whose late completion needs a generation guard (see that site), which the
 ADR's default mixed direct pipeline covers without compensation machinery.
 Porting `stagedRun` into `packages/web` would be dead weight. If a web flow
 with genuinely compensable stages appears later (e.g. multi-step store deltas),
@@ -128,11 +129,20 @@ pipeline lands."
 
 ### Step 0 — dependency spike (blocking, do first)
 
-1. Add `"superpipe": "0.17.0"` (exact pin, matching daemon) to
-   `packages/web` `dependencies`. Run `bun install`.
+1. On a scratch branch (local-only — see the migration-order step 1 note):
+   add `"superpipe": "0.17.0"` (exact pin, matching daemon) to
+   `packages/web` `dependencies`. Run `bun install`. Draft
+   `src/lib/pipelines/decision-run.ts` and its parity test here so the
+   vitest leg below actually exercises the new dependency; both are
+   COMMITTED only with the first migrated site (PR 1).
 2. Verify resolution under all three consumers of web code:
-   `cd packages/web && bunx vitest run src/lib/__tests__/user-error.test.ts`
-   (vitest/vite), `make build` (rollup production build), and the dev server
+   `cd packages/web && bunx vitest run
+   src/lib/pipelines/__tests__/decision-run.test.ts` (vitest/vite — review
+   correction, codex round 2: run the parity suite, which imports
+   `decision-run.ts` and therefore `superpipe`; the earlier
+   `user-error.test.ts` leg never loads the new module, so a Vitest/Vite
+   resolution or ESM interop failure in the dependency would stay green),
+   `make build` (rollup production build), and the dev server
    (`make dev PORT=8484 DB_PATH=/tmp/hyperneo-web-spike.db`). Confirm bundle
    size delta is negligible and no CJS/ESM interop errors surface.
 3. If the spike fails on bundling grounds, fall back to direct-only
@@ -499,9 +509,19 @@ anywhere in this plan.
   verbatim and deciding `match[1]`; order = current order. The classifier's
   gates reuse the same pattern constants and the `getXFromPath` helpers where
   they already encapsulate dual-pattern logic; the legacy redirect writes
-  (`history.replaceState`) are the pipeline's LEADING effect stages, before
-  the match gates (review correction round 23 — effects in the composition,
-  not a shell preamble).
+  are the pipeline's LEADING effect stages, before the match gates (review
+  correction round 23 — effects in the composition, not a shell preamble).
+  Review correction (codex round 2): the redirects do NOT perform bare
+  `history.replaceState` — they call `pushPath(..., true)`
+  (`router.ts:715-735`), which preserves the current entry's
+  `__hyperneoInAppHistoryDepth` (read from the live history state) and
+  writes the canonical `path` and `spaceId` state; a bare `replaceState`
+  would discard the depth key and desync `navigateBack`'s `depth > 0`
+  dispatch (`router.ts:313-319`). The redirect stages therefore invoke a
+  `pushPath` port with `replace: true` — or reproduce its complete state
+  write — and the characterization set adds a redirect firing with NONZERO
+  in-app history depth (legacy URL after prior in-app navigation keeps the
+  depth, so back-navigation still calls `history.back`).
 - **Shell/effect wiring.** Phase 2's pipeline: redirect effect stages →
   match gates → guarded per-arm signal-write stages, all inside `batch()`.
   The signal writes are EFFECT STAGES of the same `apply-space-route`
@@ -748,10 +768,16 @@ anywhere in this plan.
   `onSendComplete`, clear timeout, return false.
   `stagedRun`'s value is compensation chains over CAS-guarded writes; this
   flow has no compensable multi-stage state — its early exits are
-  data-dependent halts (`!dep`), and its one await is an idempotent request
-  with UI-side interpretation. A direct mixed pipeline (ADR default) is the
-  honest shape; porting 738 lines of stagedRun machinery for one caller is
-  not.
+  data-dependent halts (`!dep`). Its one await is NOT idempotent (review
+  correction, codex round 2: the daemon handler mints a fresh message UUID
+  per invocation — `session-handlers.ts:586-594` — so a retry double-sends),
+  and its late completion is unguarded today: when `message.send` resolves
+  after the 15-second timer fired, the timeout triple (`onSendComplete` +
+  `onError` + toast) has already run, yet the resolved leg still calls
+  `onMessageAccepted` and returns `true` (`useSendMessage.ts:135-141`) —
+  contradictory UI outcomes the pipeline must guard, not inherit. A direct
+  mixed pipeline (ADR default) is the honest shape; porting 738 lines of
+  stagedRun machinery for one caller is not.
 - **Proposed combinator.** Direct mixed pipeline (review correction round
   21: admission helpers + async effect stages land TOGETHER in one step —
   do not ship an admission-only intermediate whose result the hook still
@@ -791,7 +817,14 @@ anywhere in this plan.
   run their effects and stamp `outcome`, then a `!outcomeStamped`-style halt
   guard; the `send` arm continues through `stageSendRequest` (async effect:
   `onSendStart`, arm timeout, live `getHub()` read, await request,
-  `onMessageAccepted`, clear timeout, stamp outcome). Review correction on
+  `onMessageAccepted`, clear timeout, stamp outcome; review correction codex
+  round 2 — a settled/generation guard: the armed timeout callback flips a
+  per-call `timedOut` flag (a plain mutable cell the hook owns and threads
+  through the `armTimeout` port — never a signal), and the post-await leg
+  consults it: when the timer already fired, the stage SKIPS
+  `onMessageAccepted` and stamps the timed-out outcome instead of success,
+  so one send can never report both a timeout error and a late acceptance).
+  Review correction on
   the connected-without-hub diversion: when the live `getHub()` read comes
   back empty, the stage must run the SAME completion sequence as the
   current hook (`useSendMessage.ts:95-121`) — enqueue the queued action,
@@ -808,11 +841,17 @@ anywhere in this plan.
   unchanged in substance (ports capture the same closures).
 - **Step-by-step migration.**
   1. Audit `src/hooks/__tests__/useSendMessage.test.ts` and
-     `ChatContainerSendOverride.test.ts` for: empty-content false,
+     `src/islands/__tests__/ChatContainerSendOverride.test.ts` (review
+     correction, codex round 2: the override suite lives with the islands,
+     not beside the hook tests) for: empty-content false,
      busy-unqueueable false, archived toast+false, offline enqueue+true,
      race enqueue+`onSendComplete`+true, success path (`onSendStart` order,
   messageId callback, timeout cleared), failure path (sanitized message,
-     `onSendComplete`, timeout cleared), timeout fire path. Add missing rows
+     `onSendComplete`, timeout cleared), timeout fire path, AND the
+     late-completion path (fake timers: the request resolves after the timer
+     fired — pin TODAY's contradiction, the timeout triple PLUS the late
+     `onMessageAccepted` + `true` return, before the generation guard
+     deliberately changes it). Add missing rows
      FIRST — the effect ordering (onSendStart before hub check) is
      behavior.
   2. Land the complete direct pipeline in ONE step (review correction
@@ -838,18 +877,30 @@ anywhere in this plan.
   move `toast` calls into module scope; they are ports. The timeout's
   `onSendComplete` + `onError` + toast triple on fire must remain exactly
   once per fired timer; the hook-owned ref guarantees that — the pipeline
-  never re-arms.
+  never re-arms. The late-completion generation guard (codex round 2) is a
+  deliberate behavior change over today's contradictory double-report; its
+  row lands in the same slice as the guard, with the current contradiction
+  characterized first.
 
 ## Suggested migration order
 
-Each step is one PR-sized unit; every step keeps `bun run check` and the
-site's Vitest suite green.
+Every landed step is one PR-sized unit and keeps `bun run check` and the
+site's Vitest suite green. The step-1 spike is LOCAL-ONLY — run on a scratch
+branch, never merged as its own PR (review correction, codex round 2: a
+standalone dependency-plus-combinator PR ships unused production machinery;
+the committed dependency lands with step 2).
 
-1. **Prerequisite spike** — superpipe dep in `packages/web`, build/vitest/dev
-   verification; `src/lib/pipelines/decision-run.ts` + parity test. Blocks
-   everything else.
+1. **Prerequisite spike (local-only, never merged as a PR)** — add the
+   superpipe dep and DRAFT `src/lib/pipelines/decision-run.ts` + parity test
+   on a scratch branch; build/vitest/dev verification per Step 0. Blocks
+   everything else. The dependency, combinator, and parity test are COMMITTED
+   only in step 2, landing with the first migrated site (review correction,
+   codex round 2).
 2. **`task-banner`** — smallest decisionRun; establishes the web conventions
-   (gates, module-scope instance, wrapper) with an existing test suite.
+   (gates, module-scope instance, wrapper) with an existing test suite. This
+   is the FIRST merged PR: the superpipe dependency, `decision-run.ts`, and
+   its parity test land HERE, together with the migrated site (= PR 1 in the
+   breakdown below).
 3. **`session-load-error`** — same shape, query-retry template.
 4. **`user-error`** — same shape, order-sensitive arms.
 5. **`app-routing`** — first "real" consumer (signal effect caller); pure
@@ -930,7 +981,11 @@ optional router phase 2. No per-site section is left uncovered.
   "0.17.0"` exact pin; new `packages/web/src/lib/pipelines/decision-run.ts`
   (web-local copy of the 19-line combinator, option (a)) with its parity
   test (first-gate-wins, wrapper-fallback, null-seeding); verify all three
-  consumers per Step 0 (vitest, `make build`, dev server; eyeball the
+  consumers per Step 0 (vitest — `bunx vitest run
+  src/lib/pipelines/__tests__/decision-run.test.ts
+  src/lib/__tests__/task-banner.test.ts`, both of which import the new
+  dependency transitively and go red on a resolution failure, per the codex
+  round 2 correction; `make build`; dev server; eyeball the
   bundle-size delta); THEN `packages/web/src/lib/task-banner.ts` — compound fall-through
   rows FIRST (approved-without-reason, review-without-checkpoint, hooks
   without workflowRunId), then gates `gateTaskBlocked` →
@@ -946,7 +1001,9 @@ optional router phase 2. No per-site section is left uncovered.
 - **Excludes**: `SpaceTaskPane.tsx` (renders the returned union unchanged);
   every other site.
 - **Tests**: `src/lib/__tests__/task-banner.test.ts` (+ precedence-order rows).
-- **Depends on**: PR 1.
+- **Depends on**: none — this is the first slice (review correction, codex
+  round 2: the former self-reference was a renumbering artifact of merging
+  the dependency-only PR into it).
 
 ### PR 2 — `refactor(web): migrate classifySessionLoadError to decisionRun`
 
@@ -1096,7 +1153,7 @@ optional router phase 2. No per-site section is left uncovered.
 - **Excludes**: `ModelsSettings.tsx` / `WorkflowModelSelect.tsx` fetch
   handlers (consume the unchanged wrapper); any per-model decisionRun.
 - **Tests**: `src/hooks/__tests__/useModelSwitcher.test.ts`.
-- **Depends on**: PR 1, PR 1.
+- **Depends on**: PR 1.
 
 ### PR 9 — `refactor(web): migrate resolveTargetSessionId to a direct superpipe pipeline`
 
@@ -1118,7 +1175,7 @@ optional router phase 2. No per-site section is left uncovered.
 - **Excludes**: the hook's latch logic, refs, and render-phase writes
   (resource/state ownership stays in the hook per ADR Decision 5).
 - **Tests**: `src/hooks/__tests__/useTargetSessionContext.test.ts`.
-- **Depends on**: PR 1, PR 1.
+- **Depends on**: PR 1.
 
 ### PR 10 — `refactor(web): migrate resolveNodeClick to a direct superpipe pipeline`
 
@@ -1144,7 +1201,7 @@ optional router phase 2. No per-site section is left uncovered.
   interpretation unchanged).
 - **Tests**: `src/lib/__tests__/node-click-resolver.test.ts` (+ precedence
   rows).
-- **Depends on**: PR 1, PR 1, PR 9.
+- **Depends on**: PR 1, PR 9.
 
 ### PR 11 — `test(web): pin shortenModelName scrubs; helper stays a plain function`
 
@@ -1187,18 +1244,25 @@ optional router phase 2. No per-site section is left uncovered.
   by design; never silently changed here); the memo cache (only if the
   convergence lands and render-path calls appear).
 - **Tests**: `src/lib/__tests__/session-utils.test.ts`.
-- **Depends on**: PR 1, PR 1; blocked on the open question 2 decision.
+- **Depends on**: PR 1; blocked on the open question 2 decision.
 
 ### PR 13 — `test(web): pin sendMessage effect ordering and failure paths`
 
 - **Phase**: 📌 pins — prod Δ = 0.
 - **Scope**: missing characterization rows in
   `src/hooks/__tests__/useSendMessage.test.ts` and
-  `ChatContainerSendOverride.test.ts`: empty-content false,
+  `src/islands/__tests__/ChatContainerSendOverride.test.ts` (review
+  correction, codex round 2: full path — the override suite lives with the
+  islands, not beside the hook tests): empty-content false,
   busy-unqueueable false, archived toast+false, offline enqueue+true, race
   enqueue+`onSendComplete`+true, success ordering (`onSendStart` BEFORE the
   hub check, messageId callback, timeout cleared), failure path (sanitized
-  message, `onSendComplete`, timeout cleared), timeout fire path. The
+  message, `onSendComplete`, timeout cleared), timeout fire path, AND the
+  late-completion path (review correction, codex round 2: fake timers — the
+  request resolves after the timer fired; pin TODAY's contradictory
+  behavior, the timeout triple PLUS the late `onMessageAccepted` + `true`
+  return, because `message.send` is not idempotent — the daemon mints a
+  fresh message UUID per invocation, `session-handlers.ts:586-594`). The
   effect ordering is behavior and must be pinned against the UNCHANGED hook
   before any extraction.
 - **Budget**: prod Δ = 0; test Δ ≈ 150.
@@ -1220,7 +1284,13 @@ optional router phase 2. No per-site section is left uncovered.
   `stageSendRequest` (live `getHub()` re-read immediately after
   `onSendStart` + timeout arming; an empty hub runs the exact current
   completion sequence — enqueue, `onSendComplete`, CLEAR the armed timeout,
-  successful outcome), with queue/reject arms stamping `outcome` behind a
+  successful outcome; the LATE-COMPLETION generation guard, codex round 2 —
+  the armed timeout callback flips a per-call `timedOut` cell owned by the
+  hook and threaded through the `armTimeout` port, and the post-await leg
+  skips `onMessageAccepted` and stamps the timed-out outcome when the timer
+  already fired, ending today's contradictory timeout-error-plus-late-
+  acceptance double-report), with queue/reject arms stamping `outcome`
+  behind a
   `!outcomeStamped`-style halt guard. `sessionId` rides in the per-call ctx;
   ports (`request`, `enqueue`, timeout and callback/toast functions) are
   injected fresh per call; the hook keeps the timeout ref and shrinks to
@@ -1241,9 +1311,12 @@ optional router phase 2. No per-site section is left uncovered.
   (open question 7 decides after this lands); hook dependency-array changes
   beyond what the snapshot requires.
 - **Tests**: `src/hooks/__tests__/useSendMessage.test.ts` and
-  `ChatContainerSendOverride.test.ts` (PR 13 rows stay green) plus the new
-  pipeline-level admission decision-table test.
-- **Depends on**: PR 1, PR 1, PR 13 (PR 3's `sanitizeUserError` is consumed
+  `src/islands/__tests__/ChatContainerSendOverride.test.ts` (PR 13 rows stay
+  green; the PR 13 late-completion row is UPDATED here to the guarded
+  expectation — late resolution after a fired timer produces NO
+  `onMessageAccepted` and a failed outcome — as the deliberate divergence)
+  plus the new pipeline-level admission decision-table test.
+- **Depends on**: PR 1, PR 13 (PR 3's `sanitizeUserError` is consumed
   unchanged).
 
 ### PR 15 — `refactor(web): compose the complete apply-space-route pipeline (router phase 2)`
@@ -1252,9 +1325,13 @@ optional router phase 2. No per-site section is left uncovered.
 - **Scope**: `packages/web/src/lib/router.ts` — ONE complete
   `apply-space-route` pipeline (codex round 23 correction; supersedes the
   per-site sketch of a standalone `classifySpaceRoute` decisionRun consumed
-  by an imperative write switch): legacy redirect EFFECT stages
-  (`history.replaceState`: `/tasks/archived` → `completed`, `/forge` →
-  `/evolve`) run first, then match gates reusing the PR 5 pattern constants
+  by an imperative write switch): legacy redirect EFFECT stages run first —
+  `/tasks/archived` → `completed` and `/forge` → `/evolve`, each invoking the
+  `pushPath` port with `replace: true` so the canonical `path`, `spaceId`
+  state, and `__hyperneoInAppHistoryDepth` survive exactly as
+  `router.ts:715-735` writes them today (review correction, codex round 2:
+  bare `history.replaceState` discards the depth key and desyncs
+  `navigateBack`) — then match gates reusing the PR 5 pattern constants
   in the current else-if order, then guarded per-arm signal-write stages —
   the whole run executes inside `batch()`. Review correction (PR #2982):
   the write stages operate through explicit write-PORT functions passed as
@@ -1274,8 +1351,10 @@ optional router phase 2. No per-site section is left uncovered.
   pipeline: redirects → match → guarded writes, inside `batch()`.
 - **Excludes**: any behavior change to redirect targets or signal writes.
 - **Tests**: the four router suites from PR 5 stay green; the route-union
-  decision table; manual nav smoke via `make dev` (walk every route,
-  back/forward, overlay open/close).
+  decision table; a redirect-from-nonzero-depth row (legacy URL entered
+  after prior in-app navigation preserves `__hyperneoInAppHistoryDepth`, so
+  `navigateBack` still dispatches `history.back`); manual nav smoke via
+  `make dev` (walk every route, back/forward, overlay open/close).
 - **Depends on**: PR 5; open question 3.
 
 ## Open questions
