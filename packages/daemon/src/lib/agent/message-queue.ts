@@ -75,12 +75,6 @@ export class MessageQueue {
     } else {
       this.nonCompactionSentSinceBoundary = true;
       this.recentSentPrompts.set(message.id, message.content);
-      if (this.recentSentPrompts.size > 32) {
-        const oldest = this.recentSentPrompts.keys().next().value;
-        if (oldest !== undefined) {
-          this.recentSentPrompts.delete(oldest);
-        }
-      }
     }
   }
 
@@ -459,10 +453,12 @@ export class MessageQueue {
     return this.generation;
   }
 
-  stop(): void {
+  stop(options?: { preserveInternalCompactions?: boolean }): void {
     this.running = false;
     const hadDeliveredAwaitingBoundary = this.internalCompactionsAwaitingBoundary > 0;
-    this.revokeAllInternalCompactions();
+    if (!options?.preserveInternalCompactions) {
+      this.revokeAllInternalCompactions();
+    }
     this.internalCompactionsAwaitingBoundary = 0;
     if (hadDeliveredAwaitingBoundary && this.onDeliveredCompactionRevoked) {
       this.onDeliveredCompactionRevoked();

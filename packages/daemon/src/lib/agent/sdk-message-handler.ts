@@ -1590,21 +1590,27 @@ export class SDKMessageHandler {
           modelInfo
         );
         if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
-        if (!contextInfo) return;
+        const staleInfo = contextTracker.getContextInfo();
+        const effectiveInfo =
+          contextInfo ?? (staleInfo && staleInfo.totalUsed > 0 ? staleInfo : null);
+        if (!effectiveInfo) return;
         sampled = true;
-        contextTracker.updateWithDetailedBreakdown(contextInfo);
-        const publishProjection = internalEventBus
-          .publish('context.updated', {
-            sessionId: session.id,
-            contextInfo,
-          })
-          .catch((error) => {
-            this.logger.warn(
-              `context.updated publication failed for session ${session.id}:`,
-              error
-            );
-          });
-        if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
+        if (contextInfo) {
+          contextTracker.updateWithDetailedBreakdown(contextInfo);
+        }
+        const publishProjection = contextInfo
+          ? internalEventBus
+              .publish('context.updated', {
+                sessionId: session.id,
+                contextInfo,
+              })
+              .catch((error) => {
+                this.logger.warn(
+                  `context.updated publication failed for session ${session.id}:`,
+                  error
+                );
+              })
+          : Promise.resolve();
 
         const providerId = session.config.provider;
         if (
@@ -1629,18 +1635,18 @@ export class SDKMessageHandler {
           );
         }
         const effectiveWindow =
-          contextInfo.totalCapacity > 0 ? contextInfo.totalCapacity : modelInfo?.contextWindow;
-        const effectivePercent = contextInfo.autoCompactPercent;
+          effectiveInfo.totalCapacity > 0 ? effectiveInfo.totalCapacity : modelInfo?.contextWindow;
+        const effectivePercent = effectiveInfo.autoCompactPercent;
         const budgetKey = contextBudgetThreshold(effectiveWindow ?? 0, effectivePercent);
         if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
           return;
         }
         const decision = decideContextBudgetCompaction({
-          totalUsed: contextInfo.totalUsed,
+          totalUsed: effectiveInfo.totalUsed,
           configuredWindow: effectiveWindow,
           autoCompactPercent: effectivePercent,
-          sdkAutoCompactEnabled: contextInfo.isAutoCompactEnabled,
-          sdkAutoCompactThreshold: contextInfo.sdkAutoCompactThreshold,
+          sdkAutoCompactEnabled: effectiveInfo.isAutoCompactEnabled,
+          sdkAutoCompactThreshold: effectiveInfo.sdkAutoCompactThreshold,
           cooldownActive: contextTracker.isCoolingDown(budgetKey),
           compactingActive: this.ctx.stateManager.getIsCompacting(),
         });
@@ -1649,7 +1655,7 @@ export class SDKMessageHandler {
           this.logger.info(
             `Daemon context-budget compaction for session ${session.id} ` +
               `(provider=${providerId}, reason=${decision.reason}, ` +
-              `${contextInfo.totalUsed} >= ${budgetKey} of ${effectiveWindow ?? 0} tokens)`
+              `${effectiveInfo.totalUsed} >= ${budgetKey} of ${effectiveWindow ?? 0} tokens)`
           );
           void this.ctx.messageQueue
             .enqueue('/compact', true, { durable: true, prepend: true })
@@ -1668,9 +1674,7 @@ export class SDKMessageHandler {
       } finally {
         this.pendingContextRefresh = null;
         if (reason === 'turn-end' && !this.isDaemonCompactionPending()) {
-          if (!sampled) {
-            this.ctx.resumePendingWorkAfterCompaction?.();
-          } else {
+          if (sampled) {
             this.ctx.clearPendingResumeAfterCompaction?.();
           }
           this.ctx.messageQueue.pruneSentPrompts();

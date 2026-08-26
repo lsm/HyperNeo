@@ -88,6 +88,13 @@ export class ContextFetcher {
 
     const request = query.getContextUsage();
     this.inFlightUsage = request;
+    request
+      .catch(() => {})
+      .finally(() => {
+        if (this.inFlightUsage === request) {
+          this.inFlightUsage = null;
+        }
+      });
     try {
       const response = await ContextFetcher.withUsageTimeout(request);
       const resolvedMetadata = await ContextFetcher.resolveMetadataForResponse(
@@ -102,10 +109,6 @@ export class ContextFetcher {
     } catch (error) {
       this.logger.warn('query.getContextUsage() failed:', error);
       return null;
-    } finally {
-      if (this.inFlightUsage === request) {
-        this.inFlightUsage = null;
-      }
     }
   }
 

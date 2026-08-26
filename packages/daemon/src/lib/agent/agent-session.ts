@@ -434,6 +434,10 @@ export class AgentSession
       this.session.metadata.lastContextInfo = contextInfo;
       this.db.updateSession(this.session.id, { metadata: this.session.metadata });
     });
+    this.messageQueue.onDeliveredCompactionRevoked = () => {
+      this.contextTracker.clearCompactionCooldown();
+      this.clearPendingResumeAfterCompaction();
+    };
 
     this.messageHandler = new SDKMessageHandler(this);
 
@@ -1223,6 +1227,7 @@ export class AgentSession
 
   private restoredBudgetEnforcement: Promise<void> = Promise.resolve();
   private pendingResumeAfterCompaction = false;
+  private pendingMidTurnBudgetKey: number | undefined;
   private midTurnBudgetCheckInFlight = false;
   private midTurnRecheckPending = false;
   private contextBudgetFetcher: ContextFetcher | null = null;
@@ -1273,6 +1278,7 @@ export class AgentSession
       return;
     }
     this.pendingResumeAfterCompaction = true;
+    this.pendingMidTurnBudgetKey = budgetKey;
     this.messageQueue.clearNonCompactionSentSinceBoundary();
     this.logger.info(
       `Daemon mid-turn context-budget interrupt for session ${this.session.id} ` +
@@ -1298,10 +1304,13 @@ export class AgentSession
       if (timedOut) {
         this.logger.warn(
           `mid-turn context-budget interrupt for session ${this.session.id} is slow to ` +
-            `acknowledge; retaining post-compaction resume state`
+            `acknowledge; restarting the query to recover`
         );
+        this.messageQueue.clearNonCompactionSentSinceBoundary();
+        await this.finishSurvivorTeardownWithRestart();
       } else {
         this.pendingResumeAfterCompaction = false;
+        this.pendingMidTurnBudgetKey = undefined;
         this.logger.warn(
           `mid-turn context-budget interrupt failed for session ${this.session.id}:`,
           error
@@ -1326,6 +1335,7 @@ export class AgentSession
       (error) => {
         if (!this.pendingResumeAfterCompaction) return;
         this.pendingResumeAfterCompaction = false;
+        this.pendingMidTurnBudgetKey = undefined;
         this.logger.warn(
           `late mid-turn context-budget interrupt failure for session ${this.session.id}:`,
           error
@@ -1395,13 +1405,41 @@ export class AgentSession
 
   private async finishSurvivorTeardownWithRestart(): Promise<void> {
     if (!this.lifecycleManager) return;
-    const restart = this.lifecycleManager.restart().catch((error) => {
-      this.logger.warn(
-        `query restart after unconfirmed survivor cancellation failed for ` +
-          `session ${this.session.id}:`,
-        error
+    if (
+      this.pendingResumeAfterCompaction &&
+      !this.messageQueue.hasOutstandingInternalCompaction()
+    ) {
+      const budgetKey = this.pendingMidTurnBudgetKey;
+      this.contextTracker.markCompactionTriggered(budgetKey);
+      this.messageQueue.clearNonCompactionSentSinceBoundary();
+      this.logger.info(
+        `Daemon context-budget compaction for session ${this.session.id} ` +
+          `(provider=${this.session.config.provider}, reason=mid-turn-restart, ` +
+          `${this.contextTracker.getContextInfo()?.totalUsed ?? 0} >= ${budgetKey ?? 0} tokens)`
       );
-    });
+      void this.messageQueue
+        .enqueue('/compact', true, { durable: true, prepend: true })
+        .catch((error) => {
+          if (this.messageQueue.hasOutstandingInternalCompaction()) {
+            return;
+          }
+          this.logger.warn(
+            `compaction enqueue before restart failed for session ${this.session.id}:`,
+            error
+          );
+          this.contextTracker.clearCompactionCooldown();
+          this.clearPendingResumeAfterCompaction();
+        });
+    }
+    const restart = this.lifecycleManager
+      .restart({ preserveInternalCompactions: true })
+      .catch((error) => {
+        this.logger.warn(
+          `query restart after unconfirmed survivor cancellation failed for ` +
+            `session ${this.session.id}:`,
+          error
+        );
+      });
     await Promise.race([
       restart,
       new Promise<void>((resolve) => {
@@ -1479,6 +1517,7 @@ export class AgentSession
   resumePendingWorkAfterCompaction(): void {
     if (!this.pendingResumeAfterCompaction) return;
     this.pendingResumeAfterCompaction = false;
+    this.pendingMidTurnBudgetKey = undefined;
     if (this.messageQueue.hasOutstandingNonCompactionMessages()) return;
     void this.messageQueue
       .enqueue(
@@ -1494,6 +1533,7 @@ export class AgentSession
   clearPendingResumeAfterCompaction(): void {
     if (!this.pendingResumeAfterCompaction) return;
     this.pendingResumeAfterCompaction = false;
+    this.pendingMidTurnBudgetKey = undefined;
     this.logger.info(
       `dropping pending post-compaction resume for session ${this.session.id} ` +
         `(no daemon compaction was enqueued)`
@@ -1585,19 +1625,7 @@ export class AgentSession
       });
       if (decision.action !== 'compact') {
         if (supersededQueued && this.pendingResumeAfterCompaction) {
-          this.pendingResumeAfterCompaction = false;
-          void this.messageQueue
-            .enqueue(
-              'Context was compacted to stay within the configured window. Continue the task you were working on.',
-              false,
-              { durable: true }
-            )
-            .catch((error) => {
-              this.logger.warn(
-                `post-cancellation continuation enqueue failed for session ${this.session.id}:`,
-                error
-              );
-            });
+          this.resumePendingWorkAfterCompaction();
         }
         return;
       }
