@@ -489,4 +489,14 @@ export class SessionRepository {
 
     return result;
   }
+
+  countActiveSessionsBySpaceAndWorkspacePath(spaceId: string, workspacePath: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM sessions
+          WHERE space_id = ? AND workspace_path = ? AND status NOT IN ('archived', 'ended')`
+      )
+      .get(spaceId, workspacePath) as { c: number } | undefined;
+    return row?.c ?? 0;
+  }
 }

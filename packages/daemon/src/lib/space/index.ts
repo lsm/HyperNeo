@@ -1,4 +1,6 @@
 export { SpaceManager } from './managers/space-manager.ts';
+export { SpaceWorkspaceManager } from './managers/space-workspace-manager.ts';
+export type { SpaceWorkspaceRecord } from '../../storage/repositories/space-workspace-repository.ts';
 export { SpaceWorktreeManager } from './managers/space-worktree-manager.ts';
 export type { SpaceWorktreeInfo } from './managers/space-worktree-manager.ts';
 export { SpaceWorktreeRepository } from '../../storage/repositories/space-worktree-repository.ts';
