@@ -195,6 +195,10 @@ export class Database {
     this.sessionRepo.createSession(session, options);
   }
 
+  isWorkspaceRegisteredToSpace(spaceId: string, workspacePath: string): boolean {
+    return this.sessionRepo.isWorkspaceRegisteredToSpace(spaceId, workspacePath);
+  }
+
   getSession(id: string): Session | null {
     return this.sessionRepo.getSession(id);
   }

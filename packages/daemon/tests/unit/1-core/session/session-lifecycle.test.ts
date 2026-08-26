@@ -1769,6 +1769,7 @@ describe('SessionLifecycle - setWorkspace', () => {
       deleteSession: mock(() => {}),
       getSession: mock(() => null),
       getGlobalSettings: mock(() => DEFAULT_GLOBAL_SETTINGS),
+      isWorkspaceRegisteredToSpace: mock(() => true),
     } as unknown as Database;
 
     mockWorktreeManager = {
@@ -2018,5 +2019,39 @@ describe('SessionLifecycle - setWorkspace', () => {
         gitBranch: 'main',
       })
     );
+  });
+
+  it('blocks setWorkspace when the spaceId is set and the workspace is unregistered', async () => {
+    (mockDb.isWorkspaceRegisteredToSpace as ReturnType<typeof mock>).mockReturnValue(false);
+
+    const agentSession = makeAgentSession({ context: { spaceId: 'space-1' } });
+    (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+    await expect(lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct')).rejects.toThrow(
+      'is not registered to space space-1'
+    );
+
+    expect(mockDb.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows setWorkspace when the spaceId is set and the workspace is registered', async () => {
+    (mockDb.isWorkspaceRegisteredToSpace as ReturnType<typeof mock>).mockReturnValue(true);
+
+    const agentSession = makeAgentSession({ context: { spaceId: 'space-1' } });
+    (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+    await lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct');
+
+    expect(mockDb.isWorkspaceRegisteredToSpace).toHaveBeenCalledWith('space-1', '/some/workspace');
+    expect(mockDb.updateSession).toHaveBeenCalled();
+  });
+
+  it('skips the workspace ownership check when the session has no spaceId', async () => {
+    const agentSession = makeAgentSession();
+    (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+    await lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct');
+
+    expect(mockDb.isWorkspaceRegisteredToSpace).not.toHaveBeenCalled();
   });
 });

@@ -234,7 +234,6 @@ describe('SpaceWorkspaceManager', () => {
       expect(rows[0]!.id).toBe(primary.id);
       expect(rows[1]!.id).toBe(secondary.id);
     });
-
     test('does not include another space workspaces', async () => {
       workspaceRepo.create({ spaceId: SPACE_A, path: '/repo/a' });
       workspaceRepo.create({ spaceId: SPACE_B, path: '/repo/b' });
@@ -242,6 +241,30 @@ describe('SpaceWorkspaceManager', () => {
       const rows = await manager.listWorkspaces(SPACE_A);
       expect(rows).toHaveLength(1);
       expect(rows[0]!.path).toBe('/repo/a');
+    });
+  });
+
+  describe('ownership predicate', () => {
+    test('returns true for a path registered as a secondary workspace', () => {
+      workspaceRepo.create({ spaceId: SPACE_A, path: '/repo/a-secondary' });
+      const sessionRepo = new SessionRepository(db);
+      expect(sessionRepo.isWorkspaceRegisteredToSpace(SPACE_A, '/repo/a-secondary')).toBe(true);
+    });
+
+    test('returns true for a space primary path', () => {
+      const sessionRepo = new SessionRepository(db);
+      expect(sessionRepo.isWorkspaceRegisteredToSpace(SPACE_A, '/repo/a')).toBe(true);
+    });
+
+    test('returns false for an unregistered path', () => {
+      const sessionRepo = new SessionRepository(db);
+      expect(sessionRepo.isWorkspaceRegisteredToSpace(SPACE_A, '/repo/unknown')).toBe(false);
+    });
+
+    test('returns false for a path registered to a different space', () => {
+      workspaceRepo.create({ spaceId: SPACE_B, path: '/repo/b-secondary' });
+      const sessionRepo = new SessionRepository(db);
+      expect(sessionRepo.isWorkspaceRegisteredToSpace(SPACE_A, '/repo/b-secondary')).toBe(false);
     });
   });
 

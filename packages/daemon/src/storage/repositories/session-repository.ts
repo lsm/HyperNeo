@@ -46,6 +46,20 @@ export class SessionRepository {
     }
   }
 
+  isWorkspaceRegisteredToSpace(spaceId: string, workspacePath: string): boolean {
+    if (!this.workspaceTablesExist()) return true;
+    const owner = this.db
+      .prepare(
+        `SELECT 1 FROM (
+          SELECT space_id FROM space_workspaces WHERE space_id = ? AND path = ?
+          UNION ALL
+          SELECT id AS space_id FROM spaces WHERE id = ? AND workspace_path = ?
+        ) LIMIT 1`
+      )
+      .get(spaceId, workspacePath, spaceId, workspacePath) as { '1': number } | undefined;
+    return !!owner;
+  }
+
   createSession(session: Session, options?: { enforceWorkspaceOwnership?: boolean }): void {
     const stmt = this.db.prepare(
       `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, acp_session_id, sdk_origin_path, available_commands, processing_state, archived_at, type, session_context)

@@ -237,6 +237,18 @@ describe('workspace-validation-pipeline', () => {
       expect(verdict.canonicalPath).toBe('/repository');
     });
 
+    test('treats a Windows drive root claim as containing any candidate beneath it', async () => {
+      const verdict = await validate({
+        snap: snapshot([registeredClaim(SPACE_A, 'C:/')]),
+        rawPath: 'C:/repo',
+      });
+      expect(verdict.accepted).toBe(false);
+      if (verdict.accepted) return;
+      expect(verdict.reason).toBe('ambiguous_nesting');
+      expect(verdict.nestingDirection).toBe('candidate_inside_existing');
+      expect(verdict.conflictPath).toBe('C:/');
+    });
+
     test('allows nesting across different spaces', async () => {
       const verdict = await validate({
         snap: snapshot([registeredClaim(SPACE_B, '/work')]),

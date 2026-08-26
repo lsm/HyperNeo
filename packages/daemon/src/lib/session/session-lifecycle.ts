@@ -419,6 +419,13 @@ export class SessionLifecycle {
       throw new Error('Workspace path cannot be empty');
     }
 
+    const spaceId = session.context?.spaceId;
+    if (spaceId && !this.db.isWorkspaceRegisteredToSpace(spaceId, normalizedPath)) {
+      throw new Error(
+        `Workspace ${normalizedPath} is not registered to space ${spaceId}; setWorkspace blocked`
+      );
+    }
+
     let worktreeMetadata: WorktreeMetadata | undefined;
     let currentBranch: string | undefined;
 

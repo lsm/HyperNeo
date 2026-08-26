@@ -94,7 +94,9 @@ export const nodeWorkspaceValidationIo: WorkspaceValidationIo = {
 function containsNestedPath(parent: string, child: string): boolean {
   const normalizedParent = parent.replace(/\\/g, '/');
   const normalizedChild = child.replace(/\\/g, '/');
-  if (normalizedParent === '/') return normalizedChild !== '/';
+  if (normalizedParent.endsWith('/')) {
+    return normalizedChild !== normalizedParent && normalizedChild.startsWith(normalizedParent);
+  }
   return normalizedChild.startsWith(`${normalizedParent}/`);
 }
 
