@@ -3,6 +3,7 @@ import type { CuratedModel, ProviderCredentials } from '@hyperneo/shared/provide
 import { getProviderRegistry } from './registry.js';
 import { initializeProviders, registerBuiltInProvider } from './factory.js';
 import { AcpProvider } from './acp-provider.js';
+import { bumpProviderCatalogEpoch } from '../model-service.js';
 import { CustomEndpointProvider, customProviderIdFor } from './custom-endpoint-provider.js';
 import { Logger } from '../logger.js';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.js';
@@ -47,6 +48,7 @@ export async function syncProviderToRegistry(
   isStartupSync = false
 ): Promise<void> {
   const registry = getProviderRegistry();
+  bumpProviderCatalogEpoch(record.providerId);
 
   if (record.kind === 'built_in') {
     await registerBuiltInProvider(registry, record.providerId);
@@ -79,12 +81,14 @@ export async function syncProviderToRegistry(
         const own = await provider.getCredentials();
         if (!own) {
           logger.info(`Skipping stale stored credentials for ${record.providerId}`);
+          bumpProviderCatalogEpoch(record.providerId);
           return;
         }
       }
       provider.setCredentials(credentials);
       logger.info(`Applied credentials to built-in provider ${record.providerId}`);
     }
+    bumpProviderCatalogEpoch(record.providerId);
     return;
   }
 
@@ -127,6 +131,7 @@ export async function syncProviderToRegistry(
     } catch (err) {
       logger.warn(`Failed to register custom endpoint provider ${providerId}:`, err);
     }
+    bumpProviderCatalogEpoch(providerId);
   }
 }
 
@@ -155,6 +160,8 @@ export async function removeProviderFromRegistry(
   const provider = registry.get(providerId);
   if (!provider) return;
 
+  bumpProviderCatalogEpoch(providerId);
+
   if (provider.logout && !options.preserveCredentials) {
     try {
       await provider.logout();
@@ -172,5 +179,6 @@ export async function removeProviderFromRegistry(
   }
 
   registry.unregister(providerId);
+  bumpProviderCatalogEpoch(providerId);
   logger.info(`Unregistered provider ${providerId}`);
 }

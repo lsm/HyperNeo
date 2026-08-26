@@ -132,7 +132,11 @@ import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import type { Database } from '../../../../src/storage/database';
 
 type TitleSdkInvoker = {
-  generateTitleWithSdk(provider: string, modelId: string, messageText: string): Promise<string>;
+  generateTitleWithSdk(
+    provider: string,
+    modelId: string,
+    messageText: string
+  ): Promise<string | null>;
 };
 
 function runTitleSdk(
@@ -140,7 +144,7 @@ function runTitleSdk(
   provider = 'anthropic',
   modelId = 'claude-sonnet-4-20250514',
   messageText = 'Create a login form'
-): Promise<string> {
+): Promise<string | null> {
   return (lifecycle as unknown as TitleSdkInvoker).generateTitleWithSdk(
     provider,
     modelId,
@@ -174,7 +178,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
           provider: string,
           modelId: string,
           messageText: string
-        ) => Promise<string>;
+        ) => Promise<string | null>;
       }
     ).generateTitleWithSdk(provider, modelId, messageText);
 
@@ -491,6 +495,26 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
     expect(result.isFallback).toBe(true);
     expect(result.title).toBe('Create a login form');
+  });
+
+  it('should fall back to message text when the provider has no visible models', async () => {
+    mockTitleProviderService.getTitleGenerationModels = mock(async () => null);
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      mockSessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    expect(result.isFallback).toBe(true);
+    expect(result.title).toBe('Create a login form');
+    expect(lastTitleQueryOptions).toBeUndefined();
   });
 
   it('should skip auto-title generation when a user has manually renamed the session', async () => {

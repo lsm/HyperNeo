@@ -162,6 +162,25 @@ export class OllamaProvider implements Provider {
     }
   }
 
+  async getModelsForSessionConfig(sessionConfig?: ProviderSessionConfig): Promise<ModelInfo[]> {
+    const baseUrl = sessionConfig?.baseUrl;
+    const apiKey = sessionConfig?.apiKey;
+    if (!baseUrl && !apiKey) {
+      return this.getModels();
+    }
+    try {
+      return await this.fetchModels(
+        baseUrl ?? this.getBaseUrl(),
+        false,
+        apiKey || this.getApiKey(),
+        DEFAULT_PROBE_TIMEOUT_MS,
+        true
+      );
+    } catch {
+      return [];
+    }
+  }
+
   async listRemoteModels(options?: ListRemoteModelsOptions): Promise<ModelInfo[]> {
     if (this.kind === 'cloud' && !this.getApiKey()) return [];
     if (
@@ -267,9 +286,16 @@ export class OllamaProvider implements Provider {
     this.bridgeServers.clear();
   }
 
-  private async fetchModels(baseUrl = this.getBaseUrl(), updateCache = true): Promise<ModelInfo[]> {
+  private async fetchModels(
+    baseUrl = this.getBaseUrl(),
+    updateCache = true,
+    apiKey = this.getApiKey(),
+    timeoutMs?: number,
+    keepEmptyResult = false
+  ): Promise<ModelInfo[]> {
     const response = await this.fetchImpl(`${normalizeBaseUrl(baseUrl)}/api/tags`, {
-      headers: this.getApiKey() ? { Authorization: `Bearer ${this.getApiKey()}` } : undefined,
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+      ...(timeoutMs !== undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
     if (response.status === 401 || response.status === 403) {
       const keyName = this.kind === 'cloud' ? 'OLLAMA_CLOUD_API_KEY' : 'OLLAMA_API_KEY';
@@ -284,7 +310,7 @@ export class OllamaProvider implements Provider {
     const models = (body.models ?? [])
       .map((model) => this.toModelInfo(model))
       .filter((model): model is ModelInfo => model !== null);
-    const result = models.length > 0 ? models : this.fallbackModels();
+    const result = models.length > 0 || keepEmptyResult ? models : this.fallbackModels();
     if (updateCache) {
       this.modelCache = result;
       this.modelCacheAt = Date.now();

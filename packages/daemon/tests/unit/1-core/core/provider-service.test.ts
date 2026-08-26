@@ -13,7 +13,11 @@ import {
   markBuiltInProviderDisabled,
   resetProviderFactory,
 } from '../../../../src/lib/providers/factory';
-import { ProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import {
+  ProviderRegistry,
+  getProviderRegistry,
+  resetProviderRegistry,
+} from '../../../../src/lib/providers/registry';
 
 class MockProvider implements Provider {
   readonly id: string;
@@ -563,23 +567,158 @@ describe('ProviderService', () => {
 
       expect(model).toBe('kimi-k2.7-code');
     });
+
+    it('falls back to the first curated model when the title override is curated out', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-1' }]);
+
+      const model = await realService.getTitleGenerationModel('title-override', 'title-9');
+
+      expect(model).toBe('translated-1');
+    });
+
+    it('keeps the session model fallback when no curation is configured', async () => {
+      const model = await service.getTitleGenerationModel('glm', 'glm-4.7');
+
+      expect(model).toBe('translated-4.7');
+    });
+
+    it('falls back to the first curated model when the session model is curated out', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new GlmMockProvider());
+      globalRegistry.setCuratedModels('glm', [{ id: 'glm-1' }]);
+
+      const model = await realService.getTitleGenerationModel('glm', 'glm-4.7');
+
+      expect(model).toBe('translated-1');
+    });
+
+    it('falls back to a visible curated model when a listed title override leaves the catalog', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-turbo' }, { id: 'title-1' }]);
+
+      const model = await realService.getTitleGenerationModel('title-override', 'title-9');
+
+      expect(model).toBe('translated-1');
+    });
+
+    it('accepts a session-model alias that resolves to a curated catalog model', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      const provider = new GlmMockProvider();
+      const baseModels = await provider.getModels();
+      provider.getModels = async () => [
+        ...baseModels,
+        {
+          id: 'glm-5',
+          name: 'GLM-5',
+          alias: 'glm',
+          family: 'glm',
+          provider: 'glm',
+          contextWindow: 200000,
+          description: 'GLM-5',
+          releaseDate: '',
+          available: true,
+        },
+      ];
+      globalRegistry.register(provider);
+      globalRegistry.setCuratedModels('glm', [{ id: 'glm-5' }]);
+
+      const model = await realService.getTitleGenerationModel('glm', 'glm');
+
+      expect(model).toBe('translated-5');
+    });
+
+    it('accepts an uncached alias of a curated model on a dynamically discovered provider', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register({
+        id: 'ollama',
+        displayName: 'Ollama',
+        isAvailable: () => true,
+        getModels: async () => [
+          {
+            id: 'ollama-qwen',
+            name: 'Qwen',
+            alias: 'qwen3',
+            family: 'qwen',
+            provider: 'ollama',
+            contextWindow: 128000,
+            description: 'Qwen',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('ollama', [{ id: 'ollama-qwen' }]);
+
+      const model = await realService.getTitleGenerationModel('ollama', 'qwen3');
+
+      expect(model).toBe('ollama-qwen');
+    });
+
+    it('returns null when curation is explicitly empty', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', []);
+
+      const model = await realService.getTitleGenerationModel('title-override', 'title-9');
+
+      expect(model).toBeNull();
+    });
+
+    it('skips provider discovery when curation is explicitly empty', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      let fetchCount = 0;
+      globalRegistry.register({
+        id: 'title-empty',
+        displayName: 'Title Empty Provider',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          return [];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('title-empty', []);
+
+      const model = await realService.getTitleGenerationModel(
+        'title-empty' as unknown as ProviderId,
+        'title-9'
+      );
+
+      expect(model).toBeNull();
+      expect(fetchCount).toBe(0);
+    });
   });
 
   describe('getTitleGenerationConfig', () => {
     it('should return config for registered provider', async () => {
       const config = await service.getTitleGenerationConfig('glm');
 
-      expect(config.modelId).toBe('glm-haiku');
-      expect(config.baseUrl).toBe('https://api.glm.example.com');
-      expect(config.apiVersion).toBe('v1');
+      expect(config?.modelId).toBe('glm-haiku');
+      expect(config?.baseUrl).toBe('https://api.glm.example.com');
+      expect(config?.apiVersion).toBe('v1');
     });
 
     it('should return fallback config for unknown provider', async () => {
       const config = await service.getTitleGenerationConfig('unknown' as unknown as ProviderId);
 
-      expect(config.modelId).toBe('haiku');
-      expect(config.baseUrl).toBe('https://api.anthropic.com');
-      expect(config.apiVersion).toBe('v1');
+      expect(config?.modelId).toBe('haiku');
+      expect(config?.baseUrl).toBe('https://api.anthropic.com');
+      expect(config?.apiVersion).toBe('v1');
     });
 
     it('should return defaults when buildSdkConfig throws (e.g. server not yet started)', async () => {
@@ -587,8 +726,8 @@ describe('ProviderService', () => {
 
       const config = await service.getTitleGenerationConfig('throwing' as unknown as ProviderId);
 
-      expect(config.baseUrl).toBe('https://api.anthropic.com');
-      expect(config.apiVersion).toBe('v1');
+      expect(config?.baseUrl).toBe('https://api.anthropic.com');
+      expect(config?.apiVersion).toBe('v1');
     });
 
     it('should return provider-routed title model for region-aware providers', async () => {
@@ -598,9 +737,742 @@ describe('ProviderService', () => {
 
       const config = await service.getTitleGenerationConfig('region-aware-title' as ProviderId);
 
-      expect(config.modelId).toBe('kimi-k2.7-code');
-      expect(config.baseUrl).toBe('https://api.moonshot.ai/anthropic');
-      expect(config.apiVersion).toBe('v1');
+      expect(config?.modelId).toBe('kimi-k2.7-code');
+      expect(config?.baseUrl).toBe('https://api.moonshot.ai/anthropic');
+      expect(config?.apiVersion).toBe('v1');
+    });
+
+    it('uses the tier fallback when the title override is curated out', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      const provider = new TitleOverrideMockProvider();
+      const baseModels = await provider.getModels();
+      provider.getModels = async () => [
+        ...baseModels,
+        {
+          id: 'title-haiku',
+          name: 'Title Haiku',
+          alias: 'title-haiku',
+          family: 'mock',
+          provider: 'title-override',
+          contextWindow: 100000,
+          description: 'Mock model',
+          releaseDate: '',
+          available: true,
+        },
+      ];
+      globalRegistry.register(provider);
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-haiku' }, { id: 'title-1' }]);
+
+      const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
+
+      expect(config?.modelId).toBe('title-haiku');
+      expect(config?.baseUrl).toBe('https://mock.api.com');
+    });
+
+    it('skips a curated-listed title override that is missing from the provider catalog', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [
+        { id: 'title-turbo' },
+        { id: 'title-haiku' },
+        { id: 'title-1' },
+      ]);
+
+      const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
+
+      expect(config?.modelId).toBe('title-1');
+      expect(config?.baseUrl).toBe('https://mock.api.com');
+    });
+
+    it('falls back to the first curated model when title override and tier fallback are curated out', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-1' }]);
+
+      const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
+
+      expect(config?.modelId).toBe('title-1');
+      expect(config?.baseUrl).toBe('https://mock.api.com');
+    });
+
+    it('returns null when curation is explicitly empty', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', []);
+
+      const config = await realService.getTitleGenerationConfig('title-override' as ProviderId);
+
+      expect(config).toBeNull();
+    });
+
+    it('discards the selected title model when bridge startup changes curation', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      class BridgeInvalidateMockProvider extends MockProvider {
+        constructor() {
+          super('bridge-invalidate', 'Bridge Invalidate Provider', true, 'title-');
+        }
+
+        getTitleGenerationModel(): string {
+          return 'title-turbo';
+        }
+
+        async ensureBridgeStarted(): Promise<void> {
+          globalRegistry.setCuratedModels('bridge-invalidate', []);
+        }
+
+        buildSdkConfig(modelId: string): ProviderSdkConfig {
+          return {
+            envVars: { ANTHROPIC_BASE_URL: 'https://mock.api.com', ANTHROPIC_MODEL: modelId },
+            isAnthropicCompatible: true,
+          };
+        }
+      }
+      globalRegistry.register(new BridgeInvalidateMockProvider());
+
+      const config = await realService.getTitleGenerationConfig(
+        'bridge-invalidate' as unknown as ProviderId
+      );
+
+      expect(config).toBeNull();
+    });
+
+    it('cancels healing when the provider is replaced during the catalog fetch', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      class HealSwapMockProvider extends MockProvider {
+        constructor() {
+          super('heal-swap', 'Heal Swap Provider', true, 'title-');
+        }
+
+        getTitleGenerationModel(): string {
+          return 'title-turbo';
+        }
+
+        buildSdkConfig(): ProviderSdkConfig {
+          throw new Error('stale provider instance');
+        }
+      }
+      class HealReplacementMockProvider extends MockProvider {
+        constructor() {
+          super('heal-swap', 'Heal Replacement', true, 'title-');
+        }
+
+        async ensureBridgeStarted(): Promise<void> {
+          globalRegistry.unregister('heal-swap');
+          globalRegistry.register(this);
+          globalRegistry.setCuratedModels('heal-swap', [{ id: 'title-1' }]);
+        }
+
+        override buildSdkConfig(modelId: string): ProviderSdkConfig {
+          return {
+            envVars: {
+              ANTHROPIC_BASE_URL: 'https://replacement.api.com',
+              ANTHROPIC_MODEL: modelId,
+            },
+            isAnthropicCompatible: true,
+          };
+        }
+      }
+      const replacement = new HealReplacementMockProvider();
+      const original = new HealSwapMockProvider();
+      original.ensureBridgeStarted = replacement.ensureBridgeStarted.bind(replacement);
+      globalRegistry.register(original);
+      globalRegistry.setCuratedModels('heal-swap', [{ id: 'title-1' }]);
+
+      const config = await realService.getTitleGenerationConfig(
+        'heal-swap' as unknown as ProviderId
+      );
+
+      expect(config).toBeNull();
+    });
+
+    it('cancels selection when the provider is replaced during bridge startup', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      class ReplaceDuringBridgeMockProvider extends MockProvider {
+        constructor() {
+          super('replace-bridge', 'Replace Bridge Provider', true, 'title-');
+        }
+
+        getTitleGenerationModel(): string {
+          return 'title-turbo';
+        }
+
+        async ensureBridgeStarted(): Promise<void> {
+          globalRegistry.unregister('replace-bridge');
+          globalRegistry.register(
+            new MockProvider('replace-bridge', 'Replacement', true, 'title-')
+          );
+          globalRegistry.setCuratedModels('replace-bridge', [
+            { id: 'title-turbo' },
+            { id: 'title-1' },
+          ]);
+        }
+
+        buildSdkConfig(modelId: string): ProviderSdkConfig {
+          return {
+            envVars: { ANTHROPIC_BASE_URL: 'https://mock.api.com', ANTHROPIC_MODEL: modelId },
+            isAnthropicCompatible: true,
+          };
+        }
+      }
+      globalRegistry.register(new ReplaceDuringBridgeMockProvider());
+      globalRegistry.setCuratedModels('replace-bridge', [{ id: 'title-turbo' }, { id: 'title-1' }]);
+
+      const config = await realService.getTitleGenerationConfig(
+        'replace-bridge' as unknown as ProviderId
+      );
+
+      expect(config).toBeNull();
+    });
+
+    it('keeps a canonical title model selected through an alias-only curated entry', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      class AliasCatalogMockProvider extends MockProvider {
+        constructor() {
+          super('alias-catalog', 'Alias Catalog Provider', true, 'alias-');
+        }
+
+        getTitleGenerationModel(): string {
+          return 'slashless';
+        }
+
+        async getModels(): Promise<ModelInfo[]> {
+          return [
+            {
+              id: 'org/slashless-model',
+              name: 'Slashless Model',
+              alias: 'slashless',
+              family: 'mock',
+              provider: 'alias-catalog',
+              contextWindow: 100000,
+              description: 'Alias catalog model',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        }
+
+        buildSdkConfig(modelId: string): ProviderSdkConfig {
+          return {
+            envVars: { ANTHROPIC_BASE_URL: 'https://mock.api.com', ANTHROPIC_MODEL: modelId },
+            isAnthropicCompatible: true,
+          };
+        }
+      }
+      globalRegistry.register(new AliasCatalogMockProvider());
+      globalRegistry.setCuratedModels('alias-catalog', [{ id: 'slashless' }, { id: 'alias-1' }]);
+
+      const config = await realService.getTitleGenerationConfig(
+        'alias-catalog' as unknown as ProviderId
+      );
+
+      expect(config?.modelId).toBe('org/slashless-model');
+      expect(config?.baseUrl).toBe('https://mock.api.com');
+    });
+
+    it('heals a provider-rejected title override to an allowed catalog model', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      class AllowlistTitleMockProvider extends MockProvider {
+        constructor() {
+          super('allowlist-title', 'Allowlist Title Provider', true, 'title-');
+        }
+
+        getTitleGenerationModel(): string {
+          return 'blocked-title';
+        }
+
+        async getModels(): Promise<ModelInfo[]> {
+          return [
+            {
+              id: 'allowed-model',
+              name: 'Allowed Model',
+              alias: 'allowed-model',
+              family: 'mock',
+              provider: 'allowlist-title',
+              contextWindow: 100000,
+              description: 'Allowed',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        }
+
+        buildSdkConfig(modelId: string): ProviderSdkConfig {
+          if (modelId !== 'allowed-model') {
+            throw new Error(`model '${modelId}' is not in the configured allowlist`);
+          }
+          return {
+            envVars: { ANTHROPIC_BASE_URL: 'https://mock.api.com', ANTHROPIC_MODEL: modelId },
+            isAnthropicCompatible: true,
+          };
+        }
+      }
+      globalRegistry.register(new AllowlistTitleMockProvider());
+
+      const config = await realService.getTitleGenerationConfig(
+        'allowlist-title' as unknown as ProviderId
+      );
+
+      expect(config?.modelId).toBe('allowed-model');
+    });
+
+    it('uses the provider cached catalog when model discovery fails', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => {
+          throw new Error('probe route missing');
+        },
+        getCachedModels: () => [
+          {
+            id: 'custom-turbo',
+            name: 'Custom Turbo',
+            alias: 'custom-turbo',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Turbo',
+            releaseDate: '',
+            available: true,
+          },
+          {
+            id: 'custom-1',
+            name: 'Custom Model 1',
+            alias: 'custom1',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Model 1',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        getTitleGenerationModel: () => 'custom-turbo',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('custom-endpoint', [
+        { id: 'custom-turbo' },
+        { id: 'custom-1' },
+      ]);
+
+      const config = await realService.getTitleGenerationConfig('custom-endpoint' as ProviderId);
+
+      expect(config?.modelId).toBe('custom-turbo');
+    });
+
+    it('treats an empty catalog response as failed discovery', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getCachedModels: () => [
+          {
+            id: 'custom-turbo',
+            name: 'Custom Turbo',
+            alias: 'custom-turbo',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Turbo',
+            releaseDate: '',
+            available: true,
+          },
+          {
+            id: 'custom-1',
+            name: 'Custom Model 1',
+            alias: 'custom1',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Model 1',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        getTitleGenerationModel: () => 'custom-turbo',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('custom-endpoint', [
+        { id: 'custom-turbo' },
+        { id: 'custom-1' },
+      ]);
+
+      const config = await realService.getTitleGenerationConfig('custom-endpoint' as ProviderId);
+
+      expect(config?.modelId).toBe('custom-turbo');
+    });
+
+    it('falls back to static metadata when discovery throws without a provider cache', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register({
+        id: 'glm',
+        displayName: 'GLM',
+        isAvailable: () => true,
+        getModels: async () => {
+          throw new Error('discovery timeout');
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('glm', [{ id: 'glm-5' }]);
+
+      const config = await realService.getTitleGenerationConfig('glm');
+
+      expect(config?.modelId).toBe('glm-5');
+    });
+
+    it('fetches the provider catalog once per title selection', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      let fetchCount = 0;
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          return [
+            {
+              id: 'custom-turbo',
+              name: 'Custom Turbo',
+              alias: 'custom-turbo',
+              family: 'custom',
+              provider: 'custom-endpoint',
+              contextWindow: 128000,
+              description: 'Custom Turbo',
+              releaseDate: '',
+              available: true,
+            },
+            {
+              id: 'custom-1',
+              name: 'Custom Model 1',
+              alias: 'custom1',
+              family: 'custom',
+              provider: 'custom-endpoint',
+              contextWindow: 128000,
+              description: 'Custom Model 1',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        getTitleGenerationModel: () => 'custom-turbo',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('custom-endpoint', [
+        { id: 'custom-turbo' },
+        { id: 'custom-1' },
+      ]);
+
+      const config = await realService.getTitleGenerationConfig('custom-endpoint' as ProviderId);
+
+      expect(config?.modelId).toBe('custom-turbo');
+      expect(fetchCount).toBe(1);
+    });
+
+    it('reuses the provider catalog across consecutive title selections', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      let fetchCount = 0;
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          return [
+            {
+              id: 'custom-turbo',
+              name: 'Custom Turbo',
+              alias: 'custom-turbo',
+              family: 'custom',
+              provider: 'custom-endpoint',
+              contextWindow: 128000,
+              description: 'Custom Turbo',
+              releaseDate: '',
+              available: true,
+            },
+            {
+              id: 'custom-1',
+              name: 'Custom Model 1',
+              alias: 'custom1',
+              family: 'custom',
+              provider: 'custom-endpoint',
+              contextWindow: 128000,
+              description: 'Custom Model 1',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => 'custom-1',
+        getTitleGenerationModel: () => 'custom-turbo',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('custom-endpoint', [
+        { id: 'custom-turbo' },
+        { id: 'custom-1' },
+      ]);
+
+      expect(await realService.getCheapTierModel('custom-endpoint')).toBe('custom-turbo');
+      expect(await realService.getCheapTierModel('custom-endpoint')).toBe('custom-turbo');
+      expect(await realService.getTitleGenerationModel('custom-endpoint', 'custom-1')).toBe(
+        'custom-turbo'
+      );
+      expect(fetchCount).toBe(1);
+    });
+
+    it('invalidates the catalog cache when curation changes', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      let fetchCount = 0;
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => {
+          fetchCount += 1;
+          return [
+            {
+              id: 'custom-turbo',
+              name: 'Custom Turbo',
+              alias: 'custom-turbo',
+              family: 'custom',
+              provider: 'custom-endpoint',
+              contextWindow: 128000,
+              description: 'Custom Turbo',
+              releaseDate: '',
+              available: true,
+            },
+            {
+              id: 'custom-1',
+              name: 'Custom Model 1',
+              alias: 'custom1',
+              family: 'custom',
+              provider: 'custom-endpoint',
+              contextWindow: 128000,
+              description: 'Custom Model 1',
+              releaseDate: '',
+              available: true,
+            },
+          ];
+        },
+        ownsModel: () => false,
+        getModelForTier: () => 'custom-1',
+        getTitleGenerationModel: () => 'custom-turbo',
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('custom-endpoint', [
+        { id: 'custom-turbo' },
+        { id: 'custom-1' },
+      ]);
+
+      expect(await realService.getCheapTierModel('custom-endpoint')).toBe('custom-turbo');
+      expect(fetchCount).toBe(1);
+
+      globalRegistry.setCuratedModels('custom-endpoint', [{ id: 'custom-1' }]);
+
+      expect(await realService.getCheapTierModel('custom-endpoint')).toBe('custom-1');
+      expect(fetchCount).toBe(2);
+    });
+
+    it('uses the supplied session model when the title override is curated out', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      const provider = new TitleOverrideMockProvider();
+      const baseModels = await provider.getModels();
+      provider.getModels = async () => [
+        ...baseModels,
+        {
+          id: 'title-2',
+          name: 'Title Model 2',
+          alias: 'title2',
+          family: 'mock',
+          provider: 'title-override',
+          contextWindow: 100000,
+          description: 'Mock model',
+          releaseDate: '',
+          available: true,
+        },
+      ];
+      globalRegistry.register(provider);
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-2' }, { id: 'title-1' }]);
+
+      const model = await realService.getTitleGenerationModel('title-override', 'title-2');
+
+      expect(model).toBe('translated-2');
+    });
+
+    it('does not cache empty catalogs across curation changes', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => [],
+        getCachedModels: () => [
+          {
+            id: 'custom-model',
+            name: 'Custom Model',
+            alias: 'custom',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Model',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+      globalRegistry.setCuratedModels('custom-endpoint', []);
+
+      expect(
+        await realService.getTitleGenerationConfig('custom-endpoint' as ProviderId)
+      ).toBeNull();
+
+      globalRegistry.setCuratedModels('custom-endpoint', [{ id: 'custom-model' }]);
+
+      const config = await realService.getTitleGenerationConfig('custom-endpoint' as ProviderId);
+
+      expect(config?.modelId).toBe('custom-model');
+    });
+
+    it('falls back to the first catalog model when no curation and no candidates exist', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register({
+        id: 'custom-endpoint',
+        displayName: 'Custom Endpoint',
+        isAvailable: () => true,
+        getModels: async () => [
+          {
+            id: 'custom-1',
+            name: 'Custom Model 1',
+            alias: 'custom1',
+            family: 'custom',
+            provider: 'custom-endpoint',
+            contextWindow: 128000,
+            description: 'Custom Model 1',
+            releaseDate: '',
+            available: true,
+          },
+        ],
+        ownsModel: () => false,
+        getModelForTier: () => undefined,
+        buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: true }),
+      } as unknown as Parameters<typeof globalRegistry.register>[0]);
+
+      const config = await realService.getTitleGenerationConfig('custom-endpoint' as ProviderId);
+
+      expect(config?.modelId).toBe('custom-1');
+    });
+
+    it('re-reads curation after catalog discovery', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      const provider = new TitleOverrideMockProvider();
+      const baseModels = await provider.getModels();
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          ...baseModels,
+          {
+            id: 'title-haiku',
+            name: 'Title Haiku',
+            alias: 'title-haiku',
+            family: 'mock',
+            provider: 'title-override',
+            contextWindow: 100000,
+            description: 'Mock model',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
+      globalRegistry.register(provider);
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-haiku' }, { id: 'title-1' }]);
+
+      const pending = realService.getTitleGenerationConfig('title-override' as ProviderId);
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-1' }]);
+
+      const config = await pending;
+
+      expect(config?.modelId).toBe('title-1');
+    });
+  });
+
+  describe('getCheapTierModel', () => {
+    it('returns the provider title override when no curation is configured', async () => {
+      registry.register(new TitleOverrideMockProvider());
+
+      expect(await service.getCheapTierModel('title-override')).toBe('title-turbo');
+    });
+
+    it('skips curated-out candidates and falls back to the first curated model', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-1' }]);
+
+      expect(await realService.getCheapTierModel('title-override')).toBe('title-1');
+    });
+
+    it('returns null when curation is explicitly empty', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', []);
+
+      expect(await realService.getCheapTierModel('title-override')).toBeNull();
+    });
+
+    it('skips stale curated entries missing from the provider catalog', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [{ id: 'title-stale' }, { id: 'title-1' }]);
+
+      expect(await realService.getCheapTierModel('title-override')).toBe('title-1');
+    });
+
+    it('skips curated-listed preferred candidates missing from the provider catalog', async () => {
+      const globalRegistry = getProviderRegistry();
+      const realService = new ProviderService();
+      globalRegistry.register(new TitleOverrideMockProvider());
+      globalRegistry.setCuratedModels('title-override', [
+        { id: 'title-turbo' },
+        { id: 'title-haiku' },
+        { id: 'title-1' },
+      ]);
+
+      expect(await realService.getCheapTierModel('title-override')).toBe('title-1');
     });
   });
 

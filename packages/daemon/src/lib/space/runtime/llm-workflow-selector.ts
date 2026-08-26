@@ -36,6 +36,10 @@ export async function selectWorkflowWithLlmDefault(
   let modelId: string;
   try {
     const cfg = await providerService.getTitleGenerationConfig(provider);
+    if (!cfg) {
+      log.warn('Default provider has no visible models for workflow selection');
+      return null;
+    }
     modelId = cfg.modelId;
   } catch (err) {
     log.warn('Failed to resolve title-generation model for workflow selection:', err);

@@ -36,7 +36,12 @@ import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
 import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import { Logger } from '../logger.ts';
-import { getSessionModelInfo } from '../model-service.ts';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
+import {
+  getProviderCatalogEpoch,
+  getSessionModelInfo,
+  isCuratedOutModel,
+} from '../model-service.ts';
 import {
   getProviderContextManager,
   getProviderRegistry,
@@ -240,10 +245,32 @@ export interface QueryOptionsBuilderContext {
   readonly toolGuards?: DeclarativeToolGuard[];
 }
 
+export interface BuiltFallbackIdentity {
+  providerId: string;
+  primaryModel: string | undefined;
+  fallbackModel: string | undefined;
+  scopedApiKey?: string;
+  scopedBaseUrl?: string;
+  scopedRegion?: string;
+  providerEpoch?: number;
+}
+
+const builtFallbackBySession = new WeakMap<object, BuiltFallbackIdentity>();
+
+export function markBuiltFallbackIdentity(session: object, identity: BuiltFallbackIdentity): void {
+  builtFallbackBySession.set(session, identity);
+}
+
+export function getBuiltFallbackIdentity(session: object): BuiltFallbackIdentity | undefined {
+  return builtFallbackBySession.get(session);
+}
+
 export class QueryOptionsBuilder {
   private canUseTool?: CanUseTool;
   private askUserQuestionHook?: HookCallback;
   private deferredPermissionMode?: PermissionMode;
+  private effectiveFallbackCaptured = false;
+  private effectiveFallbackModel?: string;
   private readonly logger = new Logger('QueryOptionsBuilder');
 
   constructor(private ctx: QueryOptionsBuilderContext) {}
@@ -299,16 +326,63 @@ export class QueryOptionsBuilder {
     const modelInfo = await getSessionModelInfo(this.ctx.session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
+    const providerEpoch = getProviderCatalogEpoch(providerId);
     if (config.fallbackModel) {
-      const contextManager = getProviderContextManager();
-      const fallbackSession = {
-        ...this.ctx.session,
-        config: { ...this.ctx.session.config, model: config.fallbackModel },
-      };
-      await contextManager.ensureContextReady(fallbackSession);
-      const fallbackContext = contextManager.createContext(fallbackSession);
-      sdkFallbackModel = fallbackContext.getSdkModelId();
+      const sessionScopedProvider = Boolean(
+        config.providerConfig?.apiKey ||
+          config.providerConfig?.baseUrl ||
+          config.providerConfig?.region
+      );
+      const outcome = await decideFallbackModelCuration({
+        providerId,
+        fallbackModel: config.fallbackModel,
+        cacheKey: this.ctx.session.id,
+        providerConfig: config.providerConfig ?? {},
+        sessionScopedProvider,
+        signalAborted: false,
+        guardsIntact: () => true,
+      });
+      if (outcome === 'excluded') {
+        this.logger.warn(
+          `Ignoring curated-out fallback model '${config.fallbackModel}' for provider '${providerId}'`
+        );
+      } else if (outcome === 'allowed') {
+        const contextManager = getProviderContextManager();
+        const fallbackSession = {
+          ...this.ctx.session,
+          config: { ...this.ctx.session.config, model: config.fallbackModel },
+        };
+        try {
+          await contextManager.ensureContextReady(fallbackSession);
+          const fallbackContext = contextManager.createContext(fallbackSession);
+          sdkFallbackModel = fallbackContext.getSdkModelId();
+        } catch {
+          this.logger.warn(
+            `Ignoring fallback model '${config.fallbackModel}' rejected by provider '${providerId}'`
+          );
+        }
+      }
     }
+
+    const configuredFallbackModel = sdkFallbackModel ? config.fallbackModel : undefined;
+    const configuredPrimaryModel = config.model;
+    const configuredScopedApiKey = config.providerConfig?.apiKey;
+    const configuredScopedBaseUrl = config.providerConfig?.baseUrl;
+    const configuredScopedRegion = config.providerConfig?.region;
+    this.effectiveFallbackCaptured = true;
+    this.effectiveFallbackModel = configuredFallbackModel;
+    markBuiltFallbackIdentity(this.ctx.session, {
+      providerId,
+      primaryModel: config.model,
+      fallbackModel: configuredFallbackModel,
+      scopedApiKey: configuredScopedApiKey,
+      scopedBaseUrl: configuredScopedBaseUrl,
+      scopedRegion:
+        typeof config.providerConfig?.region === 'string'
+          ? config.providerConfig.region
+          : undefined,
+      providerEpoch,
+    });
 
     const systemPromptConfig = this.buildSystemPrompt();
     const disallowedTools = this.getDisallowedTools();
@@ -376,13 +450,43 @@ export class QueryOptionsBuilder {
       hooks,
 
       canUseTool: this.canUseTool,
-      onUserDialog: async (request) => {
-        if (request.dialogKind === 'refusal_fallback_prompt') {
-          return { behavior: 'completed', result: { continue: true } };
+      onUserDialog: async (request, { signal }) => {
+        if (request.dialogKind !== 'refusal_fallback_prompt') return { behavior: 'cancelled' };
+        if (!configuredFallbackModel) {
+          return { behavior: 'cancelled' };
         }
-        return { behavior: 'cancelled' };
+        const guardsIntact = () => {
+          const configNow = this.ctx.session.config;
+          return (
+            !signal.aborted &&
+            getProviderCatalogEpoch(providerId) === providerEpoch &&
+            (configNow.provider ?? 'anthropic') === providerId &&
+            configNow.fallbackModel === configuredFallbackModel &&
+            configNow.model === configuredPrimaryModel &&
+            configNow.providerConfig?.apiKey === configuredScopedApiKey &&
+            configNow.providerConfig?.baseUrl === configuredScopedBaseUrl &&
+            configNow.providerConfig?.region === configuredScopedRegion
+          );
+        };
+        const outcome = await decideFallbackModelCuration({
+          providerId,
+          fallbackModel: configuredFallbackModel,
+          cacheKey: this.ctx.session.id,
+          providerConfig: this.ctx.session.config.providerConfig ?? {},
+          sessionScopedProvider: Boolean(
+            this.ctx.session.config.providerConfig?.apiKey ||
+              this.ctx.session.config.providerConfig?.baseUrl ||
+              this.ctx.session.config.providerConfig?.region
+          ),
+          signalAborted: signal.aborted,
+          guardsIntact,
+        });
+        if (outcome !== 'allowed') {
+          return { behavior: 'cancelled' };
+        }
+        return { behavior: 'completed', result: { continue: true } };
       },
-      supportedDialogKinds: config.fallbackModel ? ['refusal_fallback_prompt'] : undefined,
+      supportedDialogKinds: sdkFallbackModel ? ['refusal_fallback_prompt'] : undefined,
     };
 
     if (this.ctx.session.type === 'space_chat') {
@@ -544,8 +648,10 @@ export class QueryOptionsBuilder {
         }
       }
 
-      const fallbackModel = this.ctx.session.config.fallbackModel;
-      if (fallbackModel) {
+      const fallbackModel = this.effectiveFallbackCaptured
+        ? this.effectiveFallbackModel
+        : this.ctx.session.config.fallbackModel;
+      if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
         const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
         const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
         const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);

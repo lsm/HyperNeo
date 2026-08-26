@@ -11,13 +11,14 @@ import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
+import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
 import type { Database } from '../../../../src/storage/database';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
-import { setModelsCache } from '../../../../src/lib/model-service';
+import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
 
 class TranslatingMockProvider implements Provider {
   readonly id = 'anthropic-codex';
@@ -2449,6 +2450,11 @@ describe('SDKMessageHandler', () => {
         model: 'gpt-5.4',
         fallbackModel: 'gpt-5.4-mini',
       };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
 
       await handler.handleMessage({
         type: 'system',
@@ -2466,6 +2472,507 @@ describe('SDKMessageHandler', () => {
           config: expect.objectContaining({ model: 'gpt-5.4-mini' }),
         })
       );
+    });
+
+    it('skips scoped catalog discovery when no curation is configured', async () => {
+      const provider = new TranslatingMockProvider();
+      let scopedFetchCount = 0;
+      (
+        provider as unknown as {
+          getModelsForSessionConfig: (config: unknown) => Promise<ModelInfo[]>;
+        }
+      ).getModelsForSessionConfig = async () => {
+        scopedFetchCount += 1;
+        return [];
+      };
+      getProviderRegistry().register(provider);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        providerConfig: { baseUrl: 'http://scoped.example' },
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        scopedBaseUrl: 'http://scoped.example',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(scopedFetchCount).toBe(0);
+      expect(mockSession.config.model).toBe('gpt-5.4-mini');
+      expect(updateSessionSpy).toHaveBeenCalled();
+    });
+
+    it('treats fallback resolution failure as a stale retry instead of throwing', async () => {
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'missing-provider',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'missing-provider',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('should skip fallback persistence when the provider epoch changed after build', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        providerEpoch: getProviderCatalogEpoch('anthropic-codex') + 5,
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist a retry event for a fallback replaced after build', async () => {
+      const provider = new TranslatingMockProvider();
+      provider.translateModelIdForSdk = () => 'default';
+      provider.getModels = async () => [];
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [
+        { id: 'gpt-5.4-mini' },
+        { id: 'gpt-5.4-turbo' },
+      ]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-turbo',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'default',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist a curated-out fallback model', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist the fallback when the session config changes during the curation check', async () => {
+      const provider = new TranslatingMockProvider();
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT 5.4 Mini',
+            alias: 'gpt54mini',
+            family: 'gpt',
+            provider: 'anthropic-codex',
+            contextWindow: 100000,
+            description: 'GPT 5.4 Mini',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      const pending = handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mockSession.config = { ...mockSession.config, fallbackModel: undefined };
+
+      await pending;
+
+      expect(mockSession.config.fallbackModel).toBeUndefined();
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist the fallback when it changes during fallback resolution', async () => {
+      const provider = new TranslatingMockProvider();
+      (provider as unknown as { ensureBridgeStarted: () => Promise<void> }).ensureBridgeStarted =
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 8));
+        };
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      const pending = handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mockSession.config = { ...mockSession.config, fallbackModel: 'opus' };
+
+      await pending;
+
+      expect(mockSession.config.fallbackModel).toBe('opus');
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist the fallback when the primary model changes during the curation check', async () => {
+      const provider = new TranslatingMockProvider();
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT 5.4 Mini',
+            alias: 'gpt54mini',
+            family: 'gpt',
+            provider: 'anthropic-codex',
+            contextWindow: 100000,
+            description: 'GPT 5.4 Mini',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      const pending = handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mockSession.config = { ...mockSession.config, model: 'gpt-5.4-turbo' };
+
+      await pending;
+
+      expect(mockSession.config.model).toBe('gpt-5.4-turbo');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist the fallback when session-scoped provider settings change during the curation check', async () => {
+      const provider = new TranslatingMockProvider();
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT 5.4 Mini',
+            alias: 'gpt54mini',
+            family: 'gpt',
+            provider: 'anthropic-codex',
+            contextWindow: 100000,
+            description: 'GPT 5.4 Mini',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      const pending = handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mockSession.config = { ...mockSession.config, providerConfig: { apiKey: 'sk-new-endpoint' } };
+
+      await pending;
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist the fallback when the session region changes during the curation check', async () => {
+      const provider = new TranslatingMockProvider();
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT 5.4 Mini',
+            alias: 'gpt54mini',
+            family: 'gpt',
+            provider: 'anthropic-codex',
+            contextWindow: 100000,
+            description: 'GPT 5.4 Mini',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      const pending = handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mockSession.config = { ...mockSession.config, providerConfig: { region: 'global' } };
+
+      await pending;
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist an SDK fallback that no longer maps to the configured fallback', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      getProviderRegistry().setCuratedModels('anthropic-codex', [
+        { id: 'gpt-5.4' },
+        { id: 'gpt-5.4-mini' },
+      ]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'gpt-5.4',
+        fallback_model: 'claude-opus-4-7',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist a retry event after the primary model changed since build', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4-turbo',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4-turbo');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist a retry event after session-scoped settings changed since build', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        providerConfig: { apiKey: 'sk-new-endpoint' },
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist an SDK fallback when no fallback is configured', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: undefined,
+      };
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'gpt-5.4',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
     });
 
     describe('refusal rewind target plumbing (refused_user_message_uuid)', () => {

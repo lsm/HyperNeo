@@ -105,6 +105,129 @@ describe('OllamaProvider', () => {
     });
   });
 
+  it('loads models from the session-scoped base URL without touching the shared cache', async () => {
+    process.env.OLLAMA_BASE_URL = 'http://ollama.test/';
+    const fetchMock = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            models: [
+              {
+                name: 'qwen3:14b',
+                model: 'qwen3:14b',
+                modified_at: '2026-04-20T00:00:00Z',
+                details: { family: 'qwen', parameter_size: '14B', quantization_level: 'Q4_K_M' },
+              },
+            ],
+          }),
+          { status: 200 }
+        )
+    );
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    const models = await provider.getModelsForSessionConfig({
+      baseUrl: 'http://scoped.ollama.test',
+      apiKey: 'scoped-key',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('http://scoped.ollama.test/api/tags', {
+      headers: { Authorization: 'Bearer scoped-key' },
+      signal: expect.any(AbortSignal),
+    });
+    expect(models).toHaveLength(1);
+    expect(models[0]).toMatchObject({ id: 'qwen3:14b', provider: 'ollama' });
+
+    await provider.getModels();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenLastCalledWith('http://ollama.test/api/tags', {
+      headers: undefined,
+    });
+  });
+
+  it('authenticates scoped discovery with the session API key when only the key is overridden', async () => {
+    process.env.OLLAMA_BASE_URL = 'http://ollama.test/';
+    const fetchMock = mock(
+      async () =>
+        new Response(
+          JSON.stringify({
+            models: [
+              {
+                name: 'qwen3:14b',
+                model: 'qwen3:14b',
+                modified_at: '2026-04-20T00:00:00Z',
+                details: { family: 'qwen', parameter_size: '14B', quantization_level: 'Q4_K_M' },
+              },
+            ],
+          }),
+          { status: 200 }
+        )
+    );
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    const models = await provider.getModelsForSessionConfig({ apiKey: 'session-key' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('http://ollama.test/api/tags', {
+      headers: { Authorization: 'Bearer session-key' },
+      signal: expect.any(AbortSignal),
+    });
+    expect(models).toHaveLength(1);
+    expect(models[0]).toMatchObject({ id: 'qwen3:14b' });
+  });
+
+  it('returns an empty scoped catalog when the session API key is rejected', async () => {
+    process.env.OLLAMA_BASE_URL = 'http://ollama.test/';
+    const fetchMock = mock(async () => new Response('unauthorized', { status: 401 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    const models = await provider.getModelsForSessionConfig({ apiKey: 'bad-key' });
+
+    expect(models).toEqual([]);
+  });
+
+  it('keeps a successful empty scoped response explicit instead of substituting fallback models', async () => {
+    process.env.OLLAMA_BASE_URL = 'http://ollama.test/';
+    const fetchMock = mock(
+      async () => new Response(JSON.stringify({ models: [] }), { status: 200 })
+    );
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    const models = await provider.getModelsForSessionConfig({ apiKey: 'session-key' });
+
+    expect(models).toEqual([]);
+  });
+
+  it('fails scoped discovery closed with an empty catalog on transport errors', async () => {
+    process.env.OLLAMA_BASE_URL = 'http://ollama.test/';
+    const fetchMock = mock(async () => new Response('boom', { status: 500 }));
+    const provider = new OllamaProvider({
+      kind: 'local',
+      env: process.env,
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    const models = await provider.getModelsForSessionConfig({ apiKey: 'session-key' });
+
+    expect(models).toEqual([]);
+  });
+
   it('bypasses the Ollama model cache for forced remote discovery', async () => {
     let callCount = 0;
     const fetchMock = mock(async () => {

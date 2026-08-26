@@ -98,6 +98,8 @@ export interface Provider {
 
   ensureBridgeStarted?(modelId: string, sessionConfig?: ProviderSessionConfig): Promise<void>;
 
+  getModelsForSessionConfig?(sessionConfig?: ProviderSessionConfig): Promise<ModelInfo[]>;
+
   translateModelIdForSdk?(modelId: string): string;
 
   getTitleGenerationModel?(): string;

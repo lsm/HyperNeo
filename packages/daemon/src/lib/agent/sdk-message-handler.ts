@@ -37,7 +37,8 @@ import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { getSessionModelInfo } from '../model-service.ts';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
+import { getProviderCatalogEpoch, getSessionModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
 import { ContextFetcher } from './context-fetcher.ts';
@@ -49,7 +50,10 @@ import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
-import { shouldUseHyperNeoCompactFallback } from './query-options-builder.js';
+import {
+  getBuiltFallbackIdentity,
+  shouldUseHyperNeoCompactFallback,
+} from './query-options-builder.js';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
@@ -1292,8 +1296,77 @@ export class SDKMessageHandler {
     await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
     if (message.direction !== 'retry') return;
     if (message.scope === 'local') return;
-    const fallbackModel = await this.resolveConfiguredFallbackModel(message.fallback_model);
+    const providerId = session.config.provider ?? 'anthropic';
+    const builtIdentity = getBuiltFallbackIdentity(session);
+    if (
+      !builtIdentity ||
+      builtIdentity.providerId !== providerId ||
+      builtIdentity.primaryModel !== session.config.model ||
+      builtIdentity.fallbackModel !== session.config.fallbackModel ||
+      builtIdentity.scopedApiKey !== session.config.providerConfig?.apiKey ||
+      builtIdentity.scopedBaseUrl !== session.config.providerConfig?.baseUrl ||
+      builtIdentity.scopedRegion !==
+        (typeof session.config.providerConfig?.region === 'string'
+          ? session.config.providerConfig.region
+          : undefined) ||
+      (builtIdentity.providerEpoch !== undefined &&
+        builtIdentity.providerEpoch !== getProviderCatalogEpoch(providerId))
+    ) {
+      return;
+    }
+    const fallbackModelBeforeResolve = this.ctx.session.config.fallbackModel;
+    let fallbackModel: string | undefined;
+    try {
+      fallbackModel = await this.resolveConfiguredFallbackModel(message.fallback_model);
+    } catch {
+      this.logger.warn(
+        '[SDKMessageHandler] Fallback resolution failed for a stale or removed provider, ignoring retry'
+      );
+      return;
+    }
     if (!fallbackModel || session.config.model === fallbackModel) return;
+    if (
+      fallbackModelBeforeResolve !== fallbackModel ||
+      fallbackModelBeforeResolve !== builtIdentity.fallbackModel ||
+      this.ctx.session.config.fallbackModel !== fallbackModel
+    ) {
+      return;
+    }
+    const guardsIntact = () => {
+      const liveConfig = this.ctx.session.config;
+      return (
+        (liveConfig.provider ?? 'anthropic') === providerId &&
+        liveConfig.fallbackModel === fallbackModel &&
+        liveConfig.model === builtIdentity.primaryModel &&
+        liveConfig.providerConfig?.apiKey === builtIdentity.scopedApiKey &&
+        liveConfig.providerConfig?.baseUrl === builtIdentity.scopedBaseUrl &&
+        liveConfig.providerConfig?.region ===
+          (typeof builtIdentity.scopedRegion === 'string'
+            ? builtIdentity.scopedRegion
+            : undefined) &&
+        (builtIdentity.providerEpoch === undefined ||
+          builtIdentity.providerEpoch === getProviderCatalogEpoch(providerId))
+      );
+    };
+    const outcome = await decideFallbackModelCuration({
+      providerId,
+      fallbackModel,
+      cacheKey: session.id,
+      providerConfig: session.config.providerConfig ?? {},
+      sessionScopedProvider: Boolean(
+        builtIdentity.scopedApiKey || builtIdentity.scopedBaseUrl || builtIdentity.scopedRegion
+      ),
+      signalAborted: false,
+      guardsIntact,
+    });
+    if (outcome !== 'allowed') {
+      if (outcome === 'cancelled') {
+        this.logger.warn(
+          `[SDKMessageHandler] Session config changed during fallback validation, skipping persistence`
+        );
+      }
+      return;
+    }
 
     session.config = {
       ...session.config,
@@ -1311,7 +1384,7 @@ export class SDKMessageHandler {
     sdkFallbackModel: string | undefined
   ): Promise<string | undefined> {
     const configuredFallbackModel = this.ctx.session.config.fallbackModel;
-    if (!sdkFallbackModel || !configuredFallbackModel) return sdkFallbackModel;
+    if (!sdkFallbackModel || !configuredFallbackModel) return undefined;
 
     const fallbackSession = {
       ...this.ctx.session,
@@ -1323,7 +1396,7 @@ export class SDKMessageHandler {
     const contextManager = getProviderContextManager();
     await contextManager.ensureContextReady(fallbackSession);
     const fallbackSdkModel = contextManager.createContext(fallbackSession).getSdkModelId();
-    return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : sdkFallbackModel;
+    return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : undefined;
   }
 
   private async handleUserMessage(message: SDKMessage): Promise<void> {
