@@ -12,7 +12,11 @@ Core invariants for every site below:
 - Stages never read Preact signals. The shell (wrapper or hook) snapshots
   signal values (`.value`) into a plain input object at the call boundary, and
   interprets outputs back into signal writes / toasts / DOM inside `batch()`
-  where the caller already does so.
+  where the caller already does so. (Review correction PR #2982 — the ONE
+  exception is router phase 2: its signal WRITES are effect stages operating
+  through explicit write-PORT functions passed as deps and through values
+  snapshotted BEFORE the run; no signal object ever enters ctx, so the
+  no-signal-reads rule still holds inside stages.)
 - Characterization tests are written/pinned BEFORE each refactor (ADR 0004
   Decision 7). Nearly all sites already have Vitest suites; gaps are called
   out per site.
@@ -510,7 +514,10 @@ anywhere in this plan.
      case sensitivity of session ids, task-id alternation
      `[a-fA-F0-9-]+|[a-z]-[1-9]\d*`). Add missing rows first.
   2. Migrate `getSpaceIdFromPath` to `decisionRun('space-id-from-path',
-     [...14 gates])`; wrapper returns `ctx.decision`.
+     [...16 gates])` — review correction (PR #2982): the current cascade and
+     this plan's own inventory list SIXTEEN patterns; one gate per pattern,
+     none omitted (following a 14-gate blueprint would return `null` for two
+     valid route forms). Wrapper returns `ctx.decision`.
   3. Optionally fold `getSpaceEvolveFromPath` / `getSpaceTasksTabFromPath`
      into the same gate style (small, independent).
   4. Phase 2 (separate PR): compose the complete `apply-space-route`
@@ -576,9 +583,18 @@ anywhere in this plan.
   try/catch JSON path) AND the NULLISH EARLY RETURN (review correction:
   when `err` is `null`/`undefined` the current function returns exactly
   `'Something went wrong.'` before any normalization, pinned by the existing
-  suite — retain that guard first, then normalize). Ctx = `{ msg: string;
-  lower: string; decision: string | null }`; no terminal gate; wrapper
-  returns `ctx.decision ?? 'Something went wrong. Please try again.'`.
+  suite — retain that guard first, then normalize). Review correction (PR
+  #2982): `JSON.stringify` can SUCCEED while producing `undefined` (a
+  function, symbol, or object whose `toJSON` returns `undefined`), so today's
+  `msg` can be `undefined` and reaches `msg || 'Something went wrong.'` —
+  the normalization must apply that fallback BEFORE deriving `lower`
+  (`lower` derives from the fallback-applied message; eagerly lowercasing an
+  undefined `msg` throws from the error sanitizer). Ctx = `{ msg: string;
+  lower: string; decision: string | null }` where both `msg` and `lower` are
+  POST-fallback values; no terminal gate; wrapper returns `ctx.decision ??
+  'Something went wrong. Please try again.'`. Add a characterization row for
+  the undefined-stringify input (falls through to the empty-message
+  fallback).
 - **Pure core design.** Gates: `gatePassThrough` (decides `msg` when NOT
   `isInternalMessage(msg)` — the `msg || 'Something went wrong.'` empty-string
   fallback folds in here) → `gateConnectionLost` (websocket / not connected) →
@@ -850,14 +866,18 @@ site's Vitest suite green.
 10. **`resolveTargetSessionId`** — first steer-style direct pipeline.
 11. **`resolveNodeClick`** — the meaty direct pipeline; benefits from
     conventions built in step 10.
-12. **`sendMessage` Step 1** (admission decisionRun) — first hook-resident
-    interpretation; zero async changes.
+12. **`sendMessage` characterization** — pin the hook's admission decision
+    table and effect ordering (queue/reject/send arms, offline-enqueue label
+    truncation, timeout behavior); NO production change.
 13. **`shortenModelName`** — stays an ORDINARY PURE HELPER (review correction: a per-item pipeline executes once per dropdown item per render, exactly the hot inner-loop placement the guidance excludes; if it is ever pipelined, call-site memoization is a PREREQUISITE, not a follow-up)
     decision.
 14. **`getModelLabel`** — optional/last; gated on the SessionsPage
     convergence open question.
-15. **`sendMessage` Step 2** — full async pipeline; lands last with the
-    strongest characterization net.
+15. **`sendMessage` complete migration** — the ONE direct mixed pipeline
+    (admission gates AND send/queue effect stages) lands in a SINGLE change
+    (review corrections r21/r24: never ship an admission-only intermediate
+    whose decision the hook still interprets imperatively); lands last with
+    the strongest characterization net.
 16. *(Optional follow-up)* router phase 2, if the else-if cascade in
     `applyPathToSignals` is still deemed worth restructuring.
 
@@ -877,51 +897,41 @@ characterization of current behavior, always written before extraction), ➕
 additive core (a pure module/pipeline landed UNWIRED with its own unit
 tests), 🔧 apply (wire call sites; one site per slice), and cleanup (small
 trailing slice — none is scheduled here; the only trailing cleanups are
-embedded in their slices, e.g. the truncation-helper unification in PR 15).
+embedded in their slices, e.g. the truncation-helper unification in PR 14).
 Tiny slices may combine 📌+🔧: most sites in this plan are pure migrations
 of one small function behind an unchanged export, so they ship as single
 📌+🔧 slices with their decision-table pins in the same PR. 📌 and ➕ leaves
 are parallel-safe — they touch no call sites — so sibling slices can be
 authored concurrently. The sequence follows the "Suggested migration order"
 phases above and their stated dependencies: the Step 0 spike blocks every
-pipeline slice, PR 2 (the first landed site) establishes the conventions the
+pipeline slice, PR 1 (the first landed site) establishes the conventions the
 rest reuse, `mapRawModelsToModelInfos` keeps its corrected internal design
 (one raw pipeline, plain-helper classifiers), and `sendMessage` ships
 admission gates and effect stages together in ONE slice. `stagedRun` is
 never ported to web.
 
-Per-site coverage: PR 2 `task-banner`; PR 3 `session-load-error`; PR 4
-`user-error`; PR 5 `app-routing`; PR 6 router parsers; PR 7 `status-actions`;
-PR 8 `parse-group-message`; PR 9 `useModelSwitcher`; PR 10
-`resolveTargetSessionId`; PR 11 `node-click-resolver`; PR 12
-`shortenModelName`; PR 13 `getModelLabel`; PR 14+PR 15 `sendMessage`; PR 16
+Per-site coverage: PR 1 `task-banner`; PR 2 `session-load-error`; PR 3
+`user-error`; PR 4 `app-routing`; PR 5 router parsers; PR 6 `status-actions`;
+PR 7 `parse-group-message`; PR 8 `useModelSwitcher`; PR 9
+`resolveTargetSessionId`; PR 10 `node-click-resolver`; PR 11
+`shortenModelName`; PR 12 `getModelLabel`; PR 13+PR 14 `sendMessage`; PR 15
 optional router phase 2. No per-site section is left uncovered.
 
-### PR 1 — `chore(web): add superpipe dependency and web decisionRun combinator`
+### PR 1 — `refactor(web): migrate resolveActiveTaskBanner to decisionRun, landing the superpipe dependency`
 
-- **Phase**: ➕ additive core — the combinator lands unwired; only its parity
-  test imports it.
+- **Phase**: ➕ additive core + 📌+🔧 — the dependency/combinator and the
+  first migrated site land TOGETHER (review correction PR #2982: ADR 0004
+  adds the web dependency when the first direct pipeline lands; a standalone
+  dependency-plus-combinator PR ships unused production machinery and is
+  contrary to the adopted policy — if the bundling spike fails, this slice
+  lands the site as a direct raw pipeline instead and no `decisionRun` is
+  ported).
 - **Scope**: `packages/web/package.json` (+ lockfile) — add `"superpipe":
   "0.17.0"` exact pin; new `packages/web/src/lib/pipelines/decision-run.ts`
-  (web-local copy of the 19-line combinator, option (a)); new parity test
-  pinning first-gate-wins, wrapper-fallback, and null-seeding. Verify all
-  three consumers per Step 0: vitest (`user-error.test.ts`), `make build`,
-  and the dev server; eyeball the bundle-size delta.
-- **Budget**: prod Δ ≈ 25 (dependency entry + the 19-line module); test
-  Δ ≈ 60.
-- **Lands**: superpipe resolves under vitest/vite, the rollup production
-  build, and dev; `decisionRun` is available to web with pinned parity. If
-  the spike fails on bundling grounds, this slice instead lands direct-only
-  confirmation and every decisionRun design below falls back to raw
-  steer-style pipelines.
-- **Excludes**: any site migration; `stagedRun` (never ported to web).
-- **Tests**: `src/lib/pipelines/__tests__/decision-run.test.ts` (new).
-- **Depends on**: none. Blocks every pipeline slice below.
-
-### PR 2 — `refactor(web): migrate resolveActiveTaskBanner to decisionRun`
-
-- **Phase**: 📌+🔧 — pin rows and the one-function migration in one PR.
-- **Scope**: `packages/web/src/lib/task-banner.ts` — compound fall-through
+  (web-local copy of the 19-line combinator, option (a)) with its parity
+  test (first-gate-wins, wrapper-fallback, null-seeding); verify all three
+  consumers per Step 0 (vitest, `make build`, dev server; eyeball the
+  bundle-size delta); THEN `packages/web/src/lib/task-banner.ts` — compound fall-through
   rows FIRST (approved-without-reason, review-without-checkpoint, hooks
   without workflowRunId), then gates `gateTaskBlocked` →
   `gatePostApprovalBlocked` → `gateTaskCompletionPending` → `gateHookPending`
@@ -929,16 +939,16 @@ optional router phase 2. No per-site section is left uncovered.
   `decisionRun('active-task-banner', [...])`, wrapper keeps the signature and
   returns `ctx.decision ?? null`.
 - **Budget**: prod Δ ≈ 45; test Δ ≈ 60.
-- **Lands**: the first web pipeline is live and establishes the conventions
-  every later slice reuses (exported gate names, module-scope instance,
-  wrapper keeps the exact export signature, per-site pipeline in the same
-  module for small sites).
+- **Lands**: the first web pipeline is live, the dependency earns its place
+  in the same change, and it establishes the conventions every later slice
+  reuses (exported gate names, module-scope instance, wrapper keeps the exact
+  export signature, per-site pipeline in the same module for small sites).
 - **Excludes**: `SpaceTaskPane.tsx` (renders the returned union unchanged);
   every other site.
 - **Tests**: `src/lib/__tests__/task-banner.test.ts` (+ precedence-order rows).
 - **Depends on**: PR 1.
 
-### PR 3 — `refactor(web): migrate classifySessionLoadError to decisionRun`
+### PR 2 — `refactor(web): migrate classifySessionLoadError to decisionRun`
 
 - **Phase**: 📌+🔧.
 - **Scope**: `packages/web/src/lib/session-load-error.ts` — precedence rows
@@ -955,9 +965,9 @@ optional router phase 2. No per-site section is left uncovered.
   `UnavailableSessionView`); `describeUnavailable` / `isHardUnavailable`
   (simple switches, out of scope).
 - **Tests**: `src/lib/__tests__/session-load-error.test.ts`.
-- **Depends on**: PR 2. Parallel-safe with PR 4 (different module).
+- **Depends on**: PR 1. Parallel-safe with PR 3 (different module).
 
-### PR 4 — `refactor(web): migrate sanitizeUserError to decisionRun`
+### PR 3 — `refactor(web): migrate sanitizeUserError to decisionRun`
 
 - **Phase**: 📌+🔧.
 - **Scope**: `packages/web/src/lib/user-error.ts` — order-pair rows FIRST
@@ -973,9 +983,9 @@ optional router phase 2. No per-site section is left uncovered.
 - **Excludes**: consumers (`useSendMessage` catch, `outbound-queue` flush
   loop, `connection-manager`); `isAuthError` / `isTransientError`.
 - **Tests**: `src/lib/__tests__/user-error.test.ts`.
-- **Depends on**: PR 2. Parallel-safe with PR 3.
+- **Depends on**: PR 1. Parallel-safe with PR 2.
 
-### PR 5 — `refactor(web): migrate deriveAppExpectedPath to decisionRun`
+### PR 4 — `refactor(web): migrate deriveAppExpectedPath to decisionRun`
 
 - **Phase**: 📌+🔧.
 - **Scope**: `packages/web/src/lib/app-routing.ts` — precedence rows FIRST
@@ -998,17 +1008,18 @@ optional router phase 2. No per-site section is left uncovered.
 - **Excludes**: `App.tsx` — the effect and its state snapshot are unchanged.
 - **Tests**: `src/lib/__tests__/app-routing.test.ts` (green unchanged),
   `src/lib/__tests__/app-routing.precedence.test.ts` (new).
-- **Depends on**: PR 2. Parallel-safe with PR 6.
+- **Depends on**: PR 1. Parallel-safe with PR 5.
 
-### PR 6 — `refactor(web): migrate router path parsers to decisionRun`
+### PR 5 — `refactor(web): migrate router path parsers to decisionRun`
 
 - **Phase**: 📌+🔧 — the missing matrix rows live in this slice, not a
   preceding 📌.
 - **Scope**: `packages/web/src/lib/router.ts` — missing parser-matrix rows
   FIRST (every route shape, session-id case sensitivity, task-id alternation
   `[a-fA-F0-9-]+|[a-z]-[1-9]\d*`), then `getSpaceIdFromPath` as
-  `decisionRun('space-id-from-path', [...14 gates])`, one gate per pattern
-  owning its regex constant verbatim, order = current order (agent-detail
+  `decisionRun('space-id-from-path', [...16 gates])` (review correction PR
+  #2982: sixteen patterns, one gate per pattern — the earlier 14-gate count
+  omitted two valid route forms), owning its regex constant verbatim, order = current order (agent-detail
   before agent-list, task-view before task); wrapper returns `ctx.decision`
   with the `?? null` default, no terminal gate; fold
   `getSpaceEvolveFromPath` / `getSpaceTasksTabFromPath` into the same gate
@@ -1018,13 +1029,13 @@ optional router phase 2. No per-site section is left uncovered.
   the existing matrix; `getSpaceIdFromPath`'s contained blast radius (no
   external production callers) is preserved.
 - **Excludes**: `applyPathToSignals`, `handlePopState`, and the legacy
-  redirect writes (phase 2 is PR 16, optional).
+  redirect writes (phase 2 is PR 15, optional).
 - **Tests**: `src/lib/__tests__/router.test.ts`,
   `router-space-slug.test.ts`, `router-lifecycle-recovery.test.ts`,
   `overlay-history.test.ts` — green unchanged.
-- **Depends on**: PR 2. Parallel-safe with PR 5.
+- **Depends on**: PR 1. Parallel-safe with PR 4.
 
-### PR 7 — `refactor(web): migrate getCurrentAction to decisionRun`
+### PR 6 — `refactor(web): migrate getCurrentAction to decisionRun`
 
 - **Phase**: 📌+🔧.
 - **Scope**: `packages/web/src/lib/status-actions.ts` — gate-order rows
@@ -1042,9 +1053,9 @@ optional router phase 2. No per-site section is left uncovered.
   `getCurrentAction` (open question 4).
 - **Tests**: `src/lib/__tests__/status-actions.test.ts` (+ the
   fallback-sentinel rotation test).
-- **Depends on**: PR 2. Parallel-safe with PR 8.
+- **Depends on**: PR 1. Parallel-safe with PR 7.
 
-### PR 8 — `refactor(web): migrate parseGroupMessage to decisionRun`
+### PR 7 — `refactor(web): migrate parseGroupMessage to decisionRun`
 
 - **Phase**: 📌+🔧 — the pins are the bulk of the slice (only site without a
   suite).
@@ -1062,9 +1073,9 @@ optional router phase 2. No per-site section is left uncovered.
 - **Excludes**: `useTurnBlocks.ts` (its suite stays green unchanged).
 - **Tests**: `src/lib/__tests__/parse-group-message.test.ts` (new),
   `src/hooks/__tests__/useTurnBlocks.test.ts` (unchanged).
-- **Depends on**: PR 2. Parallel-safe with PR 7.
+- **Depends on**: PR 1. Parallel-safe with PR 6.
 
-### PR 9 — `refactor(web): compose mapRawModelsToModelInfos as a direct superpipe pipeline`
+### PR 8 — `refactor(web): compose mapRawModelsToModelInfos as a direct superpipe pipeline`
 
 - **Phase**: 📌+🔧 — tables first, then the corrected internal design.
 - **Scope**: `packages/web/src/hooks/useModelSwitcher.ts` — provider/family
@@ -1085,9 +1096,9 @@ optional router phase 2. No per-site section is left uncovered.
 - **Excludes**: `ModelsSettings.tsx` / `WorkflowModelSelect.tsx` fetch
   handlers (consume the unchanged wrapper); any per-model decisionRun.
 - **Tests**: `src/hooks/__tests__/useModelSwitcher.test.ts`.
-- **Depends on**: PR 1, PR 2.
+- **Depends on**: PR 1, PR 1.
 
-### PR 10 — `refactor(web): migrate resolveTargetSessionId to a direct superpipe pipeline`
+### PR 9 — `refactor(web): migrate resolveTargetSessionId to a direct superpipe pipeline`
 
 - **Phase**: 📌+🔧.
 - **Scope**: `packages/web/src/hooks/useTargetSessionContext.ts` — rows FIRST
@@ -1103,13 +1114,13 @@ optional router phase 2. No per-site section is left uncovered.
   the `?? candidates[0]` head-selection atomically.
 - **Budget**: prod Δ ≈ 70; test Δ ≈ 100.
 - **Lands**: the first steer-style direct web pipeline (ctx threading, final
-  decide) is in place, setting the template PR 11 builds on.
+  decide) is in place, setting the template PR 10 builds on.
 - **Excludes**: the hook's latch logic, refs, and render-phase writes
   (resource/state ownership stays in the hook per ADR Decision 5).
 - **Tests**: `src/hooks/__tests__/useTargetSessionContext.test.ts`.
-- **Depends on**: PR 1, PR 2.
+- **Depends on**: PR 1, PR 1.
 
-### PR 11 — `refactor(web): migrate resolveNodeClick to a direct superpipe pipeline`
+### PR 10 — `refactor(web): migrate resolveNodeClick to a direct superpipe pipeline`
 
 - **Phase**: 📌+🔧.
 - **Scope**: `packages/web/src/lib/node-click-resolver.ts` — missing rows
@@ -1133,12 +1144,14 @@ optional router phase 2. No per-site section is left uncovered.
   interpretation unchanged).
 - **Tests**: `src/lib/__tests__/node-click-resolver.test.ts` (+ precedence
   rows).
-- **Depends on**: PR 1, PR 2, PR 10.
+- **Depends on**: PR 1, PR 1, PR 9.
 
-### PR 12 — `test(web): pin shortenModelName scrubs; helper stays a plain function`
+### PR 11 — `test(web): pin shortenModelName scrubs; helper stays a plain function`
 
 - **Phase**: 📌 pins — prod Δ = 0 by design.
-- **Scope**: `packages/web/src/lib/provider-brand.test.ts` — each scrub in
+- **Scope**: `packages/web/src/lib/__tests__/provider-brand.test.ts` (review
+  correction PR #2982: the existing suite lives under `__tests__/`; extend
+  it, do not create a second file) — each scrub in
   isolation AND composition (openrouter `vendor: model (Kimi)` loses both
   wrappers; kimi `Kimi K3` keeps `K3`). `provider-brand.ts` stays an
   ORDINARY PURE HELPER with the `(name, provider?) => string` signature —
@@ -1155,7 +1168,7 @@ optional router phase 2. No per-site section is left uncovered.
 - **Depends on**: none — parallel-safe leaf; sequenced here to match
   migration-order step 13.
 
-### PR 13 — `refactor(web): migrate getModelLabel to decisionRun`
+### PR 12 — `refactor(web): migrate getModelLabel to decisionRun`
 
 - **Phase**: 📌+🔧 — CONDITIONAL: only lands if open question 2 resolves in
   favor of keeping the lib version; if it opts for deletion, this slice is
@@ -1174,9 +1187,9 @@ optional router phase 2. No per-site section is left uncovered.
   by design; never silently changed here); the memo cache (only if the
   convergence lands and render-path calls appear).
 - **Tests**: `src/lib/__tests__/session-utils.test.ts`.
-- **Depends on**: PR 1, PR 2; blocked on the open question 2 decision.
+- **Depends on**: PR 1, PR 1; blocked on the open question 2 decision.
 
-### PR 14 — `test(web): pin sendMessage effect ordering and failure paths`
+### PR 13 — `test(web): pin sendMessage effect ordering and failure paths`
 
 - **Phase**: 📌 pins — prod Δ = 0.
 - **Scope**: missing characterization rows in
@@ -1189,13 +1202,13 @@ optional router phase 2. No per-site section is left uncovered.
   effect ordering is behavior and must be pinned against the UNCHANGED hook
   before any extraction.
 - **Budget**: prod Δ = 0; test Δ ≈ 150.
-- **Lands**: the parity net PR 15 relies on exists and is green.
+- **Lands**: the parity net PR 14 relies on exists and is green.
 - **Excludes**: any production change; the pipeline-level admission test
-  (belongs to PR 15).
+  (belongs to PR 14).
 - **Tests**: the two suites above.
-- **Depends on**: none — parallel-safe leaf; must land before PR 15.
+- **Depends on**: none — parallel-safe leaf; must land before PR 14.
 
-### PR 15 — `refactor(web): migrate sendMessage to a direct mixed superpipe pipeline`
+### PR 14 — `refactor(web): migrate sendMessage to a direct mixed superpipe pipeline`
 
 - **Phase**: 🔧 apply — admission gates and async effect stages land together
   in this ONE slice (review correction round 21 supersedes the order-list
@@ -1228,12 +1241,12 @@ optional router phase 2. No per-site section is left uncovered.
   (open question 7 decides after this lands); hook dependency-array changes
   beyond what the snapshot requires.
 - **Tests**: `src/hooks/__tests__/useSendMessage.test.ts` and
-  `ChatContainerSendOverride.test.ts` (PR 14 rows stay green) plus the new
+  `ChatContainerSendOverride.test.ts` (PR 13 rows stay green) plus the new
   pipeline-level admission decision-table test.
-- **Depends on**: PR 1, PR 2, PR 14 (PR 4's `sanitizeUserError` is consumed
+- **Depends on**: PR 1, PR 1, PR 13 (PR 3's `sanitizeUserError` is consumed
   unchanged).
 
-### PR 16 — `refactor(web): compose the complete apply-space-route pipeline (router phase 2)`
+### PR 15 — `refactor(web): compose the complete apply-space-route pipeline (router phase 2)`
 
 - **Phase**: 🔧 apply — CONDITIONAL slice, gated on open question 3.
 - **Scope**: `packages/web/src/lib/router.ts` — ONE complete
@@ -1241,11 +1254,16 @@ optional router phase 2. No per-site section is left uncovered.
   per-site sketch of a standalone `classifySpaceRoute` decisionRun consumed
   by an imperative write switch): legacy redirect EFFECT stages
   (`history.replaceState`: `/tasks/archived` → `completed`, `/forge` →
-  `/evolve`) run first, then match gates reusing the PR 6 pattern constants
+  `/evolve`) run first, then match gates reusing the PR 5 pattern constants
   in the current else-if order, then guarded per-arm signal-write stages —
-  the whole run executes inside `batch()`. No classifier-plus-switch shape;
-  signal reads never enter gates (signals reach the write stages as ctx
-  ports); `handlePopState`'s overlay short-circuit stays untouched.
+  the whole run executes inside `batch()`. Review correction (PR #2982):
+  the write stages operate through explicit write-PORT functions passed as
+  deps and values snapshotted BEFORE the run — NO signal object enters ctx —
+  so the doc's stages-never-read-signals invariant holds; in particular the
+  conditional canonical-route clear (`setCurrentSpaceRouteId` reads
+  `currentSpaceIdSignal.value` before clearing) becomes a snapshot input
+  captured by the shell plus a port call, preserving the conditional
+  behavior. `handlePopState`'s overlay short-circuit stays untouched.
 - **Budget**: prod Δ likely ≈ 150+ on first authoring — the expected
   over-budget slice; the permitted split is ➕ (the pipeline module landed
   unwired with a route-union decision table: `/` → spacesList, unknown →
@@ -1255,10 +1273,10 @@ optional router phase 2. No per-site section is left uncovered.
 - **Lands**: the routing spine's 16-branch else-if cascade becomes one
   pipeline: redirects → match → guarded writes, inside `batch()`.
 - **Excludes**: any behavior change to redirect targets or signal writes.
-- **Tests**: the four router suites from PR 6 stay green; the route-union
+- **Tests**: the four router suites from PR 5 stay green; the route-union
   decision table; manual nav smoke via `make dev` (walk every route,
   back/forward, overlay open/close).
-- **Depends on**: PR 6; open question 3.
+- **Depends on**: PR 5; open question 3.
 
 ## Open questions
 
