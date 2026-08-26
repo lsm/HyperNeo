@@ -1269,7 +1269,7 @@ export class TaskAgentManager {
                     phase: 'spawn',
                   });
                 } catch (err) {
-                  if (workspaceChanged && previousReuseWorkspacePath !== null) {
+                  if (workspaceChanged) {
                     existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
                   }
                   throw err;
@@ -2416,7 +2416,7 @@ export class TaskAgentManager {
           workflowNodeId: execution.workflowNodeId,
         });
       } catch (err) {
-        if (previousWorkspacePath !== null) {
+        if (previousWorkspacePath !== undefined) {
           live.updateMetadata({ workspacePath: previousWorkspacePath });
         }
         throw err;
@@ -4344,7 +4344,7 @@ export class TaskAgentManager {
       try {
         await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
       } catch (err) {
-        if (previousHealWorkspacePath !== null) {
+        if (previousHealWorkspacePath !== undefined) {
           agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
         }
         throw err;
@@ -4926,7 +4926,7 @@ export class TaskAgentManager {
               workflowNodeId: matchedNodeId,
             });
           } catch (err) {
-            if (previousReuseWorkspacePath !== null) {
+            if (previousReuseWorkspacePath !== undefined) {
               existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
             }
             throw err;
