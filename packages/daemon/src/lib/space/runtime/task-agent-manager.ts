@@ -1673,11 +1673,15 @@ export class TaskAgentManager {
     if (
       guardTask?.status === 'cancelled' ||
       guardTask?.status === 'archived' ||
+      guardTask?.status === 'stopped' ||
       guardRun?.status === 'cancelled' ||
       ownedTask?.status === 'cancelled' ||
-      ownedTask?.status === 'archived'
+      ownedTask?.status === 'archived' ||
+      ownedTask?.status === 'stopped'
     ) {
-      return ownedTask?.status === 'cancelled' || ownedTask?.status === 'archived'
+      return ownedTask?.status === 'cancelled' ||
+        ownedTask?.status === 'archived' ||
+        ownedTask?.status === 'stopped'
         ? ownedTask.status
         : (guardTask?.status ?? guardRun?.status ?? ownedTask?.status ?? 'terminal');
     }
@@ -2381,7 +2385,7 @@ export class TaskAgentManager {
   ): Promise<void> {
     await this.withSessionInjectLock(sessionId, async () => {
       const terminalStatus = execution.workflowRunId
-        ? this.resolveTerminalInjectionStatus(execution.workflowRunId)
+        ? this.resolveTerminalInjectionStatus(execution.workflowRunId, task.id)
         : null;
       if (terminalStatus) {
         log.warn(
