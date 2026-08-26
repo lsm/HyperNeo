@@ -798,12 +798,18 @@ anywhere in this plan.
   behavior during connect/disconnect transitions (an early read can choose
   `send` with a hub that has since dropped, or queue when a hub is about to
   appear). The hub race stays a dynamic stage after the startup effects (see
-  pure core design). Step 2 extends ctx with ports: `{ request:
-  (payload) => Promise<{ messageId?: string }>, enqueue: (label, payload,
-  immediate) => void, onSendStart, onSendComplete, onError, onMessageAccepted,
-  armTimeout, clearTimeout, toastError, toastInfo }` and `outcome:
-  boolean | null` — all supplied fresh per call from the hook's `useCallback`
-  closures (functions pass through gate spreads by reference).
+  pure core design). Step 2 extends ctx with ports: `{ getHub: () =>
+  Hub | null, request: (payload) => Promise<{ messageId?: string }>, enqueue:
+  (label, payload, immediate) => void, onSendStart, onSendComplete, onError,
+  onMessageAccepted, armTimeout, clearTimeout, toastError, toastInfo }` and
+  `outcome: boolean | null` — all supplied fresh per call from the hook's
+  `useCallback` closures (functions pass through gate spreads by reference).
+  Review correction (codex round 3): `getHub` is a REQUIRED port — `request`
+  must NOT be constructed from a hub captured before the run (that recreates
+  the explicitly rejected early-read race); `stageSendRequest` resolves the
+  live hub through the port immediately after the startup effects. The
+  `armTimeout`/`clearTimeout` ports are PER-CALL: each invocation owns its
+  timer handle (see the concurrency note in risks/caveats).
 - **Pure core design.** Step 1 gates: `gateContentPresent` (decides
   `rejectEmpty` on blank/`isSending && !allowQueueWhileProcessing`) →
   `gateSessionArchived` → `gateOffline` → `gateSend` (terminal — when the
@@ -817,25 +823,40 @@ anywhere in this plan.
   run their effects and stamp `outcome`, then a `!outcomeStamped`-style halt
   guard; the `send` arm continues through `stageSendRequest` (async effect:
   `onSendStart`, arm timeout, live `getHub()` read, await request,
-  `onMessageAccepted`, clear timeout, stamp outcome; review correction codex
-  round 2 — a settled/generation guard: the armed timeout callback flips a
-  per-call `timedOut` flag (a plain mutable cell the hook owns and threads
-  through the `armTimeout` port — never a signal), and the post-await leg
-  consults it: when the timer already fired, the stage SKIPS
-  `onMessageAccepted` and stamps the timed-out outcome instead of success,
-  so one send can never report both a timeout error and a late acceptance).
+  `onMessageAccepted`, clear timeout, stamp outcome; review corrections
+  codex rounds 2+3 — a settled/generation guard: the armed timeout callback
+  flips a per-call `timedOut` flag (a plain mutable cell the hook owns and
+  threads through the `armTimeout` port — never a signal), and BOTH
+  post-await legs consult it. Late SUCCESS: the stage STILL calls
+  `onMessageAccepted` — that callback is store reconciliation, not a success
+  notification (`ChatContainer.tsx:635-652` records the messageId and
+  refreshes the store when the accepted message never becomes visible;
+  skipping it can strand a late-accepted message whose live update was also
+  missed) — but stamps the timed-out outcome rather than success, so the
+  user sees exactly one terminal report. Late REJECTION: the guard
+  intercepts the throw inside the stage and swallows it — the shell's
+  unconditional catch must not run a second
+  `onError`/toast/`onSendComplete` round on top of the timeout triple. One
+  send, one terminal failure report; acceptance reconciliation always
+  runs).
   Review correction on
   the connected-without-hub diversion: when the live `getHub()` read comes
   back empty, the stage must run the SAME completion sequence as the
   current hook (`useSendMessage.ts:95-121`) — enqueue the queued action,
   `onSendComplete()`, CLEAR the armed timeout, then stamp a successful
   outcome — never a bare divert mid-sequence, or the send stays marked
-  in-flight and the armed timer later emits a false timeout error. Timeout resource stays in the hook (ref owned by
-  the hook per ADR Decision 5 — pipeline receives `armTimeout`/`clearTimeout`
-  values). Errors: `stageSendRequest` throws propagate out of `.endAsync`;
-  the shell (the `useCallback` body) keeps the existing catch and performs
-  sanitize/toast/complete/clear interpretation.
-- **Shell/effect wiring.** The hook keeps `clearSendTimeout` and the ref; the
+  in-flight and the armed timer later emits a false timeout error. Timeout
+  resource stays in the hook per ADR Decision 5 — the pipeline receives
+  per-call `armTimeout`/`clearTimeout` port values (codex round 3: handles
+  tracked per invocation, not one shared ref). Errors: `stageSendRequest`
+  throws propagate out of `.endAsync` EXCEPT when the per-call `timedOut`
+  flag is already set — a late rejection is intercepted inside the stage so
+  the shell's catch cannot run a second `onError`/toast/`onSendComplete`
+  round; otherwise the shell (the `useCallback` body) keeps the existing
+  catch and performs sanitize/toast/complete/clear interpretation.
+- **Shell/effect wiring.** The hook keeps the exported `clearSendTimeout`
+  (now clearing ALL outstanding per-send handles — unmount cleanup paths
+  depend on it) and owns the per-call timer/handle state; the
   `sendMessage` `useCallback` shrinks to: snapshot inputs → build ports →
   `await sendMessagePipeline(input)` → catch → interpret. Dependency array
   unchanged in substance (ports capture the same closures).
@@ -848,10 +869,18 @@ anywhere in this plan.
      race enqueue+`onSendComplete`+true, success path (`onSendStart` order,
   messageId callback, timeout cleared), failure path (sanitized message,
      `onSendComplete`, timeout cleared), timeout fire path, AND the
-     late-completion path (fake timers: the request resolves after the timer
+     late-completion paths (fake timers: a request RESOLVING after the timer
      fired — pin TODAY's contradiction, the timeout triple PLUS the late
      `onMessageAccepted` + `true` return, before the generation guard
-     deliberately changes it). Add missing rows
+     deliberately changes it; and a request REJECTING after the timer fired —
+     pin TODAY's double terminal report, the timeout triple PLUS the catch's
+     second `onError`/toast/`onSendComplete`) AND the overlapping-send path
+     (codex round 3: `ChatContainer.tsx:653-657` passes
+     `allowQueueWhileProcessing: true`, so two sends can be in flight — pin
+     TODAY's shared-`sendTimeoutRef` handle clobbering: the second arm
+     overwrites the first handle, the first completion clears the SECOND's
+     timer, and the first's orphaned timer later fires a FALSE timeout).
+     Add missing rows
      FIRST — the effect ordering (onSendStart before hub check) is
      behavior.
   2. Land the complete direct pipeline in ONE step (review correction
@@ -863,8 +892,8 @@ anywhere in this plan.
      imperative queue/reject/send bodies; keep the plain helper logic until
      the whole mixed pipeline can land. `SEND_TIMEOUT_MS` stays module-scope;
      the hook's arm callback closes over it.
-  3. Keep `clearSendTimeout` exported behavior identical (unmount cleanup
-     paths depend on it).
+  3. Keep `clearSendTimeout`'s export identical; its body now clears ALL
+     outstanding per-send handles (unmount cleanup paths depend on it).
 - **Tests.** Characterization set above stays green through the migration
   (that is the parity proof); add a pipeline-level unit test for the
   admission decision table (pure, no mocking) when the pipeline lands.
@@ -876,11 +905,20 @@ anywhere in this plan.
   one helper during Step 2 (behavior-preserving, covered by tests). Do not
   move `toast` calls into module scope; they are ports. The timeout's
   `onSendComplete` + `onError` + toast triple on fire must remain exactly
-  once per fired timer; the hook-owned ref guarantees that — the pipeline
-  never re-arms. The late-completion generation guard (codex round 2) is a
-  deliberate behavior change over today's contradictory double-report; its
-  row lands in the same slice as the guard, with the current contradiction
-  characterized first.
+  once per fired timer PER SEND — a single shared `sendTimeoutRef` does NOT
+  guarantee that once `allowQueueWhileProcessing: true` admits overlapping
+  sends (`ChatContainer.tsx:653-657`; codex round 3: the second arm
+  clobbers the first handle, the first completion clears the SECOND's
+  timer, and the first's orphaned timer later fires a FALSE timeout), so
+  timer ownership moves PER CALL: the `armTimeout` port stores each
+  invocation's handle in per-call state, `clearTimeout` clears only that
+  invocation's handle, and the exported `clearSendTimeout` (unmount
+  cleanup) clears ALL outstanding handles. The late-completion generation
+  guard (codex rounds 2+3) is a deliberate behavior change over today's
+  contradictory double-reports — late success keeps the reconciliation
+  callback but changes the outcome; late rejection is swallowed; the
+  pipeline never re-arms — and its rows land in the same slice as the
+  guard, with the current behavior characterized first.
 
 ## Suggested migration order
 
@@ -1258,11 +1296,18 @@ optional router phase 2. No per-site section is left uncovered.
   enqueue+`onSendComplete`+true, success ordering (`onSendStart` BEFORE the
   hub check, messageId callback, timeout cleared), failure path (sanitized
   message, `onSendComplete`, timeout cleared), timeout fire path, AND the
-  late-completion path (review correction, codex round 2: fake timers — the
-  request resolves after the timer fired; pin TODAY's contradictory
-  behavior, the timeout triple PLUS the late `onMessageAccepted` + `true`
-  return, because `message.send` is not idempotent — the daemon mints a
-  fresh message UUID per invocation, `session-handlers.ts:586-594`). The
+  late-completion paths (review corrections, codex rounds 2+3: fake timers —
+  a request RESOLVING after the timer fired pins TODAY's contradiction, the
+  timeout triple PLUS the late `onMessageAccepted` + `true` return, and a
+  request REJECTING after the timer fired pins TODAY's double terminal
+  report, the timeout triple PLUS the catch's second
+  `onError`/toast/`onSendComplete`, because `message.send` is not
+  idempotent — the daemon mints a
+  fresh message UUID per invocation, `session-handlers.ts:586-594`) AND the
+  overlapping-send path (codex round 3: `ChatContainer.tsx:653-657` passes
+  `allowQueueWhileProcessing: true`; pin TODAY's shared-`sendTimeoutRef`
+  handle clobbering and the orphaned timer's FALSE timeout on the first
+  send). The
   effect ordering is behavior and must be pinned against the UNCHANGED hook
   before any extraction.
 - **Budget**: prod Δ = 0; test Δ ≈ 150.
@@ -1284,16 +1329,25 @@ optional router phase 2. No per-site section is left uncovered.
   `stageSendRequest` (live `getHub()` re-read immediately after
   `onSendStart` + timeout arming; an empty hub runs the exact current
   completion sequence — enqueue, `onSendComplete`, CLEAR the armed timeout,
-  successful outcome; the LATE-COMPLETION generation guard, codex round 2 —
-  the armed timeout callback flips a per-call `timedOut` cell owned by the
-  hook and threaded through the `armTimeout` port, and the post-await leg
-  skips `onMessageAccepted` and stamps the timed-out outcome when the timer
-  already fired, ending today's contradictory timeout-error-plus-late-
-  acceptance double-report), with queue/reject arms stamping `outcome`
+  successful outcome; the LATE-COMPLETION generation guard, codex rounds
+  2+3 — the armed timeout callback flips a per-call `timedOut` cell owned
+  by the hook and threaded through the `armTimeout` port, and BOTH
+  post-await legs consult it: a late SUCCESS still calls `onMessageAccepted`
+  (store reconciliation — `ChatContainer.tsx:635-652` refreshes when the
+  accepted message never becomes visible; never suppress it) but stamps the
+  timed-out outcome, and a late REJECTION is intercepted inside the stage so
+  the shell's catch adds no second `onError`/toast/`onSendComplete` round),
+  with queue/reject arms stamping `outcome`
   behind a
   `!outcomeStamped`-style halt guard. `sessionId` rides in the per-call ctx;
-  ports (`request`, `enqueue`, timeout and callback/toast functions) are
-  injected fresh per call; the hook keeps the timeout ref and shrinks to
+  ports (`getHub`, `request`, `enqueue`, per-call timeout and callback/toast
+  functions) are
+  injected fresh per call (`getHub` is the live hub lookup — `request` is
+  never pre-bound to an early-captured hub, codex round 3); the hook keeps
+  per-invocation timer handles (the single shared ref is replaced —
+  overlapping sends admitted via `allowQueueWhileProcessing: true` must not
+  clobber each other's timers; `clearSendTimeout` clears all outstanding
+  handles) and shrinks to
   snapshot → run → catch interpretation; unify the duplicated `> 40`-char
   enqueue-label truncation helper (behavior-preserving);
   `clearSendTimeout` behavior identical for unmount cleanup.
@@ -1312,9 +1366,11 @@ optional router phase 2. No per-site section is left uncovered.
   beyond what the snapshot requires.
 - **Tests**: `src/hooks/__tests__/useSendMessage.test.ts` and
   `src/islands/__tests__/ChatContainerSendOverride.test.ts` (PR 13 rows stay
-  green; the PR 13 late-completion row is UPDATED here to the guarded
-  expectation — late resolution after a fired timer produces NO
-  `onMessageAccepted` and a failed outcome — as the deliberate divergence)
+  green; the PR 13 late-completion and overlapping-send rows are UPDATED
+  here to the guarded expectations — late resolution after a fired timer
+  STILL calls `onMessageAccepted` but yields the timed-out outcome, a late
+  rejection adds no second error round, and overlapping sends each keep
+  their own timer with no false timeout — as the deliberate divergences)
   plus the new pipeline-level admission decision-table test.
 - **Depends on**: PR 1, PR 13 (PR 3's `sanitizeUserError` is consumed
   unchanged).
