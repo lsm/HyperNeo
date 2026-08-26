@@ -79,7 +79,9 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         );
       }
       const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken, {
+        reason: 'acp_awaiting_acceptance',
+      });
       return { parked: 'acp_awaiting_acceptance', retryAt };
     }
     if (sendStatus === 'deferred' || sendStatus === 'failed' || sendStatus === 'submitted') {
@@ -146,7 +148,9 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       if (route.mutation === 'requeue' && route.retryAt !== undefined) {
         deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
       } else if (route.mutation === 'requeueParked' && route.retryAt !== undefined) {
-        deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken);
+        deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken, {
+          reason: (route.result as { parked?: string }).parked,
+        });
       }
       return route.result;
     }
@@ -179,7 +183,9 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (route.mutation === 'requeue' && route.retryAt !== undefined) {
       deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
     } else if (route.mutation === 'requeueParked' && route.retryAt !== undefined) {
-      deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken);
+      deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken, {
+        reason: (route.result as { parked?: string }).parked,
+      });
     } else if (route.mutation === 'requeueAs') {
       try {
         deps.jobQueue.requeueAs(

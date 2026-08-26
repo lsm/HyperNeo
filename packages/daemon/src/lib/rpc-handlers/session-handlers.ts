@@ -1368,7 +1368,9 @@ export function setupSessionHandlers(
     try {
       const woken = db
         .getJobQueueRepo()
-        .rescheduleSessionDeliveries('message_delivery', targetSessionId, Date.now());
+        .rescheduleSessionDeliveries('message_delivery', targetSessionId, Date.now(), {
+          parkReason: 'sdk_resume_choice',
+        });
       if (woken > 0) {
         log.info(
           `session.sdkResumeChoice: woke ${woken} parked delivery job(s) for session ${targetSessionId}`

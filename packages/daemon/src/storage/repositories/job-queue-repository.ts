@@ -237,16 +237,30 @@ export class JobQueueRepository {
     return Number(row?.c ?? 0) || 0;
   }
 
-  requeueParked(jobId: string, runAt: number, claimToken?: string | null): Job | null {
+  requeueParked(
+    jobId: string,
+    runAt: number,
+    claimToken?: string | null,
+    opts?: { reason?: string }
+  ): Job | null {
+    const payloadSet =
+      opts?.reason !== undefined
+        ? `payload = json_set(payload, '$.__parkCount',
+               COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1, '$.__parkReason', ?)`
+        : `payload = json_set(payload, '$.__parkCount',
+               COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1, '$.__parkReason', NULL)`;
     const stmt = this.db.prepare(
       `UPDATE job_queue
          SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
-             payload = json_set(payload, '$.__parkCount',
-               COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1)
+             ${payloadSet}
        WHERE id = ? AND status = 'processing'
          AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
-    const res = withBusyRetry(() => stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null));
+    const params =
+      opts?.reason !== undefined
+        ? [runAt, opts.reason, jobId, claimToken ?? null, claimToken ?? null]
+        : [runAt, jobId, claimToken ?? null, claimToken ?? null];
+    const res = withBusyRetry(() => stmt.run(...params));
     if (res.changes === 0) return null;
     return this.getJob(jobId);
   }
@@ -278,15 +292,29 @@ export class JobQueueRepository {
     return this.getJob(jobId);
   }
 
-  rescheduleSessionDeliveries(queue: string, sessionId: string, runAt: number): number {
+  rescheduleSessionDeliveries(
+    queue: string,
+    sessionId: string,
+    runAt: number,
+    opts?: { parkReason?: string }
+  ): number {
+    const reasonFilter =
+      opts?.parkReason !== undefined
+        ? `AND json_extract(payload, '$.__parkReason') = ?`
+        : '';
     const stmt = this.db.prepare(
       `UPDATE job_queue
           SET run_at = ?, started_at = NULL, heartbeat_at = NULL
         WHERE queue = ? AND status = 'pending'
           AND json_extract(payload, '$.sessionId') = ?
-          AND run_at > ?`
+          AND run_at > ?
+          ${reasonFilter}`
     );
-    const res = withBusyRetry(() => stmt.run(runAt, queue, sessionId, runAt));
+    const params =
+      opts?.parkReason !== undefined
+        ? [runAt, queue, sessionId, runAt, opts.parkReason]
+        : [runAt, queue, sessionId, runAt];
+    const res = withBusyRetry(() => stmt.run(...params));
     return res.changes;
   }
 

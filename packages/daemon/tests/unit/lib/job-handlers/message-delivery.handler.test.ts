@@ -84,7 +84,14 @@ function makeHarness(
     isClaimCurrent: mock((_id: string, _token: string | null) => true),
     getParkCount: mock((_id: string) => 0),
     requeue: mock((_id: string, _runAt: number, _token: string | null) => null),
-    requeueParked: mock((_id: string, _runAt: number, _token: string | null) => null),
+    requeueParked: mock(
+      (
+        _id: string,
+        _runAt: number,
+        _token: string | null,
+        _opts?: { reason?: string }
+      ) => null
+    ),
     requeueAs: mock((_id: string, _role: string, _runAt: number, _token: string | null) => null),
   };
   const getSession = mock(() => session);
@@ -229,7 +236,9 @@ describe('createMessageDeliveryHandler', () => {
       const result = await handler(job, {});
       expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
       expect(result.retryAt).toBeGreaterThan(Date.now());
-      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
+        reason: 'acp_awaiting_acceptance',
+      });
       expect(session.feedCalls).toBe(0);
       expect(session.settleCalls).toEqual([]);
       expect(metrics.recordReclaimSkip).toHaveBeenCalledWith('alreadySubmitted');
@@ -337,7 +346,11 @@ describe('createMessageDeliveryHandler', () => {
       }
       if (row.requeueParked) {
         expect(result.retryAt).toBeGreaterThan(Date.now());
-        expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
+        expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
+          reason: (row.drive as { outcome: string }).outcome === 'blocked'
+            ? 'sdk_resume_choice'
+            : 'limit_recovery',
+        });
       }
       expect(session.settleCalls).toEqual(row.settle ? ['uuid-1'] : []);
       if (row.reclaimSkip) {
@@ -391,7 +404,12 @@ describe('createMessageDeliveryHandler', () => {
       expect(jobQueue.requeueParked).toHaveBeenCalledTimes(row.park === 'requeueParked' ? 1 : 0);
       if (row.park === 'requeueParked') {
         expect(result.retryAt).toBeGreaterThan(Date.now());
-        expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
+        expect(jobQueue.requeueParked).toHaveBeenCalledWith(
+          'job-1',
+          result.retryAt,
+          'claim-1',
+          { reason: row.expected.parked }
+        );
       }
       if (row.promoteRole) {
         expect(jobQueue.requeueAs).toHaveBeenCalledWith(
@@ -461,7 +479,9 @@ describe('createMessageDeliveryHandler', () => {
       session.feedResult = { outcome: 'park' };
       const result = await handler(job, {});
       expect(result).toMatchObject({ parked: 'turn_blocked' });
-      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
+        reason: 'turn_blocked',
+      });
       expect(jobQueue.requeue).not.toHaveBeenCalled();
     });
 
@@ -535,7 +555,9 @@ describe('createMessageDeliveryHandler', () => {
       expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
       expect(result.retryAt).toBeGreaterThan(Date.now());
       expect(jobQueue.getParkCount).toHaveBeenCalledTimes(1);
-      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
+        reason: 'sdk_resume_choice',
+      });
       expect(jobQueue.requeue).not.toHaveBeenCalled();
     });
 
@@ -613,14 +635,16 @@ describe('createMessageDeliveryHandler', () => {
       expect(turn.jobQueue.requeueParked).toHaveBeenCalledWith(
         'job-1',
         turnResult.retryAt,
-        'claim-1'
+        'claim-1',
+        { reason: 'sdk_resume_choice' }
       );
       expect(turn.jobQueue.requeue).not.toHaveBeenCalled();
       expect(steerResult).toMatchObject({ parked: 'turn_blocked' });
       expect(steer.jobQueue.requeueParked).toHaveBeenCalledWith(
         'job-1',
         steerResult.retryAt,
-        'claim-1'
+        'claim-1',
+        { reason: 'turn_blocked' }
       );
       expect(steer.jobQueue.requeue).not.toHaveBeenCalled();
     });
