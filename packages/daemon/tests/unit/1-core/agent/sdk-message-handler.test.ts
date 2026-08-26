@@ -4154,6 +4154,30 @@ describe('SDKMessageHandler', () => {
         expect(isCoolingDownSpy).toHaveBeenCalled();
       });
 
+      it('arms the turn-end delivery gate before awaiting the stale compacting publication', async () => {
+        let compacting = true;
+        let releaseCompacting!: () => void;
+        getIsCompactingSpy.mockImplementation(() => compacting);
+        setCompactingSpy.mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              compacting = false;
+              releaseCompacting = resolve;
+            })
+        );
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(setCompactingSpy).toHaveBeenCalledWith(false);
+        expect(setDeliveryGateSpy).toHaveBeenCalled();
+
+        releaseCompacting();
+        await handled;
+        expect(setIdleSpy).toHaveBeenCalled();
+      });
+
       it('clears the pending post-compaction resume when the turn-end decision is not a compaction', async () => {
         const clearSpy = mock(() => {});
         (

@@ -946,10 +946,11 @@ export class SDKMessageHandler {
         }
       }
       await this.recordResultUsageMetadata(message as SDKResultMessage);
-      if (this.ctx.stateManager.getIsCompacting()) {
-        await this.ctx.stateManager.setCompacting(false);
-      }
+      const compactingClear = this.ctx.stateManager.getIsCompacting()
+        ? this.ctx.stateManager.setCompacting(false)
+        : null;
       await this.refreshContextUsage('turn-end');
+      await compactingClear;
       return;
     }
 
@@ -963,11 +964,12 @@ export class SDKMessageHandler {
     let enforcedTurnEnd = false;
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
-        if (this.ctx.stateManager.getIsCompacting()) {
-          await this.ctx.stateManager.setCompacting(false);
-        }
+        const compactingClear = this.ctx.stateManager.getIsCompacting()
+          ? this.ctx.stateManager.setCompacting(false)
+          : null;
         await this.refreshContextUsage('turn-end');
         enforcedTurnEnd = true;
+        await compactingClear;
         await stateManager.setIdle();
       }
     }
@@ -1009,12 +1011,14 @@ export class SDKMessageHandler {
     }
 
     if (isSDKResultMessage(message)) {
-      if (isTopLevelResult && this.ctx.stateManager.getIsCompacting()) {
-        await this.ctx.stateManager.setCompacting(false);
-      }
+      const compactingClear =
+        isTopLevelResult && this.ctx.stateManager.getIsCompacting()
+          ? this.ctx.stateManager.setCompacting(false)
+          : null;
       if (!enforcedTurnEnd) {
         await this.refreshContextUsage('turn-end');
       }
+      await compactingClear;
     }
 
     if (isSDKResultMessage(message)) {
@@ -1551,7 +1555,8 @@ export class SDKMessageHandler {
   }
 
   private refreshContextUsage(
-    reason: 'event-tick' | 'turn-end' | 'compact-boundary'
+    reason: 'event-tick' | 'turn-end' | 'compact-boundary',
+    deadlineAt?: number
   ): Promise<void> {
     this.eventsSinceContextRefresh = 0;
 
@@ -1559,10 +1564,16 @@ export class SDKMessageHandler {
       if (reason === 'event-tick') {
         return this.pendingContextRefresh;
       }
+      const chainDeadline = deadlineAt ?? Date.now() + DELIVERY_GATE_WINDOW_MS;
       const pending = this.pendingContextRefresh;
-      this.pendingContextRefresh = pending.then(() => this.refreshContextUsage(reason));
+      this.pendingContextRefresh = pending.then(() =>
+        this.refreshContextUsage(reason, chainDeadline)
+      );
       this.ctx.messageQueue.setDeliveryGate(
-        boundedDeliveryGate(this.pendingContextRefresh.catch(() => {}))
+        boundedDeliveryGate(
+          this.pendingContextRefresh.catch(() => {}),
+          chainDeadline
+        )
       );
       return this.pendingContextRefresh;
     }
@@ -1570,7 +1581,7 @@ export class SDKMessageHandler {
     const { session, internalEventBus, contextTracker, queryObject } = this.ctx;
     if (!queryObject) return Promise.resolve();
     const fenceModel = session.config.model;
-    const gateDeadline = Date.now() + DELIVERY_GATE_WINDOW_MS;
+    const gateDeadline = deadlineAt ?? Date.now() + DELIVERY_GATE_WINDOW_MS;
     const fenceProvider = session.config.provider;
 
     const promise = (async () => {

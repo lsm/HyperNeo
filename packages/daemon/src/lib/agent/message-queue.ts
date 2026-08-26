@@ -501,6 +501,15 @@ export class MessageQueue {
     }
   }
 
+  private frontOfQueueBypassesGate(): boolean {
+    const front = this.queue[0];
+    return (
+      !!front &&
+      typeof front.content !== 'string' &&
+      front.content.some((block) => isToolResultContent(block))
+    );
+  }
+
   private async waitForNextMessage(): Promise<QueuedMessage | null> {
     while (this.running) {
       while (this.queue.length === 0) {
@@ -511,7 +520,7 @@ export class MessageQueue {
         if (!this.running) return null;
       }
 
-      while (this.deliveryGate) {
+      while (this.deliveryGate && !this.frontOfQueueBypassesGate()) {
         await Promise.race([
           this.deliveryGate.catch(() => {}),
           new Promise<void>((resolve) => {

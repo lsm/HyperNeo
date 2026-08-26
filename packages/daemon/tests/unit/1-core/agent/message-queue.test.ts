@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import type { MessageContent } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 
@@ -1312,6 +1313,43 @@ describe('MessageQueue', () => {
       expect(result.value.message.message.content[0].text).toBe('after restart');
       result.value.onSent();
       await delivery;
+      q.stop();
+    });
+
+    it('lets a queued tool result bypass a pending delivery gate', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseGate: () => void = () => {};
+      q.setDeliveryGate(
+        new Promise<void>((resolve) => {
+          releaseGate = resolve;
+        })
+      );
+
+      const toolContent: MessageContent[] = [
+        { type: 'tool_result', tool_use_id: 'toolu_1', content: 'answer' },
+      ];
+      const toolDelivery = q.enqueueWithId('tool-result-1', toolContent, false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const toolResult = await generator.next();
+      expect(toolResult.value.message.message.content).toEqual(toolContent);
+      toolResult.value.onSent();
+      await toolDelivery;
+
+      const promptDelivery = q.enqueue('next prompt', false, { durable: true });
+      const pending = generator.next();
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const deliveredEarly = await Promise.race([
+        pending.then(() => true),
+        new Promise((resolve) => setTimeout(() => resolve(false), 15)),
+      ]);
+      expect(deliveredEarly).toBe(false);
+
+      releaseGate();
+      const promptResult = await pending;
+      expect(promptResult.value.message.message.content[0].text).toBe('next prompt');
+      promptResult.value.onSent();
+      await promptDelivery;
       q.stop();
     });
   });
