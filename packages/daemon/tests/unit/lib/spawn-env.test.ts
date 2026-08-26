@@ -149,6 +149,8 @@ describe('buildGitCommandEnv', () => {
     expect(env.GIT_DISCOVERY_ACROSS_FILESYSTEM).toBe(SOURCE.GIT_DISCOVERY_ACROSS_FILESYSTEM);
     expect(env.GIT_ALLOW_PROTOCOL).toBe(SOURCE.GIT_ALLOW_PROTOCOL);
     expect(env.GIT_TERMINAL_PROMPT).toBe(SOURCE.GIT_TERMINAL_PROMPT);
+    expect(env.GIT_CONFIG_NOSYSTEM).toBe(SOURCE.GIT_CONFIG_NOSYSTEM);
+    expect(env.GIT_ATTR_NOSYSTEM).toBe(SOURCE.GIT_ATTR_NOSYSTEM);
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.GIT_CONFIG_COUNT).toBe('1');
@@ -207,6 +209,8 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.ANTHROPIC_BASE_URL).toBe('https://router.corp.example');
     expect(env.API_TIMEOUT_MS).toBe('300000');
     expect(env.CLAUDE_CODE_GIT_BASH_PATH).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/custom/claude-config');
+    expect(env.DEBUG_CLAUDE_AGENT_SDK).toBe('1');
     expect(env.NODE_EXTRA_CA_CERTS).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
@@ -229,6 +233,8 @@ describe('buildSdkRuntimeEnv', () => {
     expect(env.GIT_COMMITTER_NAME).toBe('Agent Bot');
     expect(env.GIT_COMMITTER_EMAIL).toBe('agent@example.com');
     expect(env.EMAIL).toBe('agent@example.com');
+    expect(env.GNUPGHOME).toBe(SOURCE.GNUPGHOME);
+    expect(env.GPG_TTY).toBe(SOURCE.GPG_TTY);
     expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
     expect(env.SSH_AGENT_PID).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
