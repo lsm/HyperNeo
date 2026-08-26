@@ -11,14 +11,16 @@ is a thin data-access layer over that table:
 - `create` / `getById` / `listBySpace` (primary first, then oldest) / `getByPath(spaceId, path)` /
   `findOwnerByPath(path)` (across all spaces) / `updateLabel` / `delete(spaceId, id)` / `countBySpace`.
 - Constraint violations surface as thrown SQLite errors with no reclassification. The two
-  `UNIQUE` rules in this table both raise `UNIQUE constraint failed: ...` and are
-  distinguishable only by the column list in the message: a duplicate path fails as
-  `UNIQUE constraint failed: space_workspaces.space_id, space_workspaces.path`, while a
-  second primary fails as `UNIQUE constraint failed: space_workspaces.space_id` (the
-  partial unique index on `(space_id) WHERE is_primary = 1` reports its indexed column,
-  not its name). A bare `/UNIQUE constraint/i` check therefore cannot tell the two apart;
-  callers that need to distinguish them must match the column signature. Pre-checks
-  (`getByPath` / `getById`) are advisory only — they race with concurrent inserts.
+  `UNIQUE` rules both raise `UNIQUE constraint failed: ...` and are distinguishable only
+  by the column list: a duplicate path fails as
+  `UNIQUE constraint failed: space_workspaces.space_id, space_workspaces.path`, a second
+  primary as `UNIQUE constraint failed: space_workspaces.space_id` (the partial unique
+  index on `(space_id) WHERE is_primary = 1` reports its indexed column, not its name).
+  The mapping is not exhaustive: an insert that violates both rules at once — the
+  existing primary's path together with `isPrimary: true` — reports only the
+  second-primary signature, so the message names one violated constraint, not all of
+  them. Callers that need the full conflict set must query for it (`getByPath` plus the
+  current primary) after a failure; pre-checks race with concurrent inserts.
 
 ## Canonical path comparison
 
