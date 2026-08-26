@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import type { McpServerConfig, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
+import type { McpServerConfig, SpaceTask, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
 import {
   assembleNodeAgentSessionInit,
   buildExecutionBaseSessionId,
   findAvailableSessionId,
   resolveSpawnWorkspace,
+  resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
 } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
 import type { AgentSessionInit } from '../../../../src/lib/agent/agent-session';
@@ -103,6 +104,26 @@ describe('findAvailableSessionId', () => {
     expect(() => findAvailableSessionId('base', () => true)).toThrow(
       'Could not find available session ID for base "base" after 100 attempts'
     );
+  });
+});
+
+describe('resolveTaskWorkspace', () => {
+  test('resolves to the task workspace when present', () => {
+    expect(
+      resolveTaskWorkspace({ workspacePath: '/space' }, {
+        workspacePath: '/task/override',
+      } as SpaceTask)
+    ).toBe('/task/override');
+  });
+
+  test('falls back to the space workspace when the task has none', () => {
+    expect(resolveTaskWorkspace({ workspacePath: '/space' }, {} as SpaceTask)).toBe('/space');
+  });
+
+  test('treats a null task workspace as absent and falls back to the space workspace', () => {
+    expect(
+      resolveTaskWorkspace({ workspacePath: '/space' }, { workspacePath: null } as SpaceTask)
+    ).toBe('/space');
   });
 });
 

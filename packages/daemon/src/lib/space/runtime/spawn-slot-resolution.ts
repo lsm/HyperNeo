@@ -1,5 +1,6 @@
 import type {
   McpServerConfig,
+  Space,
   SpaceTask,
   SpaceWorkflow,
   WorkflowNode,
@@ -123,6 +124,13 @@ export function resolveSpawnWorkspace(input: {
     workspacePath: input.cachedTaskWorktreePath ?? input.spaceWorkspacePath,
     createWorktree: input.cachedTaskWorktreePath === undefined && input.hasWorktreeManager,
   };
+}
+
+export function resolveTaskWorkspace(
+  space: Pick<Space, 'workspacePath'>,
+  task: Pick<SpaceTask, 'workspacePath'>
+): string {
+  return task.workspacePath ?? space.workspacePath;
 }
 
 export function assembleNodeAgentSessionInit(input: {

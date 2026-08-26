@@ -194,3 +194,69 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     });
   });
 });
+
+describe('TaskAgentManager getTaskWorktreePath — cache + durable fallback (WS10)', () => {
+  const SPACE_ID = 'space-ws10';
+  const TASK_ID = 'task-ws10';
+  const STORED_PATH = '/space/ws10/.hyperneo-worktrees/task-10-abc';
+
+  function makeManagerWithWorktree(overrides: {
+    storedPath?: string | null;
+    hasManager?: boolean;
+  }): TaskAgentManager {
+    const db = new BunDatabase(':memory:');
+    const worktreeManager =
+      overrides.hasManager === false
+        ? undefined
+        : ({
+            getTaskWorktreePathSync: () =>
+              overrides.storedPath === undefined ? null : overrides.storedPath,
+          } as unknown as SpaceWorktreeManager);
+    return new TaskAgentManager({
+      db: { getDatabase: () => db },
+      internalEventBus: { subscribe: () => () => {} },
+      taskRepo: {
+        getTask: (taskId: string) =>
+          taskId === TASK_ID ? ({ id: TASK_ID, spaceId: SPACE_ID } as unknown as SpaceTask) : null,
+      },
+      worktreeManager,
+    } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+  }
+
+  test('returns the in-memory cached path without consulting the worktree manager', () => {
+    const manager = makeManagerWithWorktree({ storedPath: '/should/not/be/consulted' });
+    const internal = manager as unknown as { taskWorktreePaths: Map<string, string> };
+    internal.taskWorktreePaths.set(TASK_ID, STORED_PATH);
+
+    expect(manager.getTaskWorktreePath(TASK_ID)).toBe(STORED_PATH);
+  });
+
+  test('falls back to the stored worktree row and caches it in memory', () => {
+    const manager = makeManagerWithWorktree({ storedPath: STORED_PATH });
+    const internal = manager as unknown as { taskWorktreePaths: Map<string, string> };
+    expect(internal.taskWorktreePaths.has(TASK_ID)).toBe(false);
+
+    expect(manager.getTaskWorktreePath(TASK_ID)).toBe(STORED_PATH);
+    expect(internal.taskWorktreePaths.get(TASK_ID)).toBe(STORED_PATH);
+  });
+
+  test('returns undefined when no worktree manager exists', () => {
+    const manager = makeManagerWithWorktree({ hasManager: false });
+
+    expect(manager.getTaskWorktreePath(TASK_ID)).toBeUndefined();
+  });
+
+  test('returns undefined when the stored row is absent', () => {
+    const manager = makeManagerWithWorktree({ storedPath: null });
+    const internal = manager as unknown as { taskWorktreePaths: Map<string, string> };
+
+    expect(manager.getTaskWorktreePath(TASK_ID)).toBeUndefined();
+    expect(internal.taskWorktreePaths.has(TASK_ID)).toBe(false);
+  });
+
+  test('returns undefined when the task itself is not found', () => {
+    const manager = makeManagerWithWorktree({ storedPath: STORED_PATH });
+
+    expect(manager.getTaskWorktreePath('does-not-exist')).toBeUndefined();
+  });
+});

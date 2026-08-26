@@ -149,6 +149,7 @@ import {
   buildSlotOverrides,
   findAvailableSessionId,
   resolveSpawnWorkspace,
+  resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
@@ -865,7 +866,7 @@ export class TaskAgentManager {
         const workspace = resolveSpawnWorkspace({
           cachedTaskWorktreePath: this.taskWorktreePaths.get(task.id),
           hasWorktreeManager: Boolean(this.config.worktreeManager),
-          spaceWorkspacePath: space.workspacePath,
+          spaceWorkspacePath: resolveTaskWorkspace(space, task),
         });
         if (workspace.createWorktree && this.config.worktreeManager) {
           try {
@@ -1231,7 +1232,14 @@ export class TaskAgentManager {
             });
 
             if (memberInfo.nodeId) {
-              const reuseWorkspacePath = this.taskWorktreePaths.get(taskId) ?? init.workspacePath;
+              const reuseSpace = await this.config.spaceManager.getSpace(parentTask.spaceId);
+              const reuseWorkspacePath = resolveSpawnWorkspace({
+                cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
+                hasWorktreeManager: false,
+                spaceWorkspacePath: reuseSpace
+                  ? resolveTaskWorkspace(reuseSpace, parentTask)
+                  : init.workspacePath,
+              }).workspacePath;
               const reuseCtx = {
                 taskId,
                 subSessionId: existingSessionId,
@@ -1972,7 +1980,11 @@ export class TaskAgentManager {
 
     const space = await this.config.spaceManager.getSpace(task.spaceId);
     if (!space) return null;
-    const workspacePath = this.getTaskWorktreePath(taskId) ?? space.workspacePath;
+    const workspacePath = resolveSpawnWorkspace({
+      cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
+      hasWorktreeManager: false,
+      spaceWorkspacePath: resolveTaskWorkspace(space, task),
+    }).workspacePath;
 
     const workflow = workflowRun?.workflowId
       ? this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)
@@ -3191,10 +3203,14 @@ export class TaskAgentManager {
       return null;
     }
 
-    const workspacePath =
-      this.getTaskWorktreePath(taskId) ??
-      agentSession.getSessionData().workspacePath ??
-      space.workspacePath;
+    const workspacePath = resolveSpawnWorkspace({
+      cachedTaskWorktreePath:
+        this.getTaskWorktreePath(taskId) ??
+        agentSession.getSessionData().workspacePath ??
+        undefined,
+      hasWorktreeManager: false,
+      spaceWorkspacePath: resolveTaskWorkspace(space, parentTask),
+    }).workspacePath;
 
     const currentInit = this.resolveCurrentNodeAgentInitForExecution({
       task: parentTask,
@@ -4217,10 +4233,14 @@ export class TaskAgentManager {
       agentName: execution.agentName,
       spaceId: parentTask.spaceId,
       workflowRunId: execution.workflowRunId,
-      workspacePath:
-        this.getTaskWorktreePath(parentTask.id) ??
-        agentSession.getSessionData().workspacePath ??
-        space.workspacePath,
+      workspacePath: resolveSpawnWorkspace({
+        cachedTaskWorktreePath:
+          this.getTaskWorktreePath(parentTask.id) ??
+          agentSession.getSessionData().workspacePath ??
+          undefined,
+        hasWorktreeManager: false,
+        spaceWorkspacePath: resolveTaskWorkspace(space, parentTask),
+      }).workspacePath,
       workflowNodeId: execution.workflowNodeId,
       phase: 'rehydrate',
     });
@@ -4787,7 +4807,11 @@ export class TaskAgentManager {
     const workflowRunId = task.workflowRunId;
     const workflowRun = workflowRunId ? this.config.workflowRunRepo.getRun(workflowRunId) : null;
 
-    const workspacePath = this.getTaskWorktreePath(taskId) ?? space.workspacePath;
+    const workspacePath = resolveSpawnWorkspace({
+      cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
+      hasWorktreeManager: false,
+      spaceWorkspacePath: resolveTaskWorkspace(space, task),
+    }).workspacePath;
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
     const poolAgent = this.config.spaceAgentManager.getById(matchedSlot.agentId);

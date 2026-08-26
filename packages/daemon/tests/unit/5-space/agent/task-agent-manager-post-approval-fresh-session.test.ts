@@ -422,6 +422,54 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(init.workspacePath).toBe('/tmp/ws');
   });
 
+  test('task.workspacePath wins over the space workspace when no worktree is persisted', async () => {
+    const tam = makeManager([]);
+    stubFreshCreateSpawnPath(tam);
+    (tam.config as unknown as Record<string, unknown>).worktreeManager = {
+      getTaskWorktreePathSync: () => null,
+    };
+
+    await tam.spawnPostApprovalSubSession({
+      task: {
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: RUN_ID,
+        workspacePath: '/task/override',
+      } as unknown as SpaceTask,
+      workflow: minimalWorkflow(),
+      targetAgent: REVIEWER_AGENT,
+      kickoffMessage: 'merge the PR',
+    });
+
+    const init = fromInitSpy.mock.calls[0][0] as unknown as Record<string, unknown>;
+    expect(init.workspacePath).toBe('/task/override');
+  });
+
+  test('persisted worktree still wins over task.workspacePath', async () => {
+    const tam = makeManager([]);
+    stubFreshCreateSpawnPath(tam);
+    const persistedWorktree = '/persisted/worktrees/task-850';
+    (tam.config as unknown as Record<string, unknown>).worktreeManager = {
+      getTaskWorktreePathSync: (spaceId: string, taskId: string) =>
+        spaceId === SPACE_ID && taskId === TASK_ID ? persistedWorktree : null,
+    };
+
+    await tam.spawnPostApprovalSubSession({
+      task: {
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: RUN_ID,
+        workspacePath: '/task/override',
+      } as unknown as SpaceTask,
+      workflow: minimalWorkflow(),
+      targetAgent: REVIEWER_AGENT,
+      kickoffMessage: 'merge the PR',
+    });
+
+    const init = fromInitSpy.mock.calls[0][0] as unknown as Record<string, unknown>;
+    expect(init.workspacePath).toBe(persistedWorktree);
+  });
+
   test('CREATE branch attaches space-agent-tools before first turn + wires self-heal (#852)', async () => {
     const tam = makeManager([]);
     (tam.config as unknown as { db: Record<string, unknown> }).db.getSession = () => null;
@@ -1072,5 +1120,33 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     expect(actual).toBe('fresh-id');
     expect(fromInitSpy).toHaveBeenCalledTimes(1);
     expect(updates.find((u) => u.id === 'exec-bound-elsewhere')).toBeUndefined();
+  });
+
+  test('reuse path prefers task.workspacePath over the space workspace', async () => {
+    const { tam } = makeRecordingManager([makeExecutionRow()]);
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () =>
+        ({
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+          title: 'T',
+          workspacePath: '/task/reuse-override',
+        }) as unknown as SpaceTask,
+    };
+    seedLiveSession(tam);
+    const { reinjectCtx } = stubMcpReinjection(tam);
+    (tam as unknown as { registerCompletionCallback: () => void }).registerCompletionCallback =
+      () => {};
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    expect(reinjectCtx).toHaveLength(1);
+    expect(reinjectCtx[0]).toMatchObject({ workspacePath: '/task/reuse-override' });
   });
 });
