@@ -592,6 +592,7 @@ export class QueryRunner {
 
     let runAbortController: AbortController | null = null;
     let isAbortError = false;
+    let fencedTerminalSettleDone = false;
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -1249,6 +1250,7 @@ export class QueryRunner {
 
         if (!finalizer.skipCatchIdle) {
           await stateManager.setIdle(terminalFence ? { fence: terminalFence } : undefined);
+          if (terminalFence) fencedTerminalSettleDone = true;
           this.ctx.clearRunnerTerminalFence?.(queryGeneration);
         }
       }
@@ -1297,6 +1299,7 @@ export class QueryRunner {
         if (
           this.ctx.getQueryGeneration() === queryGeneration &&
           this.ctx.queryAbortController === runAbortController &&
+          !fencedTerminalSettleDone &&
           !this.ctx.isCleaningUp() &&
           !recoveryState.rateLimitCooldownScheduled &&
           !(this.ctx.isLimitRecoveryPending?.() ?? false) &&

@@ -876,7 +876,7 @@ export class SDKMessageHandler {
 
     let limitEngaged = false;
     let limitBillingTerminal = false;
-    if (isTopLevelResult) {
+    if (isTopLevelResult && !this.isInvocationStale(invocationGeneration)) {
       this.resetThinkingTokenTracking();
       const limitError = this.assessResultLimitError(message);
       if (limitError && !this.isInvocationStale(invocationGeneration)) {
@@ -1384,6 +1384,7 @@ export class SDKMessageHandler {
       } else {
         const allowQueueReplay = this.lastResultWasSuccess !== false;
         await this.finishTurn(allowQueueReplay, invocationGeneration);
+        if (this.isInvocationStale(invocationGeneration)) return;
         this.usesSessionStateChangedTurnEnd = false;
         this.expectsSessionStateIdleAfterResult = false;
         this.lastResultWasSuccess = null;

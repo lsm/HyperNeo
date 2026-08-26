@@ -733,6 +733,18 @@ describe('ProcessingStateManager', () => {
       expect(manager.isTerminalIdleInFlight()).toBe(false);
       waiterB.cancel();
     });
+
+    test('hasSettledIdleOwner distinguishes an admitted owner from a settled owner', async () => {
+      const ownerA = manager.admitDeliveryTurn();
+      expect(manager.hasSettledIdleOwner(ownerA)).toBe(false);
+
+      await manager.setIdle();
+      expect(manager.hasSettledIdleOwner(ownerA)).toBe(true);
+
+      const ownerB = manager.admitDeliveryTurn();
+      expect(manager.hasSettledIdleOwner(ownerB)).toBe(false);
+      expect(manager.hasSettledIdleOwner(ownerA)).toBe(true);
+    });
   });
 
   describe('onIdleCallback ordering (deferred restart)', () => {

@@ -120,7 +120,7 @@ describe('QueryLifecycleManager', () => {
         getState: getStateSpy,
         releaseIdleWaiters: releaseIdleWaitersSpy,
         isIdleOwnerCurrent: mock(() => true),
-        isIdle: mock(() => false),
+        hasSettledIdleOwner: mock(() => false),
         waitForIdleTransition: mock(() => ({ promise: Promise.resolve(), cancel: () => {} })),
         getCurrentIdleOwner: mock(() => ({ queryGeneration: 7, turnToken: 1 })),
       } as unknown as ProcessingStateManager,
@@ -1443,7 +1443,7 @@ describe('QueryLifecycleManager', () => {
       expect(startStreamingCalled).toBe(true);
     });
 
-    test('retries a superseded immediate restart at once when the successor is already idle (B5e)', async () => {
+    test('retries a superseded immediate restart at once when the successor already settled its idle (B5e)', async () => {
       messageQueue.start(async function* () {
         yield 'test';
       });
@@ -1453,7 +1453,9 @@ describe('QueryLifecycleManager', () => {
         } as unknown as QueryLifecycleManagerContext['queryObject'],
       });
       const cancelSpy = mock(() => {});
-      (mockContext.stateManager as unknown as { isIdle: unknown }).isIdle = mock(() => true);
+      (
+        mockContext.stateManager as unknown as { hasSettledIdleOwner: unknown }
+      ).hasSettledIdleOwner = mock(() => true);
       (
         mockContext.stateManager as unknown as { waitForIdleTransition: unknown }
       ).waitForIdleTransition = mock(() => ({

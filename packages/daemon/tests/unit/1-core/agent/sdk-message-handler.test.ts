@@ -767,6 +767,32 @@ describe('SDKMessageHandler', () => {
       expect(await wait).toBe('reset');
     });
 
+    it('an idle event going stale during the finishTurn await keeps the successor turn flags (B5e)', async () => {
+      let generation = 3;
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => generation
+      );
+      mockInternalEventBus.publish = mock(async (topic: string) => {
+        if (topic === 'query.trigger') generation = 9;
+      });
+
+      await handler.handleMessage(
+        {
+          type: 'system',
+          subtype: 'session_state_changed',
+          state: 'idle',
+          uuid: 'state-idle',
+          session_id: 'sdk-session-123',
+        } as unknown as SDKMessage,
+        3
+      );
+
+      expect(
+        (handler as unknown as { usesSessionStateChangedTurnEnd: boolean })
+          .usesSessionStateChangedTurnEnd
+      ).toBe(true);
+    });
+
     it('on session_state_changed SDKs the clear wait settles on the trailing idle, not the result', async () => {
       const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
         ({
@@ -4607,6 +4633,26 @@ describe('SDKMessageHandler', () => {
       expect(emitSpy.mock.calls.map((call) => call[0] as string)).not.toContain(
         'session.errorClear'
       );
+    });
+
+    it('a stale top-level result does not clear successor limit evidence (B5e)', async () => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => 9
+      );
+      const onResultLimitError = mock(async () => true);
+      mockContext.onResultLimitError = onResultLimitError;
+      const resetsAtSeconds = Math.floor((Date.now() + 60 * 60 * 1000) / 1000);
+
+      await handler.handleMessage(makeRateLimitEvent(resetsAtSeconds), 9);
+      await handler.handleMessage(makeApiErrorResult(), 2);
+      await handler.handleMessage(makeApiErrorResult(), 9);
+
+      expect(onResultLimitError).toHaveBeenCalledTimes(1);
+      const [, hint] = onResultLimitError.mock.calls[0] as [
+        string,
+        { resetAtMs?: number | null; kind?: string | null },
+      ];
+      expect(hint.resetAtMs).toBe(resetsAtSeconds * 1000);
     });
 
     it('ignores genuine success results', async () => {

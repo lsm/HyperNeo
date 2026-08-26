@@ -37,6 +37,7 @@ export class ProcessingStateManager {
   private suppressedFenceCarryTokens: number[] = [];
   private queryOwnerGeneration = 0;
   private turnOwnerToken = 0;
+  private lastIdleTransitionOwner?: IdleOwnerScope;
 
   constructor(
     private sessionId: string,
@@ -68,6 +69,15 @@ export class ProcessingStateManager {
     const current = this.getCurrentIdleOwner();
     return (
       owner.queryGeneration === current.queryGeneration && owner.turnToken === current.turnToken
+    );
+  }
+
+  hasSettledIdleOwner(owner: IdleOwnerScope): boolean {
+    const last = this.lastIdleTransitionOwner;
+    return (
+      last !== undefined &&
+      last.queryGeneration === owner.queryGeneration &&
+      last.turnToken === owner.turnToken
     );
   }
 
@@ -229,6 +239,7 @@ export class ProcessingStateManager {
     const consumesTerminalFence = fenceOwner !== undefined;
     const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
     const transitionOwner = opts?.owner ?? fenceOwner ?? this.getCurrentIdleOwner();
+    this.lastIdleTransitionOwner = transitionOwner;
     const fenceStartToken = fenceOwner ? fenceOwner.turnToken : this.turnOwnerToken;
     if (consumesTerminalFence) {
       if (suppressDrain) {

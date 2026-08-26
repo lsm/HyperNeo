@@ -779,7 +779,7 @@ export class QueryLifecycleManager {
       if (!this.ctx.pendingRestartReason) return;
       void this.executeDeferredRestartIfPending(successorOwner, rescheduleDepth);
     });
-    if (this.ctx.stateManager.isIdle()) {
+    if (this.ctx.stateManager.hasSettledIdleOwner(successorOwner)) {
       waiter.cancel();
       if (this.ctx.pendingRestartReason) {
         void this.executeDeferredRestartIfPending(successorOwner, rescheduleDepth);
