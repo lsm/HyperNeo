@@ -1347,8 +1347,11 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   review correction PR #2981) so a
   publication failure never becomes an unhandled rejection; a `superseded`
   transition result is a NON-acknowledged outcome — abort/requeue the
-  entry, return `false` on the immediate path, no publications or flag
-  write (review correction PR #2981). EVERY
+  entry, and on the immediate path return a DISTINCT
+  handled-but-unacknowledged result that stops the caller (NOT the
+  existing `false`, which falls through to the synthetic fall-through at
+  `sdk-message-handler.ts:813-819`), with no publications or flag write
+  (review correction PR #2981). EVERY
   successful or already-consumed acknowledgment arm —
   yielded and immediate alike — also sets the
   `acknowledgedPersistedUserThisTurn` state flag as an effect stage
@@ -2316,8 +2319,13 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   NON-acknowledged outcome (review correction PR #2981): the queue entry is
   aborted/requeued — never finalized or sent — with no publications and no
   `acknowledgedPersistedUserThisTurn` write; the immediate persisted arm
-  likewise treats `superseded` as not-acknowledged, returning `false` so
-  the incoming SDK replay is discarded. Every
+  likewise treats `superseded` as not-acknowledged via a DISTINCT
+  handled-but-unacknowledged outcome that STOPS the caller (review
+  correction PR #2981: reusing `false` would fall through the
+  `sdk-message-handler.ts:813` check into the synthetic-marking path at
+  `:818-819`, publishing and processing a potentially replacement-owned
+  replay) so the incoming SDK replay is neither acknowledged nor processed
+  further. Every
   consumed arm also sets
   the `acknowledgedPersistedUserThisTurn` flag (`:666,704`) as an effect
   stage (review correction PR #2981) — the turn-end batch acknowledgment
@@ -2380,8 +2388,11 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   to run, so a missing write would consume an additional queued user
   message that was not acknowledged during the turn. A `superseded`
   transition result is NOT an acknowledgment (review correction PR #2981):
-  the immediate arm returns `false` so the incoming SDK replay is
-  discarded, with no publications or flag write. ALL publications each
+  the immediate arm returns a DISTINCT handled-but-unacknowledged outcome
+  that stops the caller BEFORE the synthetic fall-through
+  (`sdk-message-handler.ts:813-819`) — NOT the existing `false` — so the
+  replay is neither published nor processed further, and no publications
+  or flag write occur. ALL publications each
   region performs
   today run as stages of its pipeline.
 - **lands.** Both acknowledgment paths run as complete pipelines; the Chain C
