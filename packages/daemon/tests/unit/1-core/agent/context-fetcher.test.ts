@@ -251,6 +251,29 @@ describe('ContextFetcher.toContextInfo', () => {
     }
   });
 
+  it('keeps the daemon backstop inactive when autoCompactPercent is 100', () => {
+    const response = baseResponse({
+      totalTokens: 90000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 45,
+      model: 'ce-model',
+      autoCompactThreshold: 0,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 90000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 100,
+    });
+
+    expect(info.daemonBackstopActive).toBe(false);
+    expect(info.autoCompactThreshold).toBeFalsy();
+  });
+
   it('recalculates free space against the armed window when metadata capacity differs from SDK capacity', () => {
     const response = baseResponse({
       totalTokens: 90000,
@@ -700,7 +723,10 @@ describe('ContextFetcher.toContextInfo', () => {
       expect(data.tokens).toBeLessThanOrEqual(info.totalUsed);
     }
 
-    expect(info.breakdown['Free space'].tokens).toBe(121560);
+    const reservedTokens = info.totalCapacity - (info.autoCompactThreshold ?? 0);
+    expect(info.breakdown['Free space'].tokens).toBe(
+      info.totalCapacity - info.totalUsed - reservedTokens
+    );
   });
 
   it('keeps SDK free space when metadata matches SDK capacity', () => {
@@ -1030,73 +1056,6 @@ describe('ContextFetcher.fetch', () => {
     expect(info?.autoCompactThreshold).toBe(100000);
     expect(info?.breakdown['Free space']).toEqual({ tokens: 10000, percent: 5 });
   });
-
-  it('returns null when the SDK usage call never resolves', async () => {
-    const getContextUsage = mock(() => new Promise(() => {}));
-    const query = { getContextUsage } as unknown as Query;
-
-    const fetcher = new ContextFetcher('test-session');
-    const startedAt = Date.now();
-    const info = await fetcher.fetch(query);
-
-    expect(info).toBeNull();
-    expect(Date.now() - startedAt).toBeLessThan(15000);
-  }, 20000);
-
-  it('returns null when getContextUsage throws synchronously', async () => {
-    const getContextUsage = mock(() => {
-      throw new Error('query closed');
-    });
-    const query = { getContextUsage } as unknown as Query;
-
-    const fetcher = new ContextFetcher('throwing-session');
-    const info = await fetcher.fetch(query);
-
-    expect(info).toBeNull();
-    const second = await fetcher.fetch(query);
-    expect(second).toBeNull();
-  });
-
-  it('de-duplicates concurrent usage requests while one is pending', async () => {
-    let resolveUsage: (value: ReturnType<typeof baseResponse>) => void = () => {};
-    const getContextUsage = mock(
-      () =>
-        new Promise((resolve) => {
-          resolveUsage = resolve;
-        })
-    );
-    const query = { getContextUsage } as unknown as Query;
-
-    const fetcher = new ContextFetcher('dedupe-session');
-    const first = fetcher.fetch(query);
-    const second = await fetcher.fetch(query);
-
-    expect(getContextUsage).toHaveBeenCalledTimes(1);
-    expect(second).toBeNull();
-
-    resolveUsage(baseResponse({ totalTokens: 1000, maxTokens: 200000, percentage: 0.5 }));
-    const info = await first;
-    expect(info?.totalUsed).toBe(1000);
-  });
-
-  it('issues a fresh usage request after a pending one goes stale', async () => {
-    const getContextUsage = mock(() => new Promise(() => {}));
-    const query = { getContextUsage } as unknown as Query;
-
-    const fetcher = new ContextFetcher('stale-session');
-    fetcher.overrideUsageRequestStaleMsForTest(20);
-    void fetcher.fetch(query);
-
-    const deduped = await fetcher.fetch(query);
-    expect(deduped).toBeNull();
-    expect(getContextUsage).toHaveBeenCalledTimes(1);
-
-    await new Promise((resolve) => setTimeout(resolve, 25));
-
-    const recovered = await fetcher.fetch(query);
-    expect(getContextUsage).toHaveBeenCalledTimes(2);
-    expect(recovered).toBeNull();
-  }, 20000);
 
   describe('capacity mismatch warning', () => {
     it('warns when SDK effective capacity differs from metadata by >10% for NATIVE providers', async () => {

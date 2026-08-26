@@ -6,7 +6,11 @@ import type {
   ContextMessageBreakdown,
   ModelInfo,
 } from '@hyperneo/shared';
-import { AUTO_COMPACT_PERCENT_DEFAULT, resolveAutoCompactPercent } from '@hyperneo/shared';
+import {
+  AUTO_COMPACT_PERCENT_DEFAULT,
+  AUTO_COMPACT_PERCENT_MAX,
+  resolveAutoCompactPercent,
+} from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 import { getModelInfo } from '../model-service.js';
 import { scaledAutoCompactWindow } from './context-budget-decision.ts';
@@ -71,16 +75,6 @@ function resolveDisplayModel(
 export class ContextFetcher {
   private logger: Logger;
 
-  private inFlightUsage: Promise<SDKControlGetContextUsageResponse> | null = null;
-
-  private inFlightUsageStartedAt = 0;
-
-  private usageRequestStaleMs = 10_000;
-
-  overrideUsageRequestStaleMsForTest(ms: number): void {
-    this.usageRequestStaleMs = ms;
-  }
-
   constructor(private sessionId: string) {
     this.logger = new Logger(`ContextFetcher ${sessionId}`);
   }
@@ -92,28 +86,8 @@ export class ContextFetcher {
     modelMetadata?: ContextMetadata
   ): Promise<ContextInfo | null> {
     if (!query?.getContextUsage) return null;
-    if (this.inFlightUsage && Date.now() - this.inFlightUsageStartedAt < this.usageRequestStaleMs) {
-      return null;
-    }
-
-    let request: Promise<SDKControlGetContextUsageResponse>;
     try {
-      request = query.getContextUsage();
-    } catch (error) {
-      this.logger.warn('query.getContextUsage() failed:', error);
-      return null;
-    }
-    this.inFlightUsage = request;
-    this.inFlightUsageStartedAt = Date.now();
-    request
-      .catch(() => {})
-      .finally(() => {
-        if (this.inFlightUsage === request) {
-          this.inFlightUsage = null;
-        }
-      });
-    try {
-      const response = await ContextFetcher.withUsageTimeout(request);
+      const response = await query.getContextUsage();
       const resolvedMetadata = await ContextFetcher.resolveMetadataForResponse(
         response,
         modelMetadata
@@ -126,20 +100,6 @@ export class ContextFetcher {
     } catch (error) {
       this.logger.warn('query.getContextUsage() failed:', error);
       return null;
-    }
-  }
-
-  private static async withUsageTimeout<T>(pending: Promise<T>): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        pending,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('getContextUsage timed out')), 2000);
-        }),
-      ]);
-    } finally {
-      if (timer) clearTimeout(timer);
     }
   }
 
@@ -363,6 +323,7 @@ export class ContextFetcher {
       !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider) &&
       !PROVIDER_NO_SDK_AUTO_COMPACT.has(enforcementProvider)
     ) {
+      const effectivePercent = resolveAutoCompactPercent(modelMetadata?.autoCompactPercent);
       const budgetThreshold = scaledAutoCompactWindow(capacity, modelMetadata?.autoCompactPercent);
       const rawThresholdKnown =
         typeof rawSdkAutoCompactThreshold === 'number' &&
@@ -372,14 +333,27 @@ export class ContextFetcher {
         budgetThreshold !== undefined &&
         budgetThreshold > 0 &&
         budgetThreshold <= capacity &&
-        (resolveAutoCompactPercent(modelMetadata?.autoCompactPercent) >
-          AUTO_COMPACT_PERCENT_DEFAULT ||
+        effectivePercent < AUTO_COMPACT_PERCENT_MAX &&
+        (effectivePercent > AUTO_COMPACT_PERCENT_DEFAULT ||
           response.isAutoCompactEnabled === false ||
           !rawThresholdKnown ||
           rawSdkAutoCompactThreshold > budgetThreshold)
       ) {
         autoCompactThreshold = budgetThreshold;
         daemonBackstopActive = true;
+        const freeSpaceKey = Object.keys(breakdown).find((name) =>
+          name.toLowerCase().includes('free space')
+        );
+        if (freeSpaceKey) {
+          const nonFreeSpaceTokens = Object.entries(breakdown)
+            .filter(([name]) => !name.toLowerCase().includes('free space'))
+            .reduce((sum, [, data]) => sum + data.tokens, 0);
+          const correctedTokens = Math.max(0, autoCompactThreshold - nonFreeSpaceTokens);
+          breakdown[freeSpaceKey] = {
+            tokens: correctedTokens,
+            percent: capacity > 0 ? Math.round((correctedTokens / capacity) * 1000) / 10 : null,
+          };
+        }
       }
     }
 
