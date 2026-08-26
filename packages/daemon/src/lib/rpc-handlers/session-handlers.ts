@@ -1364,6 +1364,19 @@ export function setupSessionHandlers(
       log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
     }
 
+    try {
+      const woken = db
+        .getJobQueueRepo()
+        .rescheduleSessionDeliveries('message_delivery', targetSessionId, Date.now());
+      if (woken > 0) {
+        log.info(
+          `session.sdkResumeChoice: woke ${woken} parked delivery job(s) for session ${targetSessionId}`
+        );
+      }
+    } catch (err) {
+      log.warn(`session.sdkResumeChoice: failed to wake parked deliveries: ${err}`);
+    }
+
     return { success: true };
   });
 }

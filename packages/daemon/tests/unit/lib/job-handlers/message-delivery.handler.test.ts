@@ -503,6 +503,28 @@ describe('createMessageDeliveryHandler', () => {
       expect(jobQueue.requeue).not.toHaveBeenCalled();
     });
 
+    it('a budget-exhausted blocked turn parks once more when the choice resolved mid-flight', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({
+        isResumeChoiceResolved: mock(() => true),
+      });
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+      jobQueue.getParkCount.mockImplementation(() => RESUME_CHOICE_PARK_BUDGET);
+      const result = await handler(job, {});
+      expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
+      expect(result.retryAt).toBeGreaterThan(Date.now());
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
+    });
+
+    it('an unresolved choice still dead-letters even when the revalidation dep exists', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({
+        isResumeChoiceResolved: mock(() => false),
+      });
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+      jobQueue.getParkCount.mockImplementation(() => RESUME_CHOICE_PARK_BUDGET);
+      await expect(handler(job, {})).rejects.toThrow('past its budget');
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
     it('a blocked turn under the resume-choice budget parks via requeueParked', async () => {
       const { handler, session, jobQueue, job } = makeHarness();
       session.driveResult = { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };

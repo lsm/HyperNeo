@@ -278,6 +278,18 @@ export class JobQueueRepository {
     return this.getJob(jobId);
   }
 
+  rescheduleSessionDeliveries(queue: string, sessionId: string, runAt: number): number {
+    const stmt = this.db.prepare(
+      `UPDATE job_queue
+          SET run_at = ?, started_at = NULL, heartbeat_at = NULL
+        WHERE queue = ? AND status = 'pending'
+          AND json_extract(payload, '$.sessionId') = ?
+          AND run_at > ?`
+    );
+    const res = withBusyRetry(() => stmt.run(runAt, queue, sessionId, runAt));
+    return res.changes;
+  }
+
   requeueAllProcessing(queue: string, runAt: number): string[] {
     return withBusyRetry(() =>
       this.db.transaction(() => {

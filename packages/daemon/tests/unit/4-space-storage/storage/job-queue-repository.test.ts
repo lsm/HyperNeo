@@ -3,6 +3,50 @@ import { Database } from '../../../../src/storage/sqlite-compat';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 
 describe('JobQueueRepository', () => {
+  describe('rescheduleSessionDeliveries', () => {
+    it('pulls only the given session pending jobs due later to now', () => {
+      const future = Date.now() + 600_000;
+      repository.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'sess-a', messageUuid: 'u1' },
+        runAt: future,
+      });
+      repository.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'sess-b', messageUuid: 'u2' },
+        runAt: future,
+      });
+      repository.enqueue({
+        queue: 'other_queue',
+        payload: { sessionId: 'sess-a', messageUuid: 'u3' },
+        runAt: future,
+      });
+      const changed = repository.rescheduleSessionDeliveries('message_delivery', 'sess-a', Date.now());
+      expect(changed).toBe(1);
+      const jobs = repository.listJobs({ queue: 'message_delivery', limit: 10 });
+      const a = jobs.find((j) => (j.payload as { sessionId: string }).sessionId === 'sess-a');
+      const b = jobs.find((j) => (j.payload as { sessionId: string }).sessionId === 'sess-b');
+      expect(a?.runAt).toBeLessThanOrEqual(Date.now());
+      expect(b?.runAt).toBe(future);
+    });
+
+    it('never touches already-completed or processing rows', () => {
+      repository.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'sess-a', messageUuid: 'u1' },
+        runAt: Date.now() - 1000,
+      });
+      const [job] = repository.dequeue('message_delivery', 1);
+      const changedNow = repository.rescheduleSessionDeliveries(
+        'message_delivery',
+        'sess-a',
+        Date.now()
+      );
+      expect(changedNow).toBe(0);
+      expect(repository.getJob(job.id)?.status).toBe('processing');
+    });
+  });
+
   let db: Database;
   let repository: JobQueueRepository;
 

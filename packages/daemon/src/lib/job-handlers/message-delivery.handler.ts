@@ -24,6 +24,7 @@ export interface MessageDeliveryHandlerDeps {
   isSessionArchived?(sessionId: string): boolean;
   markDeliveryFailed?(sessionId: string, messageUuid: string): string | null;
   publishStatusChanged?(sessionId: string, messageIds: string[]): Promise<unknown>;
+  isResumeChoiceResolved?(sessionId: string): boolean;
   metrics?: DeliveryMetrics;
 }
 
@@ -123,6 +124,17 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         now: Date.now(),
       });
       if ('deadLetter' in route) {
+        if (
+          result.outcome === 'blocked' &&
+          deps.isResumeChoiceResolved?.(payload.sessionId) === true
+        ) {
+          const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
+          deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+          log.info(
+            `message_delivery: resume choice resolved mid-flight for ${payload.messageUuid}; parking once more instead of dead-lettering`
+          );
+          return { parked: 'sdk_resume_choice', retryAt };
+        }
         throw new DeadLetterImmediatelyError(route.deadLetter);
       }
       if (route.reclaimSkip) {
