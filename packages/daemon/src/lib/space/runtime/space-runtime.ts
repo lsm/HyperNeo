@@ -57,7 +57,7 @@ import {
 } from '../../external-events/queue-health-metrics.ts';
 import { TopicTrie } from '../../external-events/topic-trie.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
-import type { ExternalEvent } from '../../external-events/types.ts';
+import type { ExternalEvent, ExternalEventDeliveryRecord } from '../../external-events/types.ts';
 import {
   type DaemonCommandMap,
   type InternalCommandBus,
@@ -1907,7 +1907,7 @@ export class SpaceRuntime {
     if (!store) return null;
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     if (!execution) return null;
-    const pendingForTarget = () =>
+    const scopedPending = () =>
       store
         .listPendingDeliveries(execution.workflowRunId)
         .filter(
@@ -1915,18 +1915,38 @@ export class SpaceRuntime {
             row.nodeId === execution.workflowNodeId &&
             row.agentName === execution.agentName &&
             (taskId === undefined || row.taskId === taskId)
-        )
-        .slice(0, TURN_END_DIGEST_PENDING_ROW_CAP);
-    const firstPending = pendingForTarget()[0];
+        );
+    const firstPending = scopedPending()[0];
     if (!firstPending) return null;
-    const targetTaskId = taskId ?? firstPending.taskId;
-    const task = this.config.taskRepo.getTask(targetTaskId);
+    const target: WorkflowSubscriptionTarget = {
+      workflowRunId: execution.workflowRunId,
+      taskId: taskId ?? firstPending.taskId,
+      nodeId: execution.workflowNodeId,
+      agentName: execution.agentName,
+    };
+    const task = this.config.taskRepo.getTask(target.taskId);
     if (!task || task.status === 'stopped' || task.status === 'cancelled') return null;
     const run = this.config.workflowRunRepo.getRun(execution.workflowRunId);
     if (run && this.pausedSpaceIds.has(run.spaceId)) return null;
+    const claimedRows: ExternalEventDeliveryRecord[] = [];
+    for (const row of scopedPending()) {
+      if (claimedRows.length >= TURN_END_DIGEST_PENDING_ROW_CAP) break;
+      if (this.externalEventDeliveriesInFlight.has(row.deliveryKey)) continue;
+      const record = store.getById(row.eventId);
+      if (record && !this.isTargetStillSubscribed(target, record.event.topic)) {
+        store.markDeliveryFailed(row.eventId, row.deliveryKey, {
+          terminal: true,
+          reason: 'subscription_no_longer_active',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(row.eventId);
+        continue;
+      }
+      claimedRows.push(row);
+    }
+    if (claimedRows.length === 0) return null;
     const messages = this.getSdkMessageRepo();
     const deps: RenderPendingDigestDeps = {
-      listPendingDeliveries: () => pendingForTarget(),
+      listPendingDeliveries: () => claimedRows,
       getEventById: (eventId) => store.getById(eventId),
       saveDigestMessageIfAbsent: async (targetSessionId, message) => {
         const uuid = String(message.uuid);
@@ -1942,7 +1962,9 @@ export class SpaceRuntime {
         const row = messages.getDeliveryContent(targetSessionId, uuid);
         if (!row) return false;
         if (row.sendStatus === 'failed') {
-          return messages.reopenDeliveryByUuid(targetSessionId, uuid) !== null;
+          const failedRow = messages.getMessageByStatusAndUuid(targetSessionId, 'failed', uuid);
+          if (!failedRow) return false;
+          messages.updateMessageStatus([failedRow.dbId], 'deferred');
         }
         return true;
       },
@@ -1955,15 +1977,12 @@ export class SpaceRuntime {
         })();
       },
     };
-    return runRenderPendingDigest(deps, {
-      sessionId,
-      target: {
-        workflowRunId: execution.workflowRunId,
-        taskId: targetTaskId,
-        nodeId: execution.workflowNodeId,
-        agentName: execution.agentName,
-      },
-    });
+    for (const row of claimedRows) this.externalEventDeliveriesInFlight.add(row.deliveryKey);
+    try {
+      return await runRenderPendingDigest(deps, { sessionId, target });
+    } finally {
+      for (const row of claimedRows) this.externalEventDeliveriesInFlight.delete(row.deliveryKey);
+    }
   }
 
   private async deliverToLiveSessionTarget(
