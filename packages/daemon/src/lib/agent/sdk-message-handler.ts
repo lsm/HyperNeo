@@ -1234,6 +1234,7 @@ export class SDKMessageHandler {
     if (!this.acknowledgedPersistedUserThisTurn && !this.suppressIdleOnNextResult) {
       await this.acknowledgeOldestQueuedUserOnTurnEnd(activeMessageId, message.uuid ?? '');
     }
+    if (this.isInvocationStale(invocationGeneration)) return;
     this.acknowledgedPersistedUserThisTurn = false;
 
     await internalEventBus.publish('session.errorClear', {
@@ -1387,6 +1388,12 @@ export class SDKMessageHandler {
     }
 
     if (allowQueueReplay && session.config.queryMode !== 'manual') {
+      if (this.isInvocationStale(invocationGeneration)) {
+        this.logger.info(
+          'Skipping deferred replay dispatch: the turn was superseded at the idle settle.'
+        );
+        return;
+      }
       try {
         await internalEventBus.publish('query.trigger', { sessionId: session.id });
       } catch (error) {
