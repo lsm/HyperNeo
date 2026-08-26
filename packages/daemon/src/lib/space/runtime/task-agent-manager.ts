@@ -363,6 +363,7 @@ const SPACE_AGENT_RETRY_DELAY_MS = 30_000;
 
 export class TaskAgentManager {
   private readonly lateSettlements = new SpaceAgentLateSettlements();
+  private readonly spaceAgentRetryTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly spaceAgentDrainsInFlight = new Set<string>();
   private readonly spaceAgentDrainRerunQueued = new Set<string>();
 
@@ -1551,9 +1552,7 @@ export class TaskAgentManager {
           this.emitPendingDelivered(row.id, settledSessionId, row);
         };
         const scheduleReconciliation = () => {
-          setTimeout(() => {
-            void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
-          }, SPACE_AGENT_RETRY_DELAY_MS);
+          this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);
         };
         const onWatcherFailed = () => {
           if (done) return;
@@ -1632,7 +1631,7 @@ export class TaskAgentManager {
       this.emitPendingDelivered(row.id, targetSessionId, row);
     };
     const scheduleReconciliation = () => {
-      void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
+      this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);
     };
     repo.recordDeliveryAttempt(row.id, null);
     try {
@@ -1673,6 +1672,14 @@ export class TaskAgentManager {
       }
       log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);
     }
+  }
+
+  private scheduleSpaceAgentReconciliation(spaceId: string, workflowRunId: string): void {
+    const timer = setTimeout(() => {
+      this.spaceAgentRetryTimers.delete(timer);
+      void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
+    }, SPACE_AGENT_RETRY_DELAY_MS);
+    this.spaceAgentRetryTimers.add(timer);
   }
 
   activeSpaceDeliveryIdsForRun(workflowRunId: string): string[] {
@@ -2810,6 +2817,8 @@ export class TaskAgentManager {
 
   async cleanupAll(): Promise<void> {
     this.lateSettlements.dispose();
+    for (const timer of this.spaceAgentRetryTimers) clearTimeout(timer);
+    this.spaceAgentRetryTimers.clear();
     clearAllRetryableHookActionTimers();
     this.clearDirectSteerState();
     for (const executionId of this.concurrentSpawnWaiters.keys()) {

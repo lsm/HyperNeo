@@ -930,10 +930,23 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
     const failed = h.spyRepo.repo.getById(failingRow.id);
-    expect(failed?.status).toBe('failed');
-    expect(failed?.attempts).toBe(5);
-    expect(failed?.lastError).toBe('space-agent delivery attempts exhausted (5)');
+    expect(failed?.status).toBe('pending');
+    expect(failed?.attempts).toBe(1);
+    expect(failed?.lastError).toBe('injector down');
     expect(h.spyRepo.repo.getById(laterRow.id)?.status).toBe('delivered');
+  });
+
+  it('terminalizes rows whose attempt budget is already spent', async () => {
+    const h = makeSpaceAgentHarness();
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'budget spent' });
+    for (let i = 0; i < 5; i++) h.spyRepo.repo.markAttemptFailed(row.id, 'historical failure');
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.injector).not.toHaveBeenCalled();
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('failed');
+    expect(h.spyRepo.repo.getById(row.id)?.lastError).toBe('historical failure');
   });
 });
 

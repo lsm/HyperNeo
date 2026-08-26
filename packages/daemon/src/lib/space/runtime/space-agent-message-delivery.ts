@@ -29,6 +29,11 @@ export interface SpaceAgentLateSettlementOwner {
 
 export const LATE_SETTLE_HORIZON_MS = 12 * 60_000;
 
+interface ArmedWatcher {
+  handle: SpaceAgentLateSettlementHandle;
+  release: () => void;
+}
+
 export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private readonly waiters = new Map<
@@ -55,10 +60,20 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     const late = waitForDeliveryConsumption(sessionId, messageId);
     let fired = false;
     let expiry: ReturnType<typeof setTimeout> | undefined;
-    const release = () => {
+    let release: () => void = () => {};
+    const watcher: ArmedWatcher = {
+      release,
+      handle: {
+        cancel: () => {
+          fired = true;
+          release();
+        },
+      },
+    };
+    release = () => {
       clearTimeout(expiry);
       this.timers.delete(expiry!);
-      this.waiters.delete(key);
+      if (this.waiters.get(key)?.handle === watcher.handle) this.waiters.delete(key);
       late.cancel();
     };
     this.timers.add(
@@ -77,15 +92,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
         }
       }, LATE_SETTLE_HORIZON_MS))
     );
-    this.waiters.set(key, {
-      release,
-      handle: {
-        cancel: () => {
-          fired = true;
-          release();
-        },
-      },
-    });
+    this.waiters.set(key, watcher);
     void late.promise.then(() => {
       release();
       if (fired) return;
@@ -99,7 +106,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
         );
       }
     });
-    return this.waiters.get(key)!.handle;
+    return watcher.handle;
   }
 
   dispose(): void {

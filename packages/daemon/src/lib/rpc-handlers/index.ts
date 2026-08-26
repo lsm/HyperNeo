@@ -1036,6 +1036,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           stateManager: session.stateManager,
           onConsumed: injectorOptions?.onConsumed,
           lateSettlement: injectorOptions?.lateSettlement,
+          onLateFailure: injectorOptions?.onLateFailure,
           disposeSignal: injectorOptions?.disposeSignal,
         },
         {
