@@ -6662,7 +6662,17 @@ export class SpaceRuntime {
     const tam = this.config.taskAgentManager;
     if (!repo || !tam) return false;
 
-    repo.expireStale(runId);
+    repo.expireStale(
+      runId,
+      collectActiveSpaceDeliveryIds({
+        repo,
+        workflowRunId: runId,
+        spaceChatSessionId: `space:chat:${run.spaceId}`,
+        resolveReplySession: (row) => extractReplyToSessionId(formatPendingRowForSpaceAgent(row)),
+        probeDeliveryStatus: (sessionId, messageId) =>
+          this.sdkMessageRepo?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+      })
+    );
     const pending = repo.listPendingForRun(runId).filter((row) => row.targetKind === 'node_agent');
     const isTerminalTask =
       canonicalTask.status === 'done' ||
