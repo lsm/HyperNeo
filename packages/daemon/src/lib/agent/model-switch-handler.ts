@@ -251,6 +251,7 @@ export class ModelSwitchHandler {
       } else {
         session.config.model = resolvedModel;
         session.config.provider = nextProvider;
+        this.ctx.messageQueue.removePendingInternalCompactions();
         if (clearAcpSessionId) {
           session.acpSessionId = undefined;
           session.metadata = {

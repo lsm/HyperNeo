@@ -60,6 +60,15 @@ export class MessageQueue {
     this.waiters = [];
   }
 
+  removePendingInternalCompactions(): number {
+    const before = this.queue.length;
+    this.queue = this.queue.filter(
+      (queued) =>
+        !(queued.internal && typeof queued.content === 'string' && queued.content === '/compact')
+    );
+    return before - this.queue.length;
+  }
+
   async enqueue(
     content: string | MessageContent[],
     internal: boolean = false,

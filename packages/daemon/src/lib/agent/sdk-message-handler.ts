@@ -959,7 +959,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKResultMessage(message)) {
-      if (this.ctx.stateManager.getIsCompacting()) {
+      if (isTopLevelResult && this.ctx.stateManager.getIsCompacting()) {
         await this.ctx.stateManager.setCompacting(false);
       }
       if (!enforcedTurnEnd) {
