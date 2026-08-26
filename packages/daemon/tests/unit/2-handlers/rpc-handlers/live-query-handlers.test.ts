@@ -3712,6 +3712,34 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows.map((r) => r.id)).toEqual(['u1', 'a1', 'gh-compact-1', 'r1']);
       });
 
+      test('breaks same-timestamp GitHub rows at the window boundary by insertion order', () => {
+        const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
+        insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
+
+        const insertGithubEvent = (id: string): void => {
+          db.exec(`
+					INSERT INTO space_github_events (
+						id, space_id, task_id, source, delivery_id, event_type, action,
+						repo_owner, repo_name, pr_number, pr_url, actor, actor_type,
+						body, summary, external_url, external_id, occurred_at, dedupe_key,
+						raw_payload, state, created_at, updated_at
+					) VALUES (
+						'${id}', '${spaceId}', '${taskId}', 'webhook', 'delivery-${id}',
+						'pull_request', 'opened', 'lsm', 'neokai', 1965,
+						'https://github.com/lsm/neokai/pull/1965', 'reviewer', 'User', '',
+						'PR #1965 ${id}', 'https://github.com/lsm/neokai/pull/1965',
+						'ext-${id}', ${now + 2500}, '${id}', '{}', 'routed',
+						${now + 2500}, ${now + 2500}
+					)
+				`);
+        };
+        insertGithubEvent('gh-tie-a');
+        insertGithubEvent('gh-tie-b');
+
+        expect(queryCompact(taskId, 1).map((r) => r.id)).toEqual(['gh-tie-b']);
+        expect(queryCompact(taskId, 2).map((r) => r.id)).toEqual(['gh-tie-a', 'gh-tie-b']);
+      });
+
       test('keeps Write/Edit/TodoWrite tool rows even when the segment has assistant text (#2338)', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');

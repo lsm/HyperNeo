@@ -1879,7 +1879,7 @@ github_events AS (
     1 AS isRenderable,
     0 AS isTerminal,
     NULL AS turnUserMessageId,
-    NULL AS insOrder
+    ge.rowid AS insOrder
   FROM target_task tt
   JOIN space_github_events ge ON ge.task_id = tt.id
   WHERE ge.state IN ('routed', 'delivered')
@@ -2199,7 +2199,7 @@ github_events AS (
     1 AS isRenderable,
     0 AS isTerminal,
     NULL AS turnIndex,
-    NULL AS insOrder
+    ge.rowid AS insOrder
   FROM target_task tt
   JOIN space_github_events ge ON ge.task_id = tt.id
   WHERE ge.state IN ('routed', 'delivered')
