@@ -1227,7 +1227,11 @@ export class AgentSession
     if (!restored || restored.totalUsed <= 0) {
       return;
     }
+    const sessionModel = this.session.config.model;
     const modelInfo = await getSessionModelInfo(this.session);
+    if (this.session.config.model !== sessionModel || this.session.config.provider !== providerId) {
+      return;
+    }
     const configuredWindow =
       modelInfo?.contextWindow && modelInfo.contextWindow > 0
         ? modelInfo.contextWindow
@@ -1256,10 +1260,15 @@ export class AgentSession
         `(provider=${providerId}, reason=${decision.reason}, ` +
         `${restored.totalUsed} >= ${budgetKey} of ${configuredWindow ?? 0} tokens)`
     );
-    void this.messageQueue.enqueue('/compact', true, { durable: true }).catch((error) => {
-      this.logger.warn(`restored compaction enqueue failed for session ${this.session.id}:`, error);
-      this.contextTracker.clearCompactionCooldown();
-    });
+    void this.messageQueue
+      .enqueue('/compact', true, { durable: true, prepend: true })
+      .catch((error) => {
+        this.logger.warn(
+          `restored compaction enqueue failed for session ${this.session.id}:`,
+          error
+        );
+        this.contextTracker.clearCompactionCooldown();
+      });
   }
 
   private syncRuntimeMcpServersToActiveQuery(

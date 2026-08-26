@@ -4264,7 +4264,7 @@ export class TaskAgentManager {
       ctx.workflowNodeId
     );
 
-    session.mergeRuntimeMcpServers({
+    await session.mergeRuntimeMcpServers({
       'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
     });
 
@@ -4277,7 +4277,7 @@ export class TaskAgentManager {
   ): Promise<void> {
     const mcpServers = this.buildAgentMemoryMcpServers(ctx.spaceId, ctx.subSessionId);
     if (Object.keys(mcpServers).length === 0) return;
-    session.mergeRuntimeMcpServers(mcpServers);
+    await session.mergeRuntimeMcpServers(mcpServers);
     await session.restartQuery();
   }
 

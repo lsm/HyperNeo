@@ -80,15 +80,22 @@ export class MessageQueue {
   }
 
   setDeliveryGate(gate: Promise<void>): void {
-    this.deliveryGate = gate;
-    void gate.then(
+    const previous = this.deliveryGate;
+    const composed = previous
+      ? previous.then(
+          () => gate,
+          () => gate
+        )
+      : gate;
+    this.deliveryGate = composed;
+    void composed.then(
       () => {
-        if (this.deliveryGate === gate) {
+        if (this.deliveryGate === composed) {
           this.deliveryGate = null;
         }
       },
       () => {
-        if (this.deliveryGate === gate) {
+        if (this.deliveryGate === composed) {
           this.deliveryGate = null;
         }
       }
@@ -422,7 +429,7 @@ export class MessageQueue {
       if (!this.running) return null;
     }
 
-    if (this.deliveryGate) {
+    while (this.deliveryGate) {
       await this.deliveryGate.catch(() => {});
     }
 

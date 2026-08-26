@@ -1523,7 +1523,7 @@ export class SDKMessageHandler {
     this.eventsSinceContextRefresh = 0;
 
     if (this.pendingContextRefresh) {
-      if (reason === 'event-tick' || reason === 'compact-boundary') {
+      if (reason === 'event-tick') {
         return this.pendingContextRefresh;
       }
       const pending = this.pendingContextRefresh;
