@@ -334,27 +334,33 @@ none of these sites needs its compensation machinery.
   `message-delivery.ts:reconcileStrandedDeliveries` exposes no session
   status to snapshot (its `processingStatus` is `null` and the busy-status
   stage passes — inventing a status default or skipping busy sessions there
-  would be a contract change). The two variants also differ in effects
-  (review correction PR #2981): the standalone path's stage order is V2-flag
+  would be a contract change). Both variants are ORCHESTRATION-shaped per
+  ADR 0004 P6 (review correction PR #2981: pipelines are per-event reducer
+  bodies, never the loop — the row folds live in the reconciliation
+  orchestration, which invokes a reducer pipeline per stranded row and,
+  on the session variant, per stale submitted row, keeping individual
+  state transitions explicit). The two variants also differ in effects
+  (review correction PR #2981): the standalone path's order is V2-flag
   gate → coordinated lock → `selectStrandedDeliveries` filtering against
-  active/in-flight UUIDs → enqueue → session-state update — NO
+  active/in-flight UUIDs → the per-row re-enqueue reducer fold (enqueue +
+  session-state update) — NO
   submitted-message settlement (that path only queries `enqueued` rows and
   its `StrandedDeliveryDb` interface cannot query or fail `submitted` rows,
   `message-delivery.ts:201-203`; wiring settlement there would introduce new
   message-failure behavior); the agent-session variant wraps its
-  selection/enqueue stages in `withSessionResetCoordination` AROUND the
+  selection/enqueue orchestration in `withSessionResetCoordination` AROUND the
   coordinated lock (`agent-session.ts:2867-2883`; review correction PR
   #2981: the reset-coordination envelope is part of that variant's prefix —
   without it, reconciliation overlapping a conversation reset can select
   and enqueue rows during the reset and resurrect a delivery the reset is
   clearing), and appends the
-  submitted-message settlement stage (`agent-session.ts:2884-2905`) in its
-  own coordinated-lock stage — settlement is NOT under reset coordination
+  submitted-row settlement fold (`agent-session.ts:2884-2905`) in its
+  own coordinated-lock orchestration — settlement is NOT under reset coordination
   today, and the prefix is not literally "the same" as the standalone
   variant's — closing with the guarded summary-log stage
   (`if (reEnqueued > 0 || settled > 0)` log at `:2906-2909`; review
   correction PR #2981: it runs after both counts are known, inside the
-  pipeline — dropping it loses the operational signal, leaving it in the
+  operation — dropping it loses the operational signal, leaving it in the
   caller keeps a decision-dependent effect outside the operation). The
   V2-flag predicate is shared. The
   session-state update and settlement publication effect stages carry
@@ -1251,7 +1257,10 @@ hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
   (`MessageQueue.messageGenerator` per `message-queue.ts:347-359`;
   `QueryRunner.createMessageGeneratorWrapper` per
   `query-runner.ts:1704-1715`; `markMessageAccepted` before its consumed
-  query per `sdk-message-handler.ts:551-559`) — while each individual
+  query per `sdk-message-handler.ts:551-559`; the registration adapter
+  returning the promise per `:140-142` and the ACP `onAccepted` contract
+  per `acp-query-adapter.ts:29`/`acp-client.ts:272,286`) — while each
+  individual
   PUBLICATION promise keeps its today-style `.catch` containment so a
   publication failure never becomes an unhandled rejection. EVERY
   successful or already-consumed acknowledgment arm —
@@ -1615,9 +1624,12 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 - **scope.** `turn-outcome-classification.ts`: admission gates
   (`applyDeliveryV2Gate`, `applyJobQueueGate`, `applyBusyStatusGate`,
   `applyRunGate`) as direct stages of the complete
-  `reconcile-stranded-deliveries` pipeline — coordinated lock,
-  `selectStrandedDeliveries` filtering against active/in-flight UUIDs,
-  enqueue, and session-state update — with the shared V2-flag predicate and
+  `reconcile-stranded-deliveries` operation — admission, coordinated lock,
+  `selectStrandedDeliveries` filtering against active/in-flight UUIDs at
+  the ORCHESTRATION level, then a per-row reducer pipeline for the
+  enqueue + session-state update fold (ADR 0004 P6: the row loop is
+  orchestration, the pipeline is the per-row reducer; review correction
+  PR #2981) — with the shared V2-flag predicate and
   a `processingStatus: null` pass-through for the status-less entry;
   `decideReconcileAdmission` stays exported as the narrow delegate. Review
   correction (PR #2981): submitted-message SETTLEMENT exists only on the
@@ -1667,13 +1679,14 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 🔧 apply — prod Δ ≲60, test Δ ≲100
 
 - **scope.** `agent-session.ts:2852-2859`: the inline V2 + jobQueue + status
-  preamble is replaced by the complete pipeline (this path supplies
+  preamble is replaced by the complete operation (this path supplies
   `processingStatus`, so its busy-status admission stage runs); its
-  selection/enqueue stages keep the `withSessionResetCoordination` envelope
-  around the coordinated lock (`:2867-2883`, review correction PR #2981),
-  and the settlement stage keeps its own lock-only stage; the variant ends
-  with the guarded summary-log stage (`:2906-2909`) after both counts are
-  known.
+  selection/enqueue orchestration keeps the `withSessionResetCoordination`
+  envelope around the coordinated lock (`:2867-2883`, review correction PR
+  #2981), the row folds invoke per-row reducer pipelines (ADR 0004 P6),
+  and the settlement fold keeps its own lock-only orchestration; the
+  variant ends with the guarded summary-log stage (`:2906-2909`) after
+  both counts are known.
 - **lands.** The duplicated three-check preamble is gone from both
   consumers.
 - **excludes.** Everything else in `agent-session.ts`.
@@ -1688,16 +1701,11 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
 ➕ additive core — prod Δ ≲120, test Δ ≲250
 
 - **scope.** `packages/daemon/src/lib/agent/repeated-tool-error-gates.ts`:
-  a leading scope gate (`applyScopeGate` — `evolutionScopeId` absent →
-  passthrough `false`, mirroring `repeated-tool-error-guardrail.ts:75-76`;
-  review correction PR #2981: unscoped sessions must not mutate streak
-  state or enter intervention effects), a content-classification entry
-  stage running `classifyToolResultContent`
-  whose `reset`/`ignore` arms are decided before the per-error gates (review
-  correction PR #2981: today the guardrail classifies BEFORE the loop and
-  immediately `reset()`s success blocks or error-free content,
-  `repeated-tool-error-guardrail.ts:78-89` — the complete operation starts
-  there, not at the error rows), the gates (`applyInterventionCooldownGate`,
+  the ROW-ONLY reducer core (review correction PR #2981: the scope gate
+  and the whole-message `classifyToolResultContent` call stay in the
+  ONCE-PER-MESSAGE orchestration that PR 12 lands — embedding them in this
+  core would re-run classification for every error row and repeat
+  reset/ignore handling) — the gates (`applyInterventionCooldownGate`,
   transform `applyStreakCountGate`, `applyThresholdGate`,
   `applyCountFinalGate`) plus the effect stages the guardrail performs
   imperatively today — the keyed `lastInterventionByKey` timestamp write
@@ -2115,10 +2123,17 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   the failed acknowledgment and leave a rejected promise unhandled);
   `QueryRunner.createMessageGeneratorWrapper` — which suppresses the queue
   callback and invokes `onMessageYielded` itself
-  (`query-runner.ts:1704-1715`) — awaits or handles the rejection; and
+  (`query-runner.ts:1704-1715`) — awaits or handles the rejection;
   `markMessageAccepted` awaits before its consumed-row query for the ACP
   acceptance path (`sdk-message-handler.ts:551-559`, where the current
-  synchronous `try/catch` no longer contains an async rejection) — while
+  synchronous `try/catch` no longer contains an async rejection); and the
+  ADAPTER contracts are threaded too — the registration wrapper must
+  return the promise instead of discarding it
+  (`sdk-message-handler.ts:140-142`), and the ACP `onAccepted` void
+  contract (`acp-query-adapter.ts:29`, `acp-client.ts:272`) is updated or
+  its invocation at `acp-client.ts:286` sequenced so a transactional
+  rejection is handled rather than unhandled (review correction PR
+  #2981) — while
   the individual PUBLICATION promises keep
   today's per-publication `.catch` containment, so a publication failure
   never becomes an unhandled rejection or escapes the handler. Every
