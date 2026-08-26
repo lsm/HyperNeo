@@ -3194,7 +3194,9 @@ export class TaskAgentManager {
     }
 
     const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(execution.workflowRunId);
-    const parentTask = tasks[0] ?? null;
+    const ownerId = subSessionId ? this.findParentTaskIdForSubSession(subSessionId) : null;
+    const parentTask =
+      (ownerId ? tasks.find((candidate) => candidate.id === ownerId) : null) ?? tasks[0] ?? null;
     if (!parentTask) {
       log.warn(
         `TaskAgentManager.rehydrateSubSession: no parent task found for workflowRunId=${execution.workflowRunId}`

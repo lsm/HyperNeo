@@ -86,9 +86,16 @@ async function resolveWorktreeForJob(
   } else {
     const tasks = deps.spaceTaskRepo.listByWorkflowRun(runId);
     if (tasks.length > 0) {
-      const first = await deps.spaceWorktreeManager.getTaskWorktreePath(run.spaceId, tasks[0].id);
-      if (first) return { worktreePath: first, spaceId: run.spaceId };
-      fallbackTask = tasks[0];
+      const firstTask =
+        tasks[0].spaceId === run.spaceId && tasks[0].workflowRunId === runId ? tasks[0] : null;
+      if (firstTask) {
+        const first = await deps.spaceWorktreeManager.getTaskWorktreePath(
+          run.spaceId,
+          firstTask.id
+        );
+        if (first) return { worktreePath: first, spaceId: run.spaceId };
+      }
+      fallbackTask = firstTask;
     }
   }
 
