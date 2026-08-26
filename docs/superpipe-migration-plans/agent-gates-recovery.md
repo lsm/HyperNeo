@@ -26,10 +26,15 @@ resnapshot flows with CAS outcomes and compensation
 - **`decisionRun`** (`packages/daemon/src/lib/space/runtime/decision-pipeline.ts`)
   — first-match-wins gate cascade over a typed `ctx.decision`; gates are named
   exported functions; the run halts at the first gate that stamps a non-null
-  decision. Used for: mutually exclusive outcome cascades (retry arms, breaker
-  arms, ack priority rows) and for nullable first-match parse cascades where
-  each strategy gate stamps a boxed/non-null decision on success and the
-  wrapper falls back to `null`/`undefined` when no gate fired.
+  decision. Reserved (review correction PR #2981) for the genuinely PURE
+  parse cascades whose whole job is the decision — the nullable first-match
+  parsers (`api-validation-parse`, `terminal-user-message`) where each
+  strategy gate stamps a boxed/non-null decision on success and the wrapper
+  falls back to `null`/`undefined` when no gate fired. Every operation with
+  post-decision effect stages (retry arms, breaker arms, ack priority rows,
+  loop admission, …) composes as a direct pipeline with in-stage skip
+  guards instead — `decisionRun`'s per-gate halt would make those effects
+  unreachable.
 - **Raw `superpipe` transform** (`.pipe(stage, 'ctx', 'ctx')…end('ctx')`, the
   `external-event-steer-admission-pipeline.ts` shape) — a single-pass
   enrichment with several derived outputs and no single terminal decision.
@@ -417,10 +422,12 @@ none of these sites needs its compensation machinery.
 - **pure core design.** Linear stages:
   1. `parseStructuredResetStage` — `rateLimitInfo` →
      `structuredReset`/`structuredRejected`.
-  2. `parseTextResetStage` — runs the reset-parsing stages INLINE
-     (`extractResetTimestamp` stays exported as an ordinary pure helper over
-     those stages; review correction: calling its wrapper here would execute
-     a separate nested pipeline run and split the complete cooldown path).
+  2. `parseTextResetStage` — calls the plain `extractResetTimestamp` helper
+     DIRECTLY (review correction PR #2981: it is an ordinary pure helper,
+     not a pipeline, so calling it cannot execute a nested run — and
+     re-implementing its five ordered strategies inline here would create a
+     second parser that can drift from the helper still used by
+     `computeCooldown`/`isBillingTerminal`).
   3. `resolveBillingStage` — OR of `httpStatus===402`,
      `sdkErrorTag === 'billing_error'` (review correction: the SDK tag
      contributes only on that exact equality — treating raw `sdkErrorTag`
@@ -553,8 +560,13 @@ none of these sites needs its compensation machinery.
   routing or a routing failure escape the guardrail, so the per-stage
   try/catch containment (or equivalent stage-local handlers) is required.
 - **step-by-step migration.** 1) Add gates + effect stages +
-  `decideConsecutiveError` pipeline wrapper; 2) the guardrail's per-error
-  call invokes that complete pipeline; 3) no other callers exist.
+  `decideConsecutiveError` pipeline wrapper; 2) the whole
+  `observeToolResultErrors` body is replaced by ONE pipeline invocation per
+  message — classification-once, in-pipeline error-row iteration, and
+  `triggered` aggregation all inside the single invocation (review
+  correction PR #2981: a per-error call site would leave iteration or
+  aggregation in the guardrail and re-run content classification per row);
+  3) no other callers exist.
 - **tests.** Existing gates suite passes unchanged. Add: halt row (threshold
   gate fires → final gate not reached), and cooldown row asserting
   `lastInterventionAt === undefined` never trips the cooldown gate.
@@ -853,7 +865,9 @@ none of these sites needs its compensation machinery.
   charging `retryCount`, scheduling cooldown, firing LLM refinement for
   ladder arms). Extracted as pure gates in #2779; pinned by
   `rate-limit-watchdog-gates.test.ts` + `rate-limit-watchdog.test.ts`.
-- **proposed combinator.** Review correction round 22 + PR #2981: the trip classification is helper/direct-stage logic of the ONE complete rate-limit scheduling pipeline covering the FULL `scheduleRetry` flow (initialization — cancel the cooldown timer, record the error/hint — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → `lastUserMessage` state write (`:152`, the value the cooldown timer's retry callback later reads at `:412`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording (generation fence `:168-173`) → chain resolution (fence `:178-183`) → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (fence before the immediate-fallback launch, `:206-211`; the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger; revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
+- **proposed combinator.** Review correction round 22 + PR #2981: the trip classification is helper/direct-stage logic of the ONE complete rate-limit scheduling pipeline covering the FULL `scheduleRetry` flow (initialization — cancel the cooldown timer, record the error, record the
+hint ONLY when supplied (`if (hint)`, `:146`; cleared on episode change
+`:154-164`) — → no-user-message gate (logs and returns `false` before episode mutation, `rate-limit-watchdog.ts:148-151`) → `lastUserMessage` state write (`:152`, the value the cooldown timer's retry callback later reads at `:412`) → episode/generation entry and reset → current-model resolution + `triedKeys` recording (generation fence `:168-173`) → chain resolution (fence `:178-183`) → per-entry canonical model-ID resolution (`resolveModelId`) + availability checks → fallback selection with its immediate-fallback arm (fence before the immediate-fallback launch, `:206-211`; the launch stays FIRE-AND-FORGET — `void this.fireImmediateFallback(...)` at `:217` with its internal error containment, the operation returning `true` immediately while `fallbackPending` stays observable; review correction PR #2981: awaiting it would change caller timing and serialize the retry's recursive fallback/cooldown handling; the canonical-key selector lets `triedKeys` exclude the same physical model under an alias, `:187-203`) — the stages currently at `rate-limit-watchdog.ts:142-223` come FIRST — then trip classification → generation revalidation (`:246-251`) → retry charging → `scheduleCooldown` → LLM-refinement trigger gated on the armed result (the full `armed && reason === 'backoff-ladder' && classifyUnknownLimit && generation-current` guard, `:257-265`; review correction PR #2981: when a newer timer took ownership with the generation unchanged, `scheduleCooldown` returns `false` and refinement must NOT fire — a stale classification could later replace the newer cooldown); revalidation precedes charging exactly as today, or a superseded invocation could charge the new episode's retry budget), as the corrected wiring below prescribes.
 - **input/output snapshot design.**
   ```ts
   interface RateLimitTripCtx {
@@ -877,7 +891,10 @@ none of these sites needs its compensation machinery.
   `charge: !freeWait`.
 - **shell/effect wiring.** Review correction round 22 + PR #2981: compose the
   COMPLETE scheduling operation once — the `scheduleRetry` prefix stages
-  (initialization — cancel the cooldown timer, record the error/hint — and
+  (initialization — cancel the cooldown timer, record the error, record the
+  hint ONLY when one is supplied (`if (hint)`, `:146` — a same-episode call
+  omitting a hint retains the prior structured reset; cleared only on
+  episode change, `:154-164`) — and
   the no-user-message early gate that logs and returns `false` before any
   episode mutation (`rate-limit-watchdog.ts:148-151`), then the
   `lastUserMessage` state write (`:152` — the cooldown timer's retry
@@ -887,7 +904,10 @@ none of these sites needs its compensation machinery.
   entry and reset, current-model resolution +
   `triedKeys` recording, `resolveFallbackChain`, per-entry canonical
   model-ID resolution (`resolveModelId`) plus availability checks,
-  `selectNextFallback` with its immediate-fallback arm and the
+  `selectNextFallback` with its immediate-fallback arm (the launch stays
+  FIRE-AND-FORGET — `void this.fireImmediateFallback(...)` at `:217`, the
+  operation returning `true` immediately with `fallbackPending`
+  observable; review correction PR #2981) and the
   canonical-key selector that lets `triedKeys` exclude the same physical
   model under an alias (`:187-203`) — with each of today's generation
   fences carried in position (`:168-173` after current-model resolution,
@@ -900,7 +920,14 @@ none of these sites needs its compensation machinery.
   `scheduleCooldown`,
   and LLM-refinement triggering as effect stages of the same pipeline —
   revalidation runs BEFORE charging, exactly as today, so a superseded
-  invocation aborts without charging the new episode's retry budget;
+  invocation aborts without charging the new episode's retry budget, and
+  refinement is gated on the armed result (the full
+  `armed && reason === 'backoff-ladder' && classifyUnknownLimit &&
+  generation-current` guard, `rate-limit-watchdog.ts:257-265`; review
+  correction PR #2981: when a newer timer took ownership with the
+  generation unchanged, `scheduleCooldown` returns `false` and firing
+  refinement anyway could later replace that newer cooldown with a stale
+  classification);
   leaving the prefix or those effects in the watchdog shell while only the
   classifier is a runner preserves a classifier/effect split (or a
   pipeline-plus-imperative-prefix) for every rate-limit trip — the PR 2/3
@@ -1197,7 +1224,13 @@ none of these sites needs its compensation machinery.
   NOT a status-priority cascade — it scans only `enqueued` users, applies
   the durable/yielded/pending ownership filters, expands batch UUIDs,
   computes strictly increasing `consumedAt` values and persists them via
-  `updateMessageTimestamp` before publishing the replays timed with those
+  `updateMessageTimestamp` — the CALCULATION runs early, but the DB update
+  applies only after `markDeliveriesConsumedAtTurnEnd` succeeds and
+  supplies `consumedId` (`:490-500`; review correction PR #2981: marking
+  first and updating the returned row avoids mutating the timestamp of a
+  message the repository declined to consume when the terminal result is
+  ineligible or the kickoff lost ownership) — before publishing the
+  replays timed with those
   values (`:478-521`; review correction PR #2981: omitting the monotonic
   timestamp computation and DB update leaves persisted rows at their old
   enqueue times while publishing newly timed replays, so later
@@ -1348,10 +1381,16 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   complete `rate-limit-trip` scheduling pipeline, landed unwired — review
   correction (PR #2981): the FULL `scheduleRetry` operation composes, not
   just its trip tail: the initialization stages (cancel cooldown timer,
-  record error/hint) and the no-user-message early gate that logs and
+  record the error, record the hint ONLY when one is supplied — `if (hint)`
+  at `:146`, retaining the prior structured reset for same-episode calls
+  that omit a hint; cleared only on episode change at `:154-164`) and the
+  no-user-message early gate that logs and
   returns `false` (`rate-limit-watchdog.ts:148-151`), then the
   `lastUserMessage` state write (`:152`), then the leading
-  chain-resolution (`resolveFallbackChain`), per-entry canonical
+  per-episode reset (`:154-164`), current canonical-model resolution and
+  `triedKeys` recording (`:166-175`, generation fence `:168-173`),
+  chain-resolution (`resolveFallbackChain`, fence `:178-183`),
+  per-entry canonical
   model-ID resolution, availability, and fallback-selection stages
   currently at
   `rate-limit-watchdog.ts:142-223` come FIRST, then
@@ -1387,10 +1426,12 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   write, chain
   resolution (each of today's generation fences carried in position —
   `rate-limit-watchdog.ts:168-173,178-183,206-211`), canonical
-  resolution, availability, fallback selection,
+  resolution, availability, fallback selection (the immediate-fallback
+  launch staying FIRE-AND-FORGET per `:217`),
   classification, generation revalidation, retry
   charging, `scheduleCooldown`, and LLM-refinement
-  triggering all run as stages of the same operation; no imperative
+  triggering (gated on the armed result per `:257-265`) all run as stages
+  of the same operation; no imperative
   interpretation cascade or prefix remains in the shell.
 - **lands.** Every rate-limit trip runs the COMPLETE scheduling operation as
   one pipeline — never a classifier-only runner with imperative effects.
@@ -1454,7 +1495,12 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   with the preference-chain detail, `applyTerminalTurnErrorGate`,
   `applyTerminalSubtypeGate`, `applyRecoverableFinalGate` with the verbatim
   `?? true` reopen default) plus the recovery effect stages of the complete
-  delivery-turn completion operation — terminal throw, eligibility-guarded
+  delivery-turn completion operation — the guarded `clearDeliveryTurnEnd`
+  marker clear as the leading effect of EVERY non-`completed` arm
+  (`agent-session.ts:2369,2377`; review correction PR #2981: PR 7 calls it
+  out for `recovery_pending`, and the terminal/recoverable throws need it
+  just as much — a stale marker after a thrown failure makes later reclaim
+  classification select `redrive`), terminal throw, eligibility-guarded
   (`!kickoffAcknowledged && !kickoffAckInvalidated && !alreadyConsumed`)
   zero-progress escalation, optional `reopenDeliveryForRetry`, recoverable
   throw, `completed` clearing `zeroProgressDeliveryFailures`,
@@ -1933,8 +1979,10 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   `decidePersistedAckRow`/`decideYieldedAckRow` wrappers; ALSO the
   turn-end batch core `ack-turn-end-batch` (review correction PR #2981):
   scan `enqueued` users → durable/yielded/pending ownership filters →
-  batch-UUID expansion → monotonic `consumedAt` computation with
-  `updateMessageTimestamp` → turn-end consumption, the guarded
+  batch-UUID expansion → monotonic `consumedAt` computation (its DB
+  `updateMessageTimestamp` applied after the successful mark supplies
+  `consumedId`, `:490-500`) →
+  turn-end consumption, the guarded
   `messageQueue.acknowledgeYielded` stage, and publications — a
   complete operation of its own, never routed through the persisted
   selector; `selectPersistedAckRow`/`selectYieldedAckRow` stay exported;
@@ -2011,8 +2059,9 @@ sources. Coverage is exhaustive: the only per-site section without a slice is
   would drop the replay and tool-result publications from the immediate
   path; the turn-end loop (`:464-523`) runs its OWN `ack-turn-end-batch`
   pipeline (enqueued-only scan, durable/yielded/pending ownership filters,
-  batch-UUID expansion, monotonic `consumedAt` computation with
-  `updateMessageTimestamp` (`:478-500`),
+  batch-UUID expansion, monotonic `consumedAt` computation (DB
+  `updateMessageTimestamp` applied after the successful mark supplies
+  `consumedId`, `:490-500`),
   `markDeliveriesConsumedAtTurnEnd`,
   the guarded `messageQueue.acknowledgeYielded` stage
   (`:495-499`, `message-queue.ts:226-231` — consumption is signaled only
