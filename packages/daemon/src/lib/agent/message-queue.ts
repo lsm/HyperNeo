@@ -254,6 +254,10 @@ export class MessageQueue {
     return this.getPendingOrInFlightContent(messageId) !== null;
   }
 
+  hasQueuedMessages(): boolean {
+    return this.queue.length > 0;
+  }
+
   hasPendingOrClaimed(messageId: string): boolean {
     if (this.queue.some((message) => message.id === messageId)) return true;
     for (const message of this.claimed) {

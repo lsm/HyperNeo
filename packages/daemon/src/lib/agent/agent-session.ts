@@ -1214,6 +1214,70 @@ export class AgentSession
   }
 
   private restoredBudgetEnforcement: Promise<void> = Promise.resolve();
+  private pendingResumeAfterCompaction = false;
+
+  midTurnContextBudgetCheck(): void {
+    if (this.pendingResumeAfterCompaction) return;
+    const providerId = this.session.config.provider;
+    if (!providerId || providerId === 'acp') {
+      return;
+    }
+    if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
+      return;
+    }
+    const queryObject = this.queryObject;
+    if (!queryObject?.interrupt) return;
+    const info = this.contextTracker.getContextInfo();
+    if (!info || info.totalUsed <= 0) return;
+    const configuredWindow = info.totalCapacity > 0 ? info.totalCapacity : undefined;
+    const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, info.autoCompactPercent);
+    const decision = decideContextBudgetCompaction({
+      totalUsed: info.totalUsed,
+      configuredWindow,
+      autoCompactPercent: info.autoCompactPercent,
+      sdkAutoCompactEnabled: info.isAutoCompactEnabled,
+      sdkAutoCompactThreshold: info.sdkAutoCompactThreshold,
+      cooldownActive: this.contextTracker.isCoolingDown(budgetKey),
+      compactingActive: this.stateManager.getIsCompacting(),
+    });
+    if (decision.action !== 'compact') {
+      return;
+    }
+    this.pendingResumeAfterCompaction = true;
+    this.logger.info(
+      `Daemon mid-turn context-budget interrupt for session ${this.session.id} ` +
+        `(provider=${providerId}, ${info.totalUsed} >= ${budgetKey} of ${configuredWindow ?? 0} tokens)`
+    );
+    void Promise.resolve(queryObject.interrupt()).catch((error) => {
+      this.pendingResumeAfterCompaction = false;
+      this.logger.warn(
+        `mid-turn context-budget interrupt failed for session ${this.session.id}:`,
+        error
+      );
+    });
+  }
+
+  resumePendingWorkAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    if (this.messageQueue.hasQueuedMessages()) return;
+    void this.messageQueue
+      .enqueue(
+        'Context was compacted to stay within the configured window. Continue the task you were working on.',
+        true
+      )
+      .catch((error) => {
+        this.logger.warn(`post-compaction resume enqueue failed for ${this.session.id}:`, error);
+      });
+  }
+
+  async reevaluateContextBudgetAfterModelSwitch(): Promise<void> {
+    const enforcement = this.enforceRestoredContextBudget().catch((error) => {
+      this.logger.warn('post-switch context budget evaluation failed:', error);
+    });
+    this.messageQueue.setDeliveryGate(enforcement);
+    await enforcement;
+  }
 
   private async enforceRestoredContextBudget(): Promise<void> {
     const providerId = this.session.config.provider;

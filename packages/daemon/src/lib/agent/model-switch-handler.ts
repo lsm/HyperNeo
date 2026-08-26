@@ -52,6 +52,7 @@ export interface ModelSwitchHandlerContext {
   readonly queryObject: QueryLike | null;
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
+  reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
   readonly disposeAcpSessions?: typeof disposeAcpSessions;
 }
 
@@ -298,6 +299,7 @@ export class ModelSwitchHandler {
       const selectedModel = session.config.model;
       contextTracker.setModel(selectedModel);
       this.ctx.messageQueue.removePendingInternalCompactions();
+      await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
 
       messageHub.event(
         'session.model-switched',

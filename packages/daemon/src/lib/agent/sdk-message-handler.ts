@@ -62,6 +62,18 @@ import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
 
+function boundedDeliveryGate(gate: Promise<void>): Promise<void> {
+  return Promise.race([
+    gate,
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(() => resolve(), 5000);
+      if (typeof timer.unref === 'function') {
+        timer.unref();
+      }
+    }),
+  ]);
+}
+
 export type SuppressedResultOutcome = 'confirmed' | 'reset' | 'cancelled';
 
 export interface SDKMessageHandlerContext {
@@ -82,6 +94,8 @@ export interface SDKMessageHandlerContext {
   onInitSlashCommands: (commands: string[]) => Promise<void>;
 
   onCommandsChanged: (commands: string[]) => Promise<void>;
+
+  resumePendingWorkAfterCompaction?(): void;
 
   onResultLimitError?(
     errorText: string,
@@ -1494,6 +1508,7 @@ export class SDKMessageHandler {
         ? undefined
         : contextBudgetThreshold(boundaryCapacity, boundaryInfo?.autoCompactPercent)
     );
+    this.ctx.resumePendingWorkAfterCompaction?.();
 
     void this.refreshContextUsage('compact-boundary');
   }
@@ -1528,7 +1543,9 @@ export class SDKMessageHandler {
       }
       const pending = this.pendingContextRefresh;
       this.pendingContextRefresh = pending.then(() => this.refreshContextUsage(reason));
-      this.ctx.messageQueue.setDeliveryGate(this.pendingContextRefresh.catch(() => {}));
+      this.ctx.messageQueue.setDeliveryGate(
+        boundedDeliveryGate(this.pendingContextRefresh.catch(() => {}))
+      );
       return this.pendingContextRefresh;
     }
 
@@ -1586,10 +1603,12 @@ export class SDKMessageHandler {
               `(provider=${providerId}, reason=${decision.reason}, ` +
               `${contextInfo.totalUsed} >= ${budgetKey} of ${effectiveWindow ?? 0} tokens)`
           );
-          void this.ctx.messageQueue.enqueue('/compact', true, { prepend: true }).catch((error) => {
-            this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
-            contextTracker.clearCompactionCooldown();
-          });
+          void this.ctx.messageQueue
+            .enqueue('/compact', true, { durable: true, prepend: true })
+            .catch((error) => {
+              this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+              contextTracker.clearCompactionCooldown();
+            });
         }
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
@@ -1599,7 +1618,7 @@ export class SDKMessageHandler {
     })();
     this.pendingContextRefresh = promise;
     if (reason !== 'event-tick') {
-      this.ctx.messageQueue.setDeliveryGate(promise.catch(() => {}));
+      this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(promise.catch(() => {})));
     }
     return promise;
   }

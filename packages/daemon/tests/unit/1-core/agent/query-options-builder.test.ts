@@ -1060,6 +1060,28 @@ describe('QueryOptionsBuilder', () => {
       resetProviderRegistry();
     });
 
+    it('wires a PostToolUse hook that invokes the mid-turn context budget check', async () => {
+      registerOpenRouterProvider();
+      setModelsCache(new Map());
+      const budgetCheck = mock(() => {});
+      mockSession.config.provider = 'openrouter';
+      mockSession.config.model = 'any-model';
+      const options = await new QueryOptionsBuilder({
+        ...mockContext,
+        midTurnContextBudgetCheck: budgetCheck,
+      }).build();
+
+      const postToolUse = options.hooks?.PostToolUse;
+      expect(postToolUse).toBeDefined();
+      expect(postToolUse!.length).toBeGreaterThan(0);
+
+      const hook = postToolUse![0]!.hooks[0]!;
+      await hook({ hook_event_name: 'PostToolUse' } as never, undefined, {
+        signal: new AbortController().signal,
+      });
+      expect(budgetCheck).toHaveBeenCalledTimes(1);
+    });
+
     it('should enable SDK auto-compaction for OpenRouter models with their full context window (percent enforcement lives in the daemon backstop)', async () => {
       registerOpenRouterProvider();
       setModelsCache(

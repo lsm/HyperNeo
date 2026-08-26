@@ -3588,6 +3588,24 @@ describe('SDKMessageHandler', () => {
 
       expect(markCompactionTriggeredHandlerSpy).toHaveBeenCalledWith(235_929);
     });
+
+    it('asks the session to resume pending work after a compaction boundary', async () => {
+      mockContext.queryObject = null;
+      const resumeSpy = mock(() => {});
+      (
+        mockContext as { resumePendingWorkAfterCompaction?: () => void }
+      ).resumePendingWorkAfterCompaction = resumeSpy;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(resumeSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('circuit breaker integration', () => {

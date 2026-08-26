@@ -236,6 +236,7 @@ export interface QueryOptionsBuilderContext {
   readonly session: Session;
   readonly settingsManager: SettingsManager;
   readonly db?: Database;
+  midTurnContextBudgetCheck?(): void;
   consumePendingResumeSessionAt?(): string | undefined;
   peekPendingResumeSessionAt?(): string | undefined;
   readonly skillsManager?: SkillsManager;
@@ -988,6 +989,21 @@ CRITICAL RULES:
     preToolUse.push({
       hooks: [loopDetectorHooks.preToolUse],
     });
+
+    if (this.ctx.midTurnContextBudgetCheck) {
+      const budgetCheck = this.ctx.midTurnContextBudgetCheck.bind(this.ctx);
+      const postToolUse: NonNullable<Options['hooks']>['PostToolUse'] = [
+        {
+          hooks: [
+            async (): Promise<Record<string, never>> => {
+              budgetCheck();
+              return {};
+            },
+          ],
+        },
+      ];
+      hooks.PostToolUse = postToolUse;
+    }
 
     const guards = this.ctx.toolGuards;
     if (guards?.length) {
