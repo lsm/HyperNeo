@@ -26,6 +26,18 @@ export class SpaceWorktreeManager {
     this.spaceRepo = new SpaceRepository(db);
   }
 
+  private canonicalizeRepoRoot(repoRoot: string): string {
+    try {
+      const topLevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        timeout: 30_000,
+      }).trim();
+      if (topLevel) return topLevel;
+    } catch {}
+    return repoRoot;
+  }
+
   async createTaskWorktree(
     spaceId: string,
     taskId: string,
@@ -38,7 +50,7 @@ export class SpaceWorktreeManager {
     if (!space) {
       throw new Error(`Space not found: ${spaceId}`);
     }
-    const gitRoot = repoRoot ?? space.workspacePath;
+    const gitRoot = this.canonicalizeRepoRoot(repoRoot ?? space.workspacePath);
 
     const existing = this.worktreeRepo.getByTaskId(spaceId, taskId);
     if (existing) {

@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -23,7 +23,7 @@ async function makeGitRepo(label: string): Promise<string> {
   execSync('git add .', { cwd: dir });
   execSync('git commit -m "initial commit"', { cwd: dir });
 
-  return dir;
+  return realpathSync(dir);
 }
 
 function makeDb(workspacePath: string): { db: BunDatabase; spaceId: string } {
@@ -437,6 +437,43 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
     expect(a.path).not.toBe(b.path);
     expect(existsSync(a.path)).toBe(true);
     expect(existsSync(b.path)).toBe(true);
+  });
+
+  test('symlinked repo spellings canonicalize to one project dir and dedupe slugs', async () => {
+    const aliasDir = join(TMP_ROOT, `alias-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    symlinkSync(secondaryDir, aliasDir);
+
+    const taskA = seedTask(db, spaceId, 'task-ws11-alias-a', 69);
+    const taskB = seedTask(db, spaceId, 'task-ws11-alias-b', 70);
+
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Alias Title',
+      69,
+      undefined,
+      secondaryDir
+    );
+    const b = await manager.createTaskWorktree(
+      spaceId,
+      taskB,
+      'Alias Title',
+      70,
+      undefined,
+      aliasDir
+    );
+
+    expect(b.slug).not.toBe(a.slug);
+    expect(a.path).toContain(getProjectShortKey(secondaryDir));
+    expect(b.path).toContain(getProjectShortKey(secondaryDir));
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(secondaryBranches).toContain(`space/${a.slug}`);
+    expect(secondaryBranches).toContain(`space/${b.slug}`);
+
+    rmSync(aliasDir, { force: true });
   });
 });
 
