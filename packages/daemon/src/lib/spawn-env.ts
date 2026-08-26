@@ -205,7 +205,7 @@ export function buildGitCommandEnv(
   return {
     ...buildOsBaselineEnv(source),
     ...pickKeys(GIT_COMMAND_ENV_KEYS, source),
-    ...collectPermittedGitConfig(source),
+    ...collectGitConfig(source, SAFE_DIRECTORY_CONFIG_PATTERN),
   };
 }
 
@@ -214,7 +214,7 @@ export function buildGitSshEnv(source: EnvSource = STARTUP_ENV_BASELINE): Record
     ...buildOsBaselineEnv(source),
     ...pickKeys(GIT_COMMAND_ENV_KEYS, source),
     ...pickKeys([...GIT_SSH_ENV_KEYS, ...PROXY_TLS_ENV_KEYS], source),
-    ...collectPermittedGitConfig(source),
+    ...collectGitConfig(source, NETWORK_GIT_CONFIG_PATTERN),
   };
 }
 
@@ -260,9 +260,10 @@ export function buildWorkflowConditionEnv(
   return env;
 }
 
-const PERMITTED_GIT_CONFIG_PATTERN = /^(?:http(?:\..+)?\.extraHeader|safe\.directory)$/i;
+const SAFE_DIRECTORY_CONFIG_PATTERN = /^safe\.directory$/i;
+const NETWORK_GIT_CONFIG_PATTERN = /^(?:http(?:\..+)?\.extraHeader|safe\.directory)$/i;
 
-function collectPermittedGitConfig(source: EnvSource): Record<string, string> {
+function collectGitConfig(source: EnvSource, permitted: RegExp): Record<string, string> {
   const count = Number(sourceValue(source, 'GIT_CONFIG_COUNT'));
   if (!Number.isInteger(count) || count <= 0) return {};
   const keys: string[] = [];
@@ -271,7 +272,7 @@ function collectPermittedGitConfig(source: EnvSource): Record<string, string> {
     const key = sourceValue(source, `GIT_CONFIG_KEY_${index}`);
     const value = sourceValue(source, `GIT_CONFIG_VALUE_${index}`);
     if (key === undefined || value === undefined) continue;
-    if (!PERMITTED_GIT_CONFIG_PATTERN.test(key)) continue;
+    if (!permitted.test(key)) continue;
     keys.push(key);
     values.push(value);
   }
@@ -282,4 +283,8 @@ function collectPermittedGitConfig(source: EnvSource): Record<string, string> {
   });
   if (keys.length > 0) env.GIT_CONFIG_COUNT = String(keys.length);
   return env;
+}
+
+function collectPermittedGitConfig(source: EnvSource): Record<string, string> {
+  return collectGitConfig(source, NETWORK_GIT_CONFIG_PATTERN);
 }

@@ -126,11 +126,28 @@ describe('buildGitCommandEnv', () => {
     expect(env.GIT_EXEC_PATH).toBe(SOURCE.GIT_EXEC_PATH);
     expect(env.SSH_AUTH_SOCK).toBeUndefined();
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
-    expect(env.GIT_CONFIG_COUNT).toBe('1');
-    expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
-    expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined();
+    expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
     expect(env.GIT_LFS_SKIP_SMUDGE).toBeUndefined();
     expect(env.HTTPS_PROXY).toBeUndefined();
+  });
+
+  test('carries safe.directory entries but never extraHeader secrets into hook-capable commands', () => {
+    const env = buildGitCommandEnv({
+      ...SOURCE,
+      GIT_CONFIG_COUNT: '3',
+      GIT_CONFIG_KEY_0: 'safe.directory',
+      GIT_CONFIG_VALUE_0: '/mnt/trusted-repo',
+      GIT_CONFIG_KEY_1: 'http.extraheader',
+      GIT_CONFIG_VALUE_1: 'Authorization: Bearer repo-secret',
+      GIT_CONFIG_KEY_2: 'core.hooksPath',
+      GIT_CONFIG_VALUE_2: '/tmp/hooks',
+    });
+    expect(env.GIT_CONFIG_COUNT).toBe('1');
+    expect(env.GIT_CONFIG_KEY_0).toBe('safe.directory');
+    expect(env.GIT_CONFIG_VALUE_0).toBe('/mnt/trusted-repo');
+    expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
+    expect(JSON.stringify(env)).not.toContain('repo-secret');
   });
 });
 
@@ -139,11 +156,45 @@ describe('buildGitSshEnv', () => {
     const env = buildGitSshEnv(SOURCE);
     expect(env.SSH_AUTH_SOCK).toBe(SOURCE.SSH_AUTH_SOCK);
     expect(env.GIT_SSH_COMMAND).toBe(SOURCE.GIT_SSH_COMMAND);
+    expect(env.GIT_SSL_CERT).toBe(SOURCE.GIT_SSL_CERT);
+    expect(env.GIT_SSL_KEY).toBe(SOURCE.GIT_SSL_KEY);
+    expect(env.GIT_ASKPASS).toBe(SOURCE.GIT_ASKPASS);
+    expect(env.SSH_ASKPASS).toBe(SOURCE.SSH_ASKPASS);
     expect(env.GIT_CONFIG_COUNT).toBe('1');
     expect(env.GIT_CONFIG_KEY_0).toBe('http.extraHeader');
     expect(env.GIT_CONFIG_VALUE_0).toBe(SOURCE.GIT_CONFIG_VALUE_0);
     expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
     expect(env.GIT_CONFIG_VALUE_1).toBeUndefined();
+  });
+
+  test('reindexes safe.directory alongside http.extraHeader entries in the network env', () => {
+    const env = buildGitSshEnv({
+      ...SOURCE,
+      GIT_CONFIG_COUNT: '3',
+      GIT_CONFIG_KEY_0: 'safe.directory',
+      GIT_CONFIG_VALUE_0: '/mnt/trusted-repo',
+      GIT_CONFIG_KEY_1: 'http.extraheader',
+      GIT_CONFIG_VALUE_1: 'Authorization: Bearer repo-secret',
+      GIT_CONFIG_KEY_2: 'core.hooksPath',
+      GIT_CONFIG_VALUE_2: '/tmp/hooks',
+    });
+    expect(env.GIT_CONFIG_COUNT).toBe('2');
+    expect(env.GIT_CONFIG_KEY_0).toBe('safe.directory');
+    expect(env.GIT_CONFIG_KEY_1).toBe('http.extraheader');
+    expect(env.GIT_CONFIG_KEY_2).toBeUndefined();
+  });
+
+  test('accepts URL-scoped http.<url>.extraHeader configuration keys', () => {
+    const urlScoped = 'http.https://github.com/.extraHeader';
+    const env = buildGitSshEnv({
+      ...SOURCE,
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: urlScoped,
+      GIT_CONFIG_VALUE_0: 'Authorization: Bearer url-scoped-secret',
+    });
+    expect(env.GIT_CONFIG_COUNT).toBe('1');
+    expect(env.GIT_CONFIG_KEY_0).toBe(urlScoped);
+    expect(env.GIT_CONFIG_VALUE_0).toBe('Authorization: Bearer url-scoped-secret');
   });
 
   test('drops the config block entirely when no http.extraHeader entry exists', () => {
