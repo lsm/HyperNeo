@@ -14,10 +14,12 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
   const SPACE_WORKSPACE = '/space/ws02a';
   const CREATED_PATH = '/space/ws02a/.hyperneo-worktrees/task-9-abc';
   const CACHED_PATH = '/space/ws02a/.hyperneo-worktrees/task-9-cached';
+  const TASK_WORKSPACE = '/task/ws02a-override';
   const CREATE_ERROR = 'git worktree add failed';
 
   type Row = {
     name: string;
+    taskWorkspacePath?: string;
     cachedTaskWorktreePath: string | undefined;
     hasWorktreeManager: boolean;
     createResult: 'success' | 'fail' | 'n/a';
@@ -43,12 +45,13 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     unsubscribeLogs();
   });
 
-  function makeTask(): SpaceTask {
+  function makeTask(workspacePath?: string): SpaceTask {
     return {
       id: TASK_ID,
       spaceId: SPACE_ID,
       taskNumber: TASK_NUMBER,
       title: TASK_TITLE,
+      workspacePath,
     } as unknown as SpaceTask;
   }
 
@@ -93,11 +96,14 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     ).buildSpawnExecutionFlowDeps({ reservationHeld: false, reservedExecution: false });
 
     if (row.expectedOutcome.kind === 'error') {
-      await expect(deps.resolveWorkspacePath(makeTask(), makeSpace())).rejects.toThrow(
-        row.expectedOutcome.message
-      );
+      await expect(
+        deps.resolveWorkspacePath(makeTask(row.taskWorkspacePath), makeSpace())
+      ).rejects.toThrow(row.expectedOutcome.message);
     } else {
-      const workspacePath = await deps.resolveWorkspacePath(makeTask(), makeSpace());
+      const workspacePath = await deps.resolveWorkspacePath(
+        makeTask(row.taskWorkspacePath),
+        makeSpace()
+      );
       expect(workspacePath).toBe(row.expectedOutcome.value);
     }
 
@@ -164,6 +170,46 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         expectedCachedPath: undefined,
         expectedWarning: '',
       });
+    });
+  });
+
+  describe('explicit task workspace family (WS10)', () => {
+    test.each([
+      {
+        name: 'explicit task workspace is honored without creating a space-root worktree',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: TASK_WORKSPACE },
+        expectedCreateCalled: false,
+        expectedCachedPath: undefined,
+        expectedWarning: '',
+      },
+      {
+        name: 'explicit task workspace is honored without a manager',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: false,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: TASK_WORKSPACE },
+        expectedCreateCalled: false,
+        expectedCachedPath: undefined,
+        expectedWarning: '',
+      },
+      {
+        name: 'cached worktree still wins over the explicit task workspace',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: CACHED_PATH,
+        hasWorktreeManager: true,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: CACHED_PATH },
+        expectedCreateCalled: false,
+        expectedCachedPath: CACHED_PATH,
+        expectedWarning: '',
+      },
+    ] as Row[])('%s', async (row: Row) => {
+      await runRow(row);
     });
   });
 

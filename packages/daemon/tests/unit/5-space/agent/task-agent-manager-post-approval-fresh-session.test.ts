@@ -21,6 +21,8 @@ const REVIEWER_SESSION_ID = 'reviewer-session-live';
 function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
   const calls: string[] = [];
   const configUpdates: Array<Record<string, unknown>> = [];
+  const metadataUpdates: Array<Record<string, unknown>> = [];
+  const data: { id: string; workspacePath: string | null } = { id, workspacePath: null };
   const session = {
     session: { id },
     skillOverrides: undefined,
@@ -30,6 +32,12 @@ function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
       calls.push('updateConfig');
       configUpdates.push(arg);
     },
+    updateMetadata: (arg: Record<string, unknown>): void => {
+      calls.push('updateMetadata');
+      metadataUpdates.push(arg);
+      if ('workspacePath' in arg) data.workspacePath = arg.workspacePath as string | null;
+    },
+    getSessionData: (): { id: string; workspacePath: string | null } => data,
     mergeRuntimeMcpServers: (): void => {
       calls.push('mergeRuntimeMcpServers');
     },
@@ -37,7 +45,7 @@ function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
       calls.push('startStreamingQuery');
     },
   };
-  return { session: session as unknown as AgentSessionType, calls, configUpdates };
+  return { session: session as unknown as AgentSessionType, calls, configUpdates, metadataUpdates };
 }
 
 function makeCapturingFakeSession(id: string): {
@@ -1134,7 +1142,7 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
           workspacePath: '/task/reuse-override',
         }) as unknown as SpaceTask,
     };
-    seedLiveSession(tam);
+    const live = seedLiveSession(tam);
     const { reinjectCtx } = stubMcpReinjection(tam);
     (tam as unknown as { registerCompletionCallback: () => void }).registerCompletionCallback =
       () => {};
@@ -1148,5 +1156,26 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     expect(actual).toBe(REVIEWER_SESSION_ID);
     expect(reinjectCtx).toHaveLength(1);
     expect(reinjectCtx[0]).toMatchObject({ workspacePath: '/task/reuse-override' });
+    expect(live.metadataUpdates).toContainEqual({ workspacePath: '/task/reuse-override' });
+    expect(live.session.getSessionData().workspacePath).toBe('/task/reuse-override');
+  });
+
+  test('reuse path leaves the session workspace untouched when it already matches', async () => {
+    const { tam } = makeRecordingManager([makeExecutionRow()]);
+    const live = seedLiveSession(tam);
+    live.session.getSessionData().workspacePath = '/tmp/ws';
+    const { reinjectCtx } = stubMcpReinjection(tam);
+    (tam as unknown as { registerCompletionCallback: () => void }).registerCompletionCallback =
+      () => {};
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    expect(reinjectCtx[0]).toMatchObject({ workspacePath: '/tmp/ws' });
+    expect(live.metadataUpdates).toEqual([]);
   });
 });

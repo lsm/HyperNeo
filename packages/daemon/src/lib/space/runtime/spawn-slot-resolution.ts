@@ -130,7 +130,7 @@ export function resolveTaskWorkspace(
   space: Pick<Space, 'workspacePath'>,
   task: Pick<SpaceTask, 'workspacePath'>
 ): string {
-  return task.workspacePath ?? space.workspacePath;
+  return task.workspacePath || space.workspacePath;
 }
 
 export function assembleNodeAgentSessionInit(input: {

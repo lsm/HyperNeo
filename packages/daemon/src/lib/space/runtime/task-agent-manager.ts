@@ -864,9 +864,10 @@ export class TaskAgentManager {
         this.resolveSessionId(buildExecutionBaseSessionId(space.id, task.id, execution.id)),
       resolveWorkspacePath: async (task, space) => {
         const workspace = resolveSpawnWorkspace({
-          cachedTaskWorktreePath: this.taskWorktreePaths.get(task.id),
-          hasWorktreeManager: Boolean(this.config.worktreeManager),
-          spaceWorkspacePath: resolveTaskWorkspace(space, task),
+          cachedTaskWorktreePath:
+            this.taskWorktreePaths.get(task.id) ?? task.workspacePath ?? undefined,
+          hasWorktreeManager: task.workspacePath ? false : Boolean(this.config.worktreeManager),
+          spaceWorkspacePath: space.workspacePath,
         });
         if (workspace.createWorktree && this.config.worktreeManager) {
           try {
@@ -1240,6 +1241,12 @@ export class TaskAgentManager {
                   ? resolveTaskWorkspace(reuseSpace, parentTask)
                   : init.workspacePath,
               }).workspacePath;
+              if (
+                reuseWorkspacePath &&
+                existing.getSessionData().workspacePath !== reuseWorkspacePath
+              ) {
+                existing.updateMetadata({ workspacePath: reuseWorkspacePath });
+              }
               const reuseCtx = {
                 taskId,
                 subSessionId: existingSessionId,
