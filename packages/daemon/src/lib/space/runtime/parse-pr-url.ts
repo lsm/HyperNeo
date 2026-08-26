@@ -8,7 +8,7 @@ export interface ParsedPrUrl {
   number: string;
 }
 
-const PR_URL_PATTERN = /(https?):\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/([0-9]+)(?:[/?#]|$|\b)/;
+const PR_URL_PATTERN = /(https?):\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/([0-9]+)/;
 
 export function buildPrUrl(parsed: ParsedPrUrl): string {
   const host = parsed.host.toLowerCase();

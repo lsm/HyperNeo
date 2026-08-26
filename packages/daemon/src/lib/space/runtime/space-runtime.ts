@@ -4124,7 +4124,7 @@ export class SpaceRuntime {
 
     this.storeWorkflowChannels(run.id, workflow.channels ?? []);
 
-    if (description && this.config.artifactRepo) {
+    if (description && this.config.artifactRepo && workflow.tags?.includes('review')) {
       const parsed = parsePrUrl(description);
       if (parsed) {
         this.config.artifactRepo.upsert({

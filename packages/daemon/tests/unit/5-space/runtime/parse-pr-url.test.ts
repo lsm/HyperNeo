@@ -56,6 +56,30 @@ describe('parsePrUrl', () => {
     });
   });
 
+  test('extracts a PR URL from surrounding prose and punctuation', () => {
+    expect(parsePrUrl('Review https://github.com/lsm/neokai/pull/42')).toEqual({
+      scheme: 'https',
+      host: 'github.com',
+      owner: 'lsm',
+      repo: 'neokai',
+      number: '42',
+    });
+    expect(parsePrUrl('See https://github.com/lsm/neokai/pull/42.')).toEqual({
+      scheme: 'https',
+      host: 'github.com',
+      owner: 'lsm',
+      repo: 'neokai',
+      number: '42',
+    });
+    expect(parsePrUrl('Follow https://github.com/lsm/neokai/pull/42, then check the CI.')).toEqual({
+      scheme: 'https',
+      host: 'github.com',
+      owner: 'lsm',
+      repo: 'neokai',
+      number: '42',
+    });
+  });
+
   test('returns null for non-PR GitHub URLs (issue, commit, repo root)', () => {
     expect(parsePrUrl('https://github.com/lsm/neokai/issues/42')).toBeNull();
     expect(parsePrUrl('https://github.com/lsm/neokai/commit/abc123')).toBeNull();
