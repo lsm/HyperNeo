@@ -523,20 +523,32 @@ describe('ProcessingStateManager', () => {
       expect(events).toEqual(['onEnd']);
     });
 
-    test('the onIdle callback runs after the idle state is set and published', async () => {
+    test('the onIdle callback waits for the idle publication to complete', async () => {
       let statusInCallback: string | undefined;
-      let publishCountInCallback = 0;
+      let callbackRan = false;
+      let releasePublish!: () => void;
       manager.setOnIdleCallback(async () => {
+        callbackRan = true;
         statusInCallback = manager.getState().status;
-        publishCountInCallback = emitMock.mock.calls.length;
       });
       await manager.setProcessing('msg-1');
-      emitMock.mockClear();
+      emitMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePublish = resolve;
+          })
+      );
 
-      await manager.setIdle();
+      const settle = manager.setIdle();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(typeof releasePublish).toBe('function');
+      expect(callbackRan).toBe(false);
 
+      releasePublish();
+      await settle;
+
+      expect(callbackRan).toBe(true);
       expect(statusInCallback).toBe('idle');
-      expect(publishCountInCallback).toBe(1);
     });
 
     test('releaseIdleWaiters(gen) fires onEnd only for the matching waiter', async () => {

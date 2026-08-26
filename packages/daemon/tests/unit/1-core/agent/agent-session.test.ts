@@ -3137,7 +3137,11 @@ describe('AgentSession', () => {
         isSuperseded: mock(() => true),
       };
       const stateManager = agentSession.stateManager;
-      stateManager.setOnIdleCallback(async () => {});
+      let idleCallbackRan = false;
+      stateManager.setOnIdleCallback(async () => {
+        idleCallbackRan = true;
+      });
+      await stateManager.setProcessing('msg-no-message');
       let aResolved = false;
       let bResolved = false;
       void stateManager
@@ -3163,6 +3167,8 @@ describe('AgentSession', () => {
       expect(result).toBe(false);
       expect(aResolved).toBe(true);
       expect(bResolved).toBe(true);
+      expect(stateManager.getState().status).toBe('idle');
+      expect(idleCallbackRan).toBe(true);
     });
 
     it('only clears the timer for a recovery re-enqueue (generation provided)', async () => {
