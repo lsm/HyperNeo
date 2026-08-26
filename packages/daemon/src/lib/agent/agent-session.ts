@@ -25,8 +25,7 @@ import type {
   SkillEnablementOverride,
   SystemPromptConfig,
 } from '@hyperneo/shared';
-import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -135,16 +134,16 @@ import {
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import { resolveModelAlias } from '../model-service.ts';
-import { getProviderRegistry } from '../providers/factory.js';
 import { getProviderService } from '../provider-service.ts';
+import { getProviderRegistry } from '../providers/factory.js';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
 import { ContextTracker } from './context-tracker.ts';
 import {
-  runDeliveryTurnAdmission,
   type DeliveryTurnAdmissionDeps,
+  runDeliveryTurnAdmission,
 } from './delivery-turn-admission-pipeline.ts';
 import { classifyAcknowledgedSteer, resolveSteerAdmission } from './delivery-turn-routing.ts';
 import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog.ts';
@@ -157,12 +156,12 @@ import { InterruptHandler, type InterruptHandlerContext } from './interrupt-hand
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
 import {
+  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   BATCH_DELIVERY_MAX_CHARS,
   buildBatchedDeliveryContent,
   classifyReclaimTermination,
   type DriveTurnOutcome,
   deliverMessage,
-  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   type FeedSteerOutcome,
   flattenDeliveryText,
   isMessageDeliveryV2Enabled,
@@ -177,23 +176,23 @@ import {
   withSessionLock,
   withSessionResetCoordination,
 } from './message-delivery.ts';
+import { deliveryMetrics } from './message-delivery-metrics.ts';
 import {
   classifyTurnCompletion,
   decideReconcileAdmission,
   selectStrandedDeliveries,
   shouldRearmSpuriousTurnEnd,
 } from './message-delivery-pipeline.ts';
-import { deliveryMetrics } from './message-delivery-metrics.ts';
 import { MessageQueue } from './message-queue.ts';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
+import { QueryAttemptRegistry } from './query-attempt-token.ts';
 import {
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
-import { QueryAttemptRegistry } from './query-attempt-token.ts';
 import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
 import {
   type OriginalEnvVars,
@@ -201,8 +200,8 @@ import {
   type QueryRunnerContext,
   type TrackedAgentProcess,
 } from './query-runner.ts';
-import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
+import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
   SDKMessageHandler,
@@ -217,9 +216,9 @@ import {
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
 import {
   buildTaskNotificationRequeryEscalationEvent,
+  resolveTaskNotificationRequery,
   TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
   TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
-  resolveTaskNotificationRequery,
   taskNotificationRequeryDelayMs,
 } from './task-notification-requery.ts';
 
@@ -332,6 +331,8 @@ export class AgentSession
 
   private _isCleaningUp = false;
   private pendingResumeSessionAt: string | undefined;
+
+  private pendingResumeAfterCompaction = false;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
@@ -834,6 +835,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    this.clearPendingResumeAfterCompaction();
     this.messageHandler.cancelSuppressedResultWait();
     const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
     if (
@@ -1438,6 +1440,30 @@ export class AgentSession
     const value = this.pendingResumeSessionAt;
     this.pendingResumeSessionAt = undefined;
     return value;
+  }
+
+  resumePendingWorkAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    if (this.messageQueue.hasOutstandingNonCompactionMessages()) return;
+    void this.messageQueue
+      .enqueue(
+        'Context was compacted to stay within the configured window. Continue the task you were working on.',
+        false,
+        { durable: true }
+      )
+      .catch((error) => {
+        this.logger.warn(`post-compaction resume enqueue failed for ${this.session.id}:`, error);
+      });
+  }
+
+  clearPendingResumeAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    this.logger.info(
+      `dropping pending post-compaction resume for session ${this.session.id} ` +
+        `(no daemon compaction was enqueued)`
+    );
   }
 
   incrementQueryGeneration(): number {
@@ -2064,9 +2090,7 @@ export class AgentSession
     if (
       alreadyConsumed &&
       !this.rateLimitWatchdog.isRecoveryPending() &&
-      !!this.db
-        .getSDKMessageRepo()
-        ?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
+      this.db.getSDKMessageRepo()?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
     ) {
       this.logger.info(
         `delivery-turn: reclaiming recovery-intercepted row directly (uuid=${messageUuid}); ` +

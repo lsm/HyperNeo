@@ -24,8 +24,8 @@ import type {
 } from '../../../../src/lib/internal-event-bus';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
-  getModelContextWindow,
   codexBackendContextWindow,
+  getModelContextWindow,
   MODEL_CONTEXT_WINDOWS,
 } from '../../../../src/lib/providers/codex-models';
 import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
@@ -259,6 +259,8 @@ function driveCompactionRefresh(opts: {
   contextWindow: number;
   totalUsed: number;
   sdkMaxTokens?: number;
+  compactingActive?: boolean;
+  cooldownActive?: boolean;
 }): CompactionRefreshHarness {
   const session: Session = {
     id: 'compact-session',
@@ -312,6 +314,7 @@ function driveCompactionRefresh(opts: {
     beginTerminalIdle: mock(() => {}),
     setIdle: mock(async () => {}),
     setCompacting: mock(async () => {}),
+    getIsCompacting: mock(() => opts.compactingActive ?? false),
     getState: mock(() => ({ phase: 'idle' })),
   } as unknown as ProcessingStateManager;
 
@@ -319,6 +322,7 @@ function driveCompactionRefresh(opts: {
     getContextInfo: mock(() => ({ totalTokens: 1000, maxTokens: 128000 })),
     updateWithDetailedBreakdown: mock(() => {}),
     shouldCompact: mock(() => false),
+    isCoolingDown: mock(() => opts.cooldownActive ?? false),
     shouldCompactAt: shouldCompactAtSpy,
     markCompactionTriggered: markCompactionTriggeredSpy,
   } as unknown as ContextTracker;
@@ -327,6 +331,15 @@ function driveCompactionRefresh(opts: {
     enqueue: enqueueSpy,
     enqueueWithId: mock(async () => {}),
     clear: mock(() => {}),
+    setDeliveryGate: mock(() => {}),
+    hasQueuedMessages: mock(() => false),
+    hasOutstandingInternalCompaction: mock(() => false),
+    hasCompactionsAwaitingBoundary: mock(() => false),
+    hasQueuedInternalCompaction: mock(() => false),
+    hasInFlightInternalCompaction: mock(() => false),
+    pruneSentPrompts: mock(() => {}),
+    acknowledgeCompactionsAwaitingBoundary: mock(() => {}),
+    clearNonCompactionSentSinceBoundary: mock(() => {}),
   } as unknown as MessageQueue;
 
   const errorManager = { handleError: mock(async () => {}) } as unknown as ErrorManager;
@@ -425,7 +438,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
   });
 
   it('Codex-mini (128k) session near capacity does NOT enqueue /compact', async () => {
@@ -461,7 +477,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
   });
 
-  it('Kimi K3 (1M) session near capacity does NOT enqueue /compact', async () => {
+  it('Kimi K3 (1M) session near capacity enqueues /compact exactly once (daemon backstop)', async () => {
     setModelsCache(
       new Map([
         [
@@ -493,11 +509,52 @@ describe('N4: literal /compact never enters the transcript or provider request',
 
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
-    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
+    expect(harness.enqueueSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('holds across the Kimi/Codex model matrix (every canonical model near capacity, no /compact)', async () => {
+  it('Kimi K3 below the default 90 percent budget does not compact', async () => {
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'kimi-k3',
+              name: 'Kimi K3',
+              provider: 'kimi',
+              contextWindow: 1_048_576,
+              preferContextWindowMetadata: true,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+
+    const harness = driveCompactionRefresh({
+      provider: 'kimi',
+      model: 'kimi-k3',
+      contextWindow: 1_048_576,
+      totalUsed: 900_000,
+      sdkMaxTokens: 1_048_576,
+    });
+
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
+  });
+
+  it('splits across the Kimi/Codex model matrix near capacity (kimi backstops, codex native)', async () => {
     const kimiCases = KimiProvider.MODELS.map((m) => ({
       provider: 'kimi',
       model: m.id,
@@ -512,13 +569,12 @@ describe('N4: literal /compact never enters the transcript or provider request',
       contextWindow: MODEL_CONTEXT_WINDOWS[id],
       sdkMaxTokens: MODEL_CONTEXT_WINDOWS[id],
     }));
-    const matrix = [...kimiCases, ...codexCases];
 
     expect(kimiCases.map((c) => c.model).sort()).toEqual(
       ['k3-256k', 'kimi-for-coding', 'kimi-k2.7-code-highspeed', 'kimi-k3[1m]'].sort()
     );
 
-    for (const c of matrix) {
+    for (const c of [...kimiCases, ...codexCases]) {
       setModelsCache(
         new Map([
           [
@@ -544,11 +600,27 @@ describe('N4: literal /compact never enters the transcript or provider request',
       });
       await harness.handler.handleMessage(resultMessage());
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(harness.enqueueSpy, `${c.provider}/${c.model}`).not.toHaveBeenCalledWith(
-        '/compact',
-        true
-      );
-      expect(harness.markCompactionTriggeredSpy, `${c.provider}/${c.model}`).not.toHaveBeenCalled();
+      if (c.provider === 'kimi') {
+        expect(harness.enqueueSpy, `${c.provider}/${c.model}`).toHaveBeenCalledWith(
+          '/compact',
+          true,
+          { durable: true, prepend: true }
+        );
+        expect(
+          harness.markCompactionTriggeredSpy,
+          `${c.provider}/${c.model}`
+        ).toHaveBeenCalledTimes(1);
+      } else {
+        expect(harness.enqueueSpy, `${c.provider}/${c.model}`).not.toHaveBeenCalledWith(
+          '/compact',
+          true,
+          { durable: true, prepend: true }
+        );
+        expect(
+          harness.markCompactionTriggeredSpy,
+          `${c.provider}/${c.model}`
+        ).not.toHaveBeenCalled();
+      }
     }
   });
 
@@ -639,7 +711,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(replay?.content).toEqual([{ type: 'text', text: 'fix the bug' }]);
   });
 
-  it('a custom provider near capacity does NOT enqueue /compact (daemon adds no backstop while the SDK stays armed)', async () => {
+  it('when the context budget is exceeded on a custom provider, the handler enqueues /compact as internal (production call site)', async () => {
     const TEST_PROVIDER = 'test-budget-provider';
     setModelsCache(
       new Map([
@@ -669,52 +741,82 @@ describe('N4: literal /compact never enters the transcript or provider request',
 
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
-    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
-    expect(buildProviderSettings(TEST_PROVIDER, 200_000, 'budget-model')).toEqual({
-      autoCompactEnabled: true,
-      autoCompactWindow: 200_000,
+    expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
     });
   });
 
-  it('when the dormant fallback fires, the handler enqueues /compact as internal (production call site)', async () => {
-    const TEST_PROVIDER = 'test-fallback-provider';
-    const fallbackSet = PROVIDER_NO_SDK_AUTO_COMPACT as Set<string>;
-    fallbackSet.add(TEST_PROVIDER);
-    try {
-      setModelsCache(
-        new Map([
+  it('autoCompactPercent 100 opts a custom provider out of the daemon backstop', async () => {
+    const TEST_PROVIDER = 'test-optout-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
           [
-            'global',
-            [
-              {
-                id: 'fb-model',
-                name: 'Fallback Model',
-                provider: TEST_PROVIDER,
-                contextWindow: 200_000,
-                available: true,
-              },
-            ],
+            {
+              id: 'optout-model',
+              name: 'Opt-out Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              autoCompactPercent: 100,
+              available: true,
+            },
           ],
-        ])
-      );
-      const harness = driveCompactionRefresh({
-        provider: TEST_PROVIDER,
-        model: 'fb-model',
-        contextWindow: 200_000,
-        totalUsed: 195_000,
-        sdkMaxTokens: 200_000,
-      });
-      await harness.handler.handleMessage(resultMessage());
-      await new Promise((resolve) => setTimeout(resolve, 0));
+        ],
+      ])
+    );
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'optout-model',
+      contextWindow: 200_000,
+      totalUsed: 199_000,
+      sdkMaxTokens: 200_000,
+    });
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
-      expect(harness.shouldCompactAtSpy).toHaveBeenCalled();
-      expect(harness.markCompactionTriggeredSpy).toHaveBeenCalled();
-      expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true);
-    } finally {
-      fallbackSet.delete(TEST_PROVIDER);
-      setModelsCache(new Map());
-    }
+    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
+  });
+
+  it('an active SDK compaction suppresses the backstop', async () => {
+    const TEST_PROVIDER = 'test-compacting-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'compacting-model',
+              name: 'Compacting Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'compacting-model',
+      contextWindow: 200_000,
+      totalUsed: 185_000,
+      sdkMaxTokens: 200_000,
+      compactingActive: true,
+    });
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
   });
 });

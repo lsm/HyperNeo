@@ -1,24 +1,24 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
+import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
+import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
+import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
-import type { Session, MessageHub, ModelInfo } from '@hyperneo/shared';
-import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
-import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
-import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
-import type { Database } from '../../../../src/storage/database';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
-import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import type { Database } from '../../../../src/storage/database';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 class TranslatingMockProvider implements Provider {
   readonly id = 'anthropic-codex';
@@ -81,8 +81,12 @@ describe('SDKMessageHandler', () => {
   let setIdleSpy: ReturnType<typeof mock>;
   let beginTerminalIdleSpy: ReturnType<typeof mock>;
   let setCompactingSpy: ReturnType<typeof mock>;
+  let getIsCompactingSpy: ReturnType<typeof mock>;
   let getContextInfoSpy: ReturnType<typeof mock>;
   let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
+  let isCoolingDownSpy: ReturnType<typeof mock>;
+  let markCompactionTriggeredSpy: ReturnType<typeof mock>;
+  let clearCompactionCooldownSpy: ReturnType<typeof mock>;
   let enqueueMessageSpy: ReturnType<typeof mock>;
   let handleErrorSpy: ReturnType<typeof mock>;
   let lifecycleStopSpy: ReturnType<typeof mock>;
@@ -90,6 +94,13 @@ describe('SDKMessageHandler', () => {
   let hasPendingOrClaimedSpy: ReturnType<typeof mock>;
   let hasYieldedSpy: ReturnType<typeof mock>;
   let acknowledgeYieldedSpy: ReturnType<typeof mock>;
+  let setDeliveryGateSpy: ReturnType<typeof mock>;
+  let hasQueuedMessagesSpy: ReturnType<typeof mock>;
+  let hasOutstandingInternalCompactionSpy: ReturnType<typeof mock>;
+  let hasCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
+  let pruneSentPromptsSpy: ReturnType<typeof mock>;
+  let acknowledgeCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
+  let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
   let bumpDeliveryTurnActivitySpy: ReturnType<typeof mock>;
 
@@ -157,23 +168,30 @@ describe('SDKMessageHandler', () => {
     setIdleSpy = mock(async () => {});
     beginTerminalIdleSpy = mock(() => {});
     setCompactingSpy = mock(async () => {});
+    getIsCompactingSpy = mock(() => false);
     getStateSpy = mock(() => ({ phase: 'idle' }));
     mockStateManager = {
       detectPhaseFromMessage: detectPhaseFromMessageSpy,
       setIdle: setIdleSpy,
       beginTerminalIdle: beginTerminalIdleSpy,
       setCompacting: setCompactingSpy,
+      getIsCompacting: getIsCompactingSpy,
       getState: getStateSpy,
     } as unknown as ProcessingStateManager;
 
     getContextInfoSpy = mock(() => ({ totalTokens: 1000, maxTokens: 128000 }));
     updateWithDetailedBreakdownSpy = mock(() => {});
+    isCoolingDownSpy = mock(() => false);
+    markCompactionTriggeredSpy = mock(() => {});
+    clearCompactionCooldownSpy = mock(() => {});
     mockContextTracker = {
       getContextInfo: getContextInfoSpy,
       updateWithDetailedBreakdown: updateWithDetailedBreakdownSpy,
       shouldCompact: mock(() => false),
       shouldCompactAt: mock(() => false),
-      markCompactionTriggered: mock(() => {}),
+      isCoolingDown: isCoolingDownSpy,
+      markCompactionTriggered: markCompactionTriggeredSpy,
+      clearCompactionCooldown: clearCompactionCooldownSpy,
     } as unknown as ContextTracker;
 
     enqueueMessageSpy = mock(async () => 'context-id');
@@ -181,6 +199,13 @@ describe('SDKMessageHandler', () => {
     hasPendingOrClaimedSpy = mock(() => false);
     hasYieldedSpy = mock(() => false);
     acknowledgeYieldedSpy = mock(() => false);
+    setDeliveryGateSpy = mock(() => {});
+    hasQueuedMessagesSpy = mock(() => false);
+    hasOutstandingInternalCompactionSpy = mock(() => false);
+    hasCompactionsAwaitingBoundarySpy = mock(() => false);
+    pruneSentPromptsSpy = mock(() => {});
+    acknowledgeCompactionsAwaitingBoundarySpy = mock(() => {});
+    clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
       enqueue: enqueueMessageSpy,
       enqueueWithId: mock(async () => {}),
@@ -188,6 +213,18 @@ describe('SDKMessageHandler', () => {
       hasPendingOrClaimed: hasPendingOrClaimedSpy,
       hasYielded: hasYieldedSpy,
       acknowledgeYielded: acknowledgeYieldedSpy,
+      setDeliveryGate: setDeliveryGateSpy,
+      hasQueuedMessages: hasQueuedMessagesSpy,
+      hasOutstandingInternalCompaction: hasOutstandingInternalCompactionSpy,
+      hasQueuedInternalCompaction: mock(() => false),
+      hasInFlightInternalCompaction: mock(() => false),
+      hasCompactionsAwaitingBoundary: hasCompactionsAwaitingBoundarySpy,
+      hasOutstandingNonCompactionMessages: mock(() => false),
+      pruneSentPrompts: pruneSentPromptsSpy,
+      acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
+      clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
+      forgetSentPrompt: mock(() => {}),
+      getSentPromptContent: mock(() => undefined),
     } as unknown as MessageQueue;
 
     handleErrorSpy = mock(async () => {});
@@ -3479,6 +3516,28 @@ describe('SDKMessageHandler', () => {
 
       expect(setCompactingSpy).not.toHaveBeenCalled();
     });
+
+    it('clears stale compacting state when a result arrives without a boundary', async () => {
+      getIsCompactingSpy.mockImplementation(() => true);
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'stale-compact-uuid',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(setCompactingSpy).toHaveBeenCalledWith(false);
+    });
   });
 
   describe('handleCompactBoundary', () => {
@@ -3535,6 +3594,46 @@ describe('SDKMessageHandler', () => {
       expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
       expect(updateWithDetailedBreakdownSpy).toHaveBeenCalled();
       expect(mockMessageQueue.enqueueWithId).not.toHaveBeenCalled();
+    });
+
+    it('keys the boundary cooldown to the tracked active budget when known', async () => {
+      getContextInfoSpy.mockImplementation(() => ({
+        totalUsed: 10_000,
+        totalCapacity: 262_144,
+        percentUsed: 3,
+        breakdown: {},
+      }));
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(markCompactionTriggeredSpy).toHaveBeenCalledWith(235_929);
+    });
+
+    it('asks the session to resume pending work after a compaction boundary', async () => {
+      mockContext.queryObject = null;
+      const resumeSpy = mock(() => {});
+      (
+        mockContext as { resumePendingWorkAfterCompaction?: () => void }
+      ).resumePendingWorkAfterCompaction = resumeSpy;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(resumeSpy).toHaveBeenCalledTimes(1);
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(clearNonCompactionSentSinceBoundarySpy).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -3975,6 +4074,343 @@ describe('SDKMessageHandler', () => {
         setModelsCache(new Map());
       });
 
+      function budgetCase(opts?: {
+        provider?: string;
+        model?: string;
+        window?: number;
+        totalUsed?: number;
+        sdkMaxTokens?: number;
+        isAutoCompactEnabled?: boolean;
+      }) {
+        const provider = opts?.provider ?? 'openrouter';
+        const model = opts?.model ?? 'deepseek-v4';
+        const window = opts?.window ?? 1_000_000;
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: model,
+                  name: model,
+                  provider,
+                  contextWindow: window,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+        const totalUsed = opts?.totalUsed ?? 950_000;
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: totalUsed }],
+          totalTokens: totalUsed,
+          maxTokens: opts?.sdkMaxTokens ?? window,
+          rawMaxTokens: opts?.sdkMaxTokens ?? window,
+          percentage: Math.round((totalUsed / window) * 100),
+          gridRows: [],
+          model,
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: opts?.isAutoCompactEnabled ?? true,
+          apiUsage: null,
+        }));
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = provider;
+        mockContext.session.config.model = model;
+        return { getContextUsageSpy, h: new SDKMessageHandler(mockContext) };
+      }
+
+      function turnEndResult(): SDKMessage {
+        return {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+      }
+
+      it('enqueues /compact once when the budget is exceeded with an unknown SDK threshold', async () => {
+        const { getContextUsageSpy, h } = budgetCase();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+        expect(getIsCompactingSpy).toHaveBeenCalled();
+        expect(isCoolingDownSpy).toHaveBeenCalled();
+      });
+
+      it('clears the pending post-compaction resume when the turn-end decision is not a compaction', async () => {
+        const clearSpy = mock(() => {});
+        (
+          mockContext as { clearPendingResumeAfterCompaction?: () => void }
+        ).clearPendingResumeAfterCompaction = clearSpy;
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+        expect(clearSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('keeps the pending post-compaction resume while a daemon compaction is queued or running', async () => {
+        const clearSpy = mock(() => {});
+        (
+          mockContext as { clearPendingResumeAfterCompaction?: () => void }
+        ).clearPendingResumeAfterCompaction = clearSpy;
+        hasOutstandingInternalCompactionSpy.mockImplementation(() => true);
+        const { h } = budgetCase();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+        expect(clearSpy).not.toHaveBeenCalled();
+      });
+
+      it('arms the delivery gate for an enforcement-capable event-tick refresh while prompts are queued', async () => {
+        hasQueuedMessagesSpy.mockImplementation(() => true);
+        const { getContextUsageSpy, h } = budgetCase();
+
+        for (let i = 0; i < 5; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalled();
+        expect(setDeliveryGateSpy).toHaveBeenCalled();
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+      });
+
+      it('drops an over-budget refresh whose query was replaced before usage resolved', async () => {
+        let resolveUsage: ((value: unknown) => void) | undefined;
+        const getContextUsageSpy = mock(
+          () =>
+            new Promise((resolve) => {
+              resolveUsage = resolve;
+            })
+        );
+        const { h } = budgetCase();
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        mockContext.queryObject = { getContextUsage: mock(async () => ({})) } as never;
+
+        resolveUsage?.({
+          categories: [{ name: 'Messages', tokens: 950_000 }],
+          totalTokens: 950_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 95,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        });
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('still enqueues /compact when a context.updated subscriber rejects', async () => {
+        emitSpy.mockImplementation((event: string) =>
+          event === 'context.updated' ? Promise.reject(new Error('bus down')) : Promise.resolve()
+        );
+        const { h } = budgetCase();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+      });
+
+      it('never enqueues the SDK /compact command for ACP sessions', async () => {
+        const { getContextUsageSpy, h } = budgetCase({
+          provider: 'acp',
+          model: 'acp-agent-model',
+          window: 200_000,
+          totalUsed: 190_000,
+          isAutoCompactEnabled: false,
+        });
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('drops the compaction decision when the session model changes during usage sampling', async () => {
+        let resolveSampling: (() => void) | undefined;
+        const getContextUsageSpy = mock(
+          () =>
+            new Promise((resolve) => {
+              resolveSampling = () =>
+                resolve({
+                  categories: [{ name: 'Messages', tokens: 950_000 }],
+                  totalTokens: 950_000,
+                  maxTokens: 1_000_000,
+                  rawMaxTokens: 1_000_000,
+                  percentage: 95,
+                  gridRows: [],
+                  model: 'deepseek-v4',
+                  memoryFiles: [],
+                  mcpTools: [],
+                  agents: [],
+                  isAutoCompactEnabled: true,
+                  apiUsage: null,
+                });
+            })
+        );
+        const { h } = budgetCase();
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        mockContext.session.config.model = 'switched-model';
+        resolveSampling?.();
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('samples fresh usage at turn end even when an event-tick refresh is still pending', async () => {
+        let first = true;
+        let resolveFirst: ((value: unknown) => void) | undefined;
+        const getContextUsageSpy = mock(() => {
+          if (first) {
+            first = false;
+            return new Promise((resolve) => {
+              resolveFirst = resolve;
+            });
+          }
+          return Promise.resolve({
+            categories: [{ name: 'Messages', tokens: 950_000 }],
+            totalTokens: 950_000,
+            maxTokens: 1_000_000,
+            rawMaxTokens: 1_000_000,
+            percentage: 95,
+            gridRows: [],
+            model: 'deepseek-v4',
+            memoryFiles: [],
+            mcpTools: [],
+            agents: [],
+            isAutoCompactEnabled: true,
+            apiUsage: null,
+          });
+        });
+        const { h } = budgetCase();
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+
+        for (let i = 0; i < 5; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        resolveFirst?.({
+          categories: [{ name: 'Messages', tokens: 10_000 }],
+          totalTokens: 10_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 1,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        });
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(2);
+        expect(markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+      });
+
+      it('enqueues /compact without waiting for a stalled context.updated publication', async () => {
+        let resolvePublish: (() => void) | undefined;
+        mockInternalEventBus.publish = mock((event: string) => {
+          if (event !== 'context.updated') return Promise.resolve();
+          return new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          });
+        });
+        const { getContextUsageSpy, h } = budgetCase();
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).toHaveBeenCalled();
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+
+        resolvePublish?.();
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
+      });
+
       it('does not enqueue /compact for non-PROVIDER_NO_SDK_AUTO_COMPACT providers (SDK handles)', async () => {
         setModelsCache(
           new Map([
@@ -4199,134 +4635,6 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(enqueueMessageSpy).not.toHaveBeenCalled();
-      });
-
-      it('does NOT enqueue /compact for global Kimi (SDK native auto-compact handles it)', async () => {
-        setModelsCache(
-          new Map([
-            [
-              'global',
-              [
-                {
-                  id: 'kimi-k2.7-code',
-                  name: 'Kimi K2.7 Code',
-                  provider: 'kimi',
-                  contextWindow: 262_144,
-                  preferContextWindowMetadata: true,
-                  available: true,
-                },
-              ],
-            ],
-          ])
-        );
-
-        const getContextUsageSpy = mock(async () => ({
-          categories: [{ name: 'Messages', tokens: 250_000 }],
-          totalTokens: 250_000,
-          maxTokens: 200_000,
-          rawMaxTokens: 200_000,
-          percentage: 125,
-          gridRows: [],
-          model: 'kimi-k2.7-code',
-          memoryFiles: [],
-          mcpTools: [],
-          agents: [],
-          isAutoCompactEnabled: true,
-          apiUsage: null,
-        }));
-
-        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
-        mockContext.session.config.provider = 'kimi';
-        mockContext.session.config.model = 'kimi-k2.7-code';
-        mockContextTracker.shouldCompactAt = mock(() => true);
-
-        const h = new SDKMessageHandler(mockContext);
-
-        const resultMessage: SDKMessage = {
-          type: 'result',
-          subtype: 'success',
-          uuid: 'result-uuid',
-          usage: {
-            input_tokens: 10,
-            output_tokens: 5,
-            cache_read_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-          },
-          total_cost_usd: 0.001,
-          modelUsage: {},
-        } as unknown as SDKMessage;
-
-        await h.handleMessage(resultMessage);
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalled();
-      });
-
-      it('does NOT enqueue /compact for China Kimi (SDK native auto-compact handles it)', async () => {
-        setModelsCache(
-          new Map([
-            [
-              'global',
-              [
-                {
-                  id: 'kimi-for-coding',
-                  name: 'Kimi For Coding',
-                  provider: 'kimi',
-                  contextWindow: 262_144,
-                  preferContextWindowMetadata: true,
-                  available: true,
-                },
-              ],
-            ],
-          ])
-        );
-
-        const getContextUsageSpy = mock(async () => ({
-          categories: [{ name: 'Messages', tokens: 250_000 }],
-          totalTokens: 250_000,
-          maxTokens: 200_000,
-          rawMaxTokens: 200_000,
-          percentage: 125,
-          gridRows: [],
-          model: 'kimi-for-coding',
-          memoryFiles: [],
-          mcpTools: [],
-          agents: [],
-          isAutoCompactEnabled: true,
-          apiUsage: null,
-        }));
-
-        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
-        mockContext.session.config.provider = 'kimi';
-        mockContext.session.config.model = 'kimi-for-coding';
-        mockContextTracker.shouldCompactAt = mock(() => true);
-
-        const h = new SDKMessageHandler(mockContext);
-
-        const resultMessage: SDKMessage = {
-          type: 'result',
-          subtype: 'success',
-          uuid: 'result-uuid',
-          usage: {
-            input_tokens: 10,
-            output_tokens: 5,
-            cache_read_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-          },
-          total_cost_usd: 0.001,
-          modelUsage: {},
-        } as unknown as SDKMessage;
-
-        await h.handleMessage(resultMessage);
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
     });
