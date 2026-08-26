@@ -25,11 +25,18 @@ export interface RenderPendingDigestLedgerMark {
   deliveryKey: string;
 }
 
+export interface RenderPendingDigestSavedDigest {
+  dbId: string;
+  replayed: boolean;
+}
+
 export interface RenderPendingDigestDeps {
   listPendingDeliveries(target: RenderPendingDigestTarget): ExternalEventDeliveryRecord[];
   getEventById(eventId: string): ExternalEventRecord | null;
-  findDigestByUuid(sessionId: string, uuid: string): Promise<{ dbId: string } | null>;
-  saveDigestMessage(sessionId: string, message: SDKUserMessage): Promise<string>;
+  saveDigestMessageIfAbsent(
+    sessionId: string,
+    message: SDKUserMessage
+  ): Promise<RenderPendingDigestSavedDigest>;
   appendDigest(sessionId: string, message: SDKUserMessage): Promise<boolean>;
   markDeliveriesDelivered(marks: RenderPendingDigestLedgerMark[]): void;
 }
@@ -162,20 +169,13 @@ export async function persistAndAppend(
 ): Promise<RenderPendingDigestCtx> {
   const message = ctx.digestMessage!;
   const uuid = ctx.digestUuid!;
-  let dbId: string;
-  let replayed: boolean;
+  let saved: RenderPendingDigestSavedDigest;
   try {
-    const existing = await ctx.deps.findDigestByUuid(ctx.sessionId, uuid);
-    if (existing) {
-      dbId = existing.dbId;
-      replayed = true;
-    } else {
-      dbId = await ctx.deps.saveDigestMessage(ctx.sessionId, message);
-      replayed = false;
-    }
+    saved = await ctx.deps.saveDigestMessageIfAbsent(ctx.sessionId, message);
   } catch (error) {
     return { ...ctx, outcome: { action: 'failed', stage: 'persistDigest', error } };
   }
+  const dbId = saved.dbId;
   let accepted: boolean;
   try {
     accepted = await ctx.deps.appendDigest(ctx.sessionId, message);
@@ -214,7 +214,7 @@ export async function persistAndAppend(
       text: ctx.digestText ?? '',
       eventIds: (ctx.essences ?? []).map((essence) => essence.eventId),
       deliveryKeys: marks.map((mark) => mark.deliveryKey),
-      replayed,
+      replayed: saved.replayed,
     },
   };
 }

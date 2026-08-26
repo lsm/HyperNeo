@@ -50,11 +50,12 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
       return rows;
     },
     getEventById: (eventId) => records.get(eventId) ?? null,
-    findDigestByUuid: async (_sessionId, uuid) =>
-      saved.some((message) => String(message.uuid) === uuid) ? { dbId: `db-${uuid}` } : null,
-    saveDigestMessage: async (_sessionId, message) => {
+    saveDigestMessageIfAbsent: async (_sessionId, message) => {
+      const uuid = String(message.uuid);
+      const existing = saved.find((row) => String(row.uuid) === uuid);
+      if (existing) return { dbId: `db-${uuid}`, replayed: true };
       saved.push(message);
-      return `db-${String(message.uuid)}`;
+      return { dbId: `db-${uuid}`, replayed: false };
     },
     appendDigest: async (_sessionId, message) => {
       appended.push(message);
@@ -268,7 +269,7 @@ describe('render-pending-digest pipeline', () => {
 
   it('persistAndAppend fails without marking when persisting the digest throws', async () => {
     const h = harness({
-      saveDigestMessage: async () => {
+      saveDigestMessageIfAbsent: async () => {
         throw new Error('db locked');
       },
     });
