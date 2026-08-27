@@ -1249,5 +1249,16 @@ describe('SpaceGoalService', () => {
       const updated = resolvingService.updateGoal(goal.id, { title: 'Renamed' });
       expect(updated.workspacePath).toBe('/secondary');
     });
+
+    it('counts only non-archived pinned goals for workspace removal admission', () => {
+      const goal = resolvingService.createGoal({
+        spaceId,
+        title: 'T',
+        workspacePath: '/secondary',
+      });
+      expect(goalRepo.countNonArchivedByWorkspacePath(spaceId, '/secondary')).toBe(1);
+      resolvingService.updateGoal(goal.id, { status: 'archived' });
+      expect(goalRepo.countNonArchivedByWorkspacePath(spaceId, '/secondary')).toBe(0);
+    });
   });
 });

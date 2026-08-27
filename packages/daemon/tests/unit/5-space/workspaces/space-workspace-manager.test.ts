@@ -8,6 +8,7 @@ import {
   type SpaceWorkspaceManagerDeps,
   type WorkspaceSessionReferences,
   type WorkspaceTaskReferences,
+  type WorkspaceGoalReferences,
 } from '../../../../src/lib/space/managers/space-workspace-manager.ts';
 import type { WorkspaceValidationIo } from '../../../../src/lib/space/workspaces/workspace-validation-pipeline.ts';
 
@@ -137,6 +138,10 @@ const noActiveTasks: WorkspaceTaskReferences = {
   countActiveTasksByWorkspacePath: () => 0,
 };
 
+const noActiveGoals: WorkspaceGoalReferences = {
+  countActiveGoalsByWorkspacePath: () => 0,
+};
+
 function newManager(
   options: {
     spaces?: Space[];
@@ -145,6 +150,7 @@ function newManager(
     sessionReferences?: WorkspaceSessionReferences;
     transaction?: <T>(fn: () => T) => T;
     taskReferences?: WorkspaceTaskReferences;
+    goalReferences?: WorkspaceGoalReferences;
   } = {}
 ): { manager: SpaceWorkspaceManager; workspaces: FakeWorkspaces } {
   const workspaces = options.workspaces ?? new FakeWorkspaces();
@@ -153,6 +159,7 @@ function newManager(
     workspaces,
     sessionReferences: options.sessionReferences ?? noActiveSessions,
     taskReferences: options.taskReferences ?? noActiveTasks,
+    goalReferences: options.goalReferences ?? noActiveGoals,
     io: options.io ?? fakeIo(),
     transaction: options.transaction,
   };
@@ -364,6 +371,30 @@ describe('removeWorkspace', () => {
     }
     expect(err).toBeInstanceOf(WorkspaceRemovalBlockedError);
     expect((err as WorkspaceRemovalBlockedError).reason).toBe('active_tasks');
+    expect(calls).toEqual([[SPACE_A, '/sec']]);
+    expect(workspaces.rows).toHaveLength(1);
+  });
+
+  test('blocks removal while active goals reference the workspace', () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/sec', 'w2')]);
+    const calls: Array<[string, string]> = [];
+    const { manager } = newManager({
+      workspaces,
+      goalReferences: {
+        countActiveGoalsByWorkspacePath: (spaceId, workspacePath) => {
+          calls.push([spaceId, workspacePath]);
+          return 1;
+        },
+      },
+    });
+    let err: unknown;
+    try {
+      manager.removeWorkspace(SPACE_A, 'w2');
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(WorkspaceRemovalBlockedError);
+    expect((err as WorkspaceRemovalBlockedError).reason).toBe('active_goals');
     expect(calls).toEqual([[SPACE_A, '/sec']]);
     expect(workspaces.rows).toHaveLength(1);
   });

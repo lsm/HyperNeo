@@ -75,6 +75,16 @@ export class SpaceGoalRepository {
     return row ? this.rowToGoal(row) : null;
   }
 
+  countNonArchivedByWorkspacePath(spaceId: string, workspacePath: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM space_goals
+         WHERE space_id = ? AND workspace_path = ? AND status != 'archived'`
+      )
+      .get(spaceId, workspacePath) as { c: number } | undefined;
+    return row?.c ?? 0;
+  }
+
   list(params: SpaceGoalListParams): SpaceGoal[] {
     const values: SQLiteValue[] = [params.spaceId];
     let where = `WHERE space_id = ?`;

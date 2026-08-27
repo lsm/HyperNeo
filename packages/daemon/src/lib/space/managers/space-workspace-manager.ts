@@ -36,11 +36,16 @@ export interface WorkspaceTaskReferences {
   countActiveTasksByWorkspacePath(spaceId: string, workspacePath: string): number;
 }
 
+export interface WorkspaceGoalReferences {
+  countActiveGoalsByWorkspacePath(spaceId: string, workspacePath: string): number;
+}
+
 export interface SpaceWorkspaceManagerDeps {
   spaces: WorkspaceRegistryReader;
   workspaces: WorkspaceStore;
   sessionReferences: WorkspaceSessionReferences;
   taskReferences: WorkspaceTaskReferences;
+  goalReferences: WorkspaceGoalReferences;
   io?: WorkspaceValidationIo;
   transaction?: <T>(fn: () => T) => T;
 }
@@ -59,7 +64,7 @@ export class WorkspaceRegistrationError extends Error {
 export class WorkspaceRemovalBlockedError extends Error {
   constructor(
     message: string,
-    readonly reason: 'primary' | 'active_sessions' | 'active_tasks'
+    readonly reason: 'primary' | 'active_sessions' | 'active_tasks' | 'active_goals'
   ) {
     super(message);
     this.name = 'WorkspaceRemovalBlockedError';
@@ -198,6 +203,7 @@ interface RemoveWorkspaceCtx {
   workspaces: WorkspaceStore;
   sessionReferences: WorkspaceSessionReferences;
   taskReferences: WorkspaceTaskReferences;
+  goalReferences: WorkspaceGoalReferences;
   spaceId: string;
   workspaceId: string;
   workspace?: SpaceWorkspaceRecord;
@@ -254,6 +260,22 @@ function removeGuardActiveTasks(ctx: RemoveWorkspaceCtx): RemoveWorkspaceCtx {
   };
 }
 
+function removeGuardActiveGoals(ctx: RemoveWorkspaceCtx): RemoveWorkspaceCtx {
+  const workspace = ctx.workspace!;
+  const activeGoalCount = ctx.goalReferences.countActiveGoalsByWorkspacePath(
+    ctx.spaceId,
+    workspace.path
+  );
+  if (activeGoalCount === 0) return ctx;
+  return {
+    ...ctx,
+    blocked: new WorkspaceRemovalBlockedError(
+      `Cannot remove workspace ${ctx.workspaceId} while ${activeGoalCount} active goal(s) reference it`,
+      'active_goals'
+    ),
+  };
+}
+
 function removeDeleteWorkspace(ctx: RemoveWorkspaceCtx): RemoveWorkspaceCtx {
   return { ...ctx, removed: ctx.workspaces.delete(ctx.spaceId, ctx.workspaceId) };
 }
@@ -272,6 +294,8 @@ const runRemoveWorkspace = (
   .pipe(removeGuardActiveSessions, 'ctx', 'ctx')
   .pipe('!hasBlocked', 'ctx')
   .pipe(removeGuardActiveTasks, 'ctx', 'ctx')
+  .pipe('!hasBlocked', 'ctx')
+  .pipe(removeGuardActiveGoals, 'ctx', 'ctx')
   .pipe('!hasBlocked', 'ctx')
   .pipe(removeDeleteWorkspace, 'ctx', 'ctx')
   .end('ctx') as (input: RemoveWorkspaceCtx) => RemoveWorkspaceCtx;
@@ -416,6 +440,7 @@ export class SpaceWorkspaceManager {
       workspaces: this.deps.workspaces,
       sessionReferences: this.deps.sessionReferences,
       taskReferences: this.deps.taskReferences,
+      goalReferences: this.deps.goalReferences,
       spaceId,
       workspaceId,
       removed: false,

@@ -224,7 +224,6 @@ function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
     autoTriggerNext: args.auto_trigger_next,
     checkInCronExpression: args.check_in_cron_expression,
     checkInTimezone: args.check_in_timezone,
-    workspacePath: args.workspace_path,
   };
 }
 

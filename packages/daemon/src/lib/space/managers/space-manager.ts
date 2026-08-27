@@ -7,6 +7,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
   SpaceWorkspaceRepository,
   type SpaceWorkspaceRecord,
@@ -255,6 +256,7 @@ export class SpaceManager {
   private spaceRepo: SpaceRepository;
   private workspaceRepo: SpaceWorkspaceRepository;
   private taskRepo: SpaceTaskRepository;
+  private goalRepo: SpaceGoalRepository;
   private workspaceManager: SpaceWorkspaceManager;
   private onSpaceResumedCallbacks: Array<(spaceId: string) => void> = [];
   private onSpacePausedCallbacks: Array<(spaceId: string) => void> = [];
@@ -267,6 +269,7 @@ export class SpaceManager {
     this.spaceRepo = new SpaceRepository(db);
     this.workspaceRepo = new SpaceWorkspaceRepository(db, reactiveDb);
     this.taskRepo = new SpaceTaskRepository(db);
+    this.goalRepo = new SpaceGoalRepository(db);
     this.workspaceManager = new SpaceWorkspaceManager({
       spaces: this.spaceRepo,
       workspaces: this.workspaceRepo,
@@ -275,6 +278,10 @@ export class SpaceManager {
       taskReferences: {
         countActiveTasksByWorkspacePath: (spaceId, workspacePath) =>
           this.taskRepo.countNonArchivedByWorkspacePath(spaceId, workspacePath),
+      },
+      goalReferences: {
+        countActiveGoalsByWorkspacePath: (spaceId, workspacePath) =>
+          this.goalRepo.countNonArchivedByWorkspacePath(spaceId, workspacePath),
       },
     });
   }
