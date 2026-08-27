@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
 import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/queue-health-metrics';
@@ -15,6 +16,7 @@ import {
   SpaceRuntime,
 } from '../../../../src/lib/space/runtime/space-runtime';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
@@ -6680,6 +6682,26 @@ describe('SpaceRuntime external event subscriptions', () => {
         )
       ).toBe(true);
     }, 10_000);
+
+    test('flag on: a stale-session deferral leaves the ledger pending for reactivation', async () => {
+      await attachLiveSession('session-immediate-stale', 'idle');
+      tam.alive.delete('session-immediate-stale');
+      const event = immediateEvent();
+      await eventService.publish(event);
+
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+      const digestRows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-immediate-stale'
+           AND sdk_uuid LIKE 'digest-%'`
+        )
+        .get() as { n: number };
+      expect(digestRows.n).toBe(0);
+    }, 10_000);
   });
 
   describe('events delivery v2 turn-end digest pull', () => {
@@ -6776,6 +6798,73 @@ describe('SpaceRuntime external event subscriptions', () => {
         action: 'skip',
         reason: 'no_execution',
       });
+    });
+
+    test('flag on: an obsolete crash-replay digest is superseded when a fresh digest delivers', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const survivor = makeEvent({ id: 'evt-supersede-a', topic });
+      const dead = makeEvent({ id: 'evt-supersede-b', topic });
+      await eventService.publish(survivor);
+      await eventService.publish(dead);
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-supersede',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-supersede',
+        'session-supersede',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-superseded',
+        session_id: 'session-supersede',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale digest text' }] },
+        externalEventIds: [survivor.id, dead.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-supersede', orphan, 'deferred', 'system');
+
+      const deadDelivery = eventStore.listDeliveries(dead.id)[0]!;
+      eventStore.markDeliveryFailed(dead.id, deadDelivery.deliveryKey, {
+        terminal: true,
+        reason: 'subscription_no_longer_active',
+      });
+      eventStore.markEventFailedIfAllDeliveriesTerminal(dead.id);
+
+      const outcome = await runtime.renderPendingDigestForSession('session-supersede', task.id);
+      expect(outcome).toMatchObject({ action: 'delivered' });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-supersede'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-superseded');
     });
   });
 });

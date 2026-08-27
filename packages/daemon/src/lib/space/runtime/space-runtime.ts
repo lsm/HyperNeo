@@ -124,6 +124,7 @@ import {
   type ImmediateEventDeliveryDeps,
 } from './immediate-event-delivery-pipeline.ts';
 import {
+  DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestDeps,
   type RenderPendingDigestOutcome,
   runRenderPendingDigest,
@@ -1877,7 +1878,11 @@ export class SpaceRuntime {
       if (outcome.action === 'skip' && outcome.reason === 'claim_conflict') {
         this.queueHealthMetrics.recordClaimConflict();
       }
-      if (outcome.action === 'deferred' && target.sessionId) {
+      if (
+        outcome.action === 'deferred' &&
+        target.sessionId &&
+        this.isTargetSessionLive(target.sessionId)
+      ) {
         this.scheduleTurnEndDigestRetry(target.sessionId, target.taskId);
       }
       if (outcome.action === 'error') {
@@ -1901,6 +1906,7 @@ export class SpaceRuntime {
     const timer = setTimeout(() => {
       this.turnEndDigestRetryTimers.delete(sessionId);
       if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+      if (!this.isTargetSessionLive(sessionId)) return;
       void this.renderPendingDigestForSession(sessionId, taskId)
         .then((outcome) => {
           if (outcome?.action === 'delivered') {
@@ -2060,7 +2066,38 @@ export class SpaceRuntime {
     if (outcome.action !== 'delivered' && freshDigestDbId !== null) {
       messages.deletePendingUserMessage(sessionId, freshDigestDbId, 'deferred');
     }
+    if (outcome.action === 'delivered') {
+      this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid);
+    }
     return outcome;
+  }
+
+  private supersedeObsoleteDigestRows(
+    sessionId: string,
+    store: ExternalEventStore,
+    deliveredUuid: string
+  ): void {
+    try {
+      const messages = this.getSdkMessageRepo();
+      const rows = messages
+        .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
+        .filter((row) => row.sendStatus === 'deferred' && String(row.uuid) !== deliveredUuid);
+      for (const row of rows) {
+        const membership = (row as { externalEventIds?: unknown }).externalEventIds;
+        if (!Array.isArray(membership)) continue;
+        const hasDeadMember = membership.some((eventId) => {
+          if (typeof eventId !== 'string') return false;
+          const record = store.getById(eventId);
+          return record === null || record.state === 'failed';
+        });
+        if (hasDeadMember) messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+      }
+    } catch (error) {
+      log.warn(
+        `SpaceRuntime: obsolete digest supersede for session ${sessionId} failed: ` +
+          `${formatCommandError(error)}`
+      );
+    }
   }
 
   private async deliverToLiveSessionTarget(
