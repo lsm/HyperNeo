@@ -419,6 +419,14 @@ export class MessageQueue {
 
   stop(): void {
     this.running = false;
+    this.internalCompactionsAwaitingBoundary = 0;
+    this.nonCompactionSentSinceBoundary = false;
+    this.claimed = new Set(
+      [...this.claimed].filter((message) => !this.isInternalCompaction(message))
+    );
+    this.yielded = new Set(
+      [...this.yielded].filter((message) => !this.isInternalCompaction(message))
+    );
     this.deliveryGate = null;
     this.wakeWaiters();
   }

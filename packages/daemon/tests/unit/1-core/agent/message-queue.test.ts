@@ -1010,6 +1010,30 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('a queue restart clears outstanding compaction state so prompts are not held', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sent = q.enqueue('/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      result.value.onSent();
+      await sent;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+
+      q.stop();
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+
+      q.start();
+      const prompt = q.enqueue('after restart', false, { durable: true });
+      const restarted = q.messageGenerator(testSessionId);
+      const delivered = await restarted.next();
+      expect(delivered.value.message.message.content[0].text).toBe('after restart');
+      delivered.value.onSent();
+      await prompt;
+      q.stop();
+    });
+
     it('tracks internal compactions as outstanding while queued', () => {
       const q = new MessageQueue();
       const queued = q.enqueue('/compact', true, { durable: true });
