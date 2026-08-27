@@ -350,7 +350,7 @@ export interface QueryRunnerContext {
   ): Promise<void>;
   onSlashCommandsFetched(): Promise<void>;
   onModelsFetched(): Promise<void>;
-  onMarkApiSuccess(message: SDKMessage): Promise<void>;
+  onMarkApiSuccess(message: SDKMessage, queryGeneration?: number): Promise<void>;
 
   onMissingWorkflowMcpServers?: (session: AgentSession, missing: string[]) => Promise<void>;
 
@@ -1768,7 +1768,7 @@ export class QueryRunner {
 
   async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
     await this.ctx.onSDKMessage(message, undefined, queryGeneration);
-    await this.ctx.onMarkApiSuccess(message);
+    await this.ctx.onMarkApiSuccess(message, queryGeneration);
   }
 
   async *createAbortableQuery(

@@ -636,6 +636,7 @@ describe('AcpQueryRunner', () => {
     expect(onSDKMessage.mock.calls.some(([message]) => message.type === 'assistant')).toBe(true);
     expect(onSDKMessage.mock.calls.some(([message]) => message.type === 'result')).toBe(true);
     expect(onMarkApiSuccess).toHaveBeenCalled();
+    expect(onMarkApiSuccess.mock.calls.some(([, gen]) => gen === 1)).toBe(true);
     expect(stopSpy).toHaveBeenCalled();
   });
 

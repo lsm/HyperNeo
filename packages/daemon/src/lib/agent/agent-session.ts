@@ -2027,7 +2027,17 @@ export class AgentSession
     }
   }
 
-  async onMarkApiSuccess(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
+  async onMarkApiSuccess(
+    message: import('@hyperneo/shared/sdk').SDKMessage,
+    queryGeneration?: number
+  ): Promise<void> {
+    if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) {
+      this.logger.info(
+        `Skipping API success bookkeeping for superseded query generation ` +
+          `${queryGeneration} (current ${this.getQueryGeneration()}) in session ${this.session.id}`
+      );
+      return;
+    }
     this.errorManager.markApiSuccess();
     if (isSDKResultSuccess(message) && message.is_error !== true) {
       const wasPending = this.rateLimitWatchdog.isPending();

@@ -3685,6 +3685,69 @@ describe('AgentSession', () => {
       expect(markApiSuccessSpy).toHaveBeenCalled();
       expect(resetSpy).not.toHaveBeenCalled();
     });
+
+    it('skips all success bookkeeping when the attempt generation is stale', async () => {
+      const markApiSuccessSpy = mock(() => {});
+      const resetSpy = mock(() => {});
+      const setIdleSpy = mock(async () => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).errorManager = {
+        markApiSuccess: markApiSuccessSpy,
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        isPending: () => true,
+        reset: resetSpy,
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).stateManager = {
+        noteQueryOwnerGeneration: mock(() => {}),
+        getState: () => ({ status: 'rate_limit_cooldown' }),
+        setIdle: setIdleSpy,
+      };
+      const staleGeneration = agentSession.getQueryGeneration();
+      agentSession.incrementQueryGeneration();
+
+      await agentSession.onMarkApiSuccess(
+        { type: 'result', subtype: 'success' } as any,
+        staleGeneration
+      );
+
+      expect(markApiSuccessSpy).not.toHaveBeenCalled();
+      expect(resetSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+    });
+
+    it('applies success bookkeeping when the attempt generation is current', async () => {
+      const markApiSuccessSpy = mock(() => {});
+      const resetSpy = mock(() => {});
+      const setIdleSpy = mock(async () => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).errorManager = {
+        markApiSuccess: markApiSuccessSpy,
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        isPending: () => true,
+        reset: resetSpy,
+      };
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).stateManager = {
+        noteQueryOwnerGeneration: mock(() => {}),
+        getState: () => ({ status: 'rate_limit_cooldown' }),
+        setIdle: setIdleSpy,
+      };
+      const currentGeneration = agentSession.incrementQueryGeneration();
+
+      await agentSession.onMarkApiSuccess(
+        { type: 'result', subtype: 'success' } as any,
+        currentGeneration
+      );
+
+      expect(markApiSuccessSpy).toHaveBeenCalled();
+      expect(resetSpy).toHaveBeenCalled();
+      expect(setIdleSpy).toHaveBeenCalled();
+    });
   });
 
   describe('getSlashCommands', () => {
