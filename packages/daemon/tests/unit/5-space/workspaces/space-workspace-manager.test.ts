@@ -460,6 +460,27 @@ describe('resolveWorkspaceSelection', () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe('Workspace selection must not be empty');
   });
+
+  test('rejects a label registered for multiple workspaces', async () => {
+    const workspaces = new FakeWorkspaces([
+      row(SPACE_A, '/one', 'w1', false, 'docs'),
+      row(SPACE_A, '/two', 'w2', false, 'docs'),
+    ]);
+    const { manager } = newManager({ workspaces });
+    const err = await manager.resolveWorkspaceSelection(SPACE_A, 'docs').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain('Ambiguous workspace label "docs" for space space-a');
+    expect(message).toContain('(/one, /two)');
+    expect(message).toContain('Use the workspace path instead.');
+  });
+
+  test('resolves a registered path that ends in whitespace without trimming it', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/spaced ', 'w1')]);
+    const { manager } = newManager({ workspaces });
+    const resolved = await manager.resolveWorkspaceSelection(SPACE_A, '/spaced ');
+    expect(resolved).toBe('/spaced ');
+  });
 });
 
 describe('listWorkspaces', () => {

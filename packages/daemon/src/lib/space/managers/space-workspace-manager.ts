@@ -401,7 +401,7 @@ interface ResolveSelectionCtx {
 }
 
 function selectionRequireNonEmpty(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
-  if (ctx.selection !== '') return ctx;
+  if (ctx.selection.trim() !== '') return ctx;
   return { ...ctx, error: new Error('Workspace selection must not be empty') };
 }
 
@@ -413,8 +413,19 @@ function selectionLoadRows(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
 }
 
 function selectionMatchLabel(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
-  const match = ctx.rows!.find((row) => row.label === ctx.selection);
-  return match ? { ...ctx, resolvedPath: match.path } : ctx;
+  const label = ctx.selection.trim();
+  const matches = ctx.rows!.filter((row) => row.label === label);
+  if (matches.length === 1) return { ...ctx, resolvedPath: matches[0].path };
+  if (matches.length > 1) {
+    const paths = matches.map((row) => row.path).join(', ');
+    return {
+      ...ctx,
+      error: new Error(
+        `Ambiguous workspace label "${label}" for space ${ctx.spaceId}: it matches ${matches.length} registered workspaces (${paths}). Use the workspace path instead.`
+      ),
+    };
+  }
+  return ctx;
 }
 
 function selectionWorkspaceChoices(ctx: ResolveSelectionCtx): string {
@@ -536,7 +547,7 @@ export class SpaceWorkspaceManager {
       workspaces: this.deps.workspaces,
       io: this.deps.io ?? nodeWorkspaceValidationIo,
       spaceId,
-      selection: selection.trim(),
+      selection,
     });
     if (result.error) throw result.error;
     if (!result.resolvedPath) {
