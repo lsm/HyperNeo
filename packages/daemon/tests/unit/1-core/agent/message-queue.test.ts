@@ -1023,6 +1023,23 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('stop settles queued and in-flight internal compactions', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const first = q.enqueueWithId('compact-1', '/compact', true, { durable: true });
+      const second = q.enqueueWithId('compact-2', '/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      await generator.next();
+
+      q.stop();
+      await first;
+      await second;
+      expect(q.hasQueuedInternalCompaction()).toBe(false);
+      expect(q.hasInFlightInternalCompaction()).toBe(false);
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+    });
+
     it('a queue restart clears outstanding compaction state so prompts are not held', async () => {
       const q = new MessageQueue();
       q.start();

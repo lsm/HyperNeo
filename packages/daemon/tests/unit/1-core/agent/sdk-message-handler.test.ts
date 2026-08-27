@@ -3615,6 +3615,31 @@ describe('SDKMessageHandler', () => {
 
       expect(markCompactionTriggeredSpy).toHaveBeenCalledWith(235_929);
     });
+
+    it('acknowledges the compact boundary before the compacting-state publication settles', async () => {
+      let releaseSetCompacting!: () => void;
+      setCompactingSpy.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseSetCompacting = resolve;
+          })
+      );
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      const handled = handler.handleMessage(message);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+
+      releaseSetCompacting();
+      await handled;
+    });
   });
 
   describe('circuit breaker integration', () => {

@@ -426,11 +426,24 @@ export class MessageQueue {
     this.running = false;
     this.internalCompactionsAwaitingBoundary = 0;
     this.nonCompactionSentSinceBoundary = false;
+    this.queue = this.queue.filter((message) => {
+      if (!this.isInternalCompaction(message)) return true;
+      message.resolve(message.id);
+      return false;
+    });
     this.claimed = new Set(
-      [...this.claimed].filter((message) => !this.isInternalCompaction(message))
+      [...this.claimed].filter((message) => {
+        if (!this.isInternalCompaction(message)) return true;
+        message.resolve(message.id);
+        return false;
+      })
     );
     this.yielded = new Set(
-      [...this.yielded].filter((message) => !this.isInternalCompaction(message))
+      [...this.yielded].filter((message) => {
+        if (!this.isInternalCompaction(message)) return true;
+        message.resolve(message.id);
+        return false;
+      })
     );
     this.deliveryGate = null;
     this.wakeWaiters();

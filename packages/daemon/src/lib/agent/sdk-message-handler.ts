@@ -1544,6 +1544,7 @@ export class SDKMessageHandler {
 
     if (!isSDKCompactBoundary(message)) return;
 
+    this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
     await stateManager.setCompacting(false);
     const boundaryInfo = contextTracker.getContextInfo();
     const boundaryCapacity =
@@ -1553,7 +1554,6 @@ export class SDKMessageHandler {
         ? undefined
         : contextBudgetThreshold(boundaryCapacity, boundaryInfo?.autoCompactPercent)
     );
-    this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
     this.ctx.messageQueue.clearNonCompactionSentSinceBoundary();
 
     void this.refreshContextUsage('compact-boundary');
