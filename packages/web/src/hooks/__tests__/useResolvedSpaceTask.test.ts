@@ -78,11 +78,11 @@ describe('useResolvedSpaceTask', () => {
       taskDetailsSignal.value = new Map([[task.id, full]]);
     });
 
-    expect(mocks.ensureTaskDetail).toHaveBeenCalledWith(task.id);
+    expect(mocks.ensureTaskDetail).toHaveBeenCalledWith(task.id, task.updatedAt);
     expect(result.current).toBe(full);
   });
 
-  it('prefers the store task when the cached detail is staler', async () => {
+  it('prefers the store task when the cached detail is staler and refetches at its freshness', async () => {
     const task = makeSummaryTask({ updatedAt: 20 });
     const stale = { ...task, description: 'stale full', updatedAt: 10 };
 
@@ -92,6 +92,7 @@ describe('useResolvedSpaceTask', () => {
     });
 
     expect(result.current).toBe(task);
+    expect(mocks.ensureTaskDetail).toHaveBeenCalledWith(task.id, task.updatedAt);
   });
 
   it('returns null for a null task without fetching', () => {
@@ -99,5 +100,55 @@ describe('useResolvedSpaceTask', () => {
 
     expect(result.current).toBeNull();
     expect(mocks.ensureTaskDetail).not.toHaveBeenCalled();
+  });
+
+  it('retries a failed detail fetch with backoff and recovers', async () => {
+    vi.useFakeTimers();
+    const task = makeSummaryTask();
+    mocks.ensureTaskDetail.mockResolvedValue(null);
+
+    const { result } = renderHook(() => useResolvedSpaceTask(task));
+    expect(mocks.ensureTaskDetail).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(mocks.ensureTaskDetail).toHaveBeenCalledTimes(2);
+
+    const full = { ...task, description: 'full description' };
+    mocks.ensureTaskDetail.mockImplementation(async () => {
+      taskDetailsSignal.value = new Map([[task.id, full]]);
+      return full;
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+
+    expect(mocks.ensureTaskDetail).toHaveBeenCalledTimes(3);
+    expect(result.current).toBe(full);
+
+    vi.useRealTimers();
+  });
+
+  it('stops retrying after the bounded number of attempts', async () => {
+    vi.useFakeTimers();
+    const task = makeSummaryTask();
+    mocks.ensureTaskDetail.mockResolvedValue(null);
+
+    renderHook(() => useResolvedSpaceTask(task));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+    expect(mocks.ensureTaskDetail).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+    expect(mocks.ensureTaskDetail).toHaveBeenCalledTimes(3);
+
+    vi.useRealTimers();
   });
 });

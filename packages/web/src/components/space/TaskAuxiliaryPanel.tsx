@@ -242,17 +242,21 @@ export function TaskAuxiliaryPanel({
       />
     ) : null;
 
+  const descriptionPending = !!task?.descriptionTruncated && resolvedTask === task;
   const descriptionSection = (
     <SectionCard title="Description">
       <textarea
         value={descriptionDraft}
         onInput={(e) => setDescriptionDraft((e.target as HTMLTextAreaElement).value)}
         onBlur={handleDescriptionBlur}
-        disabled={savingDescription}
+        disabled={savingDescription || descriptionPending}
         rows={4}
         placeholder="Add a description…"
         class="w-full resize-none rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none disabled:opacity-50"
       />
+      {descriptionPending && (
+        <p class="mt-1 text-[11px] text-gray-400">Loading full description…</p>
+      )}
       {savingDescription && <p class="mt-1 text-[11px] text-gray-400">Saving…</p>}
     </SectionCard>
   );

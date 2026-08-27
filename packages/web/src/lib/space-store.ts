@@ -194,7 +194,7 @@ class SpaceStore {
 
   readonly space = signal<Space | null>(null);
 
-  readonly tasks = signal<SpaceTask[]>([]);
+  readonly tasks = signal<SummarySpaceTask[]>([]);
 
   readonly taskDetails = signal<ReadonlyMap<string, SpaceTask>>(new Map());
 
@@ -2010,9 +2010,9 @@ class SpaceStore {
     this.taskDetails.value = new Map(this.taskDetails.value).set(task.id, task);
   }
 
-  async ensureTaskDetail(taskId: string): Promise<SpaceTask | null> {
+  async ensureTaskDetail(taskId: string, minUpdatedAt = 0): Promise<SpaceTask | null> {
     const cached = this.taskDetails.value.get(taskId);
-    if (cached) return cached;
+    if (cached && cached.updatedAt >= minUpdatedAt) return cached;
     const existing = this.taskDetailPromises.get(taskId);
     if (existing) return existing;
 
@@ -2025,6 +2025,7 @@ class SpaceStore {
       .request<SpaceTask>('spaceTask.get', { spaceId, taskId })
       .then((task) => {
         if (!task) return null;
+        if (this.spaceId.value !== spaceId) return null;
         this.taskDetails.value = new Map(this.taskDetails.value).set(taskId, task);
         return task;
       })

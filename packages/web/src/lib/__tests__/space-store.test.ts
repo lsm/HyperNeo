@@ -2692,6 +2692,42 @@ describe('SpaceStore — task detail cache', () => {
     expect(spaceStore.taskDetails.value.size).toBe(0);
     await expect(spaceStore.ensureTaskDetail('t1')).resolves.toBeNull();
   });
+
+  it('does not write a detail resolved after a space switch into the fresh cache', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveGet: (task: SpaceTask) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise<SpaceTask>((resolve) => {
+          resolveGet = resolve;
+        })
+    );
+
+    const pending = spaceStore.ensureTaskDetail('t1');
+    await spaceStore.clearSpace();
+    resolveGet({ ...makeTask('t1'), description: 'full description' });
+    await expect(pending).resolves.toBeNull();
+
+    expect(spaceStore.taskDetails.value.size).toBe(0);
+  });
+
+  it('refetches when the cached detail is staler than the requested freshness', async () => {
+    await spaceStore.selectSpace('space-1');
+    taskDetailResult = { ...makeTask('t1'), description: 'stale full', updatedAt: 10 };
+    await spaceStore.ensureTaskDetail('t1');
+    taskDetailResult = { ...makeTask('t1'), description: 'fresh full', updatedAt: 20 };
+    mockHub.request.mockClear();
+
+    await expect(spaceStore.ensureTaskDetail('t1', 20)).resolves.toHaveProperty(
+      'description',
+      'fresh full'
+    );
+
+    expect(
+      mockHub.request.mock.calls.filter((c: unknown[]) => c[0] === 'spaceTask.get')
+    ).toHaveLength(1);
+    expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('fresh full');
+  });
 });
 
 describe('SpaceStore — node execution LiveQuery subscriptions', () => {

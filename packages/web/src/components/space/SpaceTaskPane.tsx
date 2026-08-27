@@ -1083,8 +1083,11 @@ export function SpaceTaskPane({
 
   const taskActionItems: DropdownMenuItem[] = [];
   if (!isTerminalTask) {
+    const editTaskDisabled = !!task?.descriptionTruncated && resolvedTask === task;
     taskActionItems.push({
       label: 'Edit title, description, or priority',
+      disabled: editTaskDisabled,
+      title: editTaskDisabled ? 'Waiting for the full description to load…' : undefined,
       onClick: () => {
         setEditTaskError(null);
         setShowEditTaskModal(true);
