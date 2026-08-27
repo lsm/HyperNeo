@@ -37,7 +37,7 @@ vi.mock('../../ui/Button', () => ({
   ),
 }));
 
-import { useSpaceWorkspaceChoice, useSpaceWorkspaceOptions } from '../SpaceWorkspacePicker';
+import { useSpaceWorkspaceChoice } from '../SpaceWorkspacePicker';
 import type { SpaceWorkspace } from '@hyperneo/shared';
 
 function makeWorkspace(overrides: Partial<SpaceWorkspace> = {}): SpaceWorkspace {
@@ -53,12 +53,17 @@ function makeWorkspace(overrides: Partial<SpaceWorkspace> = {}): SpaceWorkspace 
   };
 }
 
+const SECONDARY = makeWorkspace({
+  id: 'ws-2',
+  path: '/projects/docs',
+  label: 'Docs',
+  isPrimary: false,
+});
+
 function Probe({ spaceId, fallbackPath }: { spaceId: string; fallbackPath?: string | null }) {
-  const options = useSpaceWorkspaceOptions(spaceId, fallbackPath);
   const { chooseWorkspace, dialog } = useSpaceWorkspaceChoice(spaceId, fallbackPath);
   return (
     <div>
-      <span data-testid="probe-option-count">{options.length}</span>
       <button
         data-testid="probe-create"
         onClick={() => chooseWorkspace((workspacePath) => mockCreate(workspacePath))}
@@ -70,10 +75,10 @@ function Probe({ spaceId, fallbackPath }: { spaceId: string; fallbackPath?: stri
   );
 }
 
-function stubRegistry(workspaces: SpaceWorkspace[]) {
+function stubRegistry(handler: (params: { spaceId?: string }) => SpaceWorkspace[]) {
   mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-  mockRequest.mockImplementation((method: string) => {
-    if (method === 'space.workspace.list') return Promise.resolve(workspaces);
+  mockRequest.mockImplementation((method: string, params: { spaceId?: string }) => {
+    if (method === 'space.workspace.list') return Promise.resolve(handler(params));
     return Promise.resolve({});
   });
 }
@@ -91,16 +96,10 @@ describe('SpaceWorkspacePicker', () => {
   });
 
   it('sources options from the registry primary-first and flows the selection into createSession', async () => {
-    stubRegistry([
-      makeWorkspace({ id: 'ws-2', path: '/projects/docs', label: 'Docs', isPrimary: false }),
-      makeWorkspace(),
-    ]);
+    stubRegistry(() => [SECONDARY, makeWorkspace()]);
     const { getByTestId, getAllByTestId, getByText } = render(
       <Probe spaceId="space-1" fallbackPath="/projects/main" />
     );
-    await waitFor(() => {
-      expect(getByTestId('probe-option-count').textContent).toBe('2');
-    });
     fireEvent.click(getByTestId('probe-create'));
 
     const options = await waitFor(() => {
@@ -122,12 +121,59 @@ describe('SpaceWorkspacePicker', () => {
     expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
   });
 
-  it('creates directly with the primary workspace when only one is registered', async () => {
-    stubRegistry([makeWorkspace()]);
-    const { getByTestId } = render(<Probe spaceId="space-1" fallbackPath="/projects/main" />);
-    await waitFor(() => {
-      expect(getByTestId('probe-option-count').textContent).toBe('1');
+  it('waits for the registry to settle before offering the workspace choice', async () => {
+    let resolveList: (list: SpaceWorkspace[]) => void = () => {};
+    const listPromise = new Promise<SpaceWorkspace[]>((resolve) => {
+      resolveList = resolve;
     });
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method: string) =>
+      method === 'space.workspace.list' ? listPromise : Promise.resolve({})
+    );
+
+    const { getByTestId, getByText } = render(
+      <Probe spaceId="space-1" fallbackPath="/projects/main" />
+    );
+    fireEvent.click(getByTestId('probe-create'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
+
+    resolveList([makeWorkspace(), SECONDARY]);
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs');
+    });
+  });
+
+  it('resets the cached options and picker state when the space changes', async () => {
+    stubRegistry((params) => (params.spaceId === 'space-1' ? [makeWorkspace(), SECONDARY] : []));
+    const { getByTestId, rerender } = render(
+      <Probe spaceId="space-1" fallbackPath="/projects/main" />
+    );
+    fireEvent.click(getByTestId('probe-create'));
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
+
+    rerender(<Probe spaceId="space-2" fallbackPath="/projects/other" />);
+    await waitFor(() => {
+      expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
+    });
+    fireEvent.click(getByTestId('probe-create'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/other');
+    });
+    expect(mockCreate).not.toHaveBeenCalledWith('/projects/docs');
+    expect(mockCreate).not.toHaveBeenCalledWith('/projects/main');
+  });
+
+  it('creates directly with the primary workspace when only one is registered', async () => {
+    stubRegistry(() => [makeWorkspace()]);
+    const { getByTestId } = render(<Probe spaceId="space-1" fallbackPath="/projects/main" />);
     fireEvent.click(getByTestId('probe-create'));
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledWith('/projects/main');
@@ -135,7 +181,7 @@ describe('SpaceWorkspacePicker', () => {
     expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
   });
 
-  it('falls back to the space primary path when the registry is unavailable', async () => {
+  it('falls back to the space primary path when the registry fails', async () => {
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
     mockRequest.mockRejectedValue(new Error('registry unavailable'));
     const { getByTestId } = render(<Probe spaceId="space-1" fallbackPath="/projects/main" />);
@@ -143,5 +189,6 @@ describe('SpaceWorkspacePicker', () => {
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledWith('/projects/main');
     });
+    expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
   });
 });

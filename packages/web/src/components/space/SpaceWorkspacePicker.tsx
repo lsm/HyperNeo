@@ -7,38 +7,63 @@ import { cn } from '../../lib/utils';
 
 export type SpaceWorkspaceOption = Pick<SpaceWorkspace, 'id' | 'path' | 'label' | 'isPrimary'>;
 
+interface SpaceWorkspaceRegistryState {
+  spaceId: string;
+  settled: boolean;
+  list: SpaceWorkspaceOption[] | null;
+}
+
 function workspaceLabel(workspace: SpaceWorkspaceOption): string {
   if (workspace.label) return workspace.label;
   return workspace.path.split('/').filter(Boolean).at(-1) ?? workspace.path;
 }
 
-export function useSpaceWorkspaceOptions(
+function primaryFirst(list: SpaceWorkspaceOption[]): SpaceWorkspaceOption[] {
+  return [...list].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
+}
+
+function useSpaceWorkspaceRegistry(
   spaceId: string,
   fallbackPath?: string | null
-): SpaceWorkspaceOption[] {
-  const [workspaces, setWorkspaces] = useState<SpaceWorkspaceOption[] | null>(null);
+): { options: SpaceWorkspaceOption[]; settle: () => Promise<void> } {
+  const [state, setState] = useState<SpaceWorkspaceRegistryState | null>(null);
+  const settleRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     let cancelled = false;
+    let markSettled: () => void = () => {};
+    settleRef.current = new Promise<void>((resolve) => {
+      markSettled = resolve;
+    });
+    const finish = (list: SpaceWorkspaceOption[] | null) => {
+      if (cancelled) return;
+      setState({ spaceId, settled: true, list });
+      markSettled();
+    };
     const hub = connectionManager.getHubIfConnected();
-    if (!hub) return;
+    if (!hub) {
+      finish(null);
+      return;
+    }
     hub
       .request<SpaceWorkspaceOption[]>('space.workspace.list', { spaceId })
-      .then((list) => {
-        if (!cancelled && list.length > 0) {
-          setWorkspaces([...list].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary)));
-        }
-      })
-      .catch(() => {});
+      .then((list) => finish(list.length > 0 ? primaryFirst(list) : null))
+      .catch(() => finish(null));
     return () => {
       cancelled = true;
     };
   }, [spaceId]);
 
-  if (workspaces) return workspaces;
-  return fallbackPath
-    ? [{ id: `${spaceId}:primary`, path: fallbackPath, label: '', isPrimary: true }]
-    : [];
+  let options: SpaceWorkspaceOption[] = [];
+  if (state?.spaceId === spaceId && state.settled) {
+    if (state.list) {
+      options = state.list;
+    } else if (fallbackPath) {
+      options = [{ id: `${spaceId}:primary`, path: fallbackPath, label: '', isPrimary: true }];
+    }
+  }
+
+  return { options, settle: () => settleRef.current };
 }
 
 interface SpaceWorkspacePickerDialogProps {
@@ -100,28 +125,39 @@ function SpaceWorkspacePickerDialog({
 }
 
 export function useSpaceWorkspaceChoice(spaceId: string, fallbackPath?: string | null) {
-  const workspaces = useSpaceWorkspaceOptions(spaceId, fallbackPath);
+  const { options, settle } = useSpaceWorkspaceRegistry(spaceId, fallbackPath);
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   const [pickerOpen, setPickerOpen] = useState(false);
   const pendingCreateRef = useRef<((workspacePath: string) => void) | null>(null);
 
-  const chooseWorkspace = (create: (workspacePath?: string) => void) => {
-    if (workspaces.length > 1) {
-      pendingCreateRef.current = (workspacePath: string) => create(workspacePath);
-      setPickerOpen(true);
-    } else {
-      create(workspaces[0]?.path);
-    }
-  };
+  useEffect(() => {
+    pendingCreateRef.current = null;
+    setPickerOpen(false);
+  }, [spaceId]);
 
   const closePicker = () => {
     pendingCreateRef.current = null;
     setPickerOpen(false);
   };
 
+  const chooseWorkspace = (create: (workspacePath?: string) => void) => {
+    void (async () => {
+      await settle();
+      const current = optionsRef.current;
+      if (current.length > 1) {
+        pendingCreateRef.current = (workspacePath: string) => create(workspacePath);
+        setPickerOpen(true);
+      } else {
+        create(current[0]?.path);
+      }
+    })();
+  };
+
   const dialog = (
     <SpaceWorkspacePickerDialog
       isOpen={pickerOpen}
-      workspaces={workspaces}
+      workspaces={options}
       onClose={closePicker}
       onCreate={(workspacePath) => {
         const create = pendingCreateRef.current;

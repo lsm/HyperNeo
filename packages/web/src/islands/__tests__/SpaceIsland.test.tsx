@@ -1061,7 +1061,9 @@ describe('SpaceIsland — sessions view', () => {
 
     const btn = getByLabelText('Create session') as HTMLButtonElement;
     fireEvent.click(btn);
-    expect(btn.disabled).toBe(true);
+    await waitFor(() => {
+      expect(btn.disabled).toBe(true);
+    });
     await waitFor(() => {
       expect(mockCreateSession).toHaveBeenCalledTimes(1);
     });
