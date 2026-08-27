@@ -143,6 +143,8 @@ export interface RenderPendingDigestCtx extends RenderPendingDigestInput {
   scopedRows?: ExternalEventDeliveryRecord[];
   target?: RenderPendingDigestTarget;
   legacyDurableEventIds?: Set<string>;
+  consumedDurableEventIds?: Set<string>;
+  replayDigestMessage?: SDKUserMessage;
   digestMembershipEventIds?: Set<string>;
   replayable?: boolean;
   pendingRows?: ExternalEventDeliveryRecord[];
@@ -229,18 +231,26 @@ export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   return ctx;
 }
 
+function durableRowEventIds(rows: SDKUserMessage[]): string[] {
+  const ids: string[] = [];
+  for (const row of rows) {
+    const entry = parseDeferredDeliveryRow(row);
+    if (!entry) continue;
+    for (const event of deferredExternalEventEntryEvents(entry)) ids.push(event.eventId);
+  }
+  return ids;
+}
+
 export function reconcileDurable(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
   const legacyDurableEventIds = new Set<string>();
   for (const status of LEGACY_DURABLE_SCAN_STATUSES) {
-    for (const row of ctx.deps.listUserMessagesByStatus(ctx.sessionId, status)) {
-      const entry = parseDeferredDeliveryRow(row);
-      if (!entry) continue;
-      for (const event of deferredExternalEventEntryEvents(entry)) {
-        legacyDurableEventIds.add(event.eventId);
-      }
-    }
+    const rows = ctx.deps.listUserMessagesByStatus(ctx.sessionId, status);
+    for (const eventId of durableRowEventIds(rows)) legacyDurableEventIds.add(eventId);
   }
-  const digestMemberships: Array<Set<string>> = [];
+  const consumedDurableEventIds = new Set(
+    durableRowEventIds(ctx.deps.listUserMessagesByStatus(ctx.sessionId, 'consumed'))
+  );
+  const digestMembershipRows: Array<{ message: SDKUserMessage; eventIds: Set<string> }> = [];
   const digestMembershipEventIds = new Set<string>();
   for (const row of ctx.deps.listUserMessagesByUuidPrefix(
     ctx.sessionId,
@@ -249,29 +259,40 @@ export function reconcileDurable(ctx: RenderPendingDigestCtx): RenderPendingDige
     const membership = (row as { externalEventIds?: unknown }).externalEventIds;
     if (!Array.isArray(membership) || membership.length === 0) continue;
     const ids = new Set(membership.filter((id): id is string => typeof id === 'string'));
-    digestMemberships.push(ids);
+    digestMembershipRows.push({ message: row, eventIds: ids });
     for (const eventId of ids) digestMembershipEventIds.add(eventId);
   }
+  const candidateRows = (ctx.scopedRows ?? []).slice(0, TURN_END_DIGEST_PENDING_ROW_CAP);
   const pendingEventIdSet = new Set(
-    (ctx.scopedRows ?? [])
+    candidateRows
       .filter((row) => ctx.deps.getEventById(row.eventId) !== null)
       .map((row) => row.eventId)
   );
-  const replayable =
-    pendingEventIdSet.size > 0 &&
-    digestMemberships.some(
-      (ids) =>
-        ids.size === pendingEventIdSet.size && [...ids].every((id) => pendingEventIdSet.has(id))
-    );
-  return { ...ctx, legacyDurableEventIds, digestMembershipEventIds, replayable };
+  const replayMatch = digestMembershipRows.find(({ eventIds }) =>
+    [...pendingEventIdSet].every((id) => eventIds.has(id))
+  );
+  const replayable = pendingEventIdSet.size > 0 && replayMatch !== undefined;
+  return {
+    ...ctx,
+    legacyDurableEventIds,
+    consumedDurableEventIds,
+    digestMembershipEventIds,
+    replayDigestMessage: replayMatch?.message,
+    replayable,
+  };
 }
 
 export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
   const target = ctx.target!;
   const claimed: ExternalEventDeliveryRecord[] = [];
-  for (const row of ctx.scopedRows ?? []) {
-    if (claimed.length >= TURN_END_DIGEST_PENDING_ROW_CAP) break;
+  const consumedMarks: RenderPendingDigestLedgerMark[] = [];
+  const candidateRows = (ctx.scopedRows ?? []).slice(0, TURN_END_DIGEST_PENDING_ROW_CAP);
+  for (const row of candidateRows) {
     if (ctx.deps.isDeliveryInFlight(row.deliveryKey)) continue;
+    if (ctx.consumedDurableEventIds?.has(row.eventId)) {
+      consumedMarks.push({ eventId: row.eventId, deliveryKey: row.deliveryKey });
+      continue;
+    }
     if (ctx.legacyDurableEventIds?.has(row.eventId)) continue;
     if (!ctx.replayable && ctx.digestMembershipEventIds?.has(row.eventId)) continue;
     if (
@@ -300,6 +321,13 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
       continue;
     }
     claimed.push(row);
+  }
+  if (consumedMarks.length > 0) {
+    try {
+      ctx.deps.markDeliveriesDelivered(target, consumedMarks);
+    } catch (error) {
+      return { ...ctx, outcome: { action: 'failed', stage: 'markConsumedDelivered', error } };
+    }
   }
   if (claimed.length === 0) {
     return { ...ctx, outcome: { action: 'skip', reason: 'no_claimable_events' } };
@@ -347,6 +375,13 @@ function deterministicDigestUuid(eventIds: string[]): string {
 }
 
 export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
+  if (ctx.replayable && ctx.replayDigestMessage) {
+    return {
+      ...ctx,
+      digestUuid: String(ctx.replayDigestMessage.uuid),
+      digestMessage: ctx.replayDigestMessage,
+    };
+  }
   const eventIds = (ctx.essences ?? []).map((essence) => essence.eventId).sort();
   const digestUuid = deterministicDigestUuid(eventIds);
   const digestMessage = {

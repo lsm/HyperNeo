@@ -377,6 +377,7 @@ describe('render-pending-digest pipeline', () => {
     h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b']));
     const ctx = reconcileDurable(ctxOf(h, { scopedRows: h.rows }));
     expect(ctx.legacyDurableEventIds).toEqual(new Set(['ev-legacy', 'ev-consumed']));
+    expect(ctx.consumedDurableEventIds).toEqual(new Set(['ev-consumed']));
     expect(ctx.digestMembershipEventIds).toEqual(new Set(['ev-a', 'ev-b']));
     expect(ctx.replayable).toBe(true);
   });
@@ -391,6 +392,17 @@ describe('render-pending-digest pipeline', () => {
     const ctx = reconcileDurable(ctxOf(h, { scopedRows: h.rows }));
     expect(ctx.replayable).toBe(false);
     expect(ctx.digestMembershipEventIds).toEqual(new Set(['ev-a']));
+  });
+
+  it('reconcileDurable replays when the pending set is a subset of a persisted digest', () => {
+    const h = harness();
+    seedPending(h, [['ev-b', 'review']]);
+    h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b']));
+    const ctx = reconcileDurable(ctxOf(h, { scopedRows: h.rows }));
+    expect(ctx.replayable).toBe(true);
+    expect(String(ctx.replayDigestMessage?.uuid)).toBe(
+      `${DETERMINISTIC_DIGEST_UUID_PREFIX}fixture-2`
+    );
   });
 
   it('claimPending skips in-flight, legacy, membership, and immediate-tier rows', () => {
@@ -526,6 +538,20 @@ describe('render-pending-digest pipeline', () => {
     ]);
   });
 
+  it('buildMessage replays the matched persisted digest verbatim', () => {
+    const stored = digestMembershipRow(['ev-a', 'ev-b']);
+    const ctx = buildMessage(
+      ctxOf(harness(), {
+        essences: [{ eventId: 'ev-b', topic: TOPICS.review }],
+        digestText: 't',
+        replayable: true,
+        replayDigestMessage: stored,
+      })
+    );
+    expect(ctx.digestUuid).toBe(`${DETERMINISTIC_DIGEST_UUID_PREFIX}fixture-2`);
+    expect(ctx.digestMessage).toBe(stored);
+  });
+
   it('persistAndAppend saves, hands off to the mailbox, and marks ledger rows delivered', async () => {
     const h = harness();
     seedPending(h, [
@@ -618,6 +644,64 @@ describe('render-pending-digest pipeline', () => {
     expect(h.appended).toEqual([]);
     expect(h.marks).toEqual([]);
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
+  it('end to end: a pending subset of a persisted digest replays the stored digest and marks the subset', async () => {
+    const h = harness();
+    seedPending(h, [
+      ['ev-a', 'check'],
+      ['ev-b', 'review'],
+    ]);
+    h.rows.splice(0, 1);
+    h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b']));
+    h.saved.push(digestMembershipRow(['ev-a', 'ev-b']));
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome.action).toBe('delivered');
+    if (outcome.action !== 'delivered') return;
+    expect(outcome.uuid).toBe(`${DETERMINISTIC_DIGEST_UUID_PREFIX}fixture-2`);
+    expect(outcome.replayed).toBe(true);
+    expect(outcome.eventIds).toEqual(['ev-b']);
+    expect(h.marks).toEqual([{ eventId: 'ev-b', deliveryKey: 'delivery-ev-b' }]);
+    expect(h.saved).toHaveLength(1);
+    expect(h.appended).toHaveLength(1);
+  });
+
+  it('end to end: pending rows evidenced by consumed legacy rows finalize without re-rendering', async () => {
+    const h = harness();
+    seedPending(h, [
+      ['ev-fresh', 'check'],
+      ['ev-eaten', 'comment'],
+    ]);
+    h.legacyRows.set('consumed', [legacyDurableRow('ev-eaten', TOPICS.comment)]);
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome.action).toBe('delivered');
+    if (outcome.action !== 'delivered') return;
+    expect(outcome.eventIds).toEqual(['ev-fresh']);
+    expect(h.marks).toEqual([
+      { eventId: 'ev-eaten', deliveryKey: 'delivery-ev-eaten' },
+      { eventId: 'ev-fresh', deliveryKey: 'delivery-ev-fresh' },
+    ]);
+    expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
+  it('end to end: every pending row evidenced by consumed rows finalizes without a digest', async () => {
+    const h = harness();
+    seedPending(h, [['ev-eaten', 'comment']]);
+    h.legacyRows.set('consumed', [legacyDurableRow('ev-eaten', TOPICS.comment)]);
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'no_claimable_events' });
+    expect(h.marks).toEqual([{ eventId: 'ev-eaten', deliveryKey: 'delivery-ev-eaten' }]);
+    expect(h.saved).toEqual([]);
+    expect(h.appended).toEqual([]);
   });
 
   it('end to end: empty pending set is a skip', async () => {
