@@ -832,7 +832,9 @@ export class SDKMessageHandler {
       isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
 
     let releaseTurnEndGate: (() => void) | null = null;
+    let resultOwner: IdleOwnerScope | undefined;
     if (isTopLevelResult && !this.isInvocationStale(invocationGeneration)) {
+      resultOwner = this.invocationIdleOwner(invocationGeneration ?? null);
       let release!: () => void;
       const gate = new Promise<void>((resolve) => {
         release = resolve;
@@ -1011,10 +1013,10 @@ export class SDKMessageHandler {
       if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
         if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
           const compactingClear = this.clearStaleCompacting();
-          await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
+          await this.refreshContextUsage('turn-end', undefined, invocationGeneration, resultOwner);
           enforcedTurnEnd = true;
           await compactingClear;
-          await this.settleIdleForInvocation(invocationGeneration);
+          await this.settleIdleForInvocation(invocationGeneration, undefined, resultOwner);
         }
       }
 
@@ -1346,9 +1348,10 @@ export class SDKMessageHandler {
       suppressDeliveryWaiters?: boolean;
       suppressIdlePublish?: boolean;
       suppressIdleCallback?: boolean;
-    }
+    },
+    ownerOverride?: IdleOwnerScope
   ): Promise<void> {
-    const owner = this.invocationIdleOwner(invocationGeneration);
+    const owner = ownerOverride ?? this.invocationIdleOwner(invocationGeneration);
     if (owner) {
       await this.ctx.stateManager.setIdle({ ...opts, owner });
     } else if (opts) {
