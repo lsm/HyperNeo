@@ -106,7 +106,7 @@ const runEnforceContextBudget = (
   .pipe(resolveBudgetThresholds, 'ctx', 'ctx')
   .pipe('!compactionOutstanding', 'ctx')
   .pipe(runContextBudgetDecision, 'ctx', 'ctx')
-  .pipe('!budgetRequiresCompaction', 'ctx')
+  .pipe('budgetRequiresCompaction', 'ctx')
   .pipe(enqueueBudgetCompaction, 'ctx', 'ctx')
   .end('ctx') as (ctx: ContextBudgetEnforcementCtx) => ContextBudgetEnforcementCtx;
 
