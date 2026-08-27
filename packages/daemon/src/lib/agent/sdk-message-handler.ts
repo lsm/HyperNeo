@@ -150,6 +150,8 @@ export class SDKMessageHandler {
 
   private trailingIdleGateRelease: (() => void) | null = null;
 
+  private trailingIdleGeneration: number | null = null;
+
   private compactionEnqueuedMidTurnGeneration: number | null | undefined = undefined;
 
   private currentThinkingTokensEstimate: number | null = null;
@@ -1048,7 +1050,7 @@ export class SDKMessageHandler {
         const compactingClear = isTopLevelResult ? this.clearStaleCompacting() : null;
         if (isTopLevelResult && !enforcedTurnEnd) {
           if (this.expectsSessionStateIdleAfterResult) {
-            this.armTrailingIdleDeliveryGate();
+            this.armTrailingIdleDeliveryGate(invocationGeneration);
           }
           await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
         }
@@ -1398,6 +1400,17 @@ export class SDKMessageHandler {
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
       this.resetThinkingTokenTracking();
+      if (
+        this.trailingIdleGeneration !== null &&
+        this.trailingIdleGeneration !== invocationGeneration
+      ) {
+        this.logger.info(
+          `Ignoring trailing idle from a superseded query (armed ${this.trailingIdleGeneration}, ` +
+            `current ${invocationGeneration}).`
+        );
+        this.releaseTrailingIdleDeliveryGate();
+        return;
+      }
       const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
       if (clearTurnPending) {
         await this.settleIdleForInvocation(invocationGeneration, {
@@ -1429,13 +1442,14 @@ export class SDKMessageHandler {
     }
   }
 
-  private armTrailingIdleDeliveryGate(): void {
+  private armTrailingIdleDeliveryGate(invocationGeneration?: number | null): void {
     if (this.trailingIdleGateRelease) return;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     this.trailingIdleGateRelease = release;
+    this.trailingIdleGeneration = invocationGeneration ?? null;
     const bounded = boundedDeliveryGate(gate);
     this.ctx.messageQueue.setDeliveryGate(bounded);
     void bounded.then(() => {
@@ -1448,6 +1462,7 @@ export class SDKMessageHandler {
   private releaseTrailingIdleDeliveryGate(): void {
     this.trailingIdleGateRelease?.();
     this.trailingIdleGateRelease = null;
+    this.trailingIdleGeneration = null;
   }
 
   private resetThinkingTokenTracking(): void {

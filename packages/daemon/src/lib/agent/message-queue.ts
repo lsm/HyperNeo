@@ -319,6 +319,7 @@ export class MessageQueue {
       msg.reject(new Error('Interrupted by user'));
     }
     this.claimed.clear();
+    const yieldedCompactions = [...this.yielded].filter((msg) => this.isInternalCompaction(msg));
     for (const msg of this.yielded) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -326,6 +327,9 @@ export class MessageQueue {
       msg.resolve(msg.id);
     }
     this.yielded.clear();
+    if (yieldedCompactions.length > 0) {
+      this.onInternalCompactionsAborted?.();
+    }
   }
 
   getClearEpoch(): number {

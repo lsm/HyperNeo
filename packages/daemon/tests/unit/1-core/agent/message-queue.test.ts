@@ -1083,6 +1083,23 @@ describe('MessageQueue', () => {
       expect(aborted).toHaveBeenCalledTimes(1);
     });
 
+    it('clear notifies when a yielded compaction is abandoned before its boundary', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const aborted = mock(() => {});
+      q.onInternalCompactionsAborted = aborted;
+
+      const sent = q.enqueue('/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(q.hasInFlightInternalCompaction()).toBe(true);
+
+      q.clear();
+      await sent;
+      expect(aborted).toHaveBeenCalledTimes(1);
+      q.stop();
+    });
+
     it('a queue restart clears outstanding compaction state so prompts are not held', async () => {
       const q = new MessageQueue();
       q.start();

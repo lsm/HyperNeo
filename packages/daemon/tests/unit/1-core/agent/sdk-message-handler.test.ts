@@ -4592,6 +4592,28 @@ describe('SDKMessageHandler', () => {
         expect(opened).toBe(true);
       });
 
+      it('ignores a trailing idle from a superseded query generation', async () => {
+        (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+        const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+          ({
+            type: 'system',
+            subtype: 'session_state_changed',
+            state,
+            uuid: `state-${state}`,
+            session_id: 'sdk-session-123',
+          }) as unknown as SDKMessage;
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        await h.handleMessage(sessionState('busy'), 5);
+        await h.handleMessage(turnEndResult(), 5);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        await h.handleMessage(sessionState('idle'), 7);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(setIdleSpy).not.toHaveBeenCalled();
+      });
+
       it('releases the turn-end gate when result handling throws', async () => {
         emitSpy.mockImplementation((event: string) =>
           event === 'session.errorClear'
