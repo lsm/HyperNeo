@@ -1,8 +1,10 @@
 import type {
+  Space,
   SpaceGoal,
   SpaceGoalOwnerResolution,
   SpaceLongHorizonAgent,
   SpaceTask,
+  SpaceWorkspace,
 } from '@hyperneo/shared';
 import type { Signal } from '@preact/signals';
 import { signal } from '@preact/signals';
@@ -61,6 +63,8 @@ const mutableSpaceStore = spaceStore as unknown as {
   workflows: Signal<unknown[]>;
   goalOwners: Signal<Map<string, SpaceGoalOwnerResolution>>;
   longHorizonAgents: Signal<SpaceLongHorizonAgent[]>;
+  workspaces: Signal<SpaceWorkspace[]>;
+  space: Signal<Space | null>;
   pauseGoal: typeof mockPauseGoal;
   resumeGoal: typeof mockResumeGoal;
   archiveGoal: typeof mockArchiveGoal;
@@ -216,6 +220,27 @@ describe('GoalDetailPanel', () => {
     mockWorkflows.value = [];
     mockGoalOwners.value = new Map();
     mockLongHorizonAgents.value = [makeAgent()];
+    mutableSpaceStore.workspaces.value = [
+      {
+        id: 'ws-1',
+        spaceId: 'space-1',
+        path: '/primary',
+        label: 'Main',
+        isPrimary: true,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: 'ws-2',
+        spaceId: 'space-1',
+        path: '/secondary/docs',
+        label: 'Docs',
+        isPrimary: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    mutableSpaceStore.space.value = { workspacePath: '/primary' } as Space;
     mockPauseGoal.mockImplementation(async (goalId: string) =>
       makeGoal({ id: goalId, status: 'paused' })
     );
@@ -271,6 +296,23 @@ describe('GoalDetailPanel', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Archive' }));
     await waitFor(() => expect(mockArchiveGoal).toHaveBeenCalledWith('goal-1'));
+  });
+
+  it('shows the pinned workspace badge for a goal pinned to a secondary workspace', () => {
+    mockGoals.value = [makeGoal({ workspacePath: '/secondary/docs' })];
+    render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+
+    const badge = screen.getByTestId('goal-workspace-badge');
+    expect(badge.textContent).toBe('Docs');
+  });
+
+  it('hides the workspace badge for unpinned and primary-bound goals', () => {
+    const { rerender } = render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+    expect(screen.queryByTestId('goal-workspace-badge')).toBeNull();
+
+    mockGoals.value = [makeGoal({ workspacePath: '/primary' })];
+    rerender(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
+    expect(screen.queryByTestId('goal-workspace-badge')).toBeNull();
   });
 
   it('shows recurring activity and metrics instead of progress', () => {

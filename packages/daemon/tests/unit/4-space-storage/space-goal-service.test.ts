@@ -1261,4 +1261,69 @@ describe('SpaceGoalService', () => {
       expect(goalRepo.countNonArchivedByWorkspacePath(spaceId, '/secondary')).toBe(0);
     });
   });
+
+  describe('goal task workspace inheritance', () => {
+    let pinnedService: SpaceGoalService;
+
+    beforeEach(() => {
+      pinnedService = new SpaceGoalService({
+        goalRepo,
+        goalEventRepo,
+        taskRepo,
+        spaceRepo,
+        scheduleService,
+        db: db as never,
+        outcomeNotificationRepo: notificationRepo,
+        resolveWorkspacePath: async (_spaceId: string, rawPath: string) => {
+          if (rawPath === '/workspace/test' || rawPath === '/secondary') return rawPath;
+          throw new Error(`Workspace path is not registered to space: ${rawPath}`);
+        },
+      });
+    });
+
+    it('stamps the goal workspace on tasks spawned by createImmediateTask', () => {
+      const goal = pinnedService.createGoal({
+        spaceId,
+        title: 'Pinned',
+        workspacePath: '/secondary',
+      });
+      const result = pinnedService.createImmediateTask(goal.id, { source: 'rpc' });
+      expect(result.task?.workspacePath).toBe('/secondary');
+      expect(taskRepo.getTask(result.task!.id)?.workspacePath).toBe('/secondary');
+    });
+
+    it('stores a null workspace on spawned tasks for unpinned goals', () => {
+      const goal = pinnedService.createGoal({ spaceId, title: 'Unpinned' });
+      const result = pinnedService.createImmediateTask(goal.id, { source: 'rpc' });
+      expect(result.task?.workspacePath).toBeNull();
+    });
+
+    it('keeps an explicitly pinned task workspace over goal inheritance', () => {
+      const goal = pinnedService.createGoal({
+        spaceId,
+        title: 'Pinned',
+        workspacePath: '/secondary',
+      });
+      const explicit = taskRepo.createTask({
+        spaceId,
+        title: 'Manually pinned task',
+        goalId: goal.id,
+        workspacePath: '/explicit',
+      });
+      const result = pinnedService.createImmediateTask(goal.id, { source: 'rpc' });
+      expect(result.task?.workspacePath).toBe('/secondary');
+      expect(taskRepo.getTask(explicit.id)?.workspacePath).toBe('/explicit');
+    });
+
+    it('does not cascade workspace updates onto already spawned tasks', () => {
+      const goal = pinnedService.createGoal({
+        spaceId,
+        title: 'Pinned',
+        workspacePath: '/secondary',
+      });
+      const result = pinnedService.createImmediateTask(goal.id, { source: 'rpc' });
+      pinnedService.updateGoal(goal.id, { workspacePath: null });
+      expect(taskRepo.getTask(result.task!.id)?.workspacePath).toBe('/secondary');
+    });
+  });
 });

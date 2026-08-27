@@ -13,19 +13,27 @@ export function buildMarkDonePayload(task: SpaceTask): UpdateSpaceTaskParams {
   };
 }
 
+export function getWorkspaceLabel(
+  workspacePath: string | null | undefined,
+  workspaces: SpaceWorkspace[],
+  primaryPath?: string | null
+): string | null {
+  if (!workspacePath) return null;
+
+  const resolvedPrimary = primaryPath ?? workspaces.find((w) => w.isPrimary)?.path;
+  if (!resolvedPrimary) return null;
+  if (workspacePath === resolvedPrimary) return null;
+
+  const match = workspaces.find((w) => w.path === workspacePath);
+  if (match?.label) return match.label;
+
+  return workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ?? workspacePath;
+}
+
 export function getTaskWorkspaceLabel(
   task: SpaceTask,
   workspaces: SpaceWorkspace[],
   primaryPath?: string | null
 ): string | null {
-  if (!task.workspacePath) return null;
-
-  const resolvedPrimary = primaryPath ?? workspaces.find((w) => w.isPrimary)?.path;
-  if (!resolvedPrimary) return null;
-  if (task.workspacePath === resolvedPrimary) return null;
-
-  const match = workspaces.find((w) => w.path === task.workspacePath);
-  if (match?.label) return match.label;
-
-  return task.workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ?? task.workspacePath;
+  return getWorkspaceLabel(task.workspacePath, workspaces, primaryPath);
 }
