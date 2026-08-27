@@ -30,7 +30,8 @@ export interface ExternalEventPublisher {
 }
 
 export function isExternalEventDeliveryV2Enabled(): boolean {
-  return process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 === '1';
+  const v = process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2;
+  return v !== '0' && v !== 'false';
 }
 
 export class ExternalEventService implements ExternalEventPublisher {

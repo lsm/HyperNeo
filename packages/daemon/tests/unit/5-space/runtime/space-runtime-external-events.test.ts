@@ -197,6 +197,7 @@ describe('SpaceRuntime external event subscriptions', () => {
   let tam: MockTaskAgentManager;
   let bus: ReturnType<typeof createDaemonInternalEventBus>;
   let spaceManager: SpaceManager;
+  let previousExternalEventV2: string | undefined;
 
   function createWorkflow(
     nodeId = 'code',
@@ -259,6 +260,8 @@ describe('SpaceRuntime external event subscriptions', () => {
   }
 
   beforeEach(() => {
+    previousExternalEventV2 = process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2;
+    process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = '0';
     db = makeDb();
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
@@ -305,6 +308,14 @@ describe('SpaceRuntime external event subscriptions', () => {
         return { delivered: true };
       },
     });
+  });
+
+  afterEach(() => {
+    if (previousExternalEventV2 === undefined) {
+      delete process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2;
+    } else {
+      process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = previousExternalEventV2;
+    }
   });
 
   test('rehydrates long-horizon agent subscriptions and delivers matching events', async () => {
@@ -6614,7 +6625,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     test('flag off: immediate event keeps the legacy essence inject path', async () => {
       await attachLiveSession('session-immediate-legacy', 'idle');
-      delete process.env[FLAG_ENV];
+      process.env[FLAG_ENV] = '0';
       const event = immediateEvent();
       await eventService.publish(event);
 

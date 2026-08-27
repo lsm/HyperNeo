@@ -415,7 +415,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
     });
 
     it('flag off: the turn-end flush never asks for a pending digest', async () => {
-      delete process.env[FLAG_ENV];
+      process.env[FLAG_ENV] = '0';
       deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
 
       const result = await handler.handleQueryTrigger({
@@ -440,7 +440,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
 
     beforeEach(() => {
       previousFlag = process.env[FLAG_ENV];
-      delete process.env[FLAG_ENV];
+      process.env[FLAG_ENV] = '0';
       reconcileCalls = [];
       reconcileError = null;
       reconcileImpl = null;
