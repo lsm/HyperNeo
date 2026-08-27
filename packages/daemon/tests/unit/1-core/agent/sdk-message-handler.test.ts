@@ -80,6 +80,7 @@ describe('SDKMessageHandler', () => {
   let detectPhaseFromMessageSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let beginTerminalIdleSpy: ReturnType<typeof mock>;
+  let cancelTerminalIdleArmSpy: ReturnType<typeof mock>;
   let setCompactingSpy: ReturnType<typeof mock>;
   let getContextInfoSpy: ReturnType<typeof mock>;
   let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
@@ -158,10 +159,13 @@ describe('SDKMessageHandler', () => {
     beginTerminalIdleSpy = mock(() => {});
     setCompactingSpy = mock(async () => {});
     getStateSpy = mock(() => ({ phase: 'idle' }));
+    cancelTerminalIdleArmSpy = mock(() => {});
     mockStateManager = {
       detectPhaseFromMessage: detectPhaseFromMessageSpy,
       setIdle: setIdleSpy,
       beginTerminalIdle: beginTerminalIdleSpy,
+      cancelTerminalIdleArm: cancelTerminalIdleArmSpy,
+      idleOwnerForQuery: mock((queryGeneration: number) => ({ queryGeneration, turnToken: 0 })),
       setCompacting: setCompactingSpy,
       getState: getStateSpy,
     } as unknown as ProcessingStateManager;
@@ -4468,6 +4472,117 @@ describe('SDKMessageHandler', () => {
       getMessageByStatusAndUuidSpy.mockImplementation(() => ({ id: 'db-consumed' }));
       handler.markMessageAccepted('msg-accepted');
       expect(onDeliveryTurnAccepted).toHaveBeenCalled();
+    });
+  });
+
+  describe('query-owner idle filter (B5e)', () => {
+    const makeResult = (): SDKMessage =>
+      ({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        parent_tool_use_id: null,
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      }) as unknown as SDKMessage;
+
+    const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+      ({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state,
+        uuid: `state-${state}`,
+        session_id: 'sdk-session-123',
+      }) as unknown as SDKMessage;
+
+    const publishedTopics = () => emitSpy.mock.calls.map((call) => call[0] as string);
+    const idleSettleArgs = () => setIdleSpy.mock.calls.map((call) => call[0]);
+    const setGeneration = (value: number): void => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => value
+      );
+    };
+
+    it('a current result settles idle with the invocation query owner and replays', async () => {
+      setGeneration(3);
+
+      await handler.handleMessage(makeResult(), 3);
+
+      expect(beginTerminalIdleSpy).toHaveBeenCalledWith({ queryGeneration: 3, turnToken: 0 });
+      expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 3, turnToken: 0 } });
+      expect(publishedTopics()).toContain('query.trigger');
+    });
+
+    it('a stale result arms and settles with its own owner (paired) and skips the turn replay', async () => {
+      setGeneration(9);
+
+      await handler.handleMessage(makeResult(), 2);
+
+      expect(beginTerminalIdleSpy).toHaveBeenCalledWith({ queryGeneration: 2, turnToken: 0 });
+      expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 2, turnToken: 0 } });
+      expect(publishedTopics()).not.toContain('query.trigger');
+    });
+
+    it('a result going stale during the errorClear publication skips the turn replay', async () => {
+      let generation = 3;
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => generation
+      );
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'session.errorClear') generation = 9;
+      });
+
+      await handler.handleMessage(makeResult(), 3);
+
+      expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 3, turnToken: 0 } });
+      expect(publishedTopics()).not.toContain('query.trigger');
+    });
+
+    it('a stale session-state idle does not settle idle, cancels its orphaned arm, and leaves the successor turn flags alone', async () => {
+      setGeneration(9);
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage(sessionState('idle'), 2);
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({ queryGeneration: 2, turnToken: 0 });
+      expect(publishedTopics()).not.toContain('query.trigger');
+      expect(
+        (handler as unknown as { usesSessionStateChangedTurnEnd: boolean })
+          .usesSessionStateChangedTurnEnd
+      ).toBe(false);
+    });
+
+    it('a stale session-state busy event does not arm the successor turn-end expectations', async () => {
+      setGeneration(9);
+
+      await handler.handleMessage(sessionState('busy'), 2);
+
+      const flags = handler as unknown as {
+        usesSessionStateChangedTurnEnd: boolean;
+        expectsSessionStateIdleAfterResult: boolean;
+      };
+      expect(flags.usesSessionStateChangedTurnEnd).toBe(false);
+      expect(flags.expectsSessionStateIdleAfterResult).toBe(false);
+    });
+
+    it('an idle event going stale during the finishTurn await keeps the successor turn flags', async () => {
+      let generation = 3;
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => generation
+      );
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'query.trigger') generation = 9;
+      });
+
+      await handler.handleMessage(sessionState('idle'), 3);
+
+      expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 3, turnToken: 0 } });
+      expect(
+        (handler as unknown as { usesSessionStateChangedTurnEnd: boolean })
+          .usesSessionStateChangedTurnEnd
+      ).toBe(true);
     });
   });
 

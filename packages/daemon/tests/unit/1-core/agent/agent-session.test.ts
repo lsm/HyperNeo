@@ -3322,7 +3322,65 @@ describe('AgentSession', () => {
       const message = { type: 'assistant', message: { content: [] } };
       await agentSession.onSDKMessage(message as never);
 
-      expect(handleMessageSpy).toHaveBeenCalledWith(message);
+      expect(handleMessageSpy).toHaveBeenCalledWith(message, agentSession.getQueryGeneration());
+    });
+
+    it('forwards the runner generation so a replaced query cannot consume the successor idle', async () => {
+      const handleMessageSpy = mock(async () => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).messageHandler = {
+        handleMessage: handleMessageSpy,
+      };
+
+      const message = { type: 'assistant', message: { content: [] } };
+      await agentSession.onSDKMessage(message as never, undefined, 7);
+
+      expect(handleMessageSpy).toHaveBeenCalledWith(message, 7);
+    });
+
+    it('a stale non-idle session-state event does not park the task-notification requery flag', async () => {
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).messageHandler = {
+        handleMessage: mock(async () => {}),
+      };
+      agentSession.incrementQueryGeneration();
+      const busy = {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+      };
+      const flag = () =>
+        (agentSession as unknown as { taskNotificationRequeryAwaitingSdkIdle: boolean })
+          .taskNotificationRequeryAwaitingSdkIdle;
+
+      await agentSession.onSDKMessage(
+        busy as never,
+        undefined,
+        agentSession.getQueryGeneration() - 1
+      );
+      expect(flag()).toBe(false);
+
+      await agentSession.onSDKMessage(busy as never, undefined, agentSession.getQueryGeneration());
+      expect(flag()).toBe(true);
+    });
+
+    it('incrementQueryGeneration notes the PSM query-owner epoch: a replaced query waiter no longer consumes the successor idle', async () => {
+      const stateManager = agentSession.stateManager;
+      const replacedOwner = stateManager.idleOwnerForQuery(agentSession.getQueryGeneration());
+      let staleResolved = false;
+      void stateManager
+        .waitForIdleTransition(undefined, undefined, replacedOwner)
+        .promise.then(() => {
+          staleResolved = true;
+        });
+
+      agentSession.incrementQueryGeneration();
+
+      await stateManager.setIdle({ owner: stateManager.idleOwnerForQuery(1) });
+      expect(staleResolved).toBe(false);
+
+      await stateManager.setIdle({ owner: replacedOwner });
+      expect(staleResolved).toBe(true);
     });
   });
 
