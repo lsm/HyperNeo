@@ -22,7 +22,6 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
 import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
 import {
-  deliverMessage,
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
 } from '../../../lib/agent/message-delivery.ts';
@@ -30,23 +29,9 @@ import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeli
 import {
   type DeferredEventOverflowFoldResult,
   DEFERRED_EXTERNAL_EVENT_ROW_CAP,
-  deferredExternalEventEntryEvents,
-  type ExternalEventEssenceEntry,
   foldDeferredExternalEventOverflow,
   parseDeferredExternalEventText,
 } from '../../../lib/external-events/deferred-event-digest.ts';
-import {
-  decideExternalEventSteerAdmission,
-  type DirectSteerEventClass,
-} from './external-event-steer-admission-pipeline.ts';
-
-import {
-  type DirectSteerBufferEntry,
-  type DirectSteerFlushDeps,
-  type DirectSteerSkipReason,
-  runDirectSteerFlush,
-} from './direct-steer-flush-pipeline.ts';
-import { classifyExternalEventDirectSteer } from '../../../lib/external-events/event-tiers.ts';
 
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import type { Database } from '../../../storage/database.ts';
@@ -288,41 +273,7 @@ export interface TaskAgentManagerConfig {
   goalService?: import('../goals/goal-service.ts').SpaceGoalService;
   evolutionScopeService?: EvolutionScopeService;
   externalEventStore?: import('../../external-events/external-event-store.ts').ExternalEventStore;
-  directSteerDebounceMs?: number;
-  directSteerMaxBurstWaitMs?: number;
 }
-
-export const DIRECT_STEER_DEBOUNCE_MS = 20_000;
-
-export const DIRECT_STEER_MAX_BURST_WAIT_MS = 60_000;
-
-export const DIRECT_STEER_BUFFER_MAX_ENTRIES = 200;
-
-export const DIRECT_STEER_SNIPPET_MAX_CHARS = 2_000;
-
-function directSteerBufferKey(sessionId: string, eventClass: DirectSteerEventClass): string {
-  return `${sessionId}\u0000${eventClass}`;
-}
-
-const DIRECT_STEER_HYDRATABLE_FIELDS = [
-  'eventType',
-  'action',
-  'actor',
-  'body',
-  'title',
-  'state',
-  'checkName',
-  'conclusion',
-  'commentId',
-  'inReplyToId',
-  'path',
-  'line',
-  'reviewId',
-  'threadId',
-  'context',
-  'environment',
-  'description',
-] as const;
 
 type CompletionCallbackMap = Map<string, Array<() => Promise<void>>>;
 
@@ -406,17 +357,9 @@ export class TaskAgentManager {
   private rateLimitListenerUnsubs: Array<() => void> = [];
   private activityListenerUnsubs: Array<() => void> = [];
   private limitedSessionsByTask = new Map<string, Map<string, RateLimitSessionEntry>>();
-  private readonly directSteerBuffers = new Map<string, DirectSteerBufferEntry[]>();
-  private readonly directSteerTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly directSteerBurstStarts = new Map<string, number>();
-  private readonly directSteerDebounceMs: number;
-  private readonly directSteerMaxBurstWaitMs: number;
 
   constructor(private readonly config: TaskAgentManagerConfig) {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
-    this.directSteerDebounceMs = this.config.directSteerDebounceMs ?? DIRECT_STEER_DEBOUNCE_MS;
-    this.directSteerMaxBurstWaitMs =
-      this.config.directSteerMaxBurstWaitMs ?? DIRECT_STEER_MAX_BURST_WAIT_MS;
     this.subscribeToTaskArchiveEvents();
     this.subscribeToRateLimitEvents();
     this.subscribeToActivityTracking();
@@ -3048,7 +2991,6 @@ export class TaskAgentManager {
     for (const [, timer] of this.spaceAgentRetryTimers) clearTimeout(timer);
     this.spaceAgentRetryTimers.clear();
     clearAllRetryableHookActionTimers();
-    this.clearDirectSteerState();
     for (const executionId of this.concurrentSpawnWaiters.keys()) {
       this.settleConcurrentSpawnWaiters(executionId, { status: 'failed' });
     }
@@ -3995,38 +3937,7 @@ export class TaskAgentManager {
         status: 'deferred',
         origin,
       });
-      const capFold = await this.enforceDeferredExternalEventCap(sessionId, message);
-      const supersededThisRow =
-        capFold !== null && capFold.supersededUuids.includes(String(messageId));
-      if (capFold) {
-        this.pruneSupersededDirectSteerEntries(sessionId, capFold.supersededUuids);
-      }
-      if (!supersededThisRow) {
-        this.maybeBufferDirectSteer({
-          sessionId,
-          messageId,
-          deferredDbId,
-          messageText: message,
-          processingStatus: state.status,
-          inRateLimitCooldown,
-          parentTaskLimited: parentLimited,
-          inputKind,
-          isSynthetic: isSyntheticMessage,
-        });
-      }
-      if (capFold) {
-        this.maybeBufferDirectSteer({
-          sessionId,
-          messageId: String(capFold.envelopeMessage.uuid),
-          deferredDbId: capFold.envelopeDbId,
-          messageText: capFold.envelopeText,
-          processingStatus: state.status,
-          inRateLimitCooldown,
-          parentTaskLimited: parentLimited,
-          inputKind,
-          isSynthetic: isSyntheticMessage,
-        });
-      }
+      await this.enforceDeferredExternalEventCap(sessionId, message);
       return deferredDbId;
     }
     if (
@@ -4163,302 +4074,6 @@ export class TaskAgentManager {
       );
     }
     return capFold;
-  }
-
-  private pruneSupersededDirectSteerEntries(sessionId: string, supersededUuids: string[]): void {
-    if (supersededUuids.length === 0) return;
-    const gone = new Set(supersededUuids);
-    for (const [key, entries] of this.directSteerBuffers) {
-      if (!key.startsWith(`${sessionId}\u0000`)) continue;
-      const kept = entries.filter((entry) => !gone.has(entry.messageId));
-      if (kept.length === entries.length) continue;
-      if (kept.length === 0) this.directSteerBuffers.delete(key);
-      else this.directSteerBuffers.set(key, kept);
-    }
-  }
-
-  private maybeBufferDirectSteer(args: {
-    sessionId: string;
-    messageId: string;
-    deferredDbId: string;
-    messageText: string;
-    processingStatus: string;
-    inRateLimitCooldown: boolean;
-    parentTaskLimited: boolean;
-    inputKind: MessageInputKind;
-    isSynthetic: boolean;
-  }): void {
-    const parsed = parseDeferredExternalEventText(args.messageText);
-    if (!parsed) return;
-    const droppedEventCount = parsed.kind === 'fold' ? parsed.droppedCount : undefined;
-    const essences = deferredExternalEventEntryEvents(parsed);
-    const admission = decideExternalEventSteerAdmission({
-      deliveryV2Enabled: isMessageDeliveryV2Enabled(),
-      isSynthetic: args.isSynthetic,
-      inputKind: args.inputKind,
-      processingStatus: args.processingStatus,
-      inRateLimitCooldown: args.inRateLimitCooldown,
-      parentTaskLimited: args.parentTaskLimited,
-      essences,
-      ...(droppedEventCount ? { droppedEventCount } : {}),
-      bufferedDirectEventCount: this.sessionBufferedDirectEventCount(args.sessionId),
-      bufferMaxEntries: DIRECT_STEER_BUFFER_MAX_ENTRIES,
-      hydrate: (essence: ExternalEventEssenceEntry) => this.hydrateDirectSteerEssence(essence),
-    });
-    const decision = admission.decision;
-    if (decision === null) return;
-    if (decision.action === 'suppressBufferCap') {
-      this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerSuppressedByBufferCap();
-      log.warn(
-        `TaskAgentManager: direct steer buffer for session ${args.sessionId} at its ` +
-          `${DIRECT_STEER_BUFFER_MAX_ENTRIES}-event capacity; event stays deferred`
-      );
-      return;
-    }
-    if (decision.action !== 'admit') return;
-    const { eventClass, droppedEventCount: admittedDropped } = decision;
-    const settledRow = this.config.db
-      .getSDKMessageRepo()
-      .getMessageByStatusAndUuid(args.sessionId, 'deferred', args.messageId);
-    const claimDbId = settledRow?.dbId ?? args.deferredDbId;
-    const key = directSteerBufferKey(args.sessionId, eventClass);
-    const buffer = this.directSteerBuffers.get(key) ?? [];
-    if (buffer.some((item) => item.messageId === args.messageId)) return;
-    const now = Date.now();
-    buffer.push({
-      essences: decision.essences,
-      messageId: args.messageId,
-      dbId: claimDbId,
-      receivedAt: now,
-      ...(admittedDropped ? { droppedEventCount: admittedDropped } : {}),
-    });
-    this.directSteerBuffers.set(key, buffer);
-    if (!this.directSteerBurstStarts.has(key)) this.directSteerBurstStarts.set(key, now);
-    this.armDirectSteerTimer(key);
-  }
-
-  private sessionBufferedDirectEventCount(sessionId: string): number {
-    let total = 0;
-    for (const [key, entries] of this.directSteerBuffers) {
-      if (!key.startsWith(`${sessionId}\u0000`)) continue;
-      total += entries.reduce(
-        (sum, item) =>
-          sum +
-          item.essences.filter((essence) => classifyExternalEventDirectSteer(essence) !== null)
-            .length,
-        0
-      );
-    }
-    return total;
-  }
-
-  private hydrateDirectSteerEssence(essence: ExternalEventEssenceEntry): ExternalEventEssenceEntry {
-    if (this.directSteerEssenceHydrated(essence) || !this.config.externalEventStore) {
-      return essence;
-    }
-    const record = this.config.externalEventStore.getById(essence.eventId);
-    const payload = record?.event.payload;
-    if (!record || !payload) return essence;
-    const hydrated: Record<string, unknown> = { ...essence };
-    let changed = false;
-    if (hydrated.occurredAt === undefined && typeof record.event.occurredAt === 'number') {
-      hydrated.occurredAt = record.event.occurredAt;
-      changed = true;
-    }
-    if (hydrated.externalUrl === undefined && typeof record.event.externalUrl === 'string') {
-      hydrated.externalUrl = record.event.externalUrl;
-      changed = true;
-    }
-    for (const field of DIRECT_STEER_HYDRATABLE_FIELDS) {
-      if (hydrated[field] !== undefined) continue;
-      const value = payload[field];
-      if (
-        (typeof value === 'string' && value.length > 0) ||
-        typeof value === 'number' ||
-        typeof value === 'boolean'
-      ) {
-        hydrated[field] = value;
-        changed = true;
-      }
-    }
-    return changed ? (hydrated as unknown as ExternalEventEssenceEntry) : essence;
-  }
-
-  private directSteerEssenceHydrated(essence: ExternalEventEssenceEntry): boolean {
-    return DIRECT_STEER_HYDRATABLE_FIELDS.every((field) => essence[field] !== undefined);
-  }
-
-  private armDirectSteerTimer(key: string): void {
-    const burstStart = this.directSteerBurstStarts.get(key);
-    if (burstStart === undefined) return;
-    const delay = Math.min(
-      this.directSteerDebounceMs,
-      Math.max(0, this.directSteerMaxBurstWaitMs - (Date.now() - burstStart))
-    );
-    const existing = this.directSteerTimers.get(key);
-    if (existing) clearTimeout(existing);
-    const timer = setTimeout(() => {
-      this.directSteerTimers.delete(key);
-      void this.flushDirectSteerBuffer(key).catch((err) => {
-        log.warn(
-          `TaskAgentManager: direct steer flush failed for session ${key.split('\u0000')[0]}: ` +
-            `${err instanceof Error ? err.message : String(err)}; rows stay deferred`
-        );
-      });
-    }, delay);
-    this.directSteerTimers.set(key, timer);
-  }
-
-  private async flushDirectSteerBuffer(key: string): Promise<void> {
-    const entries = this.directSteerBuffers.get(key) ?? [];
-    this.directSteerBuffers.delete(key);
-    this.directSteerBurstStarts.delete(key);
-    const pendingTimer = this.directSteerTimers.get(key);
-    if (pendingTimer) {
-      clearTimeout(pendingTimer);
-      this.directSteerTimers.delete(key);
-    }
-    if (entries.length === 0) return;
-    const separator = key.indexOf('\u0000');
-    const sessionId = key.slice(0, separator);
-    await withSessionResetCoordination(sessionId, async () => {
-      await this.deliverDirectSteerUnderCoordination(sessionId, entries);
-    });
-  }
-
-  private directSteerSkipLogMessage(sessionId: string, reason: DirectSteerSkipReason): string {
-    const messages: Record<DirectSteerSkipReason, string> = {
-      session_not_tracked: `skipping direct steer — session ${sessionId} no longer tracked; rows stay deferred`,
-      session_not_processing: `skipping direct steer for session ${sessionId} — no longer processing at flush time; rows stay deferred for turn-end delivery`,
-      parent_task_limited: `skipping direct steer for session ${sessionId} — parent task became rate/usage-limited while the burst was pending; rows stay deferred`,
-      no_deferred_rows: `direct steer for session ${sessionId} found no still-deferred rows (turn likely ended first); rows already flushed`,
-      no_direct_events: `direct steer for session ${sessionId} has no direct-class events after filtering; rows stay deferred`,
-    };
-    return `TaskAgentManager: ${messages[reason]}`;
-  }
-
-  private buildDirectSteerFlushDeps(): DirectSteerFlushDeps {
-    return {
-      getSessionTracked: (sessionId) => this.getTrackedSession(sessionId) !== null,
-      getSessionProcessing: (sessionId) =>
-        this.getTrackedSession(sessionId)?.getProcessingState().status === 'processing',
-      isParentTaskLimited: (sessionId) => this.parentTaskLimitedForSession(sessionId),
-      getDeferredUuids: (sessionId) => {
-        const { messages: deferredRows } = this.config.db.getUserMessagesByStatus(
-          sessionId,
-          'deferred'
-        );
-        return new Set(deferredRows.map((row) => String(row.uuid)));
-      },
-      savePassenger: async (sessionId, message) => {
-        const dbId = this.config.db.saveUserMessage(sessionId, message, 'deferred');
-        await this.publishMessageStatusChanged(sessionId, dbId, 'deferred');
-        return dbId;
-      },
-      discardPassenger: async (sessionId, dbId) => {
-        if (!dbId) return;
-        this.config.db.updateMessageStatus([dbId], 'consumed');
-        await this.config.internalEventBus
-          .publish('messages.statusChanged', {
-            sessionId,
-            messageIds: [dbId],
-            status: 'consumed',
-          })
-          .catch(() => {});
-      },
-      saveSteer: (sessionId, message) =>
-        this.config.db.saveUserMessage(sessionId, message, 'enqueued'),
-      discardSteer: async (sessionId, messageId) => {
-        const failedDbId = this.config.db
-          .getSDKMessageRepo()
-          .markDeliveryFailedByUuid(sessionId, messageId);
-        if (failedDbId) await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-      },
-      enqueueSteer: (sessionId, messageId) => {
-        deliverMessage(this.config.db.getJobQueueRepo(), sessionId, messageId, {
-          origin: 'space_inject',
-          role: 'steer',
-        });
-      },
-      consumeSources: (_sessionId, dbIds) => {
-        this.config.db.updateMessageStatus(dbIds, 'consumed');
-      },
-      recordHealthMetrics: (steeredClasses) => {
-        this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueued();
-        for (const eventClass of steeredClasses) {
-          this.config.spaceRuntimeService?.queueHealthMetrics?.recordDirectSteerEnqueuedClass(
-            eventClass
-          );
-        }
-      },
-      publishStatusChanged: (sessionId, dbId, status) =>
-        this.publishMessageStatusChanged(
-          sessionId,
-          dbId,
-          status as 'enqueued' | 'deferred' | 'failed'
-        ),
-      publishStatusesChanged: async (sessionId, dbIds, status) => {
-        await this.config.internalEventBus
-          .publish('messages.statusChanged', {
-            sessionId,
-            messageIds: dbIds,
-            status,
-          })
-          .catch(() => {});
-      },
-    };
-  }
-
-  private async deliverDirectSteerUnderCoordination(
-    sessionId: string,
-    entries: DirectSteerBufferEntry[]
-  ): Promise<void> {
-    const outcome = await runDirectSteerFlush(this.buildDirectSteerFlushDeps(), {
-      sessionId,
-      entries,
-      snippetMaxChars: DIRECT_STEER_SNIPPET_MAX_CHARS,
-    });
-    if (outcome.action === 'skip') {
-      log.debug(this.directSteerSkipLogMessage(sessionId, outcome.reason));
-      return;
-    }
-
-    if (outcome.action === 'failed') {
-      log.warn(
-        `TaskAgentManager: direct steer flush failed for session ${sessionId} at stage ` +
-          `${outcome.stage}: ` +
-          `${outcome.error instanceof Error ? outcome.error.message : String(outcome.error)}; ` +
-          `rows stay deferred`
-      );
-      return;
-    }
-
-    log.info(
-      `TaskAgentManager: injected direct steer for session ${sessionId} covering ` +
-        `${outcome.eventCount} event(s) across ${outcome.steerableCount} row(s)`
-    );
-  }
-  private parentTaskLimitedForSession(sessionId: string): boolean {
-    const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
-    const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
-    return parentTask ? isRateOrUsageLimited(parentTask.status) : false;
-  }
-
-  private getTrackedSession(sessionId: string): AgentSession | null {
-    const indexed = this.agentSessionIndex.get(sessionId);
-    if (indexed) return indexed;
-    for (const [, nodeMap] of this.subSessions) {
-      const session = nodeMap.get(sessionId);
-      if (session) return session;
-    }
-    return null;
-  }
-
-  private clearDirectSteerState(): void {
-    for (const timer of this.directSteerTimers.values()) clearTimeout(timer);
-    this.directSteerTimers.clear();
-    this.directSteerBuffers.clear();
-    this.directSteerBurstStarts.clear();
   }
 
   private injectDeliveryRowDeps(): InjectionDeliveryRowDeps {

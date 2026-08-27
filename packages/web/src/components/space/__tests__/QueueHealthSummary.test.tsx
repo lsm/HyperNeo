@@ -37,9 +37,6 @@ const sampleSnapshot = {
     staleSessionSkips: 2,
     pausedSpaceSkips: 0,
     cooldownSkips: 0,
-    directSteerEnqueued: 0,
-    directSteerSuppressedByBufferCap: 0,
-    directSteerEnqueuedByClass: {},
   },
   failuresByCategory: {
     ttl_expired: 1,
