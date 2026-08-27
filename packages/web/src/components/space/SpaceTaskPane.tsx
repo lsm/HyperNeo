@@ -11,7 +11,7 @@ import {
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
-import { useImageDropZone } from '../../hooks';
+import { useImageDropZone, useResolvedSpaceTask } from '../../hooks';
 import { borderColors } from '../../lib/design-tokens';
 import { getTaskStatusConfig } from '../../lib/task-status';
 import {
@@ -186,6 +186,7 @@ export function SpaceTaskPane({
 
   const tasks = spaceStore.tasks.value;
   const task = taskId ? (tasks.find((t) => t.id === taskId) ?? null) : null;
+  const resolvedTask = useResolvedSpaceTask(task);
   const activityMembers: SpaceTaskActivityMember[] = taskId
     ? (spaceStore.taskActivity.value.get(taskId) ?? [])
     : [];
@@ -1267,7 +1268,7 @@ export function SpaceTaskPane({
         const child =
           banner.kind === 'blocked' ? (
             <TaskBlockedBanner
-              task={task}
+              task={resolvedTask ?? task}
               spaceId={runtimeSpaceId}
               onStatusTransition={handleStatusTransition}
             />
@@ -1349,8 +1350,10 @@ export function SpaceTaskPane({
                 <div class="h-full overflow-y-auto" data-testid="task-info-view">
                   <div class="mx-auto max-w-2xl space-y-4 px-4 py-6">
                     <SectionCard title="Description">
-                      {task.description ? (
-                        <p class="whitespace-pre-wrap text-sm text-gray-300">{task.description}</p>
+                      {resolvedTask?.description ? (
+                        <p class="whitespace-pre-wrap text-sm text-gray-300">
+                          {resolvedTask.description}
+                        </p>
                       ) : (
                         <p class="text-sm text-gray-500">No description yet.</p>
                       )}
@@ -1458,7 +1461,7 @@ export function SpaceTaskPane({
         isOpen={showEditTaskModal}
         busy={editTaskBusy}
         initialTitle={task.title}
-        initialDescription={task.description ?? ''}
+        initialDescription={resolvedTask?.description ?? ''}
         initialPriority={task.priority}
         onCancel={() => {
           if (!editTaskBusy) setShowEditTaskModal(false);

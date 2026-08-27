@@ -17,6 +17,8 @@ const {
   mockUpdateTask,
   mockSubmitForReview,
   mockPublishTask,
+  mockTaskDetails,
+  mockEnsureTaskDetail,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
     return { value: initial };
@@ -36,6 +38,8 @@ const {
     mockUpdateTask: vi.fn().mockResolvedValue(undefined),
     mockSubmitForReview: vi.fn().mockResolvedValue(undefined),
     mockPublishTask: vi.fn().mockResolvedValue(undefined),
+    mockTaskDetails: makeSignal(new Map()),
+    mockEnsureTaskDetail: vi.fn().mockResolvedValue(null),
   };
 });
 
@@ -71,6 +75,8 @@ vi.mock('../../../lib/space-store', () => ({
   spaceStore: {
     space: mockSpace,
     tasks: mockTasks,
+    taskDetails: mockTaskDetails,
+    ensureTaskDetail: mockEnsureTaskDetail,
     goals: mockGoals,
     workflows: mockWorkflows,
     workflowRuns: mockWorkflowRuns,

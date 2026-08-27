@@ -2,6 +2,7 @@ import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
 import type { SpaceTaskPriority, SpaceTaskStatus } from '@hyperneo/shared';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { useResolvedSpaceTask } from '../../hooks';
 import { navigateToSpaceEvolve, navigateToSpaceGoals } from '../../lib/router';
 import { currentSpaceGoalIdSignal, currentSpaceScopeIdSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
@@ -78,13 +79,14 @@ export function TaskAuxiliaryPanel({
 }: TaskAuxiliaryPanelProps) {
   const routeSpaceId = navigationSpaceId ?? spaceId;
   const task = spaceStore.tasks.value.find((item) => item.id === taskId) ?? null;
+  const resolvedTask = useResolvedSpaceTask(task);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scopeName, setScopeName] = useState<string | null>(null);
   const [savingWorkflow, setSavingWorkflow] = useState(false);
   const [statusTransitioning, setStatusTransitioning] = useState(false);
   const [transitionError, setTransitionError] = useState<string | null>(null);
-  const [descriptionDraft, setDescriptionDraft] = useState(task?.description ?? '');
+  const [descriptionDraft, setDescriptionDraft] = useState(resolvedTask?.description ?? '');
   const [savingDescription, setSavingDescription] = useState(false);
 
   useEffect(() => {
@@ -92,8 +94,8 @@ export function TaskAuxiliaryPanel({
   }, [spaceId]);
 
   useEffect(() => {
-    setDescriptionDraft(task?.description ?? '');
-  }, [task?.id, task?.description]);
+    setDescriptionDraft(resolvedTask?.description ?? '');
+  }, [resolvedTask?.id, resolvedTask?.description]);
 
   useEffect(() => {
     if (!task?.evolutionScopeId) {
@@ -159,7 +161,7 @@ export function TaskAuxiliaryPanel({
   };
 
   const handleDescriptionBlur = async () => {
-    const current = task.description ?? '';
+    const current = resolvedTask?.description ?? '';
     if (descriptionDraft === current) return;
     try {
       setSavingDescription(true);
@@ -344,9 +346,9 @@ export function TaskAuxiliaryPanel({
     </SectionCard>
   );
 
-  const resultSection = task.result && (
+  const resultSection = resolvedTask?.result && (
     <SectionCard title="Result summary">
-      <p class="whitespace-pre-wrap text-sm text-gray-300">{task.result}</p>
+      <p class="whitespace-pre-wrap text-sm text-gray-300">{resolvedTask.result}</p>
     </SectionCard>
   );
 
