@@ -26,9 +26,6 @@ export interface QueueHealthCounters {
   staleSessionSkips: number;
   pausedSpaceSkips: number;
   cooldownSkips: number;
-  directSteerEnqueued: number;
-  directSteerSuppressedByBufferCap: number;
-  directSteerEnqueuedByClass: Record<string, number>;
 }
 
 export interface QueueHealthGauges {
@@ -151,9 +148,6 @@ export class ExternalEventQueueMetrics {
   private staleSessionSkips = 0;
   private pausedSpaceSkips = 0;
   private cooldownSkips = 0;
-  private directSteerEnqueued = 0;
-  private directSteerSuppressedByBufferCap = 0;
-  private readonly directSteerEnqueuedByClass = new Map<string, number>();
 
   constructor(now: number = Date.now()) {
     this.since = now;
@@ -187,21 +181,6 @@ export class ExternalEventQueueMetrics {
 
   recordCooldownSkip(): void {
     this.cooldownSkips += 1;
-  }
-
-  recordDirectSteerEnqueued(): void {
-    this.directSteerEnqueued += 1;
-  }
-
-  recordDirectSteerEnqueuedClass(eventClass: string): void {
-    this.directSteerEnqueuedByClass.set(
-      eventClass,
-      (this.directSteerEnqueuedByClass.get(eventClass) ?? 0) + 1
-    );
-  }
-
-  recordDirectSteerSuppressedByBufferCap(): void {
-    this.directSteerSuppressedByBufferCap += 1;
   }
 
   recordDeliveryTerminal(event: DeliveryTerminalEvent): void {
@@ -242,9 +221,6 @@ export class ExternalEventQueueMetrics {
       staleSessionSkips: this.staleSessionSkips,
       pausedSpaceSkips: this.pausedSpaceSkips,
       cooldownSkips: this.cooldownSkips,
-      directSteerEnqueued: this.directSteerEnqueued,
-      directSteerSuppressedByBufferCap: this.directSteerSuppressedByBufferCap,
-      directSteerEnqueuedByClass: recordToObject(this.directSteerEnqueuedByClass),
     };
   }
 

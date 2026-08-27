@@ -171,15 +171,6 @@ export function QueueHealthSummary(): preact.JSX.Element {
             />
             <Metric label="Failed (terminal)" value={`${totalFailures}`} />
             <Metric
-              label="Direct steers"
-              value={`${counters.directSteerEnqueued}`}
-              hint={`${counters.directSteerSuppressedByBufferCap} buffer-cap suppressed · by class: ${
-                Object.entries(counters.directSteerEnqueuedByClass ?? {})
-                  .map(([cls, n]) => `${cls} ${n}`)
-                  .join(' · ') || 'none'
-              }`}
-            />
-            <Metric
               label="Skips"
               value={`${
                 counters.claimConflicts +
