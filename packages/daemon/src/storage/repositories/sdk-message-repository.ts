@@ -1081,14 +1081,16 @@ export class SDKMessageRepository {
   listUserMessagesByUuidPrefix(
     sessionId: string,
     prefix: string
-  ): Array<SDKUserMessage & { dbId: string; timestamp: number }> {
+  ): Array<SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }> {
     const pageSize = 100;
-    const messages: Array<SDKUserMessage & { dbId: string; timestamp: number }> = [];
+    const messages: Array<
+      SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }
+    > = [];
     let offset = 0;
     for (;;) {
       const rows = this.db
         .prepare(
-          `SELECT id, sdk_message, timestamp FROM sdk_messages
+          `SELECT id, sdk_message, timestamp, COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages
 	       WHERE session_id = ?
 	         AND message_type = 'user'
 	         AND sdk_uuid LIKE ? || '%'
@@ -1099,11 +1101,15 @@ export class SDKMessageRepository {
         id: string;
         sdk_message: string;
         timestamp: string;
+        send_status: string;
       }>;
       messages.push(
         ...rows.map(
           (row) =>
-            inflatePersistedMessage(row) as SDKUserMessage & { dbId: string; timestamp: number }
+            ({
+              ...inflatePersistedMessage(row),
+              sendStatus: row.send_status,
+            }) as SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }
         )
       );
       if (rows.length < pageSize) return messages;
