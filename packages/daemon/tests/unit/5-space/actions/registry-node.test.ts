@@ -202,3 +202,27 @@ describe('createNodeRegistryEntries — conditional entries', () => {
     }
   });
 });
+
+describe('createNodeRegistryEntries — audit choke point', () => {
+  test('registry-dispatched handlers write no legacy audit rows — audit belongs to the dispatcher', async () => {
+    const ctx = makeCtx();
+    try {
+      const auditRows: Array<Record<string, unknown>> = [];
+      const auditLogRepo = {
+        createEntry: (entry: Record<string, unknown>) => {
+          auditRows.push(entry);
+        },
+      } as unknown as NodeAgentToolsConfig['auditLogRepo'];
+      const entries = createNodeRegistryEntries(makeConfig(ctx, { auditLogRepo }));
+      const subscribe = entries.find((entry) => entry.name === 'subscribe_external_event');
+      if (!subscribe) throw new Error('subscribe_external_event entry missing');
+      const result = (await subscribe.handler({
+        topicPattern: 'github/*/*/pull_request/*.*',
+      })) as { content: Array<{ text: string }> };
+      expect(JSON.parse(result.content[0].text)).toEqual({ success: true });
+      expect(auditRows).toEqual([]);
+    } finally {
+      ctx.db.close();
+    }
+  });
+});

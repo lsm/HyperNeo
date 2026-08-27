@@ -22,7 +22,7 @@ function nodeAction<P>(entry: Omit<ActionEntry<P>, 'family'>): ActionDefinition 
 }
 
 export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionDefinition[] {
-  const handlers = createNodeAgentToolHandlers(config);
+  const handlers = createNodeAgentToolHandlers({ ...config, auditLogRepo: undefined });
   const {
     onSubscribeExternalEvent,
     onUnsubscribeExternalEvent,
