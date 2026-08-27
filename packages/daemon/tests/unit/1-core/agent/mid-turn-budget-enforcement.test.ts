@@ -415,6 +415,32 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     expect(harness.usageMock).toHaveBeenCalledTimes(2);
   });
 
+  it('retries the sampling window when a fetch declines or fails', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.usageMock.mockImplementation(async () => ({
+      ...makeUsageResponse(),
+      totalTokens: 10_000,
+      percentage: 5,
+    }));
+
+    await session.midTurnContextBudgetCheck();
+    session.session.config.model = 'other-model';
+    harness.usageMock.mockImplementation(async () => {
+      throw new Error('busy');
+    });
+    await session.midTurnContextBudgetCheck();
+    harness.usageMock.mockImplementation(async () => ({
+      ...makeUsageResponse(),
+      totalTokens: 10_000,
+      percentage: 5,
+    }));
+    await session.midTurnContextBudgetCheck();
+
+    expect(harness.usageMock).toHaveBeenCalledTimes(3);
+  });
+
   it('aborts the interrupt when the turn stops during the usage refresh', async () => {
     const session = createAgentSession();
     const harness = makeQuery();

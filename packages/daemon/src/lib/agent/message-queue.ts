@@ -61,6 +61,7 @@ export class MessageQueue {
   private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
   private deliveryGate: Promise<void> | null = null;
   private deliveryGateExclusive: boolean = false;
+  private internalRestartInFlight: boolean = false;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private nonCompactionSentSinceBoundary: boolean = false;
@@ -358,6 +359,7 @@ export class MessageQueue {
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
     this.deliveryGate = null;
+    this.deliveryGateExclusive = false;
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -514,6 +516,7 @@ export class MessageQueue {
     this.nonCompactionSentSinceBoundary = false;
     this.cancelInternalCompactionEntries(true, true);
     this.deliveryGate = null;
+    this.deliveryGateExclusive = false;
     this.wakeWaiters();
     if (deliveredCompactions) {
       this.onInternalCompactionsAborted?.();
@@ -682,7 +685,7 @@ export class MessageQueue {
       ])) as { still_queued: string[] } | undefined;
     } catch (error) {
       if (timedOut) {
-        if (!this.isRunning()) {
+        if (!this.isRunning() && !this.internalRestartInFlight) {
           resumeArmed = false;
           opts.onResumeClear();
         } else {
@@ -708,7 +711,7 @@ export class MessageQueue {
     }
 
     try {
-      if (!this.isRunning()) {
+      if (!this.isRunning() && !this.internalRestartInFlight) {
         opts.onResumeClear();
         return;
       }
@@ -751,7 +754,7 @@ export class MessageQueue {
     opts: MidTurnBudgetInterruptOptions,
     receipt: { still_queued: string[] } | undefined
   ): Promise<void> {
-    if (!this.isRunning()) {
+    if (!this.isRunning() && !this.internalRestartInFlight) {
       opts.onResumeClear();
       return;
     }
@@ -845,7 +848,17 @@ export class MessageQueue {
       );
       return;
     }
-    const content = this.getSentPromptContent(uuid) ?? opts.getDurableMessageContent?.(uuid);
+    let content = this.getSentPromptContent(uuid);
+    if (content === undefined && opts.getDurableMessageContent) {
+      try {
+        content = opts.getDurableMessageContent(uuid);
+      } catch (error) {
+        opts.logger.warn(
+          `durable content lookup for survivor ${uuid} failed for session ` + `${opts.sessionId}:`,
+          error
+        );
+      }
+    }
     if (content === undefined) {
       opts.logger.warn(
         `cancelled survivor ${uuid} for session ${opts.sessionId} has no recoverable ` +
@@ -888,22 +901,28 @@ export class MessageQueue {
       this.setDeliveryGate(deliveryGate, { exclusive: true });
       this.enqueueMidTurnCompaction(opts, 'mid-turn-restart');
     };
-    const restart = opts.restart({ beforeStart }).catch((error) => {
-      opts.logger.warn(
-        `query restart after unconfirmed survivor cancellation failed for ` +
-          `session ${opts.sessionId}:`,
-        error
-      );
-      if (!this.hasOutstandingInternalCompaction()) {
-        opts.contextTracker.clearCompactionCooldown();
-        opts.onResumeClear();
-      } else {
-        opts.logger.info(
-          `durable compaction remains queued for session ${opts.sessionId}; the pending ` +
-            `resume stays armed until its boundary on the next query`
+    this.internalRestartInFlight = true;
+    const restart = opts
+      .restart({ beforeStart })
+      .catch((error) => {
+        opts.logger.warn(
+          `query restart after unconfirmed survivor cancellation failed for ` +
+            `session ${opts.sessionId}:`,
+          error
         );
-      }
-    });
+        if (!this.hasOutstandingInternalCompaction()) {
+          opts.contextTracker.clearCompactionCooldown();
+          opts.onResumeClear();
+        } else {
+          opts.logger.info(
+            `durable compaction remains queued for session ${opts.sessionId}; the pending ` +
+              `resume stays armed until its boundary on the next query`
+          );
+        }
+      })
+      .finally(() => {
+        this.internalRestartInFlight = false;
+      });
     await Promise.race([
       restart,
       new Promise<void>((resolve) => {

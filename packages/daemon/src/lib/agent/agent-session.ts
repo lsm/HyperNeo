@@ -1594,8 +1594,6 @@ export class AgentSession
     ) {
       return stale;
     }
-    this.lastMidTurnUsageRefreshAt = Date.now();
-    this.lastMidTurnUsageRefreshKey = refreshKey;
     try {
       const modelInfo = await getSessionModelInfo(this.session);
       if (
@@ -1615,6 +1613,8 @@ export class AgentSession
         return null;
       }
       if (!info) return stale;
+      this.lastMidTurnUsageRefreshAt = Date.now();
+      this.lastMidTurnUsageRefreshKey = refreshKey;
       this.contextTracker.updateWithDetailedBreakdown(info);
       return info;
     } catch (error) {

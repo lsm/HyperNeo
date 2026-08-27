@@ -2156,6 +2156,105 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('preserves a late receipt that arrives during the recovery restart', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-late-restart', 'late-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      let releaseRestart: () => void = () => {};
+      const restartHang = new Promise<void>((resolve) => {
+        releaseRestart = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts(q, {
+        interrupt: () => slowInterrupt,
+        restart: async () => {
+          q.stop();
+          await restartHang;
+        },
+        onResumeClear,
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      releaseInterrupt({ still_queued: ['uuid-late-restart'] });
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-late-restart', 'late-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(true);
+      expect(onResumeClear).not.toHaveBeenCalled();
+    }, 15_000);
+
+    it('keeps the compaction protocol when the durable content lookup throws', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const warnMock = mock(() => {});
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-lookup-throw'] }),
+        cancelAsyncMessage: async () => true,
+        getDurableMessageContent: () => {
+          throw new Error('sqlite locked');
+        },
+        logger: { info: mock(() => {}), warn: warnMock } as never,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(
+        warnMock.mock.calls.some((call) =>
+          String((call as unknown[])[0]).includes('durable content lookup for survivor')
+        )
+      ).toBe(true);
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(true);
+      q.stop();
+    });
+
+    it('resets gate exclusivity when a stop discards the gate', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.setDeliveryGate(new Promise<void>(() => {}), { exclusive: true });
+      q.stop();
+      q.start();
+      q.setDeliveryGate(new Promise<void>(() => {}));
+      void q
+        .enqueueWithId(
+          'uuid-tool-result-3',
+          [{ type: 'tool_result' as const, tool_use_id: 'tu-3', content: 'tool output' }],
+          false,
+          {}
+        )
+        .catch(() => {});
+
+      const generator = q.messageGenerator(testSessionId);
+      const first = generator.next();
+      const yielded = await Promise.race([
+        first.then(() => true),
+        new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), 100);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        }),
+      ]);
+      expect(yielded).toBe(true);
+      (await first).value.onSent();
+      q.stop();
+    });
+
     it('holds delivery behind a gate while survivors are cancelled and requeued', async () => {
       const q = new MessageQueue();
       q.start();
