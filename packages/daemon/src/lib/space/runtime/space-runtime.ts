@@ -366,6 +366,14 @@ interface ExternalEventRateLimitState {
   cleanupTimer: Timer | null;
 }
 
+interface DigestPullTriggerState {
+  count: number;
+  taskId?: string;
+  idleTimer: Timer | null;
+  safetyTimer: Timer | null;
+  countTimer: Timer | null;
+}
+
 interface AgentStuckRecoveryState {
   nagCount: number;
   restartCount: number;
@@ -726,6 +734,7 @@ export class SpaceRuntime {
     string,
     Promise<RenderPendingDigestOutcome | null>
   >();
+  private readonly digestPullTriggers = new Map<string, DigestPullTriggerState>();
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
@@ -2001,6 +2010,112 @@ export class SpaceRuntime {
     this.digestHandoffRetryTimers.set(key, timer);
   }
 
+  private scheduleDigestPullForSession(sessionId: string, taskId?: string): void {
+    if (!isExternalEventDeliveryV2Enabled() || this.isStopped || !sessionId) return;
+    const state = this.digestPullTriggers.get(sessionId) ?? {
+      count: 0,
+      idleTimer: null,
+      safetyTimer: null,
+      countTimer: null,
+    };
+    state.count += 1;
+    state.taskId = state.taskId ?? taskId;
+    this.digestPullTriggers.set(sessionId, state);
+    if (state.idleTimer) {
+      clearTimeout(state.idleTimer);
+      state.idleTimer = null;
+    }
+    const cap = parsePositiveIntegerEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', 50);
+    if (state.count >= cap && !state.countTimer) {
+      state.countTimer = setTimeout(
+        () => this.triggerDigestPullForSession(sessionId, 'count_cap'),
+        0
+      );
+    }
+    if (!state.safetyTimer) {
+      const safetyMs = parsePositiveIntegerEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_SAFETY_MS', 300_000);
+      state.safetyTimer = setTimeout(
+        () => this.triggerDigestPullForSession(sessionId, 'safety'),
+        safetyMs
+      );
+    }
+    if (state.count < cap) {
+      const idleMs = parsePositiveIntegerEnv(
+        'HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS',
+        30_000
+      );
+      state.idleTimer = setTimeout(() => this.maybeFlushDigestOnIdle(sessionId), idleMs);
+    }
+  }
+
+  private maybeFlushDigestOnIdle(sessionId: string): void {
+    const state = this.digestPullTriggers.get(sessionId);
+    if (!state) return;
+    if (state.idleTimer) {
+      clearTimeout(state.idleTimer);
+      state.idleTimer = null;
+    }
+    if (state.count === 0 || !isExternalEventDeliveryV2Enabled() || this.isStopped) {
+      this.clearDigestPullState(sessionId);
+      return;
+    }
+    if (!this.isTargetSessionLive(sessionId)) return;
+    if (this.hasUnconsumedDigestForSession(sessionId)) {
+      const idleMs = parsePositiveIntegerEnv(
+        'HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS',
+        30_000
+      );
+      state.idleTimer = setTimeout(() => this.maybeFlushDigestOnIdle(sessionId), idleMs);
+      return;
+    }
+    void this.triggerDigestPullForSession(sessionId, 'idle');
+  }
+
+  private hasUnconsumedDigestForSession(sessionId: string): boolean {
+    for (const row of this.getSdkMessageRepo().listUserMessagesByUuidPrefix(
+      sessionId,
+      DETERMINISTIC_DIGEST_UUID_PREFIX
+    )) {
+      const status = row.sendStatus;
+      if (status && status !== 'consumed' && status !== 'failed') return true;
+    }
+    return false;
+  }
+
+  private async triggerDigestPullForSession(
+    sessionId: string,
+    trigger: 'count_cap' | 'idle' | 'safety'
+  ): Promise<void> {
+    const state = this.digestPullTriggers.get(sessionId);
+    if (!state) return;
+    this.clearDigestPullState(sessionId);
+    if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+    if (!this.isTargetSessionLive(sessionId)) return;
+    try {
+      const outcome = await this.renderPendingDigestForSession(sessionId, state.taskId);
+      if (outcome?.action === 'delivered') {
+        this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
+      } else if (outcome?.action === 'failed' || outcome?.action === 'held') {
+        this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
+      }
+    } catch (error) {
+      log.warn(
+        `SpaceRuntime: ${trigger} digest pull for session ${sessionId} failed: ` +
+          `${formatCommandError(error)}`
+      );
+      this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
+    }
+  }
+
+  private clearDigestPullState(sessionId: string): void {
+    const state = this.digestPullTriggers.get(sessionId);
+    if (!state) return;
+    if (state.idleTimer) clearTimeout(state.idleTimer);
+    if (state.safetyTimer) clearTimeout(state.safetyTimer);
+    if (state.countTimer) clearTimeout(state.countTimer);
+    this.digestPullTriggers.delete(sessionId);
+  }
+
   private consumeImmediateTierRateBudget(target: WorkflowSubscriptionTarget): boolean {
     const rateLimitKey = this.buildRateLimitKey(target);
     const state = this.getExternalEventRateLimitState(rateLimitKey);
@@ -3201,6 +3316,9 @@ export class SpaceRuntime {
     queue.push({ event, deliveryKey, deliveryMode, createdAt });
     this.pendingExternalEventQueue.set(key, queue);
     this.queueHealthMetrics.recordEnqueue(event.source, this.describeEnqueueTargetState(target));
+    if (target.sessionId) {
+      this.scheduleDigestPullForSession(target.sessionId, target.taskId);
+    }
   }
 
   private describeEnqueueTargetState(target: WorkflowSubscriptionTarget): string {
@@ -4514,6 +4632,12 @@ export class SpaceRuntime {
     }
     this.digestSupersedeRetryTimers.clear();
     this.digestSupersedeRetryCounts.clear();
+    for (const [sessionId, state] of this.digestPullTriggers) {
+      if (state.idleTimer) clearTimeout(state.idleTimer);
+      if (state.safetyTimer) clearTimeout(state.safetyTimer);
+      if (state.countTimer) clearTimeout(state.countTimer);
+      this.digestPullTriggers.delete(sessionId);
+    }
     for (const state of this.externalEventRateLimits.values()) {
       if (state.digestTimer) clearTimeout(state.digestTimer);
       if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
