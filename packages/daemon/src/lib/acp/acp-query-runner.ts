@@ -946,8 +946,10 @@ export class AcpQueryRunner {
           });
         }
 
-        this._lastConsumedUserMessage = null;
-        this.ctx.queryPromise = null;
+        if (this.ctx.getQueryGeneration() === queryGeneration) {
+          this._lastConsumedUserMessage = null;
+          this.ctx.queryPromise = null;
+        }
       }
     }
   }
