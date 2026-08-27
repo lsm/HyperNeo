@@ -880,3 +880,108 @@ export const SPACE_FORGE_TOOL_SCHEMAS = {
 } as const;
 
 export type SpaceForgeToolName = keyof typeof SPACE_FORGE_TOOL_SCHEMAS;
+
+export const TaskScheduleStatusSchema = z.enum(['active', 'paused', 'completed']);
+
+export const TaskScheduleTriggerTypeSchema = z.enum(['cron', 'at']);
+
+export const CreateScheduledTaskSchema = z.object({
+  title: z.string().describe('Short title for the task template'),
+  description: z.string().describe('Detailed description for the task template'),
+  priority: z
+    .enum(['low', 'normal', 'high', 'urgent'])
+    .optional()
+    .describe('Task priority (default: normal)'),
+  workflow_id: z.string().optional().describe('Preferred workflow ID to attach to created tasks'),
+  labels: z.array(z.string()).optional().describe('Labels to apply to created tasks'),
+  trigger_type: TaskScheduleTriggerTypeSchema.describe(
+    'Trigger type: "cron" for recurring, "at" for one-shot'
+  ),
+  cron_expression: z
+    .string()
+    .optional()
+    .describe(
+      'Cron expression (e.g. "0 9 * * 1" for every Monday at 9am, "@daily", "@hourly"). Required when trigger_type is "cron".'
+    ),
+  run_at: z
+    .number()
+    .optional()
+    .describe(
+      'Unix timestamp in ms when the task should fire. Required when trigger_type is "at".'
+    ),
+  timezone: z
+    .string()
+    .optional()
+    .describe('IANA timezone string (default: "UTC"). Example: "America/New_York"'),
+});
+
+export const ListScheduledTasksSchema = z.object({
+  status: TaskScheduleStatusSchema.optional().describe('Filter by schedule status (default: all)'),
+});
+
+export const GetScheduledTaskSchema = z.object({
+  schedule_id: z.string().describe('ID of the scheduled task to retrieve'),
+});
+
+export const PauseScheduledTaskSchema = z.object({
+  schedule_id: z.string().describe('ID of the scheduled task to pause'),
+});
+
+export const ResumeScheduledTaskSchema = z.object({
+  schedule_id: z.string().describe('ID of the scheduled task to resume'),
+});
+
+export const DeleteScheduledTaskSchema = z.object({
+  schedule_id: z.string().describe('ID of the scheduled task to delete'),
+});
+
+export const SCHEDULED_TOOL_SCHEMAS = {
+  create_scheduled_task: CreateScheduledTaskSchema,
+  list_scheduled_tasks: ListScheduledTasksSchema,
+  get_scheduled_task: GetScheduledTaskSchema,
+  pause_scheduled_task: PauseScheduledTaskSchema,
+  resume_scheduled_task: ResumeScheduledTaskSchema,
+  delete_scheduled_task: DeleteScheduledTaskSchema,
+} as const;
+
+export type ScheduledToolName = keyof typeof SCHEDULED_TOOL_SCHEMAS;
+
+export const GetExternalEventSchema = z.object({
+  eventId: z.string().min(1).describe('The id of the external event to fetch'),
+});
+
+export const EXTERNAL_EVENT_TOOL_SCHEMAS = {
+  subscribe_agent_event: SubscribeAgentEventSchema,
+  unsubscribe_agent_event: UnsubscribeAgentEventSchema,
+  list_agent_event_subscriptions: ListAgentEventSubscriptionsSchema,
+  get_external_event: GetExternalEventSchema,
+} as const;
+
+export type ExternalEventToolName = keyof typeof EXTERNAL_EVENT_TOOL_SCHEMAS;
+
+export const InactivityConfigGetSchema = z.object({});
+
+export const InactivityConfigSetEnabledSchema = z.object({
+  enabled: z.boolean().describe('true to enable or resume, false to pause'),
+});
+
+export const InactivityConfigSetSchema = z.object({
+  threshold_ms: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Idle time in milliseconds before the agent is nagged'),
+  prompt: z.string().optional().describe('Custom nag prompt; pass an empty string to clear'),
+});
+
+export const InactivityRunNowSchema = z.object({});
+
+export const INACTIVITY_TOOL_SCHEMAS = {
+  inactivity_config_get: InactivityConfigGetSchema,
+  inactivity_config_set_enabled: InactivityConfigSetEnabledSchema,
+  inactivity_config_set: InactivityConfigSetSchema,
+  inactivity_run_now: InactivityRunNowSchema,
+} as const;
+
+export type InactivityToolName = keyof typeof INACTIVITY_TOOL_SCHEMAS;
