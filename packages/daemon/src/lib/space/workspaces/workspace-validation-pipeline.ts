@@ -246,6 +246,20 @@ function hasVerdict(ctx: WorkspaceValidationCtx): boolean {
   return ctx.verdict !== undefined;
 }
 
+const runRegistryGates = (
+  superpipe<{ hasVerdict: (ctx: WorkspaceValidationCtx) => boolean }>({
+    hasVerdict,
+  })('workspace-registry-gates') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(ensureCrossSpaceExclusivity, 'ctx', 'ctx')
+  .pipe('!hasVerdict', 'ctx')
+  .pipe(ensureNoAmbiguousNesting, 'ctx', 'ctx')
+  .pipe('!hasVerdict', 'ctx')
+  .pipe(ensureUnderPerSpaceCap, 'ctx', 'ctx')
+  .pipe('!hasVerdict', 'ctx')
+  .end('ctx') as (input: WorkspaceValidationCtx) => WorkspaceValidationCtx;
+
 const run = (
   superpipe<{ hasVerdict: (ctx: WorkspaceValidationCtx) => boolean }>({
     hasVerdict,
@@ -258,11 +272,7 @@ const run = (
   .pipe('!hasVerdict', 'ctx')
   .pipe(ensureGitRepositoryRoot, 'ctx', 'ctx')
   .pipe('!hasVerdict', 'ctx')
-  .pipe(ensureCrossSpaceExclusivity, 'ctx', 'ctx')
-  .pipe('!hasVerdict', 'ctx')
-  .pipe(ensureNoAmbiguousNesting, 'ctx', 'ctx')
-  .pipe('!hasVerdict', 'ctx')
-  .pipe(ensureUnderPerSpaceCap, 'ctx', 'ctx')
+  .pipe(runRegistryGates, 'ctx', 'ctx')
   .pipe('!hasVerdict', 'ctx')
   .pipe(accept, 'ctx', 'ctx')
   .endAsync('ctx') as (input: WorkspaceValidationCtx) => Promise<WorkspaceValidationCtx>;
@@ -287,17 +297,12 @@ export function checkWorkspaceRegistryGates(
   snapshot: WorkspaceRegistrySnapshot,
   input: { spaceId: string; canonicalPath: string }
 ): WorkspaceValidationVerdict {
-  let ctx: WorkspaceValidationCtx = {
+  const ctx = runRegistryGates({
     spaceId: input.spaceId,
     rawPath: input.canonicalPath,
     canonicalPath: input.canonicalPath,
     io: nodeWorkspaceValidationIo,
     snapshot,
-  };
-  ctx = ensureCrossSpaceExclusivity(ctx);
-  if (ctx.verdict) return ctx.verdict;
-  ctx = ensureNoAmbiguousNesting(ctx);
-  if (ctx.verdict) return ctx.verdict;
-  ctx = ensureUnderPerSpaceCap(ctx);
+  });
   return ctx.verdict ?? { accepted: true, canonicalPath: input.canonicalPath };
 }
