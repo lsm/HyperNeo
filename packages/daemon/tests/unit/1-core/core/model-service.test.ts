@@ -219,6 +219,46 @@ describe('Model Service', () => {
       expect(fallbackModelsFor(providerStub(cached))).toEqual(cached);
     });
 
+    it('merges persisted-only models with cached models', () => {
+      const cached = [
+        {
+          id: 'cached-model',
+          name: 'Cached Model',
+          alias: 'cached-model',
+          family: 'test-provider',
+          provider: 'test-provider',
+          contextWindow: 128000,
+          description: 'cached',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ];
+      const persisted = [
+        {
+          id: 'persisted-only',
+          name: 'Persisted Only',
+          contextWindow: 256000,
+          thinkingModes: 'off' as const,
+        },
+      ];
+
+      const models = fallbackModelsFor(providerStub(cached), persisted);
+
+      expect(models.map((model) => model.id).sort()).toEqual(['cached-model', 'persisted-only']);
+      expect(models.find((model) => model.id === 'persisted-only')).toEqual({
+        id: 'persisted-only',
+        name: 'Persisted Only',
+        alias: '',
+        family: 'test-provider',
+        provider: 'test-provider',
+        contextWindow: 256000,
+        description: 'Persisted Only via test-provider',
+        releaseDate: '',
+        available: true,
+        thinkingModes: 'off',
+      });
+    });
+
     it('falls back to static metadata for the provider', () => {
       const models = fallbackModelsFor({ id: 'anthropic' } as unknown as Provider);
 
@@ -424,6 +464,28 @@ describe('Model Service', () => {
         { id: 'saved-1' },
       ]);
     });
+
+    it('returns empty when fingerprint computation throws', () => {
+      setProviderRepository(
+        makeRepo(
+          JSON.stringify({
+            discoveredModels: {
+              fingerprint: 'fp-1',
+              models: [{ id: 'saved-1' }],
+            },
+          })
+        )
+      );
+
+      expect(
+        endpointMatchingPersistedDiscovered({
+          id: 'remote',
+          getDiscoveryEndpointFingerprint: () => {
+            throw new Error('malformed endpoint');
+          },
+        } as unknown as Provider)
+      ).toEqual([]);
+    });
   });
 
   describe('pendingSliceReleases', () => {
@@ -470,13 +532,19 @@ describe('Model Service', () => {
       updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
       schedulePendingSliceRelease('beta');
 
-      const olderLoad = mergePendingProviderSlices('global', [providerSliceModel('alpha')], 0);
+      const olderLoad = mergePendingProviderSlices(
+        'global',
+        [providerSliceModel('alpha')],
+        0,
+        new Set(['alpha'])
+      );
       expect(olderLoad.some((model) => model.provider === 'beta')).toBe(true);
 
       const newerLoad = mergePendingProviderSlices(
         'global',
         [providerSliceModel('alpha'), providerSliceModel('beta')],
-        1
+        1,
+        new Set(['beta'])
       );
       expect(newerLoad).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
 
@@ -492,7 +560,8 @@ describe('Model Service', () => {
       const newerLoadWithoutBeta = mergePendingProviderSlices(
         'global',
         [providerSliceModel('alpha')],
-        1
+        1,
+        new Set(['alpha'])
       );
       expect(newerLoadWithoutBeta).toEqual([
         providerSliceModel('alpha'),
@@ -502,9 +571,34 @@ describe('Model Service', () => {
       const newerLoadWithBeta = mergePendingProviderSlices(
         'global',
         [providerSliceModel('alpha'), providerSliceModel('beta')],
-        2
+        2,
+        new Set(['beta'])
       );
       expect(newerLoadWithBeta).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
+    });
+
+    it('keeps the pending slice when the newer load failed and supplied only fallback models', () => {
+      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
+      schedulePendingSliceRelease('beta');
+
+      const failedFallbackLoad = mergePendingProviderSlices(
+        'global',
+        [providerSliceModel('alpha'), providerSliceModel('beta')],
+        1
+      );
+      expect(failedFallbackLoad).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
+
+      const successfulLoad = mergePendingProviderSlices(
+        'global',
+        [providerSliceModel('alpha'), providerSliceModel('beta')],
+        2,
+        new Set(['beta'])
+      );
+      expect(successfulLoad).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
+
+      expect(mergePendingProviderSlices('global', [providerSliceModel('alpha')])).toEqual([
+        providerSliceModel('alpha'),
+      ]);
     });
   });
 

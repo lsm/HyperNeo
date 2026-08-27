@@ -204,7 +204,8 @@ function pendingSliceKey(cacheKey: string, providerId: string): string {
 export function mergePendingProviderSlices(
   cacheKey: string,
   models: ModelInfo[],
-  loadSeq?: number
+  loadSeq?: number,
+  loadedProviderIds?: ReadonlySet<string>
 ): ModelInfo[] {
   let merged = models;
   const released: string[] = [];
@@ -212,12 +213,13 @@ export function mergePendingProviderSlices(
     if (!key.startsWith(`${cacheKey}:`)) continue;
     const providerId = key.slice(cacheKey.length + 1);
     const releaseAfterSeq = pendingSliceReleases.get(key);
-    const providerIsPresent = models.some((model) => model.provider === providerId);
+    const providerLoaded =
+      loadedProviderIds?.has(providerId) && models.some((model) => model.provider === providerId);
     if (
       releaseAfterSeq !== undefined &&
       loadSeq !== undefined &&
       loadSeq > releaseAfterSeq &&
-      providerIsPresent
+      providerLoaded
     ) {
       released.push(key);
       continue;
@@ -267,7 +269,8 @@ function applyRefreshedModels(
   supersededProviderIds: string[] = [],
   preservePreviousOnShrink = true,
   unavailableProviders?: ReadonlySet<string>,
-  loadSeq?: number
+  loadSeq?: number,
+  loadedProviderIds?: ReadonlySet<string>
 ): void {
   if (fetchedModels.length > 0) {
     const mergedModels = mergeWithFallbackModels(fetchedModels, unavailableProviders);
@@ -279,7 +282,10 @@ function applyRefreshedModels(
         superseded.size > 0 ? [...retainedPrevious, ...supersededSlices] : previousModels;
       modelsCache.set(cacheKey, overlaid);
     } else {
-      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels, loadSeq));
+      modelsCache.set(
+        cacheKey,
+        mergePendingProviderSlices(cacheKey, mergedModels, loadSeq, loadedProviderIds)
+      );
     }
     cacheTimestamps.set(cacheKey, Date.now());
     return;
@@ -291,7 +297,10 @@ function applyRefreshedModels(
   const filteredFallbacks = FALLBACK_MODELS.filter(
     (m) => registry.has(m.provider) && !unavailableProviders?.has(m.provider)
   );
-  modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks, loadSeq));
+  modelsCache.set(
+    cacheKey,
+    mergePendingProviderSlices(cacheKey, filteredFallbacks, loadSeq, loadedProviderIds)
+  );
   cacheTimestamps.set(cacheKey, Date.now());
 }
 
@@ -316,7 +325,8 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
           current.supersededProviderIds,
           true,
           undefined,
-          current.loadSeq
+          current.loadSeq,
+          new Set(current.loadedProviderIds)
         );
       }
       /* v8 ignore next 2 */
@@ -399,33 +409,35 @@ type PersistedDiscoveredEntry = {
   thinkingModes?: 'off' | 'on' | 'granular';
 };
 
+function buildPersistedModel(provider: Provider, entry: PersistedDiscoveredEntry): ModelInfo {
+  return {
+    id: entry.id,
+    name: entry.name ?? entry.id,
+    alias: '',
+    family: provider.id,
+    provider: provider.id,
+    contextWindow: entry.contextWindow ?? 128000,
+    preferContextWindowMetadata: entry.preferContextWindowMetadata,
+    description: entry.description ?? `${entry.name ?? entry.id} via ${provider.id}`,
+    releaseDate: entry.releaseDate ?? '',
+    available: entry.available ?? true,
+    thinkingModes: entry.thinkingModes,
+  };
+}
+
 export function fallbackModelsFor(
   provider: Provider,
   persistedDiscovered: ReadonlyArray<PersistedDiscoveredEntry> = []
 ): ModelInfo[] {
   const cached = provider.getCachedModels?.();
-  if (cached && cached.length > 0) {
-    return cached;
-  }
   const staticSlice = STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
-  if (persistedDiscovered.length === 0) return staticSlice;
-  const knownIds = new Set(staticSlice.map((model) => model.id));
-  const persistedSlice: ModelInfo[] = persistedDiscovered
+  const base = cached && cached.length > 0 ? cached : staticSlice;
+  if (persistedDiscovered.length === 0) return base;
+  const knownIds = new Set(base.map((model) => model.id));
+  const persistedSlice = persistedDiscovered
     .filter((entry) => !knownIds.has(entry.id))
-    .map((entry) => ({
-      id: entry.id,
-      name: entry.name ?? entry.id,
-      alias: '',
-      family: provider.id,
-      provider: provider.id,
-      contextWindow: entry.contextWindow ?? 128000,
-      preferContextWindowMetadata: entry.preferContextWindowMetadata,
-      description: entry.description ?? `${entry.name ?? entry.id} via ${provider.id}`,
-      releaseDate: entry.releaseDate ?? '',
-      available: entry.available ?? true,
-      thinkingModes: entry.thinkingModes,
-    }));
-  return [...staticSlice, ...persistedSlice];
+    .map((entry) => buildPersistedModel(provider, entry));
+  return [...base, ...persistedSlice];
 }
 
 function readPersistedDiscoveredEntry(
@@ -510,7 +522,12 @@ function extractWrapperGate(ctx: PersistedDiscoveryCtx): PersistedDiscoveryCtx {
 }
 
 function validateFingerprintGate(ctx: PersistedDiscoveryCtx): PersistedDiscoveryCtx {
-  const endpointFingerprint = ctx.provider.getDiscoveryEndpointFingerprint?.(ctx.record?.baseUrl);
+  let endpointFingerprint: string | undefined;
+  try {
+    endpointFingerprint = ctx.provider.getDiscoveryEndpointFingerprint?.(ctx.record?.baseUrl);
+  } catch {
+    return { ...ctx, decision: [] };
+  }
   if (endpointFingerprint !== undefined && ctx.wrapper!.fingerprint !== endpointFingerprint) {
     return { ...ctx, decision: [] };
   }
@@ -994,7 +1011,8 @@ function cancelAllProviderRetries(): void {
 function replaceProviderModelsInCache(
   providerId: string,
   models: ModelInfo[],
-  loadSeq: number
+  loadSeq: number,
+  loaded: boolean
 ): void {
   const cacheKey = 'global';
   const key = pendingSliceKey(cacheKey, providerId);
@@ -1002,7 +1020,7 @@ function replaceProviderModelsInCache(
   const releaseAfterSeq = pendingSliceReleases.get(key);
   const usePending =
     pending !== undefined &&
-    (releaseAfterSeq === undefined || loadSeq <= releaseAfterSeq || models.length === 0);
+    (releaseAfterSeq === undefined || loadSeq <= releaseAfterSeq || models.length === 0 || !loaded);
   const slice = usePending ? pending : models;
   if (!usePending && pending !== undefined) {
     pendingProviderSlices.delete(key);
@@ -1080,7 +1098,7 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
     return;
   }
   providerAppliedSeq.set(providerId, probeSeq);
-  replaceProviderModelsInCache(providerId, result.models, probeSeq);
+  replaceProviderModelsInCache(providerId, result.models, probeSeq, result.status === 'loaded');
   clearProviderFailure(providerId);
   clearProviderRetry(providerId);
 }
@@ -1139,7 +1157,7 @@ export async function recoverDormantProvider(providerId: string): Promise<Provid
     return 'recovered';
   }
   providerAppliedSeq.set(providerId, probeSeq);
-  replaceProviderModelsInCache(providerId, result.models, probeSeq);
+  replaceProviderModelsInCache(providerId, result.models, probeSeq, result.status === 'loaded');
   return 'recovered';
 }
 
@@ -1194,7 +1212,8 @@ export async function initializeModels(): Promise<void> {
         const mergedModels = mergePendingProviderSlices(
           cacheKey,
           mergeWithFallbackModels(result.models),
-          result.loadSeq
+          result.loadSeq,
+          new Set(result.loadedProviderIds)
         );
         modelsCache.set(cacheKey, mergedModels);
         cacheTimestamps.set(cacheKey, Date.now());
@@ -1352,7 +1371,8 @@ export async function refreshModels(
           current.supersededProviderIds,
           false,
           new Set(current.unavailableProviderIds),
-          current.loadSeq
+          current.loadSeq,
+          new Set(current.loadedProviderIds)
         );
       }
       throw current.forcedDiscoveryError;
@@ -1364,7 +1384,8 @@ export async function refreshModels(
       current.supersededProviderIds,
       !forceRemote,
       forceRemote ? new Set(current.unavailableProviderIds) : undefined,
-      current.loadSeq
+      current.loadSeq,
+      new Set(current.loadedProviderIds)
     );
   })();
 
