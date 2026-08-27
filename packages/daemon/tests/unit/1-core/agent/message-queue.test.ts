@@ -1262,6 +1262,30 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('a queued tool result outranks an earlier internal compaction while gated', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const compaction = q.enqueue('/compact', true, { durable: true });
+      const toolResult = q.enqueueWithId(
+        'tool-result-1',
+        [{ type: 'tool_result', tool_use_id: 'tu-1', content: 'done' }],
+        false,
+        { durable: true }
+      );
+
+      const generator = q.messageGenerator(testSessionId);
+      const first = await generator.next();
+      expect(first.value.message.uuid).toBe('tool-result-1');
+      first.value.onSent();
+      await toolResult;
+
+      const second = await generator.next();
+      expect(second.value.message.internal).toBe(true);
+      second.value.onSent();
+      await compaction;
+      q.stop();
+    });
+
     it('ordinary prompts hold behind a sent internal compaction until its boundary is acknowledged', async () => {
       const q = new MessageQueue();
       q.start();

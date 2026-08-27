@@ -503,12 +503,13 @@ export class MessageQueue {
   }
 
   private gatedBypassIndex(): number {
-    return this.queue.findIndex(
+    const toolResultIndex = this.queue.findIndex(
       (message) =>
-        this.isInternalCompaction(message) ||
-        (typeof message.content !== 'string' &&
-          message.content.some((block) => isToolResultContent(block)))
+        typeof message.content !== 'string' &&
+        message.content.some((block) => isToolResultContent(block))
     );
+    if (toolResultIndex !== -1) return toolResultIndex;
+    return this.queue.findIndex((message) => this.isInternalCompaction(message));
   }
 
   private async waitForNextMessage(): Promise<QueuedMessage | null> {

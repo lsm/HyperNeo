@@ -140,6 +140,8 @@ export class SDKMessageHandler {
 
   private pendingContextRefresh: Promise<void> | null = null;
 
+  private trailingIdleGateRelease: (() => void) | null = null;
+
   private currentThinkingTokensEstimate: number | null = null;
   private lastStampedThinkingTokensEstimate: number = 0;
 
@@ -279,6 +281,7 @@ export class SDKMessageHandler {
     this.usesSessionStateChangedTurnEnd = false;
     this.expectsSessionStateIdleAfterResult = false;
     this.lastResultWasSuccess = null;
+    this.releaseTrailingIdleDeliveryGate();
   }
 
   private cancelSuppressedResultTimer(): void {
@@ -960,13 +963,22 @@ export class SDKMessageHandler {
     let enforcedTurnEnd = false;
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
+        let releaseTurnEndGate!: () => void;
+        const turnEndGate = new Promise<void>((resolve) => {
+          releaseTurnEndGate = resolve;
+        });
+        this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(turnEndGate));
         const compactingClear = this.ctx.stateManager.getIsCompacting()
           ? this.ctx.stateManager.setCompacting(false)
           : null;
-        await this.refreshContextUsage('turn-end');
-        enforcedTurnEnd = true;
-        await compactingClear;
-        await stateManager.setIdle();
+        try {
+          await this.refreshContextUsage('turn-end');
+          enforcedTurnEnd = true;
+          await compactingClear;
+          await stateManager.setIdle();
+        } finally {
+          releaseTurnEndGate();
+        }
       }
     }
 
@@ -1013,6 +1025,9 @@ export class SDKMessageHandler {
           : null;
       if (isTopLevelResult && !enforcedTurnEnd) {
         await this.refreshContextUsage('turn-end');
+        if (this.expectsSessionStateIdleAfterResult) {
+          this.armTrailingIdleDeliveryGate();
+        }
       }
       await compactingClear;
     }
@@ -1322,7 +1337,23 @@ export class SDKMessageHandler {
         this.expectsSessionStateIdleAfterResult = false;
         this.lastResultWasSuccess = null;
       }
+      this.releaseTrailingIdleDeliveryGate();
     }
+  }
+
+  private armTrailingIdleDeliveryGate(): void {
+    if (this.trailingIdleGateRelease) return;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.trailingIdleGateRelease = release;
+    this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(gate));
+  }
+
+  private releaseTrailingIdleDeliveryGate(): void {
+    this.trailingIdleGateRelease?.();
+    this.trailingIdleGateRelease = null;
   }
 
   private resetThinkingTokenTracking(): void {

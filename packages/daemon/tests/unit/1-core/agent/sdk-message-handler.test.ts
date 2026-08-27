@@ -4434,6 +4434,64 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
+      it('holds the delivery gate closed through the terminal idle transition', async () => {
+        let releaseIdle!: () => void;
+        setIdleSpy.mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseIdle = resolve;
+            })
+        );
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const turnEndSegment = setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>;
+        let opened = false;
+        void turnEndSegment.then(() => {
+          opened = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(opened).toBe(false);
+        expect(setIdleSpy).toHaveBeenCalled();
+
+        releaseIdle();
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(true);
+      });
+
+      it('holds the delivery gate until the trailing session_state_changed idle lands', async () => {
+        const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+          ({
+            type: 'system',
+            subtype: 'session_state_changed',
+            state,
+            uuid: `state-${state}`,
+            session_id: 'sdk-session-123',
+          }) as unknown as SDKMessage;
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        await h.handleMessage(sessionState('busy'));
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const trailingSegment = setDeliveryGateSpy.mock.calls.at(-1)?.[0] as Promise<void>;
+        let opened = false;
+        void trailingSegment.then(() => {
+          opened = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(opened).toBe(false);
+
+        await h.handleMessage(sessionState('idle'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(true);
+      });
+
       it('suppresses the compaction decision while limit recovery owns the turn', async () => {
         (mockContext as { isLimitRecoveryPending?: () => boolean }).isLimitRecoveryPending = mock(
           () => true
