@@ -45,7 +45,7 @@ import { enforceContextBudget } from './context-budget-enforcement.ts';
 import { ContextFetcher } from './context-fetcher.ts';
 import type { ContextTracker } from './context-tracker.ts';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
-import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
+import { type IdleOwnerScope, isSameIdleOwner } from './idle-waiter-admission-pipeline.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { signalDeliveryConsumed } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
@@ -151,6 +151,8 @@ export class SDKMessageHandler {
   private trailingIdleGateRelease: (() => void) | null = null;
 
   private trailingIdleGeneration: number | null = null;
+
+  private trailingIdleOwner: IdleOwnerScope | undefined = undefined;
 
   private compactionEnqueuedMidTurnGeneration: number | null | undefined = undefined;
 
@@ -881,7 +883,7 @@ export class SDKMessageHandler {
       isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
 
     let releaseTurnEndGate: (() => void) | null = null;
-    if (isTopLevelResult) {
+    if (isTopLevelResult && !this.isInvocationStale(invocationGeneration)) {
       let release!: () => void;
       const gate = new Promise<void>((resolve) => {
         release = resolve;
@@ -1400,6 +1402,7 @@ export class SDKMessageHandler {
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
       this.resetThinkingTokenTracking();
+      const currentOwner = this.invocationIdleOwner(invocationGeneration);
       if (
         this.trailingIdleGeneration !== null &&
         this.trailingIdleGeneration !== invocationGeneration
@@ -1407,6 +1410,17 @@ export class SDKMessageHandler {
         this.logger.info(
           `Ignoring trailing idle from a superseded query (armed ${this.trailingIdleGeneration}, ` +
             `current ${invocationGeneration}).`
+        );
+        this.releaseTrailingIdleDeliveryGate();
+        return;
+      }
+      if (
+        this.trailingIdleOwner !== undefined &&
+        currentOwner !== undefined &&
+        !isSameIdleOwner(this.trailingIdleOwner, currentOwner)
+      ) {
+        this.logger.info(
+          'Ignoring trailing idle from a superseded turn (delivery owner advanced).'
         );
         this.releaseTrailingIdleDeliveryGate();
         return;
@@ -1450,6 +1464,7 @@ export class SDKMessageHandler {
     });
     this.trailingIdleGateRelease = release;
     this.trailingIdleGeneration = invocationGeneration ?? null;
+    this.trailingIdleOwner = this.invocationIdleOwner(invocationGeneration ?? null);
     const bounded = boundedDeliveryGate(gate);
     this.ctx.messageQueue.setDeliveryGate(bounded);
     void bounded.then(() => {
@@ -1463,6 +1478,7 @@ export class SDKMessageHandler {
     this.trailingIdleGateRelease?.();
     this.trailingIdleGateRelease = null;
     this.trailingIdleGeneration = null;
+    this.trailingIdleOwner = undefined;
   }
 
   private resetThinkingTokenTracking(): void {

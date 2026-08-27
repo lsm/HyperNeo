@@ -4592,6 +4592,17 @@ describe('SDKMessageHandler', () => {
         expect(opened).toBe(true);
       });
 
+      it('does not arm the turn-end gate for a stale top-level result', async () => {
+        (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+        const { h } = budgetCase({ totalUsed: 950_000 });
+
+        await h.handleMessage(turnEndResult(), 5);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(setDeliveryGateSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
       it('ignores a trailing idle from a superseded query generation', async () => {
         let current = 5;
         (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(

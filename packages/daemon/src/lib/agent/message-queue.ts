@@ -106,12 +106,12 @@ export class MessageQueue {
     if (this.internalCompactionsAwaitingBoundary > 0) {
       this.internalCompactionsAwaitingBoundary -= 1;
     }
-    this.cancelInternalCompactionEntries(false);
+    this.cancelInternalCompactionEntries(false, false);
     this.recentSentPrompts.clear();
     this.wakeWaiters();
   }
 
-  private cancelInternalCompactionEntries(interrupted: boolean): void {
+  private cancelInternalCompactionEntries(interrupted: boolean, includeYielded: boolean): void {
     const settle = (message: QueuedMessage) => {
       if (interrupted) {
         message.reject(new Error('Interrupted by user'));
@@ -131,13 +131,15 @@ export class MessageQueue {
         return false;
       })
     );
-    this.yielded = new Set(
-      [...this.yielded].filter((message) => {
-        if (!this.isInternalCompaction(message)) return true;
-        settle(message);
-        return false;
-      })
-    );
+    if (includeYielded) {
+      this.yielded = new Set(
+        [...this.yielded].filter((message) => {
+          if (!this.isInternalCompaction(message)) return true;
+          settle(message);
+          return false;
+        })
+      );
+    }
   }
 
   hasCompactionsAwaitingBoundary(): boolean {
@@ -301,6 +303,7 @@ export class MessageQueue {
 
   clear(): void {
     this.clearEpoch += 1;
+    const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     this.internalCompactionsAwaitingBoundary = 0;
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
@@ -327,7 +330,7 @@ export class MessageQueue {
       msg.resolve(msg.id);
     }
     this.yielded.clear();
-    if (yieldedCompactions.length > 0) {
+    if (deliveredCompactions || yieldedCompactions.length > 0) {
       this.onInternalCompactionsAborted?.();
     }
   }
@@ -458,7 +461,7 @@ export class MessageQueue {
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     this.internalCompactionsAwaitingBoundary = 0;
     this.nonCompactionSentSinceBoundary = false;
-    this.cancelInternalCompactionEntries(true);
+    this.cancelInternalCompactionEntries(true, true);
     this.deliveryGate = null;
     this.wakeWaiters();
     if (deliveredCompactions) {
