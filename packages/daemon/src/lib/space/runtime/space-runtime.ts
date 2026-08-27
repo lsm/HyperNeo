@@ -3576,7 +3576,18 @@ export class SpaceRuntime {
     if (!previous) return null;
     const nextStatus = params.status;
     if (nextStatus && previous.status !== nextStatus) {
+      assertValidSpaceTaskTransition(previous.status, nextStatus);
       const taskManager = this.getOrCreateTaskManager(spaceId);
+      if (Object.hasOwn(params, 'workspacePath')) {
+        await taskManager.updateTask(
+          taskId,
+          { workspacePath: params.workspacePath },
+          {
+            onCascadedTasks: async () => {},
+          }
+        );
+        delete (params as Record<string, unknown>).workspacePath;
+      }
       let updated = await taskManager.setTaskStatus(taskId, nextStatus, {
         result: params.result ?? undefined,
         approvalReason:
@@ -8488,7 +8499,8 @@ export class SpaceRuntime {
           this.config.goalService?.handleTaskTerminal(taskId, {
             fromStatus,
             deferPostCommitEffects: true,
-          })
+          }),
+        (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
       );
       this.taskManagers.set(spaceId, manager);
     }

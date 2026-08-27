@@ -168,4 +168,21 @@ describe('SpaceWorkspaceRepository', () => {
     expect(repo.countBySpace(SPACE_A)).toBe(2);
     expect(repo.countBySpace(SPACE_B)).toBe(1);
   });
+
+  test('createUnclaimed inserts and returns the record when the path is free', () => {
+    const record = repo.createUnclaimed({ spaceId: SPACE_A, path: '/repos/alpha', label: 'a' });
+    expect(record).not.toBeNull();
+    expect(record!.path).toBe('/repos/alpha');
+    expect(record!.label).toBe('a');
+    expect(record!.isPrimary).toBe(false);
+    expect(repo.countBySpace(SPACE_A)).toBe(1);
+  });
+
+  test('createUnclaimed returns null when any space already holds the path', () => {
+    repo.create({ spaceId: SPACE_B, path: '/repos/alpha' });
+    expect(repo.createUnclaimed({ spaceId: SPACE_A, path: '/repos/alpha' })).toBeNull();
+    expect(repo.createUnclaimed({ spaceId: SPACE_B, path: '/repos/alpha' })).toBeNull();
+    expect(repo.countBySpace(SPACE_A)).toBe(0);
+    expect(repo.countBySpace(SPACE_B)).toBe(1);
+  });
 });

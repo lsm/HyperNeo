@@ -1442,6 +1442,7 @@ export class AgentSession
 
   incrementQueryGeneration(): number {
     const next = ++this._queryGeneration;
+    this.stateManager.noteQueryOwnerGeneration(next);
     this.taskNotificationRequeryAwaitingSdkIdle = false;
     this.taskNotificationRequeryBusyInterruptGeneration = null;
     if (this.deliveryResponseObserver?.pendingStart) {
@@ -1459,10 +1460,15 @@ export class AgentSession
     return this._isCleaningUp;
   }
 
-  async onSDKMessage(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
-    const queryGeneration = this.getQueryGeneration();
+  async onSDKMessage(
+    message: import('@hyperneo/shared/sdk').SDKMessage,
+    _queuedMessages?: Array<import('@hyperneo/shared/sdk').SDKMessage>,
+    runnerGeneration?: number
+  ): Promise<void> {
+    const queryGeneration = runnerGeneration ?? this.getQueryGeneration();
     if (
       this.session.config.provider !== 'acp' &&
+      queryGeneration === this.getQueryGeneration() &&
       isSDKSessionStateChangedMessage(message) &&
       message.state !== 'idle'
     ) {
@@ -1474,7 +1480,7 @@ export class AgentSession
     }
     try {
       try {
-        await this.messageHandler.handleMessage(message);
+        await this.messageHandler.handleMessage(message, queryGeneration);
       } catch (error) {
         if (this.getQueryGeneration() === queryGeneration) {
           this.observeTaskNotificationResult(message);

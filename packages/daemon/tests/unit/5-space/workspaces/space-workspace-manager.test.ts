@@ -7,6 +7,7 @@ import {
   WorkspaceRemovalBlockedError,
   type SpaceWorkspaceManagerDeps,
   type WorkspaceSessionReferences,
+  type WorkspaceTaskReferences,
 } from '../../../../src/lib/space/managers/space-workspace-manager.ts';
 import type { WorkspaceValidationIo } from '../../../../src/lib/space/workspaces/workspace-validation-pipeline.ts';
 
@@ -53,6 +54,7 @@ class FakeSpaces {
 class FakeWorkspaces {
   rows: SpaceWorkspaceRecord[];
   failCreateWith: Error | null = null;
+  claimRacedBy: SpaceWorkspaceRecord | null = null;
   private nextId = 0;
 
   constructor(initial: SpaceWorkspaceRecord[] = []) {
@@ -79,12 +81,35 @@ class FakeWorkspaces {
     return record;
   }
 
+  createUnclaimed(params: {
+    spaceId: string;
+    path: string;
+    label?: string;
+    isPrimary?: boolean;
+  }): SpaceWorkspaceRecord | null {
+    if (this.claimRacedBy) return null;
+    return this.create(params);
+  }
+
+  findOwnerByPath(path: string): SpaceWorkspaceRecord | null {
+    if (this.claimRacedBy) return this.claimRacedBy;
+    return this.rows.find((r) => r.path === path) ?? null;
+  }
+
   getById(id: string): SpaceWorkspaceRecord | null {
     return this.rows.find((r) => r.id === id) ?? null;
   }
 
   listBySpace(spaceId: string): SpaceWorkspaceRecord[] {
     return this.rows.filter((r) => r.spaceId === spaceId);
+  }
+
+  updateLabel(spaceId: string, workspaceId: string, label: string): boolean {
+    const row = this.rows.find((r) => r.id === workspaceId && r.spaceId === spaceId);
+    if (!row) return false;
+    row.label = label;
+    row.updatedAt = 1;
+    return true;
   }
 
   delete(spaceId: string, workspaceId: string): boolean {
@@ -108,12 +133,18 @@ const noActiveSessions: WorkspaceSessionReferences = {
   countActiveSessionsByWorkspacePath: () => 0,
 };
 
+const noActiveTasks: WorkspaceTaskReferences = {
+  countActiveTasksByWorkspacePath: () => 0,
+};
+
 function newManager(
   options: {
     spaces?: Space[];
     workspaces?: FakeWorkspaces;
     io?: WorkspaceValidationIo;
     sessionReferences?: WorkspaceSessionReferences;
+    transaction?: <T>(fn: () => T) => T;
+    taskReferences?: WorkspaceTaskReferences;
   } = {}
 ): { manager: SpaceWorkspaceManager; workspaces: FakeWorkspaces } {
   const workspaces = options.workspaces ?? new FakeWorkspaces();
@@ -121,7 +152,9 @@ function newManager(
     spaces: new FakeSpaces(options.spaces ?? [fakeSpace(SPACE_A, '/primary-a')]),
     workspaces,
     sessionReferences: options.sessionReferences ?? noActiveSessions,
+    taskReferences: options.taskReferences ?? noActiveTasks,
     io: options.io ?? fakeIo(),
+    transaction: options.transaction,
   };
   return { manager: new SpaceWorkspaceManager(deps), workspaces };
 }
@@ -214,6 +247,40 @@ describe('registerWorkspace', () => {
     expect(err).not.toBeInstanceOf(WorkspaceRegistrationError);
     expect((err as Error).message).toBe('disk full');
   });
+
+  test('rejects when another space claims the path after validation', async () => {
+    const workspaces = new FakeWorkspaces();
+    workspaces.claimRacedBy = row(SPACE_B, '/repo', 'stolen');
+    const { manager } = newManager({ workspaces });
+    const err = await registrationError(manager, '/repo');
+    expect(err.reason).toBe('path_claimed_by_another_space');
+    expect(err.verdict.conflictSpaceId).toBe(SPACE_B);
+    expect(workspaces.rows).toHaveLength(0);
+  });
+
+  test('rejects when the same space claims the path after validation', async () => {
+    const workspaces = new FakeWorkspaces();
+    workspaces.claimRacedBy = row(SPACE_A, '/repo', 'stolen');
+    const { manager } = newManager({ workspaces });
+    const err = await registrationError(manager, '/repo');
+    expect(err.reason).toBe('duplicate_of_registered_workspace');
+    expect(workspaces.rows).toHaveLength(0);
+  });
+
+  test('rejects when a concurrent writer nests a workspace before the insert transaction', async () => {
+    const workspaces = new FakeWorkspaces();
+    const lateRow = row(SPACE_A, '/work', 'late');
+    const { manager } = newManager({
+      workspaces,
+      transaction: (fn) => {
+        workspaces.rows.push(lateRow);
+        return fn();
+      },
+    });
+    const err = await registrationError(manager, '/work/sub-repo');
+    expect(err.reason).toBe('ambiguous_nesting');
+    expect(workspaces.rows).toEqual([lateRow]);
+  });
 });
 
 describe('removeWorkspace', () => {
@@ -276,6 +343,67 @@ describe('removeWorkspace', () => {
     expect(calls).toEqual([[SPACE_A, '/sec']]);
     expect(workspaces.rows).toHaveLength(1);
   });
+
+  test('blocks removal while active tasks reference the workspace', () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/sec', 'w2')]);
+    const calls: Array<[string, string]> = [];
+    const { manager } = newManager({
+      workspaces,
+      taskReferences: {
+        countActiveTasksByWorkspacePath: (spaceId, workspacePath) => {
+          calls.push([spaceId, workspacePath]);
+          return 3;
+        },
+      },
+    });
+    let err: unknown;
+    try {
+      manager.removeWorkspace(SPACE_A, 'w2');
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(WorkspaceRemovalBlockedError);
+    expect((err as WorkspaceRemovalBlockedError).reason).toBe('active_tasks');
+    expect(calls).toEqual([[SPACE_A, '/sec']]);
+    expect(workspaces.rows).toHaveLength(1);
+  });
+});
+
+describe('resolveRegisteredWorkspacePath', () => {
+  test('resolves the primary path from space.workspacePath when no primary row exists', async () => {
+    const { manager } = newManager();
+    const resolved = await manager.resolveRegisteredWorkspacePath(SPACE_A, '/primary-a');
+    expect(resolved).toBe('/primary-a');
+  });
+
+  test('resolves a secondary workspace path', async () => {
+    const workspaces = new FakeWorkspaces([
+      row(SPACE_A, '/primary-a', 'primary', true),
+      row(SPACE_A, '/sec', 'w2'),
+    ]);
+    const { manager } = newManager({ workspaces });
+    const resolved = await manager.resolveRegisteredWorkspacePath(SPACE_A, '/sec');
+    expect(resolved).toBe('/sec');
+  });
+
+  test('canonicalizes the raw path through io.realpath before matching', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/canon', 'w1')]);
+    const { manager } = newManager({
+      workspaces,
+      io: fakeIo({ realpath: async () => '/canon' }),
+    });
+    const resolved = await manager.resolveRegisteredWorkspacePath(SPACE_A, '/raw');
+    expect(resolved).toBe('/canon');
+  });
+
+  test('rejects an unregistered path with a clear error', async () => {
+    const { manager } = newManager();
+    const err = await manager
+      .resolveRegisteredWorkspacePath(SPACE_A, '/unregistered')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('Workspace path is not registered to space: /unregistered');
+  });
 });
 
 describe('listWorkspaces', () => {
@@ -292,5 +420,26 @@ describe('listWorkspaces', () => {
   test('throws for an unknown space', () => {
     const { manager } = newManager({ spaces: [] });
     expect(() => manager.listWorkspaces('ghost')).toThrow('Space not found: ghost');
+  });
+});
+
+describe('updateWorkspaceLabel', () => {
+  test('updates the label of the workspace and returns true', () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/sec', 'w2')]);
+    const { manager } = newManager({ workspaces });
+    expect(manager.updateWorkspaceLabel(SPACE_A, 'w2', 'renamed')).toBe(true);
+    expect(workspaces.rows[0]!.label).toBe('renamed');
+  });
+
+  test('returns false for an unknown workspace id', () => {
+    const { manager } = newManager();
+    expect(manager.updateWorkspaceLabel(SPACE_A, 'ghost', 'renamed')).toBe(false);
+  });
+
+  test('returns false when the workspace belongs to another space and leaves it untouched', () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_B, '/sec', 'w2')]);
+    const { manager } = newManager({ workspaces });
+    expect(manager.updateWorkspaceLabel(SPACE_A, 'w2', 'renamed')).toBe(false);
+    expect(workspaces.rows[0]!.label).toBe('');
   });
 });

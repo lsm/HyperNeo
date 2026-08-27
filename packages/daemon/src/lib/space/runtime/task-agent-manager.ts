@@ -895,7 +895,9 @@ export class TaskAgentManager {
               space.id,
               task.id,
               task.title,
-              task.taskNumber
+              task.taskNumber,
+              undefined,
+              ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath
             );
             this.taskWorktreePaths.set(task.id, result.path);
             return result.path;
@@ -4715,7 +4717,8 @@ export class TaskAgentManager {
         this.config.goalService?.handleTaskTerminal(taskId, {
           fromStatus,
           deferPostCommitEffects: true,
-        })
+        }),
+      (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
     );
     const endNodeHandlers = isEndNode
       ? createEndNodeHandlers({

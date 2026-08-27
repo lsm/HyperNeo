@@ -1078,6 +1078,45 @@ export class SDKMessageRepository {
     return { messages, total: countRow ? countRow.count : messages.length };
   }
 
+  listUserMessagesByUuidPrefix(
+    sessionId: string,
+    prefix: string
+  ): Array<SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }> {
+    const pageSize = 100;
+    const messages: Array<
+      SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }
+    > = [];
+    let offset = 0;
+    for (;;) {
+      const rows = this.db
+        .prepare(
+          `SELECT id, sdk_message, timestamp, COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages
+	       WHERE session_id = ?
+	         AND message_type = 'user'
+	         AND sdk_uuid LIKE ? || '%'
+	       ORDER BY timestamp DESC, rowid DESC
+	       LIMIT ? OFFSET ?`
+        )
+        .all(sessionId, prefix, pageSize, offset) as Array<{
+        id: string;
+        sdk_message: string;
+        timestamp: string;
+        send_status: string;
+      }>;
+      messages.push(
+        ...rows.map(
+          (row) =>
+            ({
+              ...inflatePersistedMessage(row),
+              sendStatus: row.send_status,
+            }) as SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }
+        )
+      );
+      if (rows.length < pageSize) return messages;
+      offset += pageSize;
+    }
+  }
+
   getMessageByStatusAndUuid(
     sessionId: string,
     status: SendStatus,

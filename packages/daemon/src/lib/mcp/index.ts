@@ -3,3 +3,4 @@ export type { ValidationResult, McpStartupError } from './app-mcp-lifecycle-mana
 export { seedDefaultMcpEntries } from './seed-defaults.ts';
 export { McpImportService } from './mcp-import-service.ts';
 export type { ImportResult } from './mcp-import-service.ts';
+export { resolveWorkspaceMcpServerName } from './mcp-server-namespace.ts';

@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AgentProcessingState, PendingUserQuestion } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 describe('ProcessingStateManager', () => {
   let manager: ProcessingStateManager;
@@ -350,6 +350,214 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('owner-carrier idle waiters', () => {
+    function armTracked(owner?: { queryGeneration: number; turnToken: number }, gen?: number) {
+      const flags = { ended: false, resolved: false };
+      void manager
+        .waitForIdleTransition(
+          gen,
+          () => {
+            flags.ended = true;
+          },
+          owner
+        )
+        .promise.then(() => {
+          flags.resolved = true;
+        });
+      return flags;
+    }
+
+    test('setIdle with a matching owner filter resolves the owned waiter', async () => {
+      const owner = { queryGeneration: 0, turnToken: 0 };
+      const waiter = armTracked(owner);
+
+      await manager.setIdle({ owner });
+
+      expect(waiter).toEqual({ ended: true, resolved: true });
+    });
+
+    test('setIdle with a foreign owner holds the waiter until its own idle', async () => {
+      const first = { queryGeneration: 0, turnToken: 0 };
+      const successor = { queryGeneration: 0, turnToken: 1 };
+      const waiter = armTracked(first);
+
+      await manager.setIdle({ owner: successor });
+      expect(waiter).toEqual({ ended: false, resolved: false });
+
+      await manager.setIdle({ owner: first });
+      expect(waiter).toEqual({ ended: true, resolved: true });
+    });
+
+    test('an owner-filtered idle still drains unowned waiters (legacy behavior)', async () => {
+      const legacy = armTracked();
+
+      await manager.setIdle({ owner: { queryGeneration: 5, turnToken: 5 } });
+
+      expect(legacy).toEqual({ ended: true, resolved: true });
+    });
+
+    test('beginTerminalIdle fires onEnd only for the matching owner', async () => {
+      const matching = armTracked({ queryGeneration: 0, turnToken: 0 });
+      const foreign = armTracked({ queryGeneration: 1, turnToken: 0 });
+
+      manager.beginTerminalIdle({ queryGeneration: 0, turnToken: 0 });
+      await Promise.resolve();
+
+      expect(matching.ended).toBe(true);
+      expect(matching.resolved).toBe(false);
+      expect(foreign.ended).toBe(false);
+
+      await manager.setIdle();
+
+      expect(matching.resolved).toBe(true);
+      expect(foreign.resolved).toBe(false);
+    });
+
+    test('releaseIdleWaiters ANDs the episode filter with the owner filter', async () => {
+      const matched = armTracked({ queryGeneration: 0, turnToken: 0 }, 0);
+      const wrongOwner = armTracked({ queryGeneration: 1, turnToken: 0 }, 0);
+      const wrongGen = armTracked({ queryGeneration: 0, turnToken: 0 }, 1);
+
+      manager.releaseIdleWaiters(0, { queryGeneration: 0, turnToken: 0 });
+      await Promise.resolve();
+
+      expect(matched.resolved).toBe(true);
+      expect(wrongOwner.resolved).toBe(false);
+      expect(wrongGen.resolved).toBe(false);
+    });
+
+    test('a suppressed setIdle leaves owned waiters armed', async () => {
+      const waiter = armTracked({ queryGeneration: 0, turnToken: 0 });
+
+      await manager.setIdle({ suppressDeliveryWaiters: true });
+      expect(waiter).toEqual({ ended: false, resolved: false });
+
+      await manager.setIdle();
+      expect(waiter).toEqual({ ended: true, resolved: true });
+    });
+  });
+
+  describe('query-owner idle filter (B5e)', () => {
+    function armOwnedWaiter(owner: { queryGeneration: number; turnToken: number }) {
+      const flags = { ended: false, resolved: false };
+      void manager
+        .waitForIdleTransition(
+          undefined,
+          () => {
+            flags.ended = true;
+          },
+          owner
+        )
+        .promise.then(() => {
+          flags.resolved = true;
+        });
+      return flags;
+    }
+
+    test('noteQueryOwnerGeneration advances the epoch: a stale owned waiter no longer consumes the successor idle', async () => {
+      const staleWaiter = armOwnedWaiter({ queryGeneration: 1, turnToken: 0 });
+      manager.noteQueryOwnerGeneration(2);
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(2) });
+
+      expect(staleWaiter).toEqual({ ended: false, resolved: false });
+      expect(manager.getState().status).toBe('idle');
+    });
+
+    test('a stale owned waiter is spared even by a plain unscoped successor idle', async () => {
+      const staleWaiter = armOwnedWaiter({ queryGeneration: 1, turnToken: 0 });
+      manager.noteQueryOwnerGeneration(2);
+
+      await manager.setIdle();
+
+      expect(staleWaiter.resolved).toBe(false);
+    });
+
+    test('replacement during the idle publication skips the onIdle callback and the successor waiter (B5e pin)', async () => {
+      const onIdleCallback = mock(async () => {});
+      manager.setOnIdleCallback(onIdleCallback);
+      manager.noteQueryOwnerGeneration(3);
+      let releasePublish!: () => void;
+      emitMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePublish = resolve;
+          })
+      );
+
+      const settling = manager.setIdle({ owner: manager.idleOwnerForQuery(3) });
+      manager.noteQueryOwnerGeneration(4);
+      const successorWaiter = armOwnedWaiter(manager.idleOwnerForQuery(4));
+
+      releasePublish();
+      emitMock.mockImplementation(async () => {});
+      await settling;
+
+      expect(onIdleCallback).not.toHaveBeenCalled();
+      expect(successorWaiter.resolved).toBe(false);
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(4) });
+
+      expect(successorWaiter.resolved).toBe(true);
+      expect(onIdleCallback).toHaveBeenCalledTimes(1);
+    });
+
+    test('a stale owner settle preserves the successor processing state and balances the terminal counters', async () => {
+      const onIdleCallback = mock(async () => {});
+      manager.setOnIdleCallback(onIdleCallback);
+      manager.noteQueryOwnerGeneration(1);
+      const staleOwner = manager.idleOwnerForQuery(1);
+      manager.beginTerminalIdle(staleOwner);
+      manager.noteQueryOwnerGeneration(2);
+      await manager.setProcessing('successor-msg');
+
+      await manager.setIdle({ owner: staleOwner });
+
+      expect(manager.getState().status).toBe('processing');
+      expect(onIdleCallback).not.toHaveBeenCalled();
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(2) });
+
+      expect(manager.getState().status).toBe('idle');
+      expect(onIdleCallback).toHaveBeenCalledTimes(1);
+    });
+
+    test('an owner settle consumes only its own generation arm; a stale idle cancels its orphan (B5e)', async () => {
+      manager.noteQueryOwnerGeneration(1);
+      manager.beginTerminalIdle(manager.idleOwnerForQuery(1));
+      manager.noteQueryOwnerGeneration(2);
+      manager.beginTerminalIdle(manager.idleOwnerForQuery(2));
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(2) });
+
+      expect(manager.isTerminalIdlePending()).toBe(true);
+
+      manager.cancelTerminalIdleArm(manager.idleOwnerForQuery(1));
+
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
+
+    test('an owner settle with no arm of its own never consumes a foreign generation arm', async () => {
+      manager.noteQueryOwnerGeneration(2);
+      manager.beginTerminalIdle(manager.idleOwnerForQuery(2));
+      await manager.setProcessing('successor-msg');
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(7) });
+
+      expect(manager.isTerminalIdlePending()).toBe(true);
+      expect(manager.getState().status).toBe('processing');
+      expect(manager.isTerminalIdleInFlight()).toBe(true);
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(2) });
+
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
+  });
+
   describe('onIdleCallback ordering (deferred restart)', () => {
     test('fires the callback BEFORE draining delivery waiters (ownership held through the restart)', async () => {
       let waiterResolvedAtCallback = true;
@@ -398,6 +606,200 @@ describe('ProcessingStateManager', () => {
 
       expect(fires).toBe(1);
       expect(outerResolved).toBe(true);
+    });
+  });
+
+  describe('idle/waiter-release baseline (pre-owner-scoping, B5e)', () => {
+    test('a plain setIdle wakes waiters of every episode generation (unscoped drain)', async () => {
+      const ended: number[] = [];
+      let oldResolved = false;
+      let newResolved = false;
+      void manager
+        .waitForIdleTransition(0, () => ended.push(0))
+        .promise.then(() => {
+          oldResolved = true;
+        });
+      void manager
+        .waitForIdleTransition(5, () => ended.push(5))
+        .promise.then(() => {
+          newResolved = true;
+        });
+
+      await manager.setIdle();
+
+      expect(oldResolved).toBe(true);
+      expect(newResolved).toBe(true);
+      expect(ended).toEqual([0, 5]);
+    });
+
+    test('beginTerminalIdle fires onEnd for waiters of every episode generation', async () => {
+      const ended: number[] = [];
+      let resolved = false;
+      void manager
+        .waitForIdleTransition(0, () => ended.push(0))
+        .promise.then(() => {
+          resolved = true;
+        });
+      manager.waitForIdleTransition(5, () => ended.push(5));
+
+      manager.beginTerminalIdle();
+      await Promise.resolve();
+
+      expect(ended).toEqual([0, 5]);
+      expect(resolved).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(true);
+    });
+
+    test('a waiter armed while the onIdle callback runs is swept by the enclosing setIdle', async () => {
+      const events: string[] = [];
+      let releaseCallback!: () => void;
+      let lateResolved = false;
+      manager.setOnIdleCallback(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseCallback = resolve;
+          })
+      );
+
+      const settle = manager.setIdle();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(typeof releaseCallback).toBe('function');
+      const late = manager.waitForIdleTransition(3, () => events.push('late-onEnd'));
+      void late.promise.then(() => {
+        lateResolved = true;
+      });
+
+      releaseCallback();
+      await settle;
+
+      expect(events).toEqual(['late-onEnd']);
+      expect(lateResolved).toBe(true);
+    });
+
+    test('suppressIdleCallback alone still drains the waiters and publishes the idle state', async () => {
+      const onIdleCallback = mock(async () => {});
+      manager.setOnIdleCallback(onIdleCallback);
+      let resolved = false;
+      let ended = false;
+      void manager
+        .waitForIdleTransition(undefined, () => {
+          ended = true;
+        })
+        .promise.then(() => {
+          resolved = true;
+        });
+
+      await manager.setIdle({ suppressIdleCallback: true });
+
+      expect(resolved).toBe(true);
+      expect(ended).toBe(true);
+      expect(onIdleCallback).not.toHaveBeenCalled();
+      expect(emitMock).toHaveBeenCalled();
+    });
+
+    test('a racing setIdle from outside while the callback is in flight stays fully quiet', async () => {
+      const events: string[] = [];
+      let releaseCallback!: () => void;
+      let resolved = false;
+      manager.setOnIdleCallback(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseCallback = resolve;
+          })
+      );
+      void manager
+        .waitForIdleTransition(undefined, () => events.push('onEnd'))
+        .promise.then(() => {
+          resolved = true;
+        });
+
+      const settle = manager.setIdle();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(events).toEqual(['onEnd']);
+      expect(resolved).toBe(false);
+
+      await manager.setIdle();
+
+      expect(manager.getState().status).toBe('idle');
+      expect(resolved).toBe(false);
+      expect(events).toEqual(['onEnd']);
+
+      releaseCallback();
+      await settle;
+
+      expect(resolved).toBe(true);
+      expect(events).toEqual(['onEnd']);
+    });
+
+    test('the onIdle callback waits for the idle publication to complete', async () => {
+      let statusInCallback: string | undefined;
+      let callbackRan = false;
+      let releasePublish!: () => void;
+      manager.setOnIdleCallback(async () => {
+        callbackRan = true;
+        statusInCallback = manager.getState().status;
+      });
+      await manager.setProcessing('msg-1');
+      emitMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePublish = resolve;
+          })
+      );
+
+      const settle = manager.setIdle();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(typeof releasePublish).toBe('function');
+      expect(callbackRan).toBe(false);
+
+      releasePublish();
+      await settle;
+
+      expect(callbackRan).toBe(true);
+      expect(statusInCallback).toBe('idle');
+    });
+
+    test('releaseIdleWaiters(gen) fires onEnd only for the matching waiter', async () => {
+      const events: number[] = [];
+      let successorEnded = false;
+      void manager.waitForIdleTransition(2, () => events.push(2));
+      manager.waitForIdleTransition(3, () => {
+        successorEnded = true;
+      });
+
+      manager.releaseIdleWaiters(2);
+      await Promise.resolve();
+
+      expect(events).toEqual([2]);
+      expect(successorEnded).toBe(false);
+
+      await manager.setIdle();
+      expect(successorEnded).toBe(true);
+      expect(events).toEqual([2]);
+    });
+
+    test('releaseIdleWaiters is not a terminal idle: no state change, no fence, no re-fire', async () => {
+      const events: string[] = [];
+      await manager.setProcessing('msg-1');
+      emitMock.mockClear();
+      let resolved = false;
+      void manager
+        .waitForIdleTransition(undefined, () => events.push('onEnd'))
+        .promise.then(() => {
+          resolved = true;
+        });
+
+      manager.releaseIdleWaiters();
+      await Promise.resolve();
+
+      expect(resolved).toBe(true);
+      expect(manager.getState().status).toBe('processing');
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      expect(emitMock).not.toHaveBeenCalled();
+
+      await manager.setIdle();
+      expect(events).toEqual(['onEnd']);
     });
   });
 

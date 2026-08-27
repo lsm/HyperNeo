@@ -50,6 +50,7 @@ import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { signalDeliveryConsumed } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
+import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
@@ -105,6 +106,8 @@ export interface SDKMessageHandlerContext {
   ): Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
+
+  getQueryGeneration?(): number;
 
   resetTaskNotificationRequery?(): void;
 
@@ -740,8 +743,9 @@ export class SDKMessageHandler {
     } as unknown as SDKMessage).catch(() => {});
   }
 
-  async handleMessage(message: SDKMessage): Promise<void> {
+  async handleMessage(message: SDKMessage, runnerGeneration?: number): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
+    const invocationGeneration = runnerGeneration ?? this.ctx.getQueryGeneration?.() ?? null;
 
     this.ctx.bumpDeliveryTurnActivity?.();
     this.ctx.reportFirstDeliverySDKResponse?.(message.type);
@@ -908,7 +912,7 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
-      stateManager.beginTerminalIdle();
+      stateManager.beginTerminalIdle(this.invocationIdleOwner(invocationGeneration));
     }
 
     messageHub.event(
@@ -956,9 +960,11 @@ export class SDKMessageHandler {
     }
 
     if (isSDKSessionStateChangedMessage(message)) {
-      this.usesSessionStateChangedTurnEnd = true;
-      if (message.state !== 'idle') {
-        this.expectsSessionStateIdleAfterResult = true;
+      if (!this.isInvocationStale(invocationGeneration)) {
+        this.usesSessionStateChangedTurnEnd = true;
+        if (message.state !== 'idle') {
+          this.expectsSessionStateIdleAfterResult = true;
+        }
       }
     }
 
@@ -977,7 +983,7 @@ export class SDKMessageHandler {
           await this.refreshContextUsage('turn-end');
           enforcedTurnEnd = true;
           await compactingClear;
-          await stateManager.setIdle();
+          await this.settleIdleForInvocation(invocationGeneration);
         } finally {
           releaseTurnEndGate();
         }
@@ -993,7 +999,7 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && isSDKResultSuccess(message)) {
-      await this.handleResultMessage(message, activeMessageId);
+      await this.handleResultMessage(message, activeMessageId, invocationGeneration);
     }
 
     if (isSDKAssistantMessage(message)) {
@@ -1013,7 +1019,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKSessionStateChangedMessage(message)) {
-      await this.handleSessionStateChangedMessage(message);
+      await this.handleSessionStateChangedMessage(message, invocationGeneration);
     }
 
     if (isSDKCompactBoundary(message)) {
@@ -1166,14 +1172,20 @@ export class SDKMessageHandler {
 
   private async handleResultMessage(
     message: SDKMessage,
-    activeMessageId: string | null
+    activeMessageId: string | null,
+    invocationGeneration: number | null
   ): Promise<void> {
     if (!isSDKResultSuccess(message)) return;
 
     const confirmsArmedClear = this.matchesArmedClearResult(message);
 
     try {
-      await this.processResultMessage(message, activeMessageId, confirmsArmedClear);
+      await this.processResultMessage(
+        message,
+        activeMessageId,
+        confirmsArmedClear,
+        invocationGeneration
+      );
     } catch (error) {
       if (confirmsArmedClear) {
         this.clearIdleSuppression();
@@ -1185,7 +1197,8 @@ export class SDKMessageHandler {
   private async processResultMessage(
     message: SDKMessage,
     activeMessageId: string | null,
-    confirmsArmedClear: boolean
+    confirmsArmedClear: boolean,
+    invocationGeneration: number | null
   ): Promise<void> {
     if (!isSDKResultSuccess(message)) return;
 
@@ -1223,7 +1236,7 @@ export class SDKMessageHandler {
       !this.usesSessionStateChangedTurnEnd &&
       !this.expectsSessionStateIdleAfterResult
     ) {
-      await this.finishTurn(this.lastResultWasSuccess !== false);
+      await this.finishTurn(this.lastResultWasSuccess !== false, invocationGeneration);
     }
     if (confirmsArmedClear) {
       if (this.usesSessionStateChangedTurnEnd && this.expectsSessionStateIdleAfterResult) {
@@ -1283,7 +1296,41 @@ export class SDKMessageHandler {
     };
   }
 
-  private async finishTurn(allowQueueReplay = true): Promise<void> {
+  private isInvocationStale(invocationGeneration: number | null): boolean {
+    return (
+      invocationGeneration != null &&
+      this.ctx.getQueryGeneration != null &&
+      this.ctx.getQueryGeneration() !== invocationGeneration
+    );
+  }
+
+  private invocationIdleOwner(invocationGeneration: number | null): IdleOwnerScope | undefined {
+    if (invocationGeneration === null) return undefined;
+    return this.ctx.stateManager.idleOwnerForQuery(invocationGeneration);
+  }
+
+  private async settleIdleForInvocation(
+    invocationGeneration: number | null,
+    opts?: {
+      suppressDeliveryWaiters?: boolean;
+      suppressIdlePublish?: boolean;
+      suppressIdleCallback?: boolean;
+    }
+  ): Promise<void> {
+    const owner = this.invocationIdleOwner(invocationGeneration);
+    if (owner) {
+      await this.ctx.stateManager.setIdle({ ...opts, owner });
+    } else if (opts) {
+      await this.ctx.stateManager.setIdle(opts);
+    } else {
+      await this.ctx.stateManager.setIdle();
+    }
+  }
+
+  private async finishTurn(
+    allowQueueReplay = true,
+    invocationGeneration: number | null = null
+  ): Promise<void> {
     const { session, internalEventBus, stateManager } = this.ctx;
 
     if (stateManager.getState().status === 'rate_limit_cooldown') {
@@ -1296,9 +1343,15 @@ export class SDKMessageHandler {
       return;
     }
 
-    await stateManager.setIdle();
+    await this.settleIdleForInvocation(invocationGeneration);
 
     if (allowQueueReplay && session.config.queryMode !== 'manual') {
+      if (this.isInvocationStale(invocationGeneration)) {
+        this.logger.info(
+          'Skipping deferred replay dispatch: the turn was superseded at the idle settle.'
+        );
+        return;
+      }
       try {
         await internalEventBus.publish('query.trigger', { sessionId: session.id });
       } catch (error) {
@@ -1307,22 +1360,34 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleSessionStateChangedMessage(message: SDKMessage): Promise<void> {
+  private async handleSessionStateChangedMessage(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<void> {
     if (!isSDKSessionStateChangedMessage(message)) return;
+    if (this.isInvocationStale(invocationGeneration)) {
+      this.logger.warn('Ignoring session-state event from a replaced query.');
+      const staleOwner = this.invocationIdleOwner(invocationGeneration);
+      if (staleOwner) {
+        this.ctx.stateManager.cancelTerminalIdleArm(staleOwner);
+      }
+      return;
+    }
 
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
       this.resetThinkingTokenTracking();
       const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
       if (clearTurnPending) {
-        await this.ctx.stateManager.setIdle({
+        await this.settleIdleForInvocation(invocationGeneration, {
           suppressDeliveryWaiters: true,
           suppressIdlePublish: true,
           suppressIdleCallback: true,
         });
       } else {
         const allowQueueReplay = this.lastResultWasSuccess !== false;
-        await this.finishTurn(allowQueueReplay);
+        await this.finishTurn(allowQueueReplay, invocationGeneration);
+        if (this.isInvocationStale(invocationGeneration)) return;
         this.usesSessionStateChangedTurnEnd = false;
         this.expectsSessionStateIdleAfterResult = false;
         this.lastResultWasSuccess = null;

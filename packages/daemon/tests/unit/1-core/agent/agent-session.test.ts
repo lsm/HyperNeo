@@ -3091,6 +3091,86 @@ describe('AgentSession', () => {
       }
     });
 
+    it('executeRateLimitAutoRetry quiet path: a superseded episode releases only its own waiters', async () => {
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        isSuperseded: mock(() => true),
+      };
+      const stateManager = agentSession.stateManager;
+      stateManager.setOnIdleCallback(async () => {});
+      let episodeEnded = false;
+      let episodeResolved = false;
+      let successorResolved = false;
+      void stateManager
+        .waitForIdleTransition(7, () => {
+          episodeEnded = true;
+        })
+        .promise.then(() => {
+          episodeResolved = true;
+        });
+      void stateManager
+        .waitForIdleTransition(9, () => {})
+        .promise.then(() => {
+          successorResolved = true;
+        });
+
+      const result = await (
+        agentSession as unknown as {
+          executeRateLimitAutoRetry: (
+            msg: { uuid: string; content: string } | null,
+            gen?: number
+          ) => Promise<boolean>;
+        }
+      ).executeRateLimitAutoRetry({ uuid: 'msg-1', content: 'hi' }, 7);
+
+      expect(result).toBe(false);
+      expect(episodeResolved).toBe(true);
+      expect(episodeEnded).toBe(true);
+      expect(successorResolved).toBe(false);
+      expect(stateManager.getState().status).toBe('idle');
+      expect(stateManager.isTerminalIdleInFlight()).toBe(false);
+    });
+
+    it('executeRateLimitAutoRetry without a user message settles with a loud unscoped idle', async () => {
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        isSuperseded: mock(() => true),
+      };
+      const stateManager = agentSession.stateManager;
+      let idleCallbackRan = false;
+      stateManager.setOnIdleCallback(async () => {
+        idleCallbackRan = true;
+      });
+      await stateManager.setProcessing('msg-no-message');
+      let aResolved = false;
+      let bResolved = false;
+      void stateManager
+        .waitForIdleTransition(3, () => {})
+        .promise.then(() => {
+          aResolved = true;
+        });
+      void stateManager
+        .waitForIdleTransition(4, () => {})
+        .promise.then(() => {
+          bResolved = true;
+        });
+
+      const result = await (
+        agentSession as unknown as {
+          executeRateLimitAutoRetry: (
+            msg: { uuid: string; content: string } | null,
+            gen?: number
+          ) => Promise<boolean>;
+        }
+      ).executeRateLimitAutoRetry(null, 7);
+
+      expect(result).toBe(false);
+      expect(aResolved).toBe(true);
+      expect(bResolved).toBe(true);
+      expect(stateManager.getState().status).toBe('idle');
+      expect(idleCallbackRan).toBe(true);
+    });
+
     it('only clears the timer for a recovery re-enqueue (generation provided)', async () => {
       const cancelSpy = mock(() => {});
       const clearSpy = mock(() => {});
@@ -3242,7 +3322,65 @@ describe('AgentSession', () => {
       const message = { type: 'assistant', message: { content: [] } };
       await agentSession.onSDKMessage(message as never);
 
-      expect(handleMessageSpy).toHaveBeenCalledWith(message);
+      expect(handleMessageSpy).toHaveBeenCalledWith(message, agentSession.getQueryGeneration());
+    });
+
+    it('forwards the runner generation so a replaced query cannot consume the successor idle', async () => {
+      const handleMessageSpy = mock(async () => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).messageHandler = {
+        handleMessage: handleMessageSpy,
+      };
+
+      const message = { type: 'assistant', message: { content: [] } };
+      await agentSession.onSDKMessage(message as never, undefined, 7);
+
+      expect(handleMessageSpy).toHaveBeenCalledWith(message, 7);
+    });
+
+    it('a stale non-idle session-state event does not park the task-notification requery flag', async () => {
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).messageHandler = {
+        handleMessage: mock(async () => {}),
+      };
+      agentSession.incrementQueryGeneration();
+      const busy = {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+      };
+      const flag = () =>
+        (agentSession as unknown as { taskNotificationRequeryAwaitingSdkIdle: boolean })
+          .taskNotificationRequeryAwaitingSdkIdle;
+
+      await agentSession.onSDKMessage(
+        busy as never,
+        undefined,
+        agentSession.getQueryGeneration() - 1
+      );
+      expect(flag()).toBe(false);
+
+      await agentSession.onSDKMessage(busy as never, undefined, agentSession.getQueryGeneration());
+      expect(flag()).toBe(true);
+    });
+
+    it('incrementQueryGeneration notes the PSM query-owner epoch: a replaced query waiter no longer consumes the successor idle', async () => {
+      const stateManager = agentSession.stateManager;
+      const replacedOwner = stateManager.idleOwnerForQuery(agentSession.getQueryGeneration());
+      let staleResolved = false;
+      void stateManager
+        .waitForIdleTransition(undefined, undefined, replacedOwner)
+        .promise.then(() => {
+          staleResolved = true;
+        });
+
+      agentSession.incrementQueryGeneration();
+
+      await stateManager.setIdle({ owner: stateManager.idleOwnerForQuery(1) });
+      expect(staleResolved).toBe(false);
+
+      await stateManager.setIdle({ owner: replacedOwner });
+      expect(staleResolved).toBe(true);
     });
   });
 

@@ -249,7 +249,21 @@ export class SessionLifecycle {
           : undefined,
     };
 
-    this.db.createSession(session);
+    try {
+      this.db.createSession(session, {
+        enforceWorkspaceOwnership: true,
+        ownershipPath: baseWorkspacePath ?? undefined,
+      });
+    } catch (error) {
+      if (
+        worktreeMetadata &&
+        error instanceof Error &&
+        error.message.includes('is not registered to space')
+      ) {
+        await this.discardWorktree(worktreeMetadata);
+      }
+      throw error;
+    }
 
     const agentSession = this.createAgentSession(session);
     this.sessionCache.set(sessionId, agentSession);
@@ -286,6 +300,17 @@ export class SessionLifecycle {
         error
       );
       return undefined;
+    }
+  }
+
+  private async discardWorktree(worktree: WorktreeMetadata): Promise<void> {
+    try {
+      await this.worktreeManager.removeWorktree(worktree, true);
+    } catch (removeError) {
+      this.logger.error(
+        '[SessionLifecycle] Failed to remove orphan worktree after admission failure:',
+        removeError
+      );
     }
   }
 
@@ -401,6 +426,13 @@ export class SessionLifecycle {
       throw new Error('Workspace path cannot be empty');
     }
 
+    const spaceId = session.context?.spaceId;
+    if (spaceId && !this.db.isWorkspaceRegisteredToSpace(spaceId, normalizedPath)) {
+      throw new Error(
+        `Workspace ${normalizedPath} is not registered to space ${spaceId}; setWorkspace blocked`
+      );
+    }
+
     let worktreeMetadata: WorktreeMetadata | undefined;
     let currentBranch: string | undefined;
 
@@ -428,6 +460,15 @@ export class SessionLifecycle {
     }
 
     const latestSession = agentSession.getSessionData();
+
+    if (spaceId && !this.db.isWorkspaceRegisteredToSpace(spaceId, normalizedPath)) {
+      if (worktreeMetadata) {
+        await this.discardWorktree(worktreeMetadata);
+      }
+      throw new Error(
+        `Workspace ${normalizedPath} is no longer registered to space ${spaceId}; setWorkspace blocked`
+      );
+    }
 
     const updatedSession: Session = {
       ...latestSession,

@@ -5,6 +5,7 @@ import type {
   SpaceWorkspaceRepository,
 } from '../../../storage/repositories/space-workspace-repository.ts';
 import {
+  checkWorkspaceRegistryGates,
   nodeWorkspaceValidationIo,
   validateWorkspaceRegistration,
   type WorkspaceRegistryClaim,
@@ -18,18 +19,30 @@ export type WorkspaceRegistryReader = Pick<SpaceRepository, 'getSpace' | 'listSp
 
 export type WorkspaceStore = Pick<
   SpaceWorkspaceRepository,
-  'create' | 'getById' | 'listBySpace' | 'delete'
+  | 'create'
+  | 'createUnclaimed'
+  | 'findOwnerByPath'
+  | 'getById'
+  | 'listBySpace'
+  | 'updateLabel'
+  | 'delete'
 >;
 
 export interface WorkspaceSessionReferences {
   countActiveSessionsByWorkspacePath(spaceId: string, workspacePath: string): number;
 }
 
+export interface WorkspaceTaskReferences {
+  countActiveTasksByWorkspacePath(spaceId: string, workspacePath: string): number;
+}
+
 export interface SpaceWorkspaceManagerDeps {
   spaces: WorkspaceRegistryReader;
   workspaces: WorkspaceStore;
   sessionReferences: WorkspaceSessionReferences;
+  taskReferences: WorkspaceTaskReferences;
   io?: WorkspaceValidationIo;
+  transaction?: <T>(fn: () => T) => T;
 }
 
 export class WorkspaceRegistrationError extends Error {
@@ -46,7 +59,7 @@ export class WorkspaceRegistrationError extends Error {
 export class WorkspaceRemovalBlockedError extends Error {
   constructor(
     message: string,
-    readonly reason: 'primary' | 'active_sessions'
+    readonly reason: 'primary' | 'active_sessions' | 'active_tasks'
   ) {
     super(message);
     this.name = 'WorkspaceRemovalBlockedError';
@@ -86,6 +99,7 @@ interface RegisterWorkspaceCtx {
   spaces: WorkspaceRegistryReader;
   workspaces: WorkspaceStore;
   io: WorkspaceValidationIo;
+  transaction?: <T>(fn: () => T) => T;
   spaceId: string;
   rawPath: string;
   label?: string;
@@ -126,13 +140,43 @@ function registerEnsureAccepted(ctx: RegisterWorkspaceCtx): RegisterWorkspaceCtx
 function registerInsertWorkspace(ctx: RegisterWorkspaceCtx): RegisterWorkspaceCtx {
   const verdict = ctx.verdict!;
   if (!verdict.accepted) return ctx;
-  const record = ctx.workspaces.create({
-    spaceId: ctx.spaceId,
-    path: verdict.canonicalPath,
-    label: ctx.label,
-    isPrimary: false,
-  });
-  return { ...ctx, record };
+  const insert = (): RegisterWorkspaceCtx => {
+    const recheck = checkWorkspaceRegistryGates(
+      buildRegistrySnapshot(ctx.spaces, ctx.workspaces, ctx.spaceId),
+      { spaceId: ctx.spaceId, canonicalPath: verdict.canonicalPath }
+    );
+    if (!recheck.accepted) {
+      return {
+        ...ctx,
+        error: new WorkspaceRegistrationError(recheck.message, recheck.reason, recheck),
+      };
+    }
+    const record = ctx.workspaces.createUnclaimed({
+      spaceId: ctx.spaceId,
+      path: verdict.canonicalPath,
+      label: ctx.label,
+      isPrimary: false,
+    });
+    if (record) return { ...ctx, record };
+    const owner = ctx.workspaces.findOwnerByPath(verdict.canonicalPath);
+    const ownClaim = owner?.spaceId === ctx.spaceId;
+    const reason = ownClaim ? 'duplicate_of_registered_workspace' : 'path_claimed_by_another_space';
+    const message = ownClaim
+      ? `Workspace path is already registered to this space: ${verdict.canonicalPath}`
+      : `Workspace path is already claimed by space ${owner?.spaceId}: ${verdict.canonicalPath}`;
+    return {
+      ...ctx,
+      error: new WorkspaceRegistrationError(message, reason, {
+        accepted: false,
+        reason,
+        message,
+        canonicalPath: verdict.canonicalPath,
+        conflictPath: owner?.path,
+        conflictSpaceId: owner?.spaceId,
+      }),
+    };
+  };
+  return ctx.transaction ? ctx.transaction(insert) : insert();
 }
 
 const runRegisterWorkspace = (
@@ -153,6 +197,7 @@ const runRegisterWorkspace = (
 interface RemoveWorkspaceCtx {
   workspaces: WorkspaceStore;
   sessionReferences: WorkspaceSessionReferences;
+  taskReferences: WorkspaceTaskReferences;
   spaceId: string;
   workspaceId: string;
   workspace?: SpaceWorkspaceRecord;
@@ -193,6 +238,22 @@ function removeGuardActiveSessions(ctx: RemoveWorkspaceCtx): RemoveWorkspaceCtx 
   };
 }
 
+function removeGuardActiveTasks(ctx: RemoveWorkspaceCtx): RemoveWorkspaceCtx {
+  const workspace = ctx.workspace!;
+  const activeTaskCount = ctx.taskReferences.countActiveTasksByWorkspacePath(
+    ctx.spaceId,
+    workspace.path
+  );
+  if (activeTaskCount === 0) return ctx;
+  return {
+    ...ctx,
+    blocked: new WorkspaceRemovalBlockedError(
+      `Cannot remove workspace ${ctx.workspaceId} while ${activeTaskCount} active task(s) reference it`,
+      'active_tasks'
+    ),
+  };
+}
+
 function removeDeleteWorkspace(ctx: RemoveWorkspaceCtx): RemoveWorkspaceCtx {
   return { ...ctx, removed: ctx.workspaces.delete(ctx.spaceId, ctx.workspaceId) };
 }
@@ -209,6 +270,8 @@ const runRemoveWorkspace = (
   .pipe(removeGuardPrimary, 'ctx', 'ctx')
   .pipe('!hasBlocked', 'ctx')
   .pipe(removeGuardActiveSessions, 'ctx', 'ctx')
+  .pipe('!hasBlocked', 'ctx')
+  .pipe(removeGuardActiveTasks, 'ctx', 'ctx')
   .pipe('!hasBlocked', 'ctx')
   .pipe(removeDeleteWorkspace, 'ctx', 'ctx')
   .end('ctx') as (input: RemoveWorkspaceCtx) => RemoveWorkspaceCtx;
@@ -241,6 +304,91 @@ const runListWorkspaces = (
   .pipe(listWorkspaceRows, 'ctx', 'ctx')
   .end('ctx') as (input: ListWorkspacesCtx) => ListWorkspacesCtx;
 
+interface ResolveWorkspaceCtx {
+  spaces: WorkspaceRegistryReader;
+  workspaces: WorkspaceStore;
+  io: WorkspaceValidationIo;
+  spaceId: string;
+  rawPath: string;
+  snapshot?: WorkspaceRegistrySnapshot;
+  canonicalPath?: string;
+  registeredPath?: string;
+  error?: Error;
+}
+
+function resolveLoadSpace(ctx: ResolveWorkspaceCtx): ResolveWorkspaceCtx {
+  if (ctx.spaces.getSpace(ctx.spaceId)) return ctx;
+  return { ...ctx, error: new Error(`Space not found: ${ctx.spaceId}`) };
+}
+
+async function resolveCanonicalizePath(ctx: ResolveWorkspaceCtx): Promise<ResolveWorkspaceCtx> {
+  try {
+    return { ...ctx, canonicalPath: await ctx.io.realpath(ctx.rawPath) };
+  } catch {
+    return { ...ctx, error: new Error(`Workspace path does not exist: ${ctx.rawPath}`) };
+  }
+}
+
+function resolveBuildSnapshot(ctx: ResolveWorkspaceCtx): ResolveWorkspaceCtx {
+  return { ...ctx, snapshot: buildRegistrySnapshot(ctx.spaces, ctx.workspaces, ctx.spaceId) };
+}
+
+function resolveMatchRegisteredPath(ctx: ResolveWorkspaceCtx): ResolveWorkspaceCtx {
+  const claim = ctx.snapshot!.claims.find(
+    (c) => c.spaceId === ctx.spaceId && c.path === ctx.canonicalPath
+  );
+  if (claim) return { ...ctx, registeredPath: claim.path };
+  return { ...ctx, error: new Error(`Workspace path is not registered to space: ${ctx.rawPath}`) };
+}
+
+const runResolveRegisteredWorkspace = (
+  superpipe({
+    hasError: (ctx: ResolveWorkspaceCtx) => ctx.error !== undefined,
+  })('workspace-resolve-registered') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(resolveLoadSpace, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(resolveCanonicalizePath, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(resolveBuildSnapshot, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(resolveMatchRegisteredPath, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: ResolveWorkspaceCtx) => Promise<ResolveWorkspaceCtx>;
+
+interface UpdateLabelCtx {
+  workspaces: WorkspaceStore;
+  spaceId: string;
+  workspaceId: string;
+  label: string;
+  workspace?: SpaceWorkspaceRecord;
+  updated: boolean;
+}
+
+function updateLabelLoadWorkspace(ctx: UpdateLabelCtx): UpdateLabelCtx {
+  const workspace = ctx.workspaces.getById(ctx.workspaceId);
+  if (!workspace || workspace.spaceId !== ctx.spaceId) return ctx;
+  return { ...ctx, workspace };
+}
+
+function updateLabelWrite(ctx: UpdateLabelCtx): UpdateLabelCtx {
+  return {
+    ...ctx,
+    updated: ctx.workspaces.updateLabel(ctx.spaceId, ctx.workspaceId, ctx.label),
+  };
+}
+
+const runUpdateWorkspaceLabel = (
+  superpipe({
+    workspaceMissing: (ctx: UpdateLabelCtx) => ctx.workspace === undefined,
+  })('workspace-update-label') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(updateLabelLoadWorkspace, 'ctx', 'ctx')
+  .pipe('!workspaceMissing', 'ctx')
+  .pipe(updateLabelWrite, 'ctx', 'ctx')
+  .end('ctx') as (input: UpdateLabelCtx) => UpdateLabelCtx;
+
 export class SpaceWorkspaceManager {
   constructor(private readonly deps: SpaceWorkspaceManagerDeps) {}
 
@@ -253,6 +401,7 @@ export class SpaceWorkspaceManager {
       spaces: this.deps.spaces,
       workspaces: this.deps.workspaces,
       io: this.deps.io ?? nodeWorkspaceValidationIo,
+      transaction: this.deps.transaction,
       spaceId,
       rawPath,
       label,
@@ -266,6 +415,7 @@ export class SpaceWorkspaceManager {
     const result = runRemoveWorkspace({
       workspaces: this.deps.workspaces,
       sessionReferences: this.deps.sessionReferences,
+      taskReferences: this.deps.taskReferences,
       spaceId,
       workspaceId,
       removed: false,
@@ -282,5 +432,31 @@ export class SpaceWorkspaceManager {
     });
     if (result.error) throw result.error;
     return result.rows ?? [];
+  }
+
+  async resolveRegisteredWorkspacePath(spaceId: string, rawPath: string): Promise<string> {
+    const result = await runResolveRegisteredWorkspace({
+      spaces: this.deps.spaces,
+      workspaces: this.deps.workspaces,
+      io: this.deps.io ?? nodeWorkspaceValidationIo,
+      spaceId,
+      rawPath,
+    });
+    if (result.error) throw result.error;
+    if (!result.registeredPath) {
+      throw new Error(`Workspace path is not registered to space: ${rawPath}`);
+    }
+    return result.registeredPath;
+  }
+
+  updateWorkspaceLabel(spaceId: string, workspaceId: string, label: string): boolean {
+    const result = runUpdateWorkspaceLabel({
+      workspaces: this.deps.workspaces,
+      spaceId,
+      workspaceId,
+      label,
+      updated: false,
+    });
+    return result.updated;
   }
 }
