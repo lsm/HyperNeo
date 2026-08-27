@@ -74,6 +74,7 @@ vi.mock('../../ui/Button', () => ({
 }));
 
 import { SpaceSettings } from '../SpaceSettings';
+import { connectionState } from '../../../lib/state';
 import type { Space, SpaceWorkspace } from '@hyperneo/shared';
 
 function makeSpace(overrides: Partial<Space> = {}): Space {
@@ -108,6 +109,7 @@ function makeWorkspace(overrides: Partial<SpaceWorkspace> = {}): SpaceWorkspace 
 }
 
 function stubHubRequests(workspaces: SpaceWorkspace[] = []) {
+  connectionState.value = 'connected';
   mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
   mockRequest.mockImplementation((method: string) => {
     if (method === 'space.workspace.list') return Promise.resolve(workspaces);
@@ -123,6 +125,7 @@ beforeEach(() => {
 describe('SpaceSettings', () => {
   beforeEach(() => {
     cleanup();
+    connectionState.value = 'connecting';
     mockRequest.mockReset();
     mockGetHubIfConnected.mockReset();
     mockNavigateToSpaces.mockReset();
@@ -181,7 +184,7 @@ describe('SpaceSettings', () => {
     });
 
     it('renders the RPC error inline when the list fails to load', async () => {
-      mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+      stubHubRequests();
       mockRequest.mockRejectedValue(new Error('registry offline'));
       const { findByText } = render(<SpaceSettings space={makeSpace()} />);
       expect(await findByText('Failed to load workspaces: registry offline')).toBeTruthy();
@@ -192,6 +195,28 @@ describe('SpaceSettings', () => {
       expect((await findByTestId('workspaces-error')).textContent).toBe(
         'Failed to load workspaces: Not connected to server'
       );
+    });
+
+    it('reloads the workspaces after the connection recovers', async () => {
+      connectionState.value = 'connecting';
+      mockGetHubIfConnected.mockReturnValue(null);
+      const { findByTestId, findByText } = render(<SpaceSettings space={makeSpace()} />);
+      expect(await findByTestId('workspaces-error')).toBeTruthy();
+
+      stubHubRequests([makeWorkspace()]);
+      expect(await findByText('Main repo')).toBeTruthy();
+    });
+
+    it('keeps the loaded list without an error when the connection drops', async () => {
+      stubHubRequests([makeWorkspace()]);
+      const { findByText, queryByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      expect(await findByText('Main repo')).toBeTruthy();
+
+      connectionState.value = 'connecting';
+      mockGetHubIfConnected.mockReturnValue(null);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(queryByTestId('workspaces-error')).toBeNull();
+      expect(queryByTestId('workspace-item')).toBeTruthy();
     });
   });
 
@@ -331,7 +356,7 @@ describe('SpaceSettings', () => {
     const archivePromise = new Promise<{}>((res) => {
       resolveArchive = () => res({});
     });
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    stubHubRequests();
     mockRequest.mockImplementation((method: string) =>
       method === 'space.workspace.list' ? Promise.resolve([]) : archivePromise
     );
@@ -354,7 +379,7 @@ describe('SpaceSettings', () => {
     const deletePromise = new Promise<{}>((res) => {
       resolveDelete = () => res({});
     });
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    stubHubRequests();
     mockRequest.mockImplementation((method: string) =>
       method === 'space.workspace.list' ? Promise.resolve([]) : deletePromise
     );
@@ -472,8 +497,7 @@ describe('SpaceSettings', () => {
   });
 
   it('calls spaceExport.bundle when Export Bundle is clicked', async () => {
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockResolvedValue({ bundle: { version: '1', spaces: [] } });
+    stubHubRequests();
 
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
@@ -500,8 +524,7 @@ describe('SpaceSettings', () => {
     });
 
     it('includes maxConcurrentTasks in save payload', async () => {
-      mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-      mockRequest.mockResolvedValue({});
+      stubHubRequests();
 
       const space = makeSpace({ maxConcurrentTasks: 1 });
       const { getByTestId, getByText } = render(<SpaceSettings space={space} />);

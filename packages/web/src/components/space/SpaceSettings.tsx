@@ -9,7 +9,7 @@ import type {
 } from '@hyperneo/shared';
 import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
-import { globalSettings } from '../../lib/state.ts';
+import { globalSettings, connectionState } from '../../lib/state.ts';
 import { spaceStore } from '../../lib/space-store.ts';
 import { toast } from '../../lib/toast.ts';
 import { cn } from '../../lib/utils.ts';
@@ -75,9 +75,14 @@ function workspaceTitle(workspace: SpaceWorkspace): string {
 function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
   const [workspaces, setWorkspaces] = useState<SpaceWorkspace[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const connected = connectionState.value === 'connected';
 
   useEffect(() => {
     let cancelled = false;
+    if (!connected) {
+      setError(workspaces === null ? 'Failed to load workspaces: Not connected to server' : null);
+      return;
+    }
     const hub = connectionManager.getHubIfConnected();
     if (!hub) {
       setError('Failed to load workspaces: Not connected to server');
@@ -87,6 +92,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
       .request<SpaceWorkspace[]>('space.workspace.list', { spaceId })
       .then((list) => {
         if (cancelled) return;
+        setError(null);
         setWorkspaces(list);
       })
       .catch((err) => {
@@ -96,7 +102,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [spaceId]);
+  }, [spaceId, connected]);
 
   if (error) {
     return (
