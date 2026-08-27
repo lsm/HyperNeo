@@ -737,7 +737,7 @@ export class MessageQueue {
       await this.finishSurvivorTeardownWithRestart(opts);
       return true;
     }
-    let unconfirmedSurvivor = false;
+    let needsRestart = false;
     for (const uuid of survivors) {
       try {
         const cancelled = await Promise.race([
@@ -750,46 +750,44 @@ export class MessageQueue {
           }),
         ]);
         if (!cancelled) {
-          unconfirmedSurvivor = true;
+          needsRestart = true;
           opts.logger.warn(
             `cancel_async_message did not confirm cancellation of ${uuid} for ` +
               `session ${opts.sessionId}; restarting the query so the survivor cannot ` +
               `run ahead of the pending compaction`
           );
-          break;
-        }
-        if (this.revokeDeliveredCompaction(uuid)) {
-          opts.logger.info(
-            `cancelled still-queued internal compaction ${uuid} for session ` +
-              `${opts.sessionId}; a replacement compaction is enqueued after survivor ` +
-              `processing`
-          );
-          continue;
-        }
-        const content = this.getSentPromptContent(uuid);
-        if (content !== undefined) {
-          this.forgetSentPrompt(uuid);
-          void this.enqueueWithId(uuid, content, false, { durable: true }).catch((error) => {
-            opts.logger.warn(
-              `requeue of cancelled survivor ${uuid} failed for session ${opts.sessionId}:`,
-              error
-            );
-          });
-          opts.logger.info(
-            `requeued cancelled survivor ${uuid} for session ${opts.sessionId} ` +
-              `to run after the pending compaction`
-          );
         }
       } catch (error) {
-        unconfirmedSurvivor = true;
+        needsRestart = true;
         opts.logger.warn(
           `cancel_async_message failed for ${uuid} on session ${opts.sessionId}:`,
           error
         );
-        break;
+      }
+      if (this.revokeDeliveredCompaction(uuid)) {
+        opts.logger.info(
+          `cancelled still-queued internal compaction ${uuid} for session ` +
+            `${opts.sessionId}; a replacement compaction is enqueued after survivor ` +
+            `processing`
+        );
+        continue;
+      }
+      const content = this.getSentPromptContent(uuid);
+      if (content !== undefined) {
+        this.forgetSentPrompt(uuid);
+        void this.enqueueWithId(uuid, content, false, { durable: true }).catch((error) => {
+          opts.logger.warn(
+            `requeue of cancelled survivor ${uuid} failed for session ${opts.sessionId}:`,
+            error
+          );
+        });
+        opts.logger.info(
+          `requeued cancelled survivor ${uuid} for session ${opts.sessionId} ` +
+            `to run after the pending compaction`
+        );
       }
     }
-    if (unconfirmedSurvivor) {
+    if (needsRestart) {
       await this.finishSurvivorTeardownWithRestart(opts);
       return true;
     }

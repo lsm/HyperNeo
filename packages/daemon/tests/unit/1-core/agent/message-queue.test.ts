@@ -377,7 +377,7 @@ describe('MessageQueue', () => {
 
     it('size() counts messages shifted out and yielded but not yet acknowledged', async () => {
       queue.start();
-      queue.enqueueWithId('msg-inflight-size', 'Hello');
+      void queue.enqueueWithId('msg-inflight-size', 'Hello').catch(() => {});
       const generator = queue.messageGenerator(testSessionId);
       await generator.next();
       expect(queue.size()).toBe(1);
@@ -1769,6 +1769,33 @@ describe('MessageQueue', () => {
 
       expect(onResumeClear).toHaveBeenCalledTimes(1);
       expect(clearCompactionCooldown).toHaveBeenCalledTimes(1);
+      q.stop();
+    });
+
+    it('requeues survivors that follow an unconfirmed cancellation before restarting', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sentA = q.enqueueWithId('uuid-a', 'prompt-a', false, { durable: true });
+      const sentB = q.enqueueWithId('uuid-b', 'prompt-b', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      (await generator.next()).value.onSent();
+      await Promise.all([sentA, sentB]);
+
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const restartMock = mock(async () => {});
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-a', 'uuid-b'] }),
+        cancelAsyncMessage: async (uuid: string) => uuid === 'uuid-b',
+        restart: restartMock,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-a', 'prompt-a', false, { durable: true });
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-b', 'prompt-b', false, { durable: true });
+      expect(restartMock).toHaveBeenCalledTimes(1);
       q.stop();
     });
 
