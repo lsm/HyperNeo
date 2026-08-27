@@ -63,7 +63,9 @@ export interface RenderPendingDigestDeps {
   isSpacePaused(workflowRunId: string): boolean;
   listUserMessagesByStatus(
     sessionId: string,
-    status: LegacyDurableScanStatus | 'consumed'
+    status: LegacyDurableScanStatus | 'consumed',
+    limit: number,
+    direction: 'asc' | 'desc'
   ): SDKUserMessage[];
   listUserMessagesByUuidPrefix(
     sessionId: string,
@@ -168,6 +170,8 @@ export const TURN_END_DIGEST_PENDING_ROW_CAP = 200;
 
 export const TURN_END_DIGEST_SCAN_ROW_CAP = TURN_END_DIGEST_PENDING_ROW_CAP * 4;
 
+export const TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP = TURN_END_DIGEST_SCAN_ROW_CAP * 2;
+
 export const LEGACY_DURABLE_SCAN_STATUSES = ['deferred', 'enqueued', 'submitted'] as const;
 
 function eventRecordEssence(record: ExternalEventRecord): ExternalEventEssenceEntry | null {
@@ -265,7 +269,14 @@ function durableRowEventIds(rows: SDKUserMessage[]): string[] {
 
 function collectConsumedEvidence(ctx: RenderPendingDigestCtx): Set<string> {
   const ids = new Set(
-    durableRowEventIds(ctx.deps.listUserMessagesByStatus(ctx.sessionId, 'consumed'))
+    durableRowEventIds(
+      ctx.deps.listUserMessagesByStatus(
+        ctx.sessionId,
+        'consumed',
+        TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
+        'desc'
+      )
+    )
   );
   for (const row of ctx.deps.listUserMessagesByUuidPrefix(
     ctx.sessionId,
@@ -284,12 +295,26 @@ function collectConsumedEvidence(ctx: RenderPendingDigestCtx): Set<string> {
 export function reconcileDurable(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
   const legacyDurableEventIds = new Set<string>();
   for (const status of LEGACY_DURABLE_SCAN_STATUSES) {
-    const rows = ctx.deps.listUserMessagesByStatus(ctx.sessionId, status);
+    const rows = ctx.deps.listUserMessagesByStatus(
+      ctx.sessionId,
+      status,
+      TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
+      'desc'
+    );
     for (const eventId of durableRowEventIds(rows)) legacyDurableEventIds.add(eventId);
   }
   const consumedDurableEventIds =
     ctx.consumedDurableEventIds ??
-    new Set(durableRowEventIds(ctx.deps.listUserMessagesByStatus(ctx.sessionId, 'consumed')));
+    new Set(
+      durableRowEventIds(
+        ctx.deps.listUserMessagesByStatus(
+          ctx.sessionId,
+          'consumed',
+          TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
+          'desc'
+        )
+      )
+    );
   const digestMembershipRows: Array<{ message: SDKUserMessage; eventIds: Set<string> }> = [];
   const digestMembershipEventIds = new Set<string>();
   for (const row of ctx.deps.listUserMessagesByUuidPrefix(

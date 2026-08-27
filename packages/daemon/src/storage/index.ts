@@ -297,12 +297,13 @@ export class Database {
   getUserMessagesByStatus(
     sessionId: string,
     status: SendStatus,
-    limit?: number
+    limit?: number,
+    direction?: 'asc' | 'desc'
   ): {
     messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
     total: number;
   } {
-    return this.sdkMessageRepo.getUserMessagesByStatus(sessionId, status, limit);
+    return this.sdkMessageRepo.getUserMessagesByStatus(sessionId, status, limit, direction);
   }
 
   getMessageByStatusAndUuid(
