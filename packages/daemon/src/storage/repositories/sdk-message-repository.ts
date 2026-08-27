@@ -1233,6 +1233,17 @@ export class SDKMessageRepository {
     for (const messageId of messageIds) this.scheduleMessageSearchIndex(messageId);
   }
 
+  transitionMessageSendStatus(
+    messageId: string,
+    expectedStatus: SendStatus,
+    targetStatus: SendStatus
+  ): boolean {
+    const changed = this.db
+      .prepare(`UPDATE sdk_messages SET send_status = ? WHERE id = ? AND send_status = ?`)
+      .run(targetStatus, messageId, expectedStatus).changes;
+    return changed > 0;
+  }
+
   updateMessageTimestamp(messageId: string, timestampMs?: number): void {
     const stmt = this.db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`);
     const ts = timestampMs !== undefined ? new Date(timestampMs) : new Date();
