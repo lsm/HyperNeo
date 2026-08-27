@@ -13,6 +13,10 @@ import { globalSettings, connectionState } from '../../lib/state.ts';
 import { spaceStore } from '../../lib/space-store.ts';
 import { toast } from '../../lib/toast.ts';
 import { cn } from '../../lib/utils.ts';
+import {
+  hasNativeFolderPicker,
+  NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+} from '../../lib/runtime-capabilities.ts';
 import { downloadBundle } from './export-import-utils.ts';
 import { navigateToSpaces } from '../../lib/router.ts';
 import { Button } from '../ui/Button.tsx';
@@ -72,9 +76,23 @@ function workspaceTitle(workspace: SpaceWorkspace): string {
   return workspace.path.split('/').filter(Boolean).at(-1) ?? workspace.path;
 }
 
+function rpcErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+const inputClass =
+  'rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none';
+
 function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
   const [workspaces, setWorkspaces] = useState<SpaceWorkspace[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [newPath, setNewPath] = useState('');
+  const [newLabel, setNewLabel] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<{ id: string; label: string } | null>(null);
+  const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
   const connected = connectionState.value === 'connected';
 
   useEffect(() => {
@@ -97,12 +115,102 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(`Failed to load workspaces: ${err instanceof Error ? err.message : String(err)}`);
+        setError(`Failed to load workspaces: ${rpcErrorMessage(err)}`);
       });
     return () => {
       cancelled = true;
     };
-  }, [spaceId, connected]);
+  }, [spaceId, connected, reloadToken]);
+
+  function reload() {
+    setReloadToken((token) => token + 1);
+  }
+
+  function requireHub() {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) setActionError('Not connected to server');
+    return hub;
+  }
+
+  async function handleAdd() {
+    const path = newPath.trim();
+    if (!path) {
+      setActionError('Workspace path is required');
+      return;
+    }
+    const hub = requireHub();
+    if (!hub) return;
+    try {
+      setAdding(true);
+      setActionError(null);
+      await hub.request('space.workspace.add', {
+        spaceId,
+        path,
+        label: newLabel.trim() || undefined,
+      });
+      setNewPath('');
+      setNewLabel('');
+      reload();
+    } catch (err) {
+      setActionError(rpcErrorMessage(err));
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleBrowse() {
+    const hub = requireHub();
+    if (!hub) return;
+    try {
+      const picked = await hub.request<{ path: string | null }>('dialog.pickFolder', undefined, {
+        timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+      });
+      if (picked?.path) {
+        setNewPath(picked.path);
+        setActionError(null);
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to browse for folder');
+    }
+  }
+
+  async function handleSaveLabel() {
+    if (!editing) return;
+    const hub = requireHub();
+    if (!hub) return;
+    try {
+      setActionError(null);
+      await hub.request('space.workspace.updateLabel', {
+        spaceId,
+        workspaceId: editing.id,
+        label: editing.label.trim(),
+      });
+      setEditing(null);
+      reload();
+    } catch (err) {
+      setActionError(rpcErrorMessage(err));
+    }
+  }
+
+  async function handleRemove(workspace: SpaceWorkspace) {
+    if (!confirm(`Remove workspace "${workspaceTitle(workspace)}" (${workspace.path})?`)) return;
+    const hub = requireHub();
+    if (!hub) return;
+    try {
+      setActionError(null);
+      await hub.request('space.workspace.remove', { spaceId, workspaceId: workspace.id });
+      reload();
+    } catch (err) {
+      setActionError(rpcErrorMessage(err));
+    }
+  }
+
+  const addOnEnter = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAdd();
+    }
+  };
 
   if (error) {
     return (
@@ -114,41 +222,143 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
 
   if (!workspaces) return null;
 
-  if (workspaces.length === 0) {
-    return (
-      <p class="text-sm text-gray-400" data-testid="workspaces-empty">
-        No workspaces registered for this space.
-      </p>
-    );
-  }
-
   return (
-    <ul class="space-y-2" data-testid="workspaces-list">
-      {workspaces.map((workspace) => (
-        <li
-          key={workspace.id}
-          class="flex items-center gap-3 rounded-lg border border-white/10 bg-dark-850 px-3 py-2"
-          data-testid="workspace-item"
-        >
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2">
-              <span class="truncate text-sm font-medium text-gray-200">
-                {workspaceTitle(workspace)}
-              </span>
-              {workspace.isPrimary && (
-                <span
-                  class="flex-shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300"
-                  data-testid="workspace-primary-badge"
-                >
-                  Primary
-                </span>
+    <div class="space-y-3">
+      {workspaces.length === 0 ? (
+        <p class="text-sm text-gray-400" data-testid="workspaces-empty">
+          No workspaces registered for this space.
+        </p>
+      ) : (
+        <ul class="space-y-2" data-testid="workspaces-list">
+          {workspaces.map((workspace) => (
+            <li
+              key={workspace.id}
+              class="flex items-center gap-3 rounded-lg border border-white/10 bg-dark-850 px-3 py-2"
+              data-testid="workspace-item"
+            >
+              <div class="min-w-0 flex-1">
+                {editing?.id === workspace.id ? (
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={editing.label}
+                      data-testid="workspace-label-input"
+                      onInput={(e) =>
+                        setEditing({
+                          id: workspace.id,
+                          label: (e.target as HTMLInputElement).value,
+                        })
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleSaveLabel();
+                        } else if (e.key === 'Escape') {
+                          setEditing(null);
+                        }
+                      }}
+                      class="w-40 rounded border border-white/10 bg-dark-850 px-2 py-1 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      data-testid="workspace-label-save"
+                      onClick={handleSaveLabel}
+                      class="text-xs text-blue-400 hover:text-blue-300"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="workspace-label-cancel"
+                      onClick={() => setEditing(null)}
+                      class="text-xs text-gray-400 hover:text-gray-200"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div class="flex items-center gap-2">
+                    <span class="truncate text-sm font-medium text-gray-200">
+                      {workspaceTitle(workspace)}
+                    </span>
+                    {workspace.isPrimary && (
+                      <span
+                        class="flex-shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300"
+                        data-testid="workspace-primary-badge"
+                      >
+                        Primary
+                      </span>
+                    )}
+                  </div>
+                )}
+                <p class="truncate font-mono text-xs text-gray-400">{workspace.path}</p>
+              </div>
+              {editing?.id !== workspace.id && (
+                <div class="flex flex-shrink-0 items-center gap-3">
+                  <button
+                    type="button"
+                    data-testid="workspace-edit-label"
+                    onClick={() => {
+                      setEditing({ id: workspace.id, label: workspace.label });
+                      setActionError(null);
+                    }}
+                    class="text-xs text-gray-400 hover:text-gray-200"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="workspace-remove"
+                    onClick={() => handleRemove(workspace)}
+                    class="text-xs text-red-400 hover:text-red-300"
+                  >
+                    Remove
+                  </button>
+                </div>
               )}
-            </div>
-            <p class="truncate font-mono text-xs text-gray-400">{workspace.path}</p>
-          </div>
-        </li>
-      ))}
-    </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div class="flex flex-wrap items-center gap-2" data-testid="workspace-add-form">
+        <input
+          type="text"
+          value={newPath}
+          data-testid="workspace-add-path"
+          placeholder="/absolute/path/to/repo"
+          onInput={(e) => setNewPath((e.target as HTMLInputElement).value)}
+          onKeyDown={addOnEnter}
+          class={`min-w-0 flex-1 font-mono text-xs ${inputClass}`}
+        />
+        <input
+          type="text"
+          value={newLabel}
+          data-testid="workspace-add-label"
+          placeholder="Label (optional)"
+          onInput={(e) => setNewLabel((e.target as HTMLInputElement).value)}
+          onKeyDown={addOnEnter}
+          class={`w-36 ${inputClass}`}
+        />
+        {nativeFolderPickerAvailable && (
+          <button
+            type="button"
+            data-testid="workspace-add-browse"
+            onClick={handleBrowse}
+            class="rounded-lg border border-white/10 px-3 py-2 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-gray-100"
+          >
+            Browse
+          </button>
+        )}
+        <Button type="button" size="sm" loading={adding} onClick={handleAdd}>
+          Add
+        </Button>
+      </div>
+      {actionError && (
+        <p class="text-sm text-red-300" data-testid="workspaces-action-error">
+          {actionError}
+        </p>
+      )}
+    </div>
   );
 }
 

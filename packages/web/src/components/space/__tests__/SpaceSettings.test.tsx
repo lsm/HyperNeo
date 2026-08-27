@@ -1,7 +1,7 @@
 // @ts-nocheck
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
+import { render, fireEvent, waitFor, cleanup, screen } from '@testing-library/preact';
 
 const mockRequest = vi.fn();
 const mockGetHubIfConnected = vi.fn();
@@ -37,6 +37,11 @@ vi.mock('../../../lib/toast', () => ({
 
 vi.mock('../export-import-utils', () => ({
   downloadBundle: (...args) => mockDownloadBundle(...args),
+}));
+
+vi.mock('../../../lib/runtime-capabilities', () => ({
+  hasNativeFolderPicker: vi.fn(() => false),
+  NATIVE_FOLDER_PICKER_TIMEOUT_MS: 605000,
 }));
 
 vi.mock('../SpaceExternalEventsSettings', () => ({
@@ -75,6 +80,10 @@ vi.mock('../../ui/Button', () => ({
 
 import { SpaceSettings } from '../SpaceSettings';
 import { connectionState } from '../../../lib/state';
+import {
+  hasNativeFolderPicker,
+  NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+} from '../../../lib/runtime-capabilities';
 import type { Space, SpaceWorkspace } from '@hyperneo/shared';
 
 function makeSpace(overrides: Partial<Space> = {}): Space {
@@ -132,6 +141,7 @@ describe('SpaceSettings', () => {
     mockToastSuccess.mockReset();
     mockToastError.mockReset();
     mockConfirm.mockReset();
+    vi.mocked(hasNativeFolderPicker).mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -217,6 +227,258 @@ describe('SpaceSettings', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(queryByTestId('workspaces-error')).toBeNull();
       expect(queryByTestId('workspace-item')).toBeTruthy();
+    });
+
+    it('calls space.workspace.add with trimmed path and label, then reloads', async () => {
+      const primary = makeWorkspace();
+      const added = makeWorkspace({
+        id: 'ws-2',
+        path: '/projects/docs',
+        label: 'Docs',
+        isPrimary: false,
+      });
+      let list = [primary];
+      stubHubRequests();
+      mockRequest.mockImplementation((method: string) => {
+        if (method === 'space.workspace.list') return Promise.resolve(list);
+        if (method === 'space.workspace.add') {
+          list = [primary, added];
+          return Promise.resolve(added);
+        }
+        return Promise.resolve({});
+      });
+
+      const { getByTestId, getByText, findByTestId, findByText } = render(
+        <SpaceSettings space={makeSpace()} />
+      );
+      await findByTestId('workspace-add-form');
+      fireEvent.input(getByTestId('workspace-add-path'), { target: { value: ' /projects/docs ' } });
+      fireEvent.input(getByTestId('workspace-add-label'), { target: { value: ' Docs ' } });
+      fireEvent.click(getByText('Add'));
+
+      await waitFor(() => {
+        expect(mockRequest).toHaveBeenCalledWith('space.workspace.add', {
+          spaceId: 'space-1',
+          path: '/projects/docs',
+          label: 'Docs',
+        });
+      });
+      expect(await findByText('Docs')).toBeTruthy();
+      expect((getByTestId('workspace-add-path') as HTMLInputElement).value).toBe('');
+    });
+
+    it('omits the label when adding without one', async () => {
+      stubHubRequests([makeWorkspace()]);
+      const { getByTestId, getByText, findByTestId } = render(
+        <SpaceSettings space={makeSpace()} />
+      );
+      await findByTestId('workspace-add-form');
+      fireEvent.input(getByTestId('workspace-add-path'), { target: { value: '/projects/docs' } });
+      fireEvent.click(getByText('Add'));
+
+      await waitFor(() => {
+        expect(mockRequest).toHaveBeenCalledWith('space.workspace.add', {
+          spaceId: 'space-1',
+          path: '/projects/docs',
+          label: undefined,
+        });
+      });
+    });
+
+    it('shows an inline error and skips the RPC when adding an empty path', async () => {
+      stubHubRequests([makeWorkspace()]);
+      const { getByText, findByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      await findByTestId('workspace-add-form');
+      fireEvent.click(getByText('Add'));
+
+      expect((await findByTestId('workspaces-action-error')).textContent).toBe(
+        'Workspace path is required'
+      );
+      expect(mockRequest).not.toHaveBeenCalledWith('space.workspace.add', expect.anything());
+    });
+
+    it('renders add RPC errors inline', async () => {
+      stubHubRequests();
+      mockRequest.mockImplementation((method: string) =>
+        method === 'space.workspace.list'
+          ? Promise.resolve([makeWorkspace()])
+          : method === 'space.workspace.add'
+            ? Promise.reject(new Error('Workspace path does not exist'))
+            : Promise.resolve({})
+      );
+
+      const { getByTestId, getByText, findByTestId } = render(
+        <SpaceSettings space={makeSpace()} />
+      );
+      await findByTestId('workspace-add-form');
+      fireEvent.input(getByTestId('workspace-add-path'), { target: { value: '/projects/none' } });
+      fireEvent.click(getByText('Add'));
+
+      expect((await findByTestId('workspaces-action-error')).textContent).toBe(
+        'Workspace path does not exist'
+      );
+    });
+
+    it('fills the path input from the native folder picker', async () => {
+      vi.mocked(hasNativeFolderPicker).mockReturnValue(true);
+      stubHubRequests();
+      mockRequest.mockImplementation((method: string) =>
+        method === 'dialog.pickFolder'
+          ? Promise.resolve({ path: '/projects/picked' })
+          : method === 'space.workspace.list'
+            ? Promise.resolve([makeWorkspace()])
+            : Promise.resolve({})
+      );
+
+      const { getByTestId, findByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      await findByTestId('workspace-add-browse');
+      fireEvent.click(getByTestId('workspace-add-browse'));
+
+      await waitFor(() => {
+        expect(mockRequest).toHaveBeenCalledWith('dialog.pickFolder', undefined, {
+          timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
+        });
+        expect((getByTestId('workspace-add-path') as HTMLInputElement).value).toBe(
+          '/projects/picked'
+        );
+      });
+    });
+
+    it('hides the browse button when the native folder picker is unavailable', async () => {
+      stubHubRequests([makeWorkspace()]);
+      const { findByTestId, queryByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      expect(await findByTestId('workspace-add-form')).toBeTruthy();
+      expect(queryByTestId('workspace-add-browse')).toBeNull();
+    });
+
+    it('calls space.workspace.remove after confirmation and reloads', async () => {
+      mockConfirm.mockReturnValue(true);
+      const primary = makeWorkspace();
+      const docs = makeWorkspace({
+        id: 'ws-2',
+        path: '/projects/docs',
+        label: 'Docs',
+        isPrimary: false,
+      });
+      let list = [primary, docs];
+      stubHubRequests();
+      mockRequest.mockImplementation((method: string) => {
+        if (method === 'space.workspace.list') return Promise.resolve(list);
+        if (method === 'space.workspace.remove') {
+          list = [primary];
+          return Promise.resolve({ success: true });
+        }
+        return Promise.resolve({});
+      });
+
+      const { findByTestId, getAllByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      await findByTestId('workspaces-list');
+      fireEvent.click(getAllByTestId('workspace-remove')[1]);
+
+      await waitFor(() => {
+        expect(mockRequest).toHaveBeenCalledWith('space.workspace.remove', {
+          spaceId: 'space-1',
+          workspaceId: 'ws-2',
+        });
+      });
+      await waitFor(() => {
+        expect(screen.queryByText('/projects/docs')).toBeNull();
+      });
+    });
+
+    it('does not remove when confirm is dismissed', async () => {
+      mockConfirm.mockReturnValue(false);
+      stubHubRequests([makeWorkspace()]);
+      const { findByTestId, getByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      fireEvent.click(await findByTestId('workspace-remove'));
+      expect(mockRequest).not.toHaveBeenCalledWith('space.workspace.remove', expect.anything());
+    });
+
+    it('renders remove RPC errors inline', async () => {
+      mockConfirm.mockReturnValue(true);
+      stubHubRequests();
+      mockRequest.mockImplementation((method: string) =>
+        method === 'space.workspace.list'
+          ? Promise.resolve([makeWorkspace()])
+          : method === 'space.workspace.remove'
+            ? Promise.reject(new Error('Cannot remove the primary workspace of space space-1'))
+            : Promise.resolve({})
+      );
+
+      const { findByTestId, getByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      fireEvent.click(await findByTestId('workspace-remove'));
+
+      expect((await findByTestId('workspaces-action-error')).textContent).toBe(
+        'Cannot remove the primary workspace of space space-1'
+      );
+    });
+
+    it('edits a workspace label inline via space.workspace.updateLabel', async () => {
+      stubHubRequests();
+      let list = [makeWorkspace()];
+      mockRequest.mockImplementation((method: string) => {
+        if (method === 'space.workspace.list') return Promise.resolve(list);
+        if (method === 'space.workspace.updateLabel') {
+          list = [makeWorkspace({ label: 'Renamed' })];
+          return Promise.resolve({ success: true });
+        }
+        return Promise.resolve({});
+      });
+
+      const { findByTestId, getByTestId, findByText } = render(
+        <SpaceSettings space={makeSpace()} />
+      );
+      fireEvent.click(await findByTestId('workspace-edit-label'));
+
+      const input = getByTestId('workspace-label-input') as HTMLInputElement;
+      expect(input.value).toBe('Main repo');
+      fireEvent.input(input, { target: { value: ' Renamed ' } });
+      fireEvent.click(getByTestId('workspace-label-save'));
+
+      await waitFor(() => {
+        expect(mockRequest).toHaveBeenCalledWith('space.workspace.updateLabel', {
+          spaceId: 'space-1',
+          workspaceId: 'ws-1',
+          label: 'Renamed',
+        });
+      });
+      expect(await findByText('Renamed')).toBeTruthy();
+    });
+
+    it('cancels label editing without calling the RPC', async () => {
+      stubHubRequests([makeWorkspace()]);
+      const { findByTestId, getByTestId, queryByTestId, findByText } = render(
+        <SpaceSettings space={makeSpace()} />
+      );
+      fireEvent.click(await findByTestId('workspace-edit-label'));
+      fireEvent.input(getByTestId('workspace-label-input'), { target: { value: 'Discarded' } });
+      fireEvent.click(getByTestId('workspace-label-cancel'));
+
+      expect(queryByTestId('workspace-label-input')).toBeNull();
+      expect(await findByText('Main repo')).toBeTruthy();
+      expect(mockRequest).not.toHaveBeenCalledWith(
+        'space.workspace.updateLabel',
+        expect.anything()
+      );
+    });
+
+    it('renders label update RPC errors inline', async () => {
+      stubHubRequests();
+      mockRequest.mockImplementation((method: string) =>
+        method === 'space.workspace.list'
+          ? Promise.resolve([makeWorkspace()])
+          : method === 'space.workspace.updateLabel'
+            ? Promise.reject(new Error('Workspace not found: ws-1'))
+            : Promise.resolve({})
+      );
+
+      const { findByTestId, getByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      fireEvent.click(await findByTestId('workspace-edit-label'));
+      fireEvent.click(getByTestId('workspace-label-save'));
+
+      expect((await findByTestId('workspaces-action-error')).textContent).toBe(
+        'Workspace not found: ws-1'
+      );
     });
   });
 
