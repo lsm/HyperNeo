@@ -1,8 +1,12 @@
-import { existsSync, readFileSync } from 'fs';
-import { homedir } from 'os';
-import { basename, isAbsolute, join, resolve } from 'path';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { AppMcpServer, CreateAppMcpServerRequest } from '@hyperneo/shared';
+import type {
+  AppMcpServer,
+  CreateAppMcpServerRequest,
+  UpdateAppMcpServerRequest,
+} from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
 import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import { SpaceWorkspaceRepository } from '../../storage/repositories/space-workspace-repository.ts';
@@ -270,7 +274,8 @@ export class McpImportService {
 
     const historyRepo = this.db.workspaceHistory;
     if (historyRepo) {
-      for (const row of historyRepo.list(100)) {
+      const rows = historyRepo.listAll ? historyRepo.listAll() : historyRepo.list(1000);
+      for (const row of rows) {
         if (!row.path) continue;
         try {
           const abs = resolve(row.path);
@@ -293,7 +298,12 @@ export class McpImportService {
     if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
       return null;
     }
-    return servers as Record<string, McpJsonEntry>;
+    const out: Record<string, McpJsonEntry> = Object.create(null);
+    const serverRecord = servers as Record<string, unknown>;
+    for (const key of Object.keys(serverRecord)) {
+      out[key] = serverRecord[key] as McpJsonEntry;
+    }
+    return out;
   }
 
   buildCreateRequest(
@@ -372,6 +382,43 @@ function buildMcpTargets(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
   return { ...ctx, targets };
 }
 
+function buildResolvedBaseName(label: string, serverName: string): string {
+  return label ? `${label}:${serverName}` : serverName;
+}
+
+function matchExistingRank(storedName: string, serverName: string, label: string): number {
+  const base = buildResolvedBaseName(label, serverName);
+  if (storedName === base) return 0;
+  const prefix = `${base}:`;
+  if (storedName.startsWith(prefix)) {
+    const suffix = storedName.slice(prefix.length);
+    if (/^[2-9]\d*$/.test(suffix)) {
+      return parseInt(suffix, 10);
+    }
+  }
+  return -1;
+}
+
+function findBestExistingMatch(
+  serverName: string,
+  label: string,
+  existingByName: Map<string, AppMcpServer>,
+  usedExistingNames: Set<string>
+): AppMcpServer | undefined {
+  let best: AppMcpServer | undefined;
+  let bestRank = Infinity;
+  for (const [name, row] of existingByName) {
+    if (usedExistingNames.has(name)) continue;
+    const rank = matchExistingRank(name, serverName, label);
+    if (rank >= 0 && rank < bestRank) {
+      best = row;
+      bestRank = rank;
+      if (rank === 0) break;
+    }
+  }
+  return best;
+}
+
 function loadMcpExistingNames(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
   const all = ctx.db.appMcpServers.list();
   const reserved = new Set<string>(all.map((row) => row.name));
@@ -433,24 +480,47 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     }
 
     const existingRows = ctx.db.appMcpServers.listBySourcePath(target.path);
-    const existingNames = new Set(existingRows.map((row) => row.name));
+    const existingByName = new Map(existingRows.map((row) => [row.name, row]));
     const targetReserved = new Set(ctx.reserved ?? new Set<string>());
-    for (const name of existingNames) targetReserved.delete(name);
+    const usedExistingNames = new Set<string>();
 
-    const entries: Record<string, McpJsonEntry> = {};
-    const rawNames: Record<string, string> = {};
-    for (const [serverName, rawEntry] of Object.entries(entriesByServerName).sort(([a], [b]) =>
-      a.localeCompare(b)
-    )) {
+    const sortedRaws = Object.entries(entriesByServerName).sort(([a], [b]) => a.localeCompare(b));
+    const baseMatches = new Map<string, string>();
+    for (const [serverName] of sortedRaws) {
+      const baseName = buildResolvedBaseName(target.label, serverName);
+      const existing = existingByName.get(baseName);
+      if (existing && !usedExistingNames.has(baseName)) {
+        baseMatches.set(serverName, baseName);
+        usedExistingNames.add(baseName);
+      }
+    }
+
+    const entries: Record<string, McpJsonEntry> = Object.create(null);
+    const rawNames: Record<string, string> = Object.create(null);
+    for (const [serverName, rawEntry] of sortedRaws) {
       if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
         ctx.log.warn(`[mcp-import] ${target.path}: skipping "${serverName}" — invalid entry`);
         continue;
       }
-      const resolvedName = resolveWorkspaceMcpServerName({
-        label: target.label,
-        serverName,
-        reserved: targetReserved,
-      });
+      let resolvedName: string;
+      if (baseMatches.has(serverName)) {
+        resolvedName = baseMatches.get(serverName)!;
+      } else {
+        const existing = findBestExistingMatch(
+          serverName,
+          target.label,
+          existingByName,
+          usedExistingNames
+        );
+        resolvedName = existing
+          ? existing.name
+          : resolveWorkspaceMcpServerName({
+              label: target.label,
+              serverName,
+              reserved: targetReserved,
+            });
+        usedExistingNames.add(resolvedName);
+      }
       targetReserved.add(resolvedName);
       ctx.reserved?.add(resolvedName);
       entries[resolvedName] = rawEntry;
@@ -516,7 +586,7 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
         const needsName = existing.name !== resolvedName;
         if (needsName || !fieldsEqual(existing, req) || shouldMergeEnabled) {
           try {
-            const updates: Record<string, unknown> = {
+            const updates: Omit<UpdateAppMcpServerRequest, 'id'> = {
               name: resolvedName,
               description: req.description,
               sourceType: req.sourceType,
@@ -527,7 +597,7 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
               headers: req.headers,
             };
             if (shouldMergeEnabled) updates.enabled = true;
-            ctx.db.appMcpServers.update(existing.id, updates as never);
+            ctx.db.appMcpServers.update(existing.id, updates);
             existing.name = resolvedName;
             existing.enabled = shouldMergeEnabled ? true : existing.enabled;
             existing.sourceType = req.sourceType;
