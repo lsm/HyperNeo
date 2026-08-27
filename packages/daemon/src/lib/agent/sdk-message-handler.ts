@@ -888,9 +888,7 @@ export class SDKMessageHandler {
     }
 
     if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
-      if (!this.isInvocationStale(invocationGeneration)) {
-        stateManager.beginTerminalIdle(this.invocationIdleOwner(invocationGeneration));
-      }
+      stateManager.beginTerminalIdle(this.invocationIdleOwner(invocationGeneration));
     }
 
     messageHub.event(

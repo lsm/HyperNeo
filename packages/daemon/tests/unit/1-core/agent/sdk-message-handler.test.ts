@@ -4511,12 +4511,12 @@ describe('SDKMessageHandler', () => {
       expect(publishedTopics()).toContain('query.trigger');
     });
 
-    it('a stale result skips the terminal-idle arm and the turn replay but still passes its owner', async () => {
+    it('a stale result arms and settles with its own owner (paired) and skips the turn replay', async () => {
       setGeneration(9);
 
       await handler.handleMessage(makeResult(), 2);
 
-      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(beginTerminalIdleSpy).toHaveBeenCalledWith({ queryGeneration: 2, turnToken: 0 });
       expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 2, turnToken: 0 } });
       expect(publishedTopics()).not.toContain('query.trigger');
     });
