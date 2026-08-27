@@ -299,6 +299,7 @@ export interface MessageDeliverySession {
     observer?: MessageDeliveryAttemptObserver
   ): Promise<FeedSteerOutcome>;
   isWaitingForInput?(): boolean;
+  stuckInitializingMs?(now?: number): number | null;
   settleSkippedDelivery?(messageUuid: string): Promise<void>;
 }
 

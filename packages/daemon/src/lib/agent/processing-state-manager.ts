@@ -5,6 +5,7 @@ import type { Database } from '../../storage/database.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { type IdleOwnerScope, isIdleWaiterAdmitted } from './idle-waiter-admission-pipeline.ts';
+import { deliveryMetrics } from './message-delivery-metrics.ts';
 
 type StreamingPhase = 'initializing' | 'thinking' | 'streaming' | 'finalizing';
 
@@ -12,6 +13,7 @@ export class ProcessingStateManager {
   private processingState: AgentProcessingState = { status: 'idle' };
   private streamingPhase: StreamingPhase = 'initializing';
   private streamingStartedAt: number | null = null;
+  private processingStartedAt: number | null = null;
   private isCompacting = false;
   private logger: Logger;
   private onIdleCallback?: (owner?: IdleOwnerScope) => Promise<void>;
@@ -281,7 +283,11 @@ export class ProcessingStateManager {
   }
 
   async setProcessing(messageId: string, phase: StreamingPhase = 'initializing'): Promise<void> {
+    if (this.processingState.status === 'processing') {
+      this.noteInitializationProgress(phase);
+    }
     this.streamingPhase = phase;
+    this.processingStartedAt = Date.now();
     if (phase === 'streaming' && !this.streamingStartedAt) {
       this.streamingStartedAt = Date.now();
     }
@@ -343,6 +349,22 @@ export class ProcessingStateManager {
     return this.processingState.status === 'waiting_for_input';
   }
 
+  stuckInitializingMs(now: number = Date.now()): number | null {
+    const state = this.processingState;
+    if (state.status !== 'processing' || state.phase !== 'initializing') return null;
+    if (this.processingStartedAt === null) return null;
+    return Math.max(0, now - this.processingStartedAt);
+  }
+
+  private noteInitializationProgress(nextPhase: StreamingPhase): void {
+    if (this.streamingPhase !== 'initializing' || nextPhase === 'initializing') return;
+    if (this.processingStartedAt === null) return;
+    deliveryMetrics.recordInitializationDuration(
+      Date.now() - this.processingStartedAt,
+      'progressed'
+    );
+  }
+
   getPendingQuestion(): PendingUserQuestion | null {
     if (this.processingState.status === 'waiting_for_input') {
       return this.processingState.pendingQuestion;
@@ -400,6 +422,7 @@ export class ProcessingStateManager {
       return;
     }
 
+    this.noteInitializationProgress(phase);
     this.streamingPhase = phase;
 
     if (phase === 'streaming' && !this.streamingStartedAt) {
@@ -471,7 +494,18 @@ export class ProcessingStateManager {
 
   private async setState(newState: AgentProcessingState, suppressPublish = false): Promise<void> {
     if (newState.status === 'idle' || newState.status === 'interrupted') {
+      if (
+        this.processingState.status === 'processing' &&
+        this.streamingPhase === 'initializing' &&
+        this.processingStartedAt !== null
+      ) {
+        deliveryMetrics.recordInitializationDuration(
+          Date.now() - this.processingStartedAt,
+          'never_progressed'
+        );
+      }
       this.streamingPhase = 'initializing';
+      this.processingStartedAt = null;
       this.streamingStartedAt = null;
       this.isCompacting = false;
     }

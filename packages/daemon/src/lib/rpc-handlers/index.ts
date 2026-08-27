@@ -69,6 +69,7 @@ import {
   MESSAGE_DELIVERY,
 } from '../job-queue-constants.ts';
 import {
+  aggregateInFlightBySession,
   deliveryMetrics,
   type MessageDeliveryDiagnostics,
 } from '../agent/message-delivery-metrics.ts';
@@ -978,13 +979,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         MESSAGE_DELIVERY,
         Date.now() - staleThresholdMs
       );
+      const processor = deps.messageDeliveryProcessor.snapshot(MESSAGE_DELIVERY);
       return {
         lane: MESSAGE_DELIVERY,
         statusCounts: counts,
         staleProcessing,
         activeProcessing: Math.max(0, counts.processing - staleProcessing),
         oldestProcessingLeaseAgeMs: deps.jobQueue.oldestProcessingLeaseAgeMs(MESSAGE_DELIVERY),
-        processor: deps.messageDeliveryProcessor.snapshot(MESSAGE_DELIVERY),
+        processor,
+        inFlightBySession: aggregateInFlightBySession(processor.handlers),
         metrics: deliveryMetrics.snapshot(),
       };
     }

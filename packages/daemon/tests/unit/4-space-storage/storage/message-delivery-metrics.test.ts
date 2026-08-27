@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from 'bun:test';
 import {
+  aggregateInFlightBySession,
   DeliveryMetrics,
   emitMessageDeliveryLifecycleEvent,
   fingerprintDeliveryClaim,
@@ -182,6 +183,84 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
       metrics.recordFeed('reclaim-me');
       const snap = metrics.snapshot();
       expect(snap.duplicateUuids).toContain('reclaim-me');
+    });
+  });
+
+  describe('stuck-initializing refusals (admission gate signal)', () => {
+    it('counts refusions cumulatively and keeps the latest initializing duration', () => {
+      expect(metrics.snapshot().stuckInitializingRefusals).toBe(0);
+      expect(metrics.snapshot().lastStuckInitializingMs).toBeNull();
+      metrics.recordStuckInitializingRefusal(150_000);
+      metrics.recordStuckInitializingRefusal(210_000);
+      const snap = metrics.snapshot();
+      expect(snap.stuckInitializingRefusals).toBe(2);
+      expect(snap.lastStuckInitializingMs).toBe(210_000);
+    });
+  });
+
+  describe('steer acknowledgment waits', () => {
+    it('computes P50/P99 over wait samples and counts timeouts separately', () => {
+      for (const ms of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) metrics.recordAckWait(ms, 'acknowledged');
+      metrics.recordAckWait(31_000, 'ack_timeout');
+      const snap = metrics.snapshot();
+      expect(snap.ackWaitSamples).toBe(11);
+      expect(snap.ackWaitTimeouts).toBe(1);
+      expect(snap.ackWaitP50).toBe(6);
+      expect(snap.ackWaitP99).toBeGreaterThan(10);
+    });
+
+    it('ignores non-finite or negative wait samples', () => {
+      metrics.recordAckWait(5, 'acknowledged');
+      metrics.recordAckWait(NaN, 'acknowledged');
+      metrics.recordAckWait(-1, 'ack_timeout');
+      metrics.recordAckWait(Infinity, 'acknowledged');
+      const snap = metrics.snapshot();
+      expect(snap.ackWaitSamples).toBe(1);
+      expect(snap.ackWaitTimeouts).toBe(0);
+    });
+
+    it('reports null percentiles before any sample', () => {
+      const snap = metrics.snapshot();
+      expect(snap.ackWaitP50).toBeNull();
+      expect(snap.ackWaitP99).toBeNull();
+      expect(snap.ackWaitSamples).toBe(0);
+    });
+  });
+
+  describe('session initialization durations', () => {
+    it('computes P50/P99 and counts never-progressed initializations', () => {
+      for (const ms of [10, 20, 30, 40]) {
+        metrics.recordInitializationDuration(ms, 'progressed');
+      }
+      metrics.recordInitializationDuration(500_000, 'never_progressed');
+      const snap = metrics.snapshot();
+      expect(snap.initializationSamples).toBe(5);
+      expect(snap.initializationNeverProgressed).toBe(1);
+      expect(snap.initializationP50).toBe(30);
+      expect(snap.initializationP99).toBeGreaterThan(100_000);
+    });
+
+    it('ignores invalid duration samples', () => {
+      metrics.recordInitializationDuration(NaN, 'progressed');
+      metrics.recordInitializationDuration(-3, 'never_progressed');
+      expect(metrics.snapshot().initializationSamples).toBe(0);
+      expect(metrics.snapshot().initializationNeverProgressed).toBe(0);
+    });
+  });
+
+  describe('per-session in-flight aggregation', () => {
+    it('counts in-flight jobs per session and skips sessionless handlers', () => {
+      const counts = aggregateInFlightBySession([
+        { sessionId: 'sess-a' },
+        { sessionId: 'sess-a' },
+        { sessionId: 'sess-b' },
+        {},
+      ]);
+      expect(counts).toEqual({ 'sess-a': 2, 'sess-b': 1 });
+    });
+
+    it('returns an empty map for no in-flight handlers', () => {
+      expect(aggregateInFlightBySession([])).toEqual({});
     });
   });
 });

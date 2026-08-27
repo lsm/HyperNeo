@@ -37,11 +37,16 @@ class MockSession implements MessageDeliverySession {
   driveResult: DriveTurnOutcome = { outcome: 'completed' };
   feedResult: FeedSteerOutcome = { outcome: 'consumed' };
   waitingForInput = false;
+  stuckMs: number | null = null;
   driveCalls = 0;
   feedCalls = 0;
   settleCalls: string[] = [];
   lastUuid?: string;
   lastAlreadyConsumed = false;
+
+  stuckInitializingMs(): number | null {
+    return this.stuckMs;
+  }
 
   async driveDeliveryTurn(
     messageUuid: string,
@@ -85,7 +90,10 @@ function makeHarness(
   const getSession = mock(() => session);
   const getMessageContent = mock(() => ({ content: 'hello', sendStatus: 'enqueued' }));
   const isSessionArchived = mock(() => false);
-  const metrics = { recordReclaimSkip: mock(() => {}) };
+  const metrics = {
+    recordReclaimSkip: mock(() => {}),
+    recordStuckInitializingRefusal: mock(() => {}),
+  };
   const deps: MessageDeliveryHandlerDeps = {
     jobQueue: jobQueue as unknown as JobQueueRepository,
     getSession,
@@ -274,6 +282,69 @@ describe('createMessageDeliveryHandler', () => {
       expect(result).toEqual({ outcome: 'completed' });
       expect(session.driveCalls).toBe(1);
       expect(session.lastAlreadyConsumed).toBe(true);
+    });
+  });
+
+  describe('stuck-initializing admission gate', () => {
+    it('refuses a turn for a session stuck initializing past the threshold', async () => {
+      const { handler, session, jobQueue, metrics, job } = makeHarness();
+      session.stuckMs = 200_000;
+      const result = await handler(job, {});
+      expect(result).toMatchObject({ parked: 'stuck_initializing' });
+      expect(result.retryAt).toBeGreaterThan(Date.now());
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
+      expect(metrics.recordStuckInitializingRefusal).toHaveBeenCalledWith(200_000);
+      expect(session.driveCalls).toBe(0);
+      expect(session.feedCalls).toBe(0);
+      expect(session.settleCalls).toEqual([]);
+    });
+
+    it('refuses a steer the same way without feeding it', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({}, STEER_PAYLOAD);
+      session.stuckMs = 200_000;
+      const result = await handler(job, {});
+      expect(result).toMatchObject({ parked: 'stuck_initializing' });
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
+      expect(session.feedCalls).toBe(0);
+    });
+
+    it('settles an already-consumed steer before the gate even when stuck', async () => {
+      const { handler, session, jobQueue, metrics, getMessageContent, job } = makeHarness(
+        {},
+        STEER_PAYLOAD
+      );
+      session.stuckMs = 200_000;
+      getMessageContent.mockImplementation(() => ({ content: 'steer', sendStatus: 'consumed' }));
+      const result = await handler(job, {});
+      expect(result).toEqual({ outcome: 'already_consumed' });
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+      expect(metrics.recordStuckInitializingRefusal).not.toHaveBeenCalled();
+      expect(session.feedCalls).toBe(0);
+    });
+
+    it('admits when the session has been initializing only briefly', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.stuckMs = 1_000;
+      const result = await handler(job, {});
+      expect(result).toEqual({ outcome: 'completed' });
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+      expect(session.driveCalls).toBe(1);
+    });
+
+    it('admits when the session does not expose the probe (older session objects)', async () => {
+      const { handler, session, job } = makeHarness();
+      delete (session as Partial<MockSession>).stuckInitializingMs;
+      const result = await handler(job, {});
+      expect(result).toEqual({ outcome: 'completed' });
+      expect(session.driveCalls).toBe(1);
+    });
+
+    it('dead-letters a refused delivery that exhausted its park budget', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.stuckMs = 200_000;
+      jobQueue.getParkCount.mockImplementation(() => 60);
+      await expect(handler(job, {})).rejects.toThrow('stuck initializing');
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
     });
   });
 
