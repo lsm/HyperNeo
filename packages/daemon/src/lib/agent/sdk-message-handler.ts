@@ -881,13 +881,10 @@ export class SDKMessageHandler {
     let releaseTurnEndGate: (() => void) | null = null;
     if (isTopLevelResult) {
       let release!: () => void;
-      this.ctx.messageQueue.setDeliveryGate(
-        boundedDeliveryGate(
-          new Promise<void>((resolve) => {
-            release = resolve;
-          })
-        )
-      );
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(gate));
       releaseTurnEndGate = release;
     }
 
