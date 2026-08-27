@@ -65,6 +65,7 @@ interface RefreshMcpImportsCtx {
   declarations?: McpSourceDeclaration[];
   results?: ImportResult[];
   orphanPruned?: number;
+  skipOrphanPrune?: boolean;
   result?: RefreshAllResult;
 }
 
@@ -214,7 +215,10 @@ export class McpImportService {
     return result;
   }
 
-  refreshAll(sources?: readonly (string | McpImportSource)[]): RefreshAllResult {
+  refreshAll(
+    sources?: readonly (string | McpImportSource)[],
+    opts?: { skipOrphanPrune?: boolean }
+  ): RefreshAllResult {
     let mcpSources: McpImportSource[];
     if (sources === undefined) {
       try {
@@ -237,8 +241,47 @@ export class McpImportService {
       homeDirOverride: this.homeDirOverride,
       log: this.log,
       service: this,
+      skipOrphanPrune: opts?.skipOrphanPrune,
     });
     return ctx.result ?? { results: [], orphanPruned: 0 };
+  }
+
+  refreshAllForPath(absoluteWorkspacePath: string): ImportResult {
+    if (!isAbsolute(absoluteWorkspacePath)) {
+      throw new Error(
+        `McpImportService.refreshAllForPath requires absolute path, got: ${absoluteWorkspacePath}`
+      );
+    }
+
+    let mcpSources: McpImportSource[];
+    try {
+      mcpSources = this.collectMcpImportSources();
+    } catch (err) {
+      this.log.warn(
+        `[mcp-import] workspace registry collection failed, falling back to bare import: ${err instanceof Error ? err.message : String(err)}`
+      );
+      mcpSources = [];
+    }
+
+    const source = mcpSources.find((s) => {
+      try {
+        return resolve(s.path) === absoluteWorkspacePath;
+      } catch {
+        return false;
+      }
+    }) ?? { path: absoluteWorkspacePath, label: '' };
+
+    const targetPath = join(absoluteWorkspacePath, '.mcp.json');
+    const result = this.refreshAll([source], { skipOrphanPrune: true });
+    return (
+      result.results.find((r) => r.sourcePath === targetPath) ?? {
+        sourcePath: targetPath,
+        status: 'ok',
+        added: 0,
+        updated: 0,
+        removed: 0,
+      }
+    );
   }
 
   private collectMcpImportSources(): McpImportSource[] {
@@ -386,13 +429,17 @@ function buildResolvedBaseName(label: string, serverName: string): string {
   return label ? `${label}:${serverName}` : serverName;
 }
 
+function hasNumericSuffix(serverName: string): boolean {
+  return /:[1-9]\d*$/.test(serverName);
+}
+
 function matchExistingRank(storedName: string, serverName: string, label: string): number {
   const base = buildResolvedBaseName(label, serverName);
   if (storedName === base) return 0;
   const prefix = `${base}:`;
   if (storedName.startsWith(prefix)) {
     const suffix = storedName.slice(prefix.length);
-    if (/^[2-9]\d*$/.test(suffix)) {
+    if (/^(?:[2-9]|[1-9]\d+)$/.test(suffix)) {
       return parseInt(suffix, 10);
     }
   }
@@ -484,16 +531,12 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     const targetReserved = new Set(ctx.reserved ?? new Set<string>());
     const usedExistingNames = new Set<string>();
 
-    const sortedRaws = Object.entries(entriesByServerName).sort(([a], [b]) => a.localeCompare(b));
-    const baseMatches = new Map<string, string>();
-    for (const [serverName] of sortedRaws) {
-      const baseName = buildResolvedBaseName(target.label, serverName);
-      const existing = existingByName.get(baseName);
-      if (existing && !usedExistingNames.has(baseName)) {
-        baseMatches.set(serverName, baseName);
-        usedExistingNames.add(baseName);
-      }
-    }
+    const sortedRaws = Object.entries(entriesByServerName).sort(([a], [b]) => {
+      const aHas = hasNumericSuffix(a) ? 1 : 0;
+      const bHas = hasNumericSuffix(b) ? 1 : 0;
+      if (aHas !== bHas) return aHas - bHas;
+      return a.localeCompare(b);
+    });
 
     const entries: Record<string, McpJsonEntry> = Object.create(null);
     const rawNames: Record<string, string> = Object.create(null);
@@ -502,25 +545,20 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
         ctx.log.warn(`[mcp-import] ${target.path}: skipping "${serverName}" — invalid entry`);
         continue;
       }
-      let resolvedName: string;
-      if (baseMatches.has(serverName)) {
-        resolvedName = baseMatches.get(serverName)!;
-      } else {
-        const existing = findBestExistingMatch(
-          serverName,
-          target.label,
-          existingByName,
-          usedExistingNames
-        );
-        resolvedName = existing
-          ? existing.name
-          : resolveWorkspaceMcpServerName({
-              label: target.label,
-              serverName,
-              reserved: targetReserved,
-            });
-        usedExistingNames.add(resolvedName);
-      }
+      const existing = findBestExistingMatch(
+        serverName,
+        target.label,
+        existingByName,
+        usedExistingNames
+      );
+      const resolvedName = existing
+        ? existing.name
+        : resolveWorkspaceMcpServerName({
+            label: target.label,
+            serverName,
+            reserved: targetReserved,
+          });
+      usedExistingNames.add(resolvedName);
       targetReserved.add(resolvedName);
       ctx.reserved?.add(resolvedName);
       entries[resolvedName] = rawEntry;
@@ -629,6 +667,16 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
 }
 
 function pruneMcpOrphans(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
+  if (ctx.skipOrphanPrune) {
+    return {
+      ...ctx,
+      result: {
+        results: ctx.results ?? [],
+        orphanPruned: 0,
+      },
+    };
+  }
+
   const targetPaths = new Set((ctx.targets ?? []).map((t) => t.path));
   let orphanPruned = 0;
 

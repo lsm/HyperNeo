@@ -13,7 +13,7 @@ import type {
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import { join } from 'node:path';
+import { resolve } from 'node:path';
 import type { ImportResult, McpImportService } from '../mcp/index.ts';
 import { Logger } from '../logger.ts';
 
@@ -126,13 +126,12 @@ export function setupSpaceMcpHandlers(
     }
 
     if (workspacePath && typeof workspacePath === 'string') {
-      const filePath = join(workspacePath, '.mcp.json');
-      const result: ImportResult = mcpImportService.refreshFromFile(filePath);
+      const result: ImportResult = mcpImportService.refreshAllForPath(resolve(workspacePath));
       added = result.added;
       updated = result.updated;
       removed = result.removed;
       if (result.status === 'malformed') {
-        notes.push(`${filePath}: parse error — ${result.error ?? 'invalid file'}`);
+        notes.push(`${result.sourcePath}: parse error — ${result.error ?? 'invalid file'}`);
       }
     } else {
       const result = mcpImportService.refreshAll();
