@@ -3338,6 +3338,32 @@ describe('AgentSession', () => {
       expect(handleMessageSpy).toHaveBeenCalledWith(message, 7);
     });
 
+    it('a stale non-idle session-state event does not park the task-notification requery flag', async () => {
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).messageHandler = {
+        handleMessage: mock(async () => {}),
+      };
+      agentSession.incrementQueryGeneration();
+      const busy = {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+      };
+      const flag = () =>
+        (agentSession as unknown as { taskNotificationRequeryAwaitingSdkIdle: boolean })
+          .taskNotificationRequeryAwaitingSdkIdle;
+
+      await agentSession.onSDKMessage(
+        busy as never,
+        undefined,
+        agentSession.getQueryGeneration() - 1
+      );
+      expect(flag()).toBe(false);
+
+      await agentSession.onSDKMessage(busy as never, undefined, agentSession.getQueryGeneration());
+      expect(flag()).toBe(true);
+    });
+
     it('incrementQueryGeneration notes the PSM query-owner epoch: a replaced query waiter no longer consumes the successor idle', async () => {
       const stateManager = agentSession.stateManager;
       const replacedOwner = stateManager.idleOwnerForQuery(agentSession.getQueryGeneration());
