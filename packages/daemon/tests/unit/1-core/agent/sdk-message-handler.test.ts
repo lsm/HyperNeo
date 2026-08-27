@@ -4482,6 +4482,36 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
       });
 
+      it('does not count nested results as event ticks', async () => {
+        const { getContextUsageSpy, h } = budgetCase();
+
+        for (let i = 0; i < 4; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+        await h.handleMessage({
+          type: 'result',
+          subtype: 'success',
+          uuid: 'nested-result-uuid',
+          parent_tool_use_id: 'outer-tool-use',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
       it('does not run turn-end enforcement for nested subagent results', async () => {
         const { getContextUsageSpy, h } = budgetCase();
 

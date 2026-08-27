@@ -1061,7 +1061,7 @@ export class SDKMessageHandler {
         releaseTurnEndGate = null;
       }
 
-      if (isTopLevelResult && isSDKResultMessage(message)) {
+      if (isSDKResultMessage(message)) {
         if (settlesArmedClearError) {
           this.clearIdleSuppression();
         }
