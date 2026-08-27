@@ -4417,6 +4417,23 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
+      it('clears a dead delivered compaction even when turn-end sampling fails', async () => {
+        hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+        const { h } = budgetCase();
+        mockContext.queryObject = {
+          getContextUsage: mock(async () => {
+            throw new Error('SDK exploded');
+          }),
+        } as never;
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+        expect(clearCompactionCooldownSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
       it('suppresses the compaction decision while limit recovery owns the turn', async () => {
         (mockContext as { isLimitRecoveryPending?: () => boolean }).isLimitRecoveryPending = mock(
           () => true

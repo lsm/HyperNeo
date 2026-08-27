@@ -1580,7 +1580,23 @@ export class SDKMessageHandler {
     const fenceProvider = session.config.provider;
 
     const promise = (async () => {
+      let clearedDeadCompaction = false;
       try {
+        const deadDeliveredCompaction =
+          reason === 'turn-end' &&
+          this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
+          !this.ctx.messageQueue.hasQueuedInternalCompaction() &&
+          !this.ctx.messageQueue.hasInFlightInternalCompaction() &&
+          !this.ctx.stateManager.getIsCompacting();
+        if (deadDeliveredCompaction) {
+          this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+          contextTracker.clearCompactionCooldown();
+          this.logger.info(
+            `clearing stale compaction cooldown for session ${session.id} after a ` +
+              `delivered /compact ended without a compact boundary`
+          );
+          clearedDeadCompaction = true;
+        }
         const modelInfo = await getSessionModelInfo(session);
         if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
         const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
@@ -1617,19 +1633,7 @@ export class SDKMessageHandler {
         ) {
           return;
         }
-        const deadDeliveredCompaction =
-          reason === 'turn-end' &&
-          this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
-          !this.ctx.messageQueue.hasQueuedInternalCompaction() &&
-          !this.ctx.messageQueue.hasInFlightInternalCompaction() &&
-          !this.ctx.stateManager.getIsCompacting();
-        if (deadDeliveredCompaction) {
-          this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
-          contextTracker.clearCompactionCooldown();
-          this.logger.info(
-            `clearing stale compaction cooldown for session ${session.id} after a ` +
-              `delivered /compact ended without a compact boundary`
-          );
+        if (clearedDeadCompaction) {
           return;
         }
         const effectiveWindow =
