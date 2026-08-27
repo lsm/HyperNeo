@@ -1529,6 +1529,7 @@ export class TaskAgentManager {
         this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
       onSettled: (row, deliveredSessionId) =>
         this.emitPendingDelivered(row.id, deliveredSessionId, row),
+      onFailed: () => this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId),
       watchActiveDelivery: (row) => {
         const replyToSession = this.resolveSpaceAgentReplySession(row);
         const candidates =
