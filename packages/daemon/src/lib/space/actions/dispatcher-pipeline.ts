@@ -127,6 +127,9 @@ export function applyRoleAdmission(ctx: DispatchActionCtx): DispatchActionCtx {
 export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
   if (ctx.outcome) return ctx;
   const action = ctx.action!;
+  if (action.autonomyRequirement === undefined) {
+    return { ...ctx, spaceLevel: ctx.spaceLevel ?? 1 };
+  }
   const spaceLevel =
     ctx.spaceLevel ??
     (ctx.deps.getSpaceAutonomyLevel ? await ctx.deps.getSpaceAutonomyLevel(ctx.spaceId) : 1);
@@ -200,10 +203,15 @@ export async function executeAction(ctx: DispatchActionCtx): Promise<DispatchAct
 }
 
 function isToolResult(value: unknown): value is ToolResult {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Array.isArray((value as { content?: unknown }).content)
+  if (typeof value !== 'object' || value === null) return false;
+  const content = (value as { content?: unknown }).content;
+  if (!Array.isArray(content) || content.length === 0) return false;
+  return content.every(
+    (entry) =>
+      typeof entry === 'object' &&
+      entry !== null &&
+      (entry as { type?: unknown }).type === 'text' &&
+      typeof (entry as { text?: unknown }).text === 'string'
   );
 }
 
@@ -223,13 +231,13 @@ export function formatResult(ctx: DispatchActionCtx): DispatchActionCtx {
 
 export function buildDispatchTelemetryEvent(
   input: DispatchActionInput,
-  ctx: DispatchActionCtx | undefined,
+  action: RegisteredAction | undefined,
   outcome: DispatchActionOutcome
 ): DispatchTelemetryEvent {
   return {
-    actionName: ctx?.action?.name ?? input.actionName,
-    family: ctx?.action?.family,
-    safetyClass: ctx?.action?.safetyClass,
+    actionName: action?.name ?? input.actionName,
+    family: action?.family,
+    safetyClass: action?.safetyClass,
     role: input.role,
     spaceId: input.spaceId,
     taskId: input.taskId,
@@ -243,11 +251,11 @@ export function buildDispatchTelemetryEvent(
 export async function emitDispatchTelemetry(
   deps: DispatchActionDeps,
   input: DispatchActionInput,
-  ctx: DispatchActionCtx | undefined,
+  action: RegisteredAction | undefined,
   outcome: DispatchActionOutcome
 ): Promise<void> {
   if (!deps.emitTelemetry) return;
-  const event = buildDispatchTelemetryEvent(input, ctx, outcome);
+  const event = buildDispatchTelemetryEvent(input, action, outcome);
   try {
     await deps.emitTelemetry(event);
   } catch {}
@@ -283,12 +291,13 @@ export async function runDispatchAction(
   try {
     const ctx = await run({ ...input, deps });
     const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
-    await emitDispatchTelemetry(deps, input, ctx, outcome);
+    await emitDispatchTelemetry(deps, input, ctx.action, outcome);
     return outcome;
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     const outcome = failedOutcome(error);
-    await emitDispatchTelemetry(deps, input, undefined, outcome);
+    const action = deps.registry.get(input.actionName);
+    await emitDispatchTelemetry(deps, input, action, outcome);
     return outcome;
   }
 }

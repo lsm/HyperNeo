@@ -303,6 +303,24 @@ describe('applyAutonomyGate', () => {
     expect(next.outcome).toBeUndefined();
     expect(next.spaceLevel).toBe(1);
   });
+
+  test('skips the space autonomy lookup for actions without a requirement', async () => {
+    let lookups = 0;
+    const ctx = applyRoleAdmission(
+      applySafetyClass(resolveAction(buildCtx({ actionName: 'list_tasks' })))
+    );
+    const next = await applyAutonomyGate(
+      withDeps(ctx, {
+        getSpaceAutonomyLevel: async () => {
+          lookups += 1;
+          return 3;
+        },
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(lookups).toBe(0);
+    expect(next.spaceLevel).toBe(1);
+  });
 });
 
 describe('applyRateAndAudit', () => {
@@ -440,6 +458,24 @@ describe('formatResult', () => {
     expect(next.outcome.result).toBe(result);
   });
 
+  test('jsonResult-wraps payloads whose content array is not a ToolResult envelope', () => {
+    const stringEntries = { content: ['message'] };
+    const next = formatResult({
+      ...buildCtx({ actionName: 'update_task' }),
+      rawResult: stringEntries,
+    });
+    assertDispatched(next.outcome!);
+    expect(JSON.parse(extractText(next.outcome.result))).toEqual(stringEntries);
+
+    const emptyEntries = { content: [] };
+    const empty = formatResult({
+      ...buildCtx({ actionName: 'update_task' }),
+      rawResult: emptyEntries,
+    });
+    assertDispatched(empty.outcome!);
+    expect(JSON.parse(extractText(empty.outcome.result))).toEqual(emptyEntries);
+  });
+
   test('preserves an existing denied outcome', () => {
     const denied = resolveAction(buildCtx({ actionName: 'missing_action' }));
     const next = formatResult(denied);
@@ -465,7 +501,7 @@ describe('buildDispatchTelemetryEvent', () => {
     );
     const event = buildDispatchTelemetryEvent(
       baseInput({ actionName: 'update_task', taskId: TASK_ID }),
-      ctx,
+      ctx.action,
       { action: 'dispatched', result: { content: [] } }
     );
     expect(event.actionName).toBe('update_task');
@@ -483,7 +519,7 @@ describe('buildDispatchTelemetryEvent', () => {
     const denied = resolveAction(buildCtx({ actionName: 'missing_action' }));
     const event = buildDispatchTelemetryEvent(
       baseInput({ actionName: 'missing_action' }),
-      denied,
+      denied.action,
       denied.outcome!
     );
     expect(event.outcome).toBe('denied');
@@ -678,6 +714,18 @@ describe('runDispatchAction', () => {
     expect(telemetry.length).toBe(1);
     expect(telemetry[0].outcome).toBe('failed');
     expect(telemetry[0].actionName).toBe('update_task');
-    expect(telemetry[0].family).toBeUndefined();
+    expect(telemetry[0].family).toBe('space');
+    expect(telemetry[0].safetyClass).toBe('mutate');
+  });
+
+  test('dispatches ungated reads without consulting the autonomy lookup', async () => {
+    const deps = baseDeps({
+      getSpaceAutonomyLevel: async () => {
+        throw new Error('level lookup failed');
+      },
+    });
+    const outcome = await runDispatchAction(deps, baseInput({ actionName: 'list_tasks' }));
+    assertDispatched(outcome);
+    expect(JSON.parse(extractText(outcome.result))).toEqual({ tasks: [] });
   });
 });
