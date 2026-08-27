@@ -944,5 +944,50 @@ describe('McpImportService', () => {
       expect(repo.getByName('new:foo')!.command).toBe('y');
       expect(repo.getByName('repo:old:foo')).toBeNull();
     });
+
+    test('does not swap rows when a new label matches a raw-name prefix', () => {
+      const spaceRepo = new SpaceRepository(bunDb);
+      const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
+
+      const ws = mkdtempSync(join(tmpRoot, 'ws-prefix-label-'));
+      const file = join(ws, '.mcp.json');
+      writeMcpJson(file, { mcpServers: { foo: { command: 'a' }, 'repo:foo': { command: 'b' } } });
+
+      service.refreshAll([ws]);
+      const fooRow = repo.getByName('foo');
+      const prefixedRow = repo.getByName('repo:foo');
+      expect(fooRow).not.toBeNull();
+      expect(prefixedRow).not.toBeNull();
+      repo.update(fooRow!.id, { enabled: true });
+
+      const space = spaceRepo.createSpace({
+        workspacePath: ws,
+        name: 'Repo',
+        slug: 'repo',
+      });
+      workspaceRepo.create({
+        spaceId: space.id,
+        path: ws,
+        label: 'repo',
+        isPrimary: true,
+      });
+
+      writeMcpJson(file, { mcpServers: { foo: { command: 'c' }, 'repo:foo': { command: 'd' } } });
+      const { results } = service.refreshAll();
+      const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
+
+      expect(byPath[file].updated).toBe(2);
+      const migratedFoo = repo.getByName('repo:foo:2');
+      const migratedPrefixed = repo.getByName('repo:repo:foo');
+      expect(migratedFoo).not.toBeNull();
+      expect(migratedFoo!.id).toBe(fooRow!.id);
+      expect(migratedFoo!.enabled).toBe(true);
+      expect(migratedFoo!.command).toBe('c');
+      expect(migratedPrefixed).not.toBeNull();
+      expect(migratedPrefixed!.id).toBe(prefixedRow!.id);
+      expect(migratedPrefixed!.command).toBe('d');
+      expect(repo.getByName('foo')).toBeNull();
+      expect(repo.getByName('repo:foo')).toBeNull();
+    });
   });
 });

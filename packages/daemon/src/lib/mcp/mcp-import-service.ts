@@ -521,7 +521,9 @@ function findBestExistingMatch(
   for (const [name, row] of existingByName) {
     if (usedExistingNames.has(name)) continue;
     const rank = matchExistingRank(name, serverName, label, allServerNames);
-    if (rank >= 0 && rank < bestRank) {
+    if (rank < 0) continue;
+    if (allServerNames && hasLongerRawTail(name, serverName, allServerNames)) continue;
+    if (rank < bestRank) {
       best = row;
       bestRank = rank;
       if (rank === 0) break;
@@ -674,9 +676,11 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
 
       let resolvedName: string;
       const exactExisting = existingByName.get(base);
-      if (exactExisting && !usedExistingNames.has(base)) {
+      const exactOwnedByOther =
+        allServerNames && hasLongerRawTail(base, serverName, allServerNames);
+      if (exactExisting && !exactOwnedByOther && !usedExistingNames.has(base)) {
         resolvedName = base;
-      } else if (!targetReserved.has(base)) {
+      } else if (!targetReserved.has(base) && !exactOwnedByOther) {
         resolvedName = base;
       } else {
         const existing = findBestExistingMatch(
@@ -779,6 +783,9 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
             : undefined;
         if (legacy && existing && legacy.id === existing.id) {
           legacy = undefined;
+        }
+        if (legacy && existing && rawName !== resolvedName) {
+          existing = undefined;
         }
         if (!existing) {
           existing = legacy;
