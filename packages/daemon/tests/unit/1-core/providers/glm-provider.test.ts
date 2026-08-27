@@ -143,12 +143,13 @@ describe('GlmProvider', () => {
 
       const models = await provider.getModels();
 
-      expect(models).toHaveLength(7);
+      expect(models).toHaveLength(8);
       expect(models.map((m) => m.id)).toEqual([
         'glm-5',
         'glm-5.1',
         'glm-5.2[1m]',
         'glm-5.3[1m]',
+        'glm-5.3-flash[1m]',
         'glm-5-turbo',
         'glm-5v-turbo',
         'glm-4.7',
@@ -282,6 +283,61 @@ describe('GlmProvider', () => {
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('128000');
     });
 
+    it('gives discovered-only models real context windows when known', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      const fetchImpl = installModelListFetch(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: 'glm-4.6', object: 'model' },
+                { id: 'glm-4.5-air', object: 'model' },
+                { id: 'glm-4.5', object: 'model' },
+                { id: 'glm-unknown', object: 'model' },
+              ],
+            }),
+            { status: 200 }
+          )
+      );
+
+      const models = await provider.listRemoteModels();
+      const byId = new Map(models.map((m) => [m.id, m]));
+
+      expect(byId.get('glm-4.6')?.contextWindow).toBe(200_000);
+      expect(byId.get('glm-4.5-air')?.contextWindow).toBe(128_000);
+      expect(byId.get('glm-4.5')?.contextWindow).toBe(128_000);
+      expect(byId.get('glm-unknown')?.contextWindow).toBe(128_000);
+
+      expect(provider.buildSdkConfig('glm-4.6').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '200000'
+      );
+      expect(provider.buildSdkConfig('glm-4.5-air').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '128000'
+      );
+      expect(provider.buildSdkConfig('glm-4.5').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '128000'
+      );
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it('maps discovered static-catalog models onto their catalog entry', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      installModelListFetch(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'glm-5.3-flash', object: 'model' }] }), {
+            status: 200,
+          })
+      );
+
+      const models = await provider.listRemoteModels();
+
+      expect(models).toHaveLength(1);
+      expect(models[0]).toEqual({
+        ...GlmProvider.MODELS.find((m) => m.id === 'glm-5.3-flash[1m]'),
+        id: 'glm-5.3-flash',
+      });
+    });
+
     it('serves its cache unless force is true and stores the forced result', async () => {
       process.env.GLM_API_KEY = 'test-key';
       const fetchImpl = installModelListFetch(
@@ -387,6 +443,21 @@ describe('GlmProvider', () => {
       ]);
       expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
+
+    it('falls back to the static catalog when discovery fails but the probe succeeds', async () => {
+      process.env.GLM_API_KEY = 'test-key';
+      const fetchImpl = mock(async (url: RequestInfo | URL) =>
+        String(url).endsWith('/models')
+          ? new Response('unavailable', { status: 503 })
+          : new Response('{}', { status: 200 })
+      );
+      provider = new GlmProvider(process.env, fetchImpl as unknown as typeof fetch);
+
+      const models = await provider.getModels();
+
+      expect(models.map((model) => model.id)).toEqual(GlmProvider.MODELS.map((m) => m.id));
+      expect(models.find((m) => m.id === 'glm-5.3-flash[1m]')?.contextWindow).toBe(1_000_000);
+    });
   });
 
   describe('ownsModel', () => {
@@ -473,6 +544,25 @@ describe('GlmProvider', () => {
       expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.3[1m]');
     });
 
+    it('should route glm-5.3-flash to the 1M SDK model id', () => {
+      process.env.GLM_API_KEY = 'test-key';
+
+      const config = provider.buildSdkConfig('glm-5.3-flash');
+
+      expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5.3-flash[1m]');
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.3-flash[1m]');
+      expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.3-flash[1m]');
+    });
+
+    it('should keep the 1M suffix on glm-5.3-flash when the caller already provides it', () => {
+      process.env.GLM_API_KEY = 'test-key';
+
+      const config = provider.buildSdkConfig('glm-5.3-flash[1m]');
+
+      expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.3-flash[1m]');
+      expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
+    });
+
     it('should set CLAUDE_CODE_AUTO_COMPACT_WINDOW per model context window', () => {
       process.env.GLM_API_KEY = 'test-key';
 
@@ -480,6 +570,9 @@ describe('GlmProvider', () => {
         '1000000'
       );
       expect(provider.buildSdkConfig('glm-5.3').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '1000000'
+      );
+      expect(provider.buildSdkConfig('glm-5.3-flash').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
         '1000000'
       );
       expect(provider.buildSdkConfig('glm-5').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
@@ -496,6 +589,12 @@ describe('GlmProvider', () => {
       );
       expect(provider.buildSdkConfig('glm-4.7').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
         '200000'
+      );
+      expect(provider.buildSdkConfig('glm-4.6').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '200000'
+      );
+      expect(provider.buildSdkConfig('glm-4.5').envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(
+        '128000'
       );
     });
 
@@ -622,12 +721,13 @@ describe('GlmProvider', () => {
 
   describe('static models', () => {
     it('should have static models defined', () => {
-      expect(GlmProvider.MODELS).toHaveLength(7);
+      expect(GlmProvider.MODELS).toHaveLength(8);
       expect(GlmProvider.MODELS.map((m) => m.id)).toEqual([
         'glm-5',
         'glm-5.1',
         'glm-5.2[1m]',
         'glm-5.3[1m]',
+        'glm-5.3-flash[1m]',
         'glm-5-turbo',
         'glm-5v-turbo',
         'glm-4.7',
@@ -647,6 +747,24 @@ describe('GlmProvider', () => {
         preferContextWindowMetadata: true,
         description: 'GLM-5.2 · 1M context window, recommended thinking mode "max"',
         releaseDate: '2026-06-10',
+        available: true,
+      });
+    });
+
+    it('should have correct glm-5.3-flash model definition', () => {
+      const model = GlmProvider.MODELS.find((m) => m.id === 'glm-5.3-flash[1m]');
+      expect(model).toBeDefined();
+      expect(model).toEqual({
+        id: 'glm-5.3-flash[1m]',
+        name: 'GLM-5.3-Flash',
+        alias: 'glm-5.3-flash',
+        family: 'glm',
+        provider: 'glm',
+        contextWindow: 1_000_000,
+        preferContextWindowMetadata: true,
+        description:
+          'GLM-5.3-Flash · 1M context window, natively multimodal MoE (320B-A18B), formerly Ox Alpha',
+        releaseDate: '2026-08-26',
         available: true,
       });
     });

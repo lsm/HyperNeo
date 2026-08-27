@@ -463,6 +463,127 @@ describe('useModelSwitcher', () => {
       expect(glmModel?.family).toBe('glm');
     });
 
+    it('should list the Z.ai catalog with preserved context windows and [1m] ids', async () => {
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi
+          .fn()
+          .mockResolvedValueOnce({
+            currentModel: 'glm-5.3[1m]',
+            currentProvider: 'glm',
+            modelInfo: null,
+          })
+          .mockResolvedValueOnce({
+            models: [
+              {
+                id: 'glm-5.3[1m]',
+                display_name: 'GLM-5.3',
+                description: 'GLM-5.3 · 1M context window',
+                alias: 'glm-5.3',
+                provider: 'glm',
+                contextWindow: 1000000,
+              },
+              {
+                id: 'glm-5.3-flash[1m]',
+                display_name: 'GLM-5.3-Flash',
+                description: 'GLM-5.3-Flash · 1M context window',
+                alias: 'glm-5.3-flash',
+                provider: 'glm',
+                contextWindow: 1000000,
+              },
+              {
+                id: 'glm-4.6',
+                display_name: 'glm-4.6',
+                description: 'glm-4.6 via Z.ai',
+                alias: 'glm-4.6',
+                provider: 'glm',
+                contextWindow: 200000,
+              },
+            ],
+          }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+
+      const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      const glmModels = result.current.availableModels.filter((m) => m.provider === 'glm');
+      expect(glmModels.map((m) => m.id).sort()).toEqual([
+        'glm-4.6',
+        'glm-5.3-flash[1m]',
+        'glm-5.3[1m]',
+      ]);
+      for (const model of glmModels) {
+        expect(model.family).toBe('glm');
+        expect(model.contextWindow).toBeGreaterThan(0);
+      }
+      expect(
+        result.current.availableModels.find((m) => m.id === 'glm-5.3-flash[1m]')?.contextWindow
+      ).toBe(1000000);
+      expect(result.current.availableModels.find((m) => m.id === 'glm-4.6')?.contextWindow).toBe(
+        200000
+      );
+    });
+
+    it('should switch a session to a Z.ai model with the glm provider', async () => {
+      const mockHub = {
+        onEvent: vi.fn(() => () => {}),
+        request: vi
+          .fn()
+          .mockResolvedValueOnce({
+            currentModel: 'claude-sonnet-4-20250514',
+            currentProvider: 'anthropic',
+            modelInfo: null,
+          })
+          .mockResolvedValueOnce({
+            models: [
+              {
+                id: 'claude-sonnet-4-20250514',
+                display_name: 'Claude Sonnet 4',
+                description: '',
+                provider: 'anthropic',
+              },
+              {
+                id: 'glm-5.3-flash[1m]',
+                display_name: 'GLM-5.3-Flash',
+                description: 'GLM-5.3-Flash · 1M context window',
+                alias: 'glm-5.3-flash',
+                provider: 'glm',
+                contextWindow: 1000000,
+              },
+            ],
+          })
+          .mockResolvedValueOnce({
+            success: true,
+            model: 'glm-5.3-flash[1m]',
+          }),
+      };
+      mockGetHubIfConnected.mockReturnValue(mockHub);
+
+      const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+      });
+
+      const glmModel = result.current.availableModels.find((m) => m.id === 'glm-5.3-flash[1m]');
+      await act(async () => {
+        await result.current.switchModel(glmModel);
+      });
+
+      expect(mockHub.request).toHaveBeenCalledWith('session.model.switch', {
+        sessionId: 'session-1',
+        model: 'glm-5.3-flash[1m]',
+        provider: 'glm',
+      });
+      expect(result.current.currentModel).toBe('glm-5.3-flash[1m]');
+      expect(result.current.currentModelInfo?.provider).toBe('glm');
+      expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('Switched to'));
+    });
+
     it('should detect kimi family and provider for Kimi models', async () => {
       const mockHub = {
         onEvent: vi.fn(() => () => {}),
