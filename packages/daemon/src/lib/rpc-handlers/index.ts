@@ -475,6 +475,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     eventHub: {
       publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
     },
+    resolveWorkspacePath: (spaceId, rawPath) =>
+      deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath),
     onGoalResumed: (goalId, spaceId) => {
       for (const scope of deps.db.evolution.listScopes({ spaceId, spaceGoalId: goalId })) {
         try {
