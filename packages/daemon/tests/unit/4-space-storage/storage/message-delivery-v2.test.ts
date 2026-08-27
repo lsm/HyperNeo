@@ -822,7 +822,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     expect(result.retryAt).toBeGreaterThanOrEqual(before + MESSAGE_DELIVERY_PARK_MS);
     expect(repo.getJob(job.id)?.status).toBe('pending');
     expect(repo.getJob(job.id)?.runAt).toBe(result.retryAt);
-    expect(repo.getParkCount(job.id)).toBe(1);
+    expect(repo.getParkCount(job.id, 'resumeChoice')).toBe(1);
   });
 
   it('promoting a heavily parked steer to a turn resets the resume-choice park budget', async () => {
@@ -850,7 +850,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     const result = await handler(promoted);
     expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
     expect(result.retryAt as number).toBeGreaterThan(Date.now());
-    expect(repo.getParkCount(steer.id)).toBe(1);
+    expect(repo.getParkCount(steer.id, 'resumeChoice')).toBe(1);
     expect(repo.getJob(steer.id)?.status).toBe('pending');
   });
 
@@ -866,7 +866,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     let current = first;
     for (let i = 0; i < RESUME_CHOICE_PARK_BUDGET; i++) {
       await handler(current);
-      expect(repo.getParkCount(first.id)).toBe(i + 1);
+      expect(repo.getParkCount(first.id, 'resumeChoice')).toBe(i + 1);
       if (i < RESUME_CHOICE_PARK_BUDGET - 1) {
         db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
         current = repo.dequeue(MESSAGE_DELIVERY, 1)[0]!;
@@ -875,7 +875,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
     const [last] = repo.dequeue(MESSAGE_DELIVERY, 1);
     await expect(handler(last!)).rejects.toThrow('past its budget');
-    expect(repo.getParkCount(first.id)).toBe(RESUME_CHOICE_PARK_BUDGET);
+    expect(repo.getParkCount(first.id, 'resumeChoice')).toBe(RESUME_CHOICE_PARK_BUDGET);
     expect(repo.getJob(first.id)?.status).toBe('processing');
   });
 

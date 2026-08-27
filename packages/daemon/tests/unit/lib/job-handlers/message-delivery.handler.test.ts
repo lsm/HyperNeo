@@ -87,10 +87,15 @@ function makeHarness(
   const session = new MockSession();
   const jobQueue = {
     isClaimCurrent: mock((_id: string, _token: string | null) => true),
-    getParkCount: mock((_id: string) => 0),
+    getParkCount: mock((_id: string, _counter?: 'park' | 'resumeChoice') => 0),
     requeue: mock((_id: string, _runAt: number, _token: string | null) => null),
     requeueParked: mock(
-      (_id: string, _runAt: number, _token: string | null, _opts?: { reason?: string }) => null
+      (
+        _id: string,
+        _runAt: number,
+        _token: string | null,
+        _opts?: { reason?: string; counter?: 'park' | 'resumeChoice' }
+      ) => null
     ),
     requeueAs: mock((_id: string, _role: string, _runAt: number, _token: string | null) => null),
     rescheduleSessionDeliveries: mock(
@@ -241,6 +246,7 @@ describe('createMessageDeliveryHandler', () => {
       expect(result.retryAt).toBeGreaterThan(Date.now());
       expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
         reason: 'acp_awaiting_acceptance',
+        counter: 'park',
       });
       expect(session.feedCalls).toBe(0);
       expect(session.settleCalls).toEqual([]);
@@ -354,6 +360,8 @@ describe('createMessageDeliveryHandler', () => {
             (row.drive as { outcome: string }).outcome === 'blocked'
               ? 'sdk_resume_choice'
               : 'limit_recovery',
+          counter:
+            (row.drive as { outcome: string }).outcome === 'blocked' ? 'resumeChoice' : 'park',
         });
       }
       expect(session.settleCalls).toEqual(row.settle ? ['uuid-1'] : []);
@@ -410,6 +418,7 @@ describe('createMessageDeliveryHandler', () => {
         expect(result.retryAt).toBeGreaterThan(Date.now());
         expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
           reason: row.expected.parked,
+          counter: row.expected.parked === 'sdk_resume_choice' ? 'resumeChoice' : 'park',
         });
       }
       if (row.promoteRole) {
@@ -482,6 +491,7 @@ describe('createMessageDeliveryHandler', () => {
       expect(result).toMatchObject({ parked: 'turn_blocked' });
       expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
         reason: 'turn_blocked',
+        counter: 'park',
       });
       expect(jobQueue.requeue).not.toHaveBeenCalled();
     });
@@ -558,6 +568,7 @@ describe('createMessageDeliveryHandler', () => {
       expect(jobQueue.getParkCount).toHaveBeenCalledTimes(1);
       expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
         reason: 'sdk_resume_choice',
+        counter: 'resumeChoice',
       });
       expect(jobQueue.requeue).not.toHaveBeenCalled();
     });
@@ -591,6 +602,45 @@ describe('createMessageDeliveryHandler', () => {
       expect(jobQueue.rescheduleSessionDeliveries).not.toHaveBeenCalled();
     });
 
+    it('turn_blocked park accumulation never counts against the resume-choice budget', async () => {
+      const { handler, session, jobQueue, job } = makeHarness();
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+      jobQueue.getParkCount.mockImplementation((_id: string, counter?: 'park' | 'resumeChoice') =>
+        counter === 'resumeChoice' ? 0 : MAX_STEER_PARKS + 40
+      );
+      const result = await handler(job, {});
+      expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
+      expect(jobQueue.getParkCount).toHaveBeenCalledWith('job-1', 'resumeChoice');
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
+        reason: 'sdk_resume_choice',
+        counter: 'resumeChoice',
+      });
+    });
+
+    it('a parked resume-choice steer whose choice resolves post-park is woken immediately', async () => {
+      let reads = 0;
+      const { handler, session, jobQueue, job } = makeHarness(
+        {
+          isResumeChoiceResolved: mock(() => {
+            reads += 1;
+            return reads > 1;
+          }),
+        },
+        STEER_PAYLOAD
+      );
+      session.feedResult = { outcome: 'park' };
+      session.waitingForInput = true;
+      const result = await handler(job, {});
+      expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
+      expect(jobQueue.requeueParked).toHaveBeenCalledTimes(1);
+      expect(jobQueue.rescheduleSessionDeliveries).toHaveBeenCalledWith(
+        'message_delivery',
+        'sess-1',
+        expect.any(Number),
+        { parkReason: 'sdk_resume_choice' }
+      );
+    });
+
     it('a steer waiting behind an unresolved resume choice parks with the resume backoff', async () => {
       const { handler, session, jobQueue, job } = makeHarness(
         { isResumeChoiceResolved: mock(() => false) },
@@ -604,6 +654,7 @@ describe('createMessageDeliveryHandler', () => {
       expect(result.retryAt).toBeGreaterThan(Date.now() + 50_000);
       expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
         reason: 'sdk_resume_choice',
+        counter: 'resumeChoice',
       });
       expect(jobQueue.requeue).not.toHaveBeenCalled();
     });
@@ -695,7 +746,7 @@ describe('createMessageDeliveryHandler', () => {
         'job-1',
         turnResult.retryAt,
         'claim-1',
-        { reason: 'sdk_resume_choice' }
+        { reason: 'sdk_resume_choice', counter: 'resumeChoice' }
       );
       expect(turn.jobQueue.requeue).not.toHaveBeenCalled();
       expect(steerResult).toMatchObject({ parked: 'turn_blocked' });
@@ -703,7 +754,7 @@ describe('createMessageDeliveryHandler', () => {
         'job-1',
         steerResult.retryAt,
         'claim-1',
-        { reason: 'turn_blocked' }
+        { reason: 'turn_blocked', counter: 'park' }
       );
       expect(steer.jobQueue.requeue).not.toHaveBeenCalled();
     });

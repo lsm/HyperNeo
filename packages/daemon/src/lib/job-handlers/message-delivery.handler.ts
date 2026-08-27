@@ -81,6 +81,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
       deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken, {
         reason: 'acp_awaiting_acceptance',
+        counter: 'park',
       });
       return { parked: 'acp_awaiting_acceptance', retryAt };
     }
@@ -122,7 +123,8 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       );
       const result = await turn;
       const route = routeDriveTurnOutcome(result, {
-        parkCount: result.outcome === 'blocked' ? deps.jobQueue.getParkCount(job.id) : 0,
+        parkCount:
+          result.outcome === 'blocked' ? deps.jobQueue.getParkCount(job.id, 'resumeChoice') : 0,
         now: Date.now(),
         resumeChoiceResolved:
           result.outcome === 'blocked'
@@ -150,11 +152,13 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       if (route.mutation === 'requeue' && route.retryAt !== undefined) {
         deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
       } else if (route.mutation === 'requeueParked' && route.retryAt !== undefined) {
+        const parkedReason = (route.result as { parked?: string }).parked;
         deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken, {
-          reason: (route.result as { parked?: string }).parked,
+          reason: parkedReason,
+          counter: parkedReason === 'sdk_resume_choice' ? 'resumeChoice' : 'park',
         });
         if (
-          (route.result as { parked?: string }).parked === 'sdk_resume_choice' &&
+          parkedReason === 'sdk_resume_choice' &&
           deps.isResumeChoiceResolved?.(payload.sessionId) === true
         ) {
           deps.jobQueue.rescheduleSessionDeliveries(job.queue, payload.sessionId, Date.now(), {
@@ -184,11 +188,14 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     const needsParkBudget = result.outcome === 'park' || result.outcome === 'awaiting_acceptance';
     const waitingForInput =
       result.outcome === 'park' ? (session.isWaitingForInput?.() ?? false) : false;
+    const resumeChoicePending =
+      waitingForInput && deps.isResumeChoiceResolved?.(payload.sessionId) === false;
     const route = routeFeedSteerOutcome(result, {
-      parkCount: needsParkBudget ? deps.jobQueue.getParkCount(job.id) : 0,
+      parkCount: needsParkBudget
+        ? deps.jobQueue.getParkCount(job.id, resumeChoicePending ? 'resumeChoice' : 'park')
+        : 0,
       waitingForInput,
-      resumeChoicePending:
-        waitingForInput && deps.isResumeChoiceResolved?.(payload.sessionId) === false,
+      resumeChoicePending,
       now: Date.now(),
     });
     if ('deadLetter' in route) {
@@ -200,9 +207,22 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (route.mutation === 'requeue' && route.retryAt !== undefined) {
       deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
     } else if (route.mutation === 'requeueParked' && route.retryAt !== undefined) {
+      const parkedReason = (route.result as { parked?: string }).parked;
       deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken, {
-        reason: (route.result as { parked?: string }).parked,
+        reason: parkedReason,
+        counter: parkedReason === 'sdk_resume_choice' ? 'resumeChoice' : 'park',
       });
+      if (
+        parkedReason === 'sdk_resume_choice' &&
+        deps.isResumeChoiceResolved?.(payload.sessionId) === true
+      ) {
+        deps.jobQueue.rescheduleSessionDeliveries(job.queue, payload.sessionId, Date.now(), {
+          parkReason: 'sdk_resume_choice',
+        });
+        log.info(
+          `message_delivery: resume choice resolved while parking steer ${payload.messageUuid}; waking immediately`
+        );
+      }
     } else if (route.mutation === 'requeueAs') {
       try {
         deps.jobQueue.requeueAs(

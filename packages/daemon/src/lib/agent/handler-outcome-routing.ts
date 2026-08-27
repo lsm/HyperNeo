@@ -9,11 +9,11 @@ import {
 } from './message-delivery.ts';
 import {
   RESUME_CHOICE_DEAD_LETTER_REASON,
-  resumeChoiceParkDelayMs,
+  routeBlockedSteer,
   routeBlockedTurn,
 } from './message-delivery-pipeline.ts';
 
-export { RESUME_CHOICE_DEAD_LETTER_REASON, resumeChoiceParkDelayMs };
+export { RESUME_CHOICE_DEAD_LETTER_REASON };
 
 export type HandlerJobResult =
   | { outcome: 'completed'; skipped?: 'turn_terminated' }
@@ -107,15 +107,29 @@ export function routeFeedSteerOutcome(
   }
   if (result.outcome === 'park') {
     if (args.waitingForInput && args.resumeChoicePending === true) {
-      if (args.parkCount >= RESUME_CHOICE_PARK_BUDGET) {
-        return { deadLetter: RESUME_CHOICE_DEAD_LETTER_REASON };
+      const decision = routeBlockedSteer({
+        outcome: 'blocked',
+        parkCount: args.parkCount,
+        resumeChoiceResolved: false,
+        now: args.now,
+      });
+      if (decision.action === 'dead_letter') {
+        return { deadLetter: decision.reason };
       }
-      const retryAt = args.now + resumeChoiceParkDelayMs(args.parkCount);
+      if (decision.action === 'requeue_now') {
+        const retryAt = args.now;
+        return {
+          mutation: 'requeue',
+          retryAt,
+          settleSkipped: false,
+          result: { parked: 'sdk_resume_choice', retryAt },
+        };
+      }
       return {
         mutation: 'requeueParked',
-        retryAt,
+        retryAt: decision.retryAt,
         settleSkipped: false,
-        result: { parked: 'sdk_resume_choice', retryAt },
+        result: { parked: 'sdk_resume_choice', retryAt: decision.retryAt },
       };
     }
     if (args.waitingForInput) {

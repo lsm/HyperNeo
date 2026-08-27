@@ -232,9 +232,10 @@ export class JobQueueRepository {
     return this.getJob(jobId);
   }
 
-  getParkCount(jobId: string): number {
+  getParkCount(jobId: string, counter: 'park' | 'resumeChoice' = 'park'): number {
+    const field = counter === 'resumeChoice' ? '$.__resumeChoiceParks' : '$.__parkCount';
     const row = this.db
-      .prepare(`SELECT json_extract(payload, '$.__parkCount') AS c FROM job_queue WHERE id = ?`)
+      .prepare(`SELECT json_extract(payload, '${field}') AS c FROM job_queue WHERE id = ?`)
       .get(jobId) as { c: number | null } | undefined;
     return Number(row?.c ?? 0) || 0;
   }
@@ -243,25 +244,22 @@ export class JobQueueRepository {
     jobId: string,
     runAt: number,
     claimToken?: string | null,
-    opts?: { reason?: string }
+    opts?: { reason?: string; counter?: 'park' | 'resumeChoice' }
   ): Job | null {
-    const payloadSet =
-      opts?.reason !== undefined
-        ? `payload = json_set(payload, '$.__parkCount',
-               COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1, '$.__parkReason', ?)`
-        : `payload = json_set(payload, '$.__parkCount',
-               COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1, '$.__parkReason', NULL)`;
+    const counterField =
+      opts?.counter === 'resumeChoice' ? '$.__resumeChoiceParks' : '$.__parkCount';
+    const reasonSet =
+      opts?.reason !== undefined ? `, '$.__parkReason', ?` : `, '$.__parkReason', NULL`;
+    const reasonParams = opts?.reason !== undefined ? [opts.reason] : [];
     const stmt = this.db.prepare(
       `UPDATE job_queue
          SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
-             ${payloadSet}
+             payload = json_set(payload, '${counterField}',
+               COALESCE(json_extract(payload, '${counterField}'), 0) + 1${reasonSet})
        WHERE id = ? AND status = 'processing'
          AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
-    const params =
-      opts?.reason !== undefined
-        ? [runAt, opts.reason, jobId, claimToken ?? null, claimToken ?? null]
-        : [runAt, jobId, claimToken ?? null, claimToken ?? null];
+    const params = [runAt, ...reasonParams, jobId, claimToken ?? null, claimToken ?? null];
     const res = withBusyRetry(() => stmt.run(...params));
     if (res.changes === 0) return null;
     return this.getJob(jobId);
@@ -275,7 +273,7 @@ export class JobQueueRepository {
     opts?: { resetParkCount?: boolean }
   ): Job | null {
     const payloadSet = opts?.resetParkCount
-      ? `payload = json_set(payload, '$.role', ?, '$.__parkCount', 0),`
+      ? `payload = json_set(payload, '$.role', ?, '$.__parkCount', 0, '$.__resumeChoiceParks', 0),`
       : `payload = json_set(payload, '$.role', ?),`;
     const stmt = this.db.prepare(
       `UPDATE job_queue
@@ -306,7 +304,7 @@ export class JobQueueRepository {
             SET run_at = CASE WHEN run_at > ? THEN ? ELSE run_at END,
                 started_at = NULL,
                 heartbeat_at = NULL,
-                payload = json_set(payload, '$.__parkCount', 0)
+                payload = json_set(payload, '$.__parkCount', 0, '$.__resumeChoiceParks', 0)
           WHERE queue = ? AND status = 'pending'
             AND json_extract(payload, '$.sessionId') = ?
             AND json_extract(payload, '$.__parkReason') = ?`
@@ -780,7 +778,8 @@ export class JobQueueRepository {
           .prepare(
             `UPDATE job_queue
                 SET retry_count = retry_count + 1, status = 'pending', error = ?,
-                    run_at = ?, started_at = NULL, heartbeat_at = NULL
+                    run_at = ?, started_at = NULL, heartbeat_at = NULL,
+                    payload = json_set(payload, '$.__parkReason', NULL)
               WHERE id = ?
                 AND (? IS NULL OR (status = 'processing'
                   AND json_extract(payload, '$.__claimToken') = ?))`

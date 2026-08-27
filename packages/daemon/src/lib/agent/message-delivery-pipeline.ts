@@ -258,3 +258,20 @@ export function routeBlockedTurn(input: BlockedTurnRouteInput): BlockedTurnRoute
     }
   );
 }
+
+const blockedSteerRouteRun = decisionRun('message-blocked-steer-route', [
+  applyResolvedChoiceGate,
+  applyResumeChoiceBudgetGate,
+  applyParkBackoffFinalGate,
+]);
+
+export function routeBlockedSteer(input: BlockedTurnRouteInput): BlockedTurnRouteDecision {
+  const ctx = blockedSteerRouteRun(input);
+  return (
+    ctx.decision ?? {
+      action: 'park',
+      retryAt: input.now + MESSAGE_DELIVERY_PARK_MS,
+      reason: 'sdk_resume_choice',
+    }
+  );
+}

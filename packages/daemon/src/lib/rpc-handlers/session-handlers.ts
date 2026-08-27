@@ -1331,13 +1331,6 @@ export function setupSessionHandlers(
 
     const db = sessionManager.getDatabase();
 
-    if (choice === 'start_fresh') {
-      db.updateSession(targetSessionId, { sdkSessionId: undefined, sdkOriginPath: undefined });
-      const session = agentSession.getSessionData();
-      session.sdkSessionId = undefined;
-      session.sdkOriginPath = undefined;
-    }
-
     const existingAction = db
       .getSDKMessageRepo()
       .getHyperNeoActionMessageByUuid(targetSessionId, messageUuid);
@@ -1346,6 +1339,13 @@ export function setupSessionHandlers(
     }
     if (existingAction.resolved) {
       return { retried: true, alreadyResolved: true, messageId: messageUuid };
+    }
+
+    if (choice === 'start_fresh') {
+      db.updateSession(targetSessionId, { sdkSessionId: undefined, sdkOriginPath: undefined });
+      const session = agentSession.getSessionData();
+      session.sdkSessionId = undefined;
+      session.sdkOriginPath = undefined;
     }
 
     const resolvedMessage: HyperNeoActionMessage = {
