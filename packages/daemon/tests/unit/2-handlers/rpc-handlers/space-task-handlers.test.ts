@@ -530,11 +530,11 @@ describe('space-task-handlers', () => {
   });
 
   describe('spaceTask.archive via spaceTask.update', () => {
-    it('archives a completed task via status transition and publishes space.task.updated', async () => {
-      const completedTask = { ...mockTask, status: 'completed' as const };
-      setup(mockSpace, completedTask);
+    it('archives a done task via status transition and publishes space.task.updated', async () => {
+      const doneTask = { ...mockTask, status: 'done' as const };
+      setup(mockSpace, doneTask);
       (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
-        ...completedTask,
+        ...doneTask,
         status: 'archived' as const,
       });
 
@@ -749,11 +749,11 @@ describe('space-task-handlers', () => {
       expect(runtime.recoverWorkflowBackedTask).toHaveBeenCalledWith('space-1', 'task-1', 'open');
     });
 
-    it('reactivates a completed task to in_progress and publishes space.task.updated', async () => {
-      const completedTask = { ...mockTask, status: 'completed' as const };
-      setup(mockSpace, completedTask);
+    it('reactivates a done task to in_progress and publishes space.task.updated', async () => {
+      const doneTask = { ...mockTask, status: 'done' as const };
+      setup(mockSpace, doneTask);
       (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
-        ...completedTask,
+        ...doneTask,
         status: 'in_progress' as const,
         result: undefined,
         progress: undefined,
@@ -880,6 +880,9 @@ describe('space-task-handlers', () => {
     });
 
     it("writes 'stopped' via plain setTaskStatus for non-workflow tasks (nothing to park)", async () => {
+      const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+      setup(mockSpace, inProgressTask);
+
       const result = await call('spaceTask.update', {
         spaceId: 'space-1',
         taskId: 'task-1',
