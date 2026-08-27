@@ -45,8 +45,23 @@ export class ProcessingStateManager {
     this.onIdleCallback = callback;
   }
 
+  noteQueryOwnerGeneration(queryGeneration: number): void {
+    this.queryOwnerGeneration = queryGeneration;
+  }
+
+  idleOwnerForQuery(queryGeneration: number): IdleOwnerScope {
+    return { queryGeneration, turnToken: this.turnOwnerToken };
+  }
+
   private getCurrentIdleOwner(): IdleOwnerScope {
     return { queryGeneration: this.queryOwnerGeneration, turnToken: this.turnOwnerToken };
+  }
+
+  private isIdleOwnerCurrent(owner: IdleOwnerScope): boolean {
+    const current = this.getCurrentIdleOwner();
+    return (
+      current.queryGeneration === owner.queryGeneration && current.turnToken === owner.turnToken
+    );
   }
 
   private admittedIdleWaiters(transitionOwner?: IdleOwnerScope) {
@@ -171,6 +186,7 @@ export class ProcessingStateManager {
     suppressIdleCallback?: boolean;
     owner?: IdleOwnerScope;
   }): Promise<void> {
+    const transitionOwner = opts?.owner ?? this.getCurrentIdleOwner();
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
     const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
     const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
@@ -183,8 +199,15 @@ export class ProcessingStateManager {
       for (const w of this.admittedIdleWaiters(opts?.owner)) w.fireEnd();
     }
     try {
-      await this.setState({ status: 'idle' }, opts?.suppressIdlePublish);
-      if (this.onIdleCallback && !opts?.suppressIdleCallback && !this.idleCallbackInFlight) {
+      if (this.isIdleOwnerCurrent(transitionOwner)) {
+        await this.setState({ status: 'idle' }, opts?.suppressIdlePublish);
+      }
+      if (
+        this.onIdleCallback &&
+        !opts?.suppressIdleCallback &&
+        !this.idleCallbackInFlight &&
+        this.isIdleOwnerCurrent(transitionOwner)
+      ) {
         this.idleCallbackInFlight = true;
         try {
           await this.onIdleCallback();

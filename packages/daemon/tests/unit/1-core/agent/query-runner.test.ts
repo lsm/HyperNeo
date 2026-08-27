@@ -1270,7 +1270,7 @@ describe('QueryRunner', () => {
 
       expect(updateMessageStatusSpy).not.toHaveBeenCalled();
       expect(publishSpy).not.toHaveBeenCalled();
-      expect(onSDKMessageSpy).toHaveBeenCalledWith(systemInitMessage);
+      expect(onSDKMessageSpy).toHaveBeenCalledWith(systemInitMessage, undefined, undefined);
     });
 
     it('should delegate to onSDKMessage callback', async () => {
@@ -1284,7 +1284,7 @@ describe('QueryRunner', () => {
 
       await runner.handleSDKMessage(message as unknown as SDKMessage);
 
-      expect(onSDKMessageSpy).toHaveBeenCalledWith(message);
+      expect(onSDKMessageSpy).toHaveBeenCalledWith(message, undefined, undefined);
     });
 
     it('should call onMarkApiSuccess after handling message', async () => {

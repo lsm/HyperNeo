@@ -342,7 +342,11 @@ export interface QueryRunnerContext {
   isCleaningUp(): boolean;
   attemptTokens: QueryAttemptRegistry;
 
-  onSDKMessage(message: SDKMessage, queuedMessages?: SDKMessage[]): Promise<void>;
+  onSDKMessage(
+    message: SDKMessage,
+    queuedMessages?: SDKMessage[],
+    runnerGeneration?: number
+  ): Promise<void>;
   onSlashCommandsFetched(): Promise<void>;
   onModelsFetched(): Promise<void>;
   onMarkApiSuccess(message: SDKMessage): Promise<void>;
@@ -943,7 +947,7 @@ export class QueryRunner {
         }
 
         try {
-          await this.handleSDKMessage(message as SDKMessage);
+          await this.handleSDKMessage(message as SDKMessage, queryGeneration);
         } catch (error) {
           logger.error('Error handling SDK message:', error);
           logger.error('Message type:', (message as SDKMessage).type);
@@ -1750,8 +1754,8 @@ export class QueryRunner {
     }
   }
 
-  async handleSDKMessage(message: SDKMessage): Promise<void> {
-    await this.ctx.onSDKMessage(message);
+  async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
+    await this.ctx.onSDKMessage(message, undefined, queryGeneration);
     await this.ctx.onMarkApiSuccess(message);
   }
 

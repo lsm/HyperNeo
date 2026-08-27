@@ -437,6 +437,94 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('query-owner idle filter (B5e)', () => {
+    function armOwnedWaiter(owner: { queryGeneration: number; turnToken: number }) {
+      const flags = { ended: false, resolved: false };
+      void manager
+        .waitForIdleTransition(
+          undefined,
+          () => {
+            flags.ended = true;
+          },
+          owner
+        )
+        .promise.then(() => {
+          flags.resolved = true;
+        });
+      return flags;
+    }
+
+    test('noteQueryOwnerGeneration advances the epoch: a stale owned waiter no longer consumes the successor idle', async () => {
+      const staleWaiter = armOwnedWaiter({ queryGeneration: 1, turnToken: 0 });
+      manager.noteQueryOwnerGeneration(2);
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(2) });
+
+      expect(staleWaiter).toEqual({ ended: false, resolved: false });
+      expect(manager.getState().status).toBe('idle');
+    });
+
+    test('a stale owned waiter is spared even by a plain unscoped successor idle', async () => {
+      const staleWaiter = armOwnedWaiter({ queryGeneration: 1, turnToken: 0 });
+      manager.noteQueryOwnerGeneration(2);
+
+      await manager.setIdle();
+
+      expect(staleWaiter.resolved).toBe(false);
+    });
+
+    test('replacement during the idle publication skips the onIdle callback and the successor waiter (B5e pin)', async () => {
+      const onIdleCallback = mock(async () => {});
+      manager.setOnIdleCallback(onIdleCallback);
+      manager.noteQueryOwnerGeneration(3);
+      let releasePublish!: () => void;
+      emitMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePublish = resolve;
+          })
+      );
+
+      const settling = manager.setIdle({ owner: manager.idleOwnerForQuery(3) });
+      manager.noteQueryOwnerGeneration(4);
+      const successorWaiter = armOwnedWaiter(manager.idleOwnerForQuery(4));
+
+      releasePublish();
+      emitMock.mockImplementation(async () => {});
+      await settling;
+
+      expect(onIdleCallback).not.toHaveBeenCalled();
+      expect(successorWaiter.resolved).toBe(false);
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(4) });
+
+      expect(successorWaiter.resolved).toBe(true);
+      expect(onIdleCallback).toHaveBeenCalledTimes(1);
+    });
+
+    test('a stale owner settle preserves the successor processing state and balances the terminal counters', async () => {
+      const onIdleCallback = mock(async () => {});
+      manager.setOnIdleCallback(onIdleCallback);
+      manager.noteQueryOwnerGeneration(1);
+      const staleOwner = manager.idleOwnerForQuery(1);
+      manager.beginTerminalIdle(staleOwner);
+      manager.noteQueryOwnerGeneration(2);
+      await manager.setProcessing('successor-msg');
+
+      await manager.setIdle({ owner: staleOwner });
+
+      expect(manager.getState().status).toBe('processing');
+      expect(onIdleCallback).not.toHaveBeenCalled();
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(2) });
+
+      expect(manager.getState().status).toBe('idle');
+      expect(onIdleCallback).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('onIdleCallback ordering (deferred restart)', () => {
     test('fires the callback BEFORE draining delivery waiters (ownership held through the restart)', async () => {
       let waiterResolvedAtCallback = true;
