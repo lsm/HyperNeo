@@ -819,8 +819,15 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
 
     const legacyTitle = 'Legacy Title';
     const legacySlug = worktreeSlug(legacyTitle, 1);
-    const legacyDir = join(testBaseDir, getProjectShortKey(secondaryDir), 'worktrees');
+    const legacyAlias = join(
+      TMP_ROOT,
+      `legacyalias-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    symlinkSync(secondaryDir, legacyAlias);
+    const legacyProjectDir = join(testBaseDir, getProjectShortKey(legacyAlias));
+    const legacyDir = join(legacyProjectDir, 'worktrees');
     mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(join(legacyProjectDir, '.hyperneo-repo-root'), legacyAlias);
     execSync(`git branch "space/${legacySlug}" HEAD`, { cwd: secondaryDir });
     db.prepare(
       `INSERT INTO space_worktrees (id, space_id, task_id, slug, path, created_at)
@@ -846,6 +853,8 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
 
     expect(created.slug).not.toBe(legacySlug);
     expect(existsSync(created.path)).toBe(true);
+
+    rmSync(legacyAlias, { force: true });
   });
 });
 
