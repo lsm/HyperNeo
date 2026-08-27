@@ -840,7 +840,13 @@ export class SDKMessageHandler {
       this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(gate));
       releaseTurnEndGate = release;
     }
-    await stateManager.detectPhaseFromMessage(message);
+    try {
+      await stateManager.detectPhaseFromMessage(message);
+    } catch (error) {
+      releaseTurnEndGate?.();
+      releaseTurnEndGate = null;
+      throw error;
+    }
 
     if (isSDKRateLimitEvent(message)) {
       const info = message.rate_limit_info;

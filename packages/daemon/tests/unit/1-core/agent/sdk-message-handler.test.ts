@@ -4659,6 +4659,22 @@ describe('SDKMessageHandler', () => {
         expect(setIdleSpy).not.toHaveBeenCalled();
       });
 
+      it('releases the turn-end gate when phase detection throws', async () => {
+        detectPhaseFromMessageSpy.mockImplementation(async () => {
+          throw new Error('phase failed');
+        });
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        await expect(h.handleMessage(turnEndResult())).rejects.toThrow('phase failed');
+
+        let opened = false;
+        void (setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>).then(() => {
+          opened = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(true);
+      });
+
       it('releases the turn-end gate when result handling throws', async () => {
         emitSpy.mockImplementation((event: string) =>
           event === 'session.errorClear'
