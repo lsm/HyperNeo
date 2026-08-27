@@ -394,7 +394,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   setupAppMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db);
 
-  setupSpaceMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db, deps.spaceManager);
+  setupSpaceMcpHandlers(
+    deps.messageHub,
+    deps.internalEventBus,
+    deps.db,
+    deps.spaceManager,
+    deps.mcpImportService
+  );
   setupAgentMemoryHandlers(deps.messageHub, { memoryRepo: deps.db.agentMemory });
   setupExternalEventExtensionHandlers(deps);
 

@@ -13,7 +13,12 @@ import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { McpEnablementRepository } from '../../../../src/storage/repositories/mcp-enablement-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository';
+import { WorkspaceHistoryRepository } from '../../../../src/storage/repositories/workspace-history-repository';
 import { setupSpaceMcpHandlers } from '../../../../src/lib/rpc-handlers/space-mcp-handlers';
+import { McpImportService } from '../../../../src/lib/mcp/mcp-import-service';
+import { createSpaceTables } from '../../helpers/space-test-db';
 import type { Database } from '../../../../src/storage/database';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
@@ -91,6 +96,7 @@ describe('space-mcp-handlers', () => {
   let db: Database;
   let appMcpRepo: AppMcpServerRepository;
   let enablementRepo: McpEnablementRepository;
+  let mcpImportService: McpImportService;
   let tmpRoot: string;
   let originalHome: string | undefined;
 
@@ -98,15 +104,20 @@ describe('space-mcp-handlers', () => {
     bunDb = new BunDatabase(':memory:');
     bunDb.exec('PRAGMA foreign_keys = ON');
     createTables(bunDb);
+    createSpaceTables(bunDb);
     reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
 
     appMcpRepo = new AppMcpServerRepository(bunDb, reactiveDb);
     enablementRepo = new McpEnablementRepository(bunDb, reactiveDb);
 
+    const workspaceHistory = new WorkspaceHistoryRepository(bunDb);
     db = {
       appMcpServers: appMcpRepo,
       mcpEnablement: enablementRepo,
+      getDatabase: () => bunDb,
+      workspaceHistory,
     } as unknown as Database;
+    mcpImportService = new McpImportService(db);
 
     tmpRoot = mkdtempSync(join(tmpdir(), 'space-mcp-handlers-'));
     originalHome = process.env.HOME;
@@ -362,10 +373,6 @@ describe('space-mcp-handlers', () => {
   describe('mcp.imports.refresh', () => {
     test('scans the given workspace and imports new rows', async () => {
       const wsPath = join(tmpRoot, 'ws');
-      writeFileSync(
-        join(tmpRoot, 'mcp.json'),
-        JSON.stringify({ mcpServers: { foo: { command: 'x' } } })
-      );
       const fs = await import('node:fs');
       fs.mkdirSync(wsPath, { recursive: true });
       writeFileSync(
@@ -374,11 +381,10 @@ describe('space-mcp-handlers', () => {
       );
 
       const { hub, handlers } = createMockHub();
-      const { emit } = createMockDaemonHub();
-      const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
+      const spaceManager = createSpaceManagerMock([]);
       const internalEventBus = createMockInternalEventBus();
       const publish = internalEventBus.publish as ReturnType<typeof mock>;
-      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager);
+      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager, mcpImportService);
 
       const handler = handlers.get('mcp.imports.refresh')!;
       const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
@@ -392,7 +398,7 @@ describe('space-mcp-handlers', () => {
       });
     });
 
-    test('scans every space when no workspacePath narrow is given', async () => {
+    test('scans the space registry when no workspacePath narrow is given', async () => {
       const ws1 = join(tmpRoot, 'ws1');
       const ws2 = join(tmpRoot, 'ws2');
       const fs = await import('node:fs');
@@ -407,16 +413,41 @@ describe('space-mcp-handlers', () => {
         JSON.stringify({ mcpServers: { two: { command: 'y' } } })
       );
 
+      const spaceRepo = new SpaceRepository(bunDb);
+      const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
+      const spaceA = spaceRepo.createSpace({
+        workspacePath: ws1,
+        name: 'Repo A',
+        slug: 'repo-a',
+      });
+      workspaceRepo.create({
+        spaceId: spaceA.id,
+        path: ws1,
+        label: 'repo-a',
+        isPrimary: true,
+      });
+      const spaceB = spaceRepo.createSpace({
+        workspacePath: ws2,
+        name: 'Repo B',
+        slug: 'repo-b',
+      });
+      workspaceRepo.create({
+        spaceId: spaceB.id,
+        path: ws2,
+        label: 'repo-b',
+        isPrimary: true,
+      });
+
       const { hub, handlers } = createMockHub();
       const spaceManager = createSpaceManagerMock([fakeSpace('sA', ws1), fakeSpace('sB', ws2)]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, mcpImportService);
 
       const handler = handlers.get('mcp.imports.refresh')!;
       const result = (await handler({})) as McpImportsRefreshResponse;
 
       expect(result.imported).toBe(2);
-      expect(appMcpRepo.getByName('one')).toBeTruthy();
-      expect(appMcpRepo.getByName('two')).toBeTruthy();
+      expect(appMcpRepo.getByName('repo-a:one')).toBeTruthy();
+      expect(appMcpRepo.getByName('repo-b:two')).toBeTruthy();
     });
 
     test('does not emit when no import rows changed', async () => {
@@ -425,16 +456,17 @@ describe('space-mcp-handlers', () => {
       fs.mkdirSync(wsPath, { recursive: true });
 
       const { hub, handlers } = createMockHub();
-      const { emit } = createMockDaemonHub();
-      const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      const internalEventBus = createMockInternalEventBus();
+      const publish = internalEventBus.publish as ReturnType<typeof mock>;
+      const spaceManager = createSpaceManagerMock([]);
+      setupSpaceMcpHandlers(hub, internalEventBus, db, spaceManager, mcpImportService);
 
       const handler = handlers.get('mcp.imports.refresh')!;
       const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
 
       expect(result.imported).toBe(0);
       expect(result.removed).toBe(0);
-      expect(emit).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
     });
 
     test('surfaces parse-error notes from the scanner', async () => {
@@ -444,8 +476,8 @@ describe('space-mcp-handlers', () => {
       writeFileSync(join(wsPath, '.mcp.json'), '{ not valid json');
 
       const { hub, handlers } = createMockHub();
-      const spaceManager = createSpaceManagerMock([fakeSpace('space-A', wsPath)]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
+      const spaceManager = createSpaceManagerMock([]);
+      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager, mcpImportService);
 
       const handler = handlers.get('mcp.imports.refresh')!;
       const result = (await handler({ workspacePath: wsPath })) as McpImportsRefreshResponse;
