@@ -1050,14 +1050,37 @@ describe('MessageQueue', () => {
       const generator = q.messageGenerator(testSessionId);
       await generator.next();
 
-      const firstRejected = expect(first).rejects.toThrow('Interrupted by user');
-      const secondRejected = expect(second).rejects.toThrow('Interrupted by user');
+      const settled: Array<string | undefined> = [];
+      const firstHandled = first.catch((error: Error) => {
+        settled.push(error.message);
+      });
+      const secondHandled = second.catch((error: Error) => {
+        settled.push(error.message);
+      });
       q.stop();
-      await firstRejected;
-      await secondRejected;
+      await firstHandled;
+      await secondHandled;
+      expect(settled).toEqual(['Interrupted by user', 'Interrupted by user']);
       expect(q.hasQueuedInternalCompaction()).toBe(false);
       expect(q.hasInFlightInternalCompaction()).toBe(false);
       expect(q.hasOutstandingInternalCompaction()).toBe(false);
+    });
+
+    it('stop notifies when a delivered compaction is abandoned without its boundary', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const aborted = mock(() => {});
+      q.onInternalCompactionsAborted = aborted;
+
+      const sent = q.enqueue('/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      result.value.onSent();
+      await sent;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+
+      q.stop();
+      expect(aborted).toHaveBeenCalledTimes(1);
     });
 
     it('a queue restart clears outstanding compaction state so prompts are not held', async () => {

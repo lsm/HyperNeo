@@ -59,6 +59,8 @@ export class MessageQueue {
 
   onMessageEnqueued?: (messageId: string, queuedAt: number) => void;
 
+  onInternalCompactionsAborted?: () => void;
+
   private wakeWaiters(): void {
     this.waiters.forEach((waiter) => waiter());
     this.waiters = [];
@@ -449,11 +451,15 @@ export class MessageQueue {
 
   stop(): void {
     this.running = false;
+    const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     this.internalCompactionsAwaitingBoundary = 0;
     this.nonCompactionSentSinceBoundary = false;
     this.cancelInternalCompactionEntries(true);
     this.deliveryGate = null;
     this.wakeWaiters();
+    if (deliveredCompactions) {
+      this.onInternalCompactionsAborted?.();
+    }
   }
 
   isRunning(): boolean {

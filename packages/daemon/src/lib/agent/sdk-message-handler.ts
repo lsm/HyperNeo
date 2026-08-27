@@ -176,6 +176,11 @@ export class SDKMessageHandler {
       this.handleMessageYielded(messageId, consumedAt);
     };
 
+    ctx.messageQueue.onInternalCompactionsAborted = () => {
+      this.ctx.contextTracker.clearCompactionCooldown();
+      this.compactionEnqueuedMidTurnGeneration = undefined;
+    };
+
     this.repeatedToolErrorGuardrail = new RepeatedToolErrorGuardrail({
       getTaskForSession: () => {
         try {
