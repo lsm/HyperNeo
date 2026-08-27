@@ -64,6 +64,16 @@ export class QueryModeHandler {
         try {
           const outcome = await this.ctx.renderPendingDigest?.(session.id, session.context?.taskId);
           if (outcome && (outcome.action === 'failed' || outcome.action === 'held')) {
+            if (
+              outcome.action === 'failed' &&
+              (outcome.stage === 'digestCleanup' || outcome.stage === 'digestSupersede')
+            ) {
+              logger.warn(
+                `turn-end digest ${outcome.stage} failed for session ${session.id} — ` +
+                  `aborting the deferred flush so stale or duplicate digests are not delivered`
+              );
+              return 0;
+            }
             logger.warn(
               `turn-end digest pull for session ${session.id} did not deliver ` +
                 `(action=${outcome.action}${
