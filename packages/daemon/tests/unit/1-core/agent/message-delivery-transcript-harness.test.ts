@@ -13,6 +13,7 @@ import {
   type MessageDeliverySession,
 } from '../../../../src/lib/agent/message-delivery';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { deliveryMetrics } from '../../../../src/lib/agent/message-delivery-metrics';
 import { createMessageDeliveryHandler } from '../../../../src/lib/job-handlers/message-delivery.handler';
 import type { Database } from '../../../../src/storage/database';
 import type {
@@ -482,6 +483,41 @@ describe('delivery transcript parity harness (A1a)', () => {
         ]);
       } finally {
         db.close();
+      }
+    });
+
+    it('records the acknowledgment wait for a consumed steer', async () => {
+      const sessionId = 'sess-steer-ack-wait-metric';
+      const samples: Array<{ ms: number; outcome: 'acknowledged' | 'ack_timeout' }> = [];
+      const original = deliveryMetrics.recordAckWait.bind(deliveryMetrics);
+      deliveryMetrics.recordAckWait = (ms, outcome) => samples.push({ ms, outcome });
+      try {
+        const { db, agentSession, harness } = await makeTestSession(sessionId);
+        try {
+          saveUserMessage(db.getSDKMessageRepo(), sessionId, steerUuid, 'enqueued', steerContent);
+          await agentSession.stateManager.setProcessing('active-msg');
+          setNeverResolvingQuery(agentSession);
+          const steerPromise = agentSession.feedDeliverySteer(
+            steerUuid,
+            steerContent,
+            null,
+            () => true
+          );
+          await waitForTranscript(
+            harness,
+            (e) => e.op === 'queue:admit' && e.messageId === steerUuid
+          );
+          agentSession.messageQueue.remove(steerUuid);
+          const outcome = await steerPromise;
+          expect(outcome).toEqual({ outcome: 'consumed' });
+          expect(samples).toHaveLength(1);
+          expect(samples[0].outcome).toBe('acknowledged');
+          expect(samples[0].ms).toBeGreaterThanOrEqual(0);
+        } finally {
+          db.close();
+        }
+      } finally {
+        deliveryMetrics.recordAckWait = original;
       }
     });
 

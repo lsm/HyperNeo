@@ -14,7 +14,8 @@ export type MessageDeliveryLifecycleEventName =
   | 'old_handler_aborted'
   | 'settled'
   | 'slot_released'
-  | 'fenced_completion_rejected';
+  | 'fenced_completion_rejected'
+  | 'stuck_initializing_refusal';
 
 export interface MessageDeliveryLifecycleFields {
   jobId?: string;
@@ -48,7 +49,9 @@ export function emitMessageDeliveryLifecycleEvent(
     }
     emitStructuredLogEvent({
       level:
-        event === 'fenced_completion_rejected' || event === 'stale_reclaim_jitter_failed'
+        event === 'fenced_completion_rejected' ||
+        event === 'stale_reclaim_jitter_failed' ||
+        event === 'stuck_initializing_refusal'
           ? 'warn'
           : 'info',
       args: ['message_delivery.lifecycle'],
@@ -75,6 +78,16 @@ export interface DeliveryMetricsSnapshot {
   residualWindowSamples: number;
   deadLetters: number;
   zeroProgressWedges: number;
+  stuckInitializingRefusals: number;
+  lastStuckInitializingMs: number | null;
+  ackWaitP50: number | null;
+  ackWaitP99: number | null;
+  ackWaitSamples: number;
+  ackWaitTimeouts: number;
+  initializationP50: number | null;
+  initializationP99: number | null;
+  initializationSamples: number;
+  initializationNeverProgressed: number;
 }
 
 export interface MessageDeliveryDiagnostics {
@@ -84,6 +97,7 @@ export interface MessageDeliveryDiagnostics {
   activeProcessing: number;
   oldestProcessingLeaseAgeMs: number | null;
   processor: JobQueueProcessorSnapshot;
+  inFlightBySession: Record<string, number>;
   metrics: DeliveryMetricsSnapshot;
 }
 
@@ -104,6 +118,12 @@ export class DeliveryMetrics {
   private residualWindows: number[] = [];
   private deadLetters = 0;
   private zeroProgressWedges = 0;
+  private stuckInitializingRefusals = 0;
+  private lastStuckInitializingMs: number | null = null;
+  private ackWaits: number[] = [];
+  private ackWaitTimeouts = 0;
+  private initializationDurations: number[] = [];
+  private initializationNeverProgressed = 0;
 
   recordFeed(messageUuid: string): void {
     this.feedsObserved++;
@@ -146,6 +166,23 @@ export class DeliveryMetrics {
     this.zeroProgressWedges++;
   }
 
+  recordStuckInitializingRefusal(initializingMs: number): void {
+    this.stuckInitializingRefusals++;
+    this.lastStuckInitializingMs = initializingMs;
+  }
+
+  recordAckWait(ms: number, outcome: 'acknowledged' | 'ack_timeout'): void {
+    if (!Number.isFinite(ms) || ms < 0) return;
+    pushBounded(this.ackWaits, ms);
+    if (outcome === 'ack_timeout') this.ackWaitTimeouts++;
+  }
+
+  recordInitializationDuration(ms: number, outcome: 'progressed' | 'never_progressed'): void {
+    if (!Number.isFinite(ms) || ms < 0) return;
+    pushBounded(this.initializationDurations, ms);
+    if (outcome === 'never_progressed') this.initializationNeverProgressed++;
+  }
+
   snapshot(): DeliveryMetricsSnapshot {
     return {
       feedsObserved: this.feedsObserved,
@@ -157,8 +194,34 @@ export class DeliveryMetrics {
       residualWindowSamples: this.residualWindows.length,
       deadLetters: this.deadLetters,
       zeroProgressWedges: this.zeroProgressWedges,
+      stuckInitializingRefusals: this.stuckInitializingRefusals,
+      lastStuckInitializingMs: this.lastStuckInitializingMs,
+      ackWaitP50: percentile(this.ackWaits, 0.5),
+      ackWaitP99: percentile(this.ackWaits, 0.99),
+      ackWaitSamples: this.ackWaits.length,
+      ackWaitTimeouts: this.ackWaitTimeouts,
+      initializationP50: percentile(this.initializationDurations, 0.5),
+      initializationP99: percentile(this.initializationDurations, 0.99),
+      initializationSamples: this.initializationDurations.length,
+      initializationNeverProgressed: this.initializationNeverProgressed,
     };
   }
+}
+
+function pushBounded(samples: number[], ms: number): void {
+  samples.push(ms);
+  if (samples.length > RESIDUAL_WINDOW_SAMPLE_CAP) samples.shift();
+}
+
+export function aggregateInFlightBySession(
+  handlers: Array<Pick<JobQueueProcessorSnapshot['handlers'][number], 'sessionId'>>
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const handler of handlers) {
+    if (typeof handler.sessionId !== 'string') continue;
+    counts[handler.sessionId] = (counts[handler.sessionId] ?? 0) + 1;
+  }
+  return counts;
 }
 
 function percentile(samples: number[], p: number): number | null {

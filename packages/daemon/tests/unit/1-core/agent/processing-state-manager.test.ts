@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AgentProcessingState, PendingUserQuestion } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { deliveryMetrics } from '../../../../src/lib/agent/message-delivery-metrics';
 import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
@@ -1337,6 +1338,90 @@ describe('ProcessingStateManager', () => {
       await manager.updatePhase('thinking');
 
       expect(updateSessionMock).toHaveBeenCalled();
+    });
+  });
+
+  describe('stuckInitializingMs (delivery admission probe)', () => {
+    test('is null while idle', () => {
+      expect(manager.stuckInitializingMs()).toBeNull();
+    });
+
+    test('measures the current initializing phase from setProcessing', async () => {
+      const startedAt = Date.now();
+      await manager.setProcessing('msg-1');
+      expect(manager.stuckInitializingMs(startedAt + 500)).toBeGreaterThanOrEqual(500);
+      expect(manager.stuckInitializingMs(startedAt + 130_000)).toBeGreaterThanOrEqual(130_000);
+    });
+
+    test('is null once the phase leaves initializing', async () => {
+      await manager.setProcessing('msg-1');
+      await manager.updatePhase('thinking');
+      expect(manager.stuckInitializingMs()).toBeNull();
+    });
+
+    test('is null after the session goes idle', async () => {
+      await manager.setProcessing('msg-1');
+      await manager.setIdle();
+      expect(manager.stuckInitializingMs()).toBeNull();
+    });
+
+    test('is null while queued or waiting for input', async () => {
+      await manager.setQueued('msg-1');
+      expect(manager.stuckInitializingMs()).toBeNull();
+      await manager.setWaitingForInput({} as PendingUserQuestion);
+      expect(manager.stuckInitializingMs()).toBeNull();
+    });
+  });
+
+  describe('initialization-duration metrics', () => {
+    let recorded: Array<{ ms: number; outcome: 'progressed' | 'never_progressed' }>;
+    let original: (ms: number, outcome: 'progressed' | 'never_progressed') => void;
+
+    beforeEach(() => {
+      recorded = [];
+      original = deliveryMetrics.recordInitializationDuration.bind(deliveryMetrics);
+      deliveryMetrics.recordInitializationDuration = (ms, outcome) => {
+        recorded.push({ ms, outcome });
+      };
+    });
+
+    afterEach(() => {
+      deliveryMetrics.recordInitializationDuration = original;
+    });
+
+    test('records a progressed sample when updatePhase leaves initializing', async () => {
+      await manager.setProcessing('msg-1');
+      await manager.updatePhase('thinking');
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0].outcome).toBe('progressed');
+      expect(recorded[0].ms).toBeGreaterThanOrEqual(0);
+    });
+
+    test('records a progressed sample when setProcessing resumes as streaming', async () => {
+      await manager.setProcessing('msg-1');
+      await manager.setProcessing('msg-1', 'streaming');
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0].outcome).toBe('progressed');
+    });
+
+    test('records a never_progressed sample when idle lands while still initializing', async () => {
+      await manager.setProcessing('msg-1');
+      await manager.setIdle();
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0].outcome).toBe('never_progressed');
+    });
+
+    test('records nothing for a fresh manager that was never processing', async () => {
+      await manager.setIdle();
+      expect(recorded).toHaveLength(0);
+    });
+
+    test('does not double-record on later phase transitions', async () => {
+      await manager.setProcessing('msg-1');
+      await manager.updatePhase('thinking');
+      await manager.updatePhase('streaming');
+      await manager.setIdle();
+      expect(recorded).toHaveLength(1);
     });
   });
 

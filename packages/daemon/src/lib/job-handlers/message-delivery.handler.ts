@@ -11,10 +11,21 @@ import {
   type DeliveryLoadResult,
   flattenDeliveryText,
   MAX_ACP_STEER_PARKS,
+  MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliverySession,
 } from '../agent/message-delivery.ts';
-import { type DeliveryMetrics, deliveryMetrics } from '../agent/message-delivery-metrics.ts';
+import {
+  type DeliveryMetrics,
+  deliveryMetrics,
+  emitMessageDeliveryLifecycleEvent,
+  fingerprintDeliveryClaim,
+} from '../agent/message-delivery-metrics.ts';
+import {
+  resolveStuckInitializingGate,
+  stuckInitializingRefuseMs,
+  STUCK_INITIALIZING_PARK_MS,
+} from '../agent/stuck-initializing-gate.ts';
 import { Logger } from '../logger.ts';
 
 export interface MessageDeliveryHandlerDeps {
@@ -86,6 +97,32 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       return { outcome: 'skipped', sendStatus };
     }
     const alreadyConsumed = sendStatus === 'consumed';
+
+    const stuckInitializingMs = session.stuckInitializingMs?.() ?? null;
+    const gate = resolveStuckInitializingGate({
+      stuckInitializingMs,
+      thresholdMs: stuckInitializingRefuseMs(),
+      parkMs: STUCK_INITIALIZING_PARK_MS,
+      now: Date.now(),
+    });
+    if (gate.action === 'refuse') {
+      if (deps.jobQueue.getParkCount(job.id) >= MAX_STEER_PARKS) {
+        throw new DeadLetterImmediatelyError(
+          `Delivery refused past its park budget — session stuck initializing for ${gate.initializingMs}ms`
+        );
+      }
+      metrics.recordStuckInitializingRefusal(gate.initializingMs);
+      emitMessageDeliveryLifecycleEvent('stuck_initializing_refusal', {
+        jobId: job.id,
+        claimFingerprint: fingerprintDeliveryClaim(job.claimToken),
+        sessionId: payload.sessionId,
+        messageUuid: payload.messageUuid,
+        role: payload.role,
+        elapsedMs: gate.initializingMs,
+      });
+      deps.jobQueue.requeueParked(job.id, gate.retryAt, job.claimToken);
+      return { parked: 'stuck_initializing', retryAt: gate.retryAt };
+    }
 
     let turnContent = content;
     if (payload.role === 'turn' && payload.batchUuids && payload.batchUuids.length > 1) {

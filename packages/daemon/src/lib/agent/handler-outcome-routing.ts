@@ -19,7 +19,8 @@ export type HandlerJobResult =
         | 'turn_blocked'
         | 'turn_blocked_gate_open'
         | 'acp_awaiting_acceptance'
-        | 'steer_ack_timeout';
+        | 'steer_ack_timeout'
+        | 'stuck_initializing';
       retryAt: number;
     };
 

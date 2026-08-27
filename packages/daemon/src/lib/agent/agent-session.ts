@@ -2695,6 +2695,7 @@ export class AgentSession
     const steerQueryEnded: Promise<'query_ended'> = this.queryPromise
       ? this.queryPromise.catch(() => {}).then(() => 'query_ended' as const)
       : Promise.resolve('query_ended');
+    const ackWaitStartedAt = Date.now();
     const ackTimeoutMs = steerAckTimeoutMs();
     let ackTimeoutId: ReturnType<typeof setTimeout> | undefined;
     const steerAckTimeout = new Promise<'ack_timeout'>((resolve) => {
@@ -2719,6 +2720,9 @@ export class AgentSession
     } finally {
       aborted.cancel();
       if (ackTimeoutId !== undefined) clearTimeout(ackTimeoutId);
+    }
+    if (steerWinner === 'acknowledged' || steerWinner === 'ack_timeout') {
+      deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, steerWinner);
     }
     if (steerWinner === 'query_ended') {
       this.messageQueue.requeueYielded(messageUuid);
@@ -2786,6 +2790,10 @@ export class AgentSession
     } catch {
       return false;
     }
+  }
+
+  stuckInitializingMs(now: number = Date.now()): number | null {
+    return this.stateManager.stuckInitializingMs(now);
   }
 
   async deliverChatMessage(messageUuid: string): Promise<void> {
