@@ -1,9 +1,15 @@
 import type { ComponentChildren } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
-import type { Space, SpaceExportBundle, SpaceAutonomyLevel, SettingSource } from '@hyperneo/shared';
+import type {
+  Space,
+  SpaceExportBundle,
+  SpaceAutonomyLevel,
+  SettingSource,
+  SpaceWorkspace,
+} from '@hyperneo/shared';
 import { MAX_SPACE_CONCURRENT_TASKS, MIN_SPACE_CONCURRENT_TASKS } from '@hyperneo/shared';
 import { connectionManager } from '../../lib/connection-manager.ts';
-import { globalSettings } from '../../lib/state.ts';
+import { globalSettings, connectionState } from '../../lib/state.ts';
 import { spaceStore } from '../../lib/space-store.ts';
 import { toast } from '../../lib/toast.ts';
 import { cn } from '../../lib/utils.ts';
@@ -59,6 +65,91 @@ const SETTING_SOURCE_OPTIONS: Array<[SettingSource, string, string]> = [
 
 function getInheritedSettingSources(): SettingSource[] {
   return globalSettings.value?.settingSources ?? ['user', 'project', 'local'];
+}
+
+function workspaceTitle(workspace: SpaceWorkspace): string {
+  if (workspace.label) return workspace.label;
+  return workspace.path.split('/').filter(Boolean).at(-1) ?? workspace.path;
+}
+
+function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
+  const [workspaces, setWorkspaces] = useState<SpaceWorkspace[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const connected = connectionState.value === 'connected';
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!connected) {
+      setError(workspaces === null ? 'Failed to load workspaces: Not connected to server' : null);
+      return;
+    }
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      setError('Failed to load workspaces: Not connected to server');
+      return;
+    }
+    hub
+      .request<SpaceWorkspace[]>('space.workspace.list', { spaceId })
+      .then((list) => {
+        if (cancelled) return;
+        setError(null);
+        setWorkspaces(list);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(`Failed to load workspaces: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [spaceId, connected]);
+
+  if (error) {
+    return (
+      <p class="text-sm text-red-300" data-testid="workspaces-error">
+        {error}
+      </p>
+    );
+  }
+
+  if (!workspaces) return null;
+
+  if (workspaces.length === 0) {
+    return (
+      <p class="text-sm text-gray-400" data-testid="workspaces-empty">
+        No workspaces registered for this space.
+      </p>
+    );
+  }
+
+  return (
+    <ul class="space-y-2" data-testid="workspaces-list">
+      {workspaces.map((workspace) => (
+        <li
+          key={workspace.id}
+          class="flex items-center gap-3 rounded-lg border border-white/10 bg-dark-850 px-3 py-2"
+          data-testid="workspace-item"
+        >
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2">
+              <span class="truncate text-sm font-medium text-gray-200">
+                {workspaceTitle(workspace)}
+              </span>
+              {workspace.isPrimary && (
+                <span
+                  class="flex-shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300"
+                  data-testid="workspace-primary-badge"
+                >
+                  Primary
+                </span>
+              )}
+            </div>
+            <p class="truncate font-mono text-xs text-gray-400">{workspace.path}</p>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function SpaceSettings({ space }: SpaceSettingsProps) {
@@ -246,7 +337,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
 
           <SettingsBlock
             title="Basics"
-            description="Name the space, show where it runs, and choose the default model for new work."
+            description="Name the space and choose the default model for new work."
           >
             <div class="grid gap-4 lg:grid-cols-2">
               <div>
@@ -268,12 +359,6 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                 />
               </div>
               <div class="lg:col-span-2">
-                <label class="mb-1 block text-xs font-medium text-gray-400">Workspace path</label>
-                <p class="truncate rounded-lg border border-white/10 bg-dark-850 px-3 py-2 font-mono text-sm text-gray-400">
-                  {space.workspacePath}
-                </p>
-              </div>
-              <div class="lg:col-span-2">
                 <label class="mb-1 block text-xs font-medium text-gray-400">
                   Description <span class="text-gray-400">(optional)</span>
                 </label>
@@ -286,6 +371,13 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
                 />
               </div>
             </div>
+          </SettingsBlock>
+
+          <SettingsBlock
+            title="Workspaces"
+            description="Repository paths this space works in. The primary workspace is the default location."
+          >
+            <SpaceWorkspacesList spaceId={space.id} />
           </SettingsBlock>
 
           <SettingsBlock
