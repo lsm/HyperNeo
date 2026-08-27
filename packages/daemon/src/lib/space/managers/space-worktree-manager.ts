@@ -1,14 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
@@ -17,7 +9,6 @@ import { Logger } from '../../logger.ts';
 import { retryWithBackoff } from '../runtime/retry-utils.ts';
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
 import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
-import { getDataDir } from '../../data-dir.ts';
 
 export interface SpaceWorktreeInfo {
   slug: string;
@@ -68,31 +59,13 @@ export class SpaceWorktreeManager {
     }
   }
 
-  private legacyWorktreeDirs(
-    repo: { commandCwd: string; dirKey: string },
-    currentProjectDir: string
-  ): string[] {
-    const base = process.env.TEST_WORKTREE_BASE_DIR ?? join(getDataDir(), 'projects');
-    let entries: string[];
-    try {
-      entries = readdirSync(base);
-    } catch {
-      return [];
+  private legacyWorktreeDirs(currentProjectDir: string): string[] {
+    const dirs = new Set<string>();
+    for (const path of this.worktreeRepo.listPaths()) {
+      const projectDir = dirname(dirname(path));
+      if (projectDir !== currentProjectDir) dirs.add(projectDir);
     }
-    const dirs: string[] = [];
-    for (const entry of entries) {
-      const projectDir = join(base, entry);
-      if (projectDir === currentProjectDir) continue;
-      const sentinel = join(projectDir, '.hyperneo-repo-root');
-      if (!existsSync(sentinel)) continue;
-      try {
-        const stored = readFileSync(sentinel, 'utf8').trim();
-        if (stored && this.resolveRepoRoot(stored).dirKey === repo.dirKey) {
-          dirs.push(projectDir);
-        }
-      } catch {}
-    }
-    return dirs;
+    return [...dirs];
   }
 
   private isLiveRegisteredWorktree(commandCwd: string, worktreePath: string): boolean {
@@ -131,9 +104,7 @@ export class SpaceWorktreeManager {
 
     const slugPrefixes = [
       `${worktreesDir}${sep}`,
-      ...this.legacyWorktreeDirs(repo, dirname(worktreesDir)).map(
-        (dir) => join(dir, 'worktrees') + sep
-      ),
+      ...this.legacyWorktreeDirs(dirname(worktreesDir)).map((dir) => join(dir, 'worktrees') + sep),
     ];
     const existingSlugs = [
       ...this.worktreeRepo.listSlugs(spaceId),
@@ -273,7 +244,7 @@ export class SpaceWorktreeManager {
         }
       } catch {}
     }
-    if (storedKey) return storedKey;
+    if (storedKey && existsSync(storedKey)) return storedKey;
     const gitLink = join(worktreePath, '.git');
     if (existsSync(gitLink)) {
       try {

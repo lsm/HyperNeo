@@ -60,6 +60,13 @@ export class SpaceWorktreeRepository {
     return rows.map((r) => r.slug);
   }
 
+  listPaths(): string[] {
+    const rows = this.db.prepare(`SELECT path FROM space_worktrees`).all() as Array<{
+      path: string;
+    }>;
+    return rows.map((r) => r.path);
+  }
+
   markCompleted(spaceId: string, taskId: string, completedAt: number = Date.now()): boolean {
     const result = this.db
       .prepare(
