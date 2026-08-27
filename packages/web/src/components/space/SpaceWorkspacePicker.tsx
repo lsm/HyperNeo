@@ -17,6 +17,7 @@ interface SpaceWorkspaceRegistryState {
 
 interface SpaceWorkspaceRegistryGate {
   spaceId: string;
+  connected: boolean;
   done: boolean;
   promise: Promise<void>;
   resolve: () => void;
@@ -36,21 +37,24 @@ function useSpaceWorkspaceRegistry(
   fallbackPath?: string | null
 ): { options: SpaceWorkspaceOption[]; settle: () => Promise<void> } {
   const [state, setState] = useState<SpaceWorkspaceRegistryState | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const gateRef = useRef<SpaceWorkspaceRegistryGate | null>(null);
 
-  if (gateRef.current?.spaceId !== spaceId) {
+  const connected = connectionState.value === 'connected';
+
+  if (gateRef.current?.spaceId !== spaceId || gateRef.current.connected !== connected) {
     let resolveGate: () => void = () => {};
     const promise = new Promise<void>((resolve) => {
       resolveGate = resolve;
     });
-    gateRef.current = { spaceId, done: false, promise, resolve: resolveGate };
+    gateRef.current = { spaceId, connected, done: false, promise, resolve: resolveGate };
   }
-  const gate = gateRef.current;
-
-  const connected = connectionState.value === 'connected';
 
   useEffect(() => {
     let cancelled = false;
+    const gate = gateRef.current;
+    if (!gate) return;
     const apply = (list: SpaceWorkspaceOption[] | null) => {
       if (!cancelled) setState({ spaceId, settled: true, list });
     };
@@ -61,10 +65,9 @@ function useSpaceWorkspaceRegistry(
     };
     const hub = connected ? connectionManager.getHubIfConnected() : null;
     if (!hub) {
-      if (!gate.done) {
-        apply(null);
-        settleGate();
-      }
+      const settledForSpace = stateRef.current?.spaceId === spaceId && stateRef.current.settled;
+      if (!settledForSpace) apply(null);
+      settleGate();
       return;
     }
     hub
@@ -74,8 +77,9 @@ function useSpaceWorkspaceRegistry(
       .finally(() => settleGate());
     return () => {
       cancelled = true;
+      settleGate();
     };
-  }, [spaceId, connected, gate]);
+  }, [spaceId, connected]);
 
   let options: SpaceWorkspaceOption[] = [];
   if (state?.spaceId === spaceId && state.settled) {
@@ -86,7 +90,16 @@ function useSpaceWorkspaceRegistry(
     }
   }
 
-  return { options, settle: () => gate.promise };
+  const settle = async () => {
+    for (;;) {
+      const gate = gateRef.current;
+      if (!gate) return;
+      await gate.promise;
+      if (gateRef.current === gate) return;
+    }
+  };
+
+  return { options, settle };
 }
 
 interface SpaceWorkspacePickerDialogProps {

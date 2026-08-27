@@ -230,6 +230,43 @@ describe('SpaceWorkspacePicker', () => {
     });
   });
 
+  it('waits for a pending reconnect lookup instead of reusing the stale fallback', async () => {
+    connectionState.value = 'disconnected';
+    mockGetHubIfConnected.mockReturnValue(null);
+    const { getByTestId, getByText } = render(
+      <Probe spaceId="space-1" fallbackPath="/projects/main" />
+    );
+    fireEvent.click(getByTestId('probe-create'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+    });
+    mockCreate.mockClear();
+
+    let resolveList: (list: SpaceWorkspace[]) => void = () => {};
+    const listPromise = new Promise<SpaceWorkspace[]>((resolve) => {
+      resolveList = resolve;
+    });
+    connectionState.value = 'connected';
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method: string) =>
+      method === 'space.workspace.list' ? listPromise : Promise.resolve({})
+    );
+
+    fireEvent.click(getByTestId('probe-create'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
+
+    resolveList([makeWorkspace(), SECONDARY]);
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs');
+    });
+  });
+
   it('creates directly with the primary workspace when only one is registered', async () => {
     stubRegistry(() => [makeWorkspace()]);
     const { getByTestId } = render(<Probe spaceId="space-1" fallbackPath="/projects/main" />);
