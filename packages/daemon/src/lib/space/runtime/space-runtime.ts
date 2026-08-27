@@ -1836,6 +1836,7 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
+    if (this.immediateDispatchesInFlight.has(deliveryKey)) return;
     this.immediateDispatchesInFlight.add(deliveryKey);
     try {
       const deps: ImmediateEventDeliveryDeps = {
