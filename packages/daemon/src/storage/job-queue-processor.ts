@@ -290,23 +290,31 @@ export class JobQueueProcessor {
 
       let exemptSlots = this.maxConcurrent - this.inFlightExempt;
       if (exemptSlots > 0) {
+        const inFlightExemptSessions = this.collectInFlightExemptSessions();
         for (const [queue, reg] of this.handlers) {
           if (exemptSlots <= 0) break;
           if (!reg.exemptJobs) continue;
-          let jobs: Job[];
-          try {
-            jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, exemptSlots, excludeIds);
-          } catch (error) {
-            errored = true;
-            this.notePollError('dequeue_exempt', queue, error);
-            continue;
-          }
-          for (const job of jobs) {
+          const admittedSessions = new Set<string>(inFlightExemptSessions);
+          while (exemptSlots > 0) {
+            let jobs: Job[];
+            try {
+              jobs = this.repo.dequeueExempt(queue, reg.exemptJobs, 1, excludeIds, [
+                ...admittedSessions,
+              ]);
+            } catch (error) {
+              errored = true;
+              this.notePollError('dequeue_exempt', queue, error);
+              break;
+            }
+            if (jobs.length === 0) break;
+            const job = jobs[0];
             this.emitLifecycle('claim', job, 'exempt');
             void this.processJob(job, true);
+            claimed++;
+            exemptSlots--;
+            const sessionId = job.payload.sessionId;
+            if (typeof sessionId === 'string') admittedSessions.add(sessionId);
           }
-          claimed += jobs.length;
-          exemptSlots -= jobs.length;
         }
       }
     } catch (error) {
@@ -512,6 +520,18 @@ export class JobQueueProcessor {
     if (claims?.get(job.claimToken) !== record) return;
     claims.delete(job.claimToken);
     if (claims.size === 0) this.inFlightClaims.delete(job.id);
+  }
+
+  private collectInFlightExemptSessions(): Set<string> {
+    const sessions = new Set<string>();
+    for (const claims of this.inFlightClaims.values()) {
+      for (const record of claims.values()) {
+        if (record.slotClass !== 'exempt' || record.slotEvicted) continue;
+        const sessionId = record.job.payload.sessionId;
+        if (typeof sessionId === 'string') sessions.add(sessionId);
+      }
+    }
+    return sessions;
   }
 
   private reclaimStaleClaims(staleBefore: number): void {
