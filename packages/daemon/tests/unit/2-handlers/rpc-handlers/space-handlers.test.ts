@@ -70,6 +70,7 @@ const mockTask: SpaceTask = {
 
 const LONG_DESCRIPTION = 'a'.repeat(300);
 const LONG_RESULT = 'b'.repeat(260);
+const SURROGATE_DESCRIPTION = `${'a'.repeat(239)}😀${'b'.repeat(10)}`;
 
 const mockLongTask: SpaceTask = {
   ...mockTask,
@@ -987,6 +988,21 @@ describe('space-handlers', () => {
       expect(task.descriptionTruncated).toBe(false);
       expect(task.result).toBe(mockTask.result);
       expect(task.resultTruncated).toBe(false);
+    });
+
+    it('does not split a surrogate pair at the 240-char boundary', async () => {
+      taskRepo.listBySpace = mock(() => [
+        { ...mockTask, description: SURROGATE_DESCRIPTION, result: null },
+      ]);
+
+      const result = (await call('space.overview', {
+        id: 'space-1',
+        summary: true,
+      })) as OverviewResult;
+      const task = result.tasks[0];
+
+      expect(task.description).toBe('a'.repeat(239));
+      expect(task.descriptionTruncated).toBe(true);
     });
   });
 

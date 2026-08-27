@@ -103,6 +103,17 @@ type SummarySpaceTask = SpaceTask & {
   resultTruncated: boolean;
 };
 
+function safeSlice(value: string, limit: number): string {
+  if (value.length <= limit) {
+    return value;
+  }
+  const lastCode = value.charCodeAt(limit - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    return value.slice(0, limit - 1);
+  }
+  return value.slice(0, limit);
+}
+
 function truncateToSummary(value: string, limit?: number): { value: string; truncated: boolean };
 function truncateToSummary(
   value: string | null,
@@ -118,7 +129,7 @@ function truncateToSummary(
   if (value.length <= limit) {
     return { value, truncated: false };
   }
-  return { value: value.slice(0, limit), truncated: true };
+  return { value: safeSlice(value, limit), truncated: true };
 }
 
 function toSummaryTask(task: SpaceTask): SummarySpaceTask {
