@@ -117,7 +117,11 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(`Failed to load workspaces: ${rpcErrorMessage(err)}`);
+        if (workspaces === null) {
+          setError(`Failed to load workspaces: ${rpcErrorMessage(err)}`);
+        } else {
+          setActionError(`Failed to refresh workspaces: ${rpcErrorMessage(err)}`);
+        }
       });
     return () => {
       cancelled = true;
@@ -320,15 +324,17 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
                   >
                     Edit
                   </button>
-                  <button
-                    type="button"
-                    data-testid="workspace-remove"
-                    disabled={removingId === workspace.id}
-                    onClick={() => handleRemove(workspace)}
-                    class="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
-                  >
-                    Remove
-                  </button>
+                  {!workspace.isPrimary && (
+                    <button
+                      type="button"
+                      data-testid="workspace-remove"
+                      disabled={removingId === workspace.id}
+                      onClick={() => handleRemove(workspace)}
+                      class="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
               )}
             </li>
@@ -605,7 +611,7 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
             title="Workspaces"
             description="Repository paths this space works in. The primary workspace is the default location."
           >
-            <SpaceWorkspacesList spaceId={space.id} />
+            <SpaceWorkspacesList key={space.id} spaceId={space.id} />
           </SettingsBlock>
 
           <SettingsBlock

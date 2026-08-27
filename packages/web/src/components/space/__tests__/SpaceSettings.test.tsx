@@ -229,6 +229,55 @@ describe('SpaceSettings', () => {
       expect(queryByTestId('workspace-item')).toBeTruthy();
     });
 
+    it('keeps the loaded controls when a post-mutation refresh fails', async () => {
+      stubHubRequests();
+      let listCalls = 0;
+      mockRequest.mockImplementation((method: string) => {
+        if (method === 'space.workspace.list') {
+          listCalls += 1;
+          return listCalls === 1
+            ? Promise.resolve([makeWorkspace()])
+            : Promise.reject(new Error('registry offline'));
+        }
+        if (method === 'space.workspace.add') {
+          return Promise.resolve(
+            makeWorkspace({ id: 'ws-2', path: '/projects/docs', label: 'Docs', isPrimary: false })
+          );
+        }
+        return Promise.resolve({});
+      });
+
+      const { getByTestId, getByText, findByTestId, findByText } = render(
+        <SpaceSettings space={makeSpace()} />
+      );
+      await findByText('Main repo');
+      fireEvent.input(getByTestId('workspace-add-path'), { target: { value: '/projects/docs' } });
+      fireEvent.click(getByText('Add'));
+
+      expect((await findByTestId('workspaces-action-error')).textContent).toBe(
+        'Failed to refresh workspaces: registry offline'
+      );
+      expect(getByTestId('workspaces-list')).toBeTruthy();
+      expect(getByText('Main repo')).toBeTruthy();
+    });
+
+    it('does not leak the previous space workspaces when the space changes', async () => {
+      stubHubRequests([makeWorkspace()]);
+      const { rerender, findByText, queryByText } = render(<SpaceSettings space={makeSpace()} />);
+      expect(await findByText('Main repo')).toBeTruthy();
+
+      let resolveList: (list: SpaceWorkspace[]) => void;
+      const pendingList = new Promise<SpaceWorkspace[]>((res) => {
+        resolveList = res;
+      });
+      mockRequest.mockImplementation((method: string) =>
+        method === 'space.workspace.list' ? pendingList : Promise.resolve({})
+      );
+      rerender(<SpaceSettings space={makeSpace({ id: 'space-2', name: 'Other Space' })} />);
+      expect(queryByText('Main repo')).toBeNull();
+      resolveList!([]);
+    });
+
     it('calls space.workspace.add with trimmed path and label, then reloads', async () => {
       const primary = makeWorkspace();
       const added = makeWorkspace({
@@ -403,7 +452,7 @@ describe('SpaceSettings', () => {
 
       const { findByTestId, getAllByTestId } = render(<SpaceSettings space={makeSpace()} />);
       await findByTestId('workspaces-list');
-      fireEvent.click(getAllByTestId('workspace-remove')[1]);
+      fireEvent.click(getAllByTestId('workspace-remove')[0]);
 
       await waitFor(() => {
         expect(mockRequest).toHaveBeenCalledWith('space.workspace.remove', {
@@ -418,9 +467,12 @@ describe('SpaceSettings', () => {
 
     it('does not remove when confirm is dismissed', async () => {
       mockConfirm.mockReturnValue(false);
-      stubHubRequests([makeWorkspace()]);
-      const { findByTestId, getByTestId } = render(<SpaceSettings space={makeSpace()} />);
-      fireEvent.click(await findByTestId('workspace-remove'));
+      stubHubRequests([
+        makeWorkspace(),
+        makeWorkspace({ id: 'ws-2', path: '/projects/docs', label: 'Docs', isPrimary: false }),
+      ]);
+      const { findAllByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      fireEvent.click((await findAllByTestId('workspace-remove'))[0]);
       expect(mockRequest).not.toHaveBeenCalledWith('space.workspace.remove', expect.anything());
     });
 
@@ -429,18 +481,41 @@ describe('SpaceSettings', () => {
       stubHubRequests();
       mockRequest.mockImplementation((method: string) =>
         method === 'space.workspace.list'
-          ? Promise.resolve([makeWorkspace()])
+          ? Promise.resolve([
+              makeWorkspace(),
+              makeWorkspace({
+                id: 'ws-2',
+                path: '/projects/docs',
+                label: 'Docs',
+                isPrimary: false,
+              }),
+            ])
           : method === 'space.workspace.remove'
-            ? Promise.reject(new Error('Cannot remove the primary workspace of space space-1'))
+            ? Promise.reject(
+                new Error('Cannot remove workspace ws-2 while 2 active sessions reference it')
+              )
             : Promise.resolve({})
       );
 
-      const { findByTestId, getByTestId } = render(<SpaceSettings space={makeSpace()} />);
-      fireEvent.click(await findByTestId('workspace-remove'));
+      const { findByTestId, getAllByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      await findByTestId('workspaces-list');
+      fireEvent.click(getAllByTestId('workspace-remove')[0]);
 
       expect((await findByTestId('workspaces-action-error')).textContent).toBe(
-        'Cannot remove the primary workspace of space space-1'
+        'Cannot remove workspace ws-2 while 2 active sessions reference it'
       );
+    });
+
+    it('hides Remove on the primary workspace', async () => {
+      stubHubRequests([
+        makeWorkspace(),
+        makeWorkspace({ id: 'ws-2', path: '/projects/docs', label: 'Docs', isPrimary: false }),
+      ]);
+      const { findAllByTestId, findByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      expect(await findAllByTestId('workspace-remove')).toHaveLength(1);
+      const primaryRow = (await findByTestId('workspaces-list')).firstElementChild as HTMLElement;
+      expect(primaryRow.querySelector('[data-testid="workspace-remove"]')).toBeNull();
+      expect(primaryRow.querySelector('[data-testid="workspace-edit-label"]')).not.toBeNull();
     });
 
     it('disables remove while a removal is pending', async () => {
@@ -452,14 +527,22 @@ describe('SpaceSettings', () => {
       });
       mockRequest.mockImplementation((method: string) =>
         method === 'space.workspace.list'
-          ? Promise.resolve([makeWorkspace()])
+          ? Promise.resolve([
+              makeWorkspace(),
+              makeWorkspace({
+                id: 'ws-2',
+                path: '/projects/docs',
+                label: 'Docs',
+                isPrimary: false,
+              }),
+            ])
           : method === 'space.workspace.remove'
             ? removePromise
             : Promise.resolve({})
       );
 
-      const { findByTestId } = render(<SpaceSettings space={makeSpace()} />);
-      const removeBtn = (await findByTestId('workspace-remove')) as HTMLButtonElement;
+      const { findAllByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      const removeBtn = (await findAllByTestId('workspace-remove'))[0] as HTMLButtonElement;
       fireEvent.click(removeBtn);
       expect(removeBtn.disabled).toBe(true);
       resolveRemove!();
