@@ -720,6 +720,8 @@ export class SpaceRuntime {
   private readonly turnEndDigestRetryCounts = new Map<string, number>();
   private readonly digestHandoffRetryTimers = new Map<string, Timer>();
   private readonly digestHandoffRetryCounts = new Map<string, number>();
+  private readonly digestSupersedeRetryTimers = new Map<string, Timer>();
+  private readonly digestSupersedeRetryCounts = new Map<string, number>();
   private readonly renderPendingDigestsInFlight = new Map<
     string,
     Promise<RenderPendingDigestOutcome | null>
@@ -1996,6 +1998,10 @@ export class SpaceRuntime {
     const timer = setTimeout(() => {
       this.digestHandoffRetryTimers.delete(key);
       if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+      if (!this.isTargetSessionLive(sessionId)) {
+        this.digestHandoffRetryCounts.delete(key);
+        return;
+      }
       this.handoffDigestDelivery(sessionId, messageUuid, dbId);
     }, EXTERNAL_EVENT_RETRY_DELAY_MS);
     this.digestHandoffRetryTimers.set(key, timer);
@@ -2149,9 +2155,13 @@ export class SpaceRuntime {
             taskId
           );
         } catch (cleanupError) {
-          if (this.isTargetSessionLive(sessionId)) {
-            this.scheduleTurnEndDigestRetry(sessionId, taskId);
-          }
+          this.scheduleDigestSupersedeRetry(
+            sessionId,
+            store,
+            outcome.uuid,
+            outcome.eventIds,
+            taskId
+          );
           return { action: 'failed', stage: 'digestSupersede', error: cleanupError };
         }
       } else {
@@ -2174,14 +2184,40 @@ export class SpaceRuntime {
     } catch (error) {
       try {
         this.dropUncoveredDeferredDigestRows(sessionId, store, taskId);
-      } catch {
-        void error;
+      } catch (cleanupError) {
+        if (this.isTargetSessionLive(sessionId)) {
+          this.scheduleTurnEndDigestRetry(sessionId, taskId);
+        }
+        return { action: 'failed', stage: 'digestCleanup', error: cleanupError };
       }
       if (this.isTargetSessionLive(sessionId)) {
         this.scheduleTurnEndDigestRetry(sessionId, taskId);
       }
       return { action: 'failed', stage: 'renderPendingDigest', error };
     }
+  }
+
+  private scheduleDigestSupersedeRetry(
+    sessionId: string,
+    store: ExternalEventStore,
+    deliveredUuid: string,
+    deliveredEventIds: string[],
+    taskId?: string
+  ): void {
+    const key = `supersede:${sessionId}:${deliveredUuid}`;
+    if (this.digestSupersedeRetryTimers.has(key)) return;
+    const attempts = (this.digestSupersedeRetryCounts.get(key) ?? 0) + 1;
+    if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+      this.digestSupersedeRetryCounts.delete(key);
+      return;
+    }
+    this.digestSupersedeRetryCounts.set(key, attempts);
+    const timer = setTimeout(() => {
+      this.digestSupersedeRetryTimers.delete(key);
+      if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+      this.supersedeObsoleteDigestRows(sessionId, store, deliveredUuid, deliveredEventIds, taskId);
+    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
+    this.digestSupersedeRetryTimers.set(key, timer);
   }
 
   private dropUncoveredDeferredDigestRows(
@@ -4450,6 +4486,11 @@ export class SpaceRuntime {
     }
     this.digestHandoffRetryTimers.clear();
     this.digestHandoffRetryCounts.clear();
+    for (const timer of this.digestSupersedeRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.digestSupersedeRetryTimers.clear();
+    this.digestSupersedeRetryCounts.clear();
     for (const state of this.externalEventRateLimits.values()) {
       if (state.digestTimer) clearTimeout(state.digestTimer);
       if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
