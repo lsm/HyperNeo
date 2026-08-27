@@ -41,6 +41,8 @@ const CLEAR_CONFIRM_TIMEOUT_MS = 45_000;
 
 const MID_TURN_USAGE_TIMEOUT_MS = 2_500;
 
+const MID_TURN_USAGE_REFRESH_INTERVAL_MS = 10_000;
+
 export class ClearConversationCancelledError extends Error {
   constructor() {
     super('clearConversationContext cancelled by query teardown');
@@ -346,6 +348,7 @@ export class AgentSession
   private pendingResumeSessionAt: string | undefined;
   private pendingResumeAfterCompaction = false;
   private midTurnBudgetCheckInFlight = false;
+  private lastMidTurnUsageRefreshAt = 0;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
@@ -1575,6 +1578,10 @@ export class AgentSession
     const fenceModel = this.session.config.model;
     const fenceProvider = this.session.config.provider;
     const stale = this.contextTracker.getContextInfo();
+    if (stale && Date.now() - this.lastMidTurnUsageRefreshAt < MID_TURN_USAGE_REFRESH_INTERVAL_MS) {
+      return stale;
+    }
+    this.lastMidTurnUsageRefreshAt = Date.now();
     try {
       const modelInfo = await getSessionModelInfo(this.session);
       if (

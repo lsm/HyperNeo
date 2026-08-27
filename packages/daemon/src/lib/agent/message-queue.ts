@@ -813,6 +813,10 @@ export class MessageQueue {
           `session ${opts.sessionId}:`,
         error
       );
+      if (!this.hasOutstandingInternalCompaction()) {
+        opts.contextTracker.clearCompactionCooldown();
+        opts.onResumeClear();
+      }
     });
     await Promise.race([
       restart,

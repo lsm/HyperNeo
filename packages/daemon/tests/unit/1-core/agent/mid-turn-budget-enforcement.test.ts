@@ -75,6 +75,7 @@ interface QueryHarness {
   query: QueryLike;
   setInterruptResult: (impl: () => Promise<{ still_queued: string[] } | undefined>) => void;
   cancelMock: ReturnType<typeof mock>;
+  usageMock: ReturnType<typeof mock>;
 }
 
 function makeQuery(): QueryHarness {
@@ -96,6 +97,7 @@ function makeQuery(): QueryHarness {
       state.interruptImpl = impl;
     },
     cancelMock,
+    usageMock,
   };
 }
 
@@ -306,6 +308,22 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     expect(interruptCalls).toBe(1);
     const compactCalls = enqueueSpy.mock.calls.filter((call) => call[1] === '/compact');
     expect(compactCalls).toHaveLength(1);
+  });
+
+  it('throttles the mid-turn usage refresh within the sampling window', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.usageMock.mockImplementation(async () => ({
+      ...makeUsageResponse(),
+      totalTokens: 10_000,
+      percentage: 5,
+    }));
+
+    await session.midTurnContextBudgetCheck();
+    await session.midTurnContextBudgetCheck();
+
+    expect(harness.usageMock).toHaveBeenCalledTimes(1);
   });
 
   it('enqueues compaction when the interrupt resolves without a receipt', async () => {

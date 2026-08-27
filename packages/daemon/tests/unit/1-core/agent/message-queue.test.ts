@@ -1749,6 +1749,29 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('clears the pending resume and cooldown when the recovery restart fails', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const onResumeClear = mock(() => {});
+      const clearCompactionCooldown = mock(() => {});
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-r'] }),
+        cancelAsyncMessage: async () => false,
+        restart: () => Promise.reject(new Error('restart failed')),
+        onResumeClear,
+        contextTracker: {
+          markCompactionTriggered: mock(() => {}),
+          clearCompactionCooldown,
+        },
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(onResumeClear).toHaveBeenCalledTimes(1);
+      expect(clearCompactionCooldown).toHaveBeenCalledTimes(1);
+      q.stop();
+    });
+
     it('holds delivery behind a gate while survivors are cancelled and requeued', async () => {
       const q = new MessageQueue();
       q.start();
