@@ -1,9 +1,9 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AgentProcessingState, PendingUserQuestion } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
 
 describe('ProcessingStateManager', () => {
   let manager: ProcessingStateManager;
@@ -398,6 +398,200 @@ describe('ProcessingStateManager', () => {
 
       expect(fires).toBe(1);
       expect(outerResolved).toBe(true);
+    });
+  });
+
+  describe('idle/waiter-release baseline (pre-owner-scoping, B5e)', () => {
+    test('a plain setIdle wakes waiters of every episode generation (unscoped drain)', async () => {
+      const ended: number[] = [];
+      let oldResolved = false;
+      let newResolved = false;
+      void manager
+        .waitForIdleTransition(0, () => ended.push(0))
+        .promise.then(() => {
+          oldResolved = true;
+        });
+      void manager
+        .waitForIdleTransition(5, () => ended.push(5))
+        .promise.then(() => {
+          newResolved = true;
+        });
+
+      await manager.setIdle();
+
+      expect(oldResolved).toBe(true);
+      expect(newResolved).toBe(true);
+      expect(ended).toEqual([0, 5]);
+    });
+
+    test('beginTerminalIdle fires onEnd for waiters of every episode generation', async () => {
+      const ended: number[] = [];
+      let resolved = false;
+      void manager
+        .waitForIdleTransition(0, () => ended.push(0))
+        .promise.then(() => {
+          resolved = true;
+        });
+      manager.waitForIdleTransition(5, () => ended.push(5));
+
+      manager.beginTerminalIdle();
+      await Promise.resolve();
+
+      expect(ended).toEqual([0, 5]);
+      expect(resolved).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(true);
+    });
+
+    test('a waiter armed while the onIdle callback runs is swept by the enclosing setIdle', async () => {
+      const events: string[] = [];
+      let releaseCallback!: () => void;
+      let lateResolved = false;
+      manager.setOnIdleCallback(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseCallback = resolve;
+          })
+      );
+
+      const settle = manager.setIdle();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(typeof releaseCallback).toBe('function');
+      const late = manager.waitForIdleTransition(3, () => events.push('late-onEnd'));
+      void late.promise.then(() => {
+        lateResolved = true;
+      });
+
+      releaseCallback();
+      await settle;
+
+      expect(events).toEqual(['late-onEnd']);
+      expect(lateResolved).toBe(true);
+    });
+
+    test('suppressIdleCallback alone still drains the waiters and publishes the idle state', async () => {
+      const onIdleCallback = mock(async () => {});
+      manager.setOnIdleCallback(onIdleCallback);
+      let resolved = false;
+      let ended = false;
+      void manager
+        .waitForIdleTransition(undefined, () => {
+          ended = true;
+        })
+        .promise.then(() => {
+          resolved = true;
+        });
+
+      await manager.setIdle({ suppressIdleCallback: true });
+
+      expect(resolved).toBe(true);
+      expect(ended).toBe(true);
+      expect(onIdleCallback).not.toHaveBeenCalled();
+      expect(emitMock).toHaveBeenCalled();
+    });
+
+    test('a racing setIdle from outside while the callback is in flight stays fully quiet', async () => {
+      const events: string[] = [];
+      let releaseCallback!: () => void;
+      let resolved = false;
+      manager.setOnIdleCallback(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseCallback = resolve;
+          })
+      );
+      void manager
+        .waitForIdleTransition(undefined, () => events.push('onEnd'))
+        .promise.then(() => {
+          resolved = true;
+        });
+
+      const settle = manager.setIdle();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(events).toEqual(['onEnd']);
+      expect(resolved).toBe(false);
+
+      await manager.setIdle();
+
+      expect(manager.getState().status).toBe('idle');
+      expect(resolved).toBe(false);
+      expect(events).toEqual(['onEnd']);
+
+      releaseCallback();
+      await settle;
+
+      expect(resolved).toBe(true);
+      expect(events).toEqual(['onEnd']);
+    });
+
+    test('the onIdle callback waits for the idle publication to complete', async () => {
+      let statusInCallback: string | undefined;
+      let callbackRan = false;
+      let releasePublish!: () => void;
+      manager.setOnIdleCallback(async () => {
+        callbackRan = true;
+        statusInCallback = manager.getState().status;
+      });
+      await manager.setProcessing('msg-1');
+      emitMock.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePublish = resolve;
+          })
+      );
+
+      const settle = manager.setIdle();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(typeof releasePublish).toBe('function');
+      expect(callbackRan).toBe(false);
+
+      releasePublish();
+      await settle;
+
+      expect(callbackRan).toBe(true);
+      expect(statusInCallback).toBe('idle');
+    });
+
+    test('releaseIdleWaiters(gen) fires onEnd only for the matching waiter', async () => {
+      const events: number[] = [];
+      let successorEnded = false;
+      void manager.waitForIdleTransition(2, () => events.push(2));
+      manager.waitForIdleTransition(3, () => {
+        successorEnded = true;
+      });
+
+      manager.releaseIdleWaiters(2);
+      await Promise.resolve();
+
+      expect(events).toEqual([2]);
+      expect(successorEnded).toBe(false);
+
+      await manager.setIdle();
+      expect(successorEnded).toBe(true);
+      expect(events).toEqual([2]);
+    });
+
+    test('releaseIdleWaiters is not a terminal idle: no state change, no fence, no re-fire', async () => {
+      const events: string[] = [];
+      await manager.setProcessing('msg-1');
+      emitMock.mockClear();
+      let resolved = false;
+      void manager
+        .waitForIdleTransition(undefined, () => events.push('onEnd'))
+        .promise.then(() => {
+          resolved = true;
+        });
+
+      manager.releaseIdleWaiters();
+      await Promise.resolve();
+
+      expect(resolved).toBe(true);
+      expect(manager.getState().status).toBe('processing');
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      expect(emitMock).not.toHaveBeenCalled();
+
+      await manager.setIdle();
+      expect(events).toEqual(['onEnd']);
     });
   });
 
