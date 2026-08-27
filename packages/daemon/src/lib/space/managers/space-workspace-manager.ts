@@ -389,6 +389,76 @@ const runUpdateWorkspaceLabel = (
   .pipe(updateLabelWrite, 'ctx', 'ctx')
   .end('ctx') as (input: UpdateLabelCtx) => UpdateLabelCtx;
 
+interface ResolveSelectionCtx {
+  spaces: WorkspaceRegistryReader;
+  workspaces: WorkspaceStore;
+  io: WorkspaceValidationIo;
+  spaceId: string;
+  selection: string;
+  rows?: SpaceWorkspaceRecord[];
+  resolvedPath?: string;
+  error?: Error;
+}
+
+function selectionRequireNonEmpty(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
+  if (ctx.selection !== '') return ctx;
+  return { ...ctx, error: new Error('Workspace selection must not be empty') };
+}
+
+function selectionLoadRows(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
+  if (!ctx.spaces.getSpace(ctx.spaceId)) {
+    return { ...ctx, error: new Error(`Space not found: ${ctx.spaceId}`) };
+  }
+  return { ...ctx, rows: ctx.workspaces.listBySpace(ctx.spaceId) };
+}
+
+function selectionMatchLabel(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
+  const match = ctx.rows!.find((row) => row.label === ctx.selection);
+  return match ? { ...ctx, resolvedPath: match.path } : ctx;
+}
+
+function selectionWorkspaceChoices(ctx: ResolveSelectionCtx): string {
+  const entries = ctx.rows!.map((row) => (row.label ? `"${row.label}" (${row.path})` : row.path));
+  const primary = ctx.spaces.getSpace(ctx.spaceId)?.workspacePath;
+  if (primary && !ctx.rows!.some((row) => row.path === primary)) {
+    entries.push(`${primary} (primary)`);
+  }
+  return entries.length > 0 ? entries.join(', ') : '(none)';
+}
+
+async function selectionResolveAsPath(ctx: ResolveSelectionCtx): Promise<ResolveSelectionCtx> {
+  const result = await runResolveRegisteredWorkspace({
+    spaces: ctx.spaces,
+    workspaces: ctx.workspaces,
+    io: ctx.io,
+    spaceId: ctx.spaceId,
+    rawPath: ctx.selection,
+  });
+  if (!result.error) return { ...ctx, resolvedPath: result.registeredPath };
+  return {
+    ...ctx,
+    error: new Error(
+      `Unknown workspace "${ctx.selection}" for space ${ctx.spaceId}: ${result.error.message}. Registered workspaces: ${selectionWorkspaceChoices(ctx)}`
+    ),
+  };
+}
+
+const runResolveWorkspaceSelection = (
+  superpipe({
+    hasError: (ctx: ResolveSelectionCtx) => ctx.error !== undefined,
+    hasResolvedPath: (ctx: ResolveSelectionCtx) => ctx.resolvedPath !== undefined,
+  })('workspace-selection-resolution') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(selectionRequireNonEmpty, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(selectionLoadRows, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(selectionMatchLabel, 'ctx', 'ctx')
+  .pipe('!hasResolvedPath', 'ctx')
+  .pipe(selectionResolveAsPath, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: ResolveSelectionCtx) => Promise<ResolveSelectionCtx>;
+
 export class SpaceWorkspaceManager {
   constructor(private readonly deps: SpaceWorkspaceManagerDeps) {}
 
@@ -458,5 +528,20 @@ export class SpaceWorkspaceManager {
       updated: false,
     });
     return result.updated;
+  }
+
+  async resolveWorkspaceSelection(spaceId: string, selection: string): Promise<string> {
+    const result = await runResolveWorkspaceSelection({
+      spaces: this.deps.spaces,
+      workspaces: this.deps.workspaces,
+      io: this.deps.io ?? nodeWorkspaceValidationIo,
+      spaceId,
+      selection: selection.trim(),
+    });
+    if (result.error) throw result.error;
+    if (!result.resolvedPath) {
+      throw new Error(`Unknown workspace: ${selection}`);
+    }
+    return result.resolvedPath;
   }
 }

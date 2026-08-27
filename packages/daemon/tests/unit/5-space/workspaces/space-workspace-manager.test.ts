@@ -37,8 +37,14 @@ function fakeSpace(
   };
 }
 
-function row(spaceId: string, path: string, id: string, isPrimary = false): SpaceWorkspaceRecord {
-  return { id, spaceId, path, label: '', isPrimary, createdAt: 0, updatedAt: 0 };
+function row(
+  spaceId: string,
+  path: string,
+  id: string,
+  isPrimary = false,
+  label = ''
+): SpaceWorkspaceRecord {
+  return { id, spaceId, path, label, isPrimary, createdAt: 0, updatedAt: 0 };
 }
 
 class FakeSpaces {
@@ -403,6 +409,56 @@ describe('resolveRegisteredWorkspacePath', () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe('Workspace path is not registered to space: /unregistered');
+  });
+});
+
+describe('resolveWorkspaceSelection', () => {
+  test('resolves a registered workspace by label', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/sec', 'w2', false, 'docs')]);
+    const { manager } = newManager({ workspaces });
+    const resolved = await manager.resolveWorkspaceSelection(SPACE_A, 'docs');
+    expect(resolved).toBe('/sec');
+  });
+
+  test('trims the selection before matching a label', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/sec', 'w2', false, 'docs')]);
+    const { manager } = newManager({ workspaces });
+    const resolved = await manager.resolveWorkspaceSelection(SPACE_A, '  docs  ');
+    expect(resolved).toBe('/sec');
+  });
+
+  test('falls back to path resolution when no label matches', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/canon', 'w1', false, 'docs')]);
+    const { manager } = newManager({
+      workspaces,
+      io: fakeIo({ realpath: async () => '/canon' }),
+    });
+    const resolved = await manager.resolveWorkspaceSelection(SPACE_A, '/raw');
+    expect(resolved).toBe('/canon');
+  });
+
+  test('resolves the primary path selected by path', async () => {
+    const { manager } = newManager();
+    const resolved = await manager.resolveWorkspaceSelection(SPACE_A, '/primary-a');
+    expect(resolved).toBe('/primary-a');
+  });
+
+  test('rejects an unknown selection listing registered workspaces and the primary', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/sec', 'w2', false, 'docs')]);
+    const { manager } = newManager({ workspaces });
+    const err = await manager.resolveWorkspaceSelection(SPACE_A, 'nope').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain('Unknown workspace "nope" for space space-a');
+    expect(message).toContain('"docs" (/sec)');
+    expect(message).toContain('/primary-a (primary)');
+  });
+
+  test('rejects an empty selection', async () => {
+    const { manager } = newManager();
+    const err = await manager.resolveWorkspaceSelection(SPACE_A, '   ').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('Workspace selection must not be empty');
   });
 });
 
