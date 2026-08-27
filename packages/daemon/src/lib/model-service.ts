@@ -764,7 +764,7 @@ async function loadProviderModels(
         })
       : null;
     const models = discovered
-      ? options?.forceRemote
+      ? options?.forceRemote || provider.id === 'anthropic-copilot'
         ? withCuratedEntries(provider.id, discovered)
         : withCuratedEntries(provider.id, mergeDiscoveredWithStatic(provider.id, discovered))
       : await provider.getModels();

@@ -14,6 +14,7 @@ import {
   type OllamaBridgeServer,
 } from './ollama-bridge-server.js';
 import { DEFAULT_PROBE_TIMEOUT_MS } from './shared/credential-probe.js';
+import { providerDiscoveryFingerprint } from './shared/discovery-cache.js';
 
 type OllamaProviderKind = 'local' | 'cloud';
 
@@ -135,6 +136,15 @@ export class OllamaProvider implements Provider {
     return (
       apiKey?.trim() || (this.credentials?.type === 'api_key' ? this.credentials.apiKey : undefined)
     );
+  }
+
+  getDiscoveryEndpointFingerprint(discoveryBaseUrl?: string): string {
+    const envUrl =
+      this.kind === 'cloud' ? this.env.OLLAMA_CLOUD_BASE_URL : this.env.OLLAMA_BASE_URL;
+    const baseUrl = discoveryBaseUrl ?? envUrl;
+    return providerDiscoveryFingerprint({
+      ...(baseUrl === undefined ? { baseUrl: this.getBaseUrl() } : { baseUrl }),
+    });
   }
 
   getBaseUrl(): string {

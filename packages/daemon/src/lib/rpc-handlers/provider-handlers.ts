@@ -842,6 +842,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             const configSource = updates.configJson ?? existing.configJson;
             const strippedConfig = stripPersistedDiscovery(configSource);
             if (strippedConfig !== configSource) {
+              providerRepo.updateProvider(data.id, { configJson: strippedConfig });
               updates.configJson = strippedConfig;
             }
           }

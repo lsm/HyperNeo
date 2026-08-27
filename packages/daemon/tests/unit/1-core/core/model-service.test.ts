@@ -5635,18 +5635,19 @@ describe('Model Service', () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels, clearModelsCache } = await import('../../../../src/lib/model-service');
       type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
-      let resolveGetModels: (() => void) | undefined;
+      let resolveRoutineListing: (() => void) | undefined;
       let forcedCalls = 0;
       getProviderRegistry().register({
         id: 'remote-provider',
-        getModels: async () => {
+        getModels: async () => [],
+        listRemoteModels: async (options?: { force?: boolean }) => {
+          if (options?.force) {
+            forcedCalls++;
+            return [{ ...mockModels[0], provider: 'remote-provider' }];
+          }
           await new Promise<void>((resolve) => {
-            resolveGetModels = resolve;
+            resolveRoutineListing = resolve;
           });
-          return [];
-        },
-        listRemoteModels: async () => {
-          forcedCalls++;
           return [{ ...mockModels[0], provider: 'remote-provider' }];
         },
         isAvailable: async () => true,
@@ -5654,11 +5655,11 @@ describe('Model Service', () => {
 
       clearModelsCache();
       const resilient = refreshModels();
-      while (!resolveGetModels) {
+      while (!resolveRoutineListing) {
         await Promise.resolve();
       }
       const forced = refreshModels(undefined, { forceRemote: true });
-      resolveGetModels();
+      resolveRoutineListing();
 
       await resilient;
       await forced;

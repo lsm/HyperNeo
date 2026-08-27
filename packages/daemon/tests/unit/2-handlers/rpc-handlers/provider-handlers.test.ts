@@ -625,11 +625,15 @@ describe('Provider RPC handlers', () => {
         configJson: JSON.stringify({ command: 'saved acp' }),
       });
       const { refreshModels } = await import('../../../../src/lib/model-service');
+      let listingDepth = 0;
       registerRemoteProvider({
         listRemoteModels: async () => {
+          if (listingDepth > 0) return [makeDiscoveredModel('remote-a')];
+          listingDepth += 1;
           const refreshPromise = refreshModels();
           clearModelsCache();
           await refreshPromise;
+          listingDepth -= 1;
           return [makeDiscoveredModel('remote-a')];
         },
         getModels: async () => [makeDiscoveredModel('remote-a')],

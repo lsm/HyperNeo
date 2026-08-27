@@ -30,6 +30,19 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 const log = new Logger('auth-handlers');
 
+async function stripPersistedDiscoveryDurable(
+  providerId: string,
+  providerRepo: ProviderRepository | undefined
+): Promise<void> {
+  if (!providerRepo) return;
+  const record = providerRepo.getProviderByProviderId(providerId);
+  if (!record) return;
+  const stripped = stripPersistedDiscovery(record.configJson);
+  if (stripped !== record.configJson) {
+    providerRepo.updateProvider(record.id, { configJson: stripped });
+  }
+}
+
 async function clearCacheAndNotifyProvidersChanged(
   providerId: string | undefined,
   providerRepo: ProviderRepository | undefined,
@@ -37,13 +50,7 @@ async function clearCacheAndNotifyProvidersChanged(
   stripPersisted = true
 ): Promise<void> {
   if (providerId && providerRepo && stripPersisted) {
-    const record = providerRepo.getProviderByProviderId(providerId);
-    if (record) {
-      const stripped = stripPersistedDiscovery(record.configJson);
-      if (stripped !== record.configJson) {
-        providerRepo.updateProvider(record.id, { configJson: stripped });
-      }
-    }
+    await stripPersistedDiscoveryDurable(providerId, providerRepo);
   }
   const { clearModelsCache } = await import('../model-service.js');
   clearModelsCache(undefined, providerId);
@@ -161,6 +168,7 @@ export function setupAuthHandlers(
         const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
           let storeError: unknown;
           bumpProviderCatalogEpoch(providerId);
+          await stripPersistedDiscoveryDurable(providerId, providerRepo);
           if (credentials.type === 'oauth') {
             try {
               await credentialManager?.storeOAuthTokens(providerId, credentials);
@@ -321,6 +329,7 @@ export function setupAuthHandlers(
           await removeCredentialsOrKeychainError(credentialManager, providerId);
           const remaining = await provider.getCredentials?.();
           if (remaining?.type === 'oauth') {
+            await stripPersistedDiscoveryDurable(providerId, providerRepo);
             await credentialManager?.storeOAuthTokens(providerId, remaining);
             await clearCacheAndNotifyProvidersChanged(
               providerId,
@@ -338,6 +347,7 @@ export function setupAuthHandlers(
         }
         const credentials = await provider.getCredentials?.();
         if (credentials?.type === 'oauth') {
+          await stripPersistedDiscoveryDurable(providerId, providerRepo);
           try {
             await credentialManager?.storeOAuthTokens(providerId, credentials);
           } catch (storageError) {
