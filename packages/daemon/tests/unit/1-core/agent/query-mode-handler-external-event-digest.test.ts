@@ -429,4 +429,134 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       expect(enqueued[0]?.uuid).toBe('uuid-task');
     });
   });
+
+  describe('flag-off persisted digest reconcile', () => {
+    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
+    let previousFlag: string | undefined;
+    let reconcileCalls: Array<{ sessionId: string; taskId?: string }>;
+    let reconcileError: Error | null;
+    let reconcileImpl: (() => void) | null;
+
+    beforeEach(() => {
+      previousFlag = process.env[FLAG_ENV];
+      delete process.env[FLAG_ENV];
+      reconcileCalls = [];
+      reconcileError = null;
+      reconcileImpl = null;
+      handlerContext.reconcilePersistedDigestRows = (sessionId, taskId) => {
+        reconcileCalls.push({ sessionId, taskId });
+        if (reconcileError) throw reconcileError;
+        reconcileImpl?.();
+      };
+    });
+
+    afterEach(() => {
+      if (previousFlag === undefined) {
+        delete process.env[FLAG_ENV];
+      } else {
+        process.env[FLAG_ENV] = previousFlag;
+      }
+    });
+
+    it('flag off: a digest row quarantined by the reconcile bridge is not delivered', async () => {
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow('db-digest-stranded', 'digest-stranded-0001', 'stale digest text'),
+      ];
+      reconcileImpl = () => {
+        deferredRows = deferredRows.filter((row) => row.dbId !== 'db-digest-stranded');
+      };
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(1);
+      expect(reconcileCalls).toEqual([{ sessionId: SESSION_ID, taskId: undefined }]);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+    });
+
+    it('flag off: an owed digest row that survives the reconcile is delivered by the flush', async () => {
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow(
+          'db-digest-owed',
+          'digest-owed-0002',
+          'External events while you were working (2 events, PR #2828):'
+        ),
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(2);
+      expect(reconcileCalls).toHaveLength(1);
+      expect(enqueued).toHaveLength(2);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      const digestDelivery = enqueued[1]!;
+      expect(digestDelivery.uuid).toBe('digest-owed-0002');
+      expect(String(digestDelivery.content)).toContain('(2 events, PR #2828):');
+    });
+
+    it('flag off: a failing reconcile excludes digest rows so the digest and the events are not both delivered', async () => {
+      reconcileError = new Error('ledger locked');
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow('db-digest-x', 'digest-x-0003', 'stale digest text'),
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(1);
+      expect(
+        warnMessages.some((message) => String(message).includes('flag-off digest reconcile failed'))
+      ).toBe(true);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+    });
+
+    it('flag off: without a reconcile bridge the flush excludes digest rows it cannot verify', async () => {
+      handlerContext.reconcilePersistedDigestRows = undefined;
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow('db-digest-y', 'digest-y-0004', 'stale digest text'),
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(1);
+      expect(reconcileCalls).toHaveLength(0);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+    });
+
+    it('flag on: the reconcile bridge is never consulted', async () => {
+      process.env[FLAG_ENV] = '1';
+      deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(reconcileCalls).toHaveLength(0);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+    });
+  });
 });

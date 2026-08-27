@@ -42,6 +42,7 @@ export interface QueryModeHandlerContext {
     sessionId: string,
     taskId?: string
   ): Promise<RenderPendingDigestOutcome | null>;
+  reconcilePersistedDigestRows?(sessionId: string, taskId?: string): void;
 
   ensureQueryStarted(): Promise<void>;
 }
@@ -94,6 +95,19 @@ export class QueryModeHandler {
               `${error instanceof Error ? error.message : String(error)} — flushing without the digest`
           );
         }
+      } else if (this.ctx.reconcilePersistedDigestRows) {
+        try {
+          this.ctx.reconcilePersistedDigestRows(session.id, session.context?.taskId);
+        } catch (error) {
+          logger.warn(
+            `flag-off digest reconcile failed for session ${session.id}: ` +
+              `${error instanceof Error ? error.message : String(error)} — excluding digest rows ` +
+              `from this flush so the digest and the original events are not both delivered`
+          );
+          excludeDigestRows = true;
+        }
+      } else {
+        excludeDigestRows = true;
       }
 
       const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');

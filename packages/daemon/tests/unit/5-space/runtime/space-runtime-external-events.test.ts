@@ -7255,6 +7255,106 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(0);
     });
   });
+
+  describe('flag-off persisted digest reconcile', () => {
+    async function attachSessionWithPendingMembers(
+      sessionId: string,
+      eventIds: string[]
+    ): Promise<{ run: { id: string }; task: SpaceTask; topic: string }> {
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { run, task } = await startRunWithSubscription(topic);
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      for (const eventId of eventIds) {
+        await eventService.publish(makeEvent({ id: eventId, topic }));
+      }
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      return { run, task, topic };
+    }
+
+    function saveDeferredDigestRow(sessionId: string, uuid: string, eventIds: string[]): void {
+      const messages = new SDKMessageRepository(db);
+      const row = {
+        type: 'user',
+        uuid,
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stranded digest text' }] },
+        externalEventIds: eventIds,
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage(sessionId, row, 'deferred', 'system');
+    }
+
+    function deferredDigestRows(sessionId: string): Array<{ sdk_uuid: string }> {
+      return db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = ?
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all(sessionId) as Array<{ sdk_uuid: string }>;
+    }
+
+    test('deletes a stranded digest row whose member deliveries are still pending', async () => {
+      const { task } = await attachSessionWithPendingMembers('session-flagoff-pending', [
+        'evt-flagoff-a',
+        'evt-flagoff-b',
+      ]);
+      saveDeferredDigestRow('session-flagoff-pending', 'digest-stranded-pending', [
+        'evt-flagoff-a',
+        'evt-flagoff-b',
+      ]);
+
+      runtime.reconcilePersistedDigestRowsForSession('session-flagoff-pending', task.id);
+
+      expect(deferredDigestRows('session-flagoff-pending')).toHaveLength(0);
+      for (const eventId of ['evt-flagoff-a', 'evt-flagoff-b']) {
+        expect(eventStore.listDeliveries(eventId)[0]!.state).toBe('pending');
+      }
+    });
+
+    test('keeps an owed digest row whose member deliveries are all delivered', async () => {
+      const { task } = await attachSessionWithPendingMembers('session-flagoff-owed', [
+        'evt-flagoff-c',
+        'evt-flagoff-d',
+      ]);
+      for (const eventId of ['evt-flagoff-c', 'evt-flagoff-d']) {
+        const delivery = eventStore.listDeliveries(eventId)[0]!;
+        eventStore.markDeliveriesDeliveredAtomic([{ eventId, deliveryKey: delivery.deliveryKey }]);
+      }
+      saveDeferredDigestRow('session-flagoff-owed', 'digest-owed-row', [
+        'evt-flagoff-c',
+        'evt-flagoff-d',
+      ]);
+
+      runtime.reconcilePersistedDigestRowsForSession('session-flagoff-owed', task.id);
+
+      const rows = deferredDigestRows('session-flagoff-owed');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.sdk_uuid).toBe('digest-owed-row');
+    });
+
+    test('a session with no digest rows reconciles without side effects', () => {
+      expect(() => runtime.reconcilePersistedDigestRowsForSession('session-unknown')).not.toThrow();
+    });
+  });
 });
 
 describe('SpaceRuntime queue-health snapshot', () => {

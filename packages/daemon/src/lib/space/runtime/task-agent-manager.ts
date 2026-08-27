@@ -3179,6 +3179,11 @@ export class TaskAgentManager {
     agentSession.slotResetsContext = () => this.slotResetsContextForSession(sessionId);
     agentSession.renderPendingDigest = (targetSessionId, digestTaskId) =>
       this.config.spaceRuntimeService.renderPendingDigestForSession(targetSessionId, digestTaskId);
+    agentSession.reconcilePersistedDigestRows = (targetSessionId, digestTaskId) =>
+      this.config.spaceRuntimeService.reconcilePersistedDigestRowsForSession(
+        targetSessionId,
+        digestTaskId
+      );
   }
 
   private buildAgentNameAliasesForExecution(

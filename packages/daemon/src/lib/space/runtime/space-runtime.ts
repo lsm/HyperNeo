@@ -2036,6 +2036,12 @@ export class SpaceRuntime {
     }
   }
 
+  reconcilePersistedDigestRowsForSession(sessionId: string, taskId?: string): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    this.dropUncoveredDeferredDigestRows(sessionId, store, taskId);
+  }
+
   private async renderPendingDigestForSessionInternal(
     sessionId: string,
     taskId?: string
