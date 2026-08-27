@@ -522,6 +522,22 @@ describe('SDKMessageHandler', () => {
       expect(opened).toBe(true);
     });
 
+    it('releases the turn-end gate when result handling throws', async () => {
+      emitSpy.mockImplementation((event: string) =>
+        event === 'session.errorClear' ? Promise.reject(new Error('pub failed')) : Promise.resolve()
+      );
+      const { h } = budgetCase({ totalUsed: 50_000 });
+
+      await expect(h.handleMessage(turnEndResult())).rejects.toThrow('pub failed');
+
+      let opened = false;
+      void (setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>).then(() => {
+        opened = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(opened).toBe(true);
+    });
+
     it('releases the turn-end gate when a top-level result fails to save', async () => {
       saveSDKMessageSpy.mockReturnValue(false);
       mockContext.queryObject = null;

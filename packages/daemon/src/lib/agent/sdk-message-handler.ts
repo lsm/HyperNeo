@@ -887,184 +887,188 @@ export class SDKMessageHandler {
       this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(gate));
       releaseTurnEndGate = release;
     }
-
-    let deferredSuccessfully: boolean;
     try {
-      deferredSuccessfully = this.withDbChangeBatch(() => db.saveSDKMessage(session.id, message));
-    } catch (error) {
-      releaseTurnEndGate?.();
-      releaseTurnEndGate = null;
-      throw error;
-    }
-
-    if (!deferredSuccessfully) {
-      this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
-      releaseTurnEndGate?.();
-      releaseTurnEndGate = null;
-      if (this.matchesArmedClearResult(message)) {
-        this.clearIdleSuppression();
+      let deferredSuccessfully: boolean;
+      try {
+        deferredSuccessfully = this.withDbChangeBatch(() => db.saveSDKMessage(session.id, message));
+      } catch (error) {
+        releaseTurnEndGate?.();
+        releaseTurnEndGate = null;
+        throw error;
       }
-      return;
-    }
 
-    const observesArmedClearResult = this.matchesArmedClearResult(message);
-    const settlesArmedClearError = observesArmedClearResult && !isSDKResultSuccess(message);
-    if (observesArmedClearResult) {
-      this.cancelSuppressedResultTimer();
-    }
-
-    const processingState = stateManager.getState();
-    const activeMessageId =
-      isTopLevelResult && processingState.status === 'processing'
-        ? processingState.messageId
-        : null;
-
-    let limitEngaged = false;
-    let limitBillingTerminal = false;
-    if (isTopLevelResult) {
-      this.resetThinkingTokenTracking();
-      const limitError = this.assessResultLimitError(message);
-      if (limitError) {
-        limitBillingTerminal = limitError.hint.billingTerminal === true;
-        limitEngaged =
-          (await this.ctx.onResultLimitError?.(
-            limitError.errorText,
-            limitError.hint,
-            limitError.userMessageUuid
-          )) ?? false;
+      if (!deferredSuccessfully) {
+        this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
+        releaseTurnEndGate?.();
+        releaseTurnEndGate = null;
+        if (this.matchesArmedClearResult(message)) {
+          this.clearIdleSuppression();
+        }
+        return;
       }
-      this.lastResultWasSuccess = limitError === null && isSDKResultSuccess(message);
-      this.lastRateLimitInfo = null;
-      this.lastSdkErrorTag = null;
-    }
 
-    if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
-      stateManager.beginTerminalIdle(this.invocationIdleOwner(invocationGeneration));
-    }
-
-    messageHub.event(
-      'state.sdkMessages.delta',
-      {
-        added: [message],
-        timestamp: Date.now(),
-        version: ++this.sdkMessageDeltaVersion,
-      },
-      { channel: `session:${session.id}` }
-    );
-
-    try {
-      await this.ctx.internalEventBus.publish('sdk.message', {
-        sessionId: session.id,
-        message,
-      });
-    } catch (error) {
-      releaseTurnEndGate?.();
-      releaseTurnEndGate = null;
+      const observesArmedClearResult = this.matchesArmedClearResult(message);
+      const settlesArmedClearError = observesArmedClearResult && !isSDKResultSuccess(message);
       if (observesArmedClearResult) {
-        this.clearIdleSuppression();
+        this.cancelSuppressedResultTimer();
       }
-      throw error;
-    }
 
-    if (limitEngaged) {
-      const resultUuid = (message as SDKResultMessage).uuid;
-      if (resultUuid) {
-        try {
-          db.getSDKMessageRepo()?.markResultRecoveryIntercepted(
-            session.id,
-            resultUuid,
-            limitBillingTerminal
-          );
-        } catch (error) {
-          this.logger.warn('Failed to mark intercepted limit result:', error);
+      const processingState = stateManager.getState();
+      const activeMessageId =
+        isTopLevelResult && processingState.status === 'processing'
+          ? processingState.messageId
+          : null;
+
+      let limitEngaged = false;
+      let limitBillingTerminal = false;
+      if (isTopLevelResult) {
+        this.resetThinkingTokenTracking();
+        const limitError = this.assessResultLimitError(message);
+        if (limitError) {
+          limitBillingTerminal = limitError.hint.billingTerminal === true;
+          limitEngaged =
+            (await this.ctx.onResultLimitError?.(
+              limitError.errorText,
+              limitError.hint,
+              limitError.userMessageUuid
+            )) ?? false;
         }
+        this.lastResultWasSuccess = limitError === null && isSDKResultSuccess(message);
+        this.lastRateLimitInfo = null;
+        this.lastSdkErrorTag = null;
       }
-      await this.recordResultUsageMetadata(message as SDKResultMessage);
-      const compactingClear = this.clearStaleCompacting();
-      await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
-      await compactingClear;
-      releaseTurnEndGate?.();
-      releaseTurnEndGate = null;
-      return;
-    }
 
-    if (isSDKSessionStateChangedMessage(message)) {
-      if (!this.isInvocationStale(invocationGeneration)) {
-        this.usesSessionStateChangedTurnEnd = true;
-        if (message.state !== 'idle') {
-          this.expectsSessionStateIdleAfterResult = true;
+      if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
+        stateManager.beginTerminalIdle(this.invocationIdleOwner(invocationGeneration));
+      }
+
+      messageHub.event(
+        'state.sdkMessages.delta',
+        {
+          added: [message],
+          timestamp: Date.now(),
+          version: ++this.sdkMessageDeltaVersion,
+        },
+        { channel: `session:${session.id}` }
+      );
+
+      try {
+        await this.ctx.internalEventBus.publish('sdk.message', {
+          sessionId: session.id,
+          message,
+        });
+      } catch (error) {
+        releaseTurnEndGate?.();
+        releaseTurnEndGate = null;
+        if (observesArmedClearResult) {
+          this.clearIdleSuppression();
         }
+        throw error;
       }
-    }
 
-    let enforcedTurnEnd = false;
-    if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
-      if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
+      if (limitEngaged) {
+        const resultUuid = (message as SDKResultMessage).uuid;
+        if (resultUuid) {
+          try {
+            db.getSDKMessageRepo()?.markResultRecoveryIntercepted(
+              session.id,
+              resultUuid,
+              limitBillingTerminal
+            );
+          } catch (error) {
+            this.logger.warn('Failed to mark intercepted limit result:', error);
+          }
+        }
+        await this.recordResultUsageMetadata(message as SDKResultMessage);
         const compactingClear = this.clearStaleCompacting();
         await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
-        enforcedTurnEnd = true;
         await compactingClear;
-        await this.settleIdleForInvocation(invocationGeneration);
+        releaseTurnEndGate?.();
+        releaseTurnEndGate = null;
+        return;
       }
-    }
 
-    if (isSDKUserMessage(message)) {
-      await this.handleUserMessage(message);
-    }
-
-    if (isSDKSystemMessage(message)) {
-      await this.handleSystemMessage(message);
-    }
-
-    if (isTopLevelResult && isSDKResultSuccess(message)) {
-      await this.handleResultMessage(message, activeMessageId, invocationGeneration);
-    }
-
-    if (isSDKAssistantMessage(message)) {
-      await this.handleAssistantMessage(message);
-    }
-
-    if (isSDKStatusMessage(message)) {
-      await this.handleStatusMessage(message);
-    }
-
-    if (isSDKModelRefusalFallbackMessage(message)) {
-      await this.handleModelRefusalFallbackMessage(message);
-    }
-
-    if (isSDKModelRefusalNoFallbackMessage(message)) {
-      await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
-    }
-
-    if (isSDKSessionStateChangedMessage(message)) {
-      await this.handleSessionStateChangedMessage(message, invocationGeneration);
-    }
-
-    if (isSDKCompactBoundary(message)) {
-      await this.handleCompactBoundary(message, invocationGeneration);
-    }
-
-    if (isSDKResultMessage(message)) {
-      const compactingClear = isTopLevelResult ? this.clearStaleCompacting() : null;
-      if (isTopLevelResult && !enforcedTurnEnd) {
-        if (this.expectsSessionStateIdleAfterResult) {
-          this.armTrailingIdleDeliveryGate();
+      if (isSDKSessionStateChangedMessage(message)) {
+        if (!this.isInvocationStale(invocationGeneration)) {
+          this.usesSessionStateChangedTurnEnd = true;
+          if (message.state !== 'idle') {
+            this.expectsSessionStateIdleAfterResult = true;
+          }
         }
-        await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
       }
-      await compactingClear;
+
+      let enforcedTurnEnd = false;
+      if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
+        if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
+          const compactingClear = this.clearStaleCompacting();
+          await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
+          enforcedTurnEnd = true;
+          await compactingClear;
+          await this.settleIdleForInvocation(invocationGeneration);
+        }
+      }
+
+      if (isSDKUserMessage(message)) {
+        await this.handleUserMessage(message);
+      }
+
+      if (isSDKSystemMessage(message)) {
+        await this.handleSystemMessage(message);
+      }
+
+      if (isTopLevelResult && isSDKResultSuccess(message)) {
+        await this.handleResultMessage(message, activeMessageId, invocationGeneration);
+      }
+
+      if (isSDKAssistantMessage(message)) {
+        await this.handleAssistantMessage(message);
+      }
+
+      if (isSDKStatusMessage(message)) {
+        await this.handleStatusMessage(message);
+      }
+
+      if (isSDKModelRefusalFallbackMessage(message)) {
+        await this.handleModelRefusalFallbackMessage(message);
+      }
+
+      if (isSDKModelRefusalNoFallbackMessage(message)) {
+        await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
+      }
+
+      if (isSDKSessionStateChangedMessage(message)) {
+        await this.handleSessionStateChangedMessage(message, invocationGeneration);
+      }
+
+      if (isSDKCompactBoundary(message)) {
+        await this.handleCompactBoundary(message, invocationGeneration);
+      }
+
+      if (isSDKResultMessage(message)) {
+        const compactingClear = isTopLevelResult ? this.clearStaleCompacting() : null;
+        if (isTopLevelResult && !enforcedTurnEnd) {
+          if (this.expectsSessionStateIdleAfterResult) {
+            this.armTrailingIdleDeliveryGate();
+          }
+          await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
+        }
+        await compactingClear;
+        releaseTurnEndGate?.();
+        releaseTurnEndGate = null;
+      }
+
+      if (isTopLevelResult && isSDKResultMessage(message)) {
+        if (settlesArmedClearError) {
+          this.clearIdleSuppression();
+        }
+        return;
+      }
+
+      this.maybeRefreshContextOnEvent(message, invocationGeneration);
+    } finally {
       releaseTurnEndGate?.();
       releaseTurnEndGate = null;
     }
-
-    if (isTopLevelResult && isSDKResultMessage(message)) {
-      if (settlesArmedClearError) {
-        this.clearIdleSuppression();
-      }
-      return;
-    }
-
-    this.maybeRefreshContextOnEvent(message, invocationGeneration);
   }
 
   private async handleSystemMessage(message: SDKMessage): Promise<void> {
