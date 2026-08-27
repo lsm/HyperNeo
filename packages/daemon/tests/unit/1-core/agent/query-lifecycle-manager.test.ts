@@ -1294,6 +1294,31 @@ describe('QueryLifecycleManager', () => {
       expect(clearQueuedIfOwnedBySpy).toHaveBeenCalledWith('msg-retry');
     });
 
+    test('clears the queued state when a non-prepend re-enqueue aborts on supersession (B5e)', async () => {
+      let queryGeneration = 1;
+      const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-retry');
+      const removeSpy = spyOn(messageQueue, 'remove').mockReturnValue(true);
+      messageQueue.start();
+      mockContext = createMockContext({
+        getQueryGeneration: () => queryGeneration,
+        queryPromise: Promise.resolve(),
+        isRateLimitEpisodeSuperseded: () => {
+          queryGeneration = 2;
+          return false;
+        },
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await expect(
+        manager.startQueryAndEnqueue('msg-retry', 'Hello', 7, { queryGeneration: 1 })
+      ).resolves.toBe('aborted');
+
+      expect(enqueueSpy).not.toHaveBeenCalled();
+      expect(removeSpy).toHaveBeenCalledWith('msg-retry');
+      expect(setQueuedSpy).toHaveBeenCalledWith('msg-retry');
+      expect(clearQueuedIfOwnedBySpy).toHaveBeenCalledWith('msg-retry');
+    });
+
     test('emits message.sent event', async () => {
       spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-123');
 

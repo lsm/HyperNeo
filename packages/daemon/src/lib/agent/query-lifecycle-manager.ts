@@ -614,6 +614,7 @@ export class QueryLifecycleManager {
       this.ctx.getQueryGeneration?.() !== options.queryGeneration
     ) {
       messageQueue.remove(messageId);
+      await stateManager.clearQueuedIfOwnedBy(messageId);
       this.logger.info(
         `startQueryAndEnqueue: aborted re-enqueue of ${messageId} ` +
           `(the originating query was superseded).`
