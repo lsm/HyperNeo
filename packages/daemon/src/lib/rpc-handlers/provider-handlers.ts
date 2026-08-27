@@ -1,26 +1,37 @@
-import type { MessageHub } from '@hyperneo/shared';
-import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
-import type { CreateProviderParams, ProviderRecord, UpdateProviderParams } from '@hyperneo/shared';
-import type { ListRemoteModelsOptions, ProviderCredentials } from '@hyperneo/shared/provider';
+import type {
+  CreateProviderParams,
+  MessageHub,
+  ModelInfo,
+  ProviderRecord,
+  UpdateProviderParams,
+} from '@hyperneo/shared';
+import type {
+  CuratedModel,
+  ListRemoteModelsOptions,
+  Provider,
+  ProviderCredentials,
+} from '@hyperneo/shared/provider';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository.ts';
-import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
+import { parseAcpCommand } from '../acp/acp-command.js';
+import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
 import {
   KEYCHAIN_UNAVAILABLE_MESSAGE,
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
-import {
-  parseProviderConfig,
-  syncProviderToRegistry,
-  removeProviderFromRegistry,
-} from '../providers/provider-sync.js';
-import { getProviderRegistry } from '../providers/registry.js';
-import { markBuiltInProviderDisabled } from '../providers/factory.js';
-import { AcpProvider } from '../providers/acp-provider.js';
-import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
-import { parseAcpCommand } from '../acp/acp-command.js';
-import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
+import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import { AcpProvider } from '../providers/acp-provider.js';
+import { markBuiltInProviderDisabled } from '../providers/factory.js';
+import {
+  parseProviderConfig,
+  removeProviderFromRegistry,
+  syncProviderToRegistry,
+} from '../providers/provider-sync.js';
+import { getProviderRegistry } from '../providers/registry.js';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
+import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
 
 const log = new Logger('provider-handlers');
 
@@ -225,6 +236,21 @@ function validateRemoteModelRequest(data: unknown): RemoteModelRequest {
   return { id: input.id, options: input.options };
 }
 
+type RefreshDiscoveryRequest = { id: string };
+
+function validateRefreshDiscoveryRequest(data: unknown): RefreshDiscoveryRequest {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Invalid refresh discovery request');
+  }
+  const input = data as Record<string, unknown>;
+  const unknown = Object.keys(input).find((key) => key !== 'id');
+  if (unknown) throw new Error(`Unknown refresh discovery request field: ${unknown}`);
+  if (typeof input.id !== 'string' || !input.id.trim()) {
+    throw new Error('Provider id is required');
+  }
+  return { id: input.id };
+}
+
 async function listAcpRemoteModels(
   record: ProviderRecord,
   options: ListRemoteModelsOptions
@@ -245,12 +271,420 @@ async function listAcpRemoteModels(
   return fetchAcpModels(provider, { command: options.command || undefined });
 }
 
+const DISCOVERY_REFRESH_TIMEOUT_MS = 30_000;
+const DISCOVERY_SETTLE_GRACE_MS = 60_000;
+
+function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Provider discovery timed out')), ms);
+      timer.unref?.();
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function isUnchangedSavedConfig(
+  record: ProviderRecord | null,
+  saved: { baseUrl?: string; configJson?: string }
+): boolean {
+  return (
+    !!record &&
+    record.isEnabled !== false &&
+    record.baseUrl === saved.baseUrl &&
+    record.configJson === saved.configJson
+  );
+}
+
+function isCurationOnlyConfigUpdate(
+  previousConfigJson: string | undefined,
+  nextConfigJson: string | undefined
+): boolean {
+  if (previousConfigJson === nextConfigJson) return true;
+  if (!previousConfigJson || !nextConfigJson) return false;
+  let prev: Record<string, unknown>;
+  let next: Record<string, unknown>;
+  try {
+    prev = JSON.parse(previousConfigJson) as Record<string, unknown>;
+    next = JSON.parse(nextConfigJson) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  if (!prev || typeof prev !== 'object' || Array.isArray(prev)) return false;
+  if (!next || typeof next !== 'object' || Array.isArray(next)) return false;
+  const keys = new Set<string>([...Object.keys(prev), ...Object.keys(next)]);
+  for (const key of keys) {
+    if (key === 'models' || key === LAST_GOOD_DISCOVERY_KEY) continue;
+    if (JSON.stringify(prev[key] ?? null) !== JSON.stringify(next[key] ?? null)) return false;
+  }
+  return true;
+}
+
 export interface ProviderHandlerDeps {
   messageHub: MessageHub;
   providerRepo: ProviderRepository;
   credentialManager: ProviderCredentialManager;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
 }
+
+const LAST_GOOD_DISCOVERY_KEY = 'discoveredModels';
+const LAST_GOOD_DISCOVERY_WRAPPER_RESERVE =
+  `${JSON.stringify(LAST_GOOD_DISCOVERY_KEY)}:${JSON.stringify({ models: [], truncated: true })}`
+    .length + 1;
+
+interface LastGoodDiscoveredModels {
+  models: CuratedModel[];
+  truncated?: boolean;
+  fingerprint?: string;
+}
+
+function lastGoodDiscoveryBudget(
+  base: Record<string, unknown>,
+  endpointFingerprint?: string
+): number {
+  const stripped = { ...base };
+  delete stripped[LAST_GOOD_DISCOVERY_KEY];
+  const prefixLength = Object.keys(stripped).length > 0 ? JSON.stringify(stripped).length + 1 : 1;
+  const fingerprintReserve =
+    endpointFingerprint === undefined
+      ? 0
+      : `,"fingerprint":${JSON.stringify(endpointFingerprint)}`.length;
+  return Math.max(
+    0,
+    MAX_JSON_FIELD_LEN - prefixLength - LAST_GOOD_DISCOVERY_WRAPPER_RESERVE - fingerprintReserve
+  );
+}
+
+function buildLastGoodDiscoveredModels(
+  providerId: string,
+  discovered: ReadonlyArray<{ id: string; name?: string }>,
+  budget: number
+): LastGoodDiscoveredModels {
+  const registry = getProviderRegistry();
+  const byId = new Map<string, CuratedModel>();
+  for (const curated of registry.getCuratedModels(providerId) ?? []) {
+    if (!byId.has(curated.id)) {
+      byId.set(curated.id, {
+        id: curated.id,
+        ...(curated.name === undefined ? {} : { name: curated.name }),
+      });
+    }
+  }
+  const curatedCount = byId.size;
+  for (const model of discovered) {
+    const seeded = byId.get(model.id);
+    if (seeded) {
+      if (seeded.name === undefined && model.name !== undefined) seeded.name = model.name;
+      continue;
+    }
+    byId.set(model.id, { id: model.id, ...(model.name === undefined ? {} : { name: model.name }) });
+  }
+  const models: CuratedModel[] = [];
+  let used = 2;
+  let index = 0;
+  let truncated = false;
+  for (const entry of byId.values()) {
+    let candidate = entry;
+    let cost = JSON.stringify(entry).length + (models.length === 0 ? 0 : 1);
+    if (used + cost > budget && index < curatedCount && entry.name !== undefined) {
+      const bare: CuratedModel = { id: entry.id };
+      const bareCost = JSON.stringify(bare).length + (models.length === 0 ? 0 : 1);
+      if (used + bareCost <= budget) {
+        candidate = bare;
+        cost = bareCost;
+      }
+    }
+    if (used + cost > budget) {
+      if (index < curatedCount) {
+        throw new Error('Provider config has no capacity to retain all curated models');
+      }
+      truncated = true;
+      break;
+    }
+    models.push(candidate);
+    used += cost;
+    index++;
+  }
+  return { models, ...(truncated ? { truncated: true } : {}) };
+}
+
+function persistLastGoodDiscoveredModels(
+  providerRepo: ProviderRepository,
+  record: ProviderRecord,
+  discovered: ReadonlyArray<{ id: string; name?: string }>,
+  endpointFingerprint?: string
+): boolean {
+  let base: Record<string, unknown> = {};
+  if (record.configJson) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(record.configJson);
+    } catch {
+      throw new Error(
+        'Saved provider config is not valid JSON; refresh rejected to avoid overwriting it'
+      );
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(
+        'Saved provider config is not a JSON object; refresh rejected to avoid overwriting it'
+      );
+    }
+    base = parsed as Record<string, unknown>;
+  }
+  const budget = lastGoodDiscoveryBudget(base, endpointFingerprint);
+  if (budget < 2) {
+    throw new Error('Provider config has no capacity to persist discovery results');
+  }
+  const lastGood = buildLastGoodDiscoveredModels(record.providerId, discovered, budget);
+  base[LAST_GOOD_DISCOVERY_KEY] = {
+    ...lastGood,
+    ...(endpointFingerprint === undefined ? {} : { fingerprint: endpointFingerprint }),
+  };
+  providerRepo.updateProvider(record.id, { configJson: JSON.stringify(base) });
+  return lastGood.truncated === true;
+}
+
+export function stripPersistedDiscovery(configJson: string | undefined): string | undefined {
+  if (!configJson) return configJson;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(configJson) as Record<string, unknown>;
+  } catch {
+    return configJson;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return configJson;
+  if (!(LAST_GOOD_DISCOVERY_KEY in parsed)) return configJson;
+  delete parsed[LAST_GOOD_DISCOVERY_KEY];
+  return JSON.stringify(parsed);
+}
+
+function restoreServerDiscoveredModels(
+  nextConfigJson: string | undefined,
+  previousConfigJson: string | undefined
+): string | undefined {
+  if (!nextConfigJson) return nextConfigJson;
+  let next: Record<string, unknown>;
+  try {
+    next = JSON.parse(nextConfigJson) as Record<string, unknown>;
+  } catch {
+    return nextConfigJson;
+  }
+  if (!next || typeof next !== 'object' || Array.isArray(next)) return nextConfigJson;
+  let prev: Record<string, unknown> = {};
+  if (previousConfigJson) {
+    try {
+      const parsed = JSON.parse(previousConfigJson) as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        prev = parsed;
+      }
+    } catch {}
+  }
+  const serverDiscovered = prev[LAST_GOOD_DISCOVERY_KEY];
+  if (serverDiscovered === undefined) {
+    if (!(LAST_GOOD_DISCOVERY_KEY in next)) return nextConfigJson;
+    delete next[LAST_GOOD_DISCOVERY_KEY];
+    return JSON.stringify(next);
+  }
+  if (JSON.stringify(next[LAST_GOOD_DISCOVERY_KEY] ?? null) === JSON.stringify(serverDiscovered)) {
+    return nextConfigJson;
+  }
+  next[LAST_GOOD_DISCOVERY_KEY] = serverDiscovered;
+  return JSON.stringify(next);
+}
+
+type SavedConfigDiscoveryRefreshOutcome =
+  | { success: false; reason: 'superseded' }
+  | {
+      success: true;
+      truncated?: boolean;
+      models: Array<{ id: string; name?: string }>;
+    };
+
+interface CommitSavedConfigDiscoveryRefreshDeps {
+  providerRepo: ProviderRepository;
+  provider: Provider;
+  internalEventBus: InternalEventBus<DaemonInternalEventMap>;
+  getModelsCacheClearSequence(): number;
+  getCurrentCacheLoad(cacheKey?: string): Promise<void> | undefined;
+  applyDiscoveredProviderModels(
+    providerId: string,
+    models: ModelInfo[],
+    cacheKey?: string,
+    persistedDiscovered?: ReadonlyArray<{ id: string; name?: string }>
+  ): boolean;
+  releaseAppliedProviderSlice(providerId: string, cacheKey?: string): void;
+  schedulePendingSliceRelease(providerId: string, cacheKey?: string): void;
+  markProviderRefreshSucceeded(providerId: string): boolean;
+  mergeDiscoveredWithStatic(providerId: string, discovered: ReadonlyArray<ModelInfo>): ModelInfo[];
+}
+
+interface CommitSavedConfigDiscoveryRefreshCtx {
+  deps: CommitSavedConfigDiscoveryRefreshDeps;
+  providerId: string;
+  rowId: string;
+  savedConfig: { baseUrl?: string; configJson?: string };
+  originalConfigJson: string | undefined;
+  credentialsAtStart: string;
+  clearsAtStart: number;
+  discovered: ModelInfo[];
+  persistedDiscovered: ReadonlyArray<{ id: string; name?: string }>;
+  currentRecord?: ProviderRecord | null;
+  persistedConfig?: { baseUrl?: string; configJson?: string };
+  normalizedDiscovered?: ModelInfo[];
+  truncated?: boolean;
+  recoveredFailure?: boolean;
+  outcome?: SavedConfigDiscoveryRefreshOutcome;
+}
+
+async function revalidateSavedConfigUnderLock(
+  ctx: CommitSavedConfigDiscoveryRefreshCtx
+): Promise<CommitSavedConfigDiscoveryRefreshCtx> {
+  const currentRecord = ctx.deps.providerRepo.getProvider(ctx.rowId);
+  if (
+    ctx.deps.getModelsCacheClearSequence() !== ctx.clearsAtStart ||
+    JSON.stringify((await ctx.deps.provider.getCredentials?.()) ?? null) !==
+      ctx.credentialsAtStart ||
+    !isUnchangedSavedConfig(currentRecord, ctx.savedConfig)
+  ) {
+    ctx.deps.provider.clearModelCache?.();
+    return { ...ctx, currentRecord, outcome: { success: false, reason: 'superseded' } };
+  }
+  return { ...ctx, currentRecord };
+}
+
+function persistLastGoodSlice(
+  ctx: CommitSavedConfigDiscoveryRefreshCtx
+): CommitSavedConfigDiscoveryRefreshCtx {
+  let truncated = false;
+  try {
+    truncated = persistLastGoodDiscoveredModels(
+      ctx.deps.providerRepo,
+      ctx.currentRecord!,
+      ctx.discovered,
+      ctx.deps.provider.getDiscoveryEndpointFingerprint?.(ctx.savedConfig.baseUrl)
+    );
+  } catch (persistError) {
+    ctx.deps.provider.clearModelCache?.();
+    throw persistError;
+  }
+  return {
+    ...ctx,
+    truncated,
+    persistedConfig: {
+      baseUrl: ctx.savedConfig.baseUrl,
+      configJson: ctx.deps.providerRepo.getProvider(ctx.rowId)?.configJson,
+    },
+  };
+}
+
+async function applyDiscoveredSliceToLiveCache(
+  ctx: CommitSavedConfigDiscoveryRefreshCtx
+): Promise<CommitSavedConfigDiscoveryRefreshCtx> {
+  const normalizedDiscovered = ctx.deps.mergeDiscoveredWithStatic(ctx.providerId, ctx.discovered);
+  const applied = ctx.deps.applyDiscoveredProviderModels(
+    ctx.providerId,
+    normalizedDiscovered,
+    'global',
+    ctx.persistedDiscovered
+  );
+  if (applied) {
+    ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+    return { ...ctx, normalizedDiscovered };
+  }
+  const inFlight = ctx.deps.getCurrentCacheLoad();
+  if (!inFlight) {
+    ctx.deps.schedulePendingSliceRelease(ctx.providerId);
+    return { ...ctx, normalizedDiscovered };
+  }
+  await raceWithTimeout(
+    inFlight.catch(() => {}),
+    DISCOVERY_REFRESH_TIMEOUT_MS
+  ).catch(() => {});
+  const supersededDuringWait =
+    ctx.deps.getModelsCacheClearSequence() !== ctx.clearsAtStart ||
+    JSON.stringify((await ctx.deps.provider.getCredentials?.()) ?? null) !==
+      ctx.credentialsAtStart ||
+    !isUnchangedSavedConfig(ctx.deps.providerRepo.getProvider(ctx.rowId), ctx.persistedConfig!);
+  const currentRow = ctx.deps.providerRepo.getProvider(ctx.rowId);
+  if (supersededDuringWait) {
+    ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+    if (currentRow && currentRow.configJson === ctx.persistedConfig!.configJson) {
+      ctx.deps.providerRepo.updateProvider(ctx.rowId, { configJson: ctx.originalConfigJson });
+    }
+    ctx.deps.provider.clearModelCache?.();
+    return { ...ctx, normalizedDiscovered, outcome: { success: false, reason: 'superseded' } };
+  }
+  if (
+    ctx.deps.applyDiscoveredProviderModels(
+      ctx.providerId,
+      normalizedDiscovered,
+      'global',
+      ctx.persistedDiscovered
+    )
+  ) {
+    ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+  } else {
+    ctx.deps.schedulePendingSliceRelease(ctx.providerId);
+  }
+  return { ...ctx, normalizedDiscovered };
+}
+
+function markRefreshSucceededAndHealthy(
+  ctx: CommitSavedConfigDiscoveryRefreshCtx
+): CommitSavedConfigDiscoveryRefreshCtx {
+  const recoveredFailure = ctx.deps.markProviderRefreshSucceeded(ctx.providerId);
+  ctx.deps.providerRepo.updateProvider(ctx.rowId, {
+    healthStatus: 'healthy',
+    lastHealthCheckAt: Date.now(),
+  });
+  return { ...ctx, recoveredFailure };
+}
+
+function publishProvidersChangedWhenCoherent(
+  ctx: CommitSavedConfigDiscoveryRefreshCtx
+): CommitSavedConfigDiscoveryRefreshCtx {
+  if (!ctx.recoveredFailure) notifyProvidersChanged(ctx.deps.internalEventBus);
+  return ctx;
+}
+
+function assembleRefreshResult(
+  ctx: CommitSavedConfigDiscoveryRefreshCtx
+): CommitSavedConfigDiscoveryRefreshCtx {
+  return {
+    ...ctx,
+    outcome: {
+      success: true,
+      ...(ctx.truncated ? { truncated: true } : {}),
+      models: ctx.discovered.map(({ id, name }) => ({
+        id,
+        ...(name === undefined ? {} : { name }),
+      })),
+    },
+  };
+}
+
+const runCommitSavedConfigDiscoveryRefresh = (
+  superpipe<{
+    hasOutcome: (ctx: CommitSavedConfigDiscoveryRefreshCtx) => boolean;
+  }>({
+    hasOutcome: (ctx: CommitSavedConfigDiscoveryRefreshCtx): boolean => ctx.outcome !== undefined,
+  })('commit-saved-config-discovery-refresh') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(revalidateSavedConfigUnderLock, 'ctx', 'ctx')
+  .pipe('!hasOutcome', 'ctx')
+  .pipe(persistLastGoodSlice, 'ctx', 'ctx')
+  .pipe(applyDiscoveredSliceToLiveCache, 'ctx', 'ctx')
+  .pipe('!hasOutcome', 'ctx')
+  .pipe(markRefreshSucceededAndHealthy, 'ctx', 'ctx')
+  .pipe(publishProvidersChangedWhenCoherent, 'ctx', 'ctx')
+  .pipe(assembleRefreshResult, 'ctx', 'ctx')
+  .endAsync('ctx') as unknown as (
+  ctx: CommitSavedConfigDiscoveryRefreshCtx
+) => Promise<CommitSavedConfigDiscoveryRefreshCtx>;
 
 function notifyProvidersChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
   internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
@@ -317,6 +751,92 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     };
   });
 
+  messageHub.onRequest('providers.refreshDiscovery', async (data: unknown) => {
+    const request = validateRefreshDiscoveryRequest(data);
+    const record = providerRepo.getProvider(request.id);
+    if (!record) throw new Error(`Provider ${request.id} not found`);
+    const provider = getProviderRegistry().get(record.providerId);
+    if (!provider) throw new Error(`Provider ${record.providerId} is not registered`);
+    if (!provider.listRemoteModels) {
+      throw new Error(`Provider ${record.providerId} does not support remote model listing`);
+    }
+
+    const {
+      getModelsCacheClearSequence,
+      getCurrentCacheLoad,
+      applyDiscoveredProviderModels,
+      releaseAppliedProviderSlice,
+      schedulePendingSliceRelease,
+      markProviderRefreshSucceeded,
+      mergeDiscoveredWithStatic,
+    } = await import('../model-service.js');
+    const clearsAtStart = getModelsCacheClearSequence();
+    const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
+    const credentialsAtStart = JSON.stringify((await provider.getCredentials?.()) ?? null);
+
+    const discoveryPromise = provider.listRemoteModels({
+      force: true,
+      ...(record.baseUrl ? { baseUrl: record.baseUrl } : {}),
+    });
+    let discovered: ModelInfo[];
+    try {
+      discovered = await raceWithTimeout(discoveryPromise, DISCOVERY_REFRESH_TIMEOUT_MS);
+    } catch (error) {
+      await raceWithTimeout(
+        discoveryPromise.catch(() => {}),
+        DISCOVERY_SETTLE_GRACE_MS
+      ).catch(() => {});
+      provider.clearModelCache?.();
+      discoveryPromise.then(() => provider.clearModelCache?.()).catch(() => {});
+      throw error;
+    }
+    if (discovered.length === 0) {
+      provider.clearModelCache?.();
+      throw new Error(`Provider ${record.providerId} returned no models`);
+    }
+
+    if (
+      getModelsCacheClearSequence() !== clearsAtStart ||
+      JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
+      !isUnchangedSavedConfig(providerRepo.getProvider(request.id), savedConfig)
+    ) {
+      provider.clearModelCache?.();
+      return { success: false, reason: 'superseded' };
+    }
+    const persistedConfig = parseProviderConfig(savedConfig.configJson);
+    const persistedDiscovered = persistedConfig.models ?? [];
+
+    const committed = await withProviderLock(() =>
+      runCommitSavedConfigDiscoveryRefresh({
+        deps: {
+          providerRepo,
+          provider,
+          internalEventBus,
+          getModelsCacheClearSequence,
+          getCurrentCacheLoad,
+          applyDiscoveredProviderModels,
+          releaseAppliedProviderSlice,
+          schedulePendingSliceRelease,
+          markProviderRefreshSucceeded,
+          mergeDiscoveredWithStatic,
+        },
+        providerId: record.providerId,
+        rowId: request.id,
+        savedConfig,
+        originalConfigJson: record.configJson,
+        credentialsAtStart,
+        clearsAtStart,
+        discovered,
+        persistedDiscovered,
+      })
+    );
+    const outcome = committed?.outcome;
+    if (!outcome) {
+      throw new Error('providers.refreshDiscovery: commit settled without an outcome');
+    }
+    return outcome;
+  });
+
   messageHub.onRequest(
     'providers.fetchAcpModels',
     async (data: { id: string; command?: string }) => {
@@ -349,7 +869,12 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         if (data.params.providerId === 'acp') {
           validateAcpConfigCommand(data.params.configJson);
         }
-        const record = providerRepo.createProvider(data.params);
+        const params = { ...data.params };
+        const strippedConfig = stripPersistedDiscovery(params.configJson);
+        if (strippedConfig !== params.configJson) {
+          params.configJson = strippedConfig;
+        }
+        const record = providerRepo.createProvider(params);
 
         try {
           if (record.kind !== 'custom_endpoint') {
@@ -418,6 +943,44 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             ? withCustomEndpointsLock
             : (fn: () => Promise<unknown>) => fn();
         return lock(async () => {
+          if (
+            updates.configJson !== undefined &&
+            existing.configJson !== updates.configJson &&
+            isCurationOnlyConfigUpdate(existing.configJson, updates.configJson) &&
+            data.credentials === undefined &&
+            updates.baseUrl === undefined &&
+            updates.customEndpointConfigJson === undefined
+          ) {
+            const restoredConfig = restoreServerDiscoveredModels(
+              updates.configJson,
+              existing.configJson
+            );
+            if (restoredConfig && restoredConfig.length > MAX_JSON_FIELD_LEN) {
+              throw new Error(
+                `configJson must be ≤ ${MAX_JSON_FIELD_LEN} chars after restoring persisted discovery`
+              );
+            }
+            if (restoredConfig !== undefined) {
+              updates.configJson = restoredConfig;
+            }
+          }
+
+          const discoveryInvalidating =
+            data.credentials !== undefined ||
+            updates.baseUrl !== undefined ||
+            updates.customEndpointConfigJson !== undefined ||
+            updates.isEnabled === false ||
+            (updates.configJson !== undefined &&
+              !isCurationOnlyConfigUpdate(existing.configJson, updates.configJson));
+          if (discoveryInvalidating) {
+            const configSource = updates.configJson ?? existing.configJson;
+            const strippedConfig = stripPersistedDiscovery(configSource);
+            if (strippedConfig !== configSource) {
+              providerRepo.updateProvider(data.id, { configJson: strippedConfig });
+              updates.configJson = strippedConfig;
+            }
+          }
+
           if (data.credentials && existing.kind !== 'custom_endpoint') {
             try {
               if (data.credentials.apiKey) {
@@ -436,7 +999,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
-          const record = providerRepo.updateProvider(data.id, updates);
+          let record = providerRepo.updateProvider(data.id, updates);
           if (!record) throw new Error(`Provider ${data.id} not found`);
 
           const shouldResync =
@@ -446,7 +1009,29 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             updates.configJson !== undefined ||
             updates.isEnabled !== undefined;
 
+          const curationOnlyConfigUpdate = isCurationOnlyConfigUpdate(
+            existing.configJson,
+            record.configJson
+          );
+
           if (shouldResync) {
+            if (
+              curationOnlyConfigUpdate &&
+              updates.configJson !== undefined &&
+              data.credentials === undefined &&
+              updates.baseUrl === undefined &&
+              updates.customEndpointConfigJson === undefined &&
+              !discoveryInvalidating
+            ) {
+              const restoredConfig = restoreServerDiscoveredModels(
+                record.configJson,
+                existing.configJson
+              );
+              if (restoredConfig !== record.configJson) {
+                record =
+                  providerRepo.updateProvider(data.id, { configJson: restoredConfig }) ?? record;
+              }
+            }
             if (record.isEnabled === false) {
               if (record.kind === 'built_in') {
                 markBuiltInProviderDisabled(record.providerId);
@@ -488,7 +1073,13 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       }
 
       if (record.kind === 'built_in') {
-        providerRepo.updateProvider(data.id, { isEnabled: false });
+        const currentRow = providerRepo.getProvider(data.id) ?? record;
+        const strippedConfig = stripPersistedDiscovery(currentRow.configJson);
+        const updates: UpdateProviderParams = { isEnabled: false };
+        if (strippedConfig !== currentRow.configJson) {
+          updates.configJson = strippedConfig;
+        }
+        providerRepo.updateProvider(data.id, updates);
         markBuiltInProviderDisabled(record.providerId);
       } else {
         providerRepo.deleteProvider(data.id);
