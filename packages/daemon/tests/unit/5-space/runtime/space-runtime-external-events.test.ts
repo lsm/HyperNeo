@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
 import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/queue-health-metrics';
@@ -15,6 +16,7 @@ import {
   SpaceRuntime,
 } from '../../../../src/lib/space/runtime/space-runtime';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
@@ -6639,6 +6641,618 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(states.filter((state) => state === 'delivered')).toHaveLength(10);
       expect(states.filter((state) => state === 'pending')).toHaveLength(1);
       expect(injected).toHaveLength(0);
+    });
+
+    test('flag on: a deferred immediate dispatch schedules a follow-up digest pull', async () => {
+      await attachLiveSession('session-immediate-deferred', 'processing');
+      const events = Array.from({ length: 11 }, () => immediateEvent());
+      for (const event of events) {
+        await eventService.publish(event);
+      }
+      const pendingEvents = events.filter(
+        (event) => eventStore.listDeliveries(event.id)[0]!.state === 'pending'
+      );
+      expect(pendingEvents).toHaveLength(1);
+
+      const deadline = Date.now() + 5000;
+      let pendingState = 'pending';
+      let digestRows: Array<{ id: string; sdk_uuid: string; send_status: string }> = [];
+      while (Date.now() < deadline) {
+        pendingState = eventStore.listDeliveries(pendingEvents[0]!.id)[0]!.state;
+        digestRows = db
+          .prepare(
+            `SELECT id, sdk_uuid, send_status FROM sdk_messages
+             WHERE session_id = 'session-immediate-deferred' AND sdk_uuid LIKE 'digest-%'`
+          )
+          .all() as Array<{ id: string; sdk_uuid: string; send_status: string }>;
+        if (pendingState === 'delivered' && digestRows.length > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(pendingState).toBe('delivered');
+      expect(digestRows).toHaveLength(1);
+      expect(digestRows[0]!.send_status).toBe('enqueued');
+
+      const jobs = db
+        .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
+        .all() as Array<{ payload: string }>;
+      const payloads = jobs.map((job) => JSON.parse(job.payload) as Record<string, unknown>);
+      expect(
+        payloads.some(
+          (payload) =>
+            payload.sessionId === 'session-immediate-deferred' &&
+            payload.messageUuid === digestRows[0]!.sdk_uuid &&
+            payload.role === 'turn' &&
+            payload.origin === 'space_inject'
+        )
+      ).toBe(true);
+    }, 10_000);
+
+    test('flag on: a stale-session deferral leaves the ledger pending for reactivation', async () => {
+      await attachLiveSession('session-immediate-stale', 'idle');
+      tam.alive.delete('session-immediate-stale');
+      const event = immediateEvent();
+      await eventService.publish(event);
+
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+      const digestRows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-immediate-stale'
+           AND sdk_uuid LIKE 'digest-%'`
+        )
+        .get() as { n: number };
+      expect(digestRows.n).toBe(0);
+    }, 10_000);
+  });
+
+  describe('events delivery v2 turn-end digest pull', () => {
+    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
+    let previousFlag: string | undefined;
+
+    beforeEach(() => {
+      previousFlag = process.env[FLAG_ENV];
+      process.env[FLAG_ENV] = '1';
+    });
+
+    afterEach(() => {
+      if (previousFlag === undefined) {
+        delete process.env[FLAG_ENV];
+      } else {
+        process.env[FLAG_ENV] = previousFlag;
+      }
+    });
+
+    test('flag on: renders the pending queued set as one digest row and marks the ledger delivered', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const events = [
+        makeEvent({
+          id: 'evt-digest-a',
+          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+        }),
+        makeEvent({
+          id: 'evt-digest-b',
+          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+        }),
+      ];
+      for (const event of events) {
+        await eventService.publish(event);
+        expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+      }
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-digest-pull',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-digest-pull',
+        'session-digest-pull',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const outcome = await runtime.renderPendingDigestForSession('session-digest-pull', task.id);
+      expect(outcome).toMatchObject({ action: 'delivered' });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_message FROM sdk_messages WHERE session_id = 'session-digest-pull'
+           AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_message: string }>;
+      expect(rows).toHaveLength(1);
+      const saved = JSON.parse(rows[0]!.sdk_message) as {
+        uuid: string;
+        message: { content: Array<{ type: string; text: string }> };
+      };
+      expect(String(saved.uuid).startsWith('digest-')).toBe(true);
+      expect(saved.message.content[0]!.text).toContain('External events while you were working');
+      expect(saved.message.content[0]!.text).toContain('PR comment');
+
+      for (const event of events) {
+        expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+        expect(eventStore.getById(event.id)?.state).toBe('delivered');
+      }
+
+      expect(await runtime.renderPendingDigestForSession('session-digest-pull', task.id)).toEqual({
+        action: 'skip',
+        reason: 'no_pending_events',
+      });
+    });
+
+    test('flag on: a session with no node execution is not a digest target', async () => {
+      expect(await runtime.renderPendingDigestForSession('session-unknown')).toEqual({
+        action: 'skip',
+        reason: 'no_execution',
+      });
+    });
+
+    test('flag on: an obsolete crash-replay digest is superseded when a fresh digest delivers', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const survivor = makeEvent({ id: 'evt-supersede-a', topic });
+      const dead = makeEvent({ id: 'evt-supersede-b', topic });
+      await eventService.publish(survivor);
+      await eventService.publish(dead);
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-supersede',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-supersede',
+        'session-supersede',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-superseded',
+        session_id: 'session-supersede',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale digest text' }] },
+        externalEventIds: [survivor.id, dead.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-supersede', orphan, 'deferred', 'system');
+
+      const deadDelivery = eventStore.listDeliveries(dead.id)[0]!;
+      eventStore.markDeliveryFailed(dead.id, deadDelivery.deliveryKey, {
+        terminal: true,
+        reason: 'subscription_no_longer_active',
+      });
+      eventStore.markEventFailedIfAllDeliveriesTerminal(dead.id);
+
+      const outcome = await runtime.renderPendingDigestForSession('session-supersede', task.id);
+      expect(outcome).toMatchObject({ action: 'delivered' });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-supersede'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-superseded');
+    });
+
+    test('flag on: a crash-replay digest subset is superseded by a broader delivered digest', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const first = makeEvent({ id: 'evt-subset-a', topic });
+      const second = makeEvent({ id: 'evt-subset-b', topic });
+      await eventService.publish(first);
+      await eventService.publish(second);
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-subset',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-subset',
+        'session-subset',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-subset',
+        session_id: 'session-subset',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale subset digest' }] },
+        externalEventIds: [first.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-subset', orphan, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession('session-subset', task.id);
+      expect(outcome).toMatchObject({ action: 'delivered', eventIds: [first.id, second.id] });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-subset'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-subset');
+    });
+
+    test('flag on: a digest mixing delivered and pending members is superseded', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const elsewhere = makeEvent({ id: 'evt-overlap-a', topic });
+      const pending = makeEvent({ id: 'evt-overlap-b', topic });
+      await eventService.publish(elsewhere);
+      await eventService.publish(pending);
+      const elsewhereDelivery = eventStore.listDeliveries(elsewhere.id)[0]!;
+      eventStore.markDeliveryDelivered(elsewhere.id, elsewhereDelivery.deliveryKey);
+      eventStore.markEventDeliveredIfAllDeliveriesDelivered(elsewhere.id);
+      expect(eventStore.getById(elsewhere.id)?.state).toBe('delivered');
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-overlap',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-overlap',
+        'session-overlap',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-overlap',
+        session_id: 'session-overlap',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale overlap digest' }] },
+        externalEventIds: [elsewhere.id, pending.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-overlap', orphan, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession('session-overlap', task.id);
+      expect(outcome).toMatchObject({ action: 'delivered', eventIds: [pending.id] });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-overlap'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-overlap');
+    });
+
+    test('flag on: supersede uses this target delivery state for fan-out events', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const fanout = makeEvent({ id: 'evt-fanout-a', topic });
+      const pending = makeEvent({ id: 'evt-fanout-b', topic });
+      await eventService.publish(fanout);
+      await eventService.publish(pending);
+      eventStore.registerExpectedDelivery(fanout.id, 'delivery-fanout-other', {
+        workflowRunId: run.id,
+        taskId: task.id,
+        nodeId: 'review',
+        agentName: 'reviewer',
+      });
+      const codeDelivery = eventStore
+        .listDeliveries(fanout.id)
+        .find((delivery) => delivery.nodeId === 'code')!;
+      eventStore.markDeliveryDelivered(fanout.id, codeDelivery.deliveryKey);
+      expect(eventStore.getById(fanout.id)?.state).toBe('published');
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-fanout',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-fanout',
+        'session-fanout',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-fanout',
+        session_id: 'session-fanout',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale fanout digest' }] },
+        externalEventIds: [fanout.id, pending.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-fanout', orphan, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession('session-fanout', task.id);
+      expect(outcome).toMatchObject({ action: 'delivered', eventIds: [pending.id] });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-fanout'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-fanout');
+    });
+
+    test('flag on: a delivered-but-unflushed digest survives a no-pending pull', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const event = makeEvent({ id: 'evt-skip-supersede', topic });
+      await eventService.publish(event);
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      eventStore.markDeliveryDelivered(event.id, delivery.deliveryKey);
+      eventStore.markEventDeliveredIfAllDeliveriesDelivered(event.id);
+      expect(eventStore.getById(event.id)?.state).toBe('delivered');
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-skip-supersede',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-skip-supersede',
+        'session-skip-supersede',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-skip',
+        session_id: 'session-skip-supersede',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'delivered unflushed digest' }] },
+        externalEventIds: [event.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-skip-supersede', orphan, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession(
+        'session-skip-supersede',
+        task.id
+      );
+      expect(outcome).toEqual({ action: 'skip', reason: 'no_pending_events' });
+
+      const rows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-skip-supersede'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .get() as { n: number };
+      expect(rows.n).toBe(1);
+    });
+
+    test('flag on: an admission-rejected pull drops the deferred digest rows', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+      await eventService.publish(
+        makeEvent({
+          id: 'evt-admission-pending',
+          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+        })
+      );
+      expect(eventStore.listDeliveries('evt-admission-pending')[0]!.state).toBe('pending');
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-admission',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-admission',
+        'session-admission',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+      taskRepo.updateTask(task.id, { status: 'stopped' });
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-admission',
+        session_id: 'session-admission',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale admission digest' }] },
+        externalEventIds: ['evt-never-published'],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-admission', orphan, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession('session-admission', task.id);
+      expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+
+      const rows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-admission'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .get() as { n: number };
+      expect(rows.n).toBe(0);
+    });
+
+    test('flag on: a digest with a mixed delivered/pending membership is dropped on a rejected pull', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const deliveredMember = makeEvent({ id: 'evt-mixed-delivered', topic });
+      const pendingMember = makeEvent({ id: 'evt-mixed-pending', topic });
+      await eventService.publish(deliveredMember);
+      await eventService.publish(pendingMember);
+      const deliveredDelivery = eventStore.listDeliveries(deliveredMember.id)[0]!;
+      eventStore.markDeliveryDelivered(deliveredMember.id, deliveredDelivery.deliveryKey);
+      eventStore.markEventDeliveredIfAllDeliveriesDelivered(deliveredMember.id);
+      expect(eventStore.listDeliveries(pendingMember.id)[0]!.state).toBe('pending');
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-mixed',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-mixed',
+        'session-mixed',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+      taskRepo.updateTask(task.id, { status: 'stopped' });
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-mixed',
+        session_id: 'session-mixed',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'mixed membership digest' }] },
+        externalEventIds: [deliveredMember.id, pendingMember.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-mixed', orphan, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession('session-mixed', task.id);
+      expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+
+      const rows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-mixed'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .get() as { n: number };
+      expect(rows.n).toBe(0);
     });
   });
 });
