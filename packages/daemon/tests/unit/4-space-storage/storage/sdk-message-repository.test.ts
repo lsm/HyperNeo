@@ -1687,6 +1687,60 @@ describe('SDKMessageRepository', () => {
 
       expect(id1).not.toBe(id2);
     });
+
+    it('commits the row and propagates a post-commit failure from runPostSaveSideEffects', () => {
+      const failingReactiveDb = {
+        resolveTaskIdForSession: () => null,
+        willEmitTableChange: () => false,
+        notifyChange: (table: string) => {
+          if (table === 'sessions') throw new Error('sessions notify failed');
+        },
+      } as unknown as ReactiveDatabase;
+      const repo = new SDKMessageRepository(db as any, failingReactiveDb);
+
+      expect(() =>
+        repo.saveUserMessage('session-1', createUserMessage('committed user'), 'consumed')
+      ).toThrow('sessions notify failed');
+
+      const row = db
+        .prepare(`SELECT COUNT(*) AS count FROM sdk_messages WHERE session_id = ?`)
+        .get('session-1') as { count: number };
+      expect(row.count).toBe(1);
+    });
+  });
+
+  describe('saveHyperNeoActionMessage', () => {
+    function createActionMessage(uuid: string): HyperNeoActionMessage {
+      return {
+        type: 'hyperneo_action',
+        uuid,
+        session_id: 'session-1',
+        action: 'sdk_resume_choice',
+        resolved: false,
+        timestamp: Date.now(),
+      };
+    }
+
+    it('commits the row and propagates a post-commit failure from notifySessionsChanged', () => {
+      const failingReactiveDb = {
+        resolveTaskIdForSession: () => null,
+        notifyChange: (table: string) => {
+          if (table === 'sessions') throw new Error('sessions notify failed');
+        },
+      } as unknown as ReactiveDatabase;
+      const repo = new SDKMessageRepository(db as any, failingReactiveDb);
+
+      expect(() =>
+        repo.saveHyperNeoActionMessage('session-1', createActionMessage('action-fail'))
+      ).toThrow('sessions notify failed');
+
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sdk_messages WHERE message_type = 'hyperneo_action'`
+        )
+        .get() as { count: number };
+      expect(row.count).toBe(1);
+    });
   });
 
   function insertStatusMessage(
