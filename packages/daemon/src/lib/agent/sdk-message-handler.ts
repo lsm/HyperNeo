@@ -187,6 +187,7 @@ export class SDKMessageHandler {
 
     ctx.messageQueue.onInternalCompactionsAborted = () => {
       this.ctx.contextTracker.clearCompactionCooldown();
+      this.ctx.clearPendingResumeAfterCompaction?.();
       this.compactionEnqueuedMidTurnGeneration = undefined;
     };
 

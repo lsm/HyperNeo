@@ -347,6 +347,7 @@ export class AgentSession
   private pendingResumeSessionAt: string | undefined;
   private pendingResumeAfterCompaction = false;
   private midTurnBudgetCheckInFlight = false;
+  private midTurnCycleSeq = 0;
   private lastMidTurnUsageRefreshAt = 0;
   private lastMidTurnUsageRefreshKey = '';
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
@@ -1537,6 +1538,7 @@ export class AgentSession
     const providerId = this.session.config.provider;
     if (!providerId) return;
     const cancelAsyncMessage = queryObject.cancelAsyncMessage;
+    const cycleId = ++this.midTurnCycleSeq;
     const opts: MidTurnBudgetInterruptOptions = {
       sessionId: this.session.id,
       providerId,
@@ -1551,7 +1553,9 @@ export class AgentSession
         this.pendingResumeAfterCompaction = true;
       },
       onResumeClear: () => {
-        this.pendingResumeAfterCompaction = false;
+        if (this.midTurnCycleSeq === cycleId) {
+          this.pendingResumeAfterCompaction = false;
+        }
       },
       getDurableMessageContent: (uuid) => {
         const repo = this.db.getSDKMessageRepo();

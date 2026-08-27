@@ -40,16 +40,16 @@ interface QueuedMessage {
 export interface MidTurnQueueSeam {
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void;
   awaitInterruptDeadline(opts: MidTurnBudgetInterruptOptions): Promise<{
-    promise: Promise<{ still_queued: string[] } | undefined>;
+    promise: Promise<{ still_queued: string[]; cancelled?: string[] } | undefined>;
     timedOut: boolean;
     hardFailed: boolean;
-    receipt?: { still_queued: string[] };
+    receipt?: { still_queued: string[]; cancelled?: string[] };
   }>;
   standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean;
   openLateReceiptWindow(opts: MidTurnBudgetInterruptOptions): void;
   processInterruptSurvivorReceipt(
     opts: MidTurnBudgetInterruptOptions,
-    receipt: { still_queued: string[] } | undefined,
+    receipt: { still_queued: string[]; cancelled?: string[] } | undefined,
     allowRestart: boolean
   ): Promise<boolean>;
   shouldEnqueueLateCompaction(): boolean;
@@ -58,7 +58,7 @@ export interface MidTurnQueueSeam {
   registerLateReceipt(
     opts: MidTurnBudgetInterruptOptions,
     interrupt: {
-      promise: Promise<{ still_queued: string[] } | undefined>;
+      promise: Promise<{ still_queued: string[]; cancelled?: string[] } | undefined>;
       timedOut: boolean;
     }
   ): void;
@@ -69,7 +69,7 @@ export interface MidTurnBudgetInterruptOptions {
   providerId: string | undefined;
   budgetKey: number;
   logger: Logger;
-  interrupt: () => Promise<{ still_queued: string[] } | undefined>;
+  interrupt: () => Promise<{ still_queued: string[]; cancelled?: string[] } | undefined>;
   cancelAsyncMessage?: (uuid: string) => Promise<boolean>;
   restart: (options?: { beforeStart?: () => void | Promise<void> }) => Promise<void>;
   contextTracker: {
@@ -95,6 +95,10 @@ export class MessageQueue {
   private stopEpoch: number = 0;
   private restartStopEpoch: number = 0;
   private recoveryRestarted: boolean = false;
+  private midTurnCompactionQueued: boolean = false;
+  private cycleStartStopEpoch: number = 0;
+  private cycleUserStopped: boolean = false;
+  private restartAbortedByStop: boolean = false;
   private resolveEarlyDeliveryGate: (() => void) | undefined;
   private resolveLateDeliveryGate: (() => void) | undefined;
   private lateWindowRemovedCompactions: number = 0;
@@ -128,6 +132,7 @@ export class MessageQueue {
 
   noteInternalCompactionSent(message: QueuedMessage): void {
     if (this.isInternalCompaction(message)) {
+      this.midTurnCompactionQueued = false;
       this.internalCompactionsAwaitingBoundary += 1;
       this.internalCompactionIdsAwaitingBoundary.add(message.id);
     } else {
@@ -200,6 +205,9 @@ export class MessageQueue {
 
   private cancelInternalCompactionEntries(interrupted: boolean, includeYielded: boolean): number {
     let cancelled = 0;
+    if (this.queue.some((message) => this.isInternalCompaction(message))) {
+      this.midTurnCompactionQueued = false;
+    }
     const settle = (message: QueuedMessage) => {
       if (interrupted) {
         message.reject(new Error('Interrupted by user'));
@@ -575,7 +583,11 @@ export class MessageQueue {
   }
 
   private userStoppedQueue(): boolean {
-    if (this.stopEpoch > this.restartStopEpoch + 1) return !this.isRunning();
+    const internalStops = this.recoveryRestarted ? 1 : 0;
+    if (this.stopEpoch - this.cycleStartStopEpoch > internalStops) {
+      this.cycleUserStopped = true;
+    }
+    if (this.cycleUserStopped) return true;
     if (this.internalRestartInFlight) return false;
     if (this.internalRestartFailed) return false;
     return !this.isRunning();
@@ -662,6 +674,9 @@ export class MessageQueue {
   }
 
   private gatedBypassIndex(): number {
+    if (this.midTurnCompactionQueued && this.hasQueuedInternalCompaction()) {
+      return this.queue.findIndex((message) => this.isInternalCompaction(message));
+    }
     const toolResultIndex = this.queue.findIndex(
       (message) =>
         typeof message.content !== 'string' &&
@@ -713,6 +728,9 @@ export class MessageQueue {
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
     this.internalRestartFailed = false;
     this.recoveryRestarted = false;
+    this.cycleStartStopEpoch = this.stopEpoch;
+    this.cycleUserStopped = false;
+    this.restartAbortedByStop = false;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
     opts.logger.info(
@@ -726,13 +744,13 @@ export class MessageQueue {
   }
 
   async awaitInterruptDeadline(opts: MidTurnBudgetInterruptOptions): Promise<{
-    promise: Promise<{ still_queued: string[] } | undefined>;
+    promise: Promise<{ still_queued: string[]; cancelled?: string[] } | undefined>;
     timedOut: boolean;
     hardFailed: boolean;
-    receipt?: { still_queued: string[] };
+    receipt?: { still_queued: string[]; cancelled?: string[] };
   }> {
     const interruptPromise = Promise.resolve().then(() => opts.interrupt());
-    let receipt: { still_queued: string[] } | undefined;
+    let receipt: { still_queued: string[]; cancelled?: string[] } | undefined;
     let timedOut = false;
     let hardFailed = false;
     let interruptTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
@@ -748,7 +766,7 @@ export class MessageQueue {
             interruptTimeoutTimer.unref();
           }
         }),
-      ])) as { still_queued: string[] } | undefined;
+      ])) as { still_queued: string[]; cancelled?: string[] } | undefined;
     } catch (error) {
       if (timedOut) {
         if (this.standsDown(opts)) {
@@ -809,7 +827,7 @@ export class MessageQueue {
   registerLateReceipt(
     opts: MidTurnBudgetInterruptOptions,
     interrupt: {
-      promise: Promise<{ still_queued: string[] } | undefined>;
+      promise: Promise<{ still_queued: string[]; cancelled?: string[] } | undefined>;
       timedOut: boolean;
     }
   ): void {
@@ -869,12 +887,13 @@ export class MessageQueue {
 
   async processInterruptSurvivorReceipt(
     opts: MidTurnBudgetInterruptOptions,
-    receipt: { still_queued: string[] } | undefined,
+    receipt: { still_queued: string[]; cancelled?: string[] } | undefined,
     allowRestart = true
   ): Promise<boolean> {
     const survivors = receipt?.still_queued ?? [];
-    if (survivors.length === 0) return false;
-    const toRequeue: string[] = [];
+    const alreadyCancelled = receipt?.cancelled ?? [];
+    if (survivors.length === 0 && alreadyCancelled.length === 0) return false;
+    const toRequeue: string[] = [...alreadyCancelled];
     if (typeof opts.cancelAsyncMessage !== 'function') {
       toRequeue.push(...survivors);
       if (this.standsDown(opts)) {
@@ -1000,6 +1019,7 @@ export class MessageQueue {
     });
     const beforeStart = () => {
       if (this.userStoppedQueue()) {
+        this.restartAbortedByStop = true;
         throw new Error('user stop observed during the recovery restart; aborting the replacement');
       }
       this.setDeliveryGate(deliveryGate, { exclusive: true });
@@ -1011,13 +1031,15 @@ export class MessageQueue {
     const restart = opts
       .restart({ beforeStart })
       .catch((error) => {
-        this.internalRestartFailed = true;
+        this.internalRestartFailed = !this.restartAbortedByStop;
         opts.logger.warn(
           `query restart after unconfirmed survivor cancellation failed for ` +
             `session ${opts.sessionId}:`,
           error
         );
-        if (!this.hasOutstandingInternalCompaction()) {
+        if (this.restartAbortedByStop) {
+          opts.onResumeClear();
+        } else if (!this.hasOutstandingInternalCompaction()) {
           this.enqueueMidTurnCompaction(opts, 'mid-turn-restart-failed');
           opts.contextTracker.clearCompactionCooldown();
           opts.onResumeClear();
@@ -1045,6 +1067,7 @@ export class MessageQueue {
 
   enqueueMidTurnCompaction(opts: MidTurnBudgetInterruptOptions, reason: string): void {
     if (this.hasOutstandingInternalCompaction()) return;
+    this.midTurnCompactionQueued = true;
     opts.contextTracker.markCompactionTriggered(opts.budgetKey);
     this.clearNonCompactionSentSinceBoundary();
     opts.logger.info(
