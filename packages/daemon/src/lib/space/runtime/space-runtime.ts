@@ -2067,7 +2067,7 @@ export class SpaceRuntime {
       messages.deletePendingUserMessage(sessionId, freshDigestDbId, 'deferred');
     }
     if (outcome.action === 'delivered') {
-      this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid);
+      this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid, outcome.eventIds);
     }
     return outcome;
   }
@@ -2075,22 +2075,30 @@ export class SpaceRuntime {
   private supersedeObsoleteDigestRows(
     sessionId: string,
     store: ExternalEventStore,
-    deliveredUuid: string
+    deliveredUuid: string,
+    deliveredEventIds: string[]
   ): void {
     try {
       const messages = this.getSdkMessageRepo();
+      const deliveredEventIdSet = new Set(deliveredEventIds);
       const rows = messages
         .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
         .filter((row) => row.sendStatus === 'deferred' && String(row.uuid) !== deliveredUuid);
       for (const row of rows) {
         const membership = (row as { externalEventIds?: unknown }).externalEventIds;
-        if (!Array.isArray(membership)) continue;
-        const hasDeadMember = membership.some((eventId) => {
-          if (typeof eventId !== 'string') return false;
+        if (!Array.isArray(membership) || membership.length === 0) continue;
+        const eventIds = membership.filter(
+          (eventId): eventId is string => typeof eventId === 'string'
+        );
+        if (eventIds.length === 0) continue;
+        const hasDeadMember = eventIds.some((eventId) => {
           const record = store.getById(eventId);
           return record === null || record.state === 'failed';
         });
-        if (hasDeadMember) messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+        const isCoveredByDelivery = eventIds.every((eventId) => deliveredEventIdSet.has(eventId));
+        if (hasDeadMember || isCoveredByDelivery) {
+          messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+        }
       }
     } catch (error) {
       log.warn(

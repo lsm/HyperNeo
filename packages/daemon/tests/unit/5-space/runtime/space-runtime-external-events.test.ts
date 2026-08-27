@@ -6866,6 +6866,66 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-superseded');
     });
+
+    test('flag on: a crash-replay digest subset is superseded by a broader delivered digest', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const first = makeEvent({ id: 'evt-subset-a', topic });
+      const second = makeEvent({ id: 'evt-subset-b', topic });
+      await eventService.publish(first);
+      await eventService.publish(second);
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-subset',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-subset',
+        'session-subset',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-subset',
+        session_id: 'session-subset',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale subset digest' }] },
+        externalEventIds: [first.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-subset', orphan, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession('session-subset', task.id);
+      expect(outcome).toMatchObject({ action: 'delivered', eventIds: [first.id, second.id] });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-subset'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-subset');
+    });
   });
 });
 
