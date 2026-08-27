@@ -258,6 +258,21 @@ describe('SpaceManager', () => {
       ).rejects.toThrow('already claimed');
       expect((await manager.listSpaces()).map((s) => s.name)).toEqual(['First']);
     });
+
+    it('rolls back the created space when workspace validation throws unexpectedly', async () => {
+      const repoA = gitRepo('alpha');
+
+      await expect(
+        manager.createSpace({
+          workspacePath: tmpDir,
+          name: 'Unexpected',
+          additionalWorkspaces: [{ path: 123 as unknown as string }, { path: repoA }],
+        })
+      ).rejects.toThrow();
+
+      expect(await manager.listSpaces()).toHaveLength(0);
+      expect(workspaceRowCount()).toBe(0);
+    });
   });
 
   describe('getSpace', () => {

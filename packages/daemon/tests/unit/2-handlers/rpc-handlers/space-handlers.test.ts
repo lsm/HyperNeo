@@ -370,6 +370,17 @@ describe('space-handlers', () => {
       ).rejects.toThrow('additionalWorkspaces[0].path is required');
     });
 
+    it('throws when an additional workspace path is not a string, before createSpace runs', async () => {
+      await expect(
+        call('space.create', {
+          workspacePath: '/tmp/x',
+          name: 'X',
+          additionalWorkspaces: [{ path: 123 }],
+        })
+      ).rejects.toThrow('additionalWorkspaces[0].path is required');
+      expect(spaceManager.createSpace).not.toHaveBeenCalled();
+    });
+
     it('propagates registration errors and publishes nothing when a secondary is invalid', async () => {
       (spaceManager.createSpace as ReturnType<typeof mock>).mockImplementation(async () => {
         throw registrationError(

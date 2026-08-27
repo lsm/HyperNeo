@@ -139,33 +139,37 @@ async function validateAdditionalWorkspaces(ctx: CreateSpaceCtx): Promise<Create
   const secondaries = ctx.params.additionalWorkspaces ?? [];
   if (secondaries.length === 0 || !ctx.space) return ctx;
   const io = ctx.io ?? nodeWorkspaceValidationIo;
-  let snapshot: WorkspaceRegistrySnapshot = buildRegistrySnapshot(
-    ctx.spaceRepo,
-    ctx.workspaceRepo,
-    ctx.space.id
-  );
-  const plans: AdditionalWorkspacePlan[] = [];
-  for (const secondary of secondaries) {
-    const verdict = await validateWorkspaceRegistration(io, snapshot, {
-      spaceId: ctx.space.id,
-      rawPath: secondary.path,
-    });
-    if (!verdict.accepted) {
-      return {
-        ...ctx,
-        error: new WorkspaceRegistrationError(verdict.message, verdict.reason, verdict),
+  try {
+    let snapshot: WorkspaceRegistrySnapshot = buildRegistrySnapshot(
+      ctx.spaceRepo,
+      ctx.workspaceRepo,
+      ctx.space.id
+    );
+    const plans: AdditionalWorkspacePlan[] = [];
+    for (const secondary of secondaries) {
+      const verdict = await validateWorkspaceRegistration(io, snapshot, {
+        spaceId: ctx.space.id,
+        rawPath: secondary.path,
+      });
+      if (!verdict.accepted) {
+        return {
+          ...ctx,
+          error: new WorkspaceRegistrationError(verdict.message, verdict.reason, verdict),
+        };
+      }
+      plans.push({ path: verdict.canonicalPath, label: secondary.label });
+      snapshot = {
+        claims: [
+          ...snapshot.claims,
+          { spaceId: ctx.space.id, path: verdict.canonicalPath, source: 'registered_workspace' },
+        ],
+        workspaceCountForSpace: snapshot.workspaceCountForSpace + 1,
       };
     }
-    plans.push({ path: verdict.canonicalPath, label: secondary.label });
-    snapshot = {
-      claims: [
-        ...snapshot.claims,
-        { spaceId: ctx.space.id, path: verdict.canonicalPath, source: 'registered_workspace' },
-      ],
-      workspaceCountForSpace: snapshot.workspaceCountForSpace + 1,
-    };
+    return { ...ctx, additionalWorkspacePlans: plans };
+  } catch (err) {
+    return { ...ctx, error: err as Error };
   }
-  return { ...ctx, additionalWorkspacePlans: plans };
 }
 
 function insertAdditionalWorkspaces(ctx: CreateSpaceCtx): CreateSpaceCtx {
@@ -174,6 +178,12 @@ function insertAdditionalWorkspaces(ctx: CreateSpaceCtx): CreateSpaceCtx {
   try {
     ctx.db.transaction(() => {
       for (const plan of plans) {
+        const owner = ctx.workspaceRepo.findOwnerByPath(plan.path);
+        if (owner && owner.spaceId !== ctx.space!.id) {
+          throw new Error(
+            `Workspace path is already claimed by space ${owner.spaceId}: ${plan.path}`
+          );
+        }
         ctx.workspaceRepo.create({
           spaceId: ctx.space!.id,
           path: plan.path,
@@ -181,7 +191,7 @@ function insertAdditionalWorkspaces(ctx: CreateSpaceCtx): CreateSpaceCtx {
           isPrimary: false,
         });
       }
-    })();
+    }, 'immediate')();
   } catch (err) {
     return { ...ctx, error: err as Error };
   }

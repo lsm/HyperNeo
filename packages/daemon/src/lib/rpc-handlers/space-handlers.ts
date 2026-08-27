@@ -136,7 +136,7 @@ export function setupSpaceHandlers(
     }
     if (params.additionalWorkspaces) {
       for (const [index, workspace] of params.additionalWorkspaces.entries()) {
-        if (!workspace?.path) {
+        if (typeof workspace?.path !== 'string' || workspace.path.trim() === '') {
           throw new Error(`additionalWorkspaces[${index}].path is required`);
         }
       }
