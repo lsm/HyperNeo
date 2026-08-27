@@ -23,6 +23,7 @@ export interface ContextBudgetEnforcementCtx {
   messageQueue: MessageQueue;
   stateManager: ProcessingStateManager;
   logger: Logger;
+  onCompactionAbandoned?: () => void;
   budgetKey: number;
   decision: ContextBudgetDecision | null;
   compactionEnqueued: boolean;
@@ -80,6 +81,7 @@ export function enqueueBudgetCompaction(
       }
       ctx.logger.warn(`compaction enqueue failed for session ${ctx.sessionId}:`, error);
       ctx.contextTracker.clearCompactionCooldown();
+      ctx.onCompactionAbandoned?.();
     });
   return { ...ctx, compactionEnqueued: true };
 }

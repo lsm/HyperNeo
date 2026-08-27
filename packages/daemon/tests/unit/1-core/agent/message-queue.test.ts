@@ -1051,8 +1051,10 @@ describe('MessageQueue', () => {
       await generator.next();
 
       q.stop();
-      await expect(first).rejects.toThrow('Interrupted by user');
-      await expect(second).rejects.toThrow('Interrupted by user');
+      const firstRejected = expect(first).rejects.toThrow('Interrupted by user');
+      const secondRejected = expect(second).rejects.toThrow('Interrupted by user');
+      await firstRejected;
+      await secondRejected;
       expect(q.hasQueuedInternalCompaction()).toBe(false);
       expect(q.hasInFlightInternalCompaction()).toBe(false);
       expect(q.hasOutstandingInternalCompaction()).toBe(false);

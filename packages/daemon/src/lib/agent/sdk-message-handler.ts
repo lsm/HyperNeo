@@ -1738,6 +1738,9 @@ export class SDKMessageHandler {
             messageQueue: this.ctx.messageQueue,
             stateManager: this.ctx.stateManager,
             logger: this.logger,
+            onCompactionAbandoned: () => {
+              this.compactionEnqueuedMidTurn = false;
+            },
           });
           if (
             outcome.compactionEnqueued &&

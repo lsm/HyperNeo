@@ -4713,7 +4713,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('does not enqueue /compact for custom-provider sessions (SDK handles via Options.settings)', async () => {
@@ -4774,7 +4777,10 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('does not enqueue /compact for native anthropic provider (SDK handles)', async () => {
@@ -4835,7 +4841,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('does not enqueue /compact when model info is missing', async () => {
