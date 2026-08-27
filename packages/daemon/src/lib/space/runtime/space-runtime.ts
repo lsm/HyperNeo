@@ -2215,7 +2215,27 @@ export class SpaceRuntime {
     const timer = setTimeout(() => {
       this.digestSupersedeRetryTimers.delete(key);
       if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
-      this.supersedeObsoleteDigestRows(sessionId, store, deliveredUuid, deliveredEventIds, taskId);
+      try {
+        this.supersedeObsoleteDigestRows(
+          sessionId,
+          store,
+          deliveredUuid,
+          deliveredEventIds,
+          taskId
+        );
+      } catch (error) {
+        this.scheduleDigestSupersedeRetry(
+          sessionId,
+          store,
+          deliveredUuid,
+          deliveredEventIds,
+          taskId
+        );
+        log.warn(
+          `SpaceRuntime: turn-end digest supersede retry for session ${sessionId} failed: ` +
+            `${formatCommandError(error)}`
+        );
+      }
     }, EXTERNAL_EVENT_RETRY_DELAY_MS);
     this.digestSupersedeRetryTimers.set(key, timer);
   }
