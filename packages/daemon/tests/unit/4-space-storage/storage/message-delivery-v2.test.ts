@@ -18,7 +18,6 @@ import {
   MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliverySession,
-  RESUME_CHOICE_PARK_BUDGET,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
 } from '../../../../src/lib/agent/message-delivery';
@@ -807,7 +806,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     expect(session.lastBatchUuids).toEqual(['kickoff', 'deleted-member', 'deferred-member']);
   });
 
-  it('blocked startup → parks via requeueParked with backoff and the job stays pending (§13: blocked→parked, not failed)', async () => {
+  it('blocked startup → parks (requeue) and the job stays pending (§13: blocked→parked, not failed)', async () => {
     const session = new MockSession();
     session.driveResult = { outcome: 'blocked', retryAt: 12345 };
     const job = turnJob(repo, 'msg-blocked');
@@ -816,67 +815,10 @@ describe('message-delivery v2 — handler (conformance)', () => {
       getSession: () => session,
       getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
     });
-    const before = Date.now();
     const result = await handler(job);
-    expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
-    expect(result.retryAt).toBeGreaterThanOrEqual(before + MESSAGE_DELIVERY_PARK_MS);
+    expect(result).toMatchObject({ parked: 'sdk_resume_choice', retryAt: 12345 });
     expect(repo.getJob(job.id)?.status).toBe('pending');
-    expect(repo.getJob(job.id)?.runAt).toBe(result.retryAt);
-    expect(repo.getParkCount(job.id)).toBe(1);
-  });
-
-  it('promoting a heavily parked steer to a turn resets the resume-choice park budget', async () => {
-    const session = new MockSession();
-    session.driveResult = { outcome: 'blocked', retryAt: Date.now() + 12345 };
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
-    });
-    const anchor = turnJob(repo, 'msg-promote-anchor');
-    repo.complete(anchor.id, { ok: true });
-    deliverMessage(repo, SESSION, 'msg-parked-steer', { origin: 'chat' });
-    let steer = repo.dequeue(MESSAGE_DELIVERY, 1)[0]!;
-    const totalParks = RESUME_CHOICE_PARK_BUDGET + 5;
-    for (let i = 0; i < totalParks; i++) {
-      repo.requeueParked(steer.id, Date.now(), steer.claimToken);
-      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(steer.id);
-      steer = repo.dequeue(MESSAGE_DELIVERY, 1)[0]!;
-    }
-    expect(repo.getParkCount(steer.id)).toBe(totalParks);
-    repo.requeueAs(steer.id, 'turn', Date.now(), steer.claimToken, { resetParkCount: true });
-    expect(repo.getParkCount(steer.id)).toBe(0);
-    const promoted = repo.dequeue(MESSAGE_DELIVERY, 1)[0]!;
-    const result = await handler(promoted);
-    expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
-    expect(result.retryAt as number).toBeGreaterThan(Date.now());
-    expect(repo.getParkCount(steer.id)).toBe(1);
-    expect(repo.getJob(steer.id)?.status).toBe('pending');
-  });
-
-  it('blocked startup past RESUME_CHOICE_PARK_BUDGET → dead-letter error before any further requeue (§13 budget)', async () => {
-    const session = new MockSession();
-    session.driveResult = { outcome: 'blocked', retryAt: Date.now() + 12345 };
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
-    });
-    const first = turnJob(repo, 'msg-blocked-budget');
-    let current = first;
-    for (let i = 0; i < RESUME_CHOICE_PARK_BUDGET; i++) {
-      await handler(current);
-      expect(repo.getParkCount(first.id)).toBe(i + 1);
-      if (i < RESUME_CHOICE_PARK_BUDGET - 1) {
-        db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
-        current = repo.dequeue(MESSAGE_DELIVERY, 1)[0]!;
-      }
-    }
-    db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
-    const [last] = repo.dequeue(MESSAGE_DELIVERY, 1);
-    await expect(handler(last!)).rejects.toThrow('past its budget');
-    expect(repo.getParkCount(first.id)).toBe(RESUME_CHOICE_PARK_BUDGET);
-    expect(repo.getJob(first.id)?.status).toBe('processing');
+    expect(repo.getJob(job.id)?.runAt).toBe(12345);
   });
 
   it('drive throws → handler rejects so the processor fails the job (§13: double-fault survives)', async () => {

@@ -1338,16 +1338,6 @@ export function setupSessionHandlers(
       session.sdkOriginPath = undefined;
     }
 
-    const existingAction = db
-      .getSDKMessageRepo()
-      .getHyperNeoActionMessageByUuid(targetSessionId, messageUuid);
-    if (!existingAction || existingAction.action !== 'sdk_resume_choice') {
-      throw new Error(`sdk_resume_choice action message not found: ${messageUuid}`);
-    }
-    if (existingAction.resolved) {
-      return { retried: true, alreadyResolved: true, messageId: messageUuid };
-    }
-
     const resolvedMessage: HyperNeoActionMessage = {
       type: 'hyperneo_action',
       uuid: messageUuid,
@@ -1373,21 +1363,6 @@ export function setupSessionHandlers(
       }
     } catch (err) {
       log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
-    }
-
-    try {
-      const woken = db
-        .getJobQueueRepo()
-        .rescheduleSessionDeliveries('message_delivery', targetSessionId, Date.now(), {
-          parkReason: 'sdk_resume_choice',
-        });
-      if (woken > 0) {
-        log.info(
-          `session.sdkResumeChoice: woke ${woken} parked delivery job(s) for session ${targetSessionId}`
-        );
-      }
-    } catch (err) {
-      log.warn(`session.sdkResumeChoice: failed to wake parked deliveries: ${err}`);
     }
 
     return { success: true };

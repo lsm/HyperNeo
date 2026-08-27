@@ -1,6 +1,5 @@
 import type { SendStatus } from '../../storage/repositories/sdk-message-repository.ts';
 import { decisionRun } from '../space/runtime/decision-pipeline.ts';
-import { MESSAGE_DELIVERY_PARK_MS, RESUME_CHOICE_PARK_BUDGET } from './message-delivery.ts';
 import type {
   InjectContextResetPlan,
   TurnEndFlushContextResetPlan,
@@ -198,63 +197,3 @@ export {
   selectStrandedDeliveries,
   shouldRearmSpuriousTurnEnd,
 } from './turn-outcome-classification.ts';
-
-export type BlockedTurnRouteDecision =
-  | { action: 'requeue_now' }
-  | { action: 'dead_letter'; reason: string }
-  | { action: 'park'; retryAt: number; reason: string };
-
-export const RESUME_CHOICE_DEAD_LETTER_REASON =
-  'Turn parked on sdk_resume_choice past its budget — answer the resume prompt or resend';
-
-const RESUME_CHOICE_PARK_BACKOFF_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000];
-
-export function resumeChoiceParkDelayMs(parkCount: number): number {
-  const idx = Math.min(Math.max(parkCount, 0), RESUME_CHOICE_PARK_BACKOFF_MS.length - 1);
-  return RESUME_CHOICE_PARK_BACKOFF_MS[idx];
-}
-
-export interface BlockedTurnRouteCtx {
-  outcome: 'blocked';
-  parkCount: number;
-  resumeChoiceResolved: boolean;
-  now: number;
-  decision: BlockedTurnRouteDecision | null;
-}
-
-export type BlockedTurnRouteInput = Omit<BlockedTurnRouteCtx, 'decision'>;
-
-export function applyResolvedChoiceGate(ctx: BlockedTurnRouteCtx): BlockedTurnRouteCtx {
-  return ctx.resumeChoiceResolved ? decided(ctx, { action: 'requeue_now' }) : ctx;
-}
-
-export function applyResumeChoiceBudgetGate(ctx: BlockedTurnRouteCtx): BlockedTurnRouteCtx {
-  return ctx.parkCount >= RESUME_CHOICE_PARK_BUDGET
-    ? decided(ctx, { action: 'dead_letter', reason: RESUME_CHOICE_DEAD_LETTER_REASON })
-    : ctx;
-}
-
-export function applyParkBackoffFinalGate(ctx: BlockedTurnRouteCtx): BlockedTurnRouteCtx {
-  return decided(ctx, {
-    action: 'park',
-    retryAt: ctx.now + resumeChoiceParkDelayMs(ctx.parkCount),
-    reason: 'sdk_resume_choice',
-  });
-}
-
-const blockedTurnRouteRun = decisionRun('message-blocked-turn-route', [
-  applyResolvedChoiceGate,
-  applyResumeChoiceBudgetGate,
-  applyParkBackoffFinalGate,
-]);
-
-export function routeBlockedTurn(input: BlockedTurnRouteInput): BlockedTurnRouteDecision {
-  const ctx = blockedTurnRouteRun(input);
-  return (
-    ctx.decision ?? {
-      action: 'park',
-      retryAt: input.now + MESSAGE_DELIVERY_PARK_MS,
-      reason: 'sdk_resume_choice',
-    }
-  );
-}
