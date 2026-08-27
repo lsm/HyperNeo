@@ -3576,6 +3576,7 @@ export class SpaceRuntime {
     if (!previous) return null;
     const nextStatus = params.status;
     if (nextStatus && previous.status !== nextStatus) {
+      assertValidSpaceTaskTransition(previous.status, nextStatus);
       const taskManager = this.getOrCreateTaskManager(spaceId);
       if (Object.hasOwn(params, 'workspacePath')) {
         await taskManager.updateTask(

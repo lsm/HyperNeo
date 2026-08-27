@@ -378,19 +378,18 @@ export function setupSpaceTaskHandlers(
       }
 
       if (updateParams.status !== currentTask.status) {
-        if (Object.hasOwn(updateParams, 'workspacePath')) {
-          await taskManager.updateTask(
-            taskId,
-            { workspacePath: updateParams.workspacePath },
-            { onCascadedTasks: emitCascadedTasks }
-          );
-          delete (updateParams as Record<string, unknown>).workspacePath;
-        }
-
         if (
           currentTask.workflowRunId &&
           isWorkflowRecoveryTransition(currentTask.status, updateParams.status)
         ) {
+          if (Object.hasOwn(updateParams, 'workspacePath')) {
+            await taskManager.updateTask(
+              taskId,
+              { workspacePath: updateParams.workspacePath },
+              { onCascadedTasks: emitCascadedTasks }
+            );
+            delete (updateParams as Record<string, unknown>).workspacePath;
+          }
           if (!spaceRuntimeService) {
             throw new Error(
               `Cannot recover workflow-backed task ${taskId}: SpaceRuntimeService is unavailable.`
@@ -456,6 +455,14 @@ export function setupSpaceTaskHandlers(
                 `Cancel action or spaceWorkflowRun.cancel) so its agents and ` +
                 `lifecycle are torn down — archiving would leave the run stranded.`
             );
+          }
+          if (Object.hasOwn(updateParams, 'workspacePath')) {
+            await taskManager.updateTask(
+              taskId,
+              { workspacePath: updateParams.workspacePath },
+              { onCascadedTasks: emitCascadedTasks }
+            );
+            delete (updateParams as Record<string, unknown>).workspacePath;
           }
           if (shouldStopWorkflowForStatus) {
             if (!spaceRuntimeService) {
