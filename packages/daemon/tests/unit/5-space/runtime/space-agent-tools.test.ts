@@ -10311,3 +10311,245 @@ describe('createSpaceAgentToolHandlers — agent-level autonomy ceiling', () => 
     expect(JSON.parse(row.processing_state)).toEqual({ status: 'idle' });
   });
 });
+
+describe('createSpaceAgentToolHandlers — approve_task dynamic-level and audit pins', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function seedWorkflowReviewTask(
+    options: { completionAutonomyLevel?: 1 | 2 | 3 | 4 | 5; workflowId?: string } = {}
+  ): string {
+    const nodeId = `node-pin-${Math.random().toString(36).slice(2)}`;
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: `Completion pin WF ${Math.random().toString(36).slice(2, 8)}`,
+      description: '',
+      nodes: [{ id: nodeId, name: 'Work', agentId: ctx.agentId }],
+      transitions: [],
+      startNodeId: nodeId,
+      endNodeId: nodeId,
+      rules: [],
+      ...(options.completionAutonomyLevel !== undefined
+        ? { completionAutonomyLevel: options.completionAutonomyLevel }
+        : {}),
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: options.workflowId ?? workflow.id,
+      title: 'completion pin run',
+      description: '',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Review task',
+      description: '',
+      status: 'review',
+      workflowRunId: run.id,
+    });
+    return task.id;
+  }
+
+  function seedStandaloneReviewTask(): string {
+    return ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Standalone review task',
+      description: '',
+      status: 'review',
+    }).id;
+  }
+
+  test('a standalone review task with no workflow run defaults to required level 5', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 4 });
+    const taskId = seedStandaloneReviewTask();
+
+    const parsed = parseResult(await makeHandlers(ctx).approve_task({ task_id: taskId }));
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toBe(
+      'approve_task not permitted: space autonomy level 4 < workflow completionAutonomyLevel 5. ' +
+        'Use submit_for_approval to request human review.'
+    );
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
+  });
+
+  test('a task whose workflow run row was deleted falls back to required level 5', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 4 });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: ctx.spaceId,
+      workflowId: 'wf-that-never-resolves',
+      title: 'doomed run',
+      description: '',
+    });
+    const taskId = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'Orphaned run task',
+      description: '',
+      status: 'review',
+      workflowRunId: run.id,
+    }).id;
+    ctx.db.exec('PRAGMA foreign_keys = OFF');
+    ctx.db.prepare('DELETE FROM space_workflow_runs WHERE id = ?').run(run.id);
+    ctx.db.exec('PRAGMA foreign_keys = ON');
+
+    const parsed = parseResult(await makeHandlers(ctx).approve_task({ task_id: taskId }));
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toBe(
+      'approve_task not permitted: space autonomy level 4 < workflow completionAutonomyLevel 5. ' +
+        'Use submit_for_approval to request human review.'
+    );
+  });
+
+  test('a run whose workflow no longer resolves falls back to required level 5', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 4 });
+    const taskId = seedWorkflowReviewTask({ workflowId: 'wf-that-never-resolves' });
+
+    const parsed = parseResult(await makeHandlers(ctx).approve_task({ task_id: taskId }));
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toBe(
+      'approve_task not permitted: space autonomy level 4 < workflow completionAutonomyLevel 5. ' +
+        'Use submit_for_approval to request human review.'
+    );
+  });
+
+  test('a workflow without an explicit completionAutonomyLevel approves at space level 3', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
+    const taskId = seedWorkflowReviewTask();
+
+    const parsed = parseResult(
+      await makeHandlers(ctx).approve_task({ task_id: taskId, reason: 'ok' })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
+  });
+
+  test('a workflow without an explicit completionAutonomyLevel interpolates the level-3 default in denials', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 2 });
+    const taskId = seedWorkflowReviewTask();
+
+    const parsed = parseResult(await makeHandlers(ctx).approve_task({ task_id: taskId }));
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toBe(
+      'approve_task not permitted: space autonomy level 2 < workflow completionAutonomyLevel 3. ' +
+        'Use submit_for_approval to request human review.'
+    );
+  });
+
+  test('completionAutonomyLevel 1 lets a level-1 space self-approve', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 1 });
+    const taskId = seedWorkflowReviewTask({ completionAutonomyLevel: 1 });
+
+    const parsed = parseResult(
+      await makeHandlers(ctx).approve_task({ task_id: taskId, reason: 'ok' })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
+  });
+
+  test('completionAutonomyLevel 2 denies a level-1 space with the workflow level interpolated', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 1 });
+    const taskId = seedWorkflowReviewTask({ completionAutonomyLevel: 2 });
+
+    const parsed = parseResult(await makeHandlers(ctx).approve_task({ task_id: taskId }));
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toBe(
+      'approve_task not permitted: space autonomy level 1 < workflow completionAutonomyLevel 2. ' +
+        'Use submit_for_approval to request human review.'
+    );
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('review');
+  });
+
+  test('completionAutonomyLevel 2 approves at exactly level 2', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 2 });
+    const taskId = seedWorkflowReviewTask({ completionAutonomyLevel: 2 });
+
+    const parsed = parseResult(await makeHandlers(ctx).approve_task({ task_id: taskId }));
+
+    expect(parsed.success).toBe(true);
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
+  });
+
+  test('without spaceManager or getSpaceAutonomyLevel the space level defaults to 1', async () => {
+    const taskId = seedWorkflowReviewTask({ completionAutonomyLevel: 5 });
+    const handlers = makeHandlers(ctx, {
+      spaceManager: undefined,
+      getSpaceAutonomyLevel: undefined,
+    });
+
+    const parsed = parseResult(await handlers.approve_task({ task_id: taskId }));
+
+    expect(parsed.success).toBe(false);
+    expect(String(parsed.error)).toBe(
+      'approve_task not permitted: space autonomy level 1 < workflow completionAutonomyLevel 5. ' +
+        'Use submit_for_approval to request human review.'
+    );
+  });
+
+  test('a successful approval writes one audit row stamped with caller and task but never the run', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const taskId = seedWorkflowReviewTask({ completionAutonomyLevel: 5 });
+    const handlers = makeHandlers(ctx, {
+      myAgentName: 'audit-pin-agent',
+      mySessionId: 'audit-pin-session',
+      auditLogRepo,
+    });
+
+    const parsed = parseResult(await handlers.approve_task({ task_id: taskId, reason: 'ok' }));
+
+    expect(parsed.success).toBe(true);
+    const rows = auditLogRepo
+      .listByTask(taskId)
+      .filter((entry) => entry.toolName === 'approve_task');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      agentName: 'audit-pin-agent',
+      sessionId: 'audit-pin-session',
+      spaceId: ctx.spaceId,
+      taskId,
+      workflowRunId: null,
+      paramsSummary: JSON.stringify({ reason: 'ok', previousStatus: 'review' }),
+    });
+  });
+
+  test('a space-level approve_task denial writes no audit row', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 3 });
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const taskId = seedWorkflowReviewTask({ completionAutonomyLevel: 5 });
+    const handlers = makeHandlers(ctx, { auditLogRepo });
+
+    await handlers.approve_task({ task_id: taskId });
+
+    const rows = auditLogRepo
+      .listBySpace(ctx.spaceId)
+      .filter((entry) => entry.toolName === 'approve_task');
+    expect(rows).toHaveLength(0);
+  });
+
+  test('a throwing audit repository never breaks the approval', async () => {
+    await ctx.spaceManager.updateSpace(ctx.spaceId, { autonomyLevel: 5 });
+    const taskId = seedStandaloneReviewTask();
+    const handlers = makeHandlers(ctx, {
+      auditLogRepo: {
+        createEntry: () => {
+          throw new Error('audit store down');
+        },
+      } as unknown as McpAuditLogRepository,
+    });
+
+    const parsed = parseResult(await handlers.approve_task({ task_id: taskId, reason: 'ok' }));
+
+    expect(parsed.success).toBe(true);
+    expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
+  });
+});
