@@ -1681,11 +1681,18 @@ export class SDKMessageHandler {
     message: SDKMessage,
     invocationGeneration: number | null
   ): Promise<void> {
-    const { stateManager, contextTracker } = this.ctx;
+    const { stateManager, contextTracker, session } = this.ctx;
 
     if (!isSDKCompactBoundary(message)) return;
     if (this.isInvocationStale(invocationGeneration)) return;
 
+    const supersededPendingCompactions = this.ctx.messageQueue.removePendingInternalCompactions();
+    if (supersededPendingCompactions > 0) {
+      this.logger.info(
+        `compact boundary superseded ${supersededPendingCompactions} queued daemon ` +
+          `compaction(s) for session ${session.id}`
+      );
+    }
     this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
     const boundaryInfo = contextTracker.getContextInfo();
     const boundaryCapacity =

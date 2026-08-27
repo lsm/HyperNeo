@@ -275,7 +275,7 @@ export class QueryLifecycleManager {
     }
   }
 
-  async restart(): Promise<void> {
+  async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
     const { session, internalEventBus, messageHandler } = this.ctx;
     let reachedSuppressedIdle = false;
 
@@ -288,6 +288,10 @@ export class QueryLifecycleManager {
 
       await this.ctx.stateManager.setIdle({ suppressDeliveryWaiters: true });
       reachedSuppressedIdle = true;
+
+      if (options?.beforeStart) {
+        await options.beforeStart();
+      }
 
       if (session.config.provider !== 'acp' && session.sdkSessionId) {
         const isValid = this.validateAndRepairWithMigration();
