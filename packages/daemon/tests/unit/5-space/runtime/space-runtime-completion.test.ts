@@ -205,6 +205,10 @@ class MockTaskAgentManager {
     return false;
   }
 
+  isSessionInMemory(sessionId: string): boolean {
+    return this.isSessionAlive(sessionId);
+  }
+
   async spawnWorkflowNodeAgent(
     _task: SpaceTask,
     _space: Space,

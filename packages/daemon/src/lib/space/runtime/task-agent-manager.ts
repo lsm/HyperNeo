@@ -1642,7 +1642,11 @@ export class TaskAgentManager {
   ): Promise<string> {
     const guardExecution = this.resolveNodeExecutionForSubSession(subSessionId);
     if (guardExecution) {
-      const guardStatus = this.resolveTerminalInjectionStatus(guardExecution.workflowRunId);
+      const guardStatus = this.resolveTerminalInjectionStatus(
+        guardExecution.workflowRunId,
+        undefined,
+        origin
+      );
       if (guardStatus) {
         log.warn(
           `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} — task/run is terminal (${guardStatus})`
@@ -1673,7 +1677,11 @@ export class TaskAgentManager {
     return this.withSessionInjectLock(subSessionId, async () => {
       const lockedExecution = this.resolveNodeExecutionForSubSession(subSessionId);
       if (lockedExecution) {
-        const lockedStatus = this.resolveTerminalInjectionStatus(lockedExecution.workflowRunId);
+        const lockedStatus = this.resolveTerminalInjectionStatus(
+          lockedExecution.workflowRunId,
+          undefined,
+          origin
+        );
         if (lockedStatus) {
           log.warn(
             `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} after lock acquisition — task/run is terminal (${lockedStatus})`
@@ -1706,9 +1714,16 @@ export class TaskAgentManager {
     });
   }
 
-  private resolveTerminalInjectionStatus(workflowRunId: string, taskId?: string): string | null {
+  private resolveTerminalInjectionStatus(
+    workflowRunId: string,
+    taskId?: string,
+    origin?: MessageOrigin
+  ): string | null {
     const isTerminal = (status?: string | null) =>
-      status === 'cancelled' || status === 'archived' || status === 'stopped';
+      status === 'cancelled' ||
+      status === 'archived' ||
+      status === 'stopped' ||
+      (origin === 'system' && status === 'done');
     const guardRun = this.config.workflowRunRepo?.getRun?.(workflowRunId) ?? null;
     if (!taskId) {
       const guardTask =
@@ -3318,6 +3333,13 @@ export class TaskAgentManager {
   private async performSubSessionRehydrate(subSessionId: string): Promise<AgentSession | null> {
     const alreadyIndexed = this.agentSessionIndex.get(subSessionId);
     if (alreadyIndexed) return alreadyIndexed;
+
+    if (this.config.db.getSession?.(subSessionId)?.status === 'archived') {
+      log.warn(
+        `TaskAgentManager.performSubSessionRehydrate: refusing to rehydrate session ${subSessionId} — session row is archived`
+      );
+      return null;
+    }
 
     log.warn(`TaskAgentManager: rehydrating ghost sub-session ${subSessionId} from DB...`);
 

@@ -926,6 +926,14 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
     expect(saveUserMessage.mock.calls[0][2]).toBe('enqueued');
     expect(enqueueMock).toHaveBeenCalledTimes(1);
   });
+
+  it('rejects runtime-origin injections when the canonical task is done (#3109)', async () => {
+    const { manager } = makeGuardManager('done', 'in_progress');
+
+    await expect(
+      manager.injectRuntimeRecoveryMessage(GUARD_SESSION_ID, 'recovery nag')
+    ).rejects.toThrow('task/run is terminal (done)');
+  });
 });
 
 describe('pending drain through the v2 injection shell', () => {

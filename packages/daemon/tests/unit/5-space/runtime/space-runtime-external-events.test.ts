@@ -103,6 +103,10 @@ class MockTaskAgentManager {
     return this.alive.has(sessionId);
   }
 
+  isSessionInMemory(sessionId: string): boolean {
+    return this.isSessionAlive(sessionId);
+  }
+
   getAgentSessionById(sessionId: string): {
     getProcessingState: () => { status: string };
     isInterruptInProgress: () => boolean;
