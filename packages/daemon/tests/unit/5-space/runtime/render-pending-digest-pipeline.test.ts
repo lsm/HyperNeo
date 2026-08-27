@@ -268,7 +268,7 @@ function ctxOf(
 
 function runStages(h: Harness): RenderPendingDigestCtx {
   return buildMessage(
-    aggregateRender(orderAndDedupe(loadPending(ctxOf(h, { pendingRows: h.rows }))))
+    aggregateRender(orderAndDedupe(loadPending(ctxOf(h, { pendingRows: h.rows, target: TARGET }))))
   );
 }
 
