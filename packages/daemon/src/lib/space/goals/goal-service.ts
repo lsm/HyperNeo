@@ -358,6 +358,7 @@ export class SpaceGoalService {
       labels: this.goalTaskLabels(goal),
       preferredWorkflowId: goal.preferredWorkflowId,
       goalId: goal.id,
+      workspacePath: goal.workspacePath ?? null,
     });
     if (!this.deps.goalRepo.claimActiveTask(goal.id, task.id)) {
       this.deps.taskRepo.deleteTask(task.id);

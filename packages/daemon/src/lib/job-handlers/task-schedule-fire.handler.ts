@@ -195,6 +195,7 @@ export async function handleTaskScheduleFire(
         }
       }
 
+      const goal = schedule.goalId ? (goalRepo?.getById(schedule.goalId) ?? null) : null;
       const task = taskRepo.createTask({
         spaceId: schedule.spaceId,
         title: schedule.title,
@@ -204,6 +205,7 @@ export async function handleTaskScheduleFire(
         labels: schedule.labels,
         createdByTaskScheduleId: schedule.id,
         goalId: schedule.goalId,
+        workspacePath: goal?.workspacePath ?? null,
       });
 
       const applied = scheduleRepo.updateAfterFireIfPending(scheduleId, job.id, {
