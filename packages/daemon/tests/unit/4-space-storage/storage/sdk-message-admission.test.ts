@@ -474,8 +474,8 @@ describe('decideMessageAdmission decision table', () => {
     },
   ];
 
-  test.each(cases)('$name', ({ input, options, expected }) => {
-    const record = decideMessageAdmission(normalizeMessageAdmissionInput(input), options);
-    expect(record).toMatchObject(expected);
+  test.each(cases.map((c) => [c.name, c] as const))('%s', (_label, c) => {
+    const record = decideMessageAdmission(normalizeMessageAdmissionInput(c.input), c.options);
+    expect(record).toMatchObject(c.expected);
   });
 });
