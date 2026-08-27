@@ -74,7 +74,7 @@ vi.mock('../../ui/Button', () => ({
 }));
 
 import { SpaceSettings } from '../SpaceSettings';
-import type { Space } from '@hyperneo/shared';
+import type { Space, SpaceWorkspace } from '@hyperneo/shared';
 
 function makeSpace(overrides: Partial<Space> = {}): Space {
   return {
@@ -92,6 +92,27 @@ function makeSpace(overrides: Partial<Space> = {}): Space {
     updatedAt: Date.now(),
     ...overrides,
   };
+}
+
+function makeWorkspace(overrides: Partial<SpaceWorkspace> = {}): SpaceWorkspace {
+  return {
+    id: 'ws-1',
+    spaceId: 'space-1',
+    path: '/projects/my-space',
+    label: 'Main repo',
+    isPrimary: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    ...overrides,
+  };
+}
+
+function stubHubRequests(workspaces: SpaceWorkspace[] = []) {
+  mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+  mockRequest.mockImplementation((method: string) => {
+    if (method === 'space.workspace.list') return Promise.resolve(workspaces);
+    return Promise.resolve({});
+  });
 }
 
 const mockConfirm = vi.fn();
@@ -121,10 +142,57 @@ describe('SpaceSettings', () => {
     expect(getByDisplayValue('Original description')).toBeTruthy();
   });
 
-  it('renders workspace path as read-only text', () => {
-    const space = makeSpace();
-    const { getByText } = render(<SpaceSettings space={space} />);
-    expect(getByText('/projects/my-space')).toBeTruthy();
+  describe('Workspaces', () => {
+    it('fetches the workspace registry list on mount', async () => {
+      stubHubRequests([makeWorkspace()]);
+      render(<SpaceSettings space={makeSpace()} />);
+      await waitFor(() => {
+        expect(mockRequest).toHaveBeenCalledWith('space.workspace.list', { spaceId: 'space-1' });
+      });
+    });
+
+    it('renders workspaces with label, path, and a primary badge', async () => {
+      stubHubRequests([
+        makeWorkspace(),
+        makeWorkspace({ id: 'ws-2', path: '/projects/docs', label: 'Docs', isPrimary: false }),
+      ]);
+      const { findAllByTestId, getByText, getAllByTestId } = render(
+        <SpaceSettings space={makeSpace()} />
+      );
+      expect(await findAllByTestId('workspace-item')).toHaveLength(2);
+      expect(getByText('Main repo')).toBeTruthy();
+      expect(getByText('/projects/my-space')).toBeTruthy();
+      expect(getByText('Docs')).toBeTruthy();
+      expect(getByText('/projects/docs')).toBeTruthy();
+      expect(getAllByTestId('workspace-primary-badge')).toHaveLength(1);
+    });
+
+    it('falls back to the path basename when the label is empty', async () => {
+      stubHubRequests([makeWorkspace({ label: '' })]);
+      const { findByText } = render(<SpaceSettings space={makeSpace()} />);
+      expect(await findByText('my-space')).toBeTruthy();
+    });
+
+    it('renders an empty state when the registry returns no workspaces', async () => {
+      stubHubRequests([]);
+      const { findByTestId, queryByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      expect(await findByTestId('workspaces-empty')).toBeTruthy();
+      expect(queryByTestId('workspaces-list')).toBeNull();
+    });
+
+    it('renders the RPC error inline when the list fails to load', async () => {
+      mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+      mockRequest.mockRejectedValue(new Error('registry offline'));
+      const { findByText } = render(<SpaceSettings space={makeSpace()} />);
+      expect(await findByText('Failed to load workspaces: registry offline')).toBeTruthy();
+    });
+
+    it('renders an inline error when the hub is unavailable', async () => {
+      const { findByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      expect((await findByTestId('workspaces-error')).textContent).toBe(
+        'Failed to load workspaces: Not connected to server'
+      );
+    });
   });
 
   it('does not show Save Changes button when form is clean', () => {
@@ -141,8 +209,7 @@ describe('SpaceSettings', () => {
   });
 
   it('calls space.update with trimmed values on save', async () => {
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockResolvedValue({});
+    stubHubRequests();
 
     const space = makeSpace();
     const { getByDisplayValue, getByText } = render(<SpaceSettings space={space} />);
@@ -165,8 +232,7 @@ describe('SpaceSettings', () => {
   });
 
   it('shows toast on successful save', async () => {
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockResolvedValue({});
+    stubHubRequests();
 
     const space = makeSpace();
     const { getByDisplayValue, getByText } = render(<SpaceSettings space={space} />);
@@ -200,8 +266,7 @@ describe('SpaceSettings', () => {
 
   it('calls space.archive and navigates on confirm', async () => {
     mockConfirm.mockReturnValue(true);
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockResolvedValue({});
+    stubHubRequests();
 
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
@@ -230,8 +295,7 @@ describe('SpaceSettings', () => {
 
   it('calls space.delete and navigates on confirm', async () => {
     mockConfirm.mockReturnValue(true);
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockResolvedValue({});
+    stubHubRequests();
 
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
@@ -252,13 +316,13 @@ describe('SpaceSettings', () => {
   });
 
   it('shows validation error when saving with empty name', async () => {
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    stubHubRequests();
     const space = makeSpace();
     const { getByDisplayValue, getByText, findByText } = render(<SpaceSettings space={space} />);
     fireEvent.input(getByDisplayValue('My Space'), { target: { value: '' } });
     fireEvent.click(getByText('Save Changes'));
     expect(await findByText('Space name is required')).toBeTruthy();
-    expect(mockRequest).not.toHaveBeenCalled();
+    expect(mockRequest).not.toHaveBeenCalledWith('space.update', expect.anything());
   });
 
   it('Archive button is disabled during archiving', async () => {
@@ -268,7 +332,9 @@ describe('SpaceSettings', () => {
       resolveArchive = () => res({});
     });
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockReturnValue(archivePromise);
+    mockRequest.mockImplementation((method: string) =>
+      method === 'space.workspace.list' ? Promise.resolve([]) : archivePromise
+    );
 
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
@@ -289,7 +355,9 @@ describe('SpaceSettings', () => {
       resolveDelete = () => res({});
     });
     mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockReturnValue(deletePromise);
+    mockRequest.mockImplementation((method: string) =>
+      method === 'space.workspace.list' ? Promise.resolve([]) : deletePromise
+    );
 
     const space = makeSpace();
     const { getByText } = render(<SpaceSettings space={space} />);
@@ -339,8 +407,7 @@ describe('SpaceSettings', () => {
   });
 
   it('includes instructions and backgroundContext in space.update payload', async () => {
-    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
-    mockRequest.mockResolvedValue({});
+    stubHubRequests();
 
     const space = makeSpace();
     const { getByDisplayValue, getByPlaceholderText, getByText } = render(
