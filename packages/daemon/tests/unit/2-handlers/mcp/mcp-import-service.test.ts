@@ -425,14 +425,14 @@ describe('McpImportService', () => {
 
       writeFileSync(badFile, '{ not json', 'utf-8');
 
-      const { results } = service.refreshAll([wsGood, wsBad]);
+      const { results } = service.refreshAll([wsBad, wsGood]);
       const byStatus = Object.fromEntries(results.map((r) => [r.sourcePath, r.status]));
 
-      expect(byStatus[goodFile]).toBe('ok');
       expect(byStatus[badFile]).toBe('malformed');
-      expect(repo.getByName('good')).not.toBeNull();
-      expect(repo.getByName('stale')).not.toBeNull();
-      expect(repo.getByName('stale')!.sourcePath).toBe(badFile);
+      expect(byStatus[goodFile]).toBe('ok');
+      expect(repo.listBySourcePath(goodFile)).toHaveLength(1);
+      expect(repo.listBySourcePath(badFile)).toHaveLength(1);
+      expect(repo.listBySourcePath(badFile)[0].command).toBe('y');
     });
   });
 });
