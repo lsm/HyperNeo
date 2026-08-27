@@ -170,6 +170,23 @@ describe('resolveAction', () => {
     expect(next.outcome.reason).toBe('invalid_params');
     expect(next.outcome.message).toContain('Invalid parameters for update_task');
   });
+
+  test('attributes the parsed target task to dispatcher audits and telemetry', () => {
+    const archiveTask = defineAction({
+      name: 'archive_task',
+      family: 'tasks',
+      safetyClass: 'destructive',
+      description: 'Archive task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const registry = createActionRegistry([archiveTask]);
+    const ctx = resolveAction(
+      buildCtx({ actionName: 'archive_task', params: { task_id: 'task-42' } }, { registry })
+    );
+    expect(ctx.taskId).toBe('task-42');
+  });
 });
 
 describe('applySafetyClass', () => {
@@ -261,23 +278,6 @@ describe('applyRoleAdmission', () => {
         expect(ctx.outcome).toBeUndefined();
       }
     }
-  });
-
-  test('attributes the parsed target task to dispatcher audits and telemetry', () => {
-    const archiveTask = defineAction({
-      name: 'archive_task',
-      family: 'tasks',
-      safetyClass: 'destructive',
-      description: 'Archive task',
-      paramsDoc: '{ task_id: string }',
-      paramsSchema: z.object({ task_id: z.string() }),
-      handler: async () => ({}),
-    });
-    const registry = createActionRegistry([archiveTask]);
-    const ctx = resolveAction(
-      buildCtx({ actionName: 'archive_task', params: { task_id: 'task-42' } }, { registry })
-    );
-    expect(ctx.taskId).toBe('task-42');
   });
 
   test('denies outside_space all actions', () => {
