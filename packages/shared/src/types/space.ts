@@ -271,6 +271,27 @@ export interface UpdateSpaceParams {
   settingSources?: SettingSource[] | null;
 }
 
+export interface SpaceWorkspace {
+  id: string;
+  spaceId: string;
+  path: string;
+  label: string;
+  isPrimary: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SpaceWorkspaceAddParams {
+  spaceId: string;
+  path: string;
+  label?: string;
+}
+
+export interface SpaceWorkspaceRemoveParams {
+  spaceId: string;
+  workspaceId: string;
+}
+
 export type SpaceTaskStatus =
   | 'draft'
   | 'open'
