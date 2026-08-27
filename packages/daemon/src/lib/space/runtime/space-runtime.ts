@@ -1957,9 +1957,7 @@ export class SpaceRuntime {
   private handoffDigestDelivery(sessionId: string, messageUuid: string, dbId: string): void {
     try {
       const repo = this.getSdkMessageRepo();
-      const current = repo.getDeliveryContent(sessionId, messageUuid);
-      if (!current || current.sendStatus !== 'deferred') return;
-      repo.updateMessageStatus([dbId], 'enqueued');
+      if (!repo.transitionMessageSendStatus(dbId, 'deferred', 'enqueued')) return;
       const role = deliverMessage(this.getJobQueueRepo(), sessionId, messageUuid, {
         origin: 'space_inject',
       });
@@ -1970,11 +1968,7 @@ export class SpaceRuntime {
       }
     } catch (error) {
       try {
-        const repo = this.getSdkMessageRepo();
-        const current = repo.getDeliveryContent(sessionId, messageUuid);
-        if (current && current.sendStatus === 'enqueued') {
-          repo.updateMessageStatus([dbId], 'deferred');
-        }
+        this.getSdkMessageRepo().transitionMessageSendStatus(dbId, 'enqueued', 'deferred');
       } catch {
         void error;
       }

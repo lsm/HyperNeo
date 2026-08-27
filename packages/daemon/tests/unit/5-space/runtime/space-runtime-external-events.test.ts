@@ -6715,6 +6715,23 @@ describe('SpaceRuntime external event subscriptions', () => {
     beforeEach(() => {
       previousFlag = process.env[FLAG_ENV];
       process.env[FLAG_ENV] = '1';
+      db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
+				id TEXT PRIMARY KEY,
+				queue TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+				payload TEXT NOT NULL DEFAULT '{}',
+				result TEXT,
+				error TEXT,
+				priority INTEGER NOT NULL DEFAULT 0,
+				max_retries INTEGER NOT NULL DEFAULT 3,
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				run_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				started_at TEXT,
+				heartbeat_at INTEGER,
+				completed_at TEXT
+			)`);
     });
 
     afterEach(() => {
@@ -7253,6 +7270,69 @@ describe('SpaceRuntime external event subscriptions', () => {
         )
         .get() as { n: number };
       expect(rows.n).toBe(0);
+    });
+
+    test('flag on: handoff does not regress a digest row a concurrent flush already submitted', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      await eventService.publish(
+        makeEvent({
+          id: 'evt-handoff-race',
+          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+        })
+      );
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-handoff-race',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-handoff-race',
+        'session-handoff-race',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const outcome = await runtime.renderPendingDigestForSession('session-handoff-race', task.id);
+      expect(outcome).toMatchObject({ action: 'delivered' });
+      const delivered = outcome as { action: 'delivered'; uuid: string; dbId: string };
+
+      db.prepare(`UPDATE sdk_messages SET send_status = 'submitted' WHERE id = ?`).run(
+        delivered.dbId
+      );
+
+      (
+        runtime as unknown as {
+          handoffDigestDelivery: (sessionId: string, messageUuid: string, dbId: string) => void;
+        }
+      ).handoffDigestDelivery('session-handoff-race', delivered.uuid, delivered.dbId);
+
+      const status = (
+        db
+          .prepare(`SELECT send_status AS s FROM sdk_messages WHERE id = ?`)
+          .get(delivered.dbId) as { s: string }
+      ).s;
+      expect(status).toBe('submitted');
+
+      const jobs = db
+        .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
+        .all() as Array<{ payload: string }>;
+      const payloads = jobs.map((job) => JSON.parse(job.payload) as Record<string, unknown>);
+      expect(payloads.some((payload) => payload.messageUuid === delivered.uuid)).toBe(false);
     });
   });
 });
