@@ -3693,6 +3693,26 @@ describe('SDKMessageHandler', () => {
       expect(setCompactingSpy).not.toHaveBeenCalled();
     });
 
+    it('asks the session to resume pending work after a compaction boundary', async () => {
+      mockContext.queryObject = null;
+      const resumeSpy = mock(() => {});
+      (
+        mockContext as { resumePendingWorkAfterCompaction?: () => void }
+      ).resumePendingWorkAfterCompaction = resumeSpy;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(resumeSpy).toHaveBeenCalledTimes(1);
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(clearNonCompactionSentSinceBoundarySpy).toHaveBeenCalledTimes(1);
+    });
+
     it('acknowledges the compact boundary before the compacting-state publication settles', async () => {
       let releaseSetCompacting!: () => void;
       setCompactingSpy.mockImplementation(
@@ -5115,6 +5135,60 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('clears the pending post-compaction resume when the turn-end decision is not a compaction', async () => {
+        const clearSpy = mock(() => {});
+        (
+          mockContext as { clearPendingResumeAfterCompaction?: () => void }
+        ).clearPendingResumeAfterCompaction = clearSpy;
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+        expect(clearSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('keeps the pending post-compaction resume while a daemon compaction is queued or running', async () => {
+        const clearSpy = mock(() => {});
+        (
+          mockContext as { clearPendingResumeAfterCompaction?: () => void }
+        ).clearPendingResumeAfterCompaction = clearSpy;
+        hasOutstandingInternalCompactionSpy.mockImplementation(() => true);
+        const { h } = budgetCase();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+        expect(clearSpy).not.toHaveBeenCalled();
+      });
+
+      it('asks the session to resume pending work when a turn-end refresh finds no context info', async () => {
+        const resumeSpy = mock(() => {});
+        (
+          mockContext as { resumePendingWorkAfterCompaction?: () => void }
+        ).resumePendingWorkAfterCompaction = resumeSpy;
+        (
+          mockContext as { clearPendingResumeAfterCompaction?: () => void }
+        ).clearPendingResumeAfterCompaction = mock(() => {});
+        const getContextUsageSpy = mock(async () => null);
+        const { h } = budgetCase();
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalled();
+        expect(resumeSpy).toHaveBeenCalledTimes(1);
       });
     });
 

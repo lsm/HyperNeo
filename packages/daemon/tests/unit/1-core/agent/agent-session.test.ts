@@ -7173,4 +7173,143 @@ describe('AgentSession', () => {
       }
     });
   });
+
+  describe('post-compaction resume hooks', () => {
+    let agentSession: AgentSession;
+    let mockSession: Session;
+    let mockDb: Database;
+    let mockMessageHub: MessageHub;
+    let mockInternalEventBus: InternalEventBus<any>;
+    let mockGetApiKey: () => Promise<string>;
+
+    beforeEach(() => {
+      mockSession = {
+        id: 'test-session-id',
+        title: 'Test Session',
+        workspacePath: '/test/workspace',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          maxTokens: 8192,
+          temperature: 1.0,
+        },
+        metadata: {
+          messageCount: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0,
+          toolCallCount: 0,
+        },
+      } as Session;
+
+      mockDb = {
+        getSession: mock(() => mockSession),
+        updateSession: mock(() => {}),
+        getUserMessages: mock(() => []),
+        getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+        deleteMessagesAfter: mock(() => 0),
+        deleteMessagesAtAndAfter: mock(() => 0),
+        getUserMessageByUuid: mock(() => undefined),
+        countMessagesAfter: mock(() => 0),
+        updateMessage: mock(() => {}),
+        getSDKMessageCount: mock(() => 0),
+      } as unknown as Database;
+
+      mockMessageHub = {
+        sendMessage: mock(() => {}),
+      } as unknown as MessageHub;
+
+      mockInternalEventBus = {
+        publish: mock(async () => {}),
+        publishAsync: mock(() => {}),
+        subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+      } as unknown as InternalEventBus<any>;
+
+      mockGetApiKey = mock(async () => 'test-api-key');
+
+      agentSession = new AgentSession(
+        mockSession,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+    });
+
+    it('resumePendingWorkAfterCompaction enqueues a durable resume prompt when armed and queue is clear', async () => {
+      const enqueueSpy = mock(async () => 'resume-uuid');
+      const hasOutstandingNonCompactionMessages = mock(() => false);
+      const session = agentSession as unknown as {
+        messageQueue: {
+          enqueue: typeof enqueueSpy;
+          hasOutstandingNonCompactionMessages: typeof hasOutstandingNonCompactionMessages;
+        };
+        pendingResumeAfterCompaction: boolean;
+      };
+      session.messageQueue.enqueue = enqueueSpy;
+      session.messageQueue.hasOutstandingNonCompactionMessages =
+        hasOutstandingNonCompactionMessages;
+      session.pendingResumeAfterCompaction = true;
+
+      agentSession.resumePendingWorkAfterCompaction();
+
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueSpy).toHaveBeenCalledWith(
+        'Context was compacted to stay within the configured window. Continue the task you were working on.',
+        false,
+        { durable: true }
+      );
+      expect(session.pendingResumeAfterCompaction).toBe(false);
+    });
+
+    it('resumePendingWorkAfterCompaction drops the resume when the queue already has user content', async () => {
+      const enqueueSpy = mock(async () => 'resume-uuid');
+      const hasOutstandingNonCompactionMessages = mock(() => true);
+      const session = agentSession as unknown as {
+        messageQueue: {
+          enqueue: typeof enqueueSpy;
+          hasOutstandingNonCompactionMessages: typeof hasOutstandingNonCompactionMessages;
+        };
+        pendingResumeAfterCompaction: boolean;
+      };
+      session.messageQueue.enqueue = enqueueSpy;
+      session.messageQueue.hasOutstandingNonCompactionMessages =
+        hasOutstandingNonCompactionMessages;
+      session.pendingResumeAfterCompaction = true;
+
+      agentSession.resumePendingWorkAfterCompaction();
+
+      expect(enqueueSpy).not.toHaveBeenCalled();
+      expect(session.pendingResumeAfterCompaction).toBe(false);
+    });
+
+    it('clearPendingResumeAfterCompaction disarms a pending resume', async () => {
+      const session = agentSession as unknown as {
+        pendingResumeAfterCompaction: boolean;
+      };
+      session.pendingResumeAfterCompaction = true;
+
+      agentSession.clearPendingResumeAfterCompaction();
+
+      expect(session.pendingResumeAfterCompaction).toBe(false);
+    });
+
+    it('handleInterrupt clears a pending post-compaction resume', async () => {
+      const interruptHandler = { handleInterrupt: mock(async () => {}) };
+      const session = agentSession as unknown as {
+        interruptHandler: typeof interruptHandler;
+        pendingResumeAfterCompaction: boolean;
+      };
+      session.interruptHandler = interruptHandler;
+      session.pendingResumeAfterCompaction = true;
+
+      await agentSession.handleInterrupt();
+
+      expect(session.pendingResumeAfterCompaction).toBe(false);
+      expect(interruptHandler.handleInterrupt).toHaveBeenCalled();
+    });
+  });
 });

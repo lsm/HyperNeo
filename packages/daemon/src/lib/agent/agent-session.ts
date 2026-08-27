@@ -333,6 +333,7 @@ export class AgentSession
 
   private _isCleaningUp = false;
   private pendingResumeSessionAt: string | undefined;
+  private pendingResumeAfterCompaction = false;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
@@ -852,6 +853,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    this.clearPendingResumeAfterCompaction();
     this.messageHandler.cancelSuppressedResultWait();
     const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
     if (
@@ -1478,6 +1480,30 @@ export class AgentSession
     const value = this.pendingResumeSessionAt;
     this.pendingResumeSessionAt = undefined;
     return value;
+  }
+
+  resumePendingWorkAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    if (this.messageQueue.hasOutstandingNonCompactionMessages()) return;
+    void this.messageQueue
+      .enqueue(
+        'Context was compacted to stay within the configured window. Continue the task you were working on.',
+        false,
+        { durable: true }
+      )
+      .catch((error) => {
+        this.logger.warn(`post-compaction resume enqueue failed for ${this.session.id}:`, error);
+      });
+  }
+
+  clearPendingResumeAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    this.logger.info(
+      `dropping pending post-compaction resume for session ${this.session.id} ` +
+        `(no daemon compaction was enqueued)`
+    );
   }
 
   incrementQueryGeneration(): number {
