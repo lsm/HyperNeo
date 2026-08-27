@@ -1,4 +1,4 @@
-import type { ModelInfo, Session } from '@hyperneo/shared';
+import type { ModelInfo, ProviderRecord, Session } from '@hyperneo/shared';
 import type {
   Provider,
   ProviderFailureErrorKind,
@@ -6,6 +6,7 @@ import type {
 } from '@hyperneo/shared/provider';
 import type { QueryLike } from './agent/query-like.ts';
 import type { ProviderRepository } from '../storage/repositories/provider-repository.ts';
+import { decisionRun } from './space/runtime/decision-pipeline.ts';
 import { COPILOT_ANTHROPIC_MODELS } from './providers/anthropic-copilot/models.js';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { DeepSeekProvider } from './providers/deepseek-provider.js';
@@ -188,11 +189,11 @@ const refreshModes = new Map<string, boolean>();
 
 const pendingProviderSlices = new Map<string, ModelInfo[]>();
 
-const pendingSliceReleases = new Set<string>();
+const pendingSliceReleases = new Map<string, number>();
 
 let providerRepositoryRef: ProviderRepository | null = null;
 
-export function setProviderRepository(repo: ProviderRepository): void {
+export function setProviderRepository(repo: ProviderRepository | null): void {
   providerRepositoryRef = repo;
 }
 
@@ -200,24 +201,30 @@ function pendingSliceKey(cacheKey: string, providerId: string): string {
   return `${cacheKey}:${providerId}`;
 }
 
-export function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): ModelInfo[] {
+export function mergePendingProviderSlices(
+  cacheKey: string,
+  models: ModelInfo[],
+  loadSeq?: number
+): ModelInfo[] {
   let merged = models;
-  const consumedKeys: string[] = [];
-  const providedProviders = new Set(merged.map((model) => model.provider));
+  const released: string[] = [];
   for (const [key, slice] of pendingProviderSlices) {
     if (!key.startsWith(`${cacheKey}:`)) continue;
     const providerId = key.slice(cacheKey.length + 1);
-    const isMarkedForRelease = pendingSliceReleases.has(key);
-    if (isMarkedForRelease && providedProviders.has(providerId)) {
-      consumedKeys.push(key);
+    const releaseAfterSeq = pendingSliceReleases.get(key);
+    const providerIsPresent = models.some((model) => model.provider === providerId);
+    if (
+      releaseAfterSeq !== undefined &&
+      loadSeq !== undefined &&
+      loadSeq > releaseAfterSeq &&
+      providerIsPresent
+    ) {
+      released.push(key);
       continue;
     }
     merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
-    if (isMarkedForRelease) {
-      consumedKeys.push(key);
-    }
   }
-  for (const key of consumedKeys) {
+  for (const key of released) {
     pendingSliceReleases.delete(key);
     pendingProviderSlices.delete(key);
   }
@@ -259,7 +266,8 @@ function applyRefreshedModels(
   previousModels: ModelInfo[] | undefined,
   supersededProviderIds: string[] = [],
   preservePreviousOnShrink = true,
-  unavailableProviders?: ReadonlySet<string>
+  unavailableProviders?: ReadonlySet<string>,
+  loadSeq?: number
 ): void {
   if (fetchedModels.length > 0) {
     const mergedModels = mergeWithFallbackModels(fetchedModels, unavailableProviders);
@@ -271,7 +279,7 @@ function applyRefreshedModels(
         superseded.size > 0 ? [...retainedPrevious, ...supersededSlices] : previousModels;
       modelsCache.set(cacheKey, overlaid);
     } else {
-      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels));
+      modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, mergedModels, loadSeq));
     }
     cacheTimestamps.set(cacheKey, Date.now());
     return;
@@ -283,7 +291,7 @@ function applyRefreshedModels(
   const filteredFallbacks = FALLBACK_MODELS.filter(
     (m) => registry.has(m.provider) && !unavailableProviders?.has(m.provider)
   );
-  modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks));
+  modelsCache.set(cacheKey, mergePendingProviderSlices(cacheKey, filteredFallbacks, loadSeq));
   cacheTimestamps.set(cacheKey, Date.now());
 }
 
@@ -305,7 +313,10 @@ async function triggerBackgroundRefresh(cacheKey: string): Promise<void> {
           cacheKey,
           current.models,
           previousModels,
-          current.supersededProviderIds
+          current.supersededProviderIds,
+          true,
+          undefined,
+          current.loadSeq
         );
       }
       /* v8 ignore next 2 */
@@ -377,9 +388,20 @@ type ProviderModelLoadResult =
   | { status: 'unavailable'; models: ModelInfo[] }
   | { status: 'failed'; models: ModelInfo[]; error?: unknown };
 
+type PersistedDiscoveredEntry = {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+  preferContextWindowMetadata?: boolean;
+  description?: string;
+  releaseDate?: string;
+  available?: boolean;
+  thinkingModes?: 'off' | 'on' | 'granular';
+};
+
 export function fallbackModelsFor(
   provider: Provider,
-  persistedDiscovered: ReadonlyArray<{ id: string; name?: string }> = []
+  persistedDiscovered: ReadonlyArray<PersistedDiscoveredEntry> = []
 ): ModelInfo[] {
   const cached = provider.getCachedModels?.();
   if (cached && cached.length > 0) {
@@ -396,16 +418,45 @@ export function fallbackModelsFor(
       alias: '',
       family: provider.id,
       provider: provider.id,
-      contextWindow: 128000,
-      description: `${entry.name ?? entry.id} via ${provider.id}`,
-      releaseDate: '',
-      available: true,
+      contextWindow: entry.contextWindow ?? 128000,
+      preferContextWindowMetadata: entry.preferContextWindowMetadata,
+      description: entry.description ?? `${entry.name ?? entry.id} via ${provider.id}`,
+      releaseDate: entry.releaseDate ?? '',
+      available: entry.available ?? true,
+      thinkingModes: entry.thinkingModes,
     }));
   return [...staticSlice, ...persistedSlice];
 }
 
+function readPersistedDiscoveredEntry(
+  entry: Record<string, unknown>
+): PersistedDiscoveredEntry | null {
+  const id = entry.id;
+  if (typeof id !== 'string') return null;
+  const parsed: PersistedDiscoveredEntry = { id };
+  const name = entry.name;
+  if (typeof name === 'string') parsed.name = name;
+  const contextWindow = entry.contextWindow;
+  if (typeof contextWindow === 'number') parsed.contextWindow = contextWindow;
+  const preferContextWindowMetadata = entry.preferContextWindowMetadata;
+  if (typeof preferContextWindowMetadata === 'boolean') {
+    parsed.preferContextWindowMetadata = preferContextWindowMetadata;
+  }
+  const description = entry.description;
+  if (typeof description === 'string') parsed.description = description;
+  const releaseDate = entry.releaseDate;
+  if (typeof releaseDate === 'string') parsed.releaseDate = releaseDate;
+  const available = entry.available;
+  if (typeof available === 'boolean') parsed.available = available;
+  const thinkingModes = entry.thinkingModes;
+  if (thinkingModes === 'off' || thinkingModes === 'on' || thinkingModes === 'granular') {
+    parsed.thinkingModes = thinkingModes;
+  }
+  return parsed;
+}
+
 export function extractPersistedDiscoveredWrapper(configJson: string | undefined): {
-  models: Array<{ id: string; name?: string }>;
+  models: Array<PersistedDiscoveredEntry>;
   fingerprint?: string;
 } | null {
   if (!configJson) return null;
@@ -423,10 +474,8 @@ export function extractPersistedDiscoveredWrapper(configJson: string | undefined
   if (!Array.isArray(models)) return null;
   const entries = models.flatMap((entry) => {
     if (!entry || typeof entry !== 'object') return [];
-    const id = (entry as { id?: unknown }).id;
-    if (typeof id !== 'string') return [];
-    const name = (entry as { name?: unknown }).name;
-    return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
+    const parsedEntry = readPersistedDiscoveredEntry(entry as Record<string, unknown>);
+    return parsedEntry ? [parsedEntry] : [];
   });
   const fingerprint = (discovered as { fingerprint?: unknown }).fingerprint;
   return {
@@ -435,26 +484,55 @@ export function extractPersistedDiscoveredWrapper(configJson: string | undefined
   };
 }
 
+interface PersistedDiscoveryCtx {
+  provider: Provider;
+  providerRepository: ProviderRepository | null;
+  record?: ProviderRecord | null;
+  wrapper?: ReturnType<typeof extractPersistedDiscoveredWrapper>;
+  endpointFingerprint?: string;
+  decision: PersistedDiscoveredEntry[] | null;
+}
+
+function loadRecordGate(ctx: PersistedDiscoveryCtx): PersistedDiscoveryCtx {
+  if (!ctx.providerRepository) return { ...ctx, decision: [] };
+  try {
+    const record = ctx.providerRepository.getProviderByProviderId(ctx.provider.id);
+    return { ...ctx, record };
+  } catch {
+    return { ...ctx, decision: [] };
+  }
+}
+
+function extractWrapperGate(ctx: PersistedDiscoveryCtx): PersistedDiscoveryCtx {
+  const wrapper = extractPersistedDiscoveredWrapper(ctx.record?.configJson);
+  if (!wrapper) return { ...ctx, decision: [] };
+  return { ...ctx, wrapper };
+}
+
+function validateFingerprintGate(ctx: PersistedDiscoveryCtx): PersistedDiscoveryCtx {
+  const endpointFingerprint = ctx.provider.getDiscoveryEndpointFingerprint?.(ctx.record?.baseUrl);
+  if (endpointFingerprint !== undefined && ctx.wrapper!.fingerprint !== endpointFingerprint) {
+    return { ...ctx, decision: [] };
+  }
+  return { ...ctx, endpointFingerprint };
+}
+
+function finalizePersistedDiscoveryGate(ctx: PersistedDiscoveryCtx): PersistedDiscoveryCtx {
+  return { ...ctx, decision: ctx.wrapper!.models };
+}
+
+const runPersistedDiscovery = decisionRun<PersistedDiscoveryCtx>('persisted-discovery', [
+  loadRecordGate,
+  extractWrapperGate,
+  validateFingerprintGate,
+  finalizePersistedDiscoveryGate,
+]);
+
 export function endpointMatchingPersistedDiscovered(
   provider: Provider
-): Array<{ id: string; name?: string }> {
-  if (!providerRepositoryRef) return [];
-  try {
-    const record = providerRepositoryRef.getProviderByProviderId(provider.id);
-    const wrapper = extractPersistedDiscoveredWrapper(record?.configJson);
-    if (!wrapper) return [];
-    const endpointFingerprint = provider.getDiscoveryEndpointFingerprint?.(record?.baseUrl);
-    if (
-      wrapper.fingerprint !== undefined &&
-      endpointFingerprint !== undefined &&
-      wrapper.fingerprint !== endpointFingerprint
-    ) {
-      return [];
-    }
-    return wrapper.models;
-  } catch {
-    return [];
-  }
+): Array<PersistedDiscoveredEntry> {
+  const ctx = runPersistedDiscovery({ provider, providerRepository: providerRepositoryRef });
+  return ctx.decision ?? [];
 }
 
 const PROVIDER_CATALOG_CACHE_TTL_MS = 10_000;
@@ -913,10 +991,23 @@ function cancelAllProviderRetries(): void {
   providerRetryGeneration += 1;
 }
 
-function replaceProviderModelsInCache(providerId: string, models: ModelInfo[]): void {
+function replaceProviderModelsInCache(
+  providerId: string,
+  models: ModelInfo[],
+  loadSeq: number
+): void {
   const cacheKey = 'global';
-  const pending = pendingProviderSlices.get(pendingSliceKey(cacheKey, providerId));
-  const slice = pending ?? models;
+  const key = pendingSliceKey(cacheKey, providerId);
+  const pending = pendingProviderSlices.get(key);
+  const releaseAfterSeq = pendingSliceReleases.get(key);
+  const usePending =
+    pending !== undefined &&
+    (releaseAfterSeq === undefined || loadSeq <= releaseAfterSeq || models.length === 0);
+  const slice = usePending ? pending : models;
+  if (!usePending && pending !== undefined) {
+    pendingProviderSlices.delete(key);
+    pendingSliceReleases.delete(key);
+  }
   const existing = modelsCache.get(cacheKey);
   if (!existing || existing.length === 0) {
     modelsCache.set(cacheKey, mergeWithFallbackModels(slice));
@@ -989,7 +1080,7 @@ async function runScheduledProviderRetry(providerId: string): Promise<void> {
     return;
   }
   providerAppliedSeq.set(providerId, probeSeq);
-  replaceProviderModelsInCache(providerId, result.models);
+  replaceProviderModelsInCache(providerId, result.models, probeSeq);
   clearProviderFailure(providerId);
   clearProviderRetry(providerId);
 }
@@ -1048,7 +1139,7 @@ export async function recoverDormantProvider(providerId: string): Promise<Provid
     return 'recovered';
   }
   providerAppliedSeq.set(providerId, probeSeq);
-  replaceProviderModelsInCache(providerId, result.models);
+  replaceProviderModelsInCache(providerId, result.models, probeSeq);
   return 'recovered';
 }
 
@@ -1102,7 +1193,8 @@ export async function initializeModels(): Promise<void> {
       if (result.models.length > 0) {
         const mergedModels = mergePendingProviderSlices(
           cacheKey,
-          mergeWithFallbackModels(result.models)
+          mergeWithFallbackModels(result.models),
+          result.loadSeq
         );
         modelsCache.set(cacheKey, mergedModels);
         cacheTimestamps.set(cacheKey, Date.now());
@@ -1158,7 +1250,7 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     for (const key of pendingProviderSlices.keys()) {
       if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
     }
-    const releaseKeys = [...pendingSliceReleases];
+    const releaseKeys = [...pendingSliceReleases.keys()];
     for (const key of releaseKeys) {
       if (key.startsWith(`${cacheKey}:`)) pendingSliceReleases.delete(key);
     }
@@ -1259,7 +1351,8 @@ export async function refreshModels(
           undefined,
           current.supersededProviderIds,
           false,
-          new Set(current.unavailableProviderIds)
+          new Set(current.unavailableProviderIds),
+          current.loadSeq
         );
       }
       throw current.forcedDiscoveryError;
@@ -1270,7 +1363,8 @@ export async function refreshModels(
       previousModels,
       current.supersededProviderIds,
       !forceRemote,
-      forceRemote ? new Set(current.unavailableProviderIds) : undefined
+      forceRemote ? new Set(current.unavailableProviderIds) : undefined,
+      current.loadSeq
     );
   })();
 
@@ -1335,7 +1429,7 @@ export function releaseAppliedProviderSlice(providerId: string, cacheKey: string
 }
 
 export function schedulePendingSliceRelease(providerId: string, cacheKey: string = 'global'): void {
-  pendingSliceReleases.add(pendingSliceKey(cacheKey, providerId));
+  pendingSliceReleases.set(pendingSliceKey(cacheKey, providerId), modelLoadSequence);
 }
 
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
