@@ -1670,5 +1670,17 @@ describe('SpaceTaskManager', () => {
         manager.updateTask(task.id, { workspacePath: '/workspace/test' })
       ).rejects.toThrow('already has a worktree');
     });
+
+    it('rejects workspacePath change while the task session is live', async () => {
+      const task = await manager.createTask({
+        title: 'T',
+        description: '',
+        workspacePath: '/secondary',
+      });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await expect(
+        manager.updateTask(task.id, { workspacePath: '/workspace/test' })
+      ).rejects.toThrow('active or started agent session');
+    });
   });
 });

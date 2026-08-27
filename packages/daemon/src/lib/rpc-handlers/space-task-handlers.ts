@@ -378,6 +378,15 @@ export function setupSpaceTaskHandlers(
       }
 
       if (updateParams.status !== currentTask.status) {
+        if (Object.hasOwn(updateParams, 'workspacePath')) {
+          await taskManager.updateTask(
+            taskId,
+            { workspacePath: updateParams.workspacePath },
+            { onCascadedTasks: emitCascadedTasks }
+          );
+          delete (updateParams as Record<string, unknown>).workspacePath;
+        }
+
         if (
           currentTask.workflowRunId &&
           isWorkflowRecoveryTransition(currentTask.status, updateParams.status)

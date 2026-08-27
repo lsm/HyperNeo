@@ -270,7 +270,7 @@ export class SpaceManager {
       transaction: <T>(fn: () => T) => db.transaction(fn, 'immediate')(),
       taskReferences: {
         countActiveTasksByWorkspacePath: (spaceId, workspacePath) =>
-          this.taskRepo.countActiveByWorkspacePath(spaceId, workspacePath),
+          this.taskRepo.countNonArchivedByWorkspacePath(spaceId, workspacePath),
       },
     });
   }

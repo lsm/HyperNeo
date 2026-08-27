@@ -117,6 +117,16 @@ export class SpaceTaskManager {
     return { ...params, workspacePath: resolved } as T;
   }
 
+  private hasActiveTaskSession(task: SpaceTask): boolean {
+    return (
+      !!task.taskAgentSessionId ||
+      !!task.postApprovalSessionId ||
+      task.status === 'in_progress' ||
+      task.status === 'rate_limited' ||
+      task.status === 'usage_limited'
+    );
+  }
+
   async getTask(taskId: string): Promise<SpaceTask | null> {
     const task = this.taskRepo.getTask(taskId);
     if (task && task.spaceId === this.spaceId) {
@@ -462,6 +472,11 @@ export class SpaceTaskManager {
 
     const targetWorkspacePath = resolvedParams.workspacePath;
     if (targetWorkspacePath !== undefined && targetWorkspacePath !== task.workspacePath) {
+      if (this.hasActiveTaskSession(task)) {
+        throw new Error(
+          `Cannot change task workspace path: task ${taskId} has an active or started agent session`
+        );
+      }
       const worktree = this.worktreeRepo.getByTaskId(this.spaceId, taskId);
       if (worktree) {
         throw new Error(

@@ -760,12 +760,11 @@ export class SpaceTaskRepository {
     this.reactiveDb?.notifyChange('space_tasks');
   }
 
-  countActiveByWorkspacePath(spaceId: string, workspacePath: string): number {
+  countNonArchivedByWorkspacePath(spaceId: string, workspacePath: string): number {
     const row = this.db
       .prepare(
         `SELECT COUNT(*) AS c FROM space_tasks
-         WHERE space_id = ? AND workspace_path = ?
-           AND status NOT IN ('done', 'cancelled', 'archived')`
+         WHERE space_id = ? AND workspace_path = ? AND status != 'archived'`
       )
       .get(spaceId, workspacePath) as { c: number } | undefined;
     return row?.c ?? 0;
