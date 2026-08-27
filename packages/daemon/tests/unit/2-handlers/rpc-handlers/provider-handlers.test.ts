@@ -12,8 +12,14 @@ import {
   clearModelsCache,
   getModelsCache,
   hasRefreshBeenAttemptedFor,
+  markRefreshAttemptedFor,
   setModelsCache,
 } from '../../../../src/lib/model-service';
+import {
+  getProviderFailure,
+  recordClassifiedProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
 import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
 import type { ProviderCredentialManager } from '../../../../src/lib/credentials/provider-credential-manager';
@@ -443,6 +449,1102 @@ describe('Provider RPC handlers', () => {
     });
   });
 
+  describe('providers.refreshDiscovery', () => {
+    afterEach(() => {
+      resetProviderFailureStore();
+    });
+
+    function makeDiscoveredModel(id: string, name?: string): ModelInfo {
+      return {
+        id,
+        name: name ?? id,
+        alias: id,
+        family: 'remote',
+        provider: 'remote',
+        contextWindow: 100000,
+        description: `${id} discovered remotely`,
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+    }
+
+    function registerRemoteProvider(
+      overrides: {
+        listRemoteModels?: () => Promise<ModelInfo[]>;
+        getModels?: () => Promise<ModelInfo[]>;
+        getDiscoveryEndpointFingerprint?: (discoveryBaseUrl?: string) => string;
+      } = {}
+    ): { listRemoteModels: ReturnType<typeof mock>; getModels: ReturnType<typeof mock> } {
+      const listRemoteModels = mock(overrides.listRemoteModels ?? (async () => []));
+      const getModels = mock(overrides.getModels ?? (async () => []));
+      getProviderRegistry().register({
+        id: 'remote',
+        isAvailable: async () => true,
+        listRemoteModels,
+        getModels,
+        ...(overrides.getDiscoveryEndpointFingerprint
+          ? { getDiscoveryEndpointFingerprint: overrides.getDiscoveryEndpointFingerprint }
+          : {}),
+      } as unknown as Provider);
+      return { listRemoteModels, getModels };
+    }
+
+    function parsePersisted(configJson: string | undefined): Record<string, unknown> {
+      return JSON.parse(configJson ?? 'null') as Record<string, unknown>;
+    }
+
+    it('rejects invalid requests before touching providers or state', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      registerRemoteProvider();
+      const handlers = setup();
+      const handler = handlers.get('providers.refreshDiscovery')!;
+
+      await expect(handler(null, {})).rejects.toThrow('Invalid refresh discovery request');
+      await expect(handler({ id: created.id, options: {} }, {})).rejects.toThrow(
+        'Unknown refresh discovery request field: options'
+      );
+      await expect(handler({ id: '' }, {})).rejects.toThrow('Provider id is required');
+      await expect(handler({ id: 'missing' }, {})).rejects.toThrow('Provider missing not found');
+
+      const unregistered = repo.createProvider({
+        providerId: 'unregistered',
+        displayName: 'Unregistered',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      await expect(handler({ id: unregistered.id }, {})).rejects.toThrow(
+        'Provider unregistered is not registered'
+      );
+
+      const unsupported = repo.createProvider({
+        providerId: 'unsupported',
+        displayName: 'Unsupported',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      getProviderRegistry().register({ id: 'unsupported' } as Provider);
+      await expect(handler({ id: unsupported.id }, {})).rejects.toThrow(
+        'Provider unsupported does not support remote model listing'
+      );
+
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+      expect(getModelsCache().size).toBe(0);
+    });
+
+    it('commits persist, cache slice, then publish in order for the saved config', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      const discovered = [makeDiscoveredModel('remote-a'), makeDiscoveredModel('remote-b')];
+      const merged = [...discovered];
+      registerRemoteProvider({
+        listRemoteModels: async () => discovered,
+        getModels: async () => merged,
+      });
+      const staleSlice = makeDiscoveredModel('remote-stale');
+      setModelsCache(new Map([['global', [staleSlice]]]));
+      let cacheAtPublish: ModelInfo[] | undefined;
+      let configAtPublish: string | undefined;
+      eventBus.publishAsync = mock((() => {
+        cacheAtPublish = getModelsCache().get('global');
+        configAtPublish = repo.getProvider(created.id)?.configJson;
+      }) as typeof eventBus.publishAsync);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; models: Array<{ id: string }> };
+
+      expect(result.success).toBe(true);
+      expect(result.models.map((model) => model.id)).toEqual(['remote-a', 'remote-b']);
+      expect(cacheAtPublish).toEqual([...merged]);
+      expect(configAtPublish).not.toBeUndefined();
+
+      const persisted = parsePersisted(repo.getProvider(created.id)?.configJson);
+      expect(persisted.command).toBe('saved acp');
+      expect(persisted.discoveredModels).toEqual({
+        models: [
+          { id: 'remote-a', name: 'remote-a' },
+          { id: 'remote-b', name: 'remote-b' },
+        ],
+      });
+      expect(configAtPublish).toBe(repo.getProvider(created.id)?.configJson);
+      expect(getModelsCache().get('global')).toEqual([...merged]);
+      expect(eventBus.publishAsync).toHaveBeenCalledTimes(1);
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
+
+    it('defers the live slice without creating an uninitialized global cache entry', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      eventBus.publishAsync = mock(() => {}) as typeof eventBus.publishAsync;
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+      const persisted = parsePersisted(repo.getProvider(created.id)?.configJson);
+      expect(persisted.discoveredModels).toEqual({
+        models: [{ id: 'remote-a', name: 'remote-a' }],
+      });
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
+
+    it('discards everything when an in-flight refresh invalidation lands mid-fetch', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      let listingDepth = 0;
+      registerRemoteProvider({
+        listRemoteModels: async () => {
+          if (listingDepth > 0) return [makeDiscoveredModel('remote-a')];
+          listingDepth += 1;
+          const refreshPromise = refreshModels();
+          clearModelsCache();
+          await refreshPromise;
+          listingDepth -= 1;
+          return [makeDiscoveredModel('remote-a')];
+        },
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; reason?: string };
+
+      expect(result).toEqual({ success: false, reason: 'superseded' });
+      expect(repo.getProvider(created.id)?.configJson).toBe(
+        JSON.stringify({ command: 'saved acp' })
+      );
+      expect(getModelsCache().has('global')).toBe(false);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('discards everything when the saved config changes mid-fetch', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => {
+          repo.updateProvider(created.id, { configJson: JSON.stringify({ command: 'rotated' }) });
+          return [makeDiscoveredModel('remote-a')];
+        },
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; reason?: string };
+
+      expect(result).toEqual({ success: false, reason: 'superseded' });
+      expect(repo.getProvider(created.id)?.configJson).toBe(JSON.stringify({ command: 'rotated' }));
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('throws and mutates nothing when discovery yields no models', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [],
+        getModels: async () => [],
+      });
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.refreshDiscovery')!({ id: created.id }, {})
+      ).rejects.toThrow('Provider remote returned no models');
+
+      expect(repo.getProvider(created.id)?.configJson).toBe(
+        JSON.stringify({ command: 'saved acp' })
+      );
+      expect(getModelsCache().size).toBe(0);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('persists curated-first with a truncation marker inside the 64 KiB bound', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ region: 'china' }),
+      });
+      const total = 2000;
+      const discovered = Array.from({ length: total }, (_, index) =>
+        makeDiscoveredModel(`m-${index}`, `Name ${index}`)
+      );
+      getProviderRegistry().setCuratedModels('remote', [{ id: `m-${total - 1}` }]);
+      registerRemoteProvider({
+        listRemoteModels: async () => discovered,
+        getModels: async () => discovered,
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; truncated?: boolean };
+
+      const persisted = parsePersisted(repo.getProvider(created.id)?.configJson) as {
+        region: string;
+        discoveredModels: { models: Array<{ id: string; name: string }>; truncated?: boolean };
+      };
+      expect(result.truncated).toBe(true);
+      expect(result.success).toBe(true);
+      expect(persisted.region).toBe('china');
+      expect(persisted.discoveredModels.truncated).toBe(true);
+      expect((repo.getProvider(created.id)?.configJson ?? '').length).toBeLessThan(64 * 1024);
+      expect(persisted.discoveredModels.models[0]?.id).toBe(`m-${total - 1}`);
+      expect(persisted.discoveredModels.models.length).toBeLessThan(total);
+      const persistedIds = new Set(persisted.discoveredModels.models.map((model) => model.id));
+      for (const model of getProviderRegistry().getCuratedModels('remote') ?? []) {
+        if (persistedIds.has(model.id)) continue;
+        throw new Error(`curated id ${model.id} lost to truncation`);
+      }
+    });
+
+    it('merges into existing config keys', async () => {
+      const withConfig = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: '{"region":"china","models":[{"id":"static-one"}],"broken":true}',
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a', 'Remote A')],
+        getModels: async () => [makeDiscoveredModel('remote-a', 'Remote A')],
+      });
+      const handlers = setup();
+      const handler = handlers.get('providers.refreshDiscovery')!;
+
+      await handler({ id: withConfig.id }, {});
+
+      const first = parsePersisted(repo.getProvider(withConfig.id)?.configJson) as Record<
+        string,
+        unknown
+      > & { discoveredModels: { models: Array<{ id: string; name?: string }> } };
+      expect(first.region).toBe('china');
+      expect(first.broken).toBe(true);
+      expect(first.discoveredModels.models).toEqual([{ id: 'remote-a', name: 'Remote A' }]);
+    });
+
+    it('rejects refresh on unparsable JSON to avoid overwriting the saved configuration', async () => {
+      const withBrokenConfig = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: 'not-json{',
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a', 'Remote A')],
+        getModels: async () => [makeDiscoveredModel('remote-a', 'Remote A')],
+      });
+      const handlers = setup();
+      const handler = handlers.get('providers.refreshDiscovery')!;
+
+      await expect(handler({ id: withBrokenConfig.id }, {})).rejects.toThrow(
+        /Saved provider config is not valid JSON/
+      );
+      expect(repo.getProvider(withBrokenConfig.id)?.configJson).toBe('not-json{');
+    });
+
+    it('persists configured curated ids ahead of discovery even when discovery omits them', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      getProviderRegistry().setCuratedModels('remote', [
+        { id: 'curated-absent' },
+        { id: 'curated-named', name: 'Curated Named' },
+      ]);
+      registerRemoteProvider({
+        listRemoteModels: async () => [
+          makeDiscoveredModel('curated-named'),
+          makeDiscoveredModel('overflow-a'),
+        ],
+        getModels: async () => [makeDiscoveredModel('curated-named')],
+      });
+      const handlers = setup();
+
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+
+      const persisted = parsePersisted(repo.getProvider(created.id)?.configJson) as {
+        discoveredModels: { models: Array<{ id: string; name?: string }> };
+      };
+      expect(persisted.discoveredModels.models).toEqual([
+        { id: 'curated-absent' },
+        { id: 'curated-named', name: 'Curated Named' },
+        { id: 'overflow-a', name: 'overflow-a' },
+      ]);
+    });
+
+    it('keeps configured curated models in the live slice when discovery omits them', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      getProviderRegistry().setCuratedModels('remote', [
+        { id: 'kept-curated' },
+        { id: 'fetched-curated' },
+      ]);
+      const keptFromPreviousSlice = makeDiscoveredModel('kept-curated');
+      const fetched = [makeDiscoveredModel('fetched-curated')];
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('kept-curated'), ...fetched],
+        getModels: async () => fetched,
+      });
+      setModelsCache(new Map([['global', [keptFromPreviousSlice]]]));
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      const slice = (getModelsCache().get('global') ?? []).filter(
+        (model) => model.provider === 'remote'
+      );
+      expect(slice.map((model) => model.id)).toContain('kept-curated');
+      expect(slice.map((model) => model.id)).toContain('fetched-curated');
+    });
+
+    it('treats an empty forced discovery result as a failed refresh even with static fallbacks', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [],
+        getModels: async () => [makeDiscoveredModel('static-fallback')],
+      });
+      setModelsCache(new Map([['global', [makeDiscoveredModel('existing')]]]));
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.refreshDiscovery')!({ id: created.id }, {})
+      ).rejects.toThrow('Provider remote returned no models');
+
+      expect(repo.getProvider(created.id)?.configJson).toBe(
+        JSON.stringify({ command: 'saved acp' })
+      );
+      expect(getModelsCache().get('global')).toEqual([makeDiscoveredModel('existing')]);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('discards everything when the credential identity changes mid-fetch', async () => {
+      let credentials: unknown = { type: 'api_key', apiKey: 'key-1' };
+      const created = repo.createProvider({
+        providerId: 'cred-remote',
+        displayName: 'Cred Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      const listRemoteModels = mock(async () => {
+        credentials = { type: 'api_key', apiKey: 'key-2' };
+        return [makeDiscoveredModel('remote-a')];
+      });
+      getProviderRegistry().register({
+        id: 'cred-remote',
+        getCredentials: async () => credentials,
+        listRemoteModels,
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      } as unknown as Provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; reason?: string };
+
+      expect(listRemoteModels).toHaveBeenCalledWith({ force: true });
+      expect(result).toEqual({ success: false, reason: 'superseded' });
+      expect(repo.getProvider(created.id)?.configJson).toBe(
+        JSON.stringify({ command: 'saved acp' })
+      );
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('clears recorded failure and retry state when the refresh succeeds', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      recordClassifiedProviderFailure('remote', {
+        errorKind: 'transient',
+        message: 'upstream 503',
+      });
+      markRefreshAttemptedFor(['remote']);
+      expect(getProviderFailure('remote')).toBeDefined();
+      expect(hasRefreshBeenAttemptedFor('remote')).toBe(true);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(getProviderFailure('remote')).toBeUndefined();
+      expect(hasRefreshBeenAttemptedFor('remote')).toBe(false);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('discards everything when a global cache clear lands mid-fetch', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => {
+          clearModelsCache();
+          return [makeDiscoveredModel('remote-a')];
+        },
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; reason?: string };
+
+      expect(result).toEqual({ success: false, reason: 'superseded' });
+      expect(repo.getProvider(created.id)?.configJson).toBe(
+        JSON.stringify({ command: 'saved acp' })
+      );
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('rejects the refresh when the saved config cannot fit the discovery wrapper', async () => {
+      const pad = 'x'.repeat(64 * 1024 - 20);
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ pad }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      setModelsCache(new Map([['global', [makeDiscoveredModel('existing')]]]));
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.refreshDiscovery')!({ id: created.id }, {})
+      ).rejects.toThrow('no capacity to persist discovery results');
+
+      expect(repo.getProvider(created.id)?.configJson).toBe(JSON.stringify({ pad }));
+      expect(getModelsCache().get('global')).toEqual([makeDiscoveredModel('existing')]);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('ignores session-scoped cache clears while a saved-config refresh is in flight', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => {
+          clearModelsCache('session-123');
+          return [makeDiscoveredModel('remote-a')];
+        },
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      const persisted = parsePersisted(repo.getProvider(created.id)?.configJson);
+      expect(persisted.discoveredModels).toEqual({
+        models: [{ id: 'remote-a', name: 'remote-a' }],
+      });
+      expect(eventBus.publishAsync).toHaveBeenCalledWith('providers.changed', {
+        sessionId: 'global',
+      });
+    });
+
+    it('rejects the refresh when curated entries alone exceed the persistence budget', async () => {
+      const pad = 'x'.repeat(65_390);
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ pad }),
+      });
+      getProviderRegistry().setCuratedModels('remote', [
+        { id: 'curated-model-a' },
+        { id: 'curated-model-b' },
+        { id: 'curated-model-c' },
+        { id: 'curated-model-d' },
+        { id: 'curated-model-e' },
+      ]);
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      setModelsCache(new Map([['global', [makeDiscoveredModel('existing')]]]));
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.refreshDiscovery')!({ id: created.id }, {})
+      ).rejects.toThrow('no capacity to retain all curated models');
+
+      expect(repo.getProvider(created.id)?.configJson).toBe(JSON.stringify({ pad }));
+      expect(getModelsCache().get('global')).toEqual([makeDiscoveredModel('existing')]);
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('retains a deferred slice through an in-flight initialization and lands both catalogs', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const slowModels: ModelInfo[] = [
+        {
+          ...makeDiscoveredModel('slow-provider-model', 'Slow Provider Model'),
+          provider: 'slow-provider',
+        },
+      ];
+      getProviderRegistry().register({
+        id: 'slow-provider',
+        isAvailable: async () => true,
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return slowModels;
+        },
+      } as unknown as Provider);
+      const refreshed = [makeDiscoveredModel('refreshed-a')];
+      const { listRemoteModels: listRemoteModelsMock, getModels: getModelsMock } =
+        registerRemoteProvider({
+          listRemoteModels: async () => refreshed,
+          getModels: async () => refreshed,
+        });
+      const handlers = setup();
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+
+      const loadPromise = refreshModels();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+      await loadPromise;
+
+      const models = getModelsCache().get('global') ?? [];
+      const ids = models.map((model) => model.id).sort();
+      expect(ids).toContain('slow-provider-model');
+      expect(ids).toContain('refreshed-a');
+
+      const replaced = [makeDiscoveredModel('replaced-b')];
+      listRemoteModelsMock.mockImplementation(async () => replaced);
+      getModelsMock.mockImplementation(async () => replaced);
+      await refreshModels();
+
+      const afterIds = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(afterIds).not.toContain('refreshed-a');
+    });
+
+    it('does not discard the persisted discovery when forced strict fetch fails', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const refreshed = [makeDiscoveredModel('refreshed-a')];
+      const { listRemoteModels: listRemoteModelsMock, getModels: getModelsMock } =
+        registerRemoteProvider({
+          listRemoteModels: async () => refreshed,
+          getModels: async () => refreshed,
+        });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+
+      listRemoteModelsMock.mockImplementation(async () => []);
+      getModelsMock.mockImplementation(async () => []);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await expect(refreshModels(undefined, { forceRemote: true })).rejects.toThrow();
+
+      const persisted = parsePersisted(repo.getProvider(created.id)?.configJson) as {
+        discoveredModels: { models: Array<{ id: string }> };
+      };
+      expect(persisted.discoveredModels.models.map((m) => m.id)).toContain('refreshed-a');
+    });
+
+    it('treats a forced rebuild as authoritative over a scheduled deferred slice', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const refreshed = [makeDiscoveredModel('refreshed-a')];
+      const { listRemoteModels: listRemoteModelsMock, getModels: getModelsMock } =
+        registerRemoteProvider({
+          listRemoteModels: async () => refreshed,
+          getModels: async () => refreshed,
+        });
+      getProviderRegistry().register({
+        id: 'later-provider',
+        isAvailable: async () => true,
+        getModels: async () => [
+          { ...makeDiscoveredModel('later-model'), provider: 'later-provider' },
+        ],
+      } as unknown as Provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+
+      listRemoteModelsMock.mockImplementation(async () => []);
+      getModelsMock.mockImplementation(async () => []);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const forced = [makeDiscoveredModel('forced-a')];
+      listRemoteModelsMock.mockImplementation(async () => forced);
+      getModelsMock.mockImplementation(async () => forced);
+      await refreshModels(undefined, { forceRemote: true });
+
+      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(ids).toContain('forced-a');
+      expect(ids).not.toContain('refreshed-a');
+      expect(ids).toContain('later-model');
+    });
+
+    it('keeps a scheduled deferred slice when the next load omits the provider', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('refreshed-a')],
+        getModels: async () => [makeDiscoveredModel('refreshed-a')],
+      });
+      getProviderRegistry().register({
+        id: 'flaky',
+        isAvailable: async () => true,
+        getModels: async () => {
+          throw new Error('flaky provider down');
+        },
+      } as unknown as Provider);
+      getProviderRegistry().register({
+        id: 'stable',
+        isAvailable: async () => true,
+        getModels: async () => [{ ...makeDiscoveredModel('stable-model'), provider: 'stable' }],
+      } as unknown as Provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(ids).toContain('refreshed-a');
+      expect(ids).toContain('stable-model');
+    });
+
+    it('strips persisted discovery when an update changes the effective configuration', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china', extra: true }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      expect(repo.getProvider(created.id)?.configJson).toContain('discoveredModels');
+
+      const updated = (await handlers.get('providers.update')!(
+        { id: created.id, params: { configJson: JSON.stringify({ region: 'global' }) } },
+        {}
+      )) as { provider: ProviderRecord };
+
+      const stored = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(stored.region).toBe('global');
+      expect(stored).not.toHaveProperty('discoveredModels');
+      expect(JSON.parse(updated.provider.configJson ?? '{}')).not.toHaveProperty(
+        'discoveredModels'
+      );
+    });
+
+    it('retains persisted discovery when a curation-only config update is saved', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      const storedBefore = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(storedBefore.discoveredModels).toBeDefined();
+
+      const mergedConfig = JSON.stringify({
+        region: 'china',
+        models: [{ id: 'remote-a' }],
+        discoveredModels: storedBefore.discoveredModels,
+      });
+      const updated = (await handlers.get('providers.update')!(
+        { id: created.id, params: { configJson: mergedConfig } },
+        {}
+      )) as { provider: ProviderRecord };
+
+      const storedAfter = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(storedAfter.discoveredModels).toEqual(storedBefore.discoveredModels);
+      expect(storedAfter.models).toEqual([{ id: 'remote-a' }]);
+      expect(
+        (JSON.parse(updated.provider.configJson ?? '{}') as Record<string, unknown>)
+          .discoveredModels
+      ).toEqual(storedBefore.discoveredModels);
+    });
+
+    it('strips persisted discovery when a curation-only save also changes the endpoint', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        baseUrl: 'https://old-endpoint.example',
+        configJson: JSON.stringify({ region: 'china' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      expect(repo.getProvider(created.id)?.configJson).toContain('discoveredModels');
+
+      const updated = (await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: {
+            baseUrl: 'https://new-endpoint.example',
+            configJson: JSON.stringify({ region: 'china', models: [{ id: 'remote-a' }] }),
+          },
+        },
+        {}
+      )) as { provider: ProviderRecord };
+
+      const stored = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(stored).not.toHaveProperty('discoveredModels');
+      expect(stored.models).toEqual([{ id: 'remote-a' }]);
+      expect(repo.getProvider(created.id)?.baseUrl).toBe('https://new-endpoint.example');
+      expect(JSON.parse(updated.provider.configJson ?? '{}')).not.toHaveProperty(
+        'discoveredModels'
+      );
+    });
+
+    it('strips persisted discovery when a built-in provider is disabled', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      expect(repo.getProvider(created.id)?.configJson).toContain('discoveredModels');
+
+      const updated = (await handlers.get('providers.update')!(
+        { id: created.id, params: { isEnabled: false } },
+        {}
+      )) as { provider: ProviderRecord };
+
+      expect(updated.provider.isEnabled).toBe(false);
+      expect(JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}')).not.toHaveProperty(
+        'discoveredModels'
+      );
+    });
+
+    it('restores server-owned discoveredModels when a stale client snapshot saves curation', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      const storedBefore = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(storedBefore.discoveredModels).toBeDefined();
+
+      const staleSnapshot = JSON.stringify({
+        region: 'china',
+        models: [{ id: 'remote-a' }],
+        discoveredModels: { models: [{ id: 'stale' }] },
+      });
+      await handlers.get('providers.update')!(
+        { id: created.id, params: { configJson: staleSnapshot } },
+        {}
+      );
+
+      const storedAfter = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(storedAfter.discoveredModels).toEqual(storedBefore.discoveredModels);
+      expect(storedAfter.models).toEqual([{ id: 'remote-a' }]);
+    });
+
+    it('rejects a stale-snapshot curation save that would overflow the configJson limit after restoring discovery', async () => {
+      const pad = 'x'.repeat(65_200);
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china', pad }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      const storedBefore = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(storedBefore.discoveredModels).toBeDefined();
+
+      const staleSnapshot = JSON.stringify({
+        region: 'china',
+        pad,
+        models: [{ id: 'remote-a' }, { id: `filler-${'y'.repeat(240)}` }],
+      });
+      const originalConfig = repo.getProvider(created.id)?.configJson;
+      expect(staleSnapshot.length).toBeLessThanOrEqual(64 * 1024);
+      expect(staleSnapshot.length).toBeGreaterThan(64 * 1024 - 100);
+
+      await expect(
+        handlers.get('providers.update')!(
+          { id: created.id, params: { configJson: staleSnapshot } },
+          {}
+        )
+      ).rejects.toThrow(/after restoring persisted discovery/);
+      expect(repo.getProvider(created.id)?.configJson).toBe(originalConfig);
+    });
+
+    it('releases the applied slice so later forced rebuilds can replace the catalog', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const catalogA = [makeDiscoveredModel('catalog-a')];
+      const catalogB = [makeDiscoveredModel('catalog-b')];
+      const { listRemoteModels, getModels } = registerRemoteProvider({
+        listRemoteModels: async () => catalogA,
+        getModels: async () => catalogA,
+      });
+      setModelsCache(new Map([['global', [makeDiscoveredModel('stale')]]]));
+      const handlers = setup();
+      const handler = handlers.get('providers.refreshDiscovery')!;
+
+      const result = (await handler({ id: created.id }, {})) as { success: boolean };
+      expect(result.success).toBe(true);
+      expect(getModelsCache().get('global')).toEqual([...catalogA]);
+
+      listRemoteModels.mockImplementation(async () => catalogB);
+      getModels.mockImplementation(async () => catalogB);
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      expect(getModelsCache().get('global')).toEqual([...catalogB]);
+    });
+
+    it('accounts for the discovery fingerprint length in the persistence budget', async () => {
+      const pad = 'x'.repeat(65_000);
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china', pad }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+        getDiscoveryEndpointFingerprint: () => 'f'.repeat(300),
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      const finalConfigJson = repo.getProvider(created.id)?.configJson ?? '';
+      expect(finalConfigJson.length).toBeLessThanOrEqual(64 * 1024);
+      expect(JSON.parse(finalConfigJson).discoveredModels.fingerprint).toBe('f'.repeat(300));
+    });
+
+    it('caps the persisted blob by remaining config capacity for large existing payloads', async () => {
+      const pad = 'x'.repeat(63_000);
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ pad }),
+      });
+      const discovered = Array.from({ length: 500 }, (_, index) =>
+        makeDiscoveredModel(`m-${index}`, `Name ${index}`)
+      );
+      registerRemoteProvider({
+        listRemoteModels: async () => discovered,
+        getModels: async () => discovered,
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; truncated?: boolean };
+
+      const finalConfigJson = repo.getProvider(created.id)?.configJson ?? '';
+      expect(result.success).toBe(true);
+      expect(finalConfigJson.length).toBeLessThan(64 * 1024);
+      const persisted = JSON.parse(finalConfigJson) as {
+        pad: string;
+        discoveredModels: { models: unknown[]; truncated?: boolean };
+      };
+      expect(persisted.pad).toBe(pad);
+      expect(persisted.discoveredModels.truncated).toBe(true);
+    });
+  });
+
   describe('providers.fetchAcpModels', () => {
     it('rejects unknown and non-ACP providers', async () => {
       const anthropic = repo.createProvider({
@@ -546,6 +1648,32 @@ describe('Provider RPC handlers', () => {
       expect(result.success).toBe(true);
       expect(result.provider.providerId).toBe('openrouter');
       expect(creds.storeApiKey).toHaveBeenCalledWith('openrouter', 'sk-or-test');
+    });
+
+    it('strips client-supplied persisted discovery before creating the row', async () => {
+      const handlers = setup();
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'openrouter',
+            displayName: 'OpenRouter',
+            kind: 'built_in',
+            authType: 'api_key',
+            configJson: JSON.stringify({
+              models: [{ id: 'kept-model' }],
+              discoveredModels: { models: [{ id: 'stale-from-previous-account' }] },
+            }),
+          },
+          credentials: { apiKey: 'sk-or-test' },
+        },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      const stored = JSON.parse(result.provider.configJson ?? '{}') as Record<string, unknown>;
+      expect(stored.models).toEqual([{ id: 'kept-model' }]);
+      expect(stored).not.toHaveProperty('discoveredModels');
+      expect(repo.getProvider(result.provider.id)?.configJson).toBe(result.provider.configJson);
     });
 
     it('does not store custom_endpoint credentials in the credential store', async () => {
@@ -875,6 +2003,27 @@ describe('Provider RPC handlers', () => {
       expect(result.success).toBe(true);
       const after = repo.getProvider(created.id);
       expect(after).not.toBeNull();
+      expect(after?.isEnabled).toBe(false);
+    });
+
+    it('strips persisted discovery when deleting a built-in provider', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({
+          region: 'china',
+          discoveredModels: { models: [{ id: 'remote-a' }] },
+        }),
+      });
+      const handlers = setup();
+      await handlers.get('providers.delete')!({ id: created.id }, {});
+
+      const after = repo.getProvider(created.id);
+      const stored = JSON.parse(after?.configJson ?? '{}') as Record<string, unknown>;
+      expect(stored.region).toBe('china');
+      expect(stored).not.toHaveProperty('discoveredModels');
       expect(after?.isEnabled).toBe(false);
     });
 

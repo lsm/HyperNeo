@@ -405,6 +405,17 @@ export class KimiProvider implements Provider {
     return merged;
   }
 
+  getDiscoveryEndpointFingerprint(discoveryBaseUrl?: string): string {
+    const envBaseUrl = this.env.KIMI_BASE_URL;
+    const explicitBaseUrl = discoveryBaseUrl ?? envBaseUrl;
+    return providerDiscoveryFingerprint({
+      ...(explicitBaseUrl === undefined
+        ? { region: this.env.KIMI_REGION ?? this.defaultRegion }
+        : {}),
+      baseUrl: this.resolveModelListBaseUrl(discoveryBaseUrl),
+    });
+  }
+
   private discoveryFingerprint(): string {
     return providerDiscoveryFingerprint({
       region: this.env.KIMI_REGION ?? this.defaultRegion,

@@ -170,6 +170,8 @@ const refreshInProgress = new Map<string, Promise<void>>();
 
 const cacheGeneration = new Map<string, number>();
 
+let cacheClearSequence = 0;
+
 const PROVIDER_RETRY_BACKOFF_MS = 60_000;
 
 interface ProviderRetryEntry {
@@ -1259,6 +1261,9 @@ function clearFailedStrictProviderCaches(result: ModelsLoadResult): void {
 }
 
 export function clearModelsCache(cacheKey?: string, providerId?: string): void {
+  if (!cacheKey || cacheKey === 'global') {
+    cacheClearSequence += 1;
+  }
   if (cacheKey) {
     const hadInFlight = refreshInProgress.has(cacheKey);
     modelsCache.delete(cacheKey);
@@ -1442,6 +1447,75 @@ export function updateProviderModelsInCache(
       .catch(() => {});
   }
   return true;
+}
+
+export function getModelsCacheClearSequence(): number {
+  return cacheClearSequence;
+}
+
+export function getCurrentCacheLoad(cacheKey: string = 'global'): Promise<void> | undefined {
+  return refreshInProgress.get(cacheKey);
+}
+
+export function applyDiscoveredProviderModels(
+  providerId: string,
+  models: ModelInfo[],
+  cacheKey: string = 'global',
+  persistedDiscovered: ReadonlyArray<{ id: string; name?: string }> = []
+): boolean {
+  const curatedIds = getCuratedModelIds(providerId);
+  let enriched = models;
+  if (curatedIds !== undefined) {
+    const present = new Set(models.map((model) => model.id));
+    const missing = [...curatedIds].filter((id) => !present.has(id));
+    if (missing.length > 0) {
+      const currentSlice = (modelsCache.get(cacheKey) ?? []).filter(
+        (model) => model.provider === providerId
+      );
+      const byId = new Map(currentSlice.map((model) => [model.id, model]));
+      const persistedById = new Map(
+        persistedDiscovered.filter((entry) => entry.id).map((entry) => [entry.id, entry])
+      );
+      const seeded: ModelInfo[] = [];
+      for (const id of missing) {
+        const found =
+          byId.get(id) ??
+          STATIC_MODEL_METADATA.find((model) => model.provider === providerId && model.id === id) ??
+          persistedById.get(id);
+        if (found) {
+          if ('family' in found) {
+            seeded.push(found as ModelInfo);
+          } else {
+            const base: ModelInfo = {
+              id: found.id,
+              name: found.name ?? found.id,
+              alias: found.id,
+              family: providerId,
+              provider: providerId,
+              contextWindow: 128000,
+              preferContextWindowMetadata: true,
+              description: `${found.name ?? found.id} via ${providerId}`,
+              releaseDate: '',
+              available: true,
+            };
+            seeded.push(base);
+          }
+        }
+      }
+      if (seeded.length > 0) enriched = [...seeded, ...models];
+    }
+  }
+  return updateProviderModelsInCache(
+    providerId,
+    filterProviderModels(providerId, enriched),
+    cacheKey
+  );
+}
+
+export function markProviderRefreshSucceeded(providerId: string): boolean {
+  providerAppliedSeq.set(providerId, ++modelLoadSequence);
+  clearProviderRetry(providerId);
+  return clearProviderFailure(providerId);
 }
 
 export function releaseAppliedProviderSlice(providerId: string, cacheKey: string = 'global'): void {
