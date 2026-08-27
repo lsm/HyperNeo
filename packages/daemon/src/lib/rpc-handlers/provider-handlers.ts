@@ -785,7 +785,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             updates.configJson !== undefined &&
             existing.configJson !== updates.configJson &&
             isCurationOnlyConfigUpdate(existing.configJson, updates.configJson) &&
-            data.credentials === undefined
+            data.credentials === undefined &&
+            updates.baseUrl === undefined &&
+            updates.customEndpointConfigJson === undefined
           ) {
             const restoredConfig = restoreServerDiscoveredModels(
               updates.configJson,
@@ -844,7 +846,9 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             if (
               curationOnlyConfigUpdate &&
               updates.configJson !== undefined &&
-              data.credentials === undefined
+              data.credentials === undefined &&
+              updates.baseUrl === undefined &&
+              updates.customEndpointConfigJson === undefined
             ) {
               const restoredConfig = restoreServerDiscoveredModels(
                 record.configJson,

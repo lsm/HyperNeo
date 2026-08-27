@@ -1302,6 +1302,46 @@ describe('Provider RPC handlers', () => {
       ).toEqual(storedBefore.discoveredModels);
     });
 
+    it('strips persisted discovery when a curation-only save also changes the endpoint', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        baseUrl: 'https://old-endpoint.example',
+        configJson: JSON.stringify({ region: 'china' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      expect(repo.getProvider(created.id)?.configJson).toContain('discoveredModels');
+
+      const updated = (await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: {
+            baseUrl: 'https://new-endpoint.example',
+            configJson: JSON.stringify({ region: 'china', models: [{ id: 'remote-a' }] }),
+          },
+        },
+        {}
+      )) as { provider: ProviderRecord };
+
+      const stored = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(stored).not.toHaveProperty('discoveredModels');
+      expect(stored.models).toEqual([{ id: 'remote-a' }]);
+      expect(repo.getProvider(created.id)?.baseUrl).toBe('https://new-endpoint.example');
+      expect(JSON.parse(updated.provider.configJson ?? '{}')).not.toHaveProperty(
+        'discoveredModels'
+      );
+    });
+
     it('restores server-owned discoveredModels when a stale client snapshot saves curation', async () => {
       const created = repo.createProvider({
         providerId: 'remote',

@@ -26,6 +26,7 @@ export class OAuthRefreshScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private activeTick: Promise<void> | null = null;
   private readonly retryCounts = new Map<string, number>();
+  private readonly pendingInvalidationRetries = new Map<string, number>();
   private readonly intervalMs: number;
   private readonly refreshWindowMs: number;
   private readonly maxRetries: number;
@@ -96,6 +97,7 @@ export class OAuthRefreshScheduler {
 
   private async refreshProviderIfNeeded(provider: Provider): Promise<void> {
     if (!provider.refreshToken) return;
+    await this.retryPendingInvalidation(provider);
     const credentials = await this.credentialsForProvider(provider);
     if (!credentials || credentials.type !== 'oauth') return;
 
@@ -124,25 +126,15 @@ export class OAuthRefreshScheduler {
         persistenceFailed = true;
       }
       if (persistenceFailed) {
-        const onPreRecovery = this.onPreRecoveryInvalidate;
-        if (onPreRecovery) {
-          try {
-            await onPreRecovery(provider.id);
-          } catch {}
-        }
+        await this.runPreRecoveryInvalidation(provider.id);
         await this.recordFailedRefresh(provider.id, retryKey);
         return;
       }
       this.retryCounts.delete(retryKey);
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
-      const onPreRecovery = this.onPreRecoveryInvalidate;
-      if (onPreRecovery) {
-        try {
-          await onPreRecovery(provider.id);
-        } catch {
-          await this.recordFailedRefresh(provider.id, retryKey);
-          return;
-        }
+      if (!(await this.runPreRecoveryInvalidation(provider.id))) {
+        await this.recordPendingInvalidationFailure(provider.id);
+        return;
       }
       await this.recoverDormant(provider.id);
       await this.onProviderChanged?.(provider.id, 'refreshed');
@@ -150,6 +142,34 @@ export class OAuthRefreshScheduler {
     }
 
     await this.recordFailedRefresh(provider.id, retryKey);
+  }
+
+  private async retryPendingInvalidation(provider: Provider): Promise<void> {
+    if (!this.pendingInvalidationRetries.has(provider.id)) return;
+    if (await this.runPreRecoveryInvalidation(provider.id)) return;
+    await this.recordPendingInvalidationFailure(provider.id);
+  }
+
+  private async runPreRecoveryInvalidation(providerId: string): Promise<boolean> {
+    const onPreRecovery = this.onPreRecoveryInvalidate;
+    if (!onPreRecovery) return true;
+    try {
+      await onPreRecovery(providerId);
+      this.pendingInvalidationRetries.delete(providerId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async recordPendingInvalidationFailure(providerId: string): Promise<void> {
+    const retries = (this.pendingInvalidationRetries.get(providerId) ?? 0) + 1;
+    this.pendingInvalidationRetries.set(providerId, retries);
+    if (retries >= this.maxRetries) {
+      this.pendingInvalidationRetries.delete(providerId);
+      this.credentialManager.markProviderHealth(providerId, 'unhealthy');
+      await this.onProviderChanged?.(providerId, 'exhausted');
+    }
   }
 
   private async recordFailedRefresh(providerId: string, retryKey: string): Promise<void> {
