@@ -116,6 +116,8 @@ Important seams under `packages/daemon/src/lib/space/`:
 - `workflows/` and `managers/` — workflow definitions and lifecycle
 - `tools/` — Space MCP servers
 
+A space owns a registry of git-repo workspaces (`space_workspaces`, with `spaces.workspace_path` kept as the immutable primary; see `docs/features/space-workspaces.md`). Tasks, goals, and sessions bind to one registered repo each, and all task→repo resolution flows through `resolveTaskWorkspace` in `space/runtime/spawn-slot-resolution.ts` — never hand-roll a space-root fallback beside it.
+
 `buildCustomAgentTaskMessage` in `space/agents/custom-agent.ts` centrally injects runtime location, role, prior goal work, project context, and standing instructions. Workflow slot prompts must remain behavioral; do not duplicate peers, channels, gate IDs, or reviewer framing there.
 
 Space goals use `space_goals` plus append-only `space_goal_events`. They store rolling summary, progress, metrics, next steps, task pointers, and optional check-in schedules. Check-ins create ordinary Space tasks. Forge scopes provide linked evidence/episode/lesson loops; they do not replace goal state.
