@@ -793,6 +793,15 @@ export class RateLimitWatchdog {
     }
     this.billingPauseSurfaced = false;
 
+    if (this.querySuperseded(this.cooldownQueryGeneration)) {
+      this.logger.info(
+        'Immediate retry aborted before firing: the cooldown-owning query was superseded; ' +
+          'retiring its published pause.'
+      );
+      void this.fireCooldownRetry(this.lastErrorMessage);
+      return false;
+    }
+
     this.logger.info(
       `Immediate retry triggered (step ${this.retryCount}/${this.config.maxAutoRetries}).`
     );

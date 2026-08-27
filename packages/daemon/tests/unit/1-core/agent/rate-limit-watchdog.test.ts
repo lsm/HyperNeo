@@ -1416,6 +1416,26 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it('retryNow reports not-fired and retires the pause when the cooldown-owning query was superseded (B5e)', async () => {
+      const { deps, notifyPause, notifyResume } = createMockDeps({ chain: [] });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      const retryCallback = mock(async () => true);
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      watchdog.setRetryCallback(retryCallback);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      expect(watchdog.isPending()).toBe(true);
+      expect(notifyPause).toHaveBeenCalledTimes(1);
+
+      queryGeneration = 9;
+      expect(watchdog.retryNow()).toBe(false);
+      await flush();
+
+      expect(retryCallback).not.toHaveBeenCalled();
+      expect(notifyResume).toHaveBeenCalledTimes(1);
+      expect(watchdog.isPending()).toBe(false);
+    });
+
     it('keeps the task paused (no resume) when startup retries are exhausted', async () => {
       const { deps, notifyResume } = createMockDeps({ chain: [] });
       const retryCallback = mock(async () => false);
