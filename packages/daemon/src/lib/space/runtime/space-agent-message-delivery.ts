@@ -229,23 +229,27 @@ async function deliverAndAwaitConsumption(
         ? () => ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus
         : undefined,
     deliver: () =>
-      withSessionResetCoordination(sessionId, async () =>
-        deliverAndMarkQueued({
-          jobQueue: ctx.deps.jobQueue,
-          stateManager: ctx.deps.stateManager,
-          sessionId,
-          messageUuid: messageId,
-          origin: ctx.origin ?? 'space_agent',
-          onEnqueueFailure: () => {
-            const failedDbId = ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(
-              sessionId,
-              messageId
-            );
-            if (failedDbId) {
-              void ctx.deps.publishStatusChanged(sessionId, failedDbId, 'failed').catch(() => {});
-            }
-          },
-        })
+      withSessionResetCoordination(
+        sessionId,
+        async () =>
+          deliverAndMarkQueued({
+            jobQueue: ctx.deps.jobQueue,
+            stateManager: ctx.deps.stateManager,
+            sessionId,
+            messageUuid: messageId,
+            origin: ctx.origin ?? 'space_agent',
+            signal: ctx.deps.disposeSignal,
+            onEnqueueFailure: () => {
+              const failedDbId = ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(
+                sessionId,
+                messageId
+              );
+              if (failedDbId) {
+                void ctx.deps.publishStatusChanged(sessionId, failedDbId, 'failed').catch(() => {});
+              }
+            },
+          }),
+        ctx.deps.disposeSignal
       ),
   });
   return { ...ctx, consumed: outcome.consumed };

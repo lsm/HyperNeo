@@ -421,8 +421,12 @@ export async function awaitDeliveryConsumptionTolerant(args: {
   });
   try {
     if (!args.signal?.aborted) {
+      const deliverPromise = args.deliver().catch((err: unknown) => {
+        if (args.signal?.aborted) return;
+        throw err;
+      });
       await Promise.race([
-        args.deliver(),
+        deliverPromise,
         aborted.then(() => {
           throw new DOMException('Aborted', 'AbortError');
         }),
@@ -488,8 +492,10 @@ export const sessionResetCoordinationLocks = new Map<string, Promise<unknown>>()
 
 export async function withSessionResetCoordination<T>(
   sessionId: string,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  signal?: AbortSignal
 ): Promise<T> {
+  throwIfDeliveryAborted(signal);
   const prev = sessionResetCoordinationLocks.get(sessionId) ?? Promise.resolve();
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
@@ -497,14 +503,23 @@ export async function withSessionResetCoordination<T>(
   });
   const tail = prev.then(() => held);
   sessionResetCoordinationLocks.set(sessionId, tail);
-  await prev;
+  const aborted = waitForDeliveryAbort(signal);
+  let acquired = false;
   try {
+    await Promise.race([prev, aborted.promise]);
+    throwIfDeliveryAborted(signal);
+    acquired = true;
     return await fn();
   } finally {
-    release();
-    if (sessionResetCoordinationLocks.get(sessionId) === tail) {
-      sessionResetCoordinationLocks.delete(sessionId);
-    }
+    aborted.cancel();
+    const releaseLock = () => {
+      release();
+      if (sessionResetCoordinationLocks.get(sessionId) === tail) {
+        sessionResetCoordinationLocks.delete(sessionId);
+      }
+    };
+    if (acquired) releaseLock();
+    else void prev.finally(releaseLock);
   }
 }
 
@@ -569,22 +584,27 @@ export async function deliverAndMarkQueued(args: {
   messageUuid: string;
   origin: MessageDeliveryOrigin;
   onEnqueueFailure?: () => void;
+  signal?: AbortSignal;
 }): Promise<void> {
-  await withSessionLock(args.sessionId, async () => {
-    let role: MessageDeliveryRole;
-    try {
-      role = deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
-        origin: args.origin,
-        parentToolUseId: null,
-      });
-    } catch (err) {
-      args.onEnqueueFailure?.();
-      throw err;
-    }
-    if (role === 'turn' && args.stateManager) {
+  await withSessionLock(
+    args.sessionId,
+    async () => {
+      let role: MessageDeliveryRole;
       try {
-        await args.stateManager.setQueuedIfIdle(args.messageUuid);
-      } catch {}
-    }
-  });
+        role = deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
+          origin: args.origin,
+          parentToolUseId: null,
+        });
+      } catch (err) {
+        args.onEnqueueFailure?.();
+        throw err;
+      }
+      if (role === 'turn' && args.stateManager) {
+        try {
+          await args.stateManager.setQueuedIfIdle(args.messageUuid);
+        } catch {}
+      }
+    },
+    args.signal
+  );
 }
