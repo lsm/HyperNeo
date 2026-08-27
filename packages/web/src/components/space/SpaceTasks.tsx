@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
+import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
 import { toast } from '../../lib/toast';
 import { getTaskStatusConfig } from '../../lib/task-status';
@@ -589,6 +590,7 @@ function TaskItem({
   const showsActivity =
     task.status === 'in_progress' &&
     (!task.workflowRunId || spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId));
+  const workspaceLabel = getTaskWorkspaceLabel(task, spaceStore.workspaces?.value ?? []);
 
   const activate = () => onClick?.(task.id);
 
@@ -624,6 +626,14 @@ function TaskItem({
           <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
             {showStatus && <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />}
             {showsActivity && <ActivitySpinner tone="info" />}
+            {workspaceLabel && (
+              <span
+                class="inline-flex items-center rounded border border-dark-600 bg-dark-700 px-1.5 py-0.5 text-xs font-medium text-gray-400"
+                data-testid="task-workspace-badge"
+              >
+                {workspaceLabel}
+              </span>
+            )}
             {task.updatedAt > 0 && (
               <span class="text-xs text-gray-500">Updated {getRelativeTime(task.updatedAt)}</span>
             )}

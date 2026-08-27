@@ -25,7 +25,7 @@ import {
   currentSpaceTaskViewTabSignal,
   rightPanelTargetSignal,
 } from '../../lib/signals';
-import { buildMarkDonePayload } from '../../lib/space-task-helpers';
+import { buildMarkDonePayload, getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { spaceStore } from '../../lib/space-store';
 import { resolveActiveTaskBanner } from '../../lib/task-banner.ts';
 import { cn } from '../../lib/utils';
@@ -597,6 +597,7 @@ export function SpaceTaskPane({
       ? ({ kind: 'hook_pending', runId: _runId } as const)
       : resolvedBanner;
   const showHeaderStatusBadge = activeBanner === null;
+  const workspaceLabel = getTaskWorkspaceLabel(task, spaceStore.workspaces?.value ?? []);
   const visibleTarget = visibleTargetName
     ? composerTargets.find(
         (target) =>
@@ -1243,6 +1244,14 @@ export function SpaceTaskPane({
               <TaskMetaBadge class={PRIORITY_BADGE_CLASSES[task.priority]}>
                 {PRIORITY_LABELS[task.priority]} Priority
               </TaskMetaBadge>
+              {workspaceLabel && (
+                <span
+                  class="inline-flex h-6 max-w-[8.5rem] items-center rounded-md border border-dark-600 bg-dark-700 px-2 text-[11px] font-medium leading-none text-gray-400 whitespace-nowrap"
+                  data-testid="task-workspace-badge"
+                >
+                  <span class="truncate">{workspaceLabel}</span>
+                </span>
+              )}
             </div>
           </div>
         </div>

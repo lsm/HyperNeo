@@ -101,6 +101,7 @@ let mockTaskActivity: ReturnType<typeof signal<Map<string, SpaceTaskActivityMemb
 let mockTaskMessageActivity: ReturnType<typeof signal<Map<string, number>>>;
 let mockNodeExecutions: ReturnType<typeof signal<NodeExecution[]>>;
 let mockNodeExecutionsByNodeId: ReturnType<typeof signal<Map<string, unknown[]>>>;
+const mockWorkspaces = signal<unknown[]>([]);
 
 const mockUpdateTask = vi.fn().mockResolvedValue(undefined);
 const mockCancelWorkflowRun = vi.fn().mockResolvedValue(undefined);
@@ -126,6 +127,7 @@ vi.mock('../../../lib/space-store', () => ({
       },
       nodeExecutions: mockNodeExecutions,
       nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,
+      workspaces: mockWorkspaces,
       updateTask: mockUpdateTask,
       cancelWorkflowRun: mockCancelWorkflowRun,
       recoverWorkflowTask: mockRecoverWorkflowTask,
@@ -312,6 +314,7 @@ describe('SpaceTaskPane', () => {
     mockWorkflowRuns.value = [];
     mockTaskActivity.value = new Map();
     mockNodeExecutions.value = [];
+    mockWorkspaces.value = [];
     mockUpdateTask.mockClear();
     mockCancelWorkflowRun.mockClear();
     mockRecoverWorkflowTask.mockClear();
@@ -354,6 +357,29 @@ describe('SpaceTaskPane', () => {
     expect(getByText('My Task')).toBeTruthy();
     expect(getAllByText('In Progress').length).toBeGreaterThan(0);
     expect(getByText('High Priority')).toBeTruthy();
+  });
+
+  it('shows workspace badge for non-primary-bound task and hides it for primary-bound task', () => {
+    mockWorkspaces.value = [
+      { id: 'ws-1', spaceId: 'space-1', path: '/primary', label: 'Main', isPrimary: true },
+      { id: 'ws-2', spaceId: 'space-1', path: '/secondary/docs', label: 'Docs', isPrimary: false },
+    ];
+    mockTasks.value = [
+      makeTask({ id: 'task-1', workspacePath: '/primary' }),
+      makeTask({
+        id: 'task-2',
+        taskNumber: 2,
+        title: 'Docs task',
+        workspacePath: '/secondary/docs',
+      }),
+    ];
+    const { queryByTestId, rerender } = render(<SpaceTaskPane taskId="task-1" />);
+    expect(queryByTestId('task-workspace-badge')).toBeNull();
+
+    rerender(<SpaceTaskPane taskId="task-2" />);
+    const badge = queryByTestId('task-workspace-badge');
+    expect(badge).toBeTruthy();
+    expect(badge?.textContent).toBe('Docs');
   });
 
   it('shows the task number in the header', () => {

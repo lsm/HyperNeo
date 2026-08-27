@@ -234,6 +234,8 @@ class SpaceStore {
 
   readonly sessions = signal<SpaceSessionRow[]>([]);
 
+  readonly workspaces = signal<SpaceWorkspace[]>([]);
+
   updateSession(sessionId: string, patch: Partial<Omit<SpaceSessionRow, 'id'>>): void {
     this.sessions.value = this.sessions.value.map((s) =>
       s.id === sessionId ? { ...s, ...patch } : s
@@ -566,6 +568,7 @@ class SpaceStore {
     this.nodeExecPromise = null;
     this.activeNodeExecRunId = null;
     this.sessions.value = [];
+    this.workspaces.value = [];
     this.schedules.value = [];
     this.goals.value = [];
     this.goalEvents.value = new Map();
@@ -622,6 +625,15 @@ class SpaceStore {
     this.cleanupFunctions.push(unsubSpaceUpdated);
 
     this.subscribeSpaceSessions(hub, spaceId);
+
+    this.listWorkspaces()
+      .then((workspaces) => {
+        if (this.spaceId.value !== spaceId) return;
+        this.workspaces.value = workspaces;
+      })
+      .catch((err) => {
+        logger.error('Failed to load workspaces:', err);
+      });
 
     const unsubSpaceArchived = hub.onEvent<{
       sessionId: string;

@@ -1,4 +1,4 @@
-import type { SpaceTask, UpdateSpaceTaskParams } from '@hyperneo/shared';
+import type { SpaceTask, SpaceWorkspace, UpdateSpaceTaskParams } from '@hyperneo/shared';
 
 export function buildMarkDonePayload(task: SpaceTask): UpdateSpaceTaskParams {
   return {
@@ -11,4 +11,19 @@ export function buildMarkDonePayload(task: SpaceTask): UpdateSpaceTaskParams {
         }
       : {}),
   };
+}
+
+export function getTaskWorkspaceLabel(
+  task: SpaceTask,
+  workspaces: SpaceWorkspace[]
+): string | null {
+  if (!task.workspacePath) return null;
+
+  const primaryPath = workspaces.find((w) => w.isPrimary)?.path;
+  if (task.workspacePath === primaryPath) return null;
+
+  const match = workspaces.find((w) => w.path === task.workspacePath);
+  if (match?.label) return match.label;
+
+  return task.workspacePath.split('/').filter(Boolean).at(-1) ?? task.workspacePath;
 }
