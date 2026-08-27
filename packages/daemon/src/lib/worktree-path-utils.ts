@@ -48,6 +48,15 @@ export function getWorktreeBaseDir(
       const fallbackProjectDir = testBaseDir
         ? join(testBaseDir, encodedPath)
         : join(getDataDir(), 'projects', encodedPath);
+      const fallbackSentinel = join(fallbackProjectDir, '.hyperneo-repo-root');
+      if (existsSync(fallbackProjectDir)) {
+        if (!existsSync(fallbackSentinel)) {
+          writeFileSync(fallbackSentinel, normalizedGitRoot);
+        }
+      } else {
+        mkdirSync(fallbackProjectDir, { recursive: true });
+        writeFileSync(fallbackSentinel, normalizedGitRoot);
+      }
       return join(fallbackProjectDir, 'worktrees');
     }
   } else {

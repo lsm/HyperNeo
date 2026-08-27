@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -23,7 +23,7 @@ async function makeGitRepo(label: string): Promise<string> {
   execSync('git add .', { cwd: dir });
   execSync('git commit -m "initial commit"', { cwd: dir });
 
-  return dir;
+  return realpathSync(dir);
 }
 
 function makeDb(workspacePath: string): { db: BunDatabase; spaceId: string } {
@@ -187,7 +187,7 @@ describe('createTaskWorktree', () => {
   test('recovers from stale directory left by a crashed previous run', async () => {
     const taskId = seedTask(db, spaceId, 'task-stale-dir', 99);
     const slug = worktreeSlug('Stale Dir Task', 99);
-    const shortKey = getProjectShortKey(repoDir);
+    const shortKey = getProjectShortKey(join(repoDir, '.git'));
     const expectedPath = join(testBaseDir, shortKey, 'worktrees', slug);
 
     mkdirSync(expectedPath, { recursive: true });
@@ -198,7 +198,7 @@ describe('createTaskWorktree', () => {
   });
 
   test('recovers stale branch via git worktree prune when branch is in a prunable worktree', async () => {
-    const shortKey = getProjectShortKey(repoDir);
+    const shortKey = getProjectShortKey(join(repoDir, '.git'));
     const stalePath = join(testBaseDir, shortKey, 'worktrees', 'prune-test-stale');
     mkdirSync(join(testBaseDir, shortKey, 'worktrees'), { recursive: true });
     execSync(`git worktree add "${stalePath}" -b space/prune-test HEAD`, { cwd: repoDir });
@@ -224,6 +224,637 @@ describe('createTaskWorktree', () => {
     await expect(
       manager.createTaskWorktree('nonexistent-space', 'any-task-id', 'Title', 1)
     ).rejects.toThrow('Space not found');
+  });
+});
+
+describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
+  let secondaryDir: string;
+
+  beforeEach(async () => {
+    secondaryDir = await makeGitRepo('secondary');
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(secondaryDir, { recursive: true, force: true });
+    } catch {}
+  });
+
+  test('secondary-repo task lands under that repo project dir; default task unchanged', async () => {
+    const defaultTaskId = seedTask(db, spaceId, 'task-ws11-default', 60);
+    const secondaryTaskId = seedTask(db, spaceId, 'task-ws11-secondary', 61);
+
+    const defaultResult = await manager.createTaskWorktree(
+      spaceId,
+      defaultTaskId,
+      'Default Repo Task',
+      60
+    );
+    const secondaryResult = await manager.createTaskWorktree(
+      spaceId,
+      secondaryTaskId,
+      'Secondary Repo Task',
+      61,
+      undefined,
+      secondaryDir
+    );
+
+    expect(defaultResult.path).toBe(
+      join(testBaseDir, getProjectShortKey(join(repoDir, '.git')), 'worktrees', defaultResult.slug)
+    );
+    expect(secondaryResult.path).toBe(
+      join(
+        testBaseDir,
+        getProjectShortKey(join(secondaryDir, '.git')),
+        'worktrees',
+        secondaryResult.slug
+      )
+    );
+    expect(existsSync(defaultResult.path)).toBe(true);
+    expect(existsSync(secondaryResult.path)).toBe(true);
+
+    const primaryBranches = execSync('git branch --list', { cwd: repoDir }).toString();
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+
+    expect(primaryBranches).toContain(`space/${defaultResult.slug}`);
+    expect(primaryBranches).not.toContain(`space/${secondaryResult.slug}`);
+    expect(secondaryBranches).toContain(`space/${secondaryResult.slug}`);
+    expect(secondaryBranches).not.toContain(`space/${defaultResult.slug}`);
+  });
+
+  test('secondary-repo worktree is registered in that repo only, path unchanged for lookups', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-list', 62);
+    const { path } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Secondary Only',
+      62,
+      undefined,
+      secondaryDir
+    );
+
+    const primaryWorktrees = execSync('git worktree list', { cwd: repoDir }).toString();
+    const secondaryWorktrees = execSync('git worktree list', { cwd: secondaryDir }).toString();
+    expect(primaryWorktrees).not.toContain(path);
+    expect(secondaryWorktrees).toContain(path);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBe(path);
+  });
+
+  test('stale branch cleanup runs in the repoRoot repo', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-stale', 63);
+    const slug = worktreeSlug('Stale Branch Task', 63);
+    execSync(`git branch "space/${slug}" HEAD`, { cwd: secondaryDir });
+
+    const result = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Stale Branch Task',
+      63,
+      undefined,
+      secondaryDir
+    );
+
+    expect(result.slug).toBe(slug);
+    expect(existsSync(result.path)).toBe(true);
+    const secondaryWorktrees = execSync('git worktree list', { cwd: secondaryDir }).toString();
+    expect(secondaryWorktrees).toContain(result.path);
+  });
+
+  test('stale directory recovery targets the repoRoot project dir', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-stale-dir', 64);
+    const slug = worktreeSlug('Stale Dir Secondary', 64);
+    const expectedPath = join(
+      testBaseDir,
+      getProjectShortKey(join(secondaryDir, '.git')),
+      'worktrees',
+      slug
+    );
+    mkdirSync(expectedPath, { recursive: true });
+
+    const result = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Stale Dir Secondary',
+      64,
+      undefined,
+      secondaryDir
+    );
+
+    expect(result.path).toBe(expectedPath);
+    expect(existsSync(result.path)).toBe(true);
+  });
+
+  test('removeTaskWorktree cleans up in the owning secondary repo and spares primary branches', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-rm', 65);
+    const { path, slug } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Remove Secondary',
+      65,
+      undefined,
+      secondaryDir
+    );
+    execSync(`git branch "space/${slug}" HEAD`, { cwd: repoDir });
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(existsSync(path)).toBe(false);
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(secondaryBranches).not.toContain(`space/${slug}`);
+    const primaryBranches = execSync('git branch --list', { cwd: repoDir }).toString();
+    expect(primaryBranches).toContain(`space/${slug}`);
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+  });
+
+  test('cleanupOrphaned deletes the branch in the owning secondary repo when the dir is gone', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-orphan', 66);
+    const { path, slug } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Orphan Secondary',
+      66,
+      undefined,
+      secondaryDir
+    );
+
+    rmSync(path, { recursive: true, force: true });
+    const secondaryWorktreesBefore = execSync('git worktree list', {
+      cwd: secondaryDir,
+    }).toString();
+    expect(secondaryWorktreesBefore).toContain(slug);
+
+    await manager.cleanupOrphaned(spaceId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(secondaryBranches).not.toContain(`space/${slug}`);
+    const secondaryWorktreesAfter = execSync('git worktree list', {
+      cwd: secondaryDir,
+    }).toString();
+    expect(secondaryWorktreesAfter).not.toContain(slug);
+  });
+
+  test('removeTaskWorktree still deletes the checkout directory when the owning repo disappeared', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-dead-repo', 67);
+    const { path } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Dead Repo Task',
+      67,
+      undefined,
+      secondaryDir
+    );
+
+    rmSync(secondaryDir, { recursive: true, force: true });
+    expect(existsSync(path)).toBe(true);
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test('slug uniqueness spans spaces sharing a repo', async () => {
+    const otherSpaceId = `space-ws11-other-${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+	       allowed_models, session_ids, slug, status, created_at, updated_at)
+	       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+    ).run(
+      otherSpaceId,
+      secondaryDir,
+      `Space ${otherSpaceId}`,
+      otherSpaceId,
+      Date.now(),
+      Date.now()
+    );
+
+    const taskA = seedTask(db, spaceId, 'task-ws11-share-a', 68);
+    const taskB = seedTask(db, otherSpaceId, 'task-ws11-share-b', 68);
+
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Shared Title',
+      68,
+      undefined,
+      secondaryDir
+    );
+    const b = await manager.createTaskWorktree(otherSpaceId, taskB, 'Shared Title', 68);
+
+    expect(a.slug).not.toBe(b.slug);
+    expect(a.path).not.toBe(b.path);
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+  });
+
+  test('symlinked repo spellings canonicalize to one project dir and dedupe slugs', async () => {
+    const aliasDir = join(TMP_ROOT, `alias-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    symlinkSync(secondaryDir, aliasDir);
+
+    const taskA = seedTask(db, spaceId, 'task-ws11-alias-a', 69);
+    const taskB = seedTask(db, spaceId, 'task-ws11-alias-b', 70);
+
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Alias Title',
+      69,
+      undefined,
+      secondaryDir
+    );
+    const b = await manager.createTaskWorktree(
+      spaceId,
+      taskB,
+      'Alias Title',
+      70,
+      undefined,
+      aliasDir
+    );
+
+    expect(b.slug).not.toBe(a.slug);
+    expect(a.path).toContain(getProjectShortKey(join(secondaryDir, '.git')));
+    expect(b.path).toContain(getProjectShortKey(join(secondaryDir, '.git')));
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(secondaryBranches).toContain(`space/${a.slug}`);
+    expect(secondaryBranches).toContain(`space/${b.slug}`);
+
+    rmSync(aliasDir, { force: true });
+  });
+
+  test('same-titled tasks in two repos of one space get distinct slugs', async () => {
+    const taskA = seedTask(db, spaceId, 'task-ws11-two-repos-a', 71);
+    const taskB = seedTask(db, spaceId, 'task-ws11-two-repos-b', 72);
+
+    const a = await manager.createTaskWorktree(spaceId, taskA, 'Union Title', 71);
+    const b = await manager.createTaskWorktree(
+      spaceId,
+      taskB,
+      'Union Title',
+      72,
+      undefined,
+      secondaryDir
+    );
+
+    expect(a.slug).not.toBe(b.slug);
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+  });
+
+  test('linked-worktree spellings of one repo share one project dir and slug scope', async () => {
+    const linkedDir = join(TMP_ROOT, `linked-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    execSync(`git worktree add "${linkedDir}" -b tmp-linked HEAD`, {
+      cwd: secondaryDir,
+      stdio: 'pipe',
+    });
+
+    const otherSpaceId = `space-ws11-linked-${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+	       allowed_models, session_ids, slug, status, created_at, updated_at)
+	       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+    ).run(
+      otherSpaceId,
+      realpathSync(linkedDir),
+      `Space ${otherSpaceId}`,
+      otherSpaceId,
+      Date.now(),
+      Date.now()
+    );
+
+    const taskA = seedTask(db, spaceId, 'task-ws11-linked-a', 73);
+    const taskB = seedTask(db, otherSpaceId, 'task-ws11-linked-b', 74);
+
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Linked Title',
+      73,
+      undefined,
+      secondaryDir
+    );
+    const b = await manager.createTaskWorktree(otherSpaceId, taskB, 'Linked Title', 74);
+
+    expect(a.path).toContain(getProjectShortKey(join(secondaryDir, '.git')));
+    expect(b.path).toContain(getProjectShortKey(join(secondaryDir, '.git')));
+    expect(b.slug).not.toBe(a.slug);
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(secondaryBranches).toContain(`space/${a.slug}`);
+    expect(secondaryBranches).toContain(`space/${b.slug}`);
+
+    rmSync(linkedDir, { recursive: true, force: true });
+  });
+
+  test('nested-directory spellings share one project dir and slug scope', async () => {
+    const nestedDir = join(secondaryDir, 'nested');
+    mkdirSync(nestedDir);
+
+    const taskA = seedTask(db, spaceId, 'task-ws11-nested-a', 75);
+    const taskB = seedTask(db, spaceId, 'task-ws11-nested-b', 76);
+
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Nested Title',
+      75,
+      undefined,
+      secondaryDir
+    );
+    const b = await manager.createTaskWorktree(
+      spaceId,
+      taskB,
+      'Nested Title',
+      76,
+      undefined,
+      nestedDir
+    );
+
+    expect(b.path).toContain(getProjectShortKey(join(secondaryDir, '.git')));
+    expect(b.slug).not.toBe(a.slug);
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+  });
+
+  test('separate-git-dir repositories clean up via the recorded command cwd', async () => {
+    const sepRepoDir = join(
+      TMP_ROOT,
+      `seprepo-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    const sepGitDir = join(TMP_ROOT, `sepgit-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    execSync(
+      `git -c init.defaultBranch=main init --separate-git-dir="${sepGitDir}" "${sepRepoDir}"`,
+      {
+        stdio: 'pipe',
+      }
+    );
+    execSync('git config user.name "Test User"', { cwd: sepRepoDir });
+    execSync('git config user.email "test@example.com"', { cwd: sepRepoDir });
+    writeFileSync(join(sepRepoDir, 'README.md'), '# test\n');
+    execSync('git add .', { cwd: sepRepoDir });
+    execSync('git commit -m "initial commit"', { cwd: sepRepoDir });
+
+    const taskId = seedTask(db, spaceId, 'task-ws11-separate', 77);
+    const { slug } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Separate Git Dir',
+      77,
+      undefined,
+      sepRepoDir
+    );
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    const branches = execSync('git branch --list', { cwd: sepRepoDir }).toString();
+    expect(branches).not.toContain(`space/${slug}`);
+
+    rmSync(sepRepoDir, { recursive: true, force: true });
+    rmSync(sepGitDir, { recursive: true, force: true });
+  });
+
+  test('cleanup falls back to the common repo when the recorded checkout cwd disappeared', async () => {
+    const linkedCwd = join(
+      TMP_ROOT,
+      `gonecwd-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    execSync(`git worktree add "${linkedCwd}" -b tmp-gone HEAD`, {
+      cwd: secondaryDir,
+      stdio: 'pipe',
+    });
+
+    const taskId = seedTask(db, spaceId, 'task-ws11-gone-cwd', 78);
+    const { slug } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Gone Cwd Task',
+      78,
+      undefined,
+      realpathSync(linkedCwd)
+    );
+
+    rmSync(linkedCwd, { recursive: true, force: true });
+    execSync('git worktree prune', { cwd: secondaryDir, stdio: 'pipe' });
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    const branches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(branches).not.toContain(`space/${slug}`);
+  });
+
+  test('cleanup ignores a recorded cwd that now belongs to a different repository', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-swapped-cwd', 79);
+    const { path, slug } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Swapped Cwd Task',
+      79,
+      undefined,
+      secondaryDir
+    );
+
+    const decoyDir = await makeGitRepo('decoy');
+    const projectDir = join(path, '..', '..');
+    writeFileSync(join(projectDir, '.hyperneo-repo-cwd'), decoyDir);
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    expect(existsSync(path)).toBe(false);
+    const secondaryBranches = execSync('git branch --list', { cwd: secondaryDir }).toString();
+    expect(secondaryBranches).not.toContain(`space/${slug}`);
+
+    rmSync(decoyDir, { recursive: true, force: true });
+  });
+
+  test('removeTaskWorktree respects a git worktree lock and keeps the checkout', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-locked', 80);
+    const { path } = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Locked Task',
+      80,
+      undefined,
+      secondaryDir
+    );
+
+    execSync(`git worktree lock "${path}"`, { cwd: secondaryDir, stdio: 'pipe' });
+
+    await manager.removeTaskWorktree(spaceId, taskId);
+
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    expect(existsSync(path)).toBe(true);
+
+    execSync(`git worktree unlock "${path}"`, { cwd: secondaryDir, stdio: 'pipe' });
+  });
+
+  test('a second daemon database cannot clobber the first live worktree', async () => {
+    const taskA = seedTask(db, spaceId, 'task-ws11-crossdb-a', 81);
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Cross Db Title',
+      81,
+      undefined,
+      secondaryDir
+    );
+
+    const otherSetup = makeDb(secondaryDir);
+    const manager2 = new SpaceWorktreeManager(otherSetup.db);
+    const taskB = seedTask(otherSetup.db, otherSetup.spaceId, 'task-ws11-crossdb-b', 81);
+
+    await expect(
+      manager2.createTaskWorktree(otherSetup.spaceId, taskB, 'Cross Db Title', 81)
+    ).rejects.toThrow('already in use by a live registered worktree');
+    expect(existsSync(a.path)).toBe(true);
+
+    otherSetup.db.close();
+  });
+
+  test('a crashed creation between git add and the DB insert is adopted on retry', async () => {
+    const taskId = seedTask(db, spaceId, 'task-ws11-adopt', 82);
+    const first = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Crash Adopt Task',
+      82,
+      undefined,
+      secondaryDir
+    );
+
+    db.prepare('DELETE FROM space_worktrees WHERE space_id = ? AND task_id = ?').run(
+      spaceId,
+      taskId
+    );
+
+    const second = await manager.createTaskWorktree(
+      spaceId,
+      taskId,
+      'Crash Adopt Task',
+      82,
+      undefined,
+      secondaryDir
+    );
+
+    expect(second.path).toBe(first.path);
+    expect(second.slug).toBe(first.slug);
+    expect(existsSync(second.path)).toBe(true);
+    expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBe(second.path);
+  });
+
+  test('bare repository spellings canonicalize to one project dir and slug scope', async () => {
+    const bareDir = join(TMP_ROOT, `bare-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const seedDir = join(TMP_ROOT, `bareseed-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    execSync(`git -c init.defaultBranch=main init "${seedDir}"`, { stdio: 'pipe' });
+    execSync('git config user.name "Test User"', { cwd: seedDir });
+    execSync('git config user.email "test@example.com"', { cwd: seedDir });
+    writeFileSync(join(seedDir, 'README.md'), '# test\n');
+    execSync('git add .', { cwd: seedDir });
+    execSync('git commit -m "initial commit"', { cwd: seedDir });
+    execSync(`git -c init.defaultBranch=main init --bare "${bareDir}"`, { stdio: 'pipe' });
+    execSync(`git -C "${seedDir}" push "${bareDir}" main:main`, { stdio: 'pipe' });
+
+    const bareAlias = join(
+      TMP_ROOT,
+      `barealias-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    symlinkSync(bareDir, bareAlias);
+
+    const otherSpaceId = `space-ws11-bare-${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+	       allowed_models, session_ids, slug, status, created_at, updated_at)
+	       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+    ).run(otherSpaceId, bareAlias, `Space ${otherSpaceId}`, otherSpaceId, Date.now(), Date.now());
+
+    const taskA = seedTask(db, spaceId, 'task-ws11-bare-a', 83);
+    const taskB = seedTask(db, otherSpaceId, 'task-ws11-bare-b', 84);
+
+    const a = await manager.createTaskWorktree(
+      spaceId,
+      taskA,
+      'Bare Title',
+      83,
+      undefined,
+      bareDir
+    );
+    const b = await manager.createTaskWorktree(otherSpaceId, taskB, 'Bare Title', 84);
+
+    expect(b.slug).not.toBe(a.slug);
+    expect(b.path).toContain(getProjectShortKey(realpathSync(bareDir)));
+    expect(existsSync(a.path)).toBe(true);
+    expect(existsSync(b.path)).toBe(true);
+
+    const bareBranches = execSync('git branch --list', { cwd: bareDir }).toString();
+    expect(bareBranches).toContain(`space/${a.slug}`);
+    expect(bareBranches).toContain(`space/${b.slug}`);
+
+    rmSync(bareAlias, { force: true });
+    rmSync(bareDir, { recursive: true, force: true });
+    rmSync(seedDir, { recursive: true, force: true });
+  });
+
+  test('legacy worktree directories keep contributing to slug scoping', async () => {
+    const legacySpaceId = `space-ws11-legacy-${Math.random().toString(36).slice(2)}`;
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+	       allowed_models, session_ids, slug, status, created_at, updated_at)
+	       VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+    ).run(
+      legacySpaceId,
+      secondaryDir,
+      `Space ${legacySpaceId}`,
+      legacySpaceId,
+      Date.now(),
+      Date.now()
+    );
+
+    const legacyTitle = 'Legacy Title';
+    const legacySlug = worktreeSlug(legacyTitle, 1);
+    const legacyAlias = join(
+      TMP_ROOT,
+      `legacyalias-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    symlinkSync(secondaryDir, legacyAlias);
+    const legacyProjectDir = join(testBaseDir, getProjectShortKey(legacyAlias));
+    const legacyDir = join(legacyProjectDir, 'worktrees');
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(join(legacyProjectDir, '.hyperneo-repo-root'), legacyAlias);
+    execSync(`git branch "space/${legacySlug}" HEAD`, { cwd: secondaryDir });
+    db.prepare(
+      `INSERT INTO space_worktrees (id, space_id, task_id, slug, path, created_at)
+	       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      `wt-legacy-${Math.random().toString(36).slice(2)}`,
+      legacySpaceId,
+      seedTask(db, legacySpaceId, 'task-ws11-legacy-old', 86),
+      legacySlug,
+      join(legacyDir, legacySlug),
+      Date.now()
+    );
+
+    const taskNew = seedTask(db, spaceId, 'task-ws11-legacy-new', 85);
+    const created = await manager.createTaskWorktree(
+      spaceId,
+      taskNew,
+      legacyTitle,
+      85,
+      undefined,
+      secondaryDir
+    );
+
+    expect(created.slug).not.toBe(legacySlug);
+    expect(existsSync(created.path)).toBe(true);
+
+    rmSync(legacyAlias, { force: true });
   });
 });
 
