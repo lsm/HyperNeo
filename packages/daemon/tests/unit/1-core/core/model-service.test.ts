@@ -5369,6 +5369,88 @@ describe('Model Service', () => {
       }
     });
 
+    it('ignores persisted discovery when the endpoint fingerprint no longer matches', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels, setProviderRepository } = await import(
+        '../../../../src/lib/model-service'
+      );
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      type RepositoryLike = Parameters<typeof setProviderRepository>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => {
+          throw new Error('endpoint down');
+        },
+        getDiscoveryEndpointFingerprint: () => '["global","https://new-endpoint.example"]',
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setProviderRepository({
+        getProviderByProviderId: (providerId: string) =>
+          providerId === 'remote-provider'
+            ? {
+                configJson: JSON.stringify({
+                  discoveredModels: {
+                    models: [{ id: 'persisted-model' }],
+                    fingerprint: '["china","https://old-endpoint.example"]',
+                  },
+                }),
+              }
+            : null,
+      } as unknown as RepositoryLike);
+
+      try {
+        await refreshModels();
+
+        const slice = getAvailableModels('global').filter(
+          (model) => model.provider === 'remote-provider'
+        );
+        expect(slice.some((model) => model.id === 'persisted-model')).toBe(false);
+      } finally {
+        setProviderRepository(null as unknown as RepositoryLike);
+      }
+    });
+
+    it('restores persisted discovery when the endpoint fingerprint matches', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels, setProviderRepository } = await import(
+        '../../../../src/lib/model-service'
+      );
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      type RepositoryLike = Parameters<typeof setProviderRepository>[0];
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => {
+          throw new Error('endpoint down');
+        },
+        getDiscoveryEndpointFingerprint: () => '["china","https://old-endpoint.example"]',
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setProviderRepository({
+        getProviderByProviderId: (providerId: string) =>
+          providerId === 'remote-provider'
+            ? {
+                configJson: JSON.stringify({
+                  discoveredModels: {
+                    models: [{ id: 'persisted-model' }],
+                    fingerprint: '["china","https://old-endpoint.example"]',
+                  },
+                }),
+              }
+            : null,
+      } as unknown as RepositoryLike);
+
+      try {
+        await refreshModels();
+
+        const slice = getAvailableModels('global').filter(
+          (model) => model.provider === 'remote-provider'
+        );
+        expect(slice.some((model) => model.id === 'persisted-model')).toBe(true);
+      } finally {
+        setProviderRepository(null as unknown as RepositoryLike);
+      }
+    });
+
     it('keeps curated capability-provider caches intact when forced discovery fails', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');

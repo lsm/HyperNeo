@@ -126,16 +126,18 @@ export class OAuthRefreshScheduler {
         persistenceFailed = true;
       }
       if (persistenceFailed) {
-        await this.runPreRecoveryInvalidation(provider.id);
+        if (!(await this.runPreRecoveryInvalidation(provider.id))) {
+          this.bumpPendingInvalidationRetries(provider.id);
+        }
         await this.recordFailedRefresh(provider.id, retryKey);
         return;
       }
       this.retryCounts.delete(retryKey);
-      this.credentialManager.markProviderHealth(provider.id, 'healthy');
       if (!(await this.runPreRecoveryInvalidation(provider.id))) {
         await this.recordPendingInvalidationFailure(provider.id);
         return;
       }
+      this.credentialManager.markProviderHealth(provider.id, 'healthy');
       await this.recoverDormant(provider.id);
       await this.onProviderChanged?.(provider.id, 'refreshed');
       return;
@@ -150,6 +152,7 @@ export class OAuthRefreshScheduler {
       await this.recordPendingInvalidationFailure(provider.id);
       return;
     }
+    this.credentialManager.markProviderHealth(provider.id, 'healthy');
     await this.recoverDormant(provider.id);
     await this.onProviderChanged?.(provider.id, 'refreshed');
   }
@@ -166,9 +169,14 @@ export class OAuthRefreshScheduler {
     }
   }
 
-  private async recordPendingInvalidationFailure(providerId: string): Promise<void> {
+  private bumpPendingInvalidationRetries(providerId: string): number {
     const retries = (this.pendingInvalidationRetries.get(providerId) ?? 0) + 1;
     this.pendingInvalidationRetries.set(providerId, retries);
+    return retries;
+  }
+
+  private async recordPendingInvalidationFailure(providerId: string): Promise<void> {
+    const retries = this.bumpPendingInvalidationRetries(providerId);
     if (retries >= this.maxRetries) {
       this.pendingInvalidationRetries.delete(providerId);
       this.credentialManager.markProviderHealth(providerId, 'unhealthy');

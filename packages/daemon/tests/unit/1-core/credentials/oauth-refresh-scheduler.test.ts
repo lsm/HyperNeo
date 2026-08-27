@@ -528,7 +528,7 @@ describe('OAuthRefreshScheduler', () => {
 
     expect(events).toEqual(['invalidated']);
     expect(manager.stored).toHaveLength(1);
-    expect(manager.health.get('oauth-provider')).toBe('healthy');
+    expect(manager.health.has('oauth-provider')).toBe(false);
   });
 
   it('marks the provider exhausted when pre-recovery invalidation keeps failing', async () => {
@@ -636,7 +636,7 @@ describe('OAuthRefreshScheduler', () => {
     expect(invalidationAttempts).toBe(1);
     expect(events).toEqual([]);
     expect(manager.stored).toHaveLength(1);
-    expect(manager.health.get('oauth-provider')).toBe('healthy');
+    expect(manager.health.has('oauth-provider')).toBe(false);
     const rotated = manager.stored[0].credentials as { expiresAt: number };
     expect(rotated.expiresAt).toBeGreaterThan(10_000);
 
@@ -685,6 +685,61 @@ describe('OAuthRefreshScheduler', () => {
     expect(invalidationAttempts).toBe(2);
     expect(events).toEqual(['changed:oauth-provider:exhausted']);
     expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+  });
+
+  it('keeps retrying the durable strip after ordinary refresh retries are exhausted', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    manager.storeOAuthTokens = async () => {
+      throw new Error('credential store failed');
+    };
+    const events: string[] = [];
+    let invalidationAttempts = 0;
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      maxRetries: 1,
+      onPreRecoveryInvalidate: async () => {
+        invalidationAttempts += 1;
+        if (invalidationAttempts === 1) throw new Error('durable strip failed');
+      },
+      recoverDormantProvider: async (providerId) => {
+        events.push(`recovered:${providerId}`);
+        return 'recovered';
+      },
+      onProviderChanged: (providerId, outcome) => {
+        events.push(`changed:${providerId}:${outcome}`);
+      },
+    });
+
+    await scheduler.tick();
+    expect(invalidationAttempts).toBe(1);
+    expect(events).toEqual(['changed:oauth-provider:exhausted']);
+    expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    await scheduler.tick();
+
+    expect(invalidationAttempts).toBe(2);
+    expect(events).toEqual([
+      'changed:oauth-provider:exhausted',
+      'recovered:oauth-provider',
+      'changed:oauth-provider:refreshed',
+    ]);
+    expect(manager.health.get('oauth-provider')).toBe('healthy');
   });
 
   it('retains unhealthy on a no-op recovery when a failure is still recorded', async () => {

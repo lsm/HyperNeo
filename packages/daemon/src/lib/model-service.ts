@@ -411,39 +411,55 @@ export function fallbackModelsFor(
   return [...staticSlice, ...persistedSlice];
 }
 
-function extractPersistedDiscovered(configJson: string | undefined): Array<{
-  id: string;
-  name?: string;
-}> {
-  if (!configJson) return [];
+function extractPersistedDiscoveredWrapper(configJson: string | undefined): {
+  models: Array<{ id: string; name?: string }>;
+  fingerprint?: string;
+} | null {
+  if (!configJson) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(configJson);
   } catch {
-    return [];
+    return null;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const obj = parsed as Record<string, unknown>;
   const discovered = obj.discoveredModels;
-  if (!discovered || typeof discovered !== 'object' || Array.isArray(discovered)) return [];
+  if (!discovered || typeof discovered !== 'object' || Array.isArray(discovered)) return null;
   const models = (discovered as { models?: unknown }).models;
-  if (!Array.isArray(models)) return [];
-  return models.flatMap((entry) => {
+  if (!Array.isArray(models)) return null;
+  const entries = models.flatMap((entry) => {
     if (!entry || typeof entry !== 'object') return [];
     const id = (entry as { id?: unknown }).id;
     if (typeof id !== 'string') return [];
     const name = (entry as { name?: unknown }).name;
     return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
   });
+  const fingerprint = (discovered as { fingerprint?: unknown }).fingerprint;
+  return {
+    models: entries,
+    ...(typeof fingerprint === 'string' ? { fingerprint } : {}),
+  };
 }
 
-function getPersistedDiscoveredForProvider(
-  providerId: string
+function endpointMatchingPersistedDiscovered(
+  provider: Provider
 ): Array<{ id: string; name?: string }> {
   if (!providerRepositoryRef) return [];
   try {
-    const record = providerRepositoryRef.getProviderByProviderId(providerId);
-    return extractPersistedDiscovered(record?.configJson);
+    const wrapper = extractPersistedDiscoveredWrapper(
+      providerRepositoryRef.getProviderByProviderId(provider.id)?.configJson
+    );
+    if (!wrapper) return [];
+    const endpointFingerprint = provider.getDiscoveryEndpointFingerprint?.();
+    if (
+      wrapper.fingerprint !== undefined &&
+      endpointFingerprint !== undefined &&
+      wrapper.fingerprint !== endpointFingerprint
+    ) {
+      return [];
+    }
+    return wrapper.models;
   } catch {
     return [];
   }
@@ -758,13 +774,13 @@ async function loadProviderModels(
     }
     return {
       status: 'failed',
-      models: fallbackModelsFor(provider, getPersistedDiscoveredForProvider(provider.id)),
+      models: fallbackModelsFor(provider, endpointMatchingPersistedDiscovered(provider)),
       error: new Error('Provider returned no models'),
     };
   } catch (error) {
     return {
       status: 'failed',
-      models: fallbackModelsFor(provider, getPersistedDiscoveredForProvider(provider.id)),
+      models: fallbackModelsFor(provider, endpointMatchingPersistedDiscovered(provider)),
       error,
     };
   }

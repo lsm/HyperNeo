@@ -331,11 +331,12 @@ export interface ProviderHandlerDeps {
 const LAST_GOOD_DISCOVERY_KEY = 'discoveredModels';
 const LAST_GOOD_DISCOVERY_WRAPPER_RESERVE =
   `${JSON.stringify(LAST_GOOD_DISCOVERY_KEY)}:${JSON.stringify({ models: [], truncated: true })}`
-    .length + 1;
+    .length + 129;
 
 interface LastGoodDiscoveredModels {
   models: CuratedModel[];
   truncated?: boolean;
+  fingerprint?: string;
 }
 
 function lastGoodDiscoveryBudget(base: Record<string, unknown>): number {
@@ -401,7 +402,8 @@ function buildLastGoodDiscoveredModels(
 function persistLastGoodDiscoveredModels(
   providerRepo: ProviderRepository,
   record: ProviderRecord,
-  discovered: ReadonlyArray<{ id: string; name?: string }>
+  discovered: ReadonlyArray<{ id: string; name?: string }>,
+  endpointFingerprint?: string
 ): boolean {
   let base: Record<string, unknown> = {};
   if (record.configJson) {
@@ -425,7 +427,10 @@ function persistLastGoodDiscoveredModels(
     throw new Error('Provider config has no capacity to persist discovery results');
   }
   const lastGood = buildLastGoodDiscoveredModels(record.providerId, discovered, budget);
-  base[LAST_GOOD_DISCOVERY_KEY] = lastGood;
+  base[LAST_GOOD_DISCOVERY_KEY] = {
+    ...lastGood,
+    ...(endpointFingerprint === undefined ? {} : { fingerprint: endpointFingerprint }),
+  };
   providerRepo.updateProvider(record.id, { configJson: JSON.stringify(base) });
   return lastGood.truncated === true;
 }
@@ -611,7 +616,12 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
       let truncated = false;
       try {
-        truncated = persistLastGoodDiscoveredModels(providerRepo, currentRecord!, discovered);
+        truncated = persistLastGoodDiscoveredModels(
+          providerRepo,
+          currentRecord!,
+          discovered,
+          provider.getDiscoveryEndpointFingerprint?.()
+        );
       } catch (persistError) {
         provider.clearModelCache?.();
         throw persistError;
@@ -649,7 +659,14 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             provider.clearModelCache?.();
             return { success: false, reason: 'superseded' };
           }
-          if (applyDiscoveredProviderModels(record.providerId, normalizedDiscovered)) {
+          if (
+            applyDiscoveredProviderModels(
+              record.providerId,
+              normalizedDiscovered,
+              'global',
+              persistedDiscovered
+            )
+          ) {
             releaseAppliedProviderSlice(record.providerId);
           } else {
             schedulePendingSliceRelease(record.providerId);
@@ -841,6 +858,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             data.credentials !== undefined ||
             updates.baseUrl !== undefined ||
             updates.customEndpointConfigJson !== undefined ||
+            updates.isEnabled === false ||
             (updates.configJson !== undefined && !curationOnlyConfigUpdate);
 
           if (shouldResync) {

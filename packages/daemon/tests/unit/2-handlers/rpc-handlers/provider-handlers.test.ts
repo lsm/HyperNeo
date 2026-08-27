@@ -1342,6 +1342,33 @@ describe('Provider RPC handlers', () => {
       );
     });
 
+    it('strips persisted discovery when a built-in provider is disabled', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      expect(repo.getProvider(created.id)?.configJson).toContain('discoveredModels');
+
+      const updated = (await handlers.get('providers.update')!(
+        { id: created.id, params: { isEnabled: false } },
+        {}
+      )) as { provider: ProviderRecord };
+
+      expect(updated.provider.isEnabled).toBe(false);
+      expect(JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}')).not.toHaveProperty(
+        'discoveredModels'
+      );
+    });
+
     it('restores server-owned discoveredModels when a stale client snapshot saves curation', async () => {
       const created = repo.createProvider({
         providerId: 'remote',
