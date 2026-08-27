@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceTasksFilterTabSignal } from '../../lib/signals';
 import { spaceStore } from '../../lib/space-store';
+import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
 import { toast } from '../../lib/toast';
 import { getTaskStatusConfig } from '../../lib/task-status';
@@ -589,6 +590,11 @@ function TaskItem({
   const showsActivity =
     task.status === 'in_progress' &&
     (!task.workflowRunId || spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId));
+  const workspaceLabel = getTaskWorkspaceLabel(
+    task,
+    spaceStore.workspaces?.value ?? [],
+    spaceStore.space?.value?.workspacePath
+  );
 
   const activate = () => onClick?.(task.id);
 
@@ -603,7 +609,13 @@ function TaskItem({
         }`}
         role={isClickable ? 'button' : undefined}
         tabIndex={isClickable ? 0 : undefined}
-        aria-label={isClickable ? `Open task #${task.taskNumber}: ${task.title}` : undefined}
+        aria-label={
+          isClickable
+            ? `Open task #${task.taskNumber}: ${task.title}${
+                workspaceLabel ? ` · ${workspaceLabel}` : ''
+              }`
+            : undefined
+        }
         onClick={isClickable ? activate : undefined}
         onKeyDown={
           isClickable
@@ -624,6 +636,14 @@ function TaskItem({
           <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
             {showStatus && <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />}
             {showsActivity && <ActivitySpinner tone="info" />}
+            {workspaceLabel && (
+              <span
+                class="inline-flex h-6 max-w-[8.5rem] items-center rounded border border-dark-600 bg-dark-700 px-1.5 py-0.5 text-xs font-medium leading-none text-gray-400 whitespace-nowrap"
+                data-testid="task-workspace-badge"
+              >
+                <span class="truncate">{workspaceLabel}</span>
+              </span>
+            )}
             {task.updatedAt > 0 && (
               <span class="text-xs text-gray-500">Updated {getRelativeTime(task.updatedAt)}</span>
             )}
@@ -994,6 +1014,7 @@ function TaskGroupList({
               t.blockReason ?? '',
               t.pendingCheckpointType ?? '',
               (t.dependsOn ?? []).join(','),
+              t.workspacePath ?? '',
             ].join(':')
           )
           .sort()
