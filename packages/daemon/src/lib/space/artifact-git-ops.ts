@@ -177,6 +177,10 @@ export function commitFileDiffCacheKey(commitSha: string, filePath: string): str
   return `commitFileDiff:${commitSha}:${filePath}`;
 }
 
+export function worktreePathScopedCacheKey(worktreePath: string, baseKey: string): string {
+  return `${worktreePath.length}:${worktreePath}:${baseKey}`;
+}
+
 export const FILE_DIFF_SIZE_LIMIT_BYTES = 100 * 1024;
 
 export async function getGitRemoteUrl(worktreePath: string): Promise<string | null> {

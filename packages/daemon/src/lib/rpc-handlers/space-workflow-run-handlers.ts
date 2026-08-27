@@ -1,5 +1,5 @@
 import { isAbsolute } from 'node:path';
-import type { MessageHub } from '@hyperneo/shared';
+import type { MessageHub, SpaceTask } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
@@ -13,6 +13,7 @@ import type { SpaceTaskManager } from '../space/managers/space-task-manager.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorktreeManager } from '../space/managers/space-worktree-manager.ts';
 import { getWorkflowRunExecutionStatusLabel } from '@hyperneo/shared';
+import { resolveTaskWorkspace } from '../space/runtime/spawn-slot-resolution.ts';
 import type { WorkflowRunFailureReason, WorkflowRunStatus } from '@hyperneo/shared';
 import {
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
@@ -33,6 +34,7 @@ import {
   fileDiffCacheKey,
   commitFilesCacheKey,
   commitFileDiffCacheKey,
+  worktreePathScopedCacheKey,
   FILE_DIFF_SIZE_LIMIT_BYTES,
 } from '../space/artifact-git-ops.ts';
 import {
@@ -86,13 +88,23 @@ async function resolveWorktreePath(
   spaceWorktreeManager: SpaceWorktreeManager,
   taskId?: string
 ): Promise<string | null> {
+  let fallbackTask: Pick<SpaceTask, 'workspacePath' | 'workflowRunId' | 'spaceId'> | null = null;
   if (taskId) {
-    const taskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(spaceId, taskId);
-    if (taskWorktreePath) {
-      return taskWorktreePath;
+    fallbackTask = spaceTaskRepo.getTask(taskId);
+    if (
+      fallbackTask &&
+      (fallbackTask.workflowRunId !== runId || fallbackTask.spaceId !== spaceId)
+    ) {
+      fallbackTask = null;
+    }
+    if (fallbackTask) {
+      const taskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(spaceId, taskId);
+      if (taskWorktreePath) {
+        return taskWorktreePath;
+      }
     }
     log.warn(
-      `resolveWorktreePath: no worktree found for taskId=${taskId}, falling back to root workspace`
+      `resolveWorktreePath: no worktree found for taskId=${taskId}, falling back to the task or root workspace`
     );
   } else {
     const tasks = spaceTaskRepo.listByWorkflowRun(runId);
@@ -102,15 +114,20 @@ async function resolveWorktreePath(
           `resolveWorktreePath: run ${runId} has ${tasks.length} tasks — showing artifacts for task ${tasks[0].id} only. Pass taskId to target a specific task.`
         );
       }
-      const firstTaskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(
-        spaceId,
-        tasks[0].id
-      );
-      if (firstTaskWorktreePath) {
-        return firstTaskWorktreePath;
+      const firstTask = tasks[0];
+      fallbackTask =
+        firstTask.spaceId === spaceId && firstTask.workflowRunId === runId ? firstTask : null;
+      if (fallbackTask) {
+        const firstTaskWorktreePath = await spaceWorktreeManager.getTaskWorktreePath(
+          spaceId,
+          firstTask.id
+        );
+        if (firstTaskWorktreePath) {
+          return firstTaskWorktreePath;
+        }
       }
       log.warn(
-        `resolveWorktreePath: no worktree found for task ${tasks[0].id} in run ${runId}, falling back to root workspace`
+        `resolveWorktreePath: no worktree found for task ${firstTask.id} in run ${runId}, falling back to the task or root workspace`
       );
     } else {
       log.warn(
@@ -120,7 +137,8 @@ async function resolveWorktreePath(
   }
 
   const space = await spaceManager.getSpace(spaceId);
-  return space?.workspacePath ?? null;
+  if (!space) return null;
+  return resolveTaskWorkspace(space, fallbackTask ?? { workspacePath: null });
 }
 
 export type SpaceWorkflowRunTaskManagerFactory = (spaceId: string) => SpaceTaskManager;
@@ -338,7 +356,22 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     const taskId = params.taskId ?? '';
-    const cached = artifactCacheRepo.get(params.runId, CACHE_KEY_GATE_ARTIFACTS, taskId);
+    const worktreePath = await resolveWorktreePath(
+      run.id,
+      run.spaceId,
+      spaceManager,
+      spaceTaskRepo,
+      spaceWorktreeManager,
+      params.taskId
+    );
+    if (!worktreePath) {
+      throw new Error(`No workspace path found for run: ${params.runId}`);
+    }
+    const cached = artifactCacheRepo.get(
+      params.runId,
+      worktreePathScopedCacheKey(worktreePath, CACHE_KEY_GATE_ARTIFACTS),
+      taskId
+    );
 
     if (!cached || !isCacheFresh(cached.syncedAt)) {
       enqueueSyncOnce(jobQueue, SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS, {
@@ -354,18 +387,6 @@ export function setupSpaceWorkflowRunHandlers(
         syncedAt: cached.syncedAt,
         status: cached.status,
       };
-    }
-
-    const worktreePath = await resolveWorktreePath(
-      run.id,
-      run.spaceId,
-      spaceManager,
-      spaceTaskRepo,
-      spaceWorktreeManager,
-      params.taskId
-    );
-    if (!worktreePath) {
-      throw new Error(`No workspace path found for run: ${params.runId}`);
     }
 
     if (!(await isGitRepo(worktreePath))) {
@@ -398,7 +419,18 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     const taskId = params.taskId ?? '';
-    const cacheKey = fileDiffCacheKey(params.filePath);
+    const worktreePath = await resolveWorktreePath(
+      run.id,
+      run.spaceId,
+      spaceManager,
+      spaceTaskRepo,
+      spaceWorktreeManager,
+      params.taskId
+    );
+    if (!worktreePath) {
+      throw new Error(`No workspace path found for run: ${params.runId}`);
+    }
+    const cacheKey = worktreePathScopedCacheKey(worktreePath, fileDiffCacheKey(params.filePath));
     const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
 
     if (!cached || !isCacheFresh(cached.syncedAt)) {
@@ -416,18 +448,6 @@ export function setupSpaceWorkflowRunHandlers(
         syncedAt: cached.syncedAt,
         status: cached.status,
       };
-    }
-
-    const worktreePath = await resolveWorktreePath(
-      run.id,
-      run.spaceId,
-      spaceManager,
-      spaceTaskRepo,
-      spaceWorktreeManager,
-      params.taskId
-    );
-    if (!worktreePath) {
-      throw new Error(`No workspace path found for run: ${params.runId}`);
     }
 
     if (!(await isGitRepo(worktreePath))) {
@@ -463,7 +483,20 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     const taskId = params.taskId ?? '';
-    const cached = artifactCacheRepo.get(params.runId, CACHE_KEY_COMMITS, taskId);
+    const worktreePath = await resolveWorktreePath(
+      run.id,
+      run.spaceId,
+      spaceManager,
+      spaceTaskRepo,
+      spaceWorktreeManager,
+      params.taskId
+    );
+    if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
+    const cached = artifactCacheRepo.get(
+      params.runId,
+      worktreePathScopedCacheKey(worktreePath, CACHE_KEY_COMMITS),
+      taskId
+    );
 
     if (!cached || !isCacheFresh(cached.syncedAt)) {
       enqueueSyncOnce(jobQueue, SPACE_WORKFLOW_RUN_SYNC_COMMITS, {
@@ -480,16 +513,6 @@ export function setupSpaceWorkflowRunHandlers(
         status: cached.status,
       };
     }
-
-    const worktreePath = await resolveWorktreePath(
-      run.id,
-      run.spaceId,
-      spaceManager,
-      spaceTaskRepo,
-      spaceWorktreeManager,
-      params.taskId
-    );
-    if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
 
     if (!(await isGitRepo(worktreePath))) {
       return { commits: [], baseRef: null, isGitRepo: false, repoUrl: null };
@@ -526,12 +549,6 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     const taskId = params.taskId ?? '';
-    const cacheKey = commitFilesCacheKey(params.commitSha);
-    const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
-    if (cached && cached.status === 'ok') {
-      return { ...cached.data, cached: true, syncedAt: cached.syncedAt };
-    }
-
     const worktreePath = await resolveWorktreePath(
       run.id,
       run.spaceId,
@@ -541,6 +558,14 @@ export function setupSpaceWorkflowRunHandlers(
       params.taskId
     );
     if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
+    const cacheKey = worktreePathScopedCacheKey(
+      worktreePath,
+      commitFilesCacheKey(params.commitSha)
+    );
+    const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
+    if (cached && cached.status === 'ok') {
+      return { ...cached.data, cached: true, syncedAt: cached.syncedAt };
+    }
 
     if (!(await isGitRepo(worktreePath))) {
       return { files: [] };
@@ -594,12 +619,6 @@ export function setupSpaceWorkflowRunHandlers(
     if (!run) throw new Error(`WorkflowRun not found: ${params.runId}`);
 
     const taskId = params.taskId ?? '';
-    const cacheKey = commitFileDiffCacheKey(params.commitSha, params.filePath);
-    const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
-    if (cached && cached.status === 'ok') {
-      return { ...cached.data, cached: true, syncedAt: cached.syncedAt };
-    }
-
     const worktreePath = await resolveWorktreePath(
       run.id,
       run.spaceId,
@@ -609,6 +628,14 @@ export function setupSpaceWorkflowRunHandlers(
       params.taskId
     );
     if (!worktreePath) throw new Error(`No workspace path found for run: ${params.runId}`);
+    const cacheKey = worktreePathScopedCacheKey(
+      worktreePath,
+      commitFileDiffCacheKey(params.commitSha, params.filePath)
+    );
+    const cached = artifactCacheRepo.get(params.runId, cacheKey, taskId);
+    if (cached && cached.status === 'ok') {
+      return { ...cached.data, cached: true, syncedAt: cached.syncedAt };
+    }
 
     if (!(await isGitRepo(worktreePath))) {
       return { diff: '', additions: 0, deletions: 0, filePath: params.filePath };

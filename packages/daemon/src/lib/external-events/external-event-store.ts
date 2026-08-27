@@ -1,5 +1,7 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { DeliveryTerminalEvent, QueueAgeStats } from './queue-health-metrics.ts';
+import { validateLiteralTopic, validateSource } from './topic-validator.ts';
 import {
   type DeliveryFailure,
   type DeliveryTarget,
@@ -10,12 +12,11 @@ import {
   type ExternalEventDeliveryState,
   type ExternalEventRecord,
   type ExternalEventState,
+  type ExternalEventUrgency,
   type StoreResult,
   TERMINAL_DELIVERY_STATES,
   TERMINAL_EVENT_STATES,
 } from './types.ts';
-import type { DeliveryTerminalEvent, QueueAgeStats } from './queue-health-metrics.ts';
-import { validateLiteralTopic, validateSource } from './topic-validator.ts';
 
 interface ExternalEventRow {
   id: string;
@@ -29,6 +30,8 @@ interface ExternalEventRow {
   summary: string;
   external_url: string | null;
   payload_json: string;
+  urgency: string | null;
+  render: string | null;
   state: ExternalEventState;
   created_at: number;
   updated_at: number;
@@ -59,6 +62,8 @@ interface ExternalEventDeliveryLogRow extends ExternalEventDeliveryRow {
   summary: string;
   external_url: string | null;
   payload_json: string;
+  urgency: string | null;
+  render: string | null;
   event_state: ExternalEventState;
   event_created_at: number;
   event_updated_at: number;
@@ -98,12 +103,12 @@ export class ExternalEventStore {
       `INSERT INTO space_external_events (
 				id, space_id, source, topic, dedupe_key,
 				occurred_at, ingested_at, source_event_id,
-				summary, external_url, payload_json,
+				summary, external_url, payload_json, urgency, render,
 				state, created_at, updated_at
 			) VALUES (
 				?, ?, ?, ?, ?,
 				?, ?, ?,
-				?, ?, ?,
+				?, ?, ?, ?, ?,
 				'published', ?, ?
 			)
 			ON CONFLICT(space_id, source, dedupe_key) DO NOTHING`
@@ -121,6 +126,8 @@ export class ExternalEventStore {
       event.summary,
       event.externalUrl ?? null,
       JSON.stringify(event.payload ?? {}),
+      event.urgency ?? null,
+      event.render ?? null,
       now,
       now
     );
@@ -455,7 +462,7 @@ export class ExternalEventStore {
            d.event_id, d.delivery_key, d.workflow_run_id, d.task_id, d.node_id, d.agent_name,
            d.state, d.failure_reason, d.delivered_at, d.updated_at,
            e.id, e.space_id, e.source, e.topic, e.dedupe_key, e.occurred_at, e.ingested_at,
-           e.source_event_id, e.summary, e.external_url, e.payload_json,
+           e.source_event_id, e.summary, e.external_url, e.payload_json, e.urgency, e.render,
            e.state AS event_state, e.created_at AS event_created_at, e.updated_at AS event_updated_at
          FROM space_external_event_deliveries d
          INNER JOIN space_external_events e ON e.id = d.event_id
@@ -614,57 +621,51 @@ export class ExternalEventStore {
   }
 
   private validate(event: ExternalEvent): void {
-    if (!event.id || typeof event.id !== 'string') {
-      throw new ExternalEventValidationError('ExternalEvent.id is required');
-    }
-    if (!event.spaceId || typeof event.spaceId !== 'string') {
-      throw new ExternalEventValidationError('ExternalEvent.spaceId is required');
-    }
-    if (
-      !event.dedupeKey ||
-      typeof event.dedupeKey !== 'string' ||
-      event.dedupeKey.trim().length === 0
-    ) {
-      throw new ExternalEventValidationError(
-        'ExternalEvent.dedupeKey is required and must not be whitespace-only'
-      );
-    }
-    if (event.dedupeKey !== event.dedupeKey.trim()) {
-      throw new ExternalEventValidationError(
-        'ExternalEvent.dedupeKey must not have leading or trailing whitespace'
-      );
-    }
-
-    const sourceCheck = validateSource(event.source);
-    if (!sourceCheck.valid) {
-      throw new ExternalEventValidationError(`ExternalEvent.source invalid: ${sourceCheck.reason}`);
-    }
-
-    const topicCheck = validateLiteralTopic(event.topic);
-    if (!topicCheck.valid) {
-      throw new ExternalEventValidationError(`ExternalEvent.topic invalid: ${topicCheck.reason}`);
-    }
-
-    const firstSegment = event.topic.split('/')[0];
-    if (firstSegment !== event.source) {
-      throw new ExternalEventValidationError(
-        `ExternalEvent.topic first segment "${firstSegment}" must equal source "${event.source}"`
-      );
-    }
-
-    if (typeof event.occurredAt !== 'number' || !Number.isFinite(event.occurredAt)) {
-      throw new ExternalEventValidationError('ExternalEvent.occurredAt must be a finite number');
-    }
-    if (typeof event.ingestedAt !== 'number' || !Number.isFinite(event.ingestedAt)) {
-      throw new ExternalEventValidationError('ExternalEvent.ingestedAt must be a finite number');
-    }
-    if (typeof event.summary !== 'string') {
-      throw new ExternalEventValidationError('ExternalEvent.summary must be a string');
-    }
-    if (typeof event.payload !== 'object' || event.payload === null) {
-      throw new ExternalEventValidationError('ExternalEvent.payload must be an object');
+    const reason = validateExternalEvent(event);
+    if (reason !== null) {
+      throw new ExternalEventValidationError(reason);
     }
   }
+}
+
+export function validateExternalEvent(event: ExternalEvent): string | null {
+  if (!event.id || typeof event.id !== 'string') return 'ExternalEvent.id is required';
+  if (!event.spaceId || typeof event.spaceId !== 'string') {
+    return 'ExternalEvent.spaceId is required';
+  }
+  if (
+    !event.dedupeKey ||
+    typeof event.dedupeKey !== 'string' ||
+    event.dedupeKey.trim().length === 0
+  ) {
+    return 'ExternalEvent.dedupeKey is required and must not be whitespace-only';
+  }
+  if (event.dedupeKey !== event.dedupeKey.trim()) {
+    return 'ExternalEvent.dedupeKey must not have leading or trailing whitespace';
+  }
+
+  const sourceCheck = validateSource(event.source);
+  if (!sourceCheck.valid) return `ExternalEvent.source invalid: ${sourceCheck.reason}`;
+
+  const topicCheck = validateLiteralTopic(event.topic);
+  if (!topicCheck.valid) return `ExternalEvent.topic invalid: ${topicCheck.reason}`;
+
+  const firstSegment = event.topic.split('/')[0];
+  if (firstSegment !== event.source) {
+    return `ExternalEvent.topic first segment "${firstSegment}" must equal source "${event.source}"`;
+  }
+
+  if (typeof event.occurredAt !== 'number' || !Number.isFinite(event.occurredAt)) {
+    return 'ExternalEvent.occurredAt must be a finite number';
+  }
+  if (typeof event.ingestedAt !== 'number' || !Number.isFinite(event.ingestedAt)) {
+    return 'ExternalEvent.ingestedAt must be a finite number';
+  }
+  if (typeof event.summary !== 'string') return 'ExternalEvent.summary must be a string';
+  if (typeof event.payload !== 'object' || event.payload === null) {
+    return 'ExternalEvent.payload must be an object';
+  }
+  return null;
 }
 
 function rowToRecord(row: ExternalEventRow): ExternalEventRecord {
@@ -688,6 +689,8 @@ function rowToRecord(row: ExternalEventRow): ExternalEventRecord {
   };
   if (row.source_event_id !== null) event.sourceEventId = row.source_event_id;
   if (row.external_url !== null) event.externalUrl = row.external_url;
+  if (row.urgency !== null) event.urgency = row.urgency as ExternalEventUrgency;
+  if (row.render !== null) event.render = row.render;
 
   return {
     event,
@@ -725,6 +728,8 @@ function deliveryLogRowToRecord(row: ExternalEventDeliveryLogRow): ExternalEvent
     summary: row.summary,
     external_url: row.external_url,
     payload_json: row.payload_json,
+    urgency: row.urgency,
+    render: row.render,
     state: row.event_state,
     created_at: row.event_created_at,
     updated_at: row.event_updated_at,

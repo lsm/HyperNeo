@@ -1,5 +1,3 @@
-import { KimiProvider } from '../providers/kimi-provider.js';
-import { getDataDir } from '../data-dir.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -24,48 +22,52 @@ import {
   isMcpServerSkillConfig,
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
+  resolveAutoCompactPercent,
   THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
-import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
 import type { PermissionMode } from '@hyperneo/shared/types/settings';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Database } from '../../storage/database.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
-import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
+import { getDataDir } from '../data-dir.ts';
 import { Logger } from '../logger.ts';
-import { decideFallbackModelCuration } from './fallback-model-curation.ts';
+import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
 import {
   getProviderCatalogEpoch,
   getSessionModelInfo,
   isCuratedOutModel,
 } from '../model-service.ts';
+import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import {
   getProviderContextManager,
   getProviderRegistry,
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
-import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { KimiProvider } from '../providers/kimi-provider.js';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
+import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
 import {
   builtinSkillPluginPath,
   defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper.ts';
 import { getCoordinatorAgents } from './coordinator-agents.ts';
+import { autoCompactReserveTokens } from './context-tracker.js';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
-import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
   resolveConfig,
 } from './output-limiter-hook.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
-import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
+import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -204,7 +206,8 @@ export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
 export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,
-  modelId?: string | null
+  modelId?: string | null,
+  autoCompactPercent?: number | null
 ): Settings | undefined {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
@@ -217,14 +220,17 @@ export function buildProviderSettings(
     };
   }
 
-  if (shouldUseHyperNeoCompactFallback(providerId)) {
-    return { autoCompactEnabled: false };
-  }
-
-  const autoCompactWindow = contextWindow;
-  if (!autoCompactWindow) {
+  if (!contextWindow) {
     return undefined;
   }
+
+  const hasExplicitPercent =
+    typeof autoCompactPercent === 'number' && Number.isFinite(autoCompactPercent);
+  const autoCompactWindow =
+    providerId === 'kimi' || !hasExplicitPercent
+      ? contextWindow
+      : Math.floor((contextWindow * resolveAutoCompactPercent(autoCompactPercent)) / 100) +
+        autoCompactReserveTokens(providerId);
 
   return {
     autoCompactEnabled: true,
@@ -236,6 +242,7 @@ export interface QueryOptionsBuilderContext {
   readonly session: Session;
   readonly settingsManager: SettingsManager;
   readonly db?: Database;
+  midTurnContextBudgetCheck?(): Promise<void>;
   consumePendingResumeSessionAt?(): string | undefined;
   peekPendingResumeSessionAt?(): string | undefined;
   readonly skillsManager?: SkillsManager;
@@ -440,7 +447,12 @@ export class QueryOptionsBuilder {
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
       settings: withSdkTranscriptRetention(
-        buildProviderSettings(providerId, modelInfo?.contextWindow, this.ctx.session.config.model)
+        buildProviderSettings(
+          providerId,
+          modelInfo?.contextWindow,
+          this.ctx.session.config.model,
+          modelInfo?.autoCompactPercent
+        )
       ),
 
       includePartialMessages: config.includePartialMessages ?? isMessageDeliveryV2Enabled(),
@@ -1024,15 +1036,33 @@ CRITICAL RULES:
       hooks.PreToolUse = preToolUse;
     }
 
-    const postHooks: NonNullable<Options['hooks']>['PostToolUse'] = [
-      { hooks: [loopDetectorHooks.postToolUse] },
-    ];
+    const budgetGuardHook = this.ctx.midTurnContextBudgetCheck
+      ? async (): Promise<Record<string, never>> => {
+          try {
+            await this.ctx.midTurnContextBudgetCheck?.();
+          } catch (error) {
+            log.warn('mid-turn context budget check failed:', error);
+          }
+          return {};
+        }
+      : null;
+
+    const postHooks: NonNullable<Options['hooks']>['PostToolUse'] = [];
+    if (budgetGuardHook) {
+      postHooks.push({ hooks: [budgetGuardHook] });
+    }
+    postHooks.push({ hooks: [loopDetectorHooks.postToolUse] });
     if (outputLimiterEnabled) {
       postHooks.push({ hooks: [createOutputLimiterPostHook(outputLimiterSettings)] });
     }
     hooks.PostToolUse = postHooks;
 
-    hooks.PostToolUseFailure = [{ hooks: [loopDetectorHooks.postToolUseFailure] }];
+    const postFailureHooks: NonNullable<Options['hooks']>['PostToolUseFailure'] = [];
+    if (budgetGuardHook) {
+      postFailureHooks.push({ hooks: [budgetGuardHook] });
+    }
+    postFailureHooks.push({ hooks: [loopDetectorHooks.postToolUseFailure] });
+    hooks.PostToolUseFailure = postFailureHooks;
     return hooks;
   }
 

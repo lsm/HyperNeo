@@ -21,6 +21,8 @@ const REVIEWER_SESSION_ID = 'reviewer-session-live';
 function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
   const calls: string[] = [];
   const configUpdates: Array<Record<string, unknown>> = [];
+  const metadataUpdates: Array<Record<string, unknown>> = [];
+  const data: { id: string; workspacePath: string | null } = { id, workspacePath: null };
   const session = {
     session: { id },
     skillOverrides: undefined,
@@ -30,6 +32,12 @@ function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
       calls.push('updateConfig');
       configUpdates.push(arg);
     },
+    updateMetadata: (arg: Record<string, unknown>): void => {
+      calls.push('updateMetadata');
+      metadataUpdates.push(arg);
+      if ('workspacePath' in arg) data.workspacePath = arg.workspacePath as string | null;
+    },
+    getSessionData: (): { id: string; workspacePath: string | null } => data,
     mergeRuntimeMcpServers: (): void => {
       calls.push('mergeRuntimeMcpServers');
     },
@@ -37,7 +45,7 @@ function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
       calls.push('startStreamingQuery');
     },
   };
-  return { session: session as unknown as AgentSessionType, calls, configUpdates };
+  return { session: session as unknown as AgentSessionType, calls, configUpdates, metadataUpdates };
 }
 
 function makeCapturingFakeSession(id: string): {
@@ -172,6 +180,9 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   test('reuses the target agent live session and injects the kickoff directly (no fresh session)', async () => {
     const tam = makeManager();
     seedLiveSession(tam);
+    (
+      tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
+    ).reinjectNodeAgentMcpServer = async () => {};
     const injected: Array<{ sessionId: string; message: string }> = [];
     (
       tam as unknown as {
@@ -212,6 +223,58 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(fromInitSpy).not.toHaveBeenCalled();
   });
 
+  test('live reuse syncs the session workspace to task.workspacePath before injection', async () => {
+    const tam = makeManager();
+    const live = seedLiveSession(tam);
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () =>
+        ({
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+          title: 'Task 850',
+          workspacePath: '/task/reuse-override',
+        }) as unknown as SpaceTask,
+    };
+    const reinjectCtx: Array<Record<string, unknown>> = [];
+    (
+      tam as unknown as {
+        reinjectNodeAgentMcpServer: (s: unknown, ctx: Record<string, unknown>) => Promise<void>;
+      }
+    ).reinjectNodeAgentMcpServer = async (_s, ctx) => {
+      reinjectCtx.push(ctx);
+    };
+    const injected: Array<{ sessionId: string; message: string }> = [];
+    (
+      tam as unknown as {
+        injectMessageIntoSession: (s: { session: { id: string } }, m: string) => Promise<string>;
+      }
+    ).injectMessageIntoSession = async (s, m) => {
+      injected.push({ sessionId: s.session.id, message: m });
+      return 'msg-id';
+    };
+
+    const result = await tam.spawnPostApprovalSubSession({
+      task: {
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: RUN_ID,
+        workspacePath: '/task/reuse-override',
+      } as unknown as SpaceTask,
+      workflow: minimalWorkflow(),
+      targetAgent: REVIEWER_AGENT,
+      kickoffMessage: 'merge the PR',
+    });
+
+    expect(result.sessionId).toBe(REVIEWER_SESSION_ID);
+    expect(injected).toHaveLength(1);
+    expect(live.metadataUpdates).toContainEqual({ workspacePath: '/task/reuse-override' });
+    expect(live.session.getSessionData().workspacePath).toBe('/task/reuse-override');
+    expect(reinjectCtx).toHaveLength(1);
+    expect(reinjectCtx[0]).toMatchObject({ workspacePath: '/task/reuse-override' });
+    expect(fromInitSpy).not.toHaveBeenCalled();
+  });
+
   test('createSubSession still reuses the prior session for a normal second activation (hard constraint)', async () => {
     const tam = makeManager();
     seedLiveSession(tam);
@@ -229,6 +292,118 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(actual).toBe(REVIEWER_SESSION_ID);
     expect(actual).not.toBe(proposedId);
     expect(fromInitSpy).not.toHaveBeenCalled();
+  });
+
+  test('createSubSession reuse resolves the workspace from the task reloaded under the inject lock', async () => {
+    const tam = makeManager();
+    const live = seedLiveSession(tam);
+    let reloadCount = 0;
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () => {
+        reloadCount += 1;
+        return reloadCount === 1
+          ? { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'Task 850' }
+          : {
+              id: TASK_ID,
+              spaceId: SPACE_ID,
+              workflowRunId: RUN_ID,
+              title: 'Task 850',
+              workspacePath: '/task/late-update',
+            };
+      },
+    };
+    const reinjectCtx: Array<Record<string, unknown>> = [];
+    (
+      tam as unknown as {
+        reinjectNodeAgentMcpServer: (s: unknown, ctx: Record<string, unknown>) => Promise<void>;
+      }
+    ).reinjectNodeAgentMcpServer = async (_s, ctx) => {
+      reinjectCtx.push(ctx);
+    };
+    (
+      tam as unknown as { ensureRequiredMcpServersAttached: (...a: unknown[]) => Promise<void> }
+    ).ensureRequiredMcpServersAttached = async () => {};
+    (
+      tam as unknown as { registerCompletionCallback: (...a: unknown[]) => void }
+    ).registerCompletionCallback = () => {};
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    expect(reinjectCtx).toHaveLength(1);
+    expect(reinjectCtx[0]).toMatchObject({ workspacePath: '/task/late-update' });
+    expect(live.metadataUpdates).toContainEqual({ workspacePath: '/task/late-update' });
+  });
+
+  test('createSubSession reuse refuses the workspace migration when the task changed ownership before the lock', async () => {
+    const tam = makeManager();
+    const live = seedLiveSession(tam);
+    stubReusePathHelpers(tam);
+    let reloadCount = 0;
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () => {
+        reloadCount += 1;
+        return reloadCount === 1
+          ? { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'Task 850' }
+          : { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: 'run-other', title: 'Task 850' };
+      },
+    };
+
+    await expect(
+      tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+        agentId: 'agent-reviewer',
+        agentName: REVIEWER_AGENT,
+        nodeId: REVIEWER_NODE_ID,
+      })
+    ).rejects.toThrow('changed ownership');
+
+    expect(live.metadataUpdates).toEqual([]);
+  });
+
+  test('createSubSession reuse keeps the migrated workspace when only the later required-server attach fails', async () => {
+    const tam = makeManager();
+    const live = seedLiveSession(tam);
+    let reloadCount = 0;
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () => {
+        reloadCount += 1;
+        return reloadCount === 1
+          ? { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'Task 850' }
+          : {
+              id: TASK_ID,
+              spaceId: SPACE_ID,
+              workflowRunId: RUN_ID,
+              title: 'Task 850',
+              workspacePath: '/task/late-update',
+            };
+      },
+    };
+    (
+      tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
+    ).reinjectNodeAgentMcpServer = async () => {};
+    (
+      tam as unknown as { ensureRequiredMcpServersAttached: (...a: unknown[]) => Promise<void> }
+    ).ensureRequiredMcpServersAttached = async () => {
+      throw new Error('attach boom');
+    };
+    (
+      tam as unknown as { registerCompletionCallback: (...a: unknown[]) => void }
+    ).registerCompletionCallback = () => {};
+
+    await expect(
+      tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+        agentId: 'agent-reviewer',
+        agentName: REVIEWER_AGENT,
+        nodeId: REVIEWER_NODE_ID,
+      })
+    ).rejects.toThrow('attach boom');
+
+    expect(live.metadataUpdates).toEqual([{ workspacePath: '/task/late-update' }]);
+    expect(live.session.getSessionData().workspacePath).toBe('/task/late-update');
   });
 
   test('stale co-owner sweep preserves blocked status (only active owners become idle)', async () => {
@@ -420,6 +595,80 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     const init = await spawnAndCaptureInit(tam);
 
     expect(init.workspacePath).toBe('/tmp/ws');
+  });
+
+  test('task.workspacePath wins over the space workspace when no worktree is persisted', async () => {
+    const tam = makeManager([]);
+    stubFreshCreateSpawnPath(tam);
+    (tam.config as unknown as Record<string, unknown>).worktreeManager = {
+      getTaskWorktreePathSync: () => null,
+    };
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () => ({
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: RUN_ID,
+        title: 'Task 850',
+        workspacePath: '/task/override',
+      }),
+    };
+
+    await tam.spawnPostApprovalSubSession({
+      task: { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask,
+      workflow: minimalWorkflow(),
+      targetAgent: REVIEWER_AGENT,
+      kickoffMessage: 'merge the PR',
+    });
+
+    const init = fromInitSpy.mock.calls[0][0] as unknown as Record<string, unknown>;
+    expect(init.workspacePath).toBe('/task/override');
+  });
+
+  test('fresh post-approval spawn rejects when the task moved to another workflow run', async () => {
+    const tam = makeManager([]);
+    stubFreshCreateSpawnPath(tam);
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () => ({
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: 'run-other',
+        title: 'Task 850',
+      }),
+    };
+
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task: { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask,
+        workflow: minimalWorkflow(),
+        targetAgent: REVIEWER_AGENT,
+        kickoffMessage: 'merge the PR',
+      })
+    ).rejects.toThrow('moved to workflow run');
+  });
+
+  test('persisted worktree still wins over task.workspacePath', async () => {
+    const tam = makeManager([]);
+    stubFreshCreateSpawnPath(tam);
+    const persistedWorktree = '/persisted/worktrees/task-850';
+    (tam.config as unknown as Record<string, unknown>).worktreeManager = {
+      getTaskWorktreePathSync: (spaceId: string, taskId: string) =>
+        spaceId === SPACE_ID && taskId === TASK_ID ? persistedWorktree : null,
+    };
+
+    await tam.spawnPostApprovalSubSession({
+      task: {
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: RUN_ID,
+        workspacePath: '/task/override',
+      } as unknown as SpaceTask,
+      workflow: minimalWorkflow(),
+      targetAgent: REVIEWER_AGENT,
+      kickoffMessage: 'merge the PR',
+    });
+
+    const init = fromInitSpy.mock.calls[0][0] as unknown as Record<string, unknown>;
+    expect(init.workspacePath).toBe(persistedWorktree);
   });
 
   test('CREATE branch attaches space-agent-tools before first turn + wires self-heal (#852)', async () => {
@@ -1072,5 +1321,54 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     expect(actual).toBe('fresh-id');
     expect(fromInitSpy).toHaveBeenCalledTimes(1);
     expect(updates.find((u) => u.id === 'exec-bound-elsewhere')).toBeUndefined();
+  });
+
+  test('reuse path prefers task.workspacePath over the space workspace', async () => {
+    const { tam } = makeRecordingManager([makeExecutionRow()]);
+    (tam.config as unknown as Record<string, unknown>).taskRepo = {
+      getTask: () =>
+        ({
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+          title: 'T',
+          workspacePath: '/task/reuse-override',
+        }) as unknown as SpaceTask,
+    };
+    const live = seedLiveSession(tam);
+    const { reinjectCtx } = stubMcpReinjection(tam);
+    (tam as unknown as { registerCompletionCallback: () => void }).registerCompletionCallback =
+      () => {};
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    expect(reinjectCtx).toHaveLength(1);
+    expect(reinjectCtx[0]).toMatchObject({ workspacePath: '/task/reuse-override' });
+    expect(live.metadataUpdates).toContainEqual({ workspacePath: '/task/reuse-override' });
+    expect(live.session.getSessionData().workspacePath).toBe('/task/reuse-override');
+  });
+
+  test('reuse path leaves the session workspace untouched when it already matches', async () => {
+    const { tam } = makeRecordingManager([makeExecutionRow()]);
+    const live = seedLiveSession(tam);
+    live.session.getSessionData().workspacePath = '/tmp/ws';
+    const { reinjectCtx } = stubMcpReinjection(tam);
+    (tam as unknown as { registerCompletionCallback: () => void }).registerCompletionCallback =
+      () => {};
+
+    const actual = await tam.createSubSession(TASK_ID, 'proposed-id', minimalInit(), {
+      agentId: 'agent-reviewer',
+      agentName: REVIEWER_AGENT,
+      nodeId: REVIEWER_NODE_ID,
+    });
+
+    expect(actual).toBe(REVIEWER_SESSION_ID);
+    expect(reinjectCtx[0]).toMatchObject({ workspacePath: '/tmp/ws' });
+    expect(live.metadataUpdates).toEqual([]);
   });
 });

@@ -19,7 +19,6 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 const TASK_ID = 'task-1241';
-const RUN_ID = 'run-1241';
 const SPACE_ID = 'space-1241';
 const NODE_ID = 'node-coder';
 const AGENT_NAME = 'coder';
@@ -127,7 +126,10 @@ function makeRealRepoHarness(options: { taskStatus?: string } = {}): RealRepoHar
     spaceAgentManager: {
       getById: (id: string) => (id !== AGENT_ID ? undefined : fakeCustomAgent()),
     },
-    worktreeManager: { createTaskWorktree: () => workspaceGate.promise },
+    worktreeManager: {
+      createTaskWorktree: () => workspaceGate.promise,
+      getTaskWorktreePathSync: () => null,
+    },
   } as unknown as TaskAgentManagerConfig);
 
   const internal = tam as unknown as {
@@ -158,14 +160,14 @@ function makeRealRepoHarness(options: { taskStatus?: string } = {}): RealRepoHar
   const task = {
     id: TASK_ID,
     spaceId: SPACE_ID,
-    workflowRunId: RUN_ID,
+    workflowRunId: runRow.id,
     title: 'After-picture spawn CAS',
     description: '',
     status: options.taskStatus ?? 'in_progress',
   } as unknown as SpaceTask;
   const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as unknown as Space;
   const workflowRun = {
-    id: RUN_ID,
+    id: runRow.id,
     workflowId: 'wf-1',
     status: 'in_progress',
   } as unknown as SpaceWorkflowRun;
