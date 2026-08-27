@@ -720,7 +720,6 @@ async function loadProviderModels(
   provider: Provider,
   options?: { forceRemote?: boolean }
 ): Promise<ProviderModelLoadResult> {
-  const persistedDiscovered = getPersistedDiscoveredForProvider(provider.id);
   try {
     if (!(await provider.isAvailable())) {
       return { status: 'unavailable', models: [] };
@@ -741,11 +740,15 @@ async function loadProviderModels(
     }
     return {
       status: 'failed',
-      models: fallbackModelsFor(provider, persistedDiscovered),
+      models: fallbackModelsFor(provider, getPersistedDiscoveredForProvider(provider.id)),
       error: new Error('Provider returned no models'),
     };
   } catch (error) {
-    return { status: 'failed', models: fallbackModelsFor(provider, persistedDiscovered), error };
+    return {
+      status: 'failed',
+      models: fallbackModelsFor(provider, getPersistedDiscoveredForProvider(provider.id)),
+      error,
+    };
   }
 }
 
