@@ -6721,13 +6721,17 @@ describe('SpaceRuntime external event subscriptions', () => {
         expect(eventStore.getById(event.id)?.state).toBe('delivered');
       }
 
-      expect(
-        await runtime.renderPendingDigestForSession('session-digest-pull', task.id)
-      ).toBeNull();
+      expect(await runtime.renderPendingDigestForSession('session-digest-pull', task.id)).toEqual({
+        action: 'skip',
+        reason: 'no_pending_events',
+      });
     });
 
     test('flag on: a session with no node execution is not a digest target', async () => {
-      expect(await runtime.renderPendingDigestForSession('session-unknown')).toBeNull();
+      expect(await runtime.renderPendingDigestForSession('session-unknown')).toEqual({
+        action: 'skip',
+        reason: 'no_execution',
+      });
     });
   });
 });

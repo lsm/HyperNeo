@@ -91,6 +91,8 @@ export class ExternalEventStore {
 
   private deliveryTerminalHook?: (event: DeliveryTerminalEvent) => void;
 
+  private deferredEventNotifications: string[] | null = null;
+
   setDeliveryTerminalHook(hook: (event: DeliveryTerminalEvent) => void): void {
     this.deliveryTerminalHook = hook;
   }
@@ -265,7 +267,10 @@ export class ExternalEventStore {
     const result = this.db
       .prepare(`UPDATE space_external_events SET state = ?, updated_at = ? WHERE id = ?`)
       .run(state, Date.now(), eventId);
-    if (result.changes > 0) this.notify(['space_external_events']);
+    if (result.changes > 0) {
+      if (this.deferredEventNotifications) this.deferredEventNotifications.push(eventId);
+      else this.notify(['space_external_events']);
+    }
   }
 
   registerExpectedDelivery(eventId: string, deliveryKey: string, target: DeliveryTarget): void {
@@ -392,15 +397,24 @@ export class ExternalEventStore {
 
   markDeliveriesDeliveredAtomic(marks: Array<{ eventId: string; deliveryKey: string }>): void {
     const changed: Array<{ eventId: string; deliveryKey: string }> = [];
-    this.db.transaction(() => {
-      for (const mark of marks) {
-        if (this.applyDeliveryDelivered(mark.eventId, mark.deliveryKey)) changed.push(mark);
-      }
-      for (const mark of marks) {
-        this.markEventDeliveredIfAllDeliveriesDelivered(mark.eventId);
-        this.markEventFailedIfAllDeliveriesTerminal(mark.eventId);
-      }
-    })();
+    const deferredEventNotifications: string[] = [];
+    this.deferredEventNotifications = deferredEventNotifications;
+    try {
+      this.db.transaction(() => {
+        for (const mark of marks) {
+          if (this.applyDeliveryDelivered(mark.eventId, mark.deliveryKey)) changed.push(mark);
+        }
+        for (const mark of marks) {
+          this.markEventDeliveredIfAllDeliveriesDelivered(mark.eventId);
+          this.markEventFailedIfAllDeliveriesTerminal(mark.eventId);
+        }
+      })();
+    } finally {
+      this.deferredEventNotifications = null;
+    }
+    if (deferredEventNotifications.length > 0) {
+      this.notify(['space_external_events']);
+    }
     for (const mark of changed) {
       this.emitDeliveryDelivered(mark.eventId, mark.deliveryKey);
     }

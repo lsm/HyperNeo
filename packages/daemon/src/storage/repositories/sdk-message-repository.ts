@@ -1080,26 +1080,35 @@ export class SDKMessageRepository {
 
   listUserMessagesByUuidPrefix(
     sessionId: string,
-    prefix: string,
-    limit = 100
+    prefix: string
   ): Array<SDKUserMessage & { dbId: string; timestamp: number }> {
-    const rows = this.db
-      .prepare(
-        `SELECT id, sdk_message, timestamp FROM sdk_messages
+    const pageSize = 100;
+    const messages: Array<SDKUserMessage & { dbId: string; timestamp: number }> = [];
+    let offset = 0;
+    for (;;) {
+      const rows = this.db
+        .prepare(
+          `SELECT id, sdk_message, timestamp FROM sdk_messages
 	       WHERE session_id = ?
 	         AND message_type = 'user'
 	         AND sdk_uuid LIKE ? || '%'
 	       ORDER BY timestamp DESC, rowid DESC
-	       LIMIT ?`
-      )
-      .all(sessionId, prefix, limit) as Array<{
-      id: string;
-      sdk_message: string;
-      timestamp: string;
-    }>;
-    return rows.map(
-      (row) => inflatePersistedMessage(row) as SDKUserMessage & { dbId: string; timestamp: number }
-    );
+	       LIMIT ? OFFSET ?`
+        )
+        .all(sessionId, prefix, pageSize, offset) as Array<{
+        id: string;
+        sdk_message: string;
+        timestamp: string;
+      }>;
+      messages.push(
+        ...rows.map(
+          (row) =>
+            inflatePersistedMessage(row) as SDKUserMessage & { dbId: string; timestamp: number }
+        )
+      );
+      if (rows.length < pageSize) return messages;
+      offset += pageSize;
+    }
   }
 
   getMessageByStatusAndUuid(
