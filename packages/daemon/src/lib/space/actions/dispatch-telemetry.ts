@@ -47,8 +47,8 @@ export function resolveRateAdmissionOptions(
 ): RateAdmissionOptions | null {
   const raw = env[SPACE_ACTIONS_RATE_LIMIT_ENV];
   if (raw === undefined || raw.trim() === '') return null;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
   return { maxDispatchesPerWindow: parsed, windowMs: RATE_ADMISSION_WINDOW_MS };
 }
 
@@ -60,7 +60,7 @@ export function createRateAdmission(options: RateAdmissionOptions | null): RateA
   let admitted = 0;
   return () => {
     const at = now();
-    if (at - windowStart >= windowMs) {
+    if (at < windowStart || at - windowStart >= windowMs) {
       windowStart = at;
       admitted = 0;
     }

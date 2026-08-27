@@ -128,6 +128,15 @@ describe('rate admission — flag resolution', () => {
     expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: '0' })).toBeNull();
     expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: '-5' })).toBeNull();
     expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: 'abc' })).toBeNull();
+    expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: '1.5' })).toBeNull();
+    expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: '120junk' })).toBeNull();
+  });
+
+  test('parses exponent notation at its numeric value', () => {
+    expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: '1e3' })).toEqual({
+      maxDispatchesPerWindow: 1000,
+      windowMs: RATE_ADMISSION_WINDOW_MS,
+    });
   });
 
   test('parses a positive per-minute limit into admission options', () => {
@@ -158,6 +167,22 @@ describe('rate admission — window enforcement', () => {
 
     now += 60_000;
     expect(admit()).toBe(true);
+    expect(admit()).toBe(true);
+    expect(admit()).toBe(false);
+  });
+
+  test('a backward clock step resets the window instead of wedging it shut', () => {
+    let now = 1_000_000;
+    const admit = createRateAdmission({
+      maxDispatchesPerWindow: 1,
+      windowMs: 60_000,
+      now: () => now,
+    });
+
+    expect(admit()).toBe(true);
+    expect(admit()).toBe(false);
+
+    now -= 30_000;
     expect(admit()).toBe(true);
     expect(admit()).toBe(false);
   });
