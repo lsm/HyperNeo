@@ -447,11 +447,10 @@ function endpointMatchingPersistedDiscovered(
 ): Array<{ id: string; name?: string }> {
   if (!providerRepositoryRef) return [];
   try {
-    const wrapper = extractPersistedDiscoveredWrapper(
-      providerRepositoryRef.getProviderByProviderId(provider.id)?.configJson
-    );
+    const record = providerRepositoryRef.getProviderByProviderId(provider.id);
+    const wrapper = extractPersistedDiscoveredWrapper(record?.configJson);
     if (!wrapper) return [];
-    const endpointFingerprint = provider.getDiscoveryEndpointFingerprint?.();
+    const endpointFingerprint = provider.getDiscoveryEndpointFingerprint?.(record?.baseUrl);
     if (
       wrapper.fingerprint !== undefined &&
       endpointFingerprint !== undefined &&
@@ -751,19 +750,25 @@ async function loadProviderModels(
   options?: { forceRemote?: boolean }
 ): Promise<ProviderModelLoadResult> {
   try {
-    if (!(await provider.isAvailable())) {
+    const savedBaseUrl = getSavedBaseUrlForProvider(provider.id);
+    const routesThroughSavedEndpoint =
+      !options?.forceRemote &&
+      savedBaseUrl !== undefined &&
+      provider.listRemoteModels !== undefined;
+    if (!routesThroughSavedEndpoint && !(await provider.isAvailable())) {
       return { status: 'unavailable', models: [] };
     }
-    const savedBaseUrl = getSavedBaseUrlForProvider(provider.id);
     const discovered =
-      (options?.forceRemote || savedBaseUrl !== undefined) && provider.listRemoteModels
+      (options?.forceRemote || routesThroughSavedEndpoint) && provider.listRemoteModels
         ? await provider.listRemoteModels({
             ...(options?.forceRemote ? { force: true } : {}),
             ...(savedBaseUrl ? { baseUrl: savedBaseUrl } : {}),
           })
         : null;
     const models = discovered
-      ? withCuratedEntries(provider.id, discovered)
+      ? routesThroughSavedEndpoint
+        ? withCuratedEntries(provider.id, mergeDiscoveredWithStatic(provider.id, discovered))
+        : withCuratedEntries(provider.id, discovered)
       : await provider.getModels();
     if (
       models.length > 0 ||

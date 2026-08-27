@@ -177,8 +177,8 @@ export class OAuthRefreshScheduler {
 
   private async recordPendingInvalidationFailure(providerId: string): Promise<void> {
     const retries = this.bumpPendingInvalidationRetries(providerId);
-    if (retries >= this.maxRetries) {
-      this.pendingInvalidationRetries.delete(providerId);
+    if (retries > this.maxRetries) return;
+    if (retries === this.maxRetries) {
       this.credentialManager.markProviderHealth(providerId, 'unhealthy');
       await this.onProviderChanged?.(providerId, 'exhausted');
     }

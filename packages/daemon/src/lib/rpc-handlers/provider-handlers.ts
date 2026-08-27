@@ -331,7 +331,7 @@ export interface ProviderHandlerDeps {
 const LAST_GOOD_DISCOVERY_KEY = 'discoveredModels';
 const LAST_GOOD_DISCOVERY_WRAPPER_RESERVE =
   `${JSON.stringify(LAST_GOOD_DISCOVERY_KEY)}:${JSON.stringify({ models: [], truncated: true })}`
-    .length + 129;
+    .length + 1;
 
 interface LastGoodDiscoveredModels {
   models: CuratedModel[];
@@ -339,11 +339,21 @@ interface LastGoodDiscoveredModels {
   fingerprint?: string;
 }
 
-function lastGoodDiscoveryBudget(base: Record<string, unknown>): number {
+function lastGoodDiscoveryBudget(
+  base: Record<string, unknown>,
+  endpointFingerprint?: string
+): number {
   const stripped = { ...base };
   delete stripped[LAST_GOOD_DISCOVERY_KEY];
   const prefixLength = Object.keys(stripped).length > 0 ? JSON.stringify(stripped).length + 1 : 1;
-  return Math.max(0, MAX_JSON_FIELD_LEN - prefixLength - LAST_GOOD_DISCOVERY_WRAPPER_RESERVE);
+  const fingerprintReserve =
+    endpointFingerprint === undefined
+      ? 0
+      : `,"fingerprint":${JSON.stringify(endpointFingerprint)}`.length;
+  return Math.max(
+    0,
+    MAX_JSON_FIELD_LEN - prefixLength - LAST_GOOD_DISCOVERY_WRAPPER_RESERVE - fingerprintReserve
+  );
 }
 
 function buildLastGoodDiscoveredModels(
@@ -422,7 +432,7 @@ function persistLastGoodDiscoveredModels(
     }
     base = parsed as Record<string, unknown>;
   }
-  const budget = lastGoodDiscoveryBudget(base);
+  const budget = lastGoodDiscoveryBudget(base, endpointFingerprint);
   if (budget < 2) {
     throw new Error('Provider config has no capacity to persist discovery results');
   }
@@ -620,7 +630,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           providerRepo,
           currentRecord!,
           discovered,
-          provider.getDiscoveryEndpointFingerprint?.()
+          provider.getDiscoveryEndpointFingerprint?.(savedConfig.baseUrl)
         );
       } catch (persistError) {
         provider.clearModelCache?.();

@@ -682,7 +682,7 @@ describe('OAuthRefreshScheduler', () => {
     await scheduler.tick();
     await scheduler.tick();
 
-    expect(invalidationAttempts).toBe(2);
+    expect(invalidationAttempts).toBe(3);
     expect(events).toEqual(['changed:oauth-provider:exhausted']);
     expect(manager.health.get('oauth-provider')).toBe('unhealthy');
   });

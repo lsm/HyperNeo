@@ -472,6 +472,7 @@ describe('Provider RPC handlers', () => {
       overrides: {
         listRemoteModels?: () => Promise<ModelInfo[]>;
         getModels?: () => Promise<ModelInfo[]>;
+        getDiscoveryEndpointFingerprint?: (discoveryBaseUrl?: string) => string;
       } = {}
     ): { listRemoteModels: ReturnType<typeof mock>; getModels: ReturnType<typeof mock> } {
       const listRemoteModels = mock(overrides.listRemoteModels ?? (async () => []));
@@ -481,6 +482,9 @@ describe('Provider RPC handlers', () => {
         isAvailable: async () => true,
         listRemoteModels,
         getModels,
+        ...(overrides.getDiscoveryEndpointFingerprint
+          ? { getDiscoveryEndpointFingerprint: overrides.getDiscoveryEndpointFingerprint }
+          : {}),
       } as unknown as Provider);
       return { listRemoteModels, getModels };
     }
@@ -1028,7 +1032,7 @@ describe('Provider RPC handlers', () => {
     });
 
     it('rejects the refresh when curated entries alone exceed the persistence budget', async () => {
-      const pad = 'x'.repeat(65_260);
+      const pad = 'x'.repeat(65_390);
       const created = repo.createProvider({
         providerId: 'remote',
         displayName: 'Remote',
@@ -1408,7 +1412,7 @@ describe('Provider RPC handlers', () => {
     });
 
     it('rejects a stale-snapshot curation save that would overflow the configJson limit after restoring discovery', async () => {
-      const pad = 'x'.repeat(65_450);
+      const pad = 'x'.repeat(65_200);
       const created = repo.createProvider({
         providerId: 'remote',
         displayName: 'Remote',
@@ -1431,10 +1435,11 @@ describe('Provider RPC handlers', () => {
       const staleSnapshot = JSON.stringify({
         region: 'china',
         pad,
-        models: [{ id: 'remote-a' }],
+        models: [{ id: 'remote-a' }, { id: `filler-${'y'.repeat(240)}` }],
       });
       const originalConfig = repo.getProvider(created.id)?.configJson;
       expect(staleSnapshot.length).toBeLessThanOrEqual(64 * 1024);
+      expect(staleSnapshot.length).toBeGreaterThan(64 * 1024 - 100);
 
       await expect(
         handlers.get('providers.update')!(
@@ -1472,6 +1477,33 @@ describe('Provider RPC handlers', () => {
       await refreshModels();
 
       expect(getModelsCache().get('global')).toEqual([...catalogB]);
+    });
+
+    it('accounts for the discovery fingerprint length in the persistence budget', async () => {
+      const pad = 'x'.repeat(65_000);
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ region: 'china', pad }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+        getDiscoveryEndpointFingerprint: () => 'f'.repeat(300),
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      const finalConfigJson = repo.getProvider(created.id)?.configJson ?? '';
+      expect(finalConfigJson.length).toBeLessThanOrEqual(64 * 1024);
+      expect(JSON.parse(finalConfigJson).discoveredModels.fingerprint).toBe('f'.repeat(300));
     });
 
     it('caps the persisted blob by remaining config capacity for large existing payloads', async () => {
