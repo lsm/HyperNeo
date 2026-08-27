@@ -75,6 +75,8 @@ function fakeSession(id: string, processingStatus = 'idle'): AgentSession {
   return {
     session: { id },
     getProcessingState: () => ({ status: processingStatus }),
+    getSessionData: () => ({ id, workspacePath: '/tmp/ws' }),
+    updateMetadata: () => {},
   } as unknown as AgentSession;
 }
 
@@ -111,6 +113,7 @@ export interface CasCall {
 interface SpawnFlowHarnessOptions {
   taskStatus?: string;
   callerTask?: SpaceTask;
+  repoTasks?: SpaceTask[];
   taskMissing?: boolean;
   execution?: NodeExecution;
   workflow?: SpaceWorkflow | null;
@@ -145,14 +148,20 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
   const dbRow: NodeExecution = { ...row };
   const taskStatus = options.taskStatus ?? 'in_progress';
   const heldReservations = new Set<string>();
+  const repoTaskQueue = [...(options.repoTasks ?? [])];
+  const useRepoTaskQueue = repoTaskQueue.length > 0;
+  const lastRepoTask = repoTaskQueue[repoTaskQueue.length - 1];
 
   const tam = new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
     sessionManager: { registerSession: () => {}, getSession: () => undefined },
     internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
     taskRepo: {
-      getTask: (id: string) =>
-        options.taskMissing || id !== TASK_ID ? undefined : makeTask(taskStatus),
+      getTask: (id: string) => {
+        if (options.taskMissing || id !== TASK_ID) return undefined;
+        if (useRepoTaskQueue) return repoTaskQueue.shift() ?? lastRepoTask;
+        return makeTask(taskStatus);
+      },
       reserveSpawnForTick: (taskId: string, allowed: readonly string[]): 'won' | 'superseded' => {
         reservations.push(taskId);
         if (heldReservations.has(taskId)) return 'superseded';
@@ -209,7 +218,12 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
       getById: (id: string) => (id !== AGENT_ID ? undefined : fakeCustomAgent()),
     },
     ...(options.worktreeGate
-      ? { worktreeManager: { createTaskWorktree: () => options.worktreeGate } }
+      ? {
+          worktreeManager: {
+            createTaskWorktree: () => options.worktreeGate,
+            getTaskWorktreePathSync: () => null,
+          },
+        }
       : {}),
   } as unknown as TaskAgentManagerConfig);
 
@@ -289,6 +303,50 @@ function seedIndexedSession(
   );
 }
 
+interface LiveSyncProbe {
+  state: { id: string; workspacePath: string | null };
+  metadataUpdates: Array<Record<string, unknown>>;
+  reinjections: Array<Record<string, unknown>>;
+  serverRestores: Array<Record<string, unknown>>;
+}
+
+function bindLiveSessionForSync(tam: TaskAgentManager, failReinjectWith?: Error): LiveSyncProbe {
+  const state = { id: 'live-session', workspacePath: '/old/ws' as string | null };
+  const metadataUpdates: Array<Record<string, unknown>> = [];
+  const reinjections: Array<Record<string, unknown>> = [];
+  const serverRestores: Array<Record<string, unknown>> = [];
+  const live = {
+    session: {
+      id: 'live-session',
+      config: { mcpServers: { 'node-agent': { __role: 'old-node-agent' } } },
+    },
+    getProcessingState: () => ({ status: 'idle' }),
+    getSessionData: () => state,
+    updateMetadata: (u: Record<string, unknown>) => {
+      metadataUpdates.push(u);
+      if ('workspacePath' in u) state.workspacePath = u.workspacePath as string | null;
+    },
+    mergeRuntimeMcpServers: (servers: Record<string, unknown>) => {
+      serverRestores.push(servers);
+    },
+  } as unknown as AgentSession;
+  const internal = tam as unknown as {
+    agentSessionIndex: Map<string, AgentSession>;
+    getSubSession: (id: string) => AgentSession | undefined;
+    reinjectNodeAgentMcpServer: (
+      session: AgentSession,
+      ctx: Record<string, unknown>
+    ) => Promise<void>;
+  };
+  internal.agentSessionIndex.set('live-session', live);
+  internal.getSubSession = (id) => (id === 'live-session' ? live : undefined);
+  internal.reinjectNodeAgentMcpServer = async (_session, ctx) => {
+    reinjections.push(ctx);
+    if (failReinjectWith) throw failReinjectWith;
+  };
+  return { state, metadataUpdates, reinjections, serverRestores };
+}
+
 function fireLongTimersImmediately(): () => void {
   const originalSetTimeout = globalThis.setTimeout;
   const spy = spyOn(globalThis, 'setTimeout').mockImplementation(((
@@ -354,6 +412,73 @@ describe('spawnWorkflowNodeAgentForExecution — staged spawn interpreter', () =
     });
     expect(h.order).toEqual([]);
     expect(h.reservations).toEqual([]);
+  });
+
+  test('reuse_live migrates the live session when the task workspace changed (perform branch)', async () => {
+    const h = makeSpawnFlowHarness({
+      execution: makeExecution({ agentSessionId: 'live-session', status: 'idle' }),
+    });
+    const probe = bindLiveSessionForSync(h.tam);
+
+    const result = await h.spawn();
+
+    expect(result).toBe('live-session');
+    expect(probe.metadataUpdates).toEqual([{ workspacePath: '/tmp/ws' }]);
+    expect(probe.reinjections).toHaveLength(1);
+    expect(probe.reinjections[0]).toMatchObject({ workspacePath: '/tmp/ws' });
+    expect(probe.state.workspacePath).toBe('/tmp/ws');
+  });
+
+  test('reuse_live rejects when the task moved to another workflow run before the locked sync', async () => {
+    const h = makeSpawnFlowHarness({
+      execution: makeExecution({ agentSessionId: 'live-session', status: 'idle' }),
+      repoTasks: [
+        makeTask('in_progress'),
+        { ...makeTask('in_progress'), workflowRunId: 'run-other' } as SpaceTask,
+      ],
+    });
+    const probe = bindLiveSessionForSync(h.tam);
+
+    await expect(h.spawn()).rejects.toThrow('no longer attached to workflow run');
+
+    expect(probe.metadataUpdates).toEqual([]);
+  });
+
+  test('reuse_live rejects when the task was detached from its workflow run before the locked sync', async () => {
+    const h = makeSpawnFlowHarness({
+      execution: makeExecution({ agentSessionId: 'live-session', status: 'idle' }),
+      repoTasks: [
+        makeTask('in_progress'),
+        { ...makeTask('in_progress'), workflowRunId: undefined } as SpaceTask,
+      ],
+    });
+    const probe = bindLiveSessionForSync(h.tam);
+
+    await expect(h.spawn()).rejects.toThrow('(now detached)');
+
+    expect(probe.metadataUpdates).toEqual([]);
+  });
+
+  test('reuse_live propagates migrate-workspace failures, rolls back, and reverts the execution rebind', async () => {
+    const h = makeSpawnFlowHarness({
+      execution: makeExecution({ agentSessionId: 'live-session', status: 'idle' }),
+    });
+    const probe = bindLiveSessionForSync(h.tam, new Error('reinject boom'));
+
+    await expect(h.spawn()).rejects.toThrow('reinject boom');
+
+    expect(probe.metadataUpdates).toEqual([
+      { workspacePath: '/tmp/ws' },
+      { workspacePath: '/old/ws' },
+    ]);
+    expect(probe.state.workspacePath).toBe('/old/ws');
+    expect(probe.serverRestores).toEqual([{ 'node-agent': { __role: 'old-node-agent' } }]);
+    expect(h.casCalls[1]).toEqual({
+      id: 'exec-1',
+      expected: ['in_progress'],
+      next: 'idle',
+      payload: { agentSessionId: 'live-session', startedAt: null, completedAt: null },
+    });
   });
 
   test('reuse_live clears no reservation: a concurrent peer keeps its in-flight spawn guard', async () => {

@@ -327,6 +327,19 @@ describe('space-task-handlers', () => {
 
       expect(taskManager.createTask).not.toHaveBeenCalled();
     });
+
+    it('forwards workspacePath to taskManager.createTask', async () => {
+      await call('spaceTask.create', {
+        spaceId: 'space-1',
+        title: 'T',
+        description: 'D',
+        workspacePath: '/secondary',
+      });
+
+      expect(taskManager.createTask).toHaveBeenCalledWith(
+        expect.objectContaining({ workspacePath: '/secondary' })
+      );
+    });
   });
 
   describe('spaceTask.list', () => {
@@ -517,11 +530,11 @@ describe('space-task-handlers', () => {
   });
 
   describe('spaceTask.archive via spaceTask.update', () => {
-    it('archives a completed task via status transition and publishes space.task.updated', async () => {
-      const completedTask = { ...mockTask, status: 'completed' as const };
-      setup(mockSpace, completedTask);
+    it('archives a done task via status transition and publishes space.task.updated', async () => {
+      const doneTask = { ...mockTask, status: 'done' as const };
+      setup(mockSpace, doneTask);
       (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
-        ...completedTask,
+        ...doneTask,
         status: 'archived' as const,
       });
 
@@ -570,9 +583,6 @@ describe('space-task-handlers', () => {
     it('propagates invalid-transition error when archiving from in_progress', async () => {
       const inProgressTask = { ...mockTask, status: 'in_progress' as const };
       setup(mockSpace, inProgressTask);
-      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(
-        new Error("Invalid status transition from 'in_progress' to 'archived'. Allowed: none")
-      );
 
       await expect(
         call('spaceTask.update', {
@@ -736,11 +746,11 @@ describe('space-task-handlers', () => {
       expect(runtime.recoverWorkflowBackedTask).toHaveBeenCalledWith('space-1', 'task-1', 'open');
     });
 
-    it('reactivates a completed task to in_progress and publishes space.task.updated', async () => {
-      const completedTask = { ...mockTask, status: 'completed' as const };
-      setup(mockSpace, completedTask);
+    it('reactivates a done task to in_progress and publishes space.task.updated', async () => {
+      const doneTask = { ...mockTask, status: 'done' as const };
+      setup(mockSpace, doneTask);
       (taskManager.setTaskStatus as ReturnType<typeof mock>).mockResolvedValue({
-        ...completedTask,
+        ...doneTask,
         status: 'in_progress' as const,
         result: undefined,
         progress: undefined,
@@ -814,9 +824,6 @@ describe('space-task-handlers', () => {
     it('propagates invalid-transition error when reactivating an archived task', async () => {
       const archivedTask = { ...mockTask, status: 'archived' as const };
       setup(mockSpace, archivedTask);
-      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(
-        new Error("Invalid status transition from 'archived' to 'in_progress'. Allowed: none")
-      );
 
       await expect(
         call('spaceTask.update', {
@@ -852,7 +859,24 @@ describe('space-task-handlers', () => {
       });
     });
 
+    it('forwards workspacePath to taskManager.updateTask', async () => {
+      await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        workspacePath: '/secondary',
+      });
+
+      expect(taskManager.updateTask).toHaveBeenCalledWith(
+        'task-1',
+        expect.objectContaining({ workspacePath: '/secondary' }),
+        expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+      );
+    });
+
     it("writes 'stopped' via plain setTaskStatus for non-workflow tasks (nothing to park)", async () => {
+      const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+      setup(mockSpace, inProgressTask);
+
       const result = await call('spaceTask.update', {
         spaceId: 'space-1',
         taskId: 'task-1',

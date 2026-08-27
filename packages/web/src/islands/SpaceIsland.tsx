@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'preact/compat';
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
+import { useSpaceWorkspaceChoice } from '../components/space/SpaceWorkspacePicker';
 import { GLASS_PRIMARY_BUTTON_CLASS, GlassRouteShell } from '../components/space/glass-workspace';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
@@ -203,19 +204,21 @@ export default function SpaceIsland({
     navigateBack(() => navigateToSpace(navigationSpaceId));
   }, [navigationSpaceId]);
 
-  const handleCreateSession = useCallback(
-    async (e: Event) => {
-      e.stopPropagation();
+  const workspaceChoice = useSpaceWorkspaceChoice(
+    spaceId,
+    space?.workspacePath,
+    `${spaceId}:${viewMode}`
+  );
+
+  const createSessionInWorkspace = useCallback(
+    async (workspacePath?: string, worktreeMode?: 'worktree' | 'direct') => {
       if (creatingSession) return;
       const requestId = Date.now();
       setCreatingSession(true);
       setActiveSessionRequestId(requestId);
       const originViewMode = viewMode;
       try {
-        const response = await createSession({
-          spaceId,
-          workspacePath: space?.workspacePath,
-        });
+        const response = await createSession({ spaceId, workspacePath, worktreeMode });
         if (stillOnThisRouteSpace() && currentSpaceViewModeSignal.value === originViewMode) {
           navigateToSpaceSession(navigationSpaceId, response.sessionId);
         }
@@ -231,15 +234,15 @@ export default function SpaceIsland({
         });
       }
     },
-    [
-      spaceId,
-      navigationSpaceId,
-      space?.workspacePath,
-      creatingSession,
-      viewMode,
-      stillOnThisRouteSpace,
-    ]
+    [spaceId, navigationSpaceId, creatingSession, viewMode, stillOnThisRouteSpace]
   );
+
+  const handleCreateSession = (e: Event) => {
+    e.stopPropagation();
+    workspaceChoice.chooseWorkspace(
+      (workspacePath, worktreeMode) => void createSessionInWorkspace(workspacePath, worktreeMode)
+    );
+  };
 
   if (sessionViewId) {
     const isSpaceAgentSession = sessionViewId === `space:chat:${spaceId}`;
@@ -449,6 +452,7 @@ export default function SpaceIsland({
             creatingSession={creatingSession}
           />
         </GlassRouteShell>
+        {workspaceChoice.dialog}
         {overlay}
       </>
     );

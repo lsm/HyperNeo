@@ -166,6 +166,7 @@ type GoalToolUpdateArgs = {
   auto_trigger_next?: boolean;
   check_in_cron_expression?: string | null;
   check_in_timezone?: string;
+  workspace_path?: string | null;
 };
 
 type SpaceSessionStatusFilter = 'active' | 'idle' | 'waiting_for_input' | 'error' | 'archived';
@@ -421,7 +422,7 @@ export interface SpaceAgentToolsConfig {
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   runtime: SpaceRuntime;
   workflowManager: SpaceWorkflowManager;
-  spaceManager?: Pick<SpaceManager, 'getSpace'>;
+  spaceManager?: Pick<SpaceManager, 'getSpace' | 'resolveWorkspaceSelection'>;
   taskRepo: SpaceTaskRepository;
   nodeExecutionRepo: NodeExecutionRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
@@ -1979,7 +1980,26 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       workflow_handle?: string;
       depends_on?: string[];
       draft?: boolean;
+      workspace?: string;
     }): Promise<ToolResult> {
+      let workspacePath: string | undefined;
+      if (args.workspace !== undefined) {
+        if (!config.spaceManager) {
+          return jsonResult({
+            success: false,
+            error: 'Workspace selection is not available for this space',
+          });
+        }
+        try {
+          workspacePath = await config.spaceManager.resolveWorkspaceSelection(
+            spaceId,
+            args.workspace
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ success: false, error: message });
+        }
+      }
       const workflowIdArg = args.workflow_id ?? null;
       const idWorkflow = workflowIdArg ? workflowManager.getWorkflow(workflowIdArg) : null;
       const workflowIdUsable =
@@ -2011,6 +2031,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           preferredWorkflowId,
           dependsOn: args.depends_on,
           status: args.draft ? 'draft' : undefined,
+          workspacePath,
           createdBy: myAgentName ?? null,
           createdBySession: mySessionId ?? null,
         });
@@ -2023,6 +2044,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             workflow_handle: args.workflow_handle,
             depends_on: args.depends_on,
             draft: args.draft,
+            workspace: args.workspace,
           },
           task.id
         );
@@ -3180,10 +3202,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       check_in_timezone?: string;
       trigger_immediately?: boolean;
       owner_agent_id?: string | null;
+      workspace_path?: string | null;
     }): Promise<ToolResult> {
       try {
         const primaryOwnerAgentId = resolveCreateGoalOwnerId(args.owner_agent_id);
-        const goal = requireGoalService().createGoal(
+        const goalService = requireGoalService();
+        const goal = goalService.createGoal(
           {
             spaceId,
             title: args.title,
@@ -3201,6 +3225,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             checkInTimezone: args.check_in_timezone,
             triggerImmediately: args.trigger_immediately,
             primaryOwnerAgentId,
+            workspacePath: await goalService.resolveGoalWorkspacePath(spaceId, args.workspace_path),
           },
           goalToolContext
         );
@@ -3222,9 +3247,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         requireGoalInSpace(args.goal_id);
         const { goal_id: goalId, ...updates } = args;
-        const goal = requireGoalService().updateGoal(
+        const goalService = requireGoalService();
+        const goal = goalService.updateGoal(
           goalId,
-          normalizeGoalUpdateArgs(updates),
+          {
+            ...normalizeGoalUpdateArgs(updates),
+            workspacePath: await goalService.resolveGoalWorkspacePath(
+              spaceId,
+              updates.workspace_path
+            ),
+          },
           goalToolContext
         );
         logAudit('update_goal', { goal_id: goalId, fields: Object.keys(updates) });
@@ -4273,6 +4305,12 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           .describe(
             'When true, create the task in draft status. Draft tasks are never auto-started by the runtime, even with a workflow and priority assigned. Must be explicitly published before orchestration picks it up.'
           ),
+        workspace: z
+          .string()
+          .optional()
+          .describe(
+            'Optional workspace for this task, given as the label or absolute path of a workspace registered in this space. Omit to use the space primary workspace. Unknown labels or paths are rejected with the list of registered workspaces.'
+          ),
       },
       (args) => handlers.create_standalone_task(args)
     ),
@@ -4691,6 +4729,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         .string()
         .optional()
         .describe('IANA timezone applied with check_in_cron_expression (e.g. "UTC").'),
+      workspace_path: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          'Registered secondary workspace path to pin this goal to. Omit to leave unchanged, null to unpin back to the space primary workspace.'
+        ),
     };
 
     tools.push(
@@ -4746,6 +4791,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             .optional()
             .describe(
               'Long-horizon agent id to assign as the goal primary owner atomically at creation. Defaults to the calling agent (self-claim) or the coordinator when absent.'
+            ),
+          workspace_path: z
+            .string()
+            .nullable()
+            .optional()
+            .describe(
+              'Registered secondary workspace path to pin this goal to. Omit or null for the space primary workspace.'
             ),
         },
         (args) => handlers.create_goal(args)

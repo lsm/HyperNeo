@@ -295,6 +295,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         taskAgentManager: {
           rehydrate: async () => {},
           isSessionAlive: () => false,
+          isSessionInMemory: () => false,
           getAgentSessionById: () => null,
           isExecutionSpawning: () => false,
           injectRuntimeRecoveryMessage: async (_sessionId: string, message: string) => {
@@ -348,6 +349,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         taskAgentManager: {
           rehydrate: async () => {},
           isSessionAlive: () => false,
+          isSessionInMemory: () => false,
           getAgentSessionById: () => null,
           isExecutionSpawning: () => false,
         } as any,
@@ -471,6 +473,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         taskAgentManager: {
           rehydrate: async () => {},
           isSessionAlive: () => false,
+          isSessionInMemory: () => false,
           getAgentSessionById: () => null,
           isExecutionSpawning: () => false,
         } as any,
@@ -595,6 +598,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         taskAgentManager: {
           rehydrate: async () => {},
           isSessionAlive: () => false,
+          isSessionInMemory: () => false,
           getAgentSessionById: () => null,
           isExecutionSpawning: () => false,
         } as any,
@@ -645,6 +649,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         taskAgentManager: {
           rehydrate: async () => {},
           isSessionAlive: () => false,
+          isSessionInMemory: () => false,
           getAgentSessionById: () => null,
           isExecutionSpawning: () => false,
         } as any,
@@ -718,6 +723,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         taskAgentManager: {
           rehydrate: async () => {},
           isSessionAlive: (sessionId: string) => sessionId === 'live-session',
+          isSessionInMemory: (sessionId: string) => sessionId === 'live-session',
           getAgentSessionById: () => null,
           isExecutionSpawning: () => false,
         } as any,
@@ -773,6 +779,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         taskAgentManager: {
           rehydrate: async () => {},
           isSessionAlive: (sessionId: string) => sessionId === 'live-session-with-inbox',
+          isSessionInMemory: (sessionId: string) => sessionId === 'live-session-with-inbox',
           getAgentSessionById: () => null,
           isExecutionSpawning: () => false,
         } as any,
@@ -839,6 +846,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         taskAgentManager: {
           rehydrate: async () => {},
           isSessionAlive: () => false,
+          isSessionInMemory: () => false,
           getAgentSessionById: () => null,
           isExecutionSpawning: () => false,
         } as any,
@@ -1044,6 +1052,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const tam = {
         rehydrate: async () => {},
         isSessionAlive: (sessionId: string) => live.has(sessionId),
+        isSessionInMemory: (sessionId: string) => live.has(sessionId),
         getAgentSessionById: () => null,
         isExecutionSpawning: () => false,
         tryResumeNodeAgentSession: async () => {},
@@ -1973,6 +1982,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         rehydrate: async () => {},
         isExecutionSpawning: () => false,
         isSessionAlive: () => false,
+        isSessionInMemory: () => false,
         tryResumeNodeAgentSession: async () => {},
         spawnWorkflowNodeAgentForExecution: async () => {
           throw new PermanentSpawnError(
@@ -2028,6 +2038,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         rehydrate: async () => {},
         isExecutionSpawning: () => false,
         isSessionAlive: () => false,
+        isSessionInMemory: () => false,
         tryResumeNodeAgentSession: async () => {},
         spawnWorkflowNodeAgentForExecution: async (
           _task: unknown,
@@ -2108,6 +2119,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const tam = {
         isExecutionSpawning: () => false,
         isSessionAlive: () => false,
+        isSessionInMemory: () => false,
         spawnWorkflowNodeAgentForExecution: async () => 'session:new',
         cancelBySessionId: () => {},
         interruptBySessionId: async () => {},
@@ -2441,6 +2453,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         rehydrate: async () => {},
         isExecutionSpawning: () => false,
         isSessionAlive: (sessionId: string) => liveSessions.has(sessionId),
+        isSessionInMemory: (sessionId: string) => liveSessions.has(sessionId),
         getAgentSessionById: () => null,
         injectRuntimeRecoveryMessage: async (sessionId: string) => `runtime-nag:${sessionId}`,
         restartStuckSubSession: async () => {},
@@ -2528,6 +2541,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         rehydrate: async () => {},
         isExecutionSpawning: () => false,
         isSessionAlive: (sessionId: string) => liveSessions.has(sessionId),
+        isSessionInMemory: (sessionId: string) => liveSessions.has(sessionId),
         getAgentSessionById: () => null,
         injectRuntimeRecoveryMessage: async (sessionId: string) => `runtime-nag:${sessionId}`,
         restartStuckSubSession: async () => {},
@@ -2601,6 +2615,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         rehydrate: async () => {},
         isExecutionSpawning: () => false,
         isSessionAlive: (sessionId: string) => liveSessions.has(sessionId),
+        isSessionInMemory: (sessionId: string) => liveSessions.has(sessionId),
         getAgentSessionById: () => null,
         injectRuntimeRecoveryMessage: async (sessionId: string) => `runtime-nag:${sessionId}`,
         restartStuckSubSession: async () => {},

@@ -153,6 +153,7 @@ import {
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup.ts';
 import { resolveFallbackChain } from './fallback-recovery.ts';
+import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler.ts';
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
@@ -172,6 +173,7 @@ import {
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   signalDeliveryConsumed,
+  steerAckTimeoutMs,
   throwIfDeliveryAborted,
   waitForDeliveryAbort,
   withSessionLock,
@@ -332,6 +334,7 @@ export class AgentSession
 
   private _isCleaningUp = false;
   private pendingResumeSessionAt: string | undefined;
+  private pendingResumeAfterCompaction = false;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
@@ -349,6 +352,15 @@ export class AgentSession
   onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
   slotResetsContext?: () => boolean;
+
+  renderPendingDigest?: (
+    sessionId: string,
+    taskId?: string
+  ) => Promise<
+    import('../space/runtime/render-pending-digest-pipeline.ts').RenderPendingDigestOutcome | null
+  >;
+
+  reconcilePersistedDigestRows?: (sessionId: string, taskId?: string) => boolean;
 
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository.ts').McpEnablementRepository {
     return this.db.mcpEnablement;
@@ -475,9 +487,10 @@ export class AgentSession
           return false;
         }
       },
-      switchAndRetry: (lastUserMessage, entry, episodeGeneration) =>
-        this.switchAndRetryForFallback(lastUserMessage, entry, episodeGeneration),
+      switchAndRetry: (lastUserMessage, entry, episodeGeneration, queryGeneration) =>
+        this.switchAndRetryForFallback(lastUserMessage, entry, episodeGeneration, queryGeneration),
       resolveModelId: async (provider, model) => this.resolveModelIdOrDefault(provider, model),
+      getQueryGeneration: () => this.getQueryGeneration(),
       notifyPause: (payload) => {
         this.internalEventBus.publish('session.rate_limit_pause', {
           sessionId: this.session.id,
@@ -498,20 +511,30 @@ export class AgentSession
         }).classifyWithTimeout(rawText),
     });
     this.rateLimitWatchdog.setRetryCallback(
-      async (lastUserMessage, switchTo, episodeGeneration) => {
+      async (lastUserMessage, switchTo, episodeGeneration, queryGeneration) => {
         if (switchTo) {
-          return await this.switchAndRetryForFallback(lastUserMessage, switchTo, episodeGeneration);
+          return await this.switchAndRetryForFallback(
+            lastUserMessage,
+            switchTo,
+            episodeGeneration,
+            queryGeneration
+          );
         }
-        return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
+        return await this.executeRateLimitAutoRetry(
+          lastUserMessage,
+          episodeGeneration,
+          queryGeneration
+        );
       }
     );
 
     this.eventSubscriptionSetup = new EventSubscriptionSetup(this);
 
-    this.stateManager.setOnIdleCallback(async () => {
-      await this.lifecycleManager.executeDeferredRestartIfPending();
+    this.stateManager.setOnIdleCallback(async (owner) => {
+      const restarted = await this.lifecycleManager.executeDeferredRestartIfPending();
       this.flushPendingTaskNotificationRequery();
-      void this.reconcileStrandedDeliveries().catch((error) => {
+      const reconcileOwner = restarted ? this.stateManager.getCurrentIdleOwner() : owner;
+      void this.reconcileStrandedDeliveries(reconcileOwner).catch((error) => {
         this.logger.warn('Idle reconcileStrandedDeliveries failed:', error);
       });
     });
@@ -781,14 +804,14 @@ export class AgentSession
     messageId: string,
     messageContent: string | MessageContent[],
     episodeGeneration?: number,
-    options?: { prepend?: boolean }
-  ): Promise<void> {
+    options?: { prepend?: boolean; queryGeneration?: number }
+  ): Promise<'started' | 'aborted'> {
     if (episodeGeneration === undefined) {
       this.rateLimitWatchdog.cancel();
     } else {
       this.rateLimitWatchdog.clearPendingCooldown();
     }
-    await this.lifecycleManager.startQueryAndEnqueue(
+    return await this.lifecycleManager.startQueryAndEnqueue(
       messageId,
       messageContent,
       episodeGeneration,
@@ -834,6 +857,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    this.clearPendingResumeAfterCompaction();
     this.messageHandler.cancelSuppressedResultWait();
     const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
     if (
@@ -971,13 +995,16 @@ export class AgentSession
   private async switchAndRetryForFallback(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry,
-    episodeGeneration: number
+    episodeGeneration: number,
+    queryGeneration?: number
   ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Fallback switch skipped: no last user message available.');
       await this.stateManager.setIdle();
       return false;
     }
+    const querySuperseded = (): boolean =>
+      queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration;
     try {
       if (this.queryPromise) {
         try {
@@ -985,7 +1012,7 @@ export class AgentSession
         } catch {}
       }
 
-      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after teardown (episode superseded).');
         return false;
       }
@@ -998,7 +1025,7 @@ export class AgentSession
       }
 
       const result = await this.handleModelSwitch(entry.model, entry.provider);
-      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after model switch (episode superseded).');
         return false;
       }
@@ -1010,7 +1037,11 @@ export class AgentSession
         return false;
       }
 
-      return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
+      return await this.executeRateLimitAutoRetry(
+        lastUserMessage,
+        episodeGeneration,
+        queryGeneration
+      );
     } catch (err) {
       this.logger.error('Fallback switch-and-retry failed:', err);
       await this.stateManager.setIdle();
@@ -1028,7 +1059,8 @@ export class AgentSession
 
   private async executeRateLimitAutoRetry(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    episodeGeneration?: number
+    episodeGeneration?: number,
+    queryGeneration?: number
   ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Rate limit auto-retry skipped: no last user message available.');
@@ -1052,17 +1084,31 @@ export class AgentSession
         this.stateManager.releaseIdleWaiters(episodeGeneration);
         return false;
       }
+      if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) {
+        this.logger.info(
+          'Rate limit auto-retry aborted before re-enqueue (the originating query was superseded).'
+        );
+        return false;
+      }
 
-      await this.startQueryAndEnqueue(
+      const retryOutcome = await this.startQueryAndEnqueue(
         lastUserMessage.uuid,
         lastUserMessage.content,
         episodeGeneration,
-        { prepend: true }
+        { prepend: true, queryGeneration }
       );
+      if (retryOutcome === 'aborted') {
+        this.logger.info(
+          'Rate limit auto-retry aborted during re-enqueue (the originating query was superseded).'
+        );
+        return false;
+      }
       return true;
     } catch (error) {
       this.logger.error('Rate limit auto-retry failed:', error);
-      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      if (queryGeneration === undefined || this.getQueryGeneration() === queryGeneration) {
+        await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      }
       return false;
     }
   }
@@ -1440,8 +1486,33 @@ export class AgentSession
     return value;
   }
 
+  resumePendingWorkAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    if (this.messageQueue.hasOutstandingNonCompactionMessages()) return;
+    void this.messageQueue
+      .enqueue(
+        'Context was compacted to stay within the configured window. Continue the task you were working on.',
+        false,
+        { durable: true }
+      )
+      .catch((error) => {
+        this.logger.warn(`post-compaction resume enqueue failed for ${this.session.id}:`, error);
+      });
+  }
+
+  clearPendingResumeAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    this.logger.info(
+      `dropping pending post-compaction resume for session ${this.session.id} ` +
+        `(no daemon compaction was enqueued)`
+    );
+  }
+
   incrementQueryGeneration(): number {
     const next = ++this._queryGeneration;
+    this.stateManager.noteQueryOwnerGeneration(next);
     this.taskNotificationRequeryAwaitingSdkIdle = false;
     this.taskNotificationRequeryBusyInterruptGeneration = null;
     if (this.deliveryResponseObserver?.pendingStart) {
@@ -1459,10 +1530,15 @@ export class AgentSession
     return this._isCleaningUp;
   }
 
-  async onSDKMessage(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
-    const queryGeneration = this.getQueryGeneration();
+  async onSDKMessage(
+    message: import('@hyperneo/shared/sdk').SDKMessage,
+    _queuedMessages?: Array<import('@hyperneo/shared/sdk').SDKMessage>,
+    runnerGeneration?: number
+  ): Promise<void> {
+    const queryGeneration = runnerGeneration ?? this.getQueryGeneration();
     if (
       this.session.config.provider !== 'acp' &&
+      queryGeneration === this.getQueryGeneration() &&
       isSDKSessionStateChangedMessage(message) &&
       message.state !== 'idle'
     ) {
@@ -1474,7 +1550,7 @@ export class AgentSession
     }
     try {
       try {
-        await this.messageHandler.handleMessage(message);
+        await this.messageHandler.handleMessage(message, queryGeneration);
       } catch (error) {
         if (this.getQueryGeneration() === queryGeneration) {
           this.observeTaskNotificationResult(message);
@@ -1965,20 +2041,28 @@ export class AgentSession
   async onRateLimitExhausted(
     errorMessage: string,
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    hint?: LimitRetryHint
+    hint?: LimitRetryHint,
+    queryGeneration?: number
   ): Promise<boolean> {
-    return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage, hint);
+    return this.rateLimitWatchdog.scheduleRetry(
+      errorMessage,
+      lastUserMessage,
+      hint,
+      queryGeneration
+    );
   }
 
   async onResultLimitError(
     errorText: string,
     hint: LimitRetryHint,
-    userMessageUuid?: string
+    userMessageUuid?: string,
+    queryGeneration?: number
   ): Promise<boolean> {
     return this.onRateLimitExhausted(
       errorText,
       this.queryRunner.resolveRetryUserMessage(userMessageUuid),
-      hint
+      hint,
+      queryGeneration
     );
   }
 
@@ -2202,10 +2286,16 @@ export class AgentSession
         if (!spuriousFire) break;
         graceRearms++;
         activeTurnEnd.cancel();
-        activeTurnEnd = this.stateManager.waitForIdleTransition(
+        const rearmedTurnEnd = this.stateManager.waitForIdleTransition(
           this.rateLimitWatchdog.getGeneration(),
-          recordTurnEndMarker
+          recordTurnEndMarker,
+          started.idleOwner
         );
+        activeTurnEnd = {
+          promise: rearmedTurnEnd.promise,
+          cancel: rearmedTurnEnd.cancel,
+          idleOwner: started.idleOwner,
+        };
         raceArmedAt = Date.now();
         turnEndFired = false;
         void activeTurnEnd.promise.then(() => {
@@ -2304,11 +2394,15 @@ export class AgentSession
       currentQueryPromise: () => this.queryPromise,
       pendingContentSnapshot: (messageUuid) =>
         this.messageQueue.getPendingOrInFlightContent?.(messageUuid) ?? null,
-      waitForTurnEnd: () =>
-        this.stateManager.waitForIdleTransition(
+      waitForTurnEnd: () => {
+        const idleOwner = this.stateManager.admitDeliveryTurn();
+        const { promise, cancel } = this.stateManager.waitForIdleTransition(
           this.rateLimitWatchdog.getGeneration(),
-          recordTurnEndMarker
-        ),
+          recordTurnEndMarker,
+          idleOwner
+        );
+        return { promise, cancel, idleOwner };
+      },
       existingQueueEntry: (messageUuid) => this.messageQueue.waitForPendingOrInFlight(messageUuid),
       removeQueueEntry: (messageUuid) => this.messageQueue.remove(messageUuid),
       queueEntryYielded: (messageUuid) => this.messageQueue.hasYielded(messageUuid),
@@ -2601,11 +2695,17 @@ export class AgentSession
     const steerQueryEnded: Promise<'query_ended'> = this.queryPromise
       ? this.queryPromise.catch(() => {}).then(() => 'query_ended' as const)
       : Promise.resolve('query_ended');
-    let steerWinner: 'acknowledged' | 'query_ended' = 'query_ended';
+    const ackTimeoutMs = steerAckTimeoutMs();
+    let ackTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const steerAckTimeout = new Promise<'ack_timeout'>((resolve) => {
+      ackTimeoutId = setTimeout(() => resolve('ack_timeout' as const), ackTimeoutMs);
+    });
+    let steerWinner: 'acknowledged' | 'query_ended' | 'ack_timeout' = 'query_ended';
     try {
       steerWinner = await Promise.race([
         action.acknowledgment.then(() => 'acknowledged' as const),
         steerQueryEnded,
+        steerAckTimeout,
         aborted.promise,
       ]);
     } catch (error) {
@@ -2618,11 +2718,34 @@ export class AgentSession
       }
     } finally {
       aborted.cancel();
+      if (ackTimeoutId !== undefined) clearTimeout(ackTimeoutId);
     }
     if (steerWinner === 'query_ended') {
       this.messageQueue.requeueYielded(messageUuid);
       this.reopenDeliveryForRetry(messageUuid);
       throw new Error('Steer target query ended before the SDK consumed the steer');
+    }
+    if (steerWinner === 'ack_timeout') {
+      if (this.messageQueue.hasYielded(messageUuid)) {
+        this.logger.warn(
+          `delivery-steer: acknowledgment wait timed out after ${ackTimeoutMs}ms with the ` +
+            `steer already yielded to the SDK (uuid=${messageUuid}, ` +
+            `session=${this.session.id}); settling it as acknowledged like the queue's own ` +
+            `durable yield timeout instead of requeueing content the live query may still execute`
+        );
+        this.messageQueue.acknowledgeYielded(messageUuid);
+      } else {
+        this.logger.warn(
+          `delivery-steer: the SDK did not acknowledge the steer within ${ackTimeoutMs}ms ` +
+            `(uuid=${messageUuid}, session=${this.session.id}); releasing the worker slot, ` +
+            `dropping the unconsumed queue admission, and requeueing the steer`
+        );
+        if (!this.messageQueue.remove(messageUuid)) {
+          this.messageQueue.acknowledgeYielded(messageUuid);
+        }
+        this.reopenDeliveryForRetry(messageUuid);
+        return { outcome: 'ack_timeout' };
+      }
     }
     if (claimGuard && !claimGuard()) {
       return { outcome: 'aborted' };
@@ -2856,7 +2979,7 @@ export class AgentSession
     }
   }
 
-  async reconcileStrandedDeliveries(): Promise<number> {
+  async reconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
     if (!isMessageDeliveryV2Enabled()) return 0;
     const jobQueue = this.db.getJobQueueRepo?.();
     if (!jobQueue) return 0;
@@ -2867,6 +2990,7 @@ export class AgentSession
 
     const reEnqueued = await withSessionResetCoordination(this.session.id, async () =>
       withSessionLock(this.session.id, async () => {
+        if (!this.stateManager.isIdleOwnerCurrent(owner)) return 0;
         const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
         const stranded = selectStrandedDeliveries(
           this.db.getUserMessageIdsByStatus(this.session.id, 'enqueued'),
@@ -2885,6 +3009,7 @@ export class AgentSession
     let settled = 0;
     const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {
+      if (!this.stateManager.isIdleOwnerCurrent(owner)) return;
       const activeNow = jobQueue.activeDeliveryMessageUuids(this.session.id);
       const staleSubmitted = selectStaleSubmittedDeliveries(
         this.db.getUserMessageIdsByStatus(this.session.id, 'submitted'),

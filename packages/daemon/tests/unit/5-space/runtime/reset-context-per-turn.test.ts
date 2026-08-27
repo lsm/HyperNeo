@@ -69,6 +69,8 @@ function makeManager(opts: {
     return {
       session: { id: SESSION_ID, sdkSessionId: o.sdkSessionId },
       getProcessingState,
+      getSessionData: () => ({ id: SESSION_ID, workspacePath: null }),
+      updateMetadata: () => {},
       handleQueryTrigger: replayMock,
       ensureQueryStarted: ensureStartedMock,
       clearConversationContext: clearMock,
@@ -460,6 +462,8 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     const live = {
       session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
       getProcessingState: () => ({ status: 'idle' }),
+      getSessionData: () => ({ id: SESSION_ID, workspacePath: '/w' }),
+      updateMetadata: () => {},
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: mock(async () => {
@@ -521,6 +525,9 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     ]);
     const taskRepo = cfg.config.taskRepo as Record<string, ReturnType<typeof mock>>;
     let cancelled = false;
+    taskRepo.getTask = mock(() =>
+      cancelled ? { id: 'task-1', status: 'cancelled', workflowRunId: RUN_ID } : null
+    );
     taskRepo.listByWorkflowRunIncludingArchived = mock(() =>
       cancelled ? [{ id: 'task-1', status: 'cancelled', workflowRunId: RUN_ID }] : []
     );
@@ -532,6 +539,8 @@ describe('resetContextPerTurn — TaskAgentManager injection gating', () => {
     const live = {
       session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
       getProcessingState: () => ({ status: 'idle' }),
+      getSessionData: () => ({ id: SESSION_ID, workspacePath: '/w' }),
+      updateMetadata: () => {},
       ensureQueryStarted: session.ensureStartedMock,
       handleQueryTrigger: session.replayMock,
       clearConversationContext: mock(async () => {

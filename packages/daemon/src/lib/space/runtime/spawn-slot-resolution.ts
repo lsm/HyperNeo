@@ -1,5 +1,6 @@
 import type {
   McpServerConfig,
+  Space,
   SpaceTask,
   SpaceWorkflow,
   WorkflowNode,
@@ -93,6 +94,17 @@ export function buildExecutionBaseSessionId(
   return `space:${spaceId}:task:${taskId}:exec:${executionId}`;
 }
 
+export function taskIdFromSubSessionIdentity(
+  subSessionId: string,
+  segment?: 'space' | 'task'
+): string | null {
+  const segments = subSessionId.split(':');
+  const wanted = segment ?? 'task';
+  const index = segments.indexOf(wanted);
+  if (index === -1 || index + 1 >= segments.length) return null;
+  return segments[index + 1] || null;
+}
+
 export function findAvailableSessionId(
   baseId: string,
   isTaken: (sessionId: string) => boolean
@@ -123,6 +135,19 @@ export function resolveSpawnWorkspace(input: {
     workspacePath: input.cachedTaskWorktreePath ?? input.spaceWorkspacePath,
     createWorktree: input.cachedTaskWorktreePath === undefined && input.hasWorktreeManager,
   };
+}
+
+export function explicitTaskWorkspace(task: Pick<SpaceTask, 'workspacePath'>): string | undefined {
+  const raw = task.workspacePath;
+  if (raw === undefined || raw === null) return undefined;
+  return raw.trim() === '' ? undefined : raw;
+}
+
+export function resolveTaskWorkspace(
+  space: Pick<Space, 'workspacePath'>,
+  task: Pick<SpaceTask, 'workspacePath'>
+): string {
+  return explicitTaskWorkspace(task) ?? space.workspacePath;
 }
 
 export function assembleNodeAgentSessionInit(input: {

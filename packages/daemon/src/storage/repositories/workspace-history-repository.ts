@@ -38,6 +38,14 @@ export class WorkspaceHistoryRepository {
       .all(limit) as WorkspaceHistoryRow[];
   }
 
+  listAll(): WorkspaceHistoryRow[] {
+    return this.db
+      .prepare(
+        'SELECT path, last_used_at, use_count FROM workspace_history ORDER BY last_used_at DESC, id DESC'
+      )
+      .all() as WorkspaceHistoryRow[];
+  }
+
   remove(path: string): boolean {
     const result = this.db.prepare('DELETE FROM workspace_history WHERE path = ?').run(path);
     return result.changes > 0;

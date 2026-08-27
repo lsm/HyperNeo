@@ -14,11 +14,16 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
   const SPACE_WORKSPACE = '/space/ws02a';
   const CREATED_PATH = '/space/ws02a/.hyperneo-worktrees/task-9-abc';
   const CACHED_PATH = '/space/ws02a/.hyperneo-worktrees/task-9-cached';
+  const TASK_WORKSPACE = '/task/ws02a-override';
+  const STORED_PATH = '/space/ws02a/.hyperneo-worktrees/task-9-stored';
   const CREATE_ERROR = 'git worktree add failed';
 
   type Row = {
     name: string;
+    taskSpaceId?: string;
+    taskWorkspacePath?: string;
     cachedTaskWorktreePath: string | undefined;
+    storedTaskWorktreePath?: string;
     hasWorktreeManager: boolean;
     createResult: 'success' | 'fail' | 'n/a';
     expectedOutcome: { kind: 'path'; value: string } | { kind: 'error'; message: string };
@@ -43,12 +48,13 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     unsubscribeLogs();
   });
 
-  function makeTask(): SpaceTask {
+  function makeTask(workspacePath?: string, spaceId: string = SPACE_ID): SpaceTask {
     return {
       id: TASK_ID,
-      spaceId: SPACE_ID,
+      spaceId,
       taskNumber: TASK_NUMBER,
       title: TASK_TITLE,
+      workspacePath,
     } as unknown as SpaceTask;
   }
 
@@ -56,12 +62,28 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     return { id: SPACE_ID, workspacePath: SPACE_WORKSPACE } as unknown as Space;
   }
 
-  function makeManager(worktreeManager?: SpaceWorktreeManager): TaskAgentManager {
+  function makeManager(
+    worktreeManager?: SpaceWorktreeManager,
+    options: { storedTaskWorktreePath?: string } = {}
+  ): TaskAgentManager {
     const db = new BunDatabase(':memory:');
     return new TaskAgentManager({
       db: { getDatabase: () => db },
       internalEventBus: { subscribe: () => () => {} },
-      worktreeManager,
+      taskRepo: {
+        getTask: () => ({
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          taskNumber: TASK_NUMBER,
+          title: TASK_TITLE,
+        }),
+      },
+      worktreeManager: worktreeManager
+        ? ({
+            ...worktreeManager,
+            getTaskWorktreePathSync: () => options.storedTaskWorktreePath ?? null,
+          } as unknown as SpaceWorktreeManager)
+        : undefined,
     } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
   }
 
@@ -79,7 +101,8 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     const manager = makeManager(
       row.hasWorktreeManager
         ? ({ createTaskWorktree } as unknown as SpaceWorktreeManager)
-        : undefined
+        : undefined,
+      { storedTaskWorktreePath: row.storedTaskWorktreePath }
     );
 
     const taskWorktreePaths = (manager as unknown as { taskWorktreePaths: Map<string, string> })
@@ -93,17 +116,27 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     ).buildSpawnExecutionFlowDeps({ reservationHeld: false, reservedExecution: false });
 
     if (row.expectedOutcome.kind === 'error') {
-      await expect(deps.resolveWorkspacePath(makeTask(), makeSpace())).rejects.toThrow(
-        row.expectedOutcome.message
-      );
+      await expect(
+        deps.resolveWorkspacePath(makeTask(row.taskWorkspacePath, row.taskSpaceId), makeSpace())
+      ).rejects.toThrow(row.expectedOutcome.message);
     } else {
-      const workspacePath = await deps.resolveWorkspacePath(makeTask(), makeSpace());
+      const workspacePath = await deps.resolveWorkspacePath(
+        makeTask(row.taskWorkspacePath, row.taskSpaceId),
+        makeSpace()
+      );
       expect(workspacePath).toBe(row.expectedOutcome.value);
     }
 
     if (row.expectedCreateCalled) {
       expect(createTaskWorktree).toHaveBeenCalledTimes(1);
-      expect(createTaskWorktree).toHaveBeenCalledWith(SPACE_ID, TASK_ID, TASK_TITLE, TASK_NUMBER);
+      expect(createTaskWorktree).toHaveBeenCalledWith(
+        SPACE_ID,
+        TASK_ID,
+        TASK_TITLE,
+        TASK_NUMBER,
+        undefined,
+        SPACE_WORKSPACE
+      );
     } else {
       expect(createTaskWorktree).not.toHaveBeenCalled();
     }
@@ -167,6 +200,99 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     });
   });
 
+  describe('explicit task workspace family (WS10)', () => {
+    test.each([
+      {
+        name: 'explicit task workspace is honored without creating a space-root worktree',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: TASK_WORKSPACE },
+        expectedCreateCalled: false,
+        expectedCachedPath: undefined,
+        expectedWarning: '',
+      },
+      {
+        name: 'explicit task workspace is honored without a manager',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: false,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: TASK_WORKSPACE },
+        expectedCreateCalled: false,
+        expectedCachedPath: undefined,
+        expectedWarning: '',
+      },
+      {
+        name: 'cached worktree still wins over the explicit task workspace',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: CACHED_PATH,
+        hasWorktreeManager: true,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: CACHED_PATH },
+        expectedCreateCalled: false,
+        expectedCachedPath: CACHED_PATH,
+        expectedWarning: '',
+      },
+      {
+        name: 'blank task workspace is treated as absent and falls back to the space workspace',
+        taskWorkspacePath: '',
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: false,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: SPACE_WORKSPACE },
+        expectedCreateCalled: false,
+        expectedCachedPath: undefined,
+        expectedWarning: '',
+      },
+      {
+        name: 'whitespace-only task workspace is treated as absent and creates a space-root worktree',
+        taskWorkspacePath: '   ',
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'success',
+        expectedOutcome: { kind: 'path', value: CREATED_PATH },
+        expectedCreateCalled: true,
+        expectedCachedPath: CREATED_PATH,
+        expectedWarning: '',
+      },
+      {
+        name: 'persisted durable worktree wins over the explicit task workspace after restart',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: undefined,
+        storedTaskWorktreePath: STORED_PATH,
+        hasWorktreeManager: true,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: STORED_PATH },
+        expectedCreateCalled: false,
+        expectedCachedPath: STORED_PATH,
+        expectedWarning: '',
+      },
+    ] as Row[])('%s', async (row: Row) => {
+      await runRow(row);
+    });
+  });
+
+  describe('repoRoot guard family (WS11)', () => {
+    test.each([
+      {
+        name: 'foreign task with an explicit workspace still creates the worktree in the spawning space workspace',
+        taskSpaceId: 'foreign-space',
+        taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'success',
+        expectedOutcome: { kind: 'path', value: CREATED_PATH },
+        expectedCreateCalled: true,
+        expectedCachedPath: CREATED_PATH,
+        expectedWarning: '',
+      },
+    ] as Row[])('%s', async (row: Row) => {
+      await runRow(row);
+    });
+  });
+
   describe('cached path family', () => {
     test.each([
       {
@@ -192,5 +318,71 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     ] as Row[])('%s', async (row: Row) => {
       await runRow(row);
     });
+  });
+});
+
+describe('TaskAgentManager getTaskWorktreePath — cache + durable fallback (WS10)', () => {
+  const SPACE_ID = 'space-ws10';
+  const TASK_ID = 'task-ws10';
+  const STORED_PATH = '/space/ws10/.hyperneo-worktrees/task-10-abc';
+
+  function makeManagerWithWorktree(overrides: {
+    storedPath?: string | null;
+    hasManager?: boolean;
+  }): TaskAgentManager {
+    const db = new BunDatabase(':memory:');
+    const worktreeManager =
+      overrides.hasManager === false
+        ? undefined
+        : ({
+            getTaskWorktreePathSync: () =>
+              overrides.storedPath === undefined ? null : overrides.storedPath,
+          } as unknown as SpaceWorktreeManager);
+    return new TaskAgentManager({
+      db: { getDatabase: () => db },
+      internalEventBus: { subscribe: () => () => {} },
+      taskRepo: {
+        getTask: (taskId: string) =>
+          taskId === TASK_ID ? ({ id: TASK_ID, spaceId: SPACE_ID } as unknown as SpaceTask) : null,
+      },
+      worktreeManager,
+    } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+  }
+
+  test('returns the in-memory cached path without consulting the worktree manager', () => {
+    const manager = makeManagerWithWorktree({ storedPath: '/should/not/be/consulted' });
+    const internal = manager as unknown as { taskWorktreePaths: Map<string, string> };
+    internal.taskWorktreePaths.set(TASK_ID, STORED_PATH);
+
+    expect(manager.getTaskWorktreePath(TASK_ID)).toBe(STORED_PATH);
+  });
+
+  test('falls back to the stored worktree row and caches it in memory', () => {
+    const manager = makeManagerWithWorktree({ storedPath: STORED_PATH });
+    const internal = manager as unknown as { taskWorktreePaths: Map<string, string> };
+    expect(internal.taskWorktreePaths.has(TASK_ID)).toBe(false);
+
+    expect(manager.getTaskWorktreePath(TASK_ID)).toBe(STORED_PATH);
+    expect(internal.taskWorktreePaths.get(TASK_ID)).toBe(STORED_PATH);
+  });
+
+  test('returns undefined when no worktree manager exists', () => {
+    const manager = makeManagerWithWorktree({ hasManager: false });
+
+    expect(manager.getTaskWorktreePath(TASK_ID)).toBeUndefined();
+  });
+
+  test('returns undefined when the stored row is absent', () => {
+    const manager = makeManagerWithWorktree({ storedPath: null });
+    const internal = manager as unknown as { taskWorktreePaths: Map<string, string> };
+
+    expect(manager.getTaskWorktreePath(TASK_ID)).toBeUndefined();
+    expect(internal.taskWorktreePaths.has(TASK_ID)).toBe(false);
+  });
+
+  test('returns undefined when the task itself is not found', () => {
+    const manager = makeManagerWithWorktree({ storedPath: STORED_PATH });
+
+    expect(manager.getTaskWorktreePath('does-not-exist')).toBeUndefined();
   });
 });

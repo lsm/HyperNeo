@@ -40,6 +40,7 @@
     "packages/daemon/src/lib/agent/reference-resolver.ts",
     "packages/daemon/src/lib/id-resolution.ts",
     "packages/daemon/src/lib/acp/acp-transport.ts",
+    "packages/daemon/src/lib/space/managers/space-workspace-manager.ts",
     "packages/daemon/src/lib/space/workspaces/workspace-validation-pipeline.ts",
     "packages/daemon/src/lib/acp/acp-client.ts",
     "packages/daemon/src/lib/acp/acp-message-translator.ts",
@@ -49,6 +50,7 @@
   ],
   "ignoreIssues": {
     "packages/daemon/src/lib/agent/ack-selection.ts": ["exports"],
+    "packages/daemon/src/lib/agent/context-budget-decision.ts": ["exports"],
     "packages/daemon/src/lib/agent/delivery-turn-routing.ts": ["exports"],
     "packages/daemon/src/lib/agent/loop-detector-hook.ts": ["exports"],
     "packages/daemon/src/lib/agent/message-queue-timeout-policy.ts": ["exports"],
@@ -72,6 +74,7 @@
     "packages/daemon/src/lib/space/managers/node-execution-manager.ts": ["exports"],
     "packages/daemon/src/lib/space/messaging-adapter.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/gate-evaluator.ts": ["exports"],
+    "packages/daemon/src/lib/space/runtime/render-pending-digest-pipeline.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/post-approval-router.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/built-in-validator-registry.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/retry-utils.ts": ["exports"],

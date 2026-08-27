@@ -17,6 +17,8 @@ import {
   deliverMessage,
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
+  STEER_ACK_TIMEOUT_MS,
+  steerAckTimeoutMs,
   waitForDeliveryConsumption,
   withSessionLock,
   withSessionResetCoordination,
@@ -1048,6 +1050,36 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setIdle();
       await expect(cancelled).rejects.toThrow();
       expect(retrySpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('an aborted delivery admission leaves the idle owner untouched (no phantom turn)', async () => {
+      const admitSpy = mock(() => ({}));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'enqueued' })),
+      }));
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => false),
+        size: mock(() => 0),
+      };
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+
+      const before = agentSession.stateManager.getCurrentIdleOwner();
+      const outcome = await agentSession.driveDeliveryTurn(
+        'kick-aborted',
+        'hello',
+        null,
+        false,
+        () => false
+      );
+
+      expect(outcome).toEqual({ outcome: 'aborted' });
+      expect(agentSession.stateManager.getCurrentIdleOwner()).toEqual(before);
+      expect(admitSpy).not.toHaveBeenCalled();
     });
 
     it('driveDeliveryTurn parks instead of reopening while limit recovery is pending', async () => {
@@ -2117,6 +2149,125 @@ describe('AgentSession', () => {
       }
     });
 
+    it('reconcileStrandedDeliveries skips both locked mutations when the idle owner goes stale while waiting for the lock', async () => {
+      const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      try {
+        const enqueue = mock(() => ({}));
+        const markDeliveryFailedByUuid = mock(() => null);
+        mockDb.getJobQueueRepo = mock(() => ({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        }));
+        mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
+          status === 'enqueued'
+            ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
+            : [{ dbId: 'db-2', uuid: 'uuid-2', timestamp: 2 }]
+        );
+        mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }));
+
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const holder = withSessionLock('test-session-id', async () => {
+          await gate;
+        });
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+        const owner = agentSession.stateManager.getCurrentIdleOwner();
+        const reconcilePromise = agentSession.reconcileStrandedDeliveries(owner);
+        await settle();
+        await settle();
+        expect(enqueue).not.toHaveBeenCalled();
+
+        agentSession.incrementQueryGeneration();
+        release();
+        await holder;
+        await reconcilePromise;
+
+        expect(enqueue).not.toHaveBeenCalled();
+        expect(markDeliveryFailedByUuid).not.toHaveBeenCalled();
+      } finally {
+        if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+      }
+    });
+
+    it('reconcileStrandedDeliveries fences on the turn owner too — a successor delivery admission invalidates it', async () => {
+      const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      try {
+        const enqueue = mock(() => ({}));
+        const markDeliveryFailedByUuid = mock(() => null);
+        mockDb.getJobQueueRepo = mock(() => ({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          enqueue,
+        }));
+        mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
+          status === 'enqueued'
+            ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
+            : [{ dbId: 'db-2', uuid: 'uuid-2', timestamp: 2 }]
+        );
+        mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }));
+
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const holder = withSessionLock('test-session-id', async () => {
+          await gate;
+        });
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+        const owner = agentSession.stateManager.getCurrentIdleOwner();
+        const reconcilePromise = agentSession.reconcileStrandedDeliveries(owner);
+        await settle();
+        await settle();
+
+        agentSession.stateManager.admitDeliveryTurn();
+        release();
+        await holder;
+        await reconcilePromise;
+
+        expect(enqueue).not.toHaveBeenCalled();
+        expect(markDeliveryFailedByUuid).not.toHaveBeenCalled();
+      } finally {
+        if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+      }
+    });
+
+    it('reconcileStrandedDeliveries with a still-current owner re-enqueues and settles as before', async () => {
+      const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      try {
+        const enqueue = mock(() => ({}));
+        const markDeliveryFailedByUuid = mock(() => 'db-2');
+        mockDb.getJobQueueRepo = mock(() => ({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          getActiveDeliveryRole: mock(() => null),
+          enqueue,
+        }));
+        mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
+          status === 'enqueued'
+            ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }]
+            : [{ dbId: 'db-2', uuid: 'uuid-2', timestamp: 2 }]
+        );
+        mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }));
+
+        const owner = agentSession.stateManager.getCurrentIdleOwner();
+        const settledCount = await agentSession.reconcileStrandedDeliveries(owner);
+
+        expect(settledCount).toBe(2);
+        expect(enqueue).toHaveBeenCalledTimes(1);
+        expect(markDeliveryFailedByUuid).toHaveBeenCalledTimes(1);
+      } finally {
+        if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+      }
+    });
+
     it('replayAllPendingMessages bypasses the manual-mode guard that stops immediate-mode replay', async () => {
       agentSession.session.config.queryMode = 'manual';
       const inner = agentSession.queryModeHandler as unknown as {
@@ -3091,6 +3242,86 @@ describe('AgentSession', () => {
       }
     });
 
+    it('executeRateLimitAutoRetry quiet path: a superseded episode releases only its own waiters', async () => {
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        isSuperseded: mock(() => true),
+      };
+      const stateManager = agentSession.stateManager;
+      stateManager.setOnIdleCallback(async () => {});
+      let episodeEnded = false;
+      let episodeResolved = false;
+      let successorResolved = false;
+      void stateManager
+        .waitForIdleTransition(7, () => {
+          episodeEnded = true;
+        })
+        .promise.then(() => {
+          episodeResolved = true;
+        });
+      void stateManager
+        .waitForIdleTransition(9, () => {})
+        .promise.then(() => {
+          successorResolved = true;
+        });
+
+      const result = await (
+        agentSession as unknown as {
+          executeRateLimitAutoRetry: (
+            msg: { uuid: string; content: string } | null,
+            gen?: number
+          ) => Promise<boolean>;
+        }
+      ).executeRateLimitAutoRetry({ uuid: 'msg-1', content: 'hi' }, 7);
+
+      expect(result).toBe(false);
+      expect(episodeResolved).toBe(true);
+      expect(episodeEnded).toBe(true);
+      expect(successorResolved).toBe(false);
+      expect(stateManager.getState().status).toBe('idle');
+      expect(stateManager.isTerminalIdleInFlight()).toBe(false);
+    });
+
+    it('executeRateLimitAutoRetry without a user message settles with a loud unscoped idle', async () => {
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        isSuperseded: mock(() => true),
+      };
+      const stateManager = agentSession.stateManager;
+      let idleCallbackRan = false;
+      stateManager.setOnIdleCallback(async () => {
+        idleCallbackRan = true;
+      });
+      await stateManager.setProcessing('msg-no-message');
+      let aResolved = false;
+      let bResolved = false;
+      void stateManager
+        .waitForIdleTransition(3, () => {})
+        .promise.then(() => {
+          aResolved = true;
+        });
+      void stateManager
+        .waitForIdleTransition(4, () => {})
+        .promise.then(() => {
+          bResolved = true;
+        });
+
+      const result = await (
+        agentSession as unknown as {
+          executeRateLimitAutoRetry: (
+            msg: { uuid: string; content: string } | null,
+            gen?: number
+          ) => Promise<boolean>;
+        }
+      ).executeRateLimitAutoRetry(null, 7);
+
+      expect(result).toBe(false);
+      expect(aResolved).toBe(true);
+      expect(bResolved).toBe(true);
+      expect(stateManager.getState().status).toBe('idle');
+      expect(idleCallbackRan).toBe(true);
+    });
+
     it('only clears the timer for a recovery re-enqueue (generation provided)', async () => {
       const cancelSpy = mock(() => {});
       const clearSpy = mock(() => {});
@@ -3242,7 +3473,65 @@ describe('AgentSession', () => {
       const message = { type: 'assistant', message: { content: [] } };
       await agentSession.onSDKMessage(message as never);
 
-      expect(handleMessageSpy).toHaveBeenCalledWith(message);
+      expect(handleMessageSpy).toHaveBeenCalledWith(message, agentSession.getQueryGeneration());
+    });
+
+    it('forwards the runner generation so a replaced query cannot consume the successor idle', async () => {
+      const handleMessageSpy = mock(async () => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).messageHandler = {
+        handleMessage: handleMessageSpy,
+      };
+
+      const message = { type: 'assistant', message: { content: [] } };
+      await agentSession.onSDKMessage(message as never, undefined, 7);
+
+      expect(handleMessageSpy).toHaveBeenCalledWith(message, 7);
+    });
+
+    it('a stale non-idle session-state event does not park the task-notification requery flag', async () => {
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).messageHandler = {
+        handleMessage: mock(async () => {}),
+      };
+      agentSession.incrementQueryGeneration();
+      const busy = {
+        type: 'system',
+        subtype: 'session_state_changed',
+        state: 'busy',
+      };
+      const flag = () =>
+        (agentSession as unknown as { taskNotificationRequeryAwaitingSdkIdle: boolean })
+          .taskNotificationRequeryAwaitingSdkIdle;
+
+      await agentSession.onSDKMessage(
+        busy as never,
+        undefined,
+        agentSession.getQueryGeneration() - 1
+      );
+      expect(flag()).toBe(false);
+
+      await agentSession.onSDKMessage(busy as never, undefined, agentSession.getQueryGeneration());
+      expect(flag()).toBe(true);
+    });
+
+    it('incrementQueryGeneration notes the PSM query-owner epoch: a replaced query waiter no longer consumes the successor idle', async () => {
+      const stateManager = agentSession.stateManager;
+      const replacedOwner = stateManager.idleOwnerForQuery(agentSession.getQueryGeneration());
+      let staleResolved = false;
+      void stateManager
+        .waitForIdleTransition(undefined, undefined, replacedOwner)
+        .promise.then(() => {
+          staleResolved = true;
+        });
+
+      agentSession.incrementQueryGeneration();
+
+      await stateManager.setIdle({ owner: stateManager.idleOwnerForQuery(1) });
+      expect(staleResolved).toBe(false);
+
+      await stateManager.setIdle({ owner: replacedOwner });
+      expect(staleResolved).toBe(true);
     });
   });
 
@@ -6428,6 +6717,193 @@ describe('AgentSession', () => {
         db.close();
       }
     });
+
+    it('releases the worker slot and requeues when a hung query never acknowledges an unclaimed steer', async () => {
+      const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '25';
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        const repo = db.getSDKMessageRepo();
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        await agentSession.stateManager.setProcessing('active-msg-uuid');
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const queue = agentSession.messageQueue;
+        const steerPromise = agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'ack_timeout' });
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
+        expect(queue.hasPendingOrInFlight(steerUuid)).toBe(false);
+        expect(queue.size()).toBe(0);
+      } finally {
+        if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+        else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
+        db.close();
+      }
+    });
+
+    it('settles a yielded steer as acknowledged when a hung query never confirms it', async () => {
+      const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '25';
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        const repo = db.getSDKMessageRepo();
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        await agentSession.stateManager.setProcessing('active-msg-uuid');
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const queue = agentSession.messageQueue;
+        const steerPromise = agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator(sessionId, { suppressPreYieldCallback: true });
+        await generator.next();
+        expect(queue.hasYielded(steerUuid)).toBe(true);
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'consumed' });
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('consumed');
+        expect(queue.hasYielded(steerUuid)).toBe(false);
+        expect(queue.size()).toBe(0);
+      } finally {
+        if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+        else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
+        db.close();
+      }
+    });
+
+    it('an acknowledgment arriving before the timeout still consumes the steer', async () => {
+      const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '10000';
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        const repo = db.getSDKMessageRepo();
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        await agentSession.stateManager.setProcessing('active-msg-uuid');
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const queue = agentSession.messageQueue;
+        const steerPromise = agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        queue.remove(steerUuid);
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'consumed' });
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('consumed');
+      } finally {
+        if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+        else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
+        db.close();
+      }
+    });
+  });
+
+  describe('steerAckTimeoutMs — override validation', () => {
+    const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+
+    afterEach(() => {
+      if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+      else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
+    });
+
+    it('falls back to the default when the override is unset or unparseable', () => {
+      delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+      expect(steerAckTimeoutMs()).toBe(STEER_ACK_TIMEOUT_MS);
+      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = 'not-a-number';
+      expect(steerAckTimeoutMs()).toBe(STEER_ACK_TIMEOUT_MS);
+    });
+
+    it('falls back to the default when the override is outside the supported timer range', () => {
+      for (const invalid of ['0', '-1', 'Infinity', '9999999999999']) {
+        process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = invalid;
+        expect(steerAckTimeoutMs()).toBe(STEER_ACK_TIMEOUT_MS);
+      }
+    });
+
+    it('accepts a positive finite override within the supported timer range', () => {
+      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '250';
+      expect(steerAckTimeoutMs()).toBe(250);
+    });
   });
 
   describe('delivery continuation hardening (A3a)', () => {
@@ -6844,6 +7320,145 @@ describe('AgentSession', () => {
       } finally {
         db.close();
       }
+    });
+  });
+
+  describe('post-compaction resume hooks', () => {
+    let agentSession: AgentSession;
+    let mockSession: Session;
+    let mockDb: Database;
+    let mockMessageHub: MessageHub;
+    let mockInternalEventBus: InternalEventBus<any>;
+    let mockGetApiKey: () => Promise<string>;
+
+    beforeEach(() => {
+      mockSession = {
+        id: 'test-session-id',
+        title: 'Test Session',
+        workspacePath: '/test/workspace',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          maxTokens: 8192,
+          temperature: 1.0,
+        },
+        metadata: {
+          messageCount: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalCost: 0,
+          toolCallCount: 0,
+        },
+      } as Session;
+
+      mockDb = {
+        getSession: mock(() => mockSession),
+        updateSession: mock(() => {}),
+        getUserMessages: mock(() => []),
+        getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
+        deleteMessagesAfter: mock(() => 0),
+        deleteMessagesAtAndAfter: mock(() => 0),
+        getUserMessageByUuid: mock(() => undefined),
+        countMessagesAfter: mock(() => 0),
+        updateMessage: mock(() => {}),
+        getSDKMessageCount: mock(() => 0),
+      } as unknown as Database;
+
+      mockMessageHub = {
+        sendMessage: mock(() => {}),
+      } as unknown as MessageHub;
+
+      mockInternalEventBus = {
+        publish: mock(async () => {}),
+        publishAsync: mock(() => {}),
+        subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
+      } as unknown as InternalEventBus<any>;
+
+      mockGetApiKey = mock(async () => 'test-api-key');
+
+      agentSession = new AgentSession(
+        mockSession,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+    });
+
+    it('resumePendingWorkAfterCompaction enqueues a durable resume prompt when armed and queue is clear', async () => {
+      const enqueueSpy = mock(async () => 'resume-uuid');
+      const hasOutstandingNonCompactionMessages = mock(() => false);
+      const session = agentSession as unknown as {
+        messageQueue: {
+          enqueue: typeof enqueueSpy;
+          hasOutstandingNonCompactionMessages: typeof hasOutstandingNonCompactionMessages;
+        };
+        pendingResumeAfterCompaction: boolean;
+      };
+      session.messageQueue.enqueue = enqueueSpy;
+      session.messageQueue.hasOutstandingNonCompactionMessages =
+        hasOutstandingNonCompactionMessages;
+      session.pendingResumeAfterCompaction = true;
+
+      agentSession.resumePendingWorkAfterCompaction();
+
+      expect(enqueueSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueSpy).toHaveBeenCalledWith(
+        'Context was compacted to stay within the configured window. Continue the task you were working on.',
+        false,
+        { durable: true }
+      );
+      expect(session.pendingResumeAfterCompaction).toBe(false);
+    });
+
+    it('resumePendingWorkAfterCompaction drops the resume when the queue already has user content', async () => {
+      const enqueueSpy = mock(async () => 'resume-uuid');
+      const hasOutstandingNonCompactionMessages = mock(() => true);
+      const session = agentSession as unknown as {
+        messageQueue: {
+          enqueue: typeof enqueueSpy;
+          hasOutstandingNonCompactionMessages: typeof hasOutstandingNonCompactionMessages;
+        };
+        pendingResumeAfterCompaction: boolean;
+      };
+      session.messageQueue.enqueue = enqueueSpy;
+      session.messageQueue.hasOutstandingNonCompactionMessages =
+        hasOutstandingNonCompactionMessages;
+      session.pendingResumeAfterCompaction = true;
+
+      agentSession.resumePendingWorkAfterCompaction();
+
+      expect(enqueueSpy).not.toHaveBeenCalled();
+      expect(session.pendingResumeAfterCompaction).toBe(false);
+    });
+
+    it('clearPendingResumeAfterCompaction disarms a pending resume', async () => {
+      const session = agentSession as unknown as {
+        pendingResumeAfterCompaction: boolean;
+      };
+      session.pendingResumeAfterCompaction = true;
+
+      agentSession.clearPendingResumeAfterCompaction();
+
+      expect(session.pendingResumeAfterCompaction).toBe(false);
+    });
+
+    it('handleInterrupt clears a pending post-compaction resume', async () => {
+      const interruptHandler = { handleInterrupt: mock(async () => {}) };
+      const session = agentSession as unknown as {
+        interruptHandler: typeof interruptHandler;
+        pendingResumeAfterCompaction: boolean;
+      };
+      session.interruptHandler = interruptHandler;
+      session.pendingResumeAfterCompaction = true;
+
+      await agentSession.handleInterrupt();
+
+      expect(session.pendingResumeAfterCompaction).toBe(false);
+      expect(interruptHandler.handleInterrupt).toHaveBeenCalled();
     });
   });
 });

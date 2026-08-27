@@ -212,7 +212,12 @@ function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
         options.missingAgent || id !== AGENT_ID ? undefined : fakeCustomAgent(),
     },
     ...(options.worktreeGate
-      ? { worktreeManager: { createTaskWorktree: () => options.worktreeGate } }
+      ? {
+          worktreeManager: {
+            createTaskWorktree: () => options.worktreeGate,
+            getTaskWorktreePathSync: () => null,
+          },
+        }
       : {}),
   } as unknown as TaskAgentManagerConfig);
 

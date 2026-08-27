@@ -826,7 +826,7 @@ export class AcpQueryRunner {
             }
 
             try {
-              await this.handleSDKMessage(acpMessage as SDKMessage);
+              await this.handleSDKMessage(acpMessage as SDKMessage, queryGeneration);
             } catch (error) {
               logger.error('Error handling ACP SDK message:', error);
               logger.error('Message type:', (acpMessage as SDKMessage).type);
@@ -1061,11 +1061,16 @@ export class AcpQueryRunner {
       const limitAssessment = assessLimitError({ rawText: errorMessage });
       const rateLimitCooldownScheduled =
         limitAssessment.isLimit &&
-        !!(await this.ctx.onRateLimitExhausted?.(errorMessage, this._lastConsumedUserMessage, {
-          resetAtMs: limitAssessment.resetAtMs,
-          kind: limitAssessment.kind,
-          billingTerminal: limitAssessment.billingTerminal,
-        }));
+        !!(await this.ctx.onRateLimitExhausted?.(
+          errorMessage,
+          this._lastConsumedUserMessage,
+          {
+            resetAtMs: limitAssessment.resetAtMs,
+            kind: limitAssessment.kind,
+            billingTerminal: limitAssessment.billingTerminal,
+          },
+          queryGeneration
+        ));
       if (rateLimitCooldownScheduled) {
         recoveryState.rateLimitCooldownScheduled = true;
       }
@@ -1144,8 +1149,8 @@ export class AcpQueryRunner {
     }
   }
 
-  private async handleSDKMessage(message: SDKMessage): Promise<void> {
-    await this.ctx.onSDKMessage(message);
+  private async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
+    await this.ctx.onSDKMessage(message, undefined, queryGeneration);
     await this.ctx.onMarkApiSuccess(message);
   }
 

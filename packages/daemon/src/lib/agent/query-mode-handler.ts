@@ -6,6 +6,11 @@ import {
   DEFERRED_FOLD_UUID_PREFIX,
   foldDeferredExternalEventsAtFlush,
 } from '../external-events/deferred-event-digest.ts';
+import { isExternalEventDeliveryV2Enabled } from '../external-events/external-event-service.ts';
+import {
+  DETERMINISTIC_DIGEST_UUID_PREFIX,
+  type RenderPendingDigestOutcome,
+} from '../space/runtime/render-pending-digest-pipeline.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
 import { ClearConversationCancelledError } from './agent-session.ts';
@@ -33,6 +38,11 @@ export interface QueryModeHandlerContext {
   };
   slotResetsContext?(): boolean;
   clearConversationContext?(): Promise<void>;
+  renderPendingDigest?(
+    sessionId: string,
+    taskId?: string
+  ): Promise<RenderPendingDigestOutcome | null>;
+  reconcilePersistedDigestRows?(sessionId: string, taskId?: string): boolean;
 
   ensureQueryStarted(): Promise<void>;
 }
@@ -54,10 +64,61 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, logger } = this.ctx;
 
     const runFlush = async (): Promise<number> => {
+      let excludeDigestRows = false;
+      if (isExternalEventDeliveryV2Enabled()) {
+        try {
+          const outcome = await this.ctx.renderPendingDigest?.(session.id, session.context?.taskId);
+          if (outcome && (outcome.action === 'failed' || outcome.action === 'held')) {
+            if (
+              outcome.action === 'failed' &&
+              (outcome.stage === 'digestCleanup' || outcome.stage === 'digestSupersede')
+            ) {
+              logger.warn(
+                `turn-end digest ${outcome.stage} failed for session ${session.id} — ` +
+                  `excluding digest rows from this flush so stale or duplicate digests are not delivered`
+              );
+              excludeDigestRows = true;
+            } else {
+              logger.warn(
+                `turn-end digest pull for session ${session.id} did not deliver ` +
+                  `(action=${outcome.action}${
+                    outcome.action === 'failed'
+                      ? `, stage=${outcome.stage}`
+                      : `, reason=${outcome.reason}`
+                  }) — flushing without the digest`
+              );
+            }
+          }
+        } catch (error) {
+          logger.warn(
+            `turn-end digest pull failed for session ${session.id}: ` +
+              `${error instanceof Error ? error.message : String(error)} — flushing without the digest`
+          );
+        }
+      } else if (this.ctx.reconcilePersistedDigestRows) {
+        try {
+          if (!this.ctx.reconcilePersistedDigestRows(session.id, session.context?.taskId)) {
+            excludeDigestRows = true;
+          }
+        } catch (error) {
+          logger.warn(
+            `flag-off digest reconcile failed for session ${session.id}: ` +
+              `${error instanceof Error ? error.message : String(error)} — excluding digest rows ` +
+              `from this flush so the digest and the original events are not both delivered`
+          );
+          excludeDigestRows = true;
+        }
+      } else {
+        excludeDigestRows = true;
+      }
+
       const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
-      const backlog = options?.excludeMessageUuid
+      const backlogBase = options?.excludeMessageUuid
         ? allDeferred.filter((m) => m.uuid !== options.excludeMessageUuid)
         : allDeferred;
+      const backlog = excludeDigestRows
+        ? backlogBase.filter((m) => !String(m.uuid).startsWith(DETERMINISTIC_DIGEST_UUID_PREFIX))
+        : backlogBase;
 
       if (backlog.length === 0) {
         return 0;

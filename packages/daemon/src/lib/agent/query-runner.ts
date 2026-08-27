@@ -40,6 +40,7 @@ import {
 } from './query-retry-routing.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
+import { isMeaningfulSdkStartupProgress } from './sdk-startup-progress.ts';
 import {
   isRetryableProviderError,
   TRANSIENT_CONNECTION_ERROR_SUBSTRINGS,
@@ -331,7 +332,11 @@ export interface QueryRunnerContext {
   isCleaningUp(): boolean;
   attemptTokens: QueryAttemptRegistry;
 
-  onSDKMessage(message: SDKMessage, queuedMessages?: SDKMessage[]): Promise<void>;
+  onSDKMessage(
+    message: SDKMessage,
+    queuedMessages?: SDKMessage[],
+    runnerGeneration?: number
+  ): Promise<void>;
   onSlashCommandsFetched(): Promise<void>;
   onModelsFetched(): Promise<void>;
   onMarkApiSuccess(message: SDKMessage): Promise<void>;
@@ -347,7 +352,8 @@ export interface QueryRunnerContext {
   onRateLimitExhausted?: (
     errorMessage: string,
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    hint?: LimitRetryHint
+    hint?: LimitRetryHint,
+    queryGeneration?: number
   ) => Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
@@ -692,9 +698,10 @@ export class QueryRunner {
 
       const queryStartTime = Date.now();
       let startupTimeoutReached = false;
+      let startupProgressSeen = false;
 
       const startupTimer = setTimeout(() => {
-        if (!this.ctx.firstMessageReceived) {
+        if (!startupProgressSeen) {
           startupTimeoutReached = true;
           const elapsed = Date.now() - queryStartTime;
           const isRootWorkspace = !session.worktree;
@@ -732,34 +739,28 @@ export class QueryRunner {
         throw new Error('Query object is null after initialization');
       }
 
-      let messageCount = 0;
-
       for await (const message of this.createAbortableQuery(
         queryObject,
         runAbortController.signal
       )) {
-        if (startupTimeoutReached && messageCount === 0) {
+        if (startupTimeoutReached && !startupProgressSeen) {
           throw new Error('SDK startup timeout - query aborted');
         }
 
-        messageCount++;
-
-        if (messageCount === 1) {
+        if (!startupProgressSeen && isMeaningfulSdkStartupProgress(message as SDKMessage)) {
+          startupProgressSeen = true;
           const timer = this.ctx.startupTimeoutTimer;
           if (timer) {
             clearTimeout(timer);
             this.ctx.startupTimeoutTimer = null;
           }
           releaseStartupPermit('first_message');
-        }
-
-        this.ctx.firstMessageReceived = true;
-        if (messageCount === 1) {
+          this.ctx.firstMessageReceived = true;
           this._consumedUserMessages.delete(queryGeneration);
         }
 
         try {
-          await this.handleSDKMessage(message as SDKMessage);
+          await this.handleSDKMessage(message as SDKMessage, queryGeneration);
         } catch (error) {
           logger.error('Error handling SDK message:', error);
           logger.error('Message type:', (message as SDKMessage).type);
@@ -782,7 +783,7 @@ export class QueryRunner {
 
       if (
         this.ctx.getQueryGeneration() === queryGeneration &&
-        !(startupTimeoutReached && messageCount === 0)
+        !(startupTimeoutReached && !startupProgressSeen)
       ) {
         this.ctx.consumePendingResumeSessionAt?.();
       }
@@ -791,7 +792,7 @@ export class QueryRunner {
         messageQueue.stop();
       }
 
-      if (startupTimeoutReached && messageCount === 0) {
+      if (startupTimeoutReached && !startupProgressSeen) {
         throw new Error('SDK startup timeout - query aborted');
       }
     } catch (error) {
@@ -987,7 +988,8 @@ export class QueryRunner {
           const handoffAccepted = !!(await this.ctx.onRateLimitExhausted?.(
             errorMessage,
             this._lastConsumedUserMessage,
-            retrySignal.rateLimitHint ?? undefined
+            retrySignal.rateLimitHint ?? undefined,
+            queryGeneration
           ));
           recoveryState.rateLimitCooldownScheduled = handoffAccepted;
           decision = decideQueryRetry({
@@ -1437,8 +1439,8 @@ export class QueryRunner {
     }
   }
 
-  async handleSDKMessage(message: SDKMessage): Promise<void> {
-    await this.ctx.onSDKMessage(message);
+  async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
+    await this.ctx.onSDKMessage(message, undefined, queryGeneration);
     await this.ctx.onMarkApiSuccess(message);
   }
 

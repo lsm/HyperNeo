@@ -231,6 +231,10 @@ function makeCtx(): TestCtx {
     scheduleService,
     db,
     longHorizonAgentRepo,
+    resolveWorkspacePath: async (_spaceId: string, rawPath: string) => {
+      if (rawPath === workspacePath || rawPath === '/tmp/secondary-workspace') return rawPath;
+      throw new Error(`Workspace path is not registered to space: ${rawPath}`);
+    },
   });
   const evolutionRepo = new EvolutionRepository(db);
   const evolutionScopeService = new EvolutionScopeService({
@@ -2486,6 +2490,75 @@ describe('createSpaceAgentToolHandlers — goal tools', () => {
     const parsed = JSON.parse(out.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('Goal not found');
+  });
+
+  test('pins a registered secondary workspace on create_goal and round-trips', async () => {
+    const handlers = makeHandlers(ctx);
+    const out = await handlers.create_goal({
+      title: 'Pinned goal',
+      workspace_path: '/tmp/secondary-workspace',
+    });
+    const created = JSON.parse(out.content[0].text);
+    expect(created.success).toBe(true);
+    expect(created.goal.workspacePath).toBe('/tmp/secondary-workspace');
+    const fetched = JSON.parse(
+      (await handlers.get_goal({ goal_id: created.goal.id })).content[0].text
+    );
+    expect(fetched.goal.workspacePath).toBe('/tmp/secondary-workspace');
+  });
+
+  test('stores null when create_goal omits workspace_path', async () => {
+    const handlers = makeHandlers(ctx);
+    const out = await handlers.create_goal({ title: 'Unpinned goal' });
+    const created = JSON.parse(out.content[0].text);
+    expect(created.success).toBe(true);
+    expect(created.goal.workspacePath).toBeNull();
+  });
+
+  test('rejects an unregistered workspace on create_goal', async () => {
+    const handlers = makeHandlers(ctx);
+    const out = await handlers.create_goal({
+      title: 'Bad workspace',
+      workspace_path: '/not/registered',
+    });
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('Workspace path is not registered to space: /not/registered');
+  });
+
+  test('update_goal moves the pin to another registered workspace', async () => {
+    const handlers = makeHandlers(ctx);
+    const created = JSON.parse((await handlers.create_goal({ title: 'Move pin' })).content[0].text);
+    const first = JSON.parse(
+      (
+        await handlers.update_goal({
+          goal_id: created.goal.id,
+          workspace_path: '/tmp/secondary-workspace',
+        })
+      ).content[0].text
+    );
+    expect(first.success).toBe(true);
+    expect(first.goal.workspacePath).toBe('/tmp/secondary-workspace');
+    const cleared = JSON.parse(
+      (await handlers.update_goal({ goal_id: created.goal.id, workspace_path: null })).content[0]
+        .text
+    );
+    expect(cleared.success).toBe(true);
+    expect(cleared.goal.workspacePath).toBeNull();
+  });
+
+  test('update_goal rejects an unregistered workspace', async () => {
+    const handlers = makeHandlers(ctx);
+    const created = JSON.parse(
+      (await handlers.create_goal({ title: 'Bad update' })).content[0].text
+    );
+    const out = await handlers.update_goal({
+      goal_id: created.goal.id,
+      workspace_path: '/not/registered',
+    });
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toBe('Workspace path is not registered to space: /not/registered');
   });
 });
 

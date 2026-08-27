@@ -34,6 +34,7 @@ vi.mock('../../../lib/space-store', () => ({
       stopSpace: mockStopSpace,
       startSpace: mockStartSpace,
       updateSpace: mockUpdateSpace,
+      listWorkspaces: vi.fn().mockResolvedValue([]),
     };
   },
 }));

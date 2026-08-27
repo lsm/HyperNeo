@@ -7,6 +7,7 @@ const LAZY_LOAD_TIMEOUT = 5000;
 
 import type { Space, SpaceTask, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
+import { connectionState } from '../../lib/state';
 
 let mockLoading = signal(false);
 let mockError = signal<string | null>(null);
@@ -48,6 +49,11 @@ const { mockCreateSession } = vi.hoisted(() => ({
 
 const { mockToastError } = vi.hoisted(() => ({
   mockToastError: vi.fn(),
+}));
+
+const { mockHubRequest, connectMockHub } = vi.hoisted(() => ({
+  mockHubRequest: vi.fn(),
+  connectMockHub: { current: null as unknown },
 }));
 
 const mockCurrentSpaceConfigureTabSignal = signal<string>('agents');
@@ -339,6 +345,12 @@ vi.mock('../../lib/api-helpers', () => ({
   createSession: mockCreateSession,
 }));
 
+vi.mock('../../lib/connection-manager', () => ({
+  connectionManager: {
+    getHubIfConnected: () => connectMockHub.current,
+  },
+}));
+
 vi.mock('../../lib/toast', () => ({
   toast: {
     error: mockToastError,
@@ -432,6 +444,8 @@ beforeEach(() => {
   mockNavigateToSpaceTask.mockClear();
   mockCreateSession.mockClear();
   mockToastError.mockClear();
+  connectMockHub.current = null;
+  mockHubRequest.mockClear();
   mockEnsureConfigData.mockClear();
   mockEnsureConfigData.mockResolvedValue(undefined);
   mockEnsureWorkflowDetails.mockClear();
@@ -801,6 +815,62 @@ describe('SpaceIsland — memories view', () => {
   });
 });
 
+const REGISTRY_WORKSPACES = [
+  {
+    id: 'ws-1',
+    spaceId: 'space-1',
+    path: '/projects/main',
+    label: 'Main repo',
+    isPrimary: true,
+    createdAt: 0,
+    updatedAt: 0,
+  },
+  {
+    id: 'ws-2',
+    spaceId: 'space-1',
+    path: '/projects/docs',
+    label: 'Docs',
+    isPrimary: false,
+    createdAt: 0,
+    updatedAt: 0,
+  },
+];
+
+function stubWorkspaceRegistryWithGit(isGitRepo: boolean) {
+  connectMockHub.current = { request: mockHubRequest };
+  mockHubRequest.mockImplementation((method: string) => {
+    if (method === 'space.workspace.list') {
+      return Promise.resolve(REGISTRY_WORKSPACES);
+    }
+    if (method === 'git.branches') {
+      return Promise.resolve({
+        isGitRepo,
+        gitRoot: isGitRepo ? '/projects/docs/.git' : null,
+        currentBranch: isGitRepo ? 'main' : null,
+        defaultBranch: isGitRepo ? 'main' : null,
+        branches: isGitRepo ? ['main'] : [],
+        isDirty: false,
+      });
+    }
+    return Promise.resolve({});
+  });
+}
+
+async function renderSettledSessionsView() {
+  const utils = render(<SpaceIsland spaceId="space-1" viewMode="sessions" />);
+  await waitFor(
+    () => {
+      expect(utils.getByTestId('space-sessions-view')).toBeTruthy();
+    },
+    { timeout: LAZY_LOAD_TIMEOUT }
+  );
+  await waitFor(() => {
+    expect(mockHubRequest).toHaveBeenCalledWith('space.workspace.list', { spaceId: 'space-1' });
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  return utils;
+}
+
 describe('SpaceIsland — sessions view', () => {
   it('renders Create Session button in the header', async () => {
     const { getByLabelText, getByTestId } = render(
@@ -858,6 +928,60 @@ describe('SpaceIsland — sessions view', () => {
     await waitFor(() => {
       expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-123');
     });
+  });
+
+  it('offers registry workspaces and flows the choice into createSession', async () => {
+    mockCreateSession.mockResolvedValueOnce({ sessionId: 'new-session-456' });
+    mockCurrentSpaceIdSignal.value = 'space-1';
+    mockCurrentSpaceViewModeSignal.value = 'sessions';
+    const initialConnectionState = connectionState.value;
+    connectionState.value = 'connected';
+    stubWorkspaceRegistryWithGit(false);
+
+    const { getByLabelText, getByTestId, getByText } = await renderSettledSessionsView();
+    fireEvent.click(getByLabelText('Create session'));
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
+    expect(mockCreateSession).not.toHaveBeenCalled();
+
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith({
+        spaceId: 'space-1',
+        workspacePath: '/projects/docs',
+      });
+    });
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-456');
+    });
+    connectionState.value = initialConnectionState;
+  });
+
+  it('flows the selected worktree mode into createSession', async () => {
+    mockCreateSession.mockResolvedValueOnce({ sessionId: 'new-session-789' });
+    mockCurrentSpaceIdSignal.value = 'space-1';
+    mockCurrentSpaceViewModeSignal.value = 'sessions';
+    const initialConnectionState = connectionState.value;
+    connectionState.value = 'connected';
+    stubWorkspaceRegistryWithGit(true);
+
+    const { getByLabelText, getByTestId, getByText } = await renderSettledSessionsView();
+    fireEvent.click(getByLabelText('Create session'));
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
+
+    fireEvent.click(getByTestId('space-workspace-mode-direct'));
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith({
+        spaceId: 'space-1',
+        workspacePath: '/projects/docs',
+        worktreeMode: 'direct',
+      });
+    });
+    connectionState.value = initialConnectionState;
   });
 
   it('navigates after slug-routed session creation when canonical space still matches', async () => {
@@ -985,7 +1109,9 @@ describe('SpaceIsland — sessions view', () => {
 
     const btn = getByLabelText('Create session') as HTMLButtonElement;
     fireEvent.click(btn);
-    expect(btn.disabled).toBe(true);
+    await waitFor(() => {
+      expect(btn.disabled).toBe(true);
+    });
     await waitFor(() => {
       expect(mockCreateSession).toHaveBeenCalledTimes(1);
     });

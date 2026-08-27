@@ -23,7 +23,10 @@ export interface EventSubscriptionSetupContext {
     preserveDeliveryJobs?: boolean;
     skipDeferredReplay?: boolean;
   }): Promise<void>;
-  startQueryAndEnqueue(messageId: string, messageContent: string | MessageContent[]): Promise<void>;
+  startQueryAndEnqueue(
+    messageId: string,
+    messageContent: string | MessageContent[]
+  ): Promise<'started' | 'aborted'>;
   deliverChatMessage?(messageId: string): Promise<void>;
 }
 

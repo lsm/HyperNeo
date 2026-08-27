@@ -5,6 +5,7 @@ import { connectionState } from '../../lib/state';
 import { spaceStore } from '../../lib/space-store';
 import { getGoalStatusConfig } from '../../lib/goal-status';
 import { getPriorityIndicatorTone } from '../../lib/priority-tokens';
+import { getWorkspaceLabel } from '../../lib/space-task-helpers';
 import { toast } from '../../lib/toast';
 import { InspectBadge, InspectPanel, InspectPanelHeader } from '../ui/InspectPanel';
 import { SectionCard } from '../ui/SectionCard';
@@ -124,6 +125,11 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const activityTask = linkedTasks[0] ?? null;
   const lastActivityAt = getGoalLastActivityAt(goal, activityTask);
+  const workspaceLabel = getWorkspaceLabel(
+    goal.workspacePath,
+    spaceStore.workspaces?.value ?? [],
+    spaceStore.space?.value?.workspacePath
+  );
 
   const runAction = async (action: 'pause' | 'resume' | 'archive' | 'trigger') => {
     setActionLoading(true);
@@ -286,6 +292,14 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
               <InspectBadge tone={getPriorityIndicatorTone(goal.priority)}>
                 {goal.priority} Priority
               </InspectBadge>
+              {workspaceLabel && (
+                <span
+                  class="inline-flex h-6 max-w-[8.5rem] items-center rounded-md border border-dark-600 bg-dark-700 px-2 text-[11px] font-medium leading-none text-gray-400 whitespace-nowrap"
+                  data-testid="goal-workspace-badge"
+                >
+                  <span class="truncate">{workspaceLabel}</span>
+                </span>
+              )}
             </>
           }
         />

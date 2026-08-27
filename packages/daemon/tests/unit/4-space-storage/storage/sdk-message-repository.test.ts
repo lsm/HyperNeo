@@ -1832,6 +1832,25 @@ describe('SDKMessageRepository', () => {
       expect(result.messages).toEqual([]);
       expect(result.total).toBe(0);
     });
+
+    it('returns the newest bounded window when direction is desc', () => {
+      const timestamp = '2026-01-01T00:00:00.000Z';
+      for (const [index, text] of ['First', 'Second', 'Third'].entries()) {
+        insertStatusMessage(
+          `user-${index}`,
+          'session-1',
+          'user',
+          JSON.stringify(createUserMessage(text, `uuid-${index}`)),
+          timestamp
+        );
+      }
+
+      const result = repository.getUserMessagesByStatus('session-1', 'consumed', 2, 'desc');
+
+      expect(messageTexts(result.messages)).toEqual(['Third', 'Second']);
+      expect(result.messages.map((message) => message.dbId)).toEqual(['user-2', 'user-1']);
+      expect(result.total).toBe(3);
+    });
   });
 
   describe('getMessageByStatusAndDbId', () => {
@@ -2019,6 +2038,74 @@ describe('SDKMessageRepository', () => {
       repository.updateMessageStatus([id], 'consumed');
       expect(repository.getUserMessageIdsByStatus('session-1', 'consumed').length).toBe(1);
       expect(repository.getUserMessageIdsByStatus('session-1', 'enqueued').length).toBe(0);
+    });
+  });
+
+  describe('transitionMessageSendStatus — atomic conditional transition', () => {
+    function sendStatusOf(dbId: string): string | null {
+      return (
+        db.prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`).get(dbId) as {
+          send_status: string | null;
+        }
+      ).send_status;
+    }
+
+    it('wins the deferred → enqueued promotion when the row is still deferred', () => {
+      const dbId = repository.saveUserMessage(
+        'session-cas',
+        createUserMessage('promote me', 'uuid-cas-promote'),
+        'deferred'
+      );
+
+      expect(repository.transitionMessageSendStatus(dbId, 'deferred', 'enqueued')).toBe(true);
+      expect(sendStatusOf(dbId)).toBe('enqueued');
+    });
+
+    it('loses and leaves the row untouched when a concurrent flush already advanced it', () => {
+      for (const status of ['submitted', 'consumed', 'failed', 'enqueued'] as const) {
+        const dbId = repository.saveUserMessage(
+          'session-cas-lost',
+          createUserMessage(`already ${status}`, `uuid-cas-lost-${status}`),
+          status
+        );
+
+        expect(repository.transitionMessageSendStatus(dbId, 'deferred', 'enqueued')).toBe(false);
+        expect(sendStatusOf(dbId)).toBe(status);
+      }
+    });
+
+    it('loses for an unknown message id', () => {
+      expect(repository.transitionMessageSendStatus('no-such-id', 'deferred', 'enqueued')).toBe(
+        false
+      );
+    });
+
+    it('is one-shot: a second promotion attempt on the enqueued row loses', () => {
+      const dbId = repository.saveUserMessage(
+        'session-cas-oneshot',
+        createUserMessage('once only', 'uuid-cas-oneshot'),
+        'deferred'
+      );
+
+      expect(repository.transitionMessageSendStatus(dbId, 'deferred', 'enqueued')).toBe(true);
+      expect(repository.transitionMessageSendStatus(dbId, 'deferred', 'enqueued')).toBe(false);
+      expect(sendStatusOf(dbId)).toBe('enqueued');
+    });
+
+    it('serves the enqueued → deferred failure-revert and refuses to regress advanced rows', () => {
+      const dbId = repository.saveUserMessage(
+        'session-cas-revert',
+        createUserMessage('revert me', 'uuid-cas-revert'),
+        'enqueued'
+      );
+
+      expect(repository.transitionMessageSendStatus(dbId, 'enqueued', 'deferred')).toBe(true);
+      expect(sendStatusOf(dbId)).toBe('deferred');
+
+      repository.updateMessageStatus([dbId], 'enqueued');
+      repository.updateMessageStatus([dbId], 'submitted');
+      expect(repository.transitionMessageSendStatus(dbId, 'enqueued', 'deferred')).toBe(false);
+      expect(sendStatusOf(dbId)).toBe('submitted');
     });
   });
 

@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceRepository', () => {
@@ -101,6 +101,17 @@ describe('SpaceRepository', () => {
 
     it('returns null for unknown path', () => {
       expect(repo.getSpaceByPath('/does/not/exist')).toBeNull();
+    });
+
+    it('returns an archived space (a repo claim survives archive)', () => {
+      const created = repo.createSpace({ workspacePath: '/workspace/a', slug: 'a', name: 'A' });
+      repo.archiveSpace(created.id);
+
+      const found = repo.getSpaceByPath('/workspace/a');
+
+      expect(found).not.toBeNull();
+      expect(found!.id).toBe(created.id);
+      expect(found!.status).toBe('archived');
     });
   });
 

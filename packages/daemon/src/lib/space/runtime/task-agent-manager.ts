@@ -54,7 +54,10 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
+import type {
+  PendingAgentMessageRecord,
+  PendingAgentMessageRepository,
+} from '../../../storage/repositories/pending-agent-message-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
@@ -129,6 +132,12 @@ import {
   settleDeliveryRowStatus,
 } from './injection-delivery-steps.ts';
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
+import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
+import {
+  collectActiveSpaceDeliveryIds,
+  runSpaceAgentPendingDrain,
+  type SpaceAgentPendingDrainDeps,
+} from './space-agent-pending-drain.ts';
 import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
 import {
   formatPendingRowForNodeAgent,
@@ -148,10 +157,14 @@ import {
   buildExecutionBaseSessionId,
   buildSlotOverrides,
   findAvailableSessionId,
+  explicitTaskWorkspace,
   resolveSpawnWorkspace,
+  resolveTaskWorkspace,
+  taskIdFromSubSessionIdentity,
   resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
+import { stagedRun } from './staged-run.ts';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
@@ -247,8 +260,14 @@ export interface TaskAgentManagerConfig {
     spaceId: string,
     message: string,
     replyToSessionId?: string | null,
-    explicitMessageId?: string
-  ) => Promise<void>;
+    explicitMessageId?: string,
+    options?: {
+      onConsumed?: (settledSessionId: string) => void;
+      lateSettlement?: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
+      onLateFailure?: () => void;
+      disposeSignal?: AbortSignal;
+    }
+  ) => Promise<import('./space-agent-message-delivery.ts').SpaceAgentInjectionOutcome>;
   scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
   memoryRepo?: AgentMemoryRepository;
@@ -344,7 +363,15 @@ export function resolvePostApprovalRouteNodeId(
   return workflow.nodes.find((n) => n.agents.some((a) => a.name === targetAgent))?.id;
 }
 
+const SPACE_AGENT_RETRY_DELAY_MS = 30_000;
+
 export class TaskAgentManager {
+  private readonly lateSettlements = new SpaceAgentLateSettlements();
+  private readonly spaceAgentRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly spaceAgentDrainsInFlight = new Set<string>();
+  private readonly spaceAgentDrainRerunQueued = new Set<string>();
+  private disposed = false;
+
   attachToolContinuationRepo(repo: ToolContinuationRecoveryRepository): void {
     this.config.toolContinuationRepo = repo;
   }
@@ -852,6 +879,20 @@ export class TaskAgentManager {
           }
         );
       },
+      syncReuseLiveWorkspace: (task, space, execution, sessionId) =>
+        this.syncLiveSessionWorkspace(task, space, execution, sessionId),
+      revertLiveExecutionRebind: (execution, sessionId) => {
+        this.config.nodeExecutionRepo.casExecutionStatus(
+          execution.id,
+          ['in_progress'],
+          execution.status,
+          {
+            agentSessionId: sessionId,
+            startedAt: execution.startedAt,
+            completedAt: execution.completedAt,
+          }
+        );
+      },
       raiseSpawnRejection: (freshTask, rejectedExecution, rejectedWorkflow) => {
         validateTaskAllowsSpawn(freshTask);
         assertExecutionValidAgainstWorkflow(rejectedExecution, rejectedWorkflow);
@@ -862,9 +903,13 @@ export class TaskAgentManager {
       resolveSpawnSessionId: (space, task, execution) =>
         this.resolveSessionId(buildExecutionBaseSessionId(space.id, task.id, execution.id)),
       resolveWorkspacePath: async (task, space) => {
+        const ownsSpace = task.spaceId === space.id;
+        const taskWorkspace = ownsSpace
+          ? (this.getTaskWorktreePath(task.id) ?? explicitTaskWorkspace(task))
+          : undefined;
         const workspace = resolveSpawnWorkspace({
-          cachedTaskWorktreePath: this.taskWorktreePaths.get(task.id),
-          hasWorktreeManager: Boolean(this.config.worktreeManager),
+          cachedTaskWorktreePath: taskWorkspace,
+          hasWorktreeManager: taskWorkspace ? false : Boolean(this.config.worktreeManager),
           spaceWorkspacePath: space.workspacePath,
         });
         if (workspace.createWorktree && this.config.worktreeManager) {
@@ -873,7 +918,9 @@ export class TaskAgentManager {
               space.id,
               task.id,
               task.title,
-              task.taskNumber
+              task.taskNumber,
+              undefined,
+              ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath
             );
             this.taskWorktreePaths.set(task.id, result.path);
             return result.path;
@@ -1231,20 +1278,57 @@ export class TaskAgentManager {
             });
 
             if (memberInfo.nodeId) {
-              const reuseWorkspacePath = this.taskWorktreePaths.get(taskId) ?? init.workspacePath;
-              const reuseCtx = {
-                taskId,
-                subSessionId: existingSessionId,
-                agentName: memberInfo.agentName,
-                spaceId: parentTask.spaceId,
-                workflowRunId: parentTask.workflowRunId,
-                workspacePath: reuseWorkspacePath,
-                workflowNodeId: memberInfo.nodeId,
-              };
-              await this.reinjectNodeAgentMcpServer(existing, reuseCtx);
-              await this.ensureRequiredMcpServersAttached(existing, {
-                ...reuseCtx,
-                phase: 'spawn',
+              const reuseAgentName = memberInfo.agentName;
+              const reuseNodeId = memberInfo.nodeId;
+              const reuseWorkflowRunId = parentTask.workflowRunId;
+              await this.withSessionInjectLock(existingSessionId, async () => {
+                const lockedTask = this.config.taskRepo.getTask(taskId);
+                if (
+                  !lockedTask ||
+                  lockedTask.spaceId !== parentTask.spaceId ||
+                  lockedTask.workflowRunId !== parentTask.workflowRunId
+                ) {
+                  throw new Error(
+                    `Task ${taskId} changed ownership while reusing session ${existingSessionId}; refusing to migrate its workspace`
+                  );
+                }
+                const reuseSpace = await this.config.spaceManager.getSpace(lockedTask.spaceId);
+                const reuseWorkspacePath = resolveSpawnWorkspace({
+                  cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
+                  hasWorktreeManager: false,
+                  spaceWorkspacePath: reuseSpace
+                    ? resolveTaskWorkspace(reuseSpace, lockedTask)
+                    : init.workspacePath,
+                }).workspacePath;
+                const reuseCtx = {
+                  taskId,
+                  subSessionId: existingSessionId,
+                  agentName: reuseAgentName,
+                  spaceId: parentTask.spaceId,
+                  workflowRunId: reuseWorkflowRunId,
+                  workspacePath: reuseWorkspacePath,
+                  workflowNodeId: reuseNodeId,
+                };
+                const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
+                const previousNodeAgentServer = this.captureNodeAgentServer(existing);
+                const workspaceChanged =
+                  !!reuseWorkspacePath && previousReuseWorkspacePath !== reuseWorkspacePath;
+                if (workspaceChanged) {
+                  existing.updateMetadata({ workspacePath: reuseWorkspacePath });
+                }
+                try {
+                  await this.reinjectNodeAgentMcpServer(existing, reuseCtx);
+                } catch (err) {
+                  if (workspaceChanged) {
+                    existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
+                  }
+                  this.restoreNodeAgentServer(existing, previousNodeAgentServer);
+                  throw err;
+                }
+                await this.ensureRequiredMcpServersAttached(existing, {
+                  ...reuseCtx,
+                  phase: 'spawn',
+                });
               });
             }
 
@@ -1393,8 +1477,9 @@ export class TaskAgentManager {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return;
 
-    repo.enforceRetention({ runId: workflowRunId });
-    repo.expireStale(workflowRunId);
+    const activeDeliveryIds = this.activeSpaceDeliveryIdsForRun(workflowRunId);
+    repo.enforceRetention({ runId: workflowRunId, excludeIds: activeDeliveryIds });
+    repo.expireStale(workflowRunId, activeDeliveryIds);
 
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     const workflowNodeName = execution
@@ -1477,42 +1562,217 @@ export class TaskAgentManager {
     const repo = this.config.pendingMessageRepo;
     const inject = this.config.spaceAgentInjector;
     if (!repo || !inject) return;
+    if (this.spaceAgentDrainsInFlight.has(workflowRunId)) {
+      this.spaceAgentDrainRerunQueued.add(workflowRunId);
+      return;
+    }
+    this.spaceAgentDrainsInFlight.add(workflowRunId);
+    try {
+      do {
+        this.spaceAgentDrainRerunQueued.delete(workflowRunId);
+        await this.flushSpaceAgentDrainLocked(spaceId, workflowRunId);
+      } while (this.spaceAgentDrainRerunQueued.has(workflowRunId));
+    } finally {
+      this.spaceAgentDrainsInFlight.delete(workflowRunId);
+      this.spaceAgentDrainRerunQueued.delete(workflowRunId);
+    }
+  }
 
-    repo.enforceRetention({ runId: workflowRunId });
-    repo.expireStale(workflowRunId);
-
-    const drain = decidePendingDrainAdmission({
-      listings: [
-        {
-          targetName: 'space-agent',
-          rows: repo.listPendingForTarget(workflowRunId, 'space-agent'),
-        },
-      ],
-      admission: { executionPresent: true, targetKind: 'space_agent' },
-    });
-    if (drain.action === 'skip') return;
+  private async flushSpaceAgentDrainLocked(spaceId: string, workflowRunId: string): Promise<void> {
+    const repo = this.config.pendingMessageRepo;
+    const inject = this.config.spaceAgentInjector;
+    if (!repo || !inject) return;
 
     const spaceChatSessionId = `space:chat:${spaceId}`;
-    log.info(
-      `TaskAgentManager: flushing ${drain.rows.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
-    );
+    const resolveReplySession = (row: PendingAgentMessageRecord): string | null =>
+      this.resolveSpaceAgentReplySession(row);
+    const drainDeps: SpaceAgentPendingDrainDeps = {
+      repo,
+      resolveReplySession,
+      probeDeliveryStatus: (sessionId, messageId) =>
+        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+      onSettled: (row, deliveredSessionId) =>
+        this.emitPendingDelivered(row.id, deliveredSessionId, row),
+      onFailed: () => this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId),
+      watchActiveDelivery: (row) => {
+        const replyToSession = this.resolveSpaceAgentReplySession(row);
+        const candidates =
+          replyToSession && replyToSession !== spaceChatSessionId
+            ? [replyToSession, spaceChatSessionId]
+            : [spaceChatSessionId];
+        const probe = (sessionId: string) =>
+          this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
+        const handles: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementHandle[] =
+          [];
+        let done = false;
+        const stopWatchers = () => {
+          done = true;
+          for (const handle of handles) handle.cancel();
+        };
+        const settleFrom = (settledSessionId: string) => {
+          if (done) return;
+          done = true;
+          stopWatchers();
+          if (repo.getById(row.id)?.status !== 'pending') return;
+          repo.markDelivered(row.id, settledSessionId);
+          this.emitPendingDelivered(row.id, settledSessionId, row);
+        };
+        const scheduleReconciliation = () => {
+          this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);
+        };
+        const onWatcherFailed = () => {
+          if (done) return;
+          done = true;
+          stopWatchers();
+          scheduleReconciliation();
+        };
+        for (const sessionId of candidates) {
+          handles.push(
+            this.lateSettlements.arm({
+              sessionId,
+              messageId: row.id,
+              onConsumed: (settledSessionId) => {
+                settleFrom(settledSessionId);
+                scheduleReconciliation();
+              },
+              onFailed: onWatcherFailed,
+              getSendStatus: () => probe(sessionId),
+            })
+          );
+        }
+        for (const sessionId of candidates) {
+          if (probe(sessionId) === 'consumed') {
+            settleFrom(sessionId);
+            return;
+          }
+        }
+      },
+      deliverRow: async (row) => {
+        await this.deliverSpaceAgentPendingRow({
+          repo,
+          inject,
+          spaceId,
+          workflowRunId,
+          spaceChatSessionId,
+          resolveReplySession,
+          row,
+        });
+      },
+    };
 
-    for (const row of drain.rows) {
-      const message = formatPendingRowForSpaceAgent(row);
-      try {
-        const registry = this.config.replyRoutingRegistry;
-        const replyTo =
-          extractReplyToSessionId(message) ??
-          (registry && row.taskId ? registry.get(row.taskId) : null);
-        await inject(spaceId, message, replyTo, row.id);
-        repo.markDelivered(row.id, spaceChatSessionId);
-        this.emitPendingDelivered(row.id, spaceChatSessionId, row);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);
-        repo.markAttemptFailed(row.id, errMsg);
-      }
+    const drainOutcome = await runSpaceAgentPendingDrain(drainDeps, {
+      workflowRunId,
+      spaceChatSessionId,
+    });
+    if (drainOutcome.action === 'skip') return;
+
+    log.info(
+      `TaskAgentManager: flushing ${drainOutcome.rows.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
+    );
+  }
+
+  private async deliverSpaceAgentPendingRow(args: {
+    repo: SpaceAgentPendingDrainDeps['repo'];
+    inject: NonNullable<TaskAgentManagerConfig['spaceAgentInjector']>;
+    spaceId: string;
+    workflowRunId: string;
+    spaceChatSessionId: string;
+    resolveReplySession: (row: PendingAgentMessageRecord) => string | null;
+    row: PendingAgentMessageRecord;
+  }): Promise<void> {
+    const { repo, inject, spaceId, workflowRunId, spaceChatSessionId, resolveReplySession, row } =
+      args;
+    const current = repo.getById(row.id);
+    if (!current || current.status !== 'pending' || current.expiresAt <= Date.now()) return;
+    if (current.attempts >= current.maxAttempts) {
+      repo.markFailed(row.id, `space-agent delivery attempts exhausted (${current.maxAttempts})`);
+      return;
     }
+    const message = formatPendingRowForSpaceAgent(row);
+    const replyTo = resolveReplySession(row);
+    const deliveredSessionId = replyTo || spaceChatSessionId;
+    const settleDelivered = (settledSessionId?: string): void => {
+      const targetSessionId = settledSessionId ?? deliveredSessionId;
+      if (repo.getById(row.id)?.status !== 'pending') return;
+      repo.markDelivered(row.id, targetSessionId);
+      this.emitPendingDelivered(row.id, targetSessionId, row);
+    };
+    const scheduleReconciliation = () => {
+      this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);
+    };
+    repo.recordDeliveryAttempt(row.id, null);
+    repo.deferExpiration([row.id]);
+    try {
+      const outcome = await inject(spaceId, message, replyTo, row.id, {
+        onConsumed: settleDelivered,
+        onLateFailure: scheduleReconciliation,
+        lateSettlement: this.lateSettlements,
+        disposeSignal: this.lateSettlements.disposeSignal(),
+      });
+      if (outcome.state === 'delivered') {
+        settleDelivered(outcome.sessionId);
+        return;
+      }
+      repo.deferExpiration([row.id]);
+      if (outcome.state === 'failed' && (repo.getById(row.id)?.attempts ?? 0) >= row.maxAttempts) {
+        repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
+      }
+      if (outcome.state === 'failed') {
+        scheduleReconciliation();
+        log.warn(
+          `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}; ` +
+            `scheduled reconciliation to charge and retry the attempt`
+        );
+      } else {
+        log.info(
+          `TaskAgentManager: Space Agent delivery for ${row.id} queued pending consumption ` +
+            `by ${spaceChatSessionId}; the pending row settles when consumption completes`
+        );
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      repo.recordDeliveryError(row.id, errMsg);
+      repo.deferExpiration([row.id]);
+      const latest = repo.getById(row.id);
+      if ((latest?.attempts ?? 0) >= (latest?.maxAttempts ?? Infinity)) {
+        repo.markFailed(row.id, `space-agent delivery attempts exhausted (${latest?.maxAttempts})`);
+      } else {
+        scheduleReconciliation();
+      }
+      log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);
+    }
+  }
+
+  private scheduleSpaceAgentReconciliation(spaceId: string, workflowRunId: string): void {
+    if (this.disposed) return;
+    const key = `${spaceId}\0${workflowRunId}`;
+    if (this.spaceAgentRetryTimers.has(key)) return;
+    const timer = setTimeout(() => {
+      this.spaceAgentRetryTimers.delete(key);
+      void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
+    }, SPACE_AGENT_RETRY_DELAY_MS);
+    this.spaceAgentRetryTimers.set(key, timer);
+  }
+
+  activeSpaceDeliveryIdsForRun(workflowRunId: string): string[] {
+    const repo = this.config.pendingMessageRepo;
+    if (!repo) return [];
+    return collectActiveSpaceDeliveryIds({
+      repo,
+      workflowRunId,
+      spaceChatSessionId: `space:chat:${this.config.workflowRunRepo?.getRun?.(workflowRunId)?.spaceId ?? ''}`,
+      resolveReplySession: (row) => this.resolveSpaceAgentReplySession(row),
+      probeDeliveryStatus: (sessionId, messageId) =>
+        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+    });
+  }
+
+  private resolveSpaceAgentReplySession(row: PendingAgentMessageRecord): string | null {
+    const message = formatPendingRowForSpaceAgent(row);
+    const registry = this.config.replyRoutingRegistry;
+    return (
+      extractReplyToSessionId(message) ?? (registry && row.taskId ? registry.get(row.taskId) : null)
+    );
   }
 
   private emitPendingDelivered(
@@ -1581,7 +1841,11 @@ export class TaskAgentManager {
   ): Promise<string> {
     const guardExecution = this.resolveNodeExecutionForSubSession(subSessionId);
     if (guardExecution) {
-      const guardStatus = this.resolveTerminalInjectionStatus(guardExecution.workflowRunId);
+      const guardStatus = this.resolveTerminalInjectionStatus(
+        guardExecution.workflowRunId,
+        undefined,
+        origin
+      );
       if (guardStatus) {
         log.warn(
           `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} — task/run is terminal (${guardStatus})`
@@ -1612,7 +1876,11 @@ export class TaskAgentManager {
     return this.withSessionInjectLock(subSessionId, async () => {
       const lockedExecution = this.resolveNodeExecutionForSubSession(subSessionId);
       if (lockedExecution) {
-        const lockedStatus = this.resolveTerminalInjectionStatus(lockedExecution.workflowRunId);
+        const lockedStatus = this.resolveTerminalInjectionStatus(
+          lockedExecution.workflowRunId,
+          undefined,
+          origin
+        );
         if (lockedStatus) {
           log.warn(
             `TaskAgentManager.injectSubSessionMessageWithOrigin: rejecting inject to session ${subSessionId} after lock acquisition — task/run is terminal (${lockedStatus})`
@@ -1645,22 +1913,49 @@ export class TaskAgentManager {
     });
   }
 
-  private resolveTerminalInjectionStatus(workflowRunId: string): string | null {
-    const guardTask =
-      this.config.taskRepo?.listByWorkflowRunIncludingArchived?.(workflowRunId)?.[0] ?? null;
+  private resolveTerminalInjectionStatus(
+    workflowRunId: string,
+    taskId?: string,
+    origin?: MessageOrigin
+  ): string | null {
+    const isTerminal = (status?: string | null) =>
+      status === 'cancelled' ||
+      status === 'archived' ||
+      status === 'stopped' ||
+      (origin === 'system' && status === 'done');
     const guardRun = this.config.workflowRunRepo?.getRun?.(workflowRunId) ?? null;
-    if (
-      guardTask?.status === 'cancelled' ||
-      guardTask?.status === 'archived' ||
-      guardRun?.status === 'cancelled'
-    ) {
-      return guardTask?.status ?? guardRun?.status ?? 'terminal';
+    if (!taskId) {
+      const guardTask =
+        this.config.taskRepo?.listByWorkflowRunIncludingArchived?.(workflowRunId)?.[0] ?? null;
+      if (isTerminal(guardTask?.status)) return guardTask!.status;
+    } else {
+      const ownedTask = this.config.taskRepo.getTask?.(taskId) ?? null;
+      if (isTerminal(ownedTask?.status)) return ownedTask!.status;
     }
+    if (guardRun?.status === 'cancelled') return 'cancelled';
     return null;
   }
 
   private withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
     return withSessionResetCoordination(sessionId, fn);
+  }
+
+  private captureNodeAgentServer(session: AgentSession): McpServerConfig | undefined {
+    const servers = session.session.config?.mcpServers as
+      | Record<string, McpServerConfig>
+      | undefined;
+    return servers?.['node-agent'];
+  }
+
+  private restoreNodeAgentServer(
+    session: AgentSession,
+    previous: McpServerConfig | undefined
+  ): void {
+    if (previous) {
+      session.mergeRuntimeMcpServers({ 'node-agent': previous });
+    } else {
+      session.detachRuntimeMcpServer('node-agent');
+    }
   }
 
   private async withSessionRestoreLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -1972,7 +2267,11 @@ export class TaskAgentManager {
 
     const space = await this.config.spaceManager.getSpace(task.spaceId);
     if (!space) return null;
-    const workspacePath = this.getTaskWorktreePath(taskId) ?? space.workspacePath;
+    const workspacePath = resolveSpawnWorkspace({
+      cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
+      hasWorktreeManager: false,
+      spaceWorkspacePath: resolveTaskWorkspace(space, task),
+    }).workspacePath;
 
     const workflow = workflowRun?.workflowId
       ? this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)
@@ -2007,6 +2306,9 @@ export class TaskAgentManager {
         { autoReplayPendingMessages: false }
       );
     if (!agentSession) return null;
+    if (workspacePath && agentSession.getSessionData().workspacePath !== workspacePath) {
+      agentSession.updateMetadata({ workspacePath: workspacePath });
+    }
 
     let slotInit: AgentSessionInit | null = null;
     if (matchedSlot?.agentId && matchedNode) {
@@ -2341,6 +2643,119 @@ export class TaskAgentManager {
     return undefined;
   }
 
+  private async syncLiveSessionWorkspace(
+    task: SpaceTask,
+    space: Space,
+    execution: NodeExecution,
+    sessionId: string
+  ): Promise<void> {
+    interface SyncLiveWorkspaceState {
+      sessionId: string;
+      currentTask: SpaceTask;
+      workspacePath: string | null;
+    }
+    await this.withSessionInjectLock(sessionId, async () => {
+      const outcome = await stagedRun<SyncLiveWorkspaceState>(
+        'sync-live-session-workspace',
+        (s) => [
+          s.snapshot({
+            name: 'load-current-task',
+            provides: ['currentTask', 'workspacePath'],
+            run: () => {
+              const currentTask = this.config.taskRepo.getTask(task.id) ?? task;
+              const workspacePath = resolveSpawnWorkspace({
+                cachedTaskWorktreePath: this.getTaskWorktreePath(currentTask.id),
+                hasWorktreeManager: false,
+                spaceWorkspacePath: resolveTaskWorkspace(space, currentTask),
+              }).workspacePath;
+              return { currentTask, workspacePath };
+            },
+          }),
+          s.decide({
+            name: 'sync-gates',
+            reads: ['currentTask', 'workspacePath'],
+            branches: ['skip', 'perform', 'reject'],
+            run: (view) => {
+              const currentTask = view.currentTask;
+              const workspacePath = view.workspacePath!;
+              const terminalStatus = execution.workflowRunId
+                ? this.resolveTerminalInjectionStatus(execution.workflowRunId, currentTask.id)
+                : null;
+              const live = this.getSubSession(sessionId);
+              let skipReason: string | null = null;
+              let rejectMessage: string | null = null;
+              if (terminalStatus) skipReason = `task/run is terminal (${terminalStatus})`;
+              else if (!live) skipReason = 'session is no longer live';
+              else if (currentTask.spaceId !== space.id) {
+                rejectMessage = `Task ${currentTask.id} moved to space ${currentTask.spaceId}; refusing to sync live session ${sessionId} for space ${space.id}`;
+              } else if (currentTask.workflowRunId !== execution.workflowRunId) {
+                rejectMessage = `Task ${currentTask.id} is no longer attached to workflow run ${execution.workflowRunId} (now ${currentTask.workflowRunId ?? 'detached'}); refusing to reuse its live session ${sessionId}`;
+              } else if (!workspacePath) skipReason = 'no workspace resolved';
+              else if (live.getSessionData().workspacePath === workspacePath) {
+                skipReason = 'workspace already matches';
+              }
+              const decision = { skipReason, rejectMessage };
+              if (rejectMessage) return { decision, reject: true };
+              return skipReason ? { decision, skip: true } : { decision, perform: true };
+            },
+          }),
+          s.halt({
+            name: 'skip-sync',
+            when: 'skip',
+            reads: ['decision'],
+            run: (view) => {
+              log.info(
+                `TaskAgentManager.syncLiveSessionWorkspace: skipping live session ${sessionId} — ${(view.decision as { skipReason: string }).skipReason}`
+              );
+              return { skipped: true };
+            },
+          }),
+          s.halt({
+            name: 'reject-sync',
+            when: 'reject',
+            reads: ['decision'],
+            run: (view) => {
+              throw new Error((view.decision as { rejectMessage: string }).rejectMessage);
+            },
+          }),
+          s.effect({
+            name: 'migrate-workspace',
+            when: 'perform',
+            reads: ['currentTask', 'workspacePath'],
+            writes: [],
+            run: async (view) => {
+              const live = this.getSubSession(sessionId);
+              if (!live) return;
+              const workspacePath = view.workspacePath!;
+              const previousWorkspacePath = live.getSessionData().workspacePath;
+              const previousNodeAgentServer = this.captureNodeAgentServer(live);
+              live.updateMetadata({ workspacePath });
+              try {
+                await this.reinjectNodeAgentMcpServer(live, {
+                  taskId: view.currentTask.id,
+                  subSessionId: sessionId,
+                  agentName: execution.agentName,
+                  spaceId: space.id,
+                  workflowRunId: execution.workflowRunId,
+                  workspacePath,
+                  workflowNodeId: execution.workflowNodeId,
+                });
+              } catch (err) {
+                if (previousWorkspacePath !== undefined) {
+                  live.updateMetadata({ workspacePath: previousWorkspacePath });
+                }
+                this.restoreNodeAgentServer(live, previousNodeAgentServer);
+                throw err;
+              }
+            },
+          }),
+        ],
+        { input: ['sessionId', 'workspacePath'] }
+      )({ sessionId, workspacePath: null });
+      if (outcome.status === 'error') throw outcome.error;
+    });
+  }
+
   getSubSession(subSessionId: string): AgentSession | undefined {
     for (const [, nodeMap] of this.subSessions) {
       const session = nodeMap.get(subSessionId);
@@ -2628,6 +3043,10 @@ export class TaskAgentManager {
   }
 
   async cleanupAll(): Promise<void> {
+    this.disposed = true;
+    this.lateSettlements.dispose();
+    for (const [, timer] of this.spaceAgentRetryTimers) clearTimeout(timer);
+    this.spaceAgentRetryTimers.clear();
     clearAllRetryableHookActionTimers();
     this.clearDirectSteerState();
     for (const executionId of this.concurrentSpawnWaiters.keys()) {
@@ -2961,6 +3380,13 @@ export class TaskAgentManager {
   reattachSlotContextReset(agentSession: AgentSession): void {
     const sessionId = agentSession.session.id;
     agentSession.slotResetsContext = () => this.slotResetsContextForSession(sessionId);
+    agentSession.renderPendingDigest = (targetSessionId, digestTaskId) =>
+      this.config.spaceRuntimeService.renderPendingDigestForSession(targetSessionId, digestTaskId);
+    agentSession.reconcilePersistedDigestRows = (targetSessionId, digestTaskId) =>
+      this.config.spaceRuntimeService.reconcilePersistedDigestRowsForSession(
+        targetSessionId,
+        digestTaskId
+      );
   }
 
   private buildAgentNameAliasesForExecution(
@@ -3118,6 +3544,13 @@ export class TaskAgentManager {
     const alreadyIndexed = this.agentSessionIndex.get(subSessionId);
     if (alreadyIndexed) return alreadyIndexed;
 
+    if (this.config.db.getSession?.(subSessionId)?.status === 'archived') {
+      log.warn(
+        `TaskAgentManager.performSubSessionRehydrate: refusing to rehydrate session ${subSessionId} — session row is archived`
+      );
+      return null;
+    }
+
     log.warn(`TaskAgentManager: rehydrating ghost sub-session ${subSessionId} from DB...`);
 
     const execution = this.resolveNodeExecutionForSubSession(subSessionId);
@@ -3129,7 +3562,25 @@ export class TaskAgentManager {
     }
 
     const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(execution.workflowRunId);
-    const parentTask = tasks[0] ?? null;
+    const identitySpaceId = taskIdFromSubSessionIdentity(subSessionId, 'space');
+    const ownerIds = [
+      taskIdFromSubSessionIdentity(subSessionId),
+      subSessionId ? this.findParentTaskIdForSubSession(subSessionId) : null,
+    ].filter((candidate): candidate is string => Boolean(candidate));
+    const parentTask =
+      ownerIds
+        .map((ownerId) =>
+          tasks.find(
+            (candidate) =>
+              candidate.id === ownerId &&
+              (identitySpaceId === null || candidate.spaceId === identitySpaceId)
+          )
+        )
+        .find((match) => match) ??
+      tasks.find(
+        (candidate) => identitySpaceId === null || candidate.spaceId === identitySpaceId
+      ) ??
+      null;
     if (!parentTask) {
       log.warn(
         `TaskAgentManager.rehydrateSubSession: no parent task found for workflowRunId=${execution.workflowRunId}`
@@ -3191,10 +3642,18 @@ export class TaskAgentManager {
       return null;
     }
 
-    const workspacePath =
-      this.getTaskWorktreePath(taskId) ??
-      agentSession.getSessionData().workspacePath ??
-      space.workspacePath;
+    const workspacePath = resolveSpawnWorkspace({
+      cachedTaskWorktreePath:
+        this.getTaskWorktreePath(taskId) ??
+        explicitTaskWorkspace(parentTask) ??
+        agentSession.getSessionData().workspacePath ??
+        undefined,
+      hasWorktreeManager: false,
+      spaceWorkspacePath: space.workspacePath,
+    }).workspacePath;
+    if (workspacePath && agentSession.getSessionData().workspacePath !== workspacePath) {
+      agentSession.updateMetadata({ workspacePath: workspacePath });
+    }
 
     const currentInit = this.resolveCurrentNodeAgentInitForExecution({
       task: parentTask,
@@ -4168,7 +4627,16 @@ export class TaskAgentManager {
     }
 
     const tasks = this.config.taskRepo.listByWorkflowRun(execution.workflowRunId);
-    const parentTask = tasks[0] ?? null;
+    const ownerIds = [
+      taskIdFromSubSessionIdentity(sessionId),
+      this.findParentTaskIdForSubSession(sessionId),
+    ].filter((candidate): candidate is string => Boolean(candidate));
+    const parentTask =
+      ownerIds
+        .map((ownerId) => tasks.find((candidate) => candidate.id === ownerId))
+        .find((match) => match) ??
+      tasks[0] ??
+      null;
     if (!parentTask) {
       log.error(
         `TaskAgentManager.mcpSelfHeal: no parent task found for workflowRunId=${execution.workflowRunId} — cannot self-heal`
@@ -4211,18 +4679,79 @@ export class TaskAgentManager {
       });
     }
 
-    await this.ensureRequiredMcpServersAttached(agentSession, {
-      taskId: parentTask.id,
-      subSessionId: sessionId,
-      agentName: execution.agentName,
-      spaceId: parentTask.spaceId,
-      workflowRunId: execution.workflowRunId,
-      workspacePath:
-        this.getTaskWorktreePath(parentTask.id) ??
-        agentSession.getSessionData().workspacePath ??
-        space.workspacePath,
-      workflowNodeId: execution.workflowNodeId,
-      phase: 'rehydrate',
+    await this.withSessionInjectLock(sessionId, async () => {
+      interface SelfHealWorkspaceState {
+        sessionId: string;
+        currentTask: SpaceTask;
+        healWorkspacePath: string | null;
+      }
+      const outcome = await stagedRun<SelfHealWorkspaceState>(
+        'self-heal-workspace',
+        (s) => [
+          s.snapshot({
+            name: 'resolve-heal-workspace',
+            provides: ['currentTask', 'healWorkspacePath'],
+            run: () => {
+              const currentTask = this.config.taskRepo.getTask(parentTask.id) ?? parentTask;
+              if (currentTask.workflowRunId !== execution.workflowRunId) {
+                throw new Error(
+                  `Task ${currentTask.id} no longer belongs to workflow run ${execution.workflowRunId} (now ${currentTask.workflowRunId ?? 'detached'}); refusing to self-heal session ${sessionId}`
+                );
+              }
+              const healWorkspacePath = resolveSpawnWorkspace({
+                cachedTaskWorktreePath:
+                  this.getTaskWorktreePath(currentTask.id) ??
+                  explicitTaskWorkspace(currentTask) ??
+                  agentSession.getSessionData().workspacePath ??
+                  undefined,
+                hasWorktreeManager: false,
+                spaceWorkspacePath: space.workspacePath,
+              }).workspacePath;
+              return { currentTask, healWorkspacePath };
+            },
+          }),
+          s.effect({
+            name: 'heal-workspace',
+            reads: ['currentTask', 'healWorkspacePath'],
+            writes: [],
+            run: async (view) => {
+              const healWorkspacePath = view.healWorkspacePath!;
+              const healCtx = {
+                taskId: view.currentTask.id,
+                subSessionId: sessionId,
+                agentName: execution.agentName,
+                spaceId: view.currentTask.spaceId,
+                workflowRunId: execution.workflowRunId,
+                workspacePath: healWorkspacePath,
+                workflowNodeId: execution.workflowNodeId,
+              };
+              if (
+                healWorkspacePath &&
+                agentSession.getSessionData().workspacePath !== healWorkspacePath
+              ) {
+                const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
+                const previousNodeAgentServer = this.captureNodeAgentServer(agentSession);
+                agentSession.updateMetadata({ workspacePath: healWorkspacePath });
+                try {
+                  await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
+                } catch (err) {
+                  if (previousHealWorkspacePath !== undefined) {
+                    agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
+                  }
+                  this.restoreNodeAgentServer(agentSession, previousNodeAgentServer);
+                  throw err;
+                }
+              }
+              await this.ensureRequiredMcpServersAttached(agentSession, {
+                ...healCtx,
+                phase: 'rehydrate',
+              });
+            },
+          }),
+        ],
+        { input: ['sessionId'] }
+      )({ sessionId });
+      if (outcome.status === 'error') throw outcome.error;
     });
   }
 
@@ -4420,7 +4949,8 @@ export class TaskAgentManager {
         this.config.goalService?.handleTaskTerminal(taskId, {
           fromStatus,
           deferPostCommitEffects: true,
-        })
+        }),
+      (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
     );
     const endNodeHandlers = isEndNode
       ? createEndNodeHandlers({
@@ -4767,7 +5297,7 @@ export class TaskAgentManager {
       }
       await this.withSessionInjectLock(existing.session.id, async () => {
         const terminalStatus = task.workflowRunId
-          ? this.resolveTerminalInjectionStatus(task.workflowRunId)
+          ? this.resolveTerminalInjectionStatus(task.workflowRunId, taskId)
           : null;
         if (terminalStatus) {
           log.warn(
@@ -4775,6 +5305,39 @@ export class TaskAgentManager {
               `${existingSessionId} — task/run is terminal (${terminalStatus})`
           );
           return;
+        }
+        const currentTask = this.config.taskRepo.getTask(taskId) ?? task;
+        if (currentTask.workflowRunId !== task.workflowRunId) {
+          throw new Error(
+            `spawnPostApprovalSubSession: task ${taskId} moved to workflow run ${currentTask.workflowRunId} before reuse`
+          );
+        }
+        const reuseWorkspacePath = resolveSpawnWorkspace({
+          cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
+          hasWorktreeManager: false,
+          spaceWorkspacePath: resolveTaskWorkspace(space, currentTask),
+        }).workspacePath;
+        if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
+          const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
+          const previousNodeAgentServer = this.captureNodeAgentServer(existing);
+          existing.updateMetadata({ workspacePath: reuseWorkspacePath });
+          try {
+            await this.reinjectNodeAgentMcpServer(existing, {
+              taskId,
+              subSessionId: existingSessionId,
+              agentName: matchedSlot.name,
+              spaceId,
+              workflowRunId: task.workflowRunId ?? '',
+              workspacePath: reuseWorkspacePath,
+              workflowNodeId: matchedNodeId,
+            });
+          } catch (err) {
+            if (previousReuseWorkspacePath !== undefined) {
+              existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
+            }
+            this.restoreNodeAgentServer(existing, previousNodeAgentServer);
+            throw err;
+          }
         }
         await this.injectMessageIntoSession(existing, kickoffMessage);
       });
@@ -4787,7 +5350,17 @@ export class TaskAgentManager {
     const workflowRunId = task.workflowRunId;
     const workflowRun = workflowRunId ? this.config.workflowRunRepo.getRun(workflowRunId) : null;
 
-    const workspacePath = this.getTaskWorktreePath(taskId) ?? space.workspacePath;
+    const freshTask = this.config.taskRepo.getTask(taskId) ?? task;
+    if (freshTask.workflowRunId !== task.workflowRunId) {
+      throw new Error(
+        `spawnPostApprovalSubSession: task ${taskId} moved to workflow run ${freshTask.workflowRunId ?? 'detached'} before creating a fresh session`
+      );
+    }
+    const workspacePath = resolveSpawnWorkspace({
+      cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
+      hasWorktreeManager: false,
+      spaceWorkspacePath: resolveTaskWorkspace(space, freshTask),
+    }).workspacePath;
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
     const poolAgent = this.config.spaceAgentManager.getById(matchedSlot.agentId);

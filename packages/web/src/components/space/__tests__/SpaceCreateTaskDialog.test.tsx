@@ -5,6 +5,7 @@ import { render, fireEvent, waitFor, cleanup } from '@testing-library/preact';
 
 const mockCreateTask = vi.fn();
 const mockCreateSchedule = vi.fn();
+const mockListWorkspaces = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 
@@ -15,6 +16,9 @@ vi.mock('../../../lib/space-store', () => ({
     },
     get createSchedule() {
       return mockCreateSchedule;
+    },
+    get listWorkspaces() {
+      return mockListWorkspaces;
     },
   },
 }));
@@ -82,6 +86,11 @@ const SCHEDULE_MOCK = {
   updatedAt: Date.now(),
 };
 
+const WORKSPACES_MOCK = [
+  { id: 'ws-1', spaceId: 'space-1', path: '/spaces/s1/primary', label: 'Main', isPrimary: true },
+  { id: 'ws-2', spaceId: 'space-1', path: '/spaces/s1/docs', label: 'Docs', isPrimary: false },
+];
+
 describe('SpaceCreateTaskDialog', () => {
   let onClose;
   let onCreated;
@@ -92,6 +101,8 @@ describe('SpaceCreateTaskDialog', () => {
     onCreated = vi.fn();
     mockCreateTask.mockReset();
     mockCreateSchedule.mockReset();
+    mockListWorkspaces.mockReset();
+    mockListWorkspaces.mockResolvedValue([]);
     mockToastSuccess.mockReset();
     mockToastError.mockReset();
   });
@@ -227,6 +238,100 @@ describe('SpaceCreateTaskDialog', () => {
         })
       );
     });
+  });
+
+  it('renders workspace dropdown defaulting to the primary workspace', async () => {
+    mockListWorkspaces.mockResolvedValue(WORKSPACES_MOCK);
+
+    const { findByTestId, getByText, getByLabelText, queryByTestId } = render(
+      <SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+    );
+
+    const select = (await findByTestId('task-workspace-select')) as HTMLSelectElement;
+    expect(select.value).toBe('/spaces/s1/primary');
+    expect(getByText('Main (primary)')).toBeTruthy();
+    expect(getByText('Docs')).toBeTruthy();
+
+    fireEvent.click(getByLabelText('Schedule this task'));
+    expect(queryByTestId('task-workspace-select')).toBeNull();
+  });
+
+  it('falls back to the first workspace when none is marked primary', async () => {
+    mockListWorkspaces.mockResolvedValue(
+      WORKSPACES_MOCK.map((workspace) => ({ ...workspace, isPrimary: false }))
+    );
+
+    const { findByTestId } = render(<SpaceCreateTaskDialog isOpen={true} onClose={onClose} />);
+
+    const select = (await findByTestId('task-workspace-select')) as HTMLSelectElement;
+    expect(select.value).toBe('/spaces/s1/primary');
+  });
+
+  it('submits the default primary workspacePath when selection is unchanged', async () => {
+    mockListWorkspaces.mockResolvedValue(WORKSPACES_MOCK);
+    mockCreateTask.mockResolvedValue(TASK_MOCK);
+
+    const { getByPlaceholderText, getByRole, findByTestId } = render(
+      <SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+    );
+    await findByTestId('task-workspace-select');
+
+    fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+      target: { value: 'My new task' },
+    });
+    fireEvent.submit(getByRole('dialog').querySelector('form'));
+
+    await waitFor(() => {
+      expect(mockCreateTask).toHaveBeenCalledWith(
+        expect.objectContaining({ workspacePath: '/spaces/s1/primary' })
+      );
+    });
+  });
+
+  it('sends the chosen workspace in the create request', async () => {
+    mockListWorkspaces.mockResolvedValue(WORKSPACES_MOCK);
+    mockCreateTask.mockResolvedValue(TASK_MOCK);
+
+    const { getByPlaceholderText, getByRole, findByTestId } = render(
+      <SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+    );
+    const select = (await findByTestId('task-workspace-select')) as HTMLSelectElement;
+
+    fireEvent.change(select, { target: { value: '/spaces/s1/docs' } });
+    fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+      target: { value: 'Docs task' },
+    });
+    fireEvent.submit(getByRole('dialog').querySelector('form'));
+
+    await waitFor(() => {
+      expect(mockCreateTask).toHaveBeenCalledWith(
+        expect.objectContaining({ workspacePath: '/spaces/s1/docs' })
+      );
+    });
+  });
+
+  it('omits workspacePath when the workspace registry is unavailable', async () => {
+    mockListWorkspaces.mockRejectedValue(new Error('registry down'));
+    mockCreateTask.mockResolvedValue(TASK_MOCK);
+
+    const { getByPlaceholderText, getByRole, queryByTestId } = render(
+      <SpaceCreateTaskDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.input(getByPlaceholderText('e.g., Implement authentication module'), {
+      target: { value: 'Fallback task' },
+    });
+    fireEvent.submit(getByRole('dialog').querySelector('form'));
+
+    await waitFor(() => {
+      expect(mockCreateTask).toHaveBeenCalledTimes(1);
+    });
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      title: 'Fallback task',
+      description: '',
+      priority: 'normal',
+    });
+    expect(queryByTestId('task-workspace-select')).toBeNull();
   });
 
   it('shows schedule options when toggle is checked', () => {

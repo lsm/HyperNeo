@@ -103,7 +103,7 @@ describe('handleTaskScheduleFire', () => {
   });
 
   function makeDeps(eventHub?: { publish: (event: string, data: unknown) => Promise<unknown> }) {
-    return { db: db as never, scheduleRepo, jobQueue, spaceRepo, taskRepo, eventHub };
+    return { db: db as never, scheduleRepo, jobQueue, spaceRepo, taskRepo, goalRepo, eventHub };
   }
 
   function makeAutomationDeps(eventHub?: {
@@ -295,6 +295,38 @@ describe('handleTaskScheduleFire', () => {
     expect(updated?.activeTaskId).toBe(result.taskId);
     expect(updated?.lastTaskId).toBe(result.taskId);
     expect(updated?.nextCheckInAt).toBe(result.nextRunAt);
+  });
+
+  it('stamps the goal workspace on schedule-spawned goal tasks', async () => {
+    const goal = goalRepo.create({
+      spaceId,
+      title: 'Pinned Goal',
+      workspacePath: '/secondary',
+    });
+    const scheduleId = createCronSchedule(goal.id);
+    scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+
+    const result = await handleTaskScheduleFire(
+      makeJob({ payload: { scheduleId } }),
+      makeGoalDeps()
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(taskRepo.getTask(result.taskId ?? '')?.workspacePath).toBe('/secondary');
+  });
+
+  it('stores a null workspace on schedule-spawned tasks for unpinned goals', async () => {
+    const goal = goalRepo.create({ spaceId, title: 'Unpinned Goal' });
+    const scheduleId = createCronSchedule(goal.id);
+    scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+
+    const result = await handleTaskScheduleFire(
+      makeJob({ payload: { scheduleId } }),
+      makeGoalDeps()
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(taskRepo.getTask(result.taskId ?? '')?.workspacePath).toBeNull();
   });
 
   it('advances the schedule without creating a task when another goal task is active', async () => {
@@ -522,6 +554,7 @@ describe('handleTaskScheduleFire', () => {
         jobQueue: brokenJobQueue,
         spaceRepo,
         taskRepo,
+        goalRepo,
       })
     ).rejects.toThrow('synthetic enqueue failure');
 

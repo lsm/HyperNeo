@@ -48,6 +48,7 @@ export type PublicSpaceGoalUpdateParams = Pick<
   | 'autoTriggerNext'
   | 'checkInCronExpression'
   | 'checkInTimezone'
+  | 'workspacePath'
 >;
 
 export interface SpaceGoalMutationContext {
@@ -118,6 +119,7 @@ export interface SpaceGoalServiceDeps {
     import('../../../storage/reactive-database.ts').ReactiveDatabase,
     'beginTransaction' | 'commitTransaction' | 'abortTransaction'
   >;
+  resolveWorkspacePath?: (spaceId: string, rawPath: string) => Promise<string>;
 }
 
 export class SpaceGoalService {
@@ -125,6 +127,21 @@ export class SpaceGoalService {
 
   setGoalAutomationService(service: Pick<GoalAutomationService, 'onTaskCompleted'>): void {
     this.deps.goalAutomationService = service;
+  }
+
+  async resolveGoalWorkspacePath(
+    spaceId: string,
+    rawPath: string | null | undefined
+  ): Promise<string | null | undefined> {
+    if (rawPath === undefined) return undefined;
+    if (rawPath === null || rawPath.length === 0) return null;
+    if (!this.deps.resolveWorkspacePath) {
+      throw new Error('Workspace path validation is not available');
+    }
+    const resolved = await this.deps.resolveWorkspacePath(spaceId, rawPath);
+    const space = this.deps.spaceRepo.getSpace(spaceId);
+    if (space && resolved === space.workspacePath) return null;
+    return resolved;
   }
 
   createGoal(params: CreateSpaceGoalParams, context?: SpaceGoalMutationContext): SpaceGoal {
@@ -341,6 +358,7 @@ export class SpaceGoalService {
       labels: this.goalTaskLabels(goal),
       preferredWorkflowId: goal.preferredWorkflowId,
       goalId: goal.id,
+      workspacePath: goal.workspacePath ?? null,
     });
     if (!this.deps.goalRepo.claimActiveTask(goal.id, task.id)) {
       this.deps.taskRepo.deleteTask(task.id);
