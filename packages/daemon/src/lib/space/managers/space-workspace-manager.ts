@@ -466,6 +466,7 @@ const runResolveWorkspaceSelection = (
   .pipe(selectionLoadRows, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(selectionMatchLabel, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
   .pipe('!hasResolvedPath', 'ctx')
   .pipe(selectionResolveAsPath, 'ctx', 'ctx')
   .endAsync('ctx') as (input: ResolveSelectionCtx) => Promise<ResolveSelectionCtx>;
