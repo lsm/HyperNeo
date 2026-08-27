@@ -235,6 +235,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
               'Archive a task; archived tasks are excluded from most queries and cannot be reactivated.',
             paramsDoc: 'task_id',
             paramsSchema: ArchiveTaskSchema,
+            autonomyRequirement: 4,
             handler: handlers.archive_task,
           }),
         ]
@@ -333,5 +334,11 @@ export function composeRoleActionEntries(
 ): ActionDefinition[] {
   if (role !== 'workflow_worker') return [...spaceEntries];
   const nodeNames = new Set(nodeEntries.map((entry) => entry.name));
-  return [...nodeEntries, ...spaceEntries.filter((entry) => !nodeNames.has(entry.name))];
+  const workerOnlyNodeNames = new Set(['approve_task']);
+  return [
+    ...nodeEntries,
+    ...spaceEntries.filter(
+      (entry) => !nodeNames.has(entry.name) && !workerOnlyNodeNames.has(entry.name)
+    ),
+  ];
 }

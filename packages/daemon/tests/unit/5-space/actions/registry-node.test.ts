@@ -257,6 +257,18 @@ describe('createNodeRegistryEntries — composition', () => {
       ctx.db.close();
     }
   });
+
+  test('archive_task requires autonomy clearance despite its destructive safety class', () => {
+    const ctx = makeCtx();
+    try {
+      const byName = new Map(
+        createNodeRegistryEntries(makeConfig(ctx)).map((entry) => [entry.name, entry])
+      );
+      expect(byName.get('archive_task')?.autonomyRequirement).toBe(4);
+    } finally {
+      ctx.db.close();
+    }
+  });
 });
 
 describe('createNodeRegistryEntries — conditional entries', () => {
@@ -395,6 +407,28 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     );
   });
 
+  test('workflow_worker never falls back to the space approve_task entry', () => {
+    const spaceApproveCalls: string[] = [];
+    const composed = composeRoleActionEntries(
+      'workflow_worker',
+      makeSpaceEntries(spaceApproveCalls),
+      [
+        defineAction({
+          name: 'list_peers',
+          family: 'node',
+          safetyClass: 'read',
+          description: 'node entry',
+          paramsDoc: 'none',
+          paramsSchema: z.object({}),
+          handler: async () => null,
+        }),
+      ]
+    );
+    expect(composed.map((entry) => entry.name)).toEqual(['list_peers', 'list_sessions']);
+    const registry = createActionRegistry(composed);
+    expect(registry.get('approve_task')).toBeUndefined();
+  });
+
   test('coordinator, member, long-term, and non-space registries never include node family', () => {
     const nodeEntry = defineAction({
       name: 'list_peers',
@@ -431,7 +465,8 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
       const registry = createActionRegistry(composed);
       expect(registry.get('list_sessions')?.family).toBe('space');
       expect(registry.get('send_message')?.family).toBe('node');
-      expect(registry.entries).toHaveLength(ALWAYS_ON_NAMES.length + 2);
+      expect(registry.get('approve_task')).toBeUndefined();
+      expect(registry.entries).toHaveLength(ALWAYS_ON_NAMES.length + 1);
     } finally {
       ctx.db.close();
     }
