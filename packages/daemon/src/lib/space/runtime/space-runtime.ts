@@ -2038,7 +2038,7 @@ export class SpaceRuntime {
 
   reconcilePersistedDigestRowsForSession(sessionId: string, taskId?: string): boolean {
     const store = this.config.externalEventStore;
-    if (!store) return true;
+    if (!store) return false;
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     if (!execution) return false;
     this.dropUncoveredDeferredDigestRows(sessionId, store, taskId);
