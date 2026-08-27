@@ -1010,21 +1010,21 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
-    it('a compact boundary cancels a claimed internal compaction before it is sent', async () => {
+    it('keeps a yielded internal compaction outstanding across a compact boundary', async () => {
       const q = new MessageQueue();
       q.start();
-      const compaction = q.enqueueWithId('compact-claimed', '/compact', true, { durable: true });
+      const compaction = q.enqueueWithId('compact-yielded', '/compact', true, { durable: true });
       const generator = q.messageGenerator(testSessionId);
       const entry = await generator.next();
       expect(q.hasInFlightInternalCompaction()).toBe(true);
 
       q.acknowledgeCompactionsAwaitingBoundary();
-      expect(q.hasInFlightInternalCompaction()).toBe(false);
-      expect(q.hasOutstandingInternalCompaction()).toBe(false);
-      await compaction;
+      expect(q.hasInFlightInternalCompaction()).toBe(true);
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
 
       entry.value.onSent();
-      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      await compaction;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
       q.stop();
     });
 
