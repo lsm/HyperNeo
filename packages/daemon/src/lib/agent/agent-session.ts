@@ -348,6 +348,7 @@ export class AgentSession
   private pendingResumeAfterCompaction = false;
   private midTurnBudgetCheckInFlight = false;
   private midTurnCycleSeq = 0;
+  private midTurnArmedCycleSeq = 0;
   private lastMidTurnUsageRefreshAt = 0;
   private lastMidTurnUsageRefreshKey = '';
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
@@ -1538,7 +1539,6 @@ export class AgentSession
     const providerId = this.session.config.provider;
     if (!providerId) return;
     const cancelAsyncMessage = queryObject.cancelAsyncMessage;
-    const cycleId = ++this.midTurnCycleSeq;
     const opts: MidTurnBudgetInterruptOptions = {
       sessionId: this.session.id,
       providerId,
@@ -1551,9 +1551,10 @@ export class AgentSession
       contextTracker: this.contextTracker,
       onResumeArm: () => {
         this.pendingResumeAfterCompaction = true;
+        this.midTurnArmedCycleSeq = ++this.midTurnCycleSeq;
       },
       onResumeClear: () => {
-        if (this.midTurnCycleSeq === cycleId) {
+        if (this.midTurnCycleSeq === this.midTurnArmedCycleSeq) {
           this.pendingResumeAfterCompaction = false;
         }
       },
