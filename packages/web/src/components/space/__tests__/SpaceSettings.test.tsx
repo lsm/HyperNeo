@@ -281,6 +281,94 @@ describe('SpaceSettings', () => {
       expect(queryByTestId('workspaces-action-error')).toBeNull();
     });
 
+    it('keeps a newer action error when a pending reload later succeeds', async () => {
+      mockConfirm.mockReturnValue(true);
+      stubHubRequests();
+      const docs = makeWorkspace({
+        id: 'ws-2',
+        path: '/projects/docs',
+        label: 'Docs',
+        isPrimary: false,
+      });
+      const wiki = makeWorkspace({
+        id: 'ws-3',
+        path: '/projects/wiki',
+        label: 'Wiki',
+        isPrimary: false,
+      });
+      let resolveReload: (list: SpaceWorkspace[]) => void;
+      const pendingReload = new Promise<SpaceWorkspace[]>((res) => {
+        resolveReload = res;
+      });
+      let listCalls = 0;
+      mockRequest.mockImplementation((method: string) => {
+        if (method === 'space.workspace.list') {
+          listCalls += 1;
+          return listCalls === 1 ? Promise.resolve([makeWorkspace(), docs]) : pendingReload;
+        }
+        if (method === 'space.workspace.add') return Promise.resolve(wiki);
+        if (method === 'space.workspace.remove') return Promise.reject(new Error('remove blocked'));
+        return Promise.resolve({});
+      });
+
+      const { getByTestId, getByText, findByTestId, getAllByTestId } = render(
+        <SpaceSettings space={makeSpace()} />
+      );
+      await findByTestId('workspaces-list');
+      fireEvent.input(getByTestId('workspace-add-path'), { target: { value: '/projects/wiki' } });
+      fireEvent.click(getByText('Add'));
+      await waitFor(() => {
+        expect(
+          mockRequest.mock.calls.filter(([method]) => method === 'space.workspace.list')
+        ).toHaveLength(2);
+      });
+      fireEvent.click(getAllByTestId('workspace-remove')[0]);
+
+      expect((await findByTestId('workspaces-action-error')).textContent).toBe('remove blocked');
+      resolveReload!([makeWorkspace(), docs, wiki]);
+      await waitFor(() => {
+        expect(getByText('Wiki')).toBeTruthy();
+      });
+      expect(getByTestId('workspaces-action-error').textContent).toBe('remove blocked');
+    });
+
+    it('applies a successful removal locally when the refresh fails', async () => {
+      mockConfirm.mockReturnValue(true);
+      stubHubRequests();
+      let listCalls = 0;
+      mockRequest.mockImplementation((method: string) => {
+        if (method === 'space.workspace.list') {
+          listCalls += 1;
+          return listCalls === 1
+            ? Promise.resolve([
+                makeWorkspace(),
+                makeWorkspace({
+                  id: 'ws-2',
+                  path: '/projects/docs',
+                  label: 'Docs',
+                  isPrimary: false,
+                }),
+              ])
+            : Promise.reject(new Error('registry offline'));
+        }
+        if (method === 'space.workspace.remove') return Promise.resolve({ success: true });
+        return Promise.resolve({});
+      });
+
+      const { findByText, getAllByTestId, findByTestId, queryByText } = render(
+        <SpaceSettings space={makeSpace()} />
+      );
+      await findByText('Docs');
+      fireEvent.click(getAllByTestId('workspace-remove')[0]);
+
+      await waitFor(() => {
+        expect(queryByText('/projects/docs')).toBeNull();
+      });
+      expect((await findByTestId('workspaces-action-error')).textContent).toBe(
+        'Failed to refresh workspaces: registry offline'
+      );
+    });
+
     it('does not leak the previous space workspaces when the space changes', async () => {
       stubHubRequests([makeWorkspace()]);
       const { rerender, findByText, queryByText } = render(<SpaceSettings space={makeSpace()} />);

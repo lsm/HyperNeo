@@ -86,7 +86,10 @@ const inputClass =
 function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
   const [workspaces, setWorkspaces] = useState<SpaceWorkspace[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<{
+    text: string;
+    kind: 'action' | 'refresh';
+  } | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [newPath, setNewPath] = useState('');
   const [newLabel, setNewLabel] = useState('');
@@ -114,7 +117,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
       .then((list) => {
         if (cancelled) return;
         setError(null);
-        setActionError(null);
+        setActionError((current) => (current?.kind === 'refresh' ? null : current));
         setWorkspaces(list);
       })
       .catch((err) => {
@@ -122,7 +125,10 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
         if (workspaces === null) {
           setError(`Failed to load workspaces: ${rpcErrorMessage(err)}`);
         } else {
-          setActionError(`Failed to refresh workspaces: ${rpcErrorMessage(err)}`);
+          setActionError({
+            text: `Failed to refresh workspaces: ${rpcErrorMessage(err)}`,
+            kind: 'refresh',
+          });
         }
       });
     return () => {
@@ -136,7 +142,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
 
   function requireHub() {
     const hub = connectionManager.getHubIfConnected();
-    if (!hub) setActionError('Not connected to server');
+    if (!hub) setActionError({ text: 'Not connected to server', kind: 'action' });
     return hub;
   }
 
@@ -144,7 +150,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
     if (adding) return;
     const path = newPath.trim();
     if (!path) {
-      setActionError('Workspace path is required');
+      setActionError({ text: 'Workspace path is required', kind: 'action' });
       return;
     }
     const hub = requireHub();
@@ -152,16 +158,17 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
     try {
       setAdding(true);
       setActionError(null);
-      await hub.request('space.workspace.add', {
+      const added = await hub.request<SpaceWorkspace>('space.workspace.add', {
         spaceId,
         path,
         label: newLabel.trim() || undefined,
       });
+      setWorkspaces((current) => [...(current ?? []), added]);
       setNewPath('');
       setNewLabel('');
       reload();
     } catch (err) {
-      setActionError(rpcErrorMessage(err));
+      setActionError({ text: rpcErrorMessage(err), kind: 'action' });
     } finally {
       setAdding(false);
     }
@@ -181,7 +188,10 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
         setActionError(null);
       }
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Failed to browse for folder');
+      setActionError({
+        text: err instanceof Error ? err.message : 'Failed to browse for folder',
+        kind: 'action',
+      });
     } finally {
       setBrowsing(false);
     }
@@ -190,6 +200,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
   async function handleSaveLabel() {
     if (!editing || savingLabelId) return;
     const { id, label } = editing;
+    const trimmed = label.trim();
     const hub = requireHub();
     if (!hub) return;
     try {
@@ -198,12 +209,15 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
       await hub.request('space.workspace.updateLabel', {
         spaceId,
         workspaceId: id,
-        label: label.trim(),
+        label: trimmed,
       });
+      setWorkspaces(
+        (current) => current?.map((w) => (w.id === id ? { ...w, label: trimmed } : w)) ?? current
+      );
       setEditing((current) => (current?.id === id ? null : current));
       reload();
     } catch (err) {
-      setActionError(rpcErrorMessage(err));
+      setActionError({ text: rpcErrorMessage(err), kind: 'action' });
     } finally {
       setSavingLabelId(null);
     }
@@ -218,9 +232,10 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
       setRemovingId(workspace.id);
       setActionError(null);
       await hub.request('space.workspace.remove', { spaceId, workspaceId: workspace.id });
+      setWorkspaces((current) => current?.filter((w) => w.id !== workspace.id) ?? current);
       reload();
     } catch (err) {
-      setActionError(rpcErrorMessage(err));
+      setActionError({ text: rpcErrorMessage(err), kind: 'action' });
     } finally {
       setRemovingId(null);
     }
@@ -385,7 +400,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
       </div>
       {actionError && (
         <p class="text-sm text-red-300" data-testid="workspaces-action-error">
-          {actionError}
+          {actionError.text}
         </p>
       )}
     </div>
