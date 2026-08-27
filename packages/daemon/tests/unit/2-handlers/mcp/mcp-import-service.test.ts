@@ -6,6 +6,9 @@ import { join } from 'path';
 import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository';
+import { createSpaceTables } from '../../helpers/space-test-db';
 import { McpImportService } from '../../../../src/lib/mcp/mcp-import-service';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import type { Database } from '../../../../src/storage/database';
@@ -18,9 +21,10 @@ function buildTestDb(): {
 } {
   const bunDb = new BunDatabase(':memory:');
   createTables(bunDb);
+  createSpaceTables(bunDb);
   const reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
   const repo = new AppMcpServerRepository(bunDb, reactiveDb);
-  const db = { appMcpServers: repo } as unknown as Database;
+  const db = { appMcpServers: repo, getDatabase: () => bunDb } as unknown as Database;
   return { bunDb, reactiveDb, repo, db };
 }
 
@@ -433,6 +437,127 @@ describe('McpImportService', () => {
       expect(repo.listBySourcePath(goodFile)).toHaveLength(1);
       expect(repo.listBySourcePath(badFile)).toHaveLength(1);
       expect(repo.listBySourcePath(badFile)[0].command).toBe('y');
+    });
+
+    test('namespaces colliding server names from two registered workspaces with labels', () => {
+      const wsA = mkdtempSync(join(tmpRoot, 'ws-ns-a-'));
+      writeMcpJson(join(wsA, '.mcp.json'), {
+        mcpServers: { fetch: { command: 'a' } },
+      });
+      const wsB = mkdtempSync(join(tmpRoot, 'ws-ns-b-'));
+      writeMcpJson(join(wsB, '.mcp.json'), {
+        mcpServers: { fetch: { command: 'b' } },
+      });
+
+      const { results } = service.refreshAll([
+        { path: wsA, label: 'repo-a' },
+        { path: wsB, label: 'repo-b' },
+      ]);
+
+      expect(results.every((r) => r.status === 'ok')).toBe(true);
+      expect(repo.getByName('repo-a:fetch')).not.toBeNull();
+      expect(repo.getByName('repo-b:fetch')).not.toBeNull();
+    });
+
+    test('appends a numeric suffix when two labeled workspaces collide on the same server name', () => {
+      const wsA = mkdtempSync(join(tmpRoot, 'ws-dup-a-'));
+      writeMcpJson(join(wsA, '.mcp.json'), {
+        mcpServers: { fetch: { command: 'a1' } },
+      });
+      const wsB = mkdtempSync(join(tmpRoot, 'ws-dup-b-'));
+      writeMcpJson(join(wsB, '.mcp.json'), {
+        mcpServers: { fetch: { command: 'a2' } },
+      });
+
+      service.refreshAll([
+        { path: wsA, label: 'repo-a' },
+        { path: wsB, label: 'repo-a' },
+      ]);
+
+      expect(repo.getByName('repo-a:fetch')).not.toBeNull();
+      expect(repo.getByName('repo-a:fetch:2')).not.toBeNull();
+    });
+
+    test('re-uses stored names when re-scanning a namespaced workspace (idempotent)', () => {
+      const ws = mkdtempSync(join(tmpRoot, 'ws-idem-'));
+      const file = join(ws, '.mcp.json');
+      writeMcpJson(file, { mcpServers: { fetch: { command: 'x' } } });
+
+      service.refreshAll([{ path: ws, label: 'repo-a' }]);
+      const first = repo.getByName('repo-a:fetch');
+      expect(first).not.toBeNull();
+
+      const { results } = service.refreshAll([{ path: ws, label: 'repo-a' }]);
+      const row = repo.getByName('repo-a:fetch');
+      expect(row).not.toBeNull();
+      expect(row!.id).toBe(first!.id);
+      expect(results.every((r) => r.added === 0 && r.updated === 0 && r.removed === 0)).toBe(true);
+    });
+
+    test('collects space workspace registry paths and imports with workspace labels', () => {
+      const spaceRepo = new SpaceRepository(bunDb);
+      const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
+
+      const wsA = mkdtempSync(join(tmpRoot, 'reg-a-'));
+      writeMcpJson(join(wsA, '.mcp.json'), {
+        mcpServers: { fetch: { command: 'a' } },
+      });
+      const wsB = mkdtempSync(join(tmpRoot, 'reg-b-'));
+      writeMcpJson(join(wsB, '.mcp.json'), {
+        mcpServers: { fetch: { command: 'b' } },
+      });
+
+      const space = spaceRepo.createSpace({
+        workspacePath: wsA,
+        name: 'Repo A',
+        slug: 'repo-a',
+      });
+      workspaceRepo.create({
+        spaceId: space.id,
+        path: wsA,
+        label: 'repo-a',
+        isPrimary: true,
+      });
+      workspaceRepo.create({
+        spaceId: space.id,
+        path: wsB,
+        label: 'repo-b',
+        isPrimary: false,
+      });
+
+      const { results } = service.refreshAll();
+
+      expect(
+        results.some((r) => r.sourcePath === join(wsA, '.mcp.json') && r.status === 'ok')
+      ).toBe(true);
+      expect(
+        results.some((r) => r.sourcePath === join(wsB, '.mcp.json') && r.status === 'ok')
+      ).toBe(true);
+      expect(repo.getByName('repo-a:fetch')).not.toBeNull();
+      expect(repo.getByName('repo-b:fetch')).not.toBeNull();
+    });
+
+    test('prunes imported rows whose source path left the space workspace registry', () => {
+      const spaceRepo = new SpaceRepository(bunDb);
+
+      const ws = mkdtempSync(join(tmpRoot, 'reg-gone-'));
+      const file = join(ws, '.mcp.json');
+      writeMcpJson(file, { mcpServers: { stale: { command: 'x' } } });
+
+      const space = spaceRepo.createSpace({
+        workspacePath: ws,
+        name: 'Gone',
+        slug: 'gone',
+      });
+
+      service.refreshAll();
+      expect(repo.getByName('gone:stale')).not.toBeNull();
+
+      spaceRepo.deleteSpace(space.id);
+
+      const { orphanPruned } = service.refreshAll();
+      expect(orphanPruned).toBe(1);
+      expect(repo.getByName('gone:stale')).toBeNull();
     });
   });
 });

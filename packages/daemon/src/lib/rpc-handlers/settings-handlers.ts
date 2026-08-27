@@ -244,8 +244,7 @@ export function registerSettingsHandlers(
     if (!mcpImportService) {
       return { results: [] };
     }
-    const workspacePaths = db.workspaceHistory.list(100).map((row) => row.path);
-    const { results, orphanPruned } = mcpImportService.refreshAll(workspacePaths);
+    const { results, orphanPruned } = mcpImportService.refreshAll();
     internalEventBus.publishAsync('settings.updated', {
       namespaceId: 'global',
       settings: sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager),

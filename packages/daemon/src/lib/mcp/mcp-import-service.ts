@@ -1,9 +1,13 @@
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
-import { isAbsolute, join, resolve } from 'path';
+import { basename, isAbsolute, join, resolve } from 'path';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { AppMcpServer, CreateAppMcpServerRequest } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
+import { SpaceRepository } from '../../storage/repositories/space-repository.ts';
+import { SpaceWorkspaceRepository } from '../../storage/repositories/space-workspace-repository.ts';
 import { Logger } from '../logger.ts';
+import { resolveWorkspaceMcpServerName } from './mcp-server-namespace.ts';
 
 export interface ImportResult {
   sourcePath: string;
@@ -26,6 +30,37 @@ interface McpJsonEntry {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+}
+
+interface McpImportSource {
+  path: string;
+  label?: string;
+}
+
+interface McpImportTarget {
+  path: string;
+  label: string;
+}
+
+interface McpSourceDeclaration {
+  target: McpImportTarget;
+  status: 'ok' | 'missing' | 'malformed';
+  error?: string;
+  entries?: Record<string, McpJsonEntry>;
+}
+
+interface RefreshMcpImportsCtx {
+  db: Database;
+  sources: McpImportSource[];
+  homeDirOverride?: string;
+  log: Logger;
+  service: McpImportService;
+  targets?: McpImportTarget[];
+  reserved?: Set<string>;
+  declarations?: McpSourceDeclaration[];
+  results?: ImportResult[];
+  orphanPruned?: number;
+  result?: RefreshAllResult;
 }
 
 function inferSourceType(entry: McpJsonEntry): 'stdio' | 'sse' | 'http' {
@@ -166,69 +201,62 @@ export class McpImportService {
     return result;
   }
 
-  refreshAll(workspacePaths: readonly string[]): RefreshAllResult {
-    const targets = this.collectScanTargets(workspacePaths);
+  refreshAll(sources?: readonly (string | McpImportSource)[]): RefreshAllResult {
+    const mcpSources: McpImportSource[] =
+      sources?.map((source) => (typeof source === 'string' ? { path: source } : source)) ??
+      this.collectMcpImportSources();
 
-    const results: ImportResult[] = [];
-    for (const target of targets) {
-      try {
-        results.push(this.refreshFromFile(target));
-      } catch (err) {
-        this.log.error(
-          `[mcp-import] ${target}: unexpected error: ${err instanceof Error ? err.message : String(err)}`
-        );
-        results.push({
-          sourcePath: target,
-          status: 'malformed',
-          added: 0,
-          updated: 0,
-          removed: 0,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    return runRefreshMcpImports({
+      db: this.db,
+      sources: mcpSources,
+      homeDirOverride: this.homeDirOverride,
+      log: this.log,
+      service: this,
+    });
+  }
 
-    const targetSet = new Set(targets);
-    let orphanPruned = 0;
-    for (const row of this.db.appMcpServers.listImported()) {
-      if (!row.sourcePath) continue;
-      if (targetSet.has(row.sourcePath)) continue;
-      if (!existsSync(row.sourcePath)) {
-        if (this.db.appMcpServers.delete(row.id)) {
-          orphanPruned += 1;
+  private collectMcpImportSources(): McpImportSource[] {
+    const rawDb = this.db.getDatabase?.();
+    if (!rawDb) return [];
+
+    try {
+      const spaceRepo = new SpaceRepository(rawDb);
+      const workspaceRepo = new SpaceWorkspaceRepository(rawDb);
+      const seen = new Set<string>();
+      const out: McpImportSource[] = [];
+
+      for (const space of spaceRepo.listSpaces(false)) {
+        for (const ws of workspaceRepo.listBySpace(space.id)) {
+          if (!ws.path) continue;
+          try {
+            const abs = resolve(ws.path);
+            if (seen.has(abs)) continue;
+            seen.add(abs);
+            const label = ws.label?.trim() || basename(abs);
+            out.push({ path: abs, label });
+          } catch {}
+        }
+
+        if (space.workspacePath) {
+          try {
+            const abs = resolve(space.workspacePath);
+            if (seen.has(abs)) continue;
+            seen.add(abs);
+            out.push({ path: abs, label: basename(abs) });
+          } catch {}
         }
       }
-    }
 
-    return { results, orphanPruned };
+      return out;
+    } catch (err) {
+      this.log.warn(
+        `[mcp-import] failed to collect workspace sources: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return [];
+    }
   }
 
-  private collectScanTargets(workspacePaths: readonly string[]): string[] {
-    const seen = new Set<string>();
-    const out: string[] = [];
-
-    for (const wp of workspacePaths) {
-      if (!wp) continue;
-      const abs = resolve(wp);
-      const target = join(abs, '.mcp.json');
-      if (!seen.has(target)) {
-        seen.add(target);
-        out.push(target);
-      }
-    }
-
-    const userBaseDir =
-      process.env.TEST_USER_SETTINGS_DIR || join(this.homeDirOverride ?? homedir(), '.claude');
-    const userMcp = join(userBaseDir, '.mcp.json');
-    if (!seen.has(userMcp)) {
-      seen.add(userMcp);
-      out.push(userMcp);
-    }
-
-    return out;
-  }
-
-  private extractEntries(parsed: unknown): Record<string, McpJsonEntry> | null {
+  extractEntries(parsed: unknown): Record<string, McpJsonEntry> | null {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return null;
     }
@@ -240,7 +268,7 @@ export class McpImportService {
     return servers as Record<string, McpJsonEntry>;
   }
 
-  private buildCreateRequest(
+  buildCreateRequest(
     name: string,
     entry: McpJsonEntry,
     sourcePath: string
@@ -283,3 +311,214 @@ export class McpImportService {
     return removed;
   }
 }
+
+function buildMcpTargets(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
+  const seen = new Set<string>();
+  const targets: McpImportTarget[] = [];
+
+  for (const source of ctx.sources) {
+    if (!source.path) continue;
+    try {
+      const abs = resolve(source.path);
+      const targetPath = join(abs, '.mcp.json');
+      if (seen.has(targetPath)) continue;
+      seen.add(targetPath);
+      targets.push({ path: targetPath, label: source.label ?? '' });
+    } catch {}
+  }
+
+  const userBaseDir =
+    process.env.TEST_USER_SETTINGS_DIR || join(ctx.homeDirOverride ?? homedir(), '.claude');
+  const userMcp = join(userBaseDir, '.mcp.json');
+  if (!seen.has(userMcp)) {
+    seen.add(userMcp);
+    targets.push({ path: userMcp, label: '' });
+  }
+
+  targets.sort((a, b) => a.path.localeCompare(b.path));
+
+  return { ...ctx, targets };
+}
+
+function loadMcpExistingNames(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
+  const all = ctx.db.appMcpServers.list();
+  const reserved = new Set<string>(all.map((row) => row.name));
+  return { ...ctx, reserved };
+}
+
+function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
+  const declarations: McpSourceDeclaration[] = [];
+  const results: ImportResult[] = [];
+
+  for (const target of ctx.targets ?? []) {
+    const result: ImportResult = {
+      sourcePath: target.path,
+      status: 'ok',
+      added: 0,
+      updated: 0,
+      removed: 0,
+    };
+
+    if (!existsSync(target.path)) {
+      result.status = 'missing';
+      declarations.push({ target, status: 'missing' });
+      results.push(result);
+      continue;
+    }
+
+    let raw: string;
+    try {
+      raw = readFileSync(target.path, 'utf-8');
+    } catch (err) {
+      result.status = 'malformed';
+      result.error = `read failed: ${err instanceof Error ? err.message : String(err)}`;
+      ctx.log.warn(`[mcp-import] ${target.path}: ${result.error}`);
+      declarations.push({ target, status: 'malformed', error: result.error });
+      results.push(result);
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      result.status = 'malformed';
+      result.error = `parse failed: ${err instanceof Error ? err.message : String(err)}`;
+      ctx.log.warn(`[mcp-import] ${target.path}: ${result.error}`);
+      declarations.push({ target, status: 'malformed', error: result.error });
+      results.push(result);
+      continue;
+    }
+
+    const entriesByServerName = ctx.service.extractEntries(parsed);
+    if (entriesByServerName === null) {
+      result.status = 'malformed';
+      result.error = 'missing or invalid "mcpServers" object';
+      ctx.log.warn(`[mcp-import] ${target.path}: ${result.error}`);
+      declarations.push({ target, status: 'malformed', error: result.error });
+      results.push(result);
+      continue;
+    }
+
+    const entries: Record<string, McpJsonEntry> = {};
+    for (const [serverName, entry] of Object.entries(entriesByServerName).sort(([a], [b]) =>
+      a.localeCompare(b)
+    )) {
+      const resolvedName = resolveWorkspaceMcpServerName({
+        label: target.label,
+        serverName,
+        reserved: ctx.reserved ?? new Set<string>(),
+      });
+      ctx.reserved?.add(resolvedName);
+      entries[resolvedName] = entry;
+    }
+
+    declarations.push({ target, status: 'ok', entries });
+    results.push(result);
+  }
+
+  return { ...ctx, declarations, results };
+}
+
+function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
+  const results = ctx.results ? [...ctx.results] : [];
+
+  for (let i = 0; i < (ctx.declarations ?? []).length; i += 1) {
+    const decl = ctx.declarations![i];
+    const result = results[i];
+
+    if (decl.status === 'malformed') {
+      continue;
+    }
+
+    const existingRows = ctx.db.appMcpServers.listBySourcePath(decl.target.path);
+    const existingByName = new Map(existingRows.map((row) => [row.name, row]));
+    const declaredNames = new Set(Object.keys(decl.entries ?? {}));
+
+    if (decl.status === 'ok') {
+      for (const [resolvedName, entry] of Object.entries(decl.entries ?? {}).sort(([a], [b]) =>
+        a.localeCompare(b)
+      )) {
+        const req = ctx.service.buildCreateRequest(resolvedName, entry, decl.target.path);
+        if (!req) {
+          ctx.log.warn(
+            `[mcp-import] ${decl.target.path}: skipping "${resolvedName}" — missing required fields`
+          );
+          continue;
+        }
+
+        const existing = existingByName.get(resolvedName);
+        if (!existing) {
+          try {
+            ctx.db.appMcpServers.create(req);
+            result.added += 1;
+          } catch (err) {
+            ctx.log.warn(
+              `[mcp-import] ${decl.target.path}: failed to create "${resolvedName}": ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+          continue;
+        }
+
+        if (!fieldsEqual(existing, req)) {
+          try {
+            ctx.db.appMcpServers.update(existing.id, {
+              description: req.description,
+              sourceType: req.sourceType,
+              command: req.command,
+              args: req.args,
+              env: req.env,
+              url: req.url,
+              headers: req.headers,
+            });
+            result.updated += 1;
+          } catch (err) {
+            ctx.log.warn(
+              `[mcp-import] ${decl.target.path}: failed to update "${resolvedName}": ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+        }
+      }
+    }
+
+    for (const row of existingRows) {
+      if (!declaredNames.has(row.name)) {
+        if (ctx.db.appMcpServers.delete(row.id)) {
+          result.removed += 1;
+        }
+      }
+    }
+  }
+
+  return { ...ctx, results };
+}
+
+function pruneMcpOrphans(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
+  const targetPaths = new Set((ctx.targets ?? []).map((t) => t.path));
+  let orphanPruned = 0;
+
+  for (const row of ctx.db.appMcpServers.listImported()) {
+    if (!row.sourcePath) continue;
+    if (targetPaths.has(row.sourcePath)) continue;
+    if (ctx.db.appMcpServers.delete(row.id)) {
+      orphanPruned += 1;
+    }
+  }
+
+  return {
+    ...ctx,
+    result: {
+      results: ctx.results ?? [],
+      orphanPruned,
+    },
+  };
+}
+
+const runRefreshMcpImports = (superpipe({})('refresh-mcp-imports') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(buildMcpTargets, 'ctx', 'ctx')
+  .pipe(loadMcpExistingNames, 'ctx', 'ctx')
+  .pipe(extractMcpSources, 'ctx', 'ctx')
+  .pipe(persistMcpSources, 'ctx', 'ctx')
+  .pipe(pruneMcpOrphans, 'ctx', 'ctx')
+  .end('result') as (ctx: RefreshMcpImportsCtx) => RefreshAllResult;

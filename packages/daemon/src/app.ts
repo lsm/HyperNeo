@@ -477,8 +477,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     startupTimer.start('mcp import sweep (.mcp.json)');
     if (process.env.NODE_ENV !== 'test') {
       try {
-        const workspacePaths = db.workspaceHistory.list(100).map((row) => row.path);
-        const { results, orphanPruned } = mcpImportService.refreshAll(workspacePaths);
+        const { results, orphanPruned } = mcpImportService.refreshAll();
         const added = results.reduce((s, r) => s + r.added, 0);
         const updated = results.reduce((s, r) => s + r.updated, 0);
         const removed = results.reduce((s, r) => s + r.removed, 0) + orphanPruned;
