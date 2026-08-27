@@ -1832,6 +1832,25 @@ describe('SDKMessageRepository', () => {
       expect(result.messages).toEqual([]);
       expect(result.total).toBe(0);
     });
+
+    it('returns the newest bounded window when direction is desc', () => {
+      const timestamp = '2026-01-01T00:00:00.000Z';
+      for (const [index, text] of ['First', 'Second', 'Third'].entries()) {
+        insertStatusMessage(
+          `user-${index}`,
+          'session-1',
+          'user',
+          JSON.stringify(createUserMessage(text, `uuid-${index}`)),
+          timestamp
+        );
+      }
+
+      const result = repository.getUserMessagesByStatus('session-1', 'consumed', 2, 'desc');
+
+      expect(messageTexts(result.messages)).toEqual(['Third', 'Second']);
+      expect(result.messages.map((message) => message.dbId)).toEqual(['user-2', 'user-1']);
+      expect(result.total).toBe(3);
+    });
   });
 
   describe('getMessageByStatusAndDbId', () => {

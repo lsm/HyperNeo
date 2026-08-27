@@ -1025,7 +1025,8 @@ export class SDKMessageRepository {
   getUserMessagesByStatus(
     sessionId: string,
     status: SendStatus,
-    limit?: number
+    limit?: number,
+    direction: 'asc' | 'desc' = 'asc'
   ): {
     messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
     total: number;
@@ -1039,9 +1040,10 @@ export class SDKMessageRepository {
             )
             .get(sessionId, status) as { count: number })
         : null;
+    const order = direction === 'desc' ? 'DESC' : 'ASC';
     let projectionSql = `SELECT rowid AS row_id FROM sdk_messages
          WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}
-         ORDER BY timestamp ASC, rowid ASC`;
+         ORDER BY timestamp ${order}, rowid ${order}`;
     if (limit !== undefined) projectionSql += `\n         LIMIT ?`;
     const projected =
       limit !== undefined
