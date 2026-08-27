@@ -64,6 +64,9 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
   const updateTaskAutonomy = async (params: z.infer<typeof UpdateTaskSchema>) =>
     params.status === 'archived' ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL : 1;
 
+  const cancelTaskAutonomy = async (params: z.infer<typeof CancelTaskSchema>) =>
+    params.cancel_workflow_run === true ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL : 1;
+
   const sessionEntries: ActionDefinition[] = [
     defineAction({
       name: 'list_sessions',
@@ -422,6 +425,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Cancel a task, cascading to pending dependents and optionally its workflow run; returns the cancelled task.',
       paramsDoc: 'task_id, cancel_workflow_run?',
       paramsSchema: CancelTaskSchema,
+      autonomyRequirement: cancelTaskAutonomy,
       handler: (args) => handlers.cancel_task(args),
     }),
     defineAction({

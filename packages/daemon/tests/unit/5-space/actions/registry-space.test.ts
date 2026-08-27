@@ -209,6 +209,7 @@ describe('createSpaceRegistryEntries — composition', () => {
             'archive_task',
             'change_plan',
             'update_task',
+            'cancel_task',
             'approve_task',
             'approve_pending_completion',
           ].includes(name)
@@ -233,6 +234,24 @@ describe('createSpaceRegistryEntries — composition', () => {
         );
         expect(await resolve({ task_id: 'task-1', status: 'blocked' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', title: 'Edited' })).toBe(1);
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('cancel_task requires workflow-run clearance only when cancel_workflow_run is set', async () => {
+    const ctx = makeCtx();
+    try {
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
+      expect(typeof resolve).toBe('function');
+      if (typeof resolve === 'function') {
+        expect(await resolve({ task_id: 'task-1', cancel_workflow_run: true })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+        expect(await resolve({ task_id: 'task-1' })).toBe(1);
+        expect(await resolve({ task_id: 'task-1', cancel_workflow_run: false })).toBe(1);
       }
     } finally {
       ctx.db.close();
