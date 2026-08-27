@@ -643,7 +643,7 @@ describe('OAuthRefreshScheduler', () => {
     await scheduler.tick();
 
     expect(invalidationAttempts).toBe(2);
-    expect(events).toEqual([]);
+    expect(events).toEqual(['recovered:oauth-provider', 'changed:oauth-provider:refreshed']);
     expect(manager.stored).toHaveLength(1);
     expect(manager.health.get('oauth-provider')).toBe('healthy');
   });

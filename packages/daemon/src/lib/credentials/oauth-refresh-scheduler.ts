@@ -146,8 +146,12 @@ export class OAuthRefreshScheduler {
 
   private async retryPendingInvalidation(provider: Provider): Promise<void> {
     if (!this.pendingInvalidationRetries.has(provider.id)) return;
-    if (await this.runPreRecoveryInvalidation(provider.id)) return;
-    await this.recordPendingInvalidationFailure(provider.id);
+    if (!(await this.runPreRecoveryInvalidation(provider.id))) {
+      await this.recordPendingInvalidationFailure(provider.id);
+      return;
+    }
+    await this.recoverDormant(provider.id);
+    await this.onProviderChanged?.(provider.id, 'refreshed');
   }
 
   private async runPreRecoveryInvalidation(providerId: string): Promise<boolean> {

@@ -5295,6 +5295,80 @@ describe('Model Service', () => {
       );
     });
 
+    it('drops the forced discovery error when the failed provider is superseded mid-refresh', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels, markProviderRefreshSucceeded } = await import(
+        '../../../../src/lib/model-service'
+      );
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      let rejectDiscovery: ((error: Error) => void) | null = null;
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => mockModels,
+        listRemoteModels: () =>
+          new Promise((_, reject) => {
+            rejectDiscovery = reject;
+          }),
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+
+      const pending = refreshModels(undefined, { forceRemote: true });
+      for (let i = 0; i < 50 && !rejectDiscovery; i++) {
+        await Promise.resolve();
+      }
+      expect(rejectDiscovery).not.toBeNull();
+      rejectDiscovery?.(new Error('Remote discovery failed'));
+      (async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        markProviderRefreshSucceeded('remote-provider');
+      })();
+
+      await expect(pending).resolves.toBeUndefined();
+    });
+
+    it('routes routine rebuilds through the saved base URL when one is configured', async () => {
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      const { refreshModels, setProviderRepository } = await import(
+        '../../../../src/lib/model-service'
+      );
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      type RepositoryLike = Parameters<typeof setProviderRepository>[0];
+      const calls: unknown[] = [];
+      let getModelsCalls = 0;
+      getProviderRegistry().register({
+        id: 'remote-provider',
+        getModels: async () => {
+          getModelsCalls += 1;
+          return mockModels;
+        },
+        listRemoteModels: async (options?: unknown) => {
+          calls.push(options);
+          return [{ ...mockModels[0], provider: 'remote-provider', id: 'saved-endpoint-model' }];
+        },
+        isAvailable: async () => true,
+      } as unknown as ProviderLike);
+      setProviderRepository({
+        getProviderByProviderId: (providerId: string) =>
+          providerId === 'remote-provider' ? { baseUrl: 'https://saved-endpoint.example' } : null,
+      } as unknown as RepositoryLike);
+
+      try {
+        await refreshModels();
+
+        expect(calls).toEqual([{ baseUrl: 'https://saved-endpoint.example' }]);
+        expect(getModelsCalls).toBe(0);
+        const slice = getAvailableModels('global').filter(
+          (model) => model.provider === 'remote-provider'
+        );
+        expect(slice).toEqual([
+          expect.objectContaining({ id: 'saved-endpoint-model', provider: 'remote-provider' }),
+        ]);
+      } finally {
+        setProviderRepository(null as unknown as RepositoryLike);
+      }
+    });
+
     it('keeps curated capability-provider caches intact when forced discovery fails', async () => {
       const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
       const { refreshModels } = await import('../../../../src/lib/model-service');

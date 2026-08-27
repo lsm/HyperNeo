@@ -579,6 +579,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         DISCOVERY_SETTLE_GRACE_MS
       ).catch(() => {});
       provider.clearModelCache?.();
+      discoveryPromise.then(() => provider.clearModelCache?.()).catch(() => {});
       throw error;
     }
     if (discovered.length === 0) {

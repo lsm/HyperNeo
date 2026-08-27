@@ -349,7 +349,7 @@ interface ModelsLoadResult {
   unavailableProviderIds: string[];
   loadSeq: number;
   providerIds: string[];
-  forcedDiscoveryError?: unknown;
+  forcedDiscoveryError?: { providerId: string; error: unknown };
 }
 
 function pruneSupersededProviders(result: ModelsLoadResult): ModelsLoadResult {
@@ -371,6 +371,11 @@ function pruneSupersededProviders(result: ModelsLoadResult): ModelsLoadResult {
     loadedProviderIds: result.loadedProviderIds.filter((id) => !superseded.has(id)),
     failures: result.failures.filter((f) => !superseded.has(f.providerId)),
     supersededProviderIds: Array.from(superseded),
+    forcedDiscoveryError:
+      result.forcedDiscoveryError !== undefined &&
+      superseded.has(result.forcedDiscoveryError.providerId)
+        ? undefined
+        : result.forcedDiscoveryError,
   };
 }
 
@@ -441,6 +446,15 @@ function getPersistedDiscoveredForProvider(
     return extractPersistedDiscovered(record?.configJson);
   } catch {
     return [];
+  }
+}
+
+function getSavedBaseUrlForProvider(providerId: string): string | undefined {
+  if (!providerRepositoryRef) return undefined;
+  try {
+    return providerRepositoryRef.getProviderByProviderId(providerId)?.baseUrl ?? undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -724,9 +738,13 @@ async function loadProviderModels(
     if (!(await provider.isAvailable())) {
       return { status: 'unavailable', models: [] };
     }
+    const savedBaseUrl = getSavedBaseUrlForProvider(provider.id);
     const discovered =
-      options?.forceRemote && provider.listRemoteModels
-        ? await provider.listRemoteModels({ force: true })
+      (options?.forceRemote || savedBaseUrl !== undefined) && provider.listRemoteModels
+        ? await provider.listRemoteModels({
+            ...(options?.forceRemote ? { force: true } : {}),
+            ...(savedBaseUrl ? { baseUrl: savedBaseUrl } : {}),
+          })
         : null;
     const models = discovered
       ? withCuratedEntries(provider.id, discovered)
@@ -775,7 +793,7 @@ async function loadModelsFromProviders(options?: {
   const supersededProviderIds: string[] = [];
   const failures: ProviderLoadFailure[] = [];
   const unavailableProviderIds: string[] = [];
-  let forcedDiscoveryError: unknown;
+  let forcedDiscoveryError: { providerId: string; error: unknown } | undefined;
   results.forEach((result, index) => {
     const provider = providers[index];
     /* v8 ignore next 2 */
@@ -796,7 +814,7 @@ async function loadModelsFromProviders(options?: {
           provider.listRemoteModels &&
           forcedDiscoveryError === undefined
         ) {
-          forcedDiscoveryError = result.value.error;
+          forcedDiscoveryError = { providerId: provider.id, error: result.value.error };
         }
       }
       return;
@@ -1255,7 +1273,7 @@ export async function refreshModels(
           new Set(current.unavailableProviderIds)
         );
       }
-      throw current.forcedDiscoveryError;
+      throw current.forcedDiscoveryError.error;
     }
     applyRefreshedModels(
       cacheKey,
