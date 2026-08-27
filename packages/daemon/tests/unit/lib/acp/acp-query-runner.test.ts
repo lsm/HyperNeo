@@ -228,6 +228,8 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
       getState: mock(() => ({ status: 'idle' })),
       setProcessing: mock(async () => {}),
       beginTerminalIdle: mock(() => {}),
+      cancelTerminalIdleArm: mock(() => {}),
+      idleOwnerForQuery: mock((queryGeneration: number) => ({ queryGeneration, turnToken: 0 })),
       setIdle: mock(async () => {}),
     } as unknown as ProcessingStateManager,
     errorManager: { handleError: mock(async () => {}) } as unknown as ErrorManager,
@@ -1838,6 +1840,95 @@ describe('AcpQueryRunner', () => {
     resolveError();
     await ctx.queryPromise;
     expect(ctx.stateManager.setIdle).toHaveBeenCalled();
+  });
+
+  test('does not arm the terminal fence when superseded before the error route arms', async () => {
+    const client = createMockClient();
+    client.initialize.mockRejectedValue(new Error('429 Too Many Requests'));
+    const { ctx } = createRunnerFixture({ client });
+    ctx.onRateLimitExhausted = mock(async () => {
+      ctx.incrementQueryGeneration();
+      return false;
+    });
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(ctx.stateManager.beginTerminalIdle).not.toHaveBeenCalled();
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
+  });
+
+  test('cancels the terminal arm and skips the idle settle when superseded during error publication', async () => {
+    const client = createMockClient();
+    client.initialize.mockRejectedValue(new Error('401 Unauthorized'));
+    const { ctx } = createRunnerFixture({ client });
+    let resolveError!: () => void;
+    ctx.errorManager.handleError = mock(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveError = resolve;
+        })
+    );
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    await runner.start();
+    for (
+      let attempt = 0;
+      attempt < 20 && ctx.errorManager.handleError.mock.calls.length === 0;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    expect(ctx.stateManager.beginTerminalIdle).toHaveBeenCalledWith({
+      queryGeneration: 1,
+      turnToken: 0,
+    });
+    ctx.incrementQueryGeneration();
+    resolveError();
+    await ctx.queryPromise;
+
+    expect(ctx.stateManager.cancelTerminalIdleArm).toHaveBeenCalledWith({
+      queryGeneration: 1,
+      turnToken: 0,
+    });
+    expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
+  });
+
+  test('cancels the terminal arm and skips the idle settle when cleanup starts during error publication', async () => {
+    const client = createMockClient();
+    client.initialize.mockRejectedValue(new Error('401 Unauthorized'));
+    const { ctx } = createRunnerFixture({ client });
+    let resolveError!: () => void;
+    ctx.errorManager.handleError = mock(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveError = resolve;
+        })
+    );
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    await runner.start();
+    for (
+      let attempt = 0;
+      attempt < 20 && ctx.errorManager.handleError.mock.calls.length === 0;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    expect(ctx.stateManager.beginTerminalIdle).toHaveBeenCalledTimes(1);
+    ctx.isCleaningUp = () => true;
+    resolveError();
+    await ctx.queryPromise;
+
+    expect(ctx.stateManager.cancelTerminalIdleArm).toHaveBeenCalledWith({
+      queryGeneration: 1,
+      turnToken: 0,
+    });
+    expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
   });
 
   test('surfaces provider auth failure without spawning ACP client', async () => {
