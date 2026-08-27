@@ -243,13 +243,6 @@ export const MAX_STEER_PARKS = 60;
 
 export const RESUME_CHOICE_PARK_BUDGET = 20;
 
-const RESUME_CHOICE_PARK_BACKOFF_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000];
-
-export function resumeChoiceParkDelayMs(parkCount: number): number {
-  const idx = Math.min(Math.max(parkCount, 0), RESUME_CHOICE_PARK_BACKOFF_MS.length - 1);
-  return RESUME_CHOICE_PARK_BACKOFF_MS[idx];
-}
-
 export type DriveTurnOutcome =
   | { outcome: 'completed' }
   | { outcome: 'blocked'; retryAt: number }

@@ -221,9 +221,11 @@ export class JobQueueRepository {
 
   requeue(jobId: string, runAt: number, claimToken?: string | null): Job | null {
     const stmt = this.db.prepare(
-      `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL
-        WHERE id = ? AND status = 'processing'
-          AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
+      `UPDATE job_queue
+         SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
+             payload = json_set(payload, '$.__parkReason', NULL)
+       WHERE id = ? AND status = 'processing'
+         AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
     const res = withBusyRetry(() => stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null));
     if (res.changes === 0) return null;
@@ -298,23 +300,28 @@ export class JobQueueRepository {
     runAt: number,
     opts?: { parkReason?: string }
   ): number {
-    const reasonFilter =
-      opts?.parkReason !== undefined ? `AND json_extract(payload, '$.__parkReason') = ?` : '';
-    const wakeReset =
-      opts?.parkReason !== undefined ? `, payload = json_set(payload, '$.__parkCount', 0)` : '';
+    if (opts?.parkReason !== undefined) {
+      const stmt = this.db.prepare(
+        `UPDATE job_queue
+            SET run_at = CASE WHEN run_at > ? THEN ? ELSE run_at END,
+                started_at = NULL,
+                heartbeat_at = NULL,
+                payload = json_set(payload, '$.__parkCount', 0)
+          WHERE queue = ? AND status = 'pending'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.__parkReason') = ?`
+      );
+      const res = withBusyRetry(() => stmt.run(runAt, runAt, queue, sessionId, opts.parkReason));
+      return res.changes;
+    }
     const stmt = this.db.prepare(
       `UPDATE job_queue
-          SET run_at = ?, started_at = NULL, heartbeat_at = NULL${wakeReset}
+          SET run_at = ?, started_at = NULL, heartbeat_at = NULL
         WHERE queue = ? AND status = 'pending'
           AND json_extract(payload, '$.sessionId') = ?
-          AND run_at > ?
-          ${reasonFilter}`
+          AND run_at > ?`
     );
-    const params =
-      opts?.parkReason !== undefined
-        ? [runAt, queue, sessionId, runAt, opts.parkReason]
-        : [runAt, queue, sessionId, runAt];
-    const res = withBusyRetry(() => stmt.run(...params));
+    const res = withBusyRetry(() => stmt.run(runAt, queue, sessionId, runAt));
     return res.changes;
   }
 

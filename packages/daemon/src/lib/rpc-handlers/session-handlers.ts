@@ -1338,6 +1338,16 @@ export function setupSessionHandlers(
       session.sdkOriginPath = undefined;
     }
 
+    const existingAction = db
+      .getSDKMessageRepo()
+      .getHyperNeoActionMessageByUuid(targetSessionId, messageUuid);
+    if (!existingAction || existingAction.action !== 'sdk_resume_choice') {
+      throw new Error(`sdk_resume_choice action message not found: ${messageUuid}`);
+    }
+    if (existingAction.resolved) {
+      return { retried: true, alreadyResolved: true, messageId: messageUuid };
+    }
+
     const resolvedMessage: HyperNeoActionMessage = {
       type: 'hyperneo_action',
       uuid: messageUuid,

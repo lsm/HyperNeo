@@ -35,7 +35,12 @@ const STEER_PAYLOAD: Record<string, unknown> = {
 };
 
 function makeJob(payload: Record<string, unknown>): Job {
-  return { id: 'job-1', claimToken: 'claim-1', payload } as unknown as Job;
+  return {
+    id: 'job-1',
+    queue: 'message_delivery',
+    claimToken: 'claim-1',
+    payload,
+  } as unknown as Job;
 }
 
 class MockSession implements MessageDeliverySession {
@@ -88,6 +93,9 @@ function makeHarness(
       (_id: string, _runAt: number, _token: string | null, _opts?: { reason?: string }) => null
     ),
     requeueAs: mock((_id: string, _role: string, _runAt: number, _token: string | null) => null),
+    rescheduleSessionDeliveries: mock(
+      (_queue: string, _sessionId: string, _runAt: number, _opts?: { parkReason?: string }) => 0
+    ),
   };
   const getSession = mock(() => session);
   const getMessageContent = mock(() => ({ content: 'hello', sendStatus: 'enqueued' }));
@@ -526,7 +534,7 @@ describe('createMessageDeliveryHandler', () => {
       const result = await handler(job, {});
       expect(result).toEqual({ parked: 'sdk_resume_choice', retryAt: expect.any(Number) });
       expect(result.retryAt as number).toBeLessThanOrEqual(before + 50);
-      expect(jobQueue.getParkCount).not.toHaveBeenCalled();
+      expect(jobQueue.getParkCount).toHaveBeenCalledTimes(1);
       expect(jobQueue.requeue).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
       expect(jobQueue.requeueParked).not.toHaveBeenCalled();
     });
@@ -552,6 +560,64 @@ describe('createMessageDeliveryHandler', () => {
         reason: 'sdk_resume_choice',
       });
       expect(jobQueue.requeue).not.toHaveBeenCalled();
+    });
+
+    it('a parked resume-choice turn whose choice resolves post-park is woken immediately', async () => {
+      let reads = 0;
+      const { handler, session, jobQueue, job } = makeHarness({
+        isResumeChoiceResolved: mock(() => {
+          reads += 1;
+          return reads > 1;
+        }),
+      });
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+      const result = await handler(job, {});
+      expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
+      expect(jobQueue.requeueParked).toHaveBeenCalledTimes(1);
+      expect(jobQueue.rescheduleSessionDeliveries).toHaveBeenCalledWith(
+        'message_delivery',
+        'sess-1',
+        expect.any(Number),
+        { parkReason: 'sdk_resume_choice' }
+      );
+    });
+
+    it('a parked resume-choice turn with the choice still pending is not woken', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({
+        isResumeChoiceResolved: mock(() => false),
+      });
+      session.driveResult = { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
+      await handler(job, {});
+      expect(jobQueue.rescheduleSessionDeliveries).not.toHaveBeenCalled();
+    });
+
+    it('a steer waiting behind an unresolved resume choice parks with the resume backoff', async () => {
+      const { handler, session, jobQueue, job } = makeHarness(
+        { isResumeChoiceResolved: mock(() => false) },
+        STEER_PAYLOAD
+      );
+      session.feedResult = { outcome: 'park' };
+      session.waitingForInput = true;
+      jobQueue.getParkCount.mockImplementation(() => 3);
+      const result = await handler(job, {});
+      expect(result).toMatchObject({ parked: 'sdk_resume_choice' });
+      expect(result.retryAt).toBeGreaterThan(Date.now() + 50_000);
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1', {
+        reason: 'sdk_resume_choice',
+      });
+      expect(jobQueue.requeue).not.toHaveBeenCalled();
+    });
+
+    it('a steer waiting behind an unresolved resume choice dead-letters at the budget', async () => {
+      const { handler, session, jobQueue, job } = makeHarness(
+        { isResumeChoiceResolved: mock(() => false) },
+        STEER_PAYLOAD
+      );
+      session.feedResult = { outcome: 'park' };
+      session.waitingForInput = true;
+      jobQueue.getParkCount.mockImplementation(() => RESUME_CHOICE_PARK_BUDGET);
+      await expect(handler(job, {})).rejects.toThrow('past its budget');
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
     });
 
     it('non-blocked turn outcomes never read the park count', async () => {

@@ -64,6 +64,52 @@ describe('JobQueueRepository', () => {
       expect(repository.getJob(cooldownJob.id)?.runAt).toBe(future);
     });
 
+    it('plain requeue clears a stale park reason stamp', () => {
+      const future = Date.now() + 600_000;
+      repository.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'sess-a', messageUuid: 'u1' },
+        runAt: Date.now() - 1000,
+      });
+      const [job] = repository.dequeue('message_delivery', 1);
+      repository.requeueParked(job.id, future, job.claimToken, {
+        reason: 'sdk_resume_choice',
+      });
+      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(job.id);
+      const [reclaimed] = repository.dequeue('message_delivery', 1);
+      repository.requeue(reclaimed.id, Date.now() + 600_000, reclaimed.claimToken);
+      const changed = repository.rescheduleSessionDeliveries(
+        'message_delivery',
+        'sess-a',
+        Date.now(),
+        { parkReason: 'sdk_resume_choice' }
+      );
+      expect(changed).toBe(0);
+    });
+
+    it('a reason-filtered wake resets already-due parked jobs without delaying them', () => {
+      const past = Date.now() - 600_000;
+      repository.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'sess-a', messageUuid: 'u1' },
+        runAt: Date.now() - 1000,
+      });
+      const [job] = repository.dequeue('message_delivery', 1);
+      repository.requeueParked(job.id, past, job.claimToken, {
+        reason: 'sdk_resume_choice',
+      });
+      expect(repository.getParkCount(job.id)).toBe(1);
+      const changed = repository.rescheduleSessionDeliveries(
+        'message_delivery',
+        'sess-a',
+        Date.now(),
+        { parkReason: 'sdk_resume_choice' }
+      );
+      expect(changed).toBe(1);
+      expect(repository.getParkCount(job.id)).toBe(0);
+      expect(repository.getJob(job.id)?.runAt).toBe(past);
+    });
+
     it('a reason-filtered wake also resets the park count for a fresh budget', () => {
       const future = Date.now() + 600_000;
       repository.enqueue({

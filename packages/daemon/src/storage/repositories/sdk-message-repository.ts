@@ -1748,6 +1748,26 @@ export class SDKMessageRepository {
     this.scheduleMessageSearchIndex(rowId);
   }
 
+  getHyperNeoActionMessageByUuid(
+    sessionId: string,
+    messageUuid: string
+  ): HyperNeoActionMessage | null {
+    const row = this.db
+      .prepare(
+        `SELECT sdk_message FROM sdk_messages
+       WHERE session_id = ?
+         AND message_type = 'hyperneo_action'
+         AND sdk_uuid = ?`
+      )
+      .get(sessionId, messageUuid) as { sdk_message: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.sdk_message) as HyperNeoActionMessage;
+    } catch {
+      return null;
+    }
+  }
+
   updateHyperNeoActionMessageByUuid(
     sessionId: string,
     messageUuid: string,

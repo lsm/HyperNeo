@@ -121,23 +121,25 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         job.claimToken
       );
       const result = await turn;
-      if (
-        result.outcome === 'blocked' &&
-        deps.isResumeChoiceResolved?.(payload.sessionId) === true
-      ) {
-        const retryAt = Date.now();
-        deps.jobQueue.requeue(job.id, retryAt, job.claimToken);
-        log.info(
-          `message_delivery: resume choice already resolved for ${payload.messageUuid}; retrying immediately`
-        );
-        return { parked: 'sdk_resume_choice', retryAt };
-      }
       const route = routeDriveTurnOutcome(result, {
         parkCount: result.outcome === 'blocked' ? deps.jobQueue.getParkCount(job.id) : 0,
         now: Date.now(),
+        resumeChoiceResolved:
+          result.outcome === 'blocked'
+            ? deps.isResumeChoiceResolved?.(payload.sessionId)
+            : undefined,
       });
       if ('deadLetter' in route) {
         throw new DeadLetterImmediatelyError(route.deadLetter);
+      }
+      if (
+        result.outcome === 'blocked' &&
+        route.mutation === 'requeue' &&
+        (route.result as { parked?: string }).parked === 'sdk_resume_choice'
+      ) {
+        log.info(
+          `message_delivery: resume choice already resolved for ${payload.messageUuid}; retrying immediately`
+        );
       }
       if (route.reclaimSkip) {
         metrics.recordReclaimSkip(route.reclaimSkip);
@@ -151,6 +153,17 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken, {
           reason: (route.result as { parked?: string }).parked,
         });
+        if (
+          (route.result as { parked?: string }).parked === 'sdk_resume_choice' &&
+          deps.isResumeChoiceResolved?.(payload.sessionId) === true
+        ) {
+          deps.jobQueue.rescheduleSessionDeliveries(job.queue, payload.sessionId, Date.now(), {
+            parkReason: 'sdk_resume_choice',
+          });
+          log.info(
+            `message_delivery: resume choice resolved while parking ${payload.messageUuid}; waking immediately`
+          );
+        }
       }
       return route.result;
     }
@@ -169,9 +182,13 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       reportStage ? { reportStage } : undefined
     );
     const needsParkBudget = result.outcome === 'park' || result.outcome === 'awaiting_acceptance';
+    const waitingForInput =
+      result.outcome === 'park' ? (session.isWaitingForInput?.() ?? false) : false;
     const route = routeFeedSteerOutcome(result, {
       parkCount: needsParkBudget ? deps.jobQueue.getParkCount(job.id) : 0,
-      waitingForInput: result.outcome === 'park' ? (session.isWaitingForInput?.() ?? false) : false,
+      waitingForInput,
+      resumeChoicePending:
+        waitingForInput && deps.isResumeChoiceResolved?.(payload.sessionId) === false,
       now: Date.now(),
     });
     if ('deadLetter' in route) {
