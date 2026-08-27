@@ -256,14 +256,23 @@ export class McpImportService {
       );
     }
 
+    const targetPath = join(absoluteWorkspacePath, '.mcp.json');
+
     let mcpSources: McpImportSource[];
     try {
       mcpSources = this.collectMcpImportSources();
     } catch (err) {
       this.log.warn(
-        `[mcp-import] workspace registry collection failed, falling back to bare import: ${err instanceof Error ? err.message : String(err)}`
+        `[mcp-import] workspace registry collection failed: ${err instanceof Error ? err.message : String(err)}`
       );
-      mcpSources = [];
+      return {
+        sourcePath: targetPath,
+        status: 'failed',
+        added: 0,
+        updated: 0,
+        removed: 0,
+        error: `workspace registry collection failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
 
     const source = mcpSources.find((s) => {
@@ -273,8 +282,6 @@ export class McpImportService {
         return false;
       }
     }) ?? { path: absoluteWorkspacePath, label: '' };
-
-    const targetPath = join(absoluteWorkspacePath, '.mcp.json');
     const result = this.refreshAll([source], {
       skipOrphanPrune: true,
       includeUserConfig: false,
@@ -441,6 +448,23 @@ function hasNumericSuffix(serverName: string): boolean {
   return /:[1-9]\d*$/.test(serverName);
 }
 
+function isNameBlockedBySuffix(
+  base: string,
+  serverName: string,
+  blocked: ReadonlySet<string> | undefined,
+  allServerNames: ReadonlySet<string>
+): boolean {
+  if (!blocked) return false;
+  const prefix = `${base}:`;
+  for (const name of blocked) {
+    if (!name.startsWith(prefix)) continue;
+    const suffix = name.slice(prefix.length);
+    if (!/^(?:[2-9]|[1-9]\d+)$/.test(suffix)) continue;
+    if (!allServerNames.has(`${serverName}:${suffix}`)) return true;
+  }
+  return false;
+}
+
 function matchExistingRank(
   storedName: string,
   serverName: string,
@@ -506,18 +530,35 @@ function findBestExistingMatch(
   return best;
 }
 
+function hasLongerRawTail(
+  name: string,
+  serverName: string,
+  allServerNames: ReadonlySet<string>
+): boolean {
+  for (const other of allServerNames) {
+    if (other === serverName) continue;
+    if (other.length <= serverName.length) continue;
+    if (name === other || name.endsWith(`:${other}`)) return true;
+  }
+  return false;
+}
+
 function findLegacyMatch(
   rawName: string,
   existingByName: Map<string, AppMcpServer>,
   allServerNames?: ReadonlySet<string>,
-  protectedNames?: ReadonlySet<string>
+  protectedNames?: ReadonlySet<string>,
+  usedIds?: ReadonlySet<string>
 ): AppMcpServer | undefined {
   let best: AppMcpServer | undefined;
   let bestRank = Infinity;
   for (const [name, row] of existingByName) {
     if (protectedNames?.has(name)) continue;
+    if (usedIds?.has(row.id)) continue;
     const rank = matchExistingRank(name, rawName, '', allServerNames);
-    if (rank >= 0 && rank < bestRank) {
+    if (rank < 0) continue;
+    if (allServerNames && hasLongerRawTail(name, rawName, allServerNames)) continue;
+    if (rank < bestRank) {
       best = row;
       bestRank = rank;
       if (rank === 0) break;
@@ -621,7 +662,10 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     const rawNames: Record<string, string> = Object.create(null);
     for (const [serverName, rawEntry] of sortedRaws) {
       const base = buildResolvedBaseName(target.label, serverName);
-      if (ctx.blocked?.has(base)) {
+      if (
+        ctx.blocked?.has(base) ||
+        isNameBlockedBySuffix(base, serverName, ctx.blocked, allServerNames)
+      ) {
         ctx.log.warn(
           `[mcp-import] ${target.path}: skipping "${serverName}" — name is claimed by a user/builtin row`
         );
@@ -703,6 +747,7 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     if (decl.status === 'ok') {
       const allServerNames = new Set<string>(Object.values(decl.rawNames ?? {}));
       const protectedNames = new Set<string>(Object.keys(decl.entries ?? {}));
+      const usedExistingIds = new Set<string>();
       let persistFailed = false;
 
       for (const [resolvedName, entry] of Object.entries(decl.entries ?? {}).sort(([a], [b]) =>
@@ -719,9 +764,18 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
         declaredNames.add(resolvedName);
 
         let existing = existingByName.get(resolvedName);
+        if (existing && usedExistingIds.has(existing.id)) {
+          existing = undefined;
+        }
         let legacy =
           rawName !== resolvedName
-            ? findLegacyMatch(rawName, existingByName, allServerNames, protectedNames)
+            ? findLegacyMatch(
+                rawName,
+                existingByName,
+                allServerNames,
+                protectedNames,
+                usedExistingIds
+              )
             : undefined;
         if (legacy && existing && legacy.id === existing.id) {
           legacy = undefined;
@@ -729,6 +783,10 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
         if (!existing) {
           existing = legacy;
           legacy = undefined;
+        }
+
+        if (existing) {
+          usedExistingIds.add(existing.id);
         }
 
         if (!existing) {
