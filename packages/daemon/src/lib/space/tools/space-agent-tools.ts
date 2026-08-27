@@ -88,9 +88,33 @@ import {
   resolveEffectiveAutonomyLevel,
 } from './tool-admission-gates.ts';
 import {
-  SpaceTaskStatusSchema,
-  UpdateTaskStatusParamDescription,
-} from './task-agent-tool-schemas.ts';
+  ApprovePendingCompletionSchema,
+  ApproveTaskSchema,
+  ArchiveTaskSchema,
+  CancelTaskSchema,
+  ChangePlanSchema,
+  CreateStandaloneTaskSchema,
+  GetSessionDetailSchema,
+  GetSessionMessagesSchema,
+  GetTaskDetailSchema,
+  GetWorkflowDetailSchema,
+  GetWorkflowRunSchema,
+  InterruptSessionSchema,
+  ListSessionsSchema,
+  ListTaskMembersSchema,
+  ListTasksSchema,
+  ListWorkflowsSchema,
+  PublishTaskSchema,
+  ReassignTaskSchema,
+  RetryTaskSchema,
+  SendMessageToTaskSchema,
+  SendSessionMessageSchema,
+  SuggestWorkflowSchema,
+  UpdateSessionStateSchema,
+  UpdateTaskSchema,
+  SESSION_MESSAGE_MAX_LIMIT,
+  SPACE_SESSION_MAX_LIMIT,
+} from './space-agent-tool-schemas.ts';
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import {
@@ -201,12 +225,10 @@ type SpaceSessionSummary = {
   workspace_path: string | null;
 };
 
-const SPACE_SESSION_MAX_LIMIT = 100;
 const SPACE_SESSION_DEFAULT_LIMIT = 50;
 const SESSION_DETAIL_MESSAGE_LIMIT = 5;
 const SESSION_MESSAGE_DEFAULT_LIMIT = 20;
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 24 * 60 * 60 * 1000;
-const SESSION_MESSAGE_MAX_LIMIT = 100;
 
 function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
   return {
@@ -4097,380 +4119,151 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
   const agentStatusSchema = z.enum(['active', 'paused', 'disabled', 'archived']);
   const thinkingLevelSchema = z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k']);
   const settingSourcesSchema = z.array(z.enum(['user', 'project', 'local']));
-  const sessionStatusSchema = z.enum(['active', 'idle', 'waiting_for_input', 'error', 'archived']);
-  const sessionTypeSchema = z.enum(['worker', 'ad-hoc']);
-  const mutableProcessingStateSchema = z.enum(['idle', 'running', 'waiting_for_input']);
   // oxlint-disable-next-line typescript/no-explicit-any -- SDK tool list is heterogeneous by schema.
   const tools: SdkMcpToolDefinition<any>[] = [
     tool(
       'list_sessions',
       'List all ad-hoc and worker sessions in this Space. Filter by derived status or type, with limit/offset pagination.',
-      {
-        status: sessionStatusSchema.optional().describe('Filter by status'),
-        type: sessionTypeSchema.optional().describe('Filter by session type'),
-        limit: z.number().int().positive().max(SPACE_SESSION_MAX_LIMIT).optional().default(50),
-        offset: z.number().int().min(0).optional().default(0),
-      },
+      ListSessionsSchema.shape,
       (args) => handlers.list_sessions(args)
     ),
     tool(
       'get_session_detail',
       'Inspect one Space session including parsed processing_state and last 5 messages.',
-      { session_id: z.string().describe('Session ID') },
+      GetSessionDetailSchema.shape,
       (args) => handlers.get_session_detail(args)
     ),
     tool(
       'get_session_messages',
       'Retrieve conversation messages for one Space session with summaries and optional timestamp cursor.',
-      {
-        session_id: z.string().describe('Session ID'),
-        limit: z.number().int().positive().max(SESSION_MESSAGE_MAX_LIMIT).optional().default(20),
-        before: z.string().optional().describe('Return messages before this timestamp'),
-      },
+      GetSessionMessagesSchema.shape,
       (args) => handlers.get_session_messages(args)
     ),
     tool(
       'send_session_message',
       'Send a user message to an ad-hoc Space session. Use answer_question:true to clear a waiting_for_input pending question.',
-      {
-        session_id: z.string().describe('Target session ID'),
-        message: z.string().min(1).describe('Message text'),
-        answer_question: z
-          .boolean()
-          .optional()
-          .describe('Clear pending question state while delivering this message'),
-      },
+      SendSessionMessageSchema.shape,
       (args) => handlers.send_session_message(args)
     ),
     tool(
       'update_session_state',
       'Mutate a Space session processing state to recover stuck sessions. Requires sufficient Space autonomy.',
-      {
-        session_id: z.string().describe('Target session ID'),
-        processing_state: mutableProcessingStateSchema.describe('New processing state'),
-        clear_pending_question: z.boolean().optional().describe('Clear stale pendingQuestion'),
-      },
+      UpdateSessionStateSchema.shape,
       (args) => handlers.update_session_state(args)
     ),
     tool(
       'interrupt_session',
       'Force-interrupt a running or stuck Space session, append interrupt transcript entries, and reset state to idle. Requires sufficient Space autonomy.',
-      {
-        session_id: z.string().describe('Target session ID'),
-        reason: z.string().optional().describe('Reason recorded in the terminal result'),
-      },
+      InterruptSessionSchema.shape,
       (args) => handlers.interrupt_session(args)
     ),
     tool(
       'list_workflows',
       'Show all workflows in this space with their descriptions and steps. Call this first to understand available options before creating a task.',
-      {},
+      ListWorkflowsSchema.shape,
       () => handlers.list_workflows()
     ),
     tool(
       'get_workflow_run',
       'Check the current status of a workflow run, including the current step and associated tasks.',
-      {
-        run_id: z.string().describe('ID of the workflow run to inspect'),
-      },
+      GetWorkflowRunSchema.shape,
       (args) => handlers.get_workflow_run(args)
     ),
     tool(
       'change_plan',
       'Update the task description for an ongoing run, or switch to a different workflow mid-run (cancels the current run and starts a new one).',
-      {
-        run_id: z.string().describe('ID of the current workflow run'),
-        description: z.string().optional().describe('Updated task description'),
-        workflow_id: z
-          .string()
-          .optional()
-          .describe(
-            'New workflow ID to switch to. The current run will be cancelled and a new run started with the same title.'
-          ),
-        workflow_handle: z
-          .string()
-          .optional()
-          .describe(
-            'New workflow handle to switch to (alternative to workflow_id). The current run will be cancelled and a new run started with the same title.'
-          ),
-      },
+      ChangePlanSchema.shape,
       (args) => handlers.change_plan(args)
     ),
     tool(
       'get_workflow_detail',
       'Get the full definition of a specific workflow, including all steps, transitions, and rules. Use this to inspect a candidate workflow before creating a task.',
-      {
-        workflow_id: z.string().optional().describe('ID of the workflow to retrieve'),
-        workflow_handle: z
-          .string()
-          .optional()
-          .describe('Handle of the workflow to retrieve (alternative to workflow_id)'),
-      },
+      GetWorkflowDetailSchema.shape,
       (args) => handlers.get_workflow_detail(args)
     ),
     tool(
       'suggest_workflow',
       'List all workflows available in this space so you can pick the best one for a described piece of work. Returns every workflow in creation order with its id, handle (human-readable slug usable as workflow_handle in create_standalone_task), name, description, tags, and nodes — no pre-ranking, so your own reasoning is not biased by keyword overlap.',
-      {
-        description: z
-          .string()
-          .describe(
-            'Description of the work you want to do. Provided for context; the tool returns all workflows regardless.'
-          ),
-      },
+      SuggestWorkflowSchema.shape,
       (args) => handlers.suggest_workflow(args)
     ),
     tool(
       'list_tasks',
       'List SpaceTasks for this space. Filterable by status and workflow run. Use compact:true and limit/offset to reduce payload size.',
-      {
-        status: z
-          .enum([
-            'draft',
-            'open',
-            'in_progress',
-            'review',
-            'approved',
-            'done',
-            'blocked',
-            'cancelled',
-            'archived',
-          ])
-          .optional()
-          .describe('Filter by task status'),
-        workflow_run_id: z
-          .string()
-          .optional()
-          .describe('Filter to only tasks belonging to a specific workflow run'),
-        search: z.string().optional().describe('Substring match on task title'),
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .default(50)
-          .describe('Maximum number of tasks to return (default: 50)'),
-        offset: z
-          .number()
-          .int()
-          .min(0)
-          .optional()
-          .default(0)
-          .describe('Number of tasks to skip for pagination (default: 0)'),
-        compact: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe(
-            'Return only summary fields (id, title, status, priority, createdAt) to reduce payload size'
-          ),
-      },
+      ListTasksSchema.shape,
       (args) => handlers.list_tasks(args)
     ),
     tool(
       'create_standalone_task',
       'Create a task request. Runtime may attach and execute a workflow for this task during orchestration. Supports structured task dependencies via depends_on — the task will be blocked until every listed dependency reaches status=done, and cascade-cancelled if a dependency is cancelled.',
-      {
-        title: z.string().describe('Short title for the task'),
-        description: z.string().describe('Detailed description of the work to be done'),
-        priority: z
-          .enum(['low', 'normal', 'high', 'urgent'])
-          .optional()
-          .describe('Task priority (default: normal)'),
-        custom_agent_id: z
-          .string()
-          .optional()
-          .describe('ID of a worker agent to assign this task to'),
-        workflow_id: z
-          .string()
-          .optional()
-          .describe(
-            'ID of the workflow to use for this task. When provided, the runtime uses this workflow instead of auto-selecting one. Call list_workflows to discover available workflows (returns both IDs and handles).'
-          ),
-        workflow_handle: z
-          .string()
-          .optional()
-          .describe(
-            'Handle of the workflow to use for this task (alternative to workflow_id). Example: "coding-with-qa".'
-          ),
-        depends_on: z
-          .array(z.string())
-          .optional()
-          .describe(
-            'List of task IDs this task depends on. All must be in the same space. The task will be blocked until every dependency reaches status=done. Cycles and non-existent IDs are rejected.'
-          ),
-        draft: z
-          .boolean()
-          .optional()
-          .describe(
-            'When true, create the task in draft status. Draft tasks are never auto-started by the runtime, even with a workflow and priority assigned. Must be explicitly published before orchestration picks it up.'
-          ),
-        workspace: z
-          .string()
-          .optional()
-          .describe(
-            'Optional workspace for this task, given as the label or absolute path of a workspace registered in this space. Omit to use the space primary workspace. Unknown labels or paths are rejected with the list of registered workspaces.'
-          ),
-      },
+      CreateStandaloneTaskSchema.shape,
       (args) => handlers.create_standalone_task(args)
     ),
     tool(
       'get_task_detail',
       'Retrieve detailed information about a specific task including its status, result, and metadata.',
-      {
-        task_id: z.string().optional().describe('UUID of the task to retrieve'),
-        task_number: z
-          .number()
-          .optional()
-          .describe('Numeric task ID (e.g. 5 for task #5) — preferred over task_id'),
-      },
+      GetTaskDetailSchema.shape,
       (args) => handlers.get_task_detail(args)
     ),
     tool(
       'update_task',
       "Edit an existing task's title, description, priority, dependencies, or status. The task must belong to this space. Only the fields you provide are updated. Status changes follow the same transition table as the UI, with the same restrictions: invalid transitions are rejected with the allowed list, 'review' and 'approved' cannot be set here, review→done is owned by the approval pipeline, and archiving a task on an active workflow run is rejected.",
-      {
-        task_id: z.string().describe('UUID of the task to update'),
-        title: z.string().min(1).optional().describe('New title for the task'),
-        description: z.string().optional().describe('New description for the task'),
-        priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('New priority'),
-        depends_on: z
-          .array(z.string())
-          .optional()
-          .describe(
-            'New dependency list (replaces existing). All must be in the same space. Cycles and non-existent IDs are rejected.'
-          ),
-        status: SpaceTaskStatusSchema.optional().describe(UpdateTaskStatusParamDescription),
-      },
+      UpdateTaskSchema.shape,
       (args) => handlers.update_task(args)
     ),
     tool(
       'retry_task',
       'Retry a failed or cancelled task. Optionally update the task description for the retry attempt.',
-      {
-        task_id: z.string().describe('ID of the task to retry'),
-        description: z
-          .string()
-          .optional()
-          .describe('Updated task description for the retry attempt'),
-      },
+      RetryTaskSchema.shape,
       (args) => handlers.retry_task(args)
     ),
     tool(
       'cancel_task',
       'Cancel a task. Automatically cascades cancellation to pending dependent tasks. Optionally also cancel the associated workflow run.',
-      {
-        task_id: z.string().describe('ID of the task to cancel'),
-        cancel_workflow_run: z
-          .boolean()
-          .optional()
-          .describe(
-            'If true and the task belongs to a workflow run, also cancel that workflow run'
-          ),
-      },
+      CancelTaskSchema.shape,
       (args) => handlers.cancel_task(args)
     ),
     tool(
       'reassign_task',
       'Change the agent assignment for a task. Only allowed for tasks in open, blocked, or cancelled status.',
-      {
-        task_id: z.string().describe('ID of the task to reassign'),
-        custom_agent_id: z
-          .string()
-          .nullable()
-          .optional()
-          .describe(
-            'ID of the worker agent to assign to. Pass null to clear the worker agent assignment.'
-          ),
-        assigned_agent: z
-          .enum(['coder', 'general'])
-          .optional()
-          .describe('Agent type to assign (coder or general)'),
-      },
+      ReassignTaskSchema.shape,
       (args) => handlers.reassign_task(args)
     ),
     tool(
       'publish_task',
       'Publish a draft task, transitioning it from draft to open status. Published tasks become eligible for orchestration by the runtime tick loop. Only valid for tasks in draft status.',
-      {
-        task_id: z.string().describe('UUID of the draft task to publish'),
-      },
+      PublishTaskSchema.shape,
       (args) => handlers.publish_task(args)
     ),
     tool(
       'archive_task',
       "Archive a task. Archived tasks are excluded from most queries and cannot be reactivated — this is the true terminal state. Valid from any status that allows the 'archived' transition (e.g. draft, done, cancelled, blocked, review, approved).",
-      {
-        task_id: z.string().describe('UUID of the task to archive'),
-      },
+      ArchiveTaskSchema.shape,
       (args) => handlers.archive_task(args)
     ),
 
     tool(
       'send_message_to_task',
       'Send a message to a specific workflow node agent or long-term Space agent on a task. Use node_id for workflow nodes, or target for @handle/@role/@session/@worker addresses. Inactive workflow nodes or long-term agents are activated/queued when supported. Provide either task_id or task_number — if both are given, task_id takes precedence.',
-      {
-        task_id: z
-          .string()
-          .optional()
-          .describe(
-            'ID of the task whose agent session should receive the message. Either task_id or task_number is required.'
-          ),
-        task_number: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .describe('Space-scoped numeric task ID (e.g. 37). Used when task_id is not provided.'),
-        message: z.string().describe('Message to send to the target node agent'),
-        node_id: z
-          .string()
-          .optional()
-          .describe(
-            'Workflow node selector. Accepts a node_execution UUID or an agent name (e.g. "coder", "reviewer"). The message is routed to that node\'s sub-session; the node is activated automatically if it has no live session.'
-          ),
-        target: z
-          .string()
-          .optional()
-          .describe(
-            'Explicit generic target such as @handle, @role:task-manager, @session:<id>, or @worker:<node>/<agent>. Takes precedence over node_id when supported.'
-          ),
-      },
+      SendMessageToTaskSchema.shape,
       (args) => handlers.send_message_to_task(args)
     ),
     tool(
       'list_task_members',
       "List all node executions (workflow member agents) for a task. Returns each node's status, result, and saved data. Use this to inspect the detailed execution state of a running or completed workflow task.",
-      {
-        task_id: z.string().describe('ID of the task to inspect'),
-      },
+      ListTaskMembersSchema.shape,
       (args) => handlers.list_task_members(args)
     ),
     tool(
       'approve_task',
       "Approve a task in 'review' status, transitioning it to 'done'. Use this after reviewing a completed task's output to mark it as approved.",
-      {
-        task_id: z.string().describe('ID of the task to approve'),
-        reason: z.string().optional().describe('Reason for approval'),
-      },
+      ApproveTaskSchema.shape,
       (args) => handlers.approve_task(args)
     ),
     tool(
       'approve_pending_completion',
       "Approve or reject a task paused at a submit_for_approval checkpoint (the human-approval path). This is the coordinator's programmatic equivalent of the UI 'Approve' banner: approved transitions review → approved and fires the post-approval router; rejected transitions review → in_progress. Coordinator/task-agent sessions only — worker node agents use approve_task to self-close.",
-      {
-        task_id: z.string().describe('ID of the task awaiting submit_for_approval review'),
-        approved: z
-          .boolean()
-          .describe(
-            'true to approve (review → approved, fires post-approval router); false to reject (review → in_progress)'
-          ),
-        reason: z
-          .string()
-          .nullable()
-          .optional()
-          .describe('Optional approval/rejection note; recorded on the task as approvalReason'),
-      },
+      ApprovePendingCompletionSchema.shape,
       (args) => handlers.approve_pending_completion(args)
     ),
   ];
