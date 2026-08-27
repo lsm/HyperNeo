@@ -118,6 +118,7 @@ export interface NodeAgentToolsConfig {
   artifactProfile?: WorkflowArtifactProfile;
   taskRepo?: SpaceTaskRepository;
   auditLogRepo?: McpAuditLogRepository;
+  disableAuditLogWrites?: boolean;
   externalEventStore?: ExternalEventStore;
   onRestoreNodeAgent?: (args: { reason?: string }) => Promise<void> | void;
   hookEngine?: WorkflowHookEngine;
@@ -141,19 +142,20 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     paramsSummary: Record<string, unknown>,
     taskId?: string
   ): void {
-    if (config.auditLogRepo) {
-      try {
-        config.auditLogRepo.createEntry({
-          agentName: myAgentName,
-          sessionId: mySessionId,
-          toolName,
-          paramsSummary: JSON.stringify(paramsSummary),
-          spaceId,
-          taskId: taskId ?? config.taskId,
-          workflowRunId,
-        });
-      } catch {}
+    if (!config.auditLogRepo || config.disableAuditLogWrites) {
+      return;
     }
+    try {
+      config.auditLogRepo.createEntry({
+        agentName: myAgentName,
+        sessionId: mySessionId,
+        toolName,
+        paramsSummary: JSON.stringify(paramsSummary),
+        spaceId,
+        taskId: taskId ?? config.taskId,
+        workflowRunId,
+      });
+    } catch {}
   }
 
   const handlers = {
