@@ -34,6 +34,8 @@ interface RegistryCtx {
   db: BunDatabase;
   config: SpaceAgentToolsConfig;
   workflowManager: SpaceWorkflowManager;
+  workflowRunRepo: SpaceWorkflowRunRepository;
+  taskRepo: SpaceTaskRepository;
 }
 
 function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
@@ -107,7 +109,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
     taskAgentManager: stubTaskAgentManager,
     ...overrides,
   };
-  return { db, config, workflowManager };
+  return { db, config, workflowManager, workflowRunRepo, taskRepo };
 }
 
 const EXPECTED_ENTRIES: ReadonlyArray<readonly [string, string, string]> = [
@@ -122,10 +124,23 @@ const EXPECTED_ENTRIES: ReadonlyArray<readonly [string, string, string]> = [
   ['change_plan', 'workflows', 'destructive'],
   ['get_workflow_detail', 'workflows', 'read'],
   ['suggest_workflow', 'workflows', 'read'],
+  ['list_tasks', 'tasks', 'read'],
+  ['create_standalone_task', 'tasks', 'mutate'],
+  ['get_task_detail', 'tasks', 'read'],
+  ['update_task', 'tasks', 'mutate'],
+  ['retry_task', 'tasks', 'mutate'],
+  ['cancel_task', 'tasks', 'mutate'],
+  ['reassign_task', 'tasks', 'mutate'],
+  ['publish_task', 'tasks', 'mutate'],
+  ['archive_task', 'tasks', 'destructive'],
+  ['send_message_to_task', 'tasks', 'mutate'],
+  ['list_task_members', 'tasks', 'read'],
+  ['approve_task', 'tasks', 'mutate'],
+  ['approve_pending_completion', 'tasks', 'human_only'],
 ];
 
 describe('createSpaceRegistryEntries — composition', () => {
-  test('builds the authored sessions/workflows entries in typed-surface order', () => {
+  test('builds the authored sessions/workflows/tasks entries in typed-surface order', () => {
     const ctx = makeCtx();
     try {
       const entries = createSpaceRegistryEntries(ctx.config);
@@ -146,6 +161,7 @@ describe('createSpaceRegistryEntries — composition', () => {
     try {
       const entries = createSpaceRegistryEntries(ctx.config);
       expect(entries).toHaveLength(EXPECTED_ENTRIES.length);
+      expect(EXPECTED_ENTRIES.length).toBe(Object.keys(SPACE_AGENT_TOOL_SCHEMAS).length);
       for (const entry of entries) {
         expect(entry.paramsSchema).toBe(SPACE_AGENT_TOOL_SCHEMAS[entry.name as SpaceAgentToolName]);
       }
@@ -161,6 +177,9 @@ describe('createSpaceRegistryEntries — composition', () => {
       expect(registry.entries).toHaveLength(EXPECTED_ENTRIES.length);
       expect(registry.get('list_workflows')?.family).toBe('workflows');
       expect(registry.get('interrupt_session')?.safetyClass).toBe('destructive');
+      expect(registry.get('list_tasks')?.family).toBe('tasks');
+      expect(registry.get('archive_task')?.safetyClass).toBe('destructive');
+      expect(registry.get('approve_pending_completion')?.safetyClass).toBe('human_only');
     } finally {
       ctx.db.close();
     }
@@ -177,8 +196,48 @@ describe('createSpaceRegistryEntries — composition', () => {
       }
       expect(byName.get('send_session_message')?.autonomyRequirement).toBeUndefined();
       for (const [name] of EXPECTED_ENTRIES) {
-        if (['update_session_state', 'interrupt_session'].includes(name)) continue;
+        if (['update_session_state', 'interrupt_session', 'approve_task'].includes(name)) continue;
         expect(byName.get(name)?.autonomyRequirement).toBeUndefined();
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('approve_task resolves the workflow completionAutonomyLevel with default 5', async () => {
+    const ctx = makeCtx();
+    try {
+      const workflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Completion 3',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const run = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Run',
+      });
+      const workflowTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Workflow task',
+        description: '',
+        workflowRunId: run.id,
+      });
+      const standaloneTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Standalone task',
+        description: '',
+      });
+
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const resolve = entries.find((entry) => entry.name === 'approve_task')?.autonomyRequirement;
+      expect(typeof resolve).toBe('function');
+      if (typeof resolve === 'function') {
+        expect(await resolve({ task_id: workflowTask.id })).toBe(3);
+        expect(await resolve({ task_id: standaloneTask.id })).toBe(5);
+        expect(await resolve({ task_id: 'missing-task' })).toBe(5);
       }
     } finally {
       ctx.db.close();
@@ -193,17 +252,19 @@ describe('createSpaceRegistryEntries — conditional entries', () => {
       const entries = createSpaceRegistryEntries(ctx.config);
       expect(entries.filter((entry) => entry.family === 'sessions')).toEqual([]);
       expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 6);
-      expect(entries.every((entry) => entry.family === 'workflows')).toBe(true);
+      expect(entries.map((entry) => entry.name)).toContain('list_tasks');
     } finally {
       ctx.db.close();
     }
   });
 
-  test('keeps every entry when taskAgentManager is absent — the gate targets task-family actions', () => {
+  test('omits send_message_to_task when taskAgentManager is absent', () => {
     const ctx = makeCtx({ taskAgentManager: undefined });
     try {
       const entries = createSpaceRegistryEntries(ctx.config);
-      expect(entries.map((entry) => entry.name)).toEqual(EXPECTED_ENTRIES.map(([name]) => name));
+      expect(entries.map((entry) => entry.name)).not.toContain('send_message_to_task');
+      expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 1);
+      expect(entries.map((entry) => entry.name)).toContain('list_sessions');
     } finally {
       ctx.db.close();
     }
@@ -277,6 +338,93 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
       };
       expect(detailPayload.success).toBe(true);
       expect(detailPayload.workflow.id).toBe(workflow.id);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('round-trips every tasks-family entry through its underlying handler', async () => {
+    const ctx = makeCtx();
+    try {
+      const draftTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Draft',
+        description: '',
+        status: 'draft',
+      });
+      const openTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Open',
+        description: 'Standalone open task',
+      });
+      const cancelTarget = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Cancel me',
+        description: '',
+      });
+      const retryTarget = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Not retryable',
+        description: '',
+      });
+      const reassignTarget = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Reassign me',
+        description: '',
+      });
+      const archiveTarget = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Archive me',
+        description: '',
+      });
+
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const byName = new Map(entries.map((entry) => [entry.name, entry]));
+      const cases: Array<{ name: string; params: Record<string, unknown>; success: boolean }> = [
+        { name: 'list_tasks', params: {}, success: true },
+        {
+          name: 'create_standalone_task',
+          params: { title: 'Round trip', description: 'created via the registry' },
+          success: true,
+        },
+        { name: 'get_task_detail', params: { task_id: openTask.id }, success: true },
+        {
+          name: 'update_task',
+          params: { task_id: openTask.id, title: 'Open (edited)' },
+          success: true,
+        },
+        { name: 'retry_task', params: { task_id: retryTarget.id }, success: false },
+        { name: 'cancel_task', params: { task_id: cancelTarget.id }, success: true },
+        {
+          name: 'reassign_task',
+          params: { task_id: reassignTarget.id, custom_agent_id: 'agent-coder-1' },
+          success: true,
+        },
+        { name: 'publish_task', params: { task_id: draftTask.id }, success: true },
+        { name: 'archive_task', params: { task_id: archiveTarget.id }, success: true },
+        {
+          name: 'send_message_to_task',
+          params: { task_id: openTask.id, message: 'ping', node_id: 'coder' },
+          success: false,
+        },
+        { name: 'list_task_members', params: { task_id: openTask.id }, success: true },
+        { name: 'approve_task', params: { task_id: openTask.id }, success: false },
+        {
+          name: 'approve_pending_completion',
+          params: { task_id: openTask.id, approved: true },
+          success: false,
+        },
+      ];
+
+      for (const { name, params, success } of cases) {
+        const entry = byName.get(name);
+        if (!entry) throw new Error(`entry missing: ${name}`);
+        const result = (await entry.handler(entry.paramsSchema.parse(params))) as {
+          content: Array<{ text: string }>;
+        };
+        const payload = JSON.parse(result.content[0].text) as { success: boolean };
+        expect(payload.success).toBe(success);
+      }
     } finally {
       ctx.db.close();
     }
