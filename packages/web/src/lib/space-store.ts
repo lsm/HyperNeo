@@ -29,6 +29,7 @@ import type {
   SpaceTaskActivityMember,
   SpaceTaskPriority,
   SpaceTaskStatus,
+  SpaceWorkspace,
   SpaceWorkflow,
   SpaceWorkflowRun,
   SpaceWorkflowSummary,
@@ -1882,6 +1883,16 @@ class SpaceStore {
 
     const task = await hub.request<SpaceTask>('spaceTask.create', { ...params, spaceId });
     return task;
+  }
+
+  async listWorkspaces(): Promise<SpaceWorkspace[]> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    return hub.request<SpaceWorkspace[]>('space.workspace.list', { spaceId });
   }
 
   async fetchTaskGroup(
