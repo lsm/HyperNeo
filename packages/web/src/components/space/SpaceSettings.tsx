@@ -133,6 +133,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
   }
 
   async function handleAdd() {
+    if (adding) return;
     const path = newPath.trim();
     if (!path) {
       setActionError('Workspace path is required');

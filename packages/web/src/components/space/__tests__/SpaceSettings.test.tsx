@@ -267,6 +267,34 @@ describe('SpaceSettings', () => {
       expect((getByTestId('workspace-add-path') as HTMLInputElement).value).toBe('');
     });
 
+    it('ignores a second Enter while an add request is pending', async () => {
+      stubHubRequests();
+      let resolveAdd: () => void;
+      const addPromise = new Promise<{}>((res) => {
+        resolveAdd = () => res({});
+      });
+      mockRequest.mockImplementation((method: string) =>
+        method === 'space.workspace.list'
+          ? Promise.resolve([makeWorkspace()])
+          : method === 'space.workspace.add'
+            ? addPromise
+            : Promise.resolve({})
+      );
+
+      const { getByTestId, findByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      await findByTestId('workspace-add-form');
+      const pathInput = getByTestId('workspace-add-path');
+      fireEvent.input(pathInput, { target: { value: '/projects/docs' } });
+      fireEvent.keyDown(pathInput, { key: 'Enter' });
+      fireEvent.keyDown(pathInput, { key: 'Enter' });
+
+      const addCalls = mockRequest.mock.calls.filter(
+        ([method]) => method === 'space.workspace.add'
+      );
+      expect(addCalls).toHaveLength(1);
+      resolveAdd!();
+    });
+
     it('omits the label when adding without one', async () => {
       stubHubRequests([makeWorkspace()]);
       const { getByTestId, getByText, findByTestId } = render(
