@@ -153,6 +153,7 @@ import {
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup.ts';
 import { resolveFallbackChain } from './fallback-recovery.ts';
+import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
 import { InterruptHandler, type InterruptHandlerContext } from './interrupt-handler.ts';
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
@@ -527,10 +528,11 @@ export class AgentSession
 
     this.eventSubscriptionSetup = new EventSubscriptionSetup(this);
 
-    this.stateManager.setOnIdleCallback(async () => {
-      await this.lifecycleManager.executeDeferredRestartIfPending();
+    this.stateManager.setOnIdleCallback(async (owner) => {
+      const restarted = await this.lifecycleManager.executeDeferredRestartIfPending();
       this.flushPendingTaskNotificationRequery();
-      void this.reconcileStrandedDeliveries().catch((error) => {
+      const reconcileOwner = restarted ? this.stateManager.getCurrentIdleOwner() : owner;
+      void this.reconcileStrandedDeliveries(reconcileOwner).catch((error) => {
         this.logger.warn('Idle reconcileStrandedDeliveries failed:', error);
       });
     });
@@ -2282,10 +2284,16 @@ export class AgentSession
         if (!spuriousFire) break;
         graceRearms++;
         activeTurnEnd.cancel();
-        activeTurnEnd = this.stateManager.waitForIdleTransition(
+        const rearmedTurnEnd = this.stateManager.waitForIdleTransition(
           this.rateLimitWatchdog.getGeneration(),
-          recordTurnEndMarker
+          recordTurnEndMarker,
+          started.idleOwner
         );
+        activeTurnEnd = {
+          promise: rearmedTurnEnd.promise,
+          cancel: rearmedTurnEnd.cancel,
+          idleOwner: started.idleOwner,
+        };
         raceArmedAt = Date.now();
         turnEndFired = false;
         void activeTurnEnd.promise.then(() => {
@@ -2384,11 +2392,15 @@ export class AgentSession
       currentQueryPromise: () => this.queryPromise,
       pendingContentSnapshot: (messageUuid) =>
         this.messageQueue.getPendingOrInFlightContent?.(messageUuid) ?? null,
-      waitForTurnEnd: () =>
-        this.stateManager.waitForIdleTransition(
+      waitForTurnEnd: () => {
+        const idleOwner = this.stateManager.admitDeliveryTurn();
+        const { promise, cancel } = this.stateManager.waitForIdleTransition(
           this.rateLimitWatchdog.getGeneration(),
-          recordTurnEndMarker
-        ),
+          recordTurnEndMarker,
+          idleOwner
+        );
+        return { promise, cancel, idleOwner };
+      },
       existingQueueEntry: (messageUuid) => this.messageQueue.waitForPendingOrInFlight(messageUuid),
       removeQueueEntry: (messageUuid) => this.messageQueue.remove(messageUuid),
       queueEntryYielded: (messageUuid) => this.messageQueue.hasYielded(messageUuid),
@@ -2965,7 +2977,7 @@ export class AgentSession
     }
   }
 
-  async reconcileStrandedDeliveries(): Promise<number> {
+  async reconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
     if (!isMessageDeliveryV2Enabled()) return 0;
     const jobQueue = this.db.getJobQueueRepo?.();
     if (!jobQueue) return 0;
@@ -2976,6 +2988,7 @@ export class AgentSession
 
     const reEnqueued = await withSessionResetCoordination(this.session.id, async () =>
       withSessionLock(this.session.id, async () => {
+        if (!this.stateManager.isIdleOwnerCurrent(owner)) return 0;
         const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
         const stranded = selectStrandedDeliveries(
           this.db.getUserMessageIdsByStatus(this.session.id, 'enqueued'),
@@ -2994,6 +3007,7 @@ export class AgentSession
     let settled = 0;
     const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {
+      if (!this.stateManager.isIdleOwnerCurrent(owner)) return;
       const activeNow = jobQueue.activeDeliveryMessageUuids(this.session.id);
       const staleSubmitted = selectStaleSubmittedDeliveries(
         this.db.getUserMessageIdsByStatus(this.session.id, 'submitted'),

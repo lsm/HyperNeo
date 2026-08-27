@@ -736,9 +736,9 @@ export class QueryLifecycleManager {
     await this.restart();
   }
 
-  async executeDeferredRestartIfPending(): Promise<void> {
+  async executeDeferredRestartIfPending(): Promise<boolean> {
     if (!this.ctx.pendingRestartReason) {
-      return;
+      return false;
     }
 
     const _reason = this.ctx.pendingRestartReason;
@@ -746,7 +746,10 @@ export class QueryLifecycleManager {
 
     try {
       await this.restart();
-    } catch {}
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async cleanup(): Promise<void> {

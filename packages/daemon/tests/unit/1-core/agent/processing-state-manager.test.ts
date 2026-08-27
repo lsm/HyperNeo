@@ -438,14 +438,22 @@ describe('ProcessingStateManager', () => {
   });
 
   describe('query-owner idle filter (B5e)', () => {
-    test('setProcessing advances the turn owner token so consecutive turns are distinct', async () => {
-      const first = manager.idleOwnerForQuery(2).turnToken;
+    test('admitDeliveryTurn mints monotonic turn tokens over the tracked query owner generation', () => {
+      expect(manager.getCurrentIdleOwner()).toEqual({ queryGeneration: 0, turnToken: 0 });
+      const first = manager.admitDeliveryTurn();
+      expect(first).toEqual({ queryGeneration: 0, turnToken: 1 });
+      manager.noteQueryOwnerGeneration(4);
+      const second = manager.admitDeliveryTurn();
+      expect(second).toEqual({ queryGeneration: 4, turnToken: 2 });
+      expect(manager.isIdleOwnerCurrent(first)).toBe(false);
+      expect(manager.isIdleOwnerCurrent(second)).toBe(true);
+      expect(manager.isIdleOwnerCurrent(undefined)).toBe(true);
+    });
+
+    test('setProcessing leaves the turn owner untouched (the delivery admission owns the mint)', async () => {
+      const before = manager.getCurrentIdleOwner();
       await manager.setProcessing('msg-1', 'streaming');
-      const second = manager.idleOwnerForQuery(2).turnToken;
-      await manager.setProcessing('msg-2', 'streaming');
-      const third = manager.idleOwnerForQuery(2).turnToken;
-      expect(second).toBe(first + 1);
-      expect(third).toBe(second + 1);
+      expect(manager.getCurrentIdleOwner()).toEqual(before);
     });
 
     function armOwnedWaiter(owner: { queryGeneration: number; turnToken: number }) {
@@ -565,6 +573,65 @@ describe('ProcessingStateManager', () => {
 
       expect(manager.isTerminalIdlePending()).toBe(false);
       expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
+  });
+
+  describe('turn/delivery idle filter (B5e)', () => {
+    function armTurnWaiter(owner: { queryGeneration: number; turnToken: number }) {
+      const flags = { ended: false, resolved: false };
+      void manager
+        .waitForIdleTransition(
+          undefined,
+          () => {
+            flags.ended = true;
+          },
+          owner
+        )
+        .promise.then(() => {
+          flags.resolved = true;
+        });
+      return flags;
+    }
+
+    test('a same-query successor waiter survives the predecessor idle settle and resolves on its own', async () => {
+      const onIdleCallback = mock(async () => {});
+      manager.setOnIdleCallback(onIdleCallback);
+      const ownerA = manager.admitDeliveryTurn();
+      const waiterA = armTurnWaiter(ownerA);
+      const ownerB = manager.admitDeliveryTurn();
+      const waiterB = armTurnWaiter(ownerB);
+
+      await manager.setIdle({ owner: ownerA });
+
+      expect(waiterA).toEqual({ ended: true, resolved: true });
+      expect(waiterB).toEqual({ ended: false, resolved: false });
+      expect(onIdleCallback).not.toHaveBeenCalled();
+
+      await manager.setIdle({ owner: ownerB });
+
+      expect(waiterB).toEqual({ ended: true, resolved: true });
+      expect(onIdleCallback).toHaveBeenCalledTimes(1);
+    });
+
+    test('a waiter armed with the current turn owner still resolves on a plain unfenced idle', async () => {
+      const owner = manager.admitDeliveryTurn();
+      const waiter = armTurnWaiter(owner);
+
+      await manager.setIdle();
+
+      expect(waiter).toEqual({ ended: true, resolved: true });
+    });
+
+    test('the onIdle callback runs with the transition owner while it is still current', async () => {
+      let received: { queryGeneration: number; turnToken: number } | undefined;
+      manager.setOnIdleCallback(async (owner) => {
+        received = owner;
+      });
+      const owner = manager.admitDeliveryTurn();
+
+      await manager.setIdle();
+
+      expect(received).toEqual(owner);
     });
   });
 
