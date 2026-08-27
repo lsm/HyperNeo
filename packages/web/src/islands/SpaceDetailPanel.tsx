@@ -7,6 +7,7 @@ import type {
 import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ArchiveConfirmDialog } from '../components/ArchiveConfirmDialog';
+import { useSpaceWorkspaceChoice } from '../components/space/SpaceWorkspacePicker';
 import { CollapsibleSection } from '../components/ui/CollapsibleSection';
 import { StatusDot } from '../components/ui/StatusDot';
 import { UnreadBadge } from '../components/ui/UnreadBadge';
@@ -484,20 +485,20 @@ export function SpaceDetailPanel({
     }
   }, [archiveConfirm]);
 
-  const handleCreateSession = useCallback(
-    async (e: Event) => {
-      e.stopPropagation();
-      try {
-        const response = await createSession({
-          spaceId,
-          workspacePath: space?.workspacePath,
-        });
-        navigateToSpaceSession(routeSpaceId, response.sessionId);
-        onNavigate?.();
-      } catch {}
-    },
-    [spaceId, routeSpaceId, space?.workspacePath, onNavigate]
-  );
+  const workspaceChoice = useSpaceWorkspaceChoice(spaceId, space?.workspacePath);
+
+  const handleCreateSession = (e: Event) => {
+    e.stopPropagation();
+    workspaceChoice.chooseWorkspace((workspacePath) => {
+      void (async () => {
+        try {
+          const response = await createSession({ spaceId, workspacePath });
+          navigateToSpaceSession(routeSpaceId, response.sessionId);
+          onNavigate?.();
+        } catch {}
+      })();
+    });
+  };
 
   return (
     <div class="flex-1 flex flex-col overflow-hidden">
@@ -818,6 +819,7 @@ export function SpaceDetailPanel({
           onCancel={() => setArchiveConfirm(null)}
         />
       )}
+      {workspaceChoice.dialog}
     </div>
   );
 }

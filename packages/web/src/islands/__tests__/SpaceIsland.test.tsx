@@ -50,6 +50,11 @@ const { mockToastError } = vi.hoisted(() => ({
   mockToastError: vi.fn(),
 }));
 
+const { mockHubRequest, connectMockHub } = vi.hoisted(() => ({
+  mockHubRequest: vi.fn(),
+  connectMockHub: { current: null as unknown },
+}));
+
 const mockCurrentSpaceConfigureTabSignal = signal<string>('agents');
 const mockCurrentSpaceIdSignal = signal<string | null>(null);
 const mockCurrentSpaceCanonicalIdSignal = signal<string | null>(null);
@@ -339,6 +344,12 @@ vi.mock('../../lib/api-helpers', () => ({
   createSession: mockCreateSession,
 }));
 
+vi.mock('../../lib/connection-manager', () => ({
+  connectionManager: {
+    getHubIfConnected: () => connectMockHub.current,
+  },
+}));
+
 vi.mock('../../lib/toast', () => ({
   toast: {
     error: mockToastError,
@@ -432,6 +443,8 @@ beforeEach(() => {
   mockNavigateToSpaceTask.mockClear();
   mockCreateSession.mockClear();
   mockToastError.mockClear();
+  connectMockHub.current = null;
+  mockHubRequest.mockClear();
   mockEnsureConfigData.mockClear();
   mockEnsureConfigData.mockResolvedValue(undefined);
   mockEnsureWorkflowDetails.mockClear();
@@ -857,6 +870,69 @@ describe('SpaceIsland — sessions view', () => {
     });
     await waitFor(() => {
       expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-123');
+    });
+  });
+
+  it('offers registry workspaces and flows the choice into createSession', async () => {
+    mockCreateSession.mockResolvedValueOnce({ sessionId: 'new-session-456' });
+    mockCurrentSpaceIdSignal.value = 'space-1';
+    mockCurrentSpaceViewModeSignal.value = 'sessions';
+    connectMockHub.current = { request: mockHubRequest };
+    mockHubRequest.mockImplementation((method: string) => {
+      if (method === 'space.workspace.list') {
+        return Promise.resolve([
+          {
+            id: 'ws-1',
+            spaceId: 'space-1',
+            path: '/projects/main',
+            label: 'Main repo',
+            isPrimary: true,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+          {
+            id: 'ws-2',
+            spaceId: 'space-1',
+            path: '/projects/docs',
+            label: 'Docs',
+            isPrimary: false,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ]);
+      }
+      return Promise.resolve({});
+    });
+
+    const { getByLabelText, getByTestId, getByText } = render(
+      <SpaceIsland spaceId="space-1" viewMode="sessions" />
+    );
+    await waitFor(
+      () => {
+        expect(getByTestId('space-sessions-view')).toBeTruthy();
+      },
+      { timeout: LAZY_LOAD_TIMEOUT }
+    );
+    await waitFor(() => {
+      expect(mockHubRequest).toHaveBeenCalledWith('space.workspace.list', { spaceId: 'space-1' });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    fireEvent.click(getByLabelText('Create session'));
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
+    expect(mockCreateSession).not.toHaveBeenCalled();
+
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith({
+        spaceId: 'space-1',
+        workspacePath: '/projects/docs',
+      });
+    });
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-456');
     });
   });
 
