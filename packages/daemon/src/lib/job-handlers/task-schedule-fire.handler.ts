@@ -1,5 +1,5 @@
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { TaskSchedule } from '@hyperneo/shared';
+import type { SpaceGoal, TaskSchedule } from '@hyperneo/shared';
 import { TASK_SCHEDULE_FIRE } from '../job-queue-constants.ts';
 import { readSelfNagScheduleScopeId } from '../rpc-handlers/index.ts';
 import { Logger } from '../logger.ts';
@@ -172,11 +172,13 @@ export async function handleTaskScheduleFire(
         }
       }
 
+      let claimedGoal: SpaceGoal | null = null;
       if (goalService && schedule.goalId) {
         const claimCheck = goalService.canClaimScheduledTask({
           spaceId: schedule.spaceId,
           goalId: schedule.goalId,
         });
+        claimedGoal = claimCheck.goal;
         if (!claimCheck.claimable) {
           const applied = scheduleRepo.updateAfterFireIfPending(scheduleId, job.id, {
             lastCreatedTaskId: schedule.lastCreatedTaskId,
@@ -195,7 +197,7 @@ export async function handleTaskScheduleFire(
         }
       }
 
-      const goal = schedule.goalId ? goalRepo.getById(schedule.goalId) : null;
+      const goal = claimedGoal ?? (schedule.goalId ? goalRepo.getById(schedule.goalId) : null);
       const task = taskRepo.createTask({
         spaceId: schedule.spaceId,
         title: schedule.title,
