@@ -84,6 +84,19 @@ export class GlmProvider implements Provider {
       available: true,
     },
     {
+      id: 'glm-5.3-flash[1m]',
+      name: 'GLM-5.3-Flash',
+      alias: 'glm-5.3-flash',
+      family: 'glm',
+      provider: 'glm',
+      contextWindow: 1_000_000,
+      preferContextWindowMetadata: true,
+      description:
+        'GLM-5.3-Flash · 1M context window, natively multimodal MoE (320B-A18B), formerly Ox Alpha',
+      releaseDate: '2026-08-26',
+      available: true,
+    },
+    {
       id: 'glm-5-turbo',
       name: 'GLM-5-Turbo',
       alias: 'glm-5-turbo',
@@ -121,9 +134,11 @@ export class GlmProvider implements Provider {
     },
   ];
 
-  private static readonly CONTEXT_WINDOW_BY_MODEL_ID: Record<string, number> = Object.fromEntries(
-    GlmProvider.MODELS.map((m) => [m.id, m.contextWindow])
-  );
+  private static readonly DISCOVERED_CONTEXT_WINDOW_BY_BASE_ID: Record<string, number> = {
+    'glm-4.5': 128_000,
+    'glm-4.5-air': 128_000,
+    'glm-4.6': 200_000,
+  };
 
   private credentials: ProviderCredentials | null = null;
   private credentialsVersion = 0;
@@ -254,11 +269,22 @@ export class GlmProvider implements Provider {
     return id.toLowerCase().replace(/(\[1m\])+$/, '');
   }
 
+  private static staticModelForBaseId(baseId: string): ModelInfo | undefined {
+    return GlmProvider.MODELS.find((candidate) => GlmProvider.baseModelId(candidate.id) === baseId);
+  }
+
+  private static contextWindowForBaseId(baseId: string): number {
+    const staticModel = GlmProvider.staticModelForBaseId(baseId);
+    if (staticModel) return staticModel.contextWindow;
+    return (
+      GlmProvider.DISCOVERED_CONTEXT_WINDOW_BY_BASE_ID[baseId] ??
+      GlmProvider.DISCOVERED_MODEL_CONTEXT_WINDOW
+    );
+  }
+
   private toRemoteModelInfo(model: { id: string; name?: string }): ModelInfo {
     const baseId = GlmProvider.baseModelId(model.id);
-    const staticModel = GlmProvider.MODELS.find(
-      (candidate) => GlmProvider.baseModelId(candidate.id) === baseId
-    );
+    const staticModel = GlmProvider.staticModelForBaseId(baseId);
     if (staticModel) return { ...staticModel, id: model.id };
     return {
       id: model.id,
@@ -266,7 +292,7 @@ export class GlmProvider implements Provider {
       alias: model.id,
       family: 'glm',
       provider: this.id,
-      contextWindow: GlmProvider.DISCOVERED_MODEL_CONTEXT_WINDOW,
+      contextWindow: GlmProvider.contextWindowForBaseId(baseId),
       preferContextWindowMetadata: true,
       thinkingModes: this.capabilities.thinkingModes,
       description: `${model.name ?? model.id} via Z.ai`,
@@ -294,16 +320,10 @@ export class GlmProvider implements Provider {
     const normalisedModelId = modelId.toLowerCase();
 
     const baseModelId = normalisedModelId.replace(/(\[1m\])+$/, '');
-    const ONE_M_MODEL_IDS = new Set(['glm-5.2', 'glm-5.3']);
-    const routingModelId = ONE_M_MODEL_IDS.has(baseModelId)
-      ? `${baseModelId}[1m]`
-      : baseModelId.startsWith('glm-')
-        ? baseModelId
-        : 'glm-5-turbo';
-
-    const contextWindow =
-      GlmProvider.CONTEXT_WINDOW_BY_MODEL_ID[routingModelId] ??
-      GlmProvider.DISCOVERED_MODEL_CONTEXT_WINDOW;
+    const routingBaseModelId = baseModelId.startsWith('glm-') ? baseModelId : 'glm-5-turbo';
+    const contextWindow = GlmProvider.contextWindowForBaseId(routingBaseModelId);
+    const routingModelId =
+      GlmProvider.staticModelForBaseId(routingBaseModelId)?.id ?? routingBaseModelId;
 
     const envVars: Record<string, string> = {
       ANTHROPIC_BASE_URL: baseUrl,

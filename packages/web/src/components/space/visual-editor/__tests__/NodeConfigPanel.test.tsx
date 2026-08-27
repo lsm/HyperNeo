@@ -279,6 +279,41 @@ describe('NodeConfigPanel', () => {
       expect(optionValues).toContain('%5B%22custom%3Aendpoint-1%22%2C%22shared%22%5D');
     });
 
+    it('offers Z.ai models in the single-agent model selector', async () => {
+      mockModelsResponse.models = [
+        ...mockModels,
+        {
+          id: 'glm-5.3-flash[1m]',
+          display_name: 'GLM-5.3-Flash',
+          description: 'GLM-5.3-Flash · 1M context window',
+          provider: 'glm',
+        },
+        {
+          id: 'glm-4.6',
+          display_name: 'glm-4.6',
+          description: 'glm-4.6 via Z.ai',
+          provider: 'glm',
+        },
+      ];
+      const onUpdate = vi.fn();
+      const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+      const input = getByTestId('single-agent-model-input') as HTMLSelectElement;
+      await waitFor(() => expect(input.options.length).toBeGreaterThan(1));
+
+      const glmGroup = input.querySelector('optgroup[label="Z.ai"]');
+      expect(glmGroup).toBeTruthy();
+      expect(Array.from(glmGroup!.querySelectorAll('option')).map((o) => o.textContent)).toEqual([
+        'GLM-5.3-Flash (glm-5.3-flash[1m])',
+        'glm-4.6 (glm-4.6)',
+      ]);
+
+      input.value = encodeURIComponent(JSON.stringify(['glm', 'glm-5.3-flash[1m]']));
+      fireEvent.change(input);
+      expect(onUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'glm-5.3-flash[1m]' })
+      );
+    });
+
     it('shows current fallback when cached provider value disappears but same model id remains', async () => {
       mockModelsResponse.models = mockModels
         .filter((model) => model.provider !== 'custom:endpoint-2')
