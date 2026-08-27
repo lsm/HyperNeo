@@ -736,10 +736,10 @@ export class MessageQueue {
   ): Promise<boolean> {
     const survivors = receipt?.still_queued ?? [];
     if (survivors.length === 0) return false;
+    const toRequeue: string[] = [];
     if (typeof opts.cancelAsyncMessage !== 'function') {
-      for (const uuid of survivors) {
-        this.requeueInterruptSurvivor(opts, uuid);
-      }
+      toRequeue.push(...survivors);
+      this.requeueCollectedSurvivors(opts, toRequeue);
       await this.finishSurvivorTeardownWithRestart(opts);
       return true;
     }
@@ -774,18 +774,23 @@ export class MessageQueue {
               `run ahead of the pending compaction`
           );
         }
-        for (let remaining = index; remaining < survivors.length; remaining++) {
-          this.requeueInterruptSurvivor(opts, survivors[remaining]);
-        }
+        toRequeue.push(...survivors.slice(index));
         break;
       }
-      this.requeueInterruptSurvivor(opts, uuid);
+      toRequeue.push(uuid);
     }
+    this.requeueCollectedSurvivors(opts, toRequeue);
     if (needsRestart) {
       await this.finishSurvivorTeardownWithRestart(opts);
       return true;
     }
     return false;
+  }
+
+  private requeueCollectedSurvivors(opts: MidTurnBudgetInterruptOptions, uuids: string[]): void {
+    for (let index = uuids.length - 1; index >= 0; index--) {
+      this.requeueInterruptSurvivor(opts, uuids[index]);
+    }
   }
 
   private requeueInterruptSurvivor(opts: MidTurnBudgetInterruptOptions, uuid: string): void {
@@ -798,20 +803,27 @@ export class MessageQueue {
       return;
     }
     const content = this.getSentPromptContent(uuid) ?? opts.getDurableMessageContent?.(uuid);
-    if (content !== undefined) {
-      this.forgetSentPrompt(uuid);
-      void this.enqueueWithId(uuid, content, false, { durable: true }).catch((error) => {
+    if (content === undefined) {
+      opts.logger.warn(
+        `cancelled survivor ${uuid} for session ${opts.sessionId} has no recoverable ` +
+          `content in the sent-prompt cache or the durable store; it cannot be requeued`
+      );
+      return;
+    }
+    this.forgetSentPrompt(uuid);
+    void this.enqueueWithId(uuid, content, false, { durable: true, prepend: true }).catch(
+      (error) => {
         opts.logger.warn(
           `requeue of cancelled survivor ${uuid} failed for session ${opts.sessionId}:`,
           error
         );
-      });
-      opts.onSurvivorRequeued?.(uuid);
-      opts.logger.info(
-        `requeued cancelled survivor ${uuid} for session ${opts.sessionId} ` +
-          `to run after the pending compaction`
-      );
-    }
+      }
+    );
+    opts.onSurvivorRequeued?.(uuid);
+    opts.logger.info(
+      `requeued cancelled survivor ${uuid} for session ${opts.sessionId} ` +
+        `to run after the pending compaction`
+    );
   }
 
   private async finishSurvivorTeardownWithRestart(

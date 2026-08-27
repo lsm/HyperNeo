@@ -204,7 +204,15 @@ export class QueryLifecycleManager {
     if (queryObject && typeof queryObject.interrupt === 'function') {
       if (this.ctx.firstMessageReceived) {
         try {
-          await queryObject.interrupt();
+          await Promise.race([
+            queryObject.interrupt(),
+            new Promise((resolve) => {
+              const timer = setTimeout(resolve, timeoutMs);
+              if (typeof timer.unref === 'function') {
+                timer.unref();
+              }
+            }),
+          ]);
         } catch {}
       }
     }

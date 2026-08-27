@@ -1681,6 +1681,7 @@ describe('MessageQueue', () => {
 
       expect(enqueueSpy).toHaveBeenCalledWith('uuid-a', 'finish the deploy', false, {
         durable: true,
+        prepend: true,
       });
       q.stop();
     });
@@ -1704,6 +1705,7 @@ describe('MessageQueue', () => {
 
       expect(enqueueSpy).toHaveBeenCalledWith('uuid-c', 'ship the release', false, {
         durable: true,
+        prepend: true,
       });
       expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
       q.stop();
@@ -1794,8 +1796,14 @@ describe('MessageQueue', () => {
 
       await q.runMidTurnBudgetInterrupt(opts);
 
-      expect(enqueueSpy).toHaveBeenCalledWith('uuid-a', 'prompt-a', false, { durable: true });
-      expect(enqueueSpy).toHaveBeenCalledWith('uuid-b', 'prompt-b', false, { durable: true });
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-a', 'prompt-a', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-b', 'prompt-b', false, {
+        durable: true,
+        prepend: true,
+      });
       expect(cancelCalls).toHaveBeenCalledTimes(1);
       expect(restartMock).toHaveBeenCalledTimes(1);
       q.stop();
@@ -1818,6 +1826,7 @@ describe('MessageQueue', () => {
 
       expect(enqueueSpy).toHaveBeenCalledWith('uuid-evicted', 'db-recovered-content', false, {
         durable: true,
+        prepend: true,
       });
       expect(requeuedCallback).toHaveBeenCalledWith('uuid-evicted');
       q.stop();
@@ -1874,8 +1883,68 @@ describe('MessageQueue', () => {
 
       expect(enqueueSpy).toHaveBeenCalledWith('uuid-no-cancel', 'prompt-no-cancel', false, {
         durable: true,
+        prepend: true,
       });
       expect(restartMock).toHaveBeenCalledTimes(1);
+      q.stop();
+    });
+
+    it('reinserts survivors ahead of prompts admitted during the interrupt window', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sentA = q.enqueueWithId('uuid-a', 'prompt-a', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sentA;
+      void q.enqueue('prompt-b-arrived-late', false, { durable: true }).catch(() => {});
+      const enqueueSpy = spyOn(q, 'enqueueWithId');
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-a'] }),
+        cancelAsyncMessage: async () => true,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-a', 'prompt-a', false, {
+        durable: true,
+        prepend: true,
+      });
+      const replay = q.messageGenerator(testSessionId);
+      const first = await replay.next();
+      expect((first.value.message.message.content as Array<{ text?: string }>)[0].text).toBe(
+        '/compact'
+      );
+      first.value.onSent();
+      q.acknowledgeCompactionsAwaitingBoundary();
+      const second = await replay.next();
+      expect((second.value.message.message.content as Array<{ text?: string }>)[0].text).toBe(
+        'prompt-a'
+      );
+      second.value.onSent();
+      const third = await replay.next();
+      expect((third.value.message.message.content as Array<{ text?: string }>)[0].text).toBe(
+        'prompt-b-arrived-late'
+      );
+      third.value.onSent();
+      q.stop();
+    });
+
+    it('warns when a cancelled survivor has no recoverable content', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const warnMock = mock(() => {});
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-phantom'] }),
+        cancelAsyncMessage: async () => true,
+        logger: { info: mock(() => {}), warn: warnMock } as never,
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(warnMock).toHaveBeenCalledTimes(1);
+      expect(String((warnMock.mock.calls[0] as unknown[])[0])).toContain('no recoverable content');
+      expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-phantom')).toBe(false);
       q.stop();
     });
 

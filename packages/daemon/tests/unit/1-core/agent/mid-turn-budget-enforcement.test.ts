@@ -143,6 +143,7 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     expect(harness.cancelMock).toHaveBeenCalledWith('uuid-a');
     expect(enqueueSpy).toHaveBeenCalledWith('uuid-a', 'finish the deploy', false, {
       durable: true,
+      prepend: true,
     });
   });
 
@@ -165,6 +166,7 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     expect(harness.cancelMock).toHaveBeenCalledWith('uuid-c');
     expect(enqueueSpy).toHaveBeenCalledWith('uuid-c', 'ship the release', false, {
       durable: true,
+      prepend: true,
     });
     expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
   });
@@ -296,6 +298,7 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     expect(harness.cancelMock).toHaveBeenCalledWith('uuid-late');
     expect(enqueueSpy).toHaveBeenCalledWith('uuid-late', 'keep going', false, {
       durable: true,
+      prepend: true,
     });
   }, 15_000);
 
@@ -390,6 +393,7 @@ describe('AgentSession mid-turn context budget enforcement', () => {
 
     expect(enqueueSpy).toHaveBeenCalledWith('uuid-lru-evicted', 'db-recovered', false, {
       durable: true,
+      prepend: true,
     });
     expect(retryMock).toHaveBeenCalledWith(expect.any(String), 'uuid-lru-evicted');
   });
