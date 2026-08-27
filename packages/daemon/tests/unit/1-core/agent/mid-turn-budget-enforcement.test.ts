@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { deliveryMetrics } from '../../../../src/lib/agent/message-delivery-metrics.ts';
 import { buildBatchedDeliveryContent } from '../../../../src/lib/agent/message-delivery.ts';
 import type { QueryLike } from '../../../../src/lib/agent/query-like.ts';
 import type {
@@ -389,6 +390,7 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       markDeliveryRetryableByUuid: retryMock,
     });
     const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    const forgetFeedSpy = spyOn(deliveryMetrics, 'forgetFeed').mockImplementation(() => {});
     harness.setInterruptResult(async () => ({ still_queued: ['uuid-lru-evicted'] }));
 
     await session.midTurnContextBudgetCheck();
@@ -398,6 +400,8 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       prepend: true,
     });
     expect(retryMock).toHaveBeenCalledWith(expect.any(String), 'uuid-lru-evicted');
+    expect(forgetFeedSpy).toHaveBeenCalledWith('uuid-lru-evicted');
+    forgetFeedSpy.mockRestore();
   });
 
   it('refreshes usage when the model changes inside the sampling window', async () => {
