@@ -6926,6 +6926,70 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-subset');
     });
+
+    test('flag on: a digest mixing delivered and pending members is superseded', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const elsewhere = makeEvent({ id: 'evt-overlap-a', topic });
+      const pending = makeEvent({ id: 'evt-overlap-b', topic });
+      await eventService.publish(elsewhere);
+      await eventService.publish(pending);
+      const elsewhereDelivery = eventStore.listDeliveries(elsewhere.id)[0]!;
+      eventStore.markDeliveryDelivered(elsewhere.id, elsewhereDelivery.deliveryKey);
+      eventStore.markEventDeliveredIfAllDeliveriesDelivered(elsewhere.id);
+      expect(eventStore.getById(elsewhere.id)?.state).toBe('delivered');
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-overlap',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-overlap',
+        'session-overlap',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-overlap',
+        session_id: 'session-overlap',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale overlap digest' }] },
+        externalEventIds: [elsewhere.id, pending.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-overlap', orphan, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession('session-overlap', task.id);
+      expect(outcome).toMatchObject({ action: 'delivered', eventIds: [pending.id] });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-overlap'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-overlap');
+    });
   });
 });
 

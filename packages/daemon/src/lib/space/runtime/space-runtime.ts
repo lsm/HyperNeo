@@ -1879,7 +1879,7 @@ export class SpaceRuntime {
         this.queueHealthMetrics.recordClaimConflict();
       }
       if (
-        outcome.action === 'deferred' &&
+        (outcome.action === 'deferred' || outcome.action === 'error') &&
         target.sessionId &&
         this.isTargetSessionLive(target.sessionId)
       ) {
@@ -1960,6 +1960,7 @@ export class SpaceRuntime {
     if (!store) return null;
     const messages = this.getSdkMessageRepo();
     let freshDigestDbId: string | null = null;
+    let replayDigestDbId: string | null = null;
     const deps: RenderPendingDigestDeps = {
       getExecutionByAgentSessionId: (targetSessionId) => {
         const execution = this.config.nodeExecutionRepo.getByAgentSessionId(targetSessionId);
@@ -2040,7 +2041,10 @@ export class SpaceRuntime {
         const uuid = String(message.uuid);
         for (const status of DIGEST_REPLAY_LOOKUP_STATUSES) {
           const existing = messages.getMessageByStatusAndUuid(targetSessionId, status, uuid);
-          if (existing) return { dbId: existing.dbId, replayed: true };
+          if (existing) {
+            replayDigestDbId = existing.dbId;
+            return { dbId: existing.dbId, replayed: true };
+          }
         }
         const dbId = messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
         freshDigestDbId = dbId;
@@ -2063,8 +2067,12 @@ export class SpaceRuntime {
       },
     };
     const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
-    if (outcome.action !== 'delivered' && freshDigestDbId !== null) {
-      messages.deletePendingUserMessage(sessionId, freshDigestDbId, 'deferred');
+    if (outcome.action !== 'delivered') {
+      for (const digestDbId of [freshDigestDbId, replayDigestDbId]) {
+        if (digestDbId !== null) {
+          messages.deletePendingUserMessage(sessionId, digestDbId, 'deferred');
+        }
+      }
     }
     if (outcome.action === 'delivered') {
       this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid, outcome.eventIds);
@@ -2091,12 +2099,12 @@ export class SpaceRuntime {
           (eventId): eventId is string => typeof eventId === 'string'
         );
         if (eventIds.length === 0) continue;
-        const hasDeadMember = eventIds.some((eventId) => {
+        const isObsolete = eventIds.every((eventId) => {
+          if (deliveredEventIdSet.has(eventId)) return true;
           const record = store.getById(eventId);
-          return record === null || record.state === 'failed';
+          return record === null || record.state !== 'published';
         });
-        const isCoveredByDelivery = eventIds.every((eventId) => deliveredEventIdSet.has(eventId));
-        if (hasDeadMember || isCoveredByDelivery) {
+        if (isObsolete) {
           messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
         }
       }
