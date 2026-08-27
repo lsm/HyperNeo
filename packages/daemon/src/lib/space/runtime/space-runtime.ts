@@ -2057,7 +2057,7 @@ export class SpaceRuntime {
       },
     };
     const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
-    if (outcome.action === 'skip' && freshDigestDbId !== null) {
+    if (outcome.action !== 'delivered' && freshDigestDbId !== null) {
       messages.deletePendingUserMessage(sessionId, freshDigestDbId, 'deferred');
     }
     return outcome;
