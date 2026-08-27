@@ -310,19 +310,27 @@ export class ProcessingStateManager {
       return;
     }
     const previousState = this.processingState;
-    await this.setState({
+    const cooldownState: AgentProcessingState = {
       status: 'rate_limit_cooldown',
       retryCount: state.retryCount,
       maxRetries: state.maxRetries,
       retryAt: state.retryAt,
-    });
+    };
+    let writeError: unknown;
+    try {
+      await this.setState(cooldownState);
+    } catch (error) {
+      writeError = error;
+    }
     if (
       ownerGeneration !== undefined &&
       this.queryOwnerGeneration !== ownerGeneration &&
-      this.processingState.status === 'rate_limit_cooldown' &&
-      (this.processingState as { retryAt?: number }).retryAt === state.retryAt
+      this.processingState === cooldownState
     ) {
       await this.setState(previousState);
+    }
+    if (writeError !== undefined) {
+      throw writeError;
     }
   }
 

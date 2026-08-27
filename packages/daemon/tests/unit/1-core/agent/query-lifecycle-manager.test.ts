@@ -1167,9 +1167,9 @@ describe('QueryLifecycleManager', () => {
       expect(enqueueSpy).toHaveBeenCalledWith('msg-123', 'Hello');
     });
 
-    test('prepended retry is removed when query startup throws', async () => {
+    test('prepended retry is never admitted when query startup throws', async () => {
       const removeSpy = spyOn(messageQueue, 'remove').mockReturnValue(true);
-      spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-retry');
+      const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-retry');
       mockContext = createMockContext({
         startStreamingQuery: async () => {
           throw new Error('SDK startup failed');
@@ -1181,10 +1181,11 @@ describe('QueryLifecycleManager', () => {
         manager.startQueryAndEnqueue('msg-retry', 'Hello', 7, { prepend: true })
       ).rejects.toThrow('SDK startup failed');
 
-      expect(removeSpy).toHaveBeenCalledWith('msg-retry');
+      expect(enqueueSpy).not.toHaveBeenCalled();
+      expect(removeSpy).not.toHaveBeenCalled();
     });
 
-    test('prepended retry is admitted before the replacement query starts', async () => {
+    test('prepended retry is admitted only after the owning query starts', async () => {
       const callOrder: string[] = [];
       spyOn(messageQueue, 'enqueueWithId').mockImplementation(async () => {
         callOrder.push('enqueue');
@@ -1201,7 +1202,30 @@ describe('QueryLifecycleManager', () => {
 
       await manager.startQueryAndEnqueue('msg-retry', 'Hello', 7, { prepend: true });
 
-      expect(callOrder).toEqual(['enqueue', 'start']);
+      expect(callOrder).toEqual(['start', 'enqueue']);
+    });
+
+    test('does not admit a prepend re-enqueue superseded during query startup (B5e)', async () => {
+      let queryGeneration = 1;
+      const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-retry');
+      mockContext = createMockContext({
+        getQueryGeneration: () => queryGeneration,
+        startStreamingQuery: async () => {
+          queryGeneration = 2;
+          messageQueue.start();
+          mockContext.queryPromise = Promise.resolve();
+        },
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await expect(
+        manager.startQueryAndEnqueue('msg-retry', 'Hello', 7, {
+          prepend: true,
+          queryGeneration: 1,
+        })
+      ).resolves.toBe('aborted');
+
+      expect(enqueueSpy).not.toHaveBeenCalled();
     });
 
     test('aborts a prepend re-enqueue when the originating query was superseded (B5e)', async () => {

@@ -537,36 +537,22 @@ export class QueryLifecycleManager {
     options?: { prepend?: boolean; queryGeneration?: number }
   ): Promise<'started' | 'aborted'> {
     const { session, messageQueue, stateManager, internalEventBus } = this.ctx;
+    const querySuperseded = (): boolean =>
+      options?.queryGeneration !== undefined &&
+      this.ctx.getQueryGeneration?.() !== options.queryGeneration;
 
     if (options?.prepend) {
       await stateManager.setQueued(messageId);
-      if (
-        options.queryGeneration !== undefined &&
-        this.ctx.getQueryGeneration?.() !== options.queryGeneration
-      ) {
+      if (querySuperseded()) {
         this.logger.info(
           `startQueryAndEnqueue: aborted prepend re-enqueue of ${messageId} ` +
             `(the originating query was superseded).`
         );
         return 'aborted';
       }
-      void messageQueue
-        .enqueueWithId(messageId, messageContent, false, { prepend: true })
-        .catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
-        .catch((handlerError) => {
-          this.logger.warn('Failed to handle queued message delivery error', handlerError);
-        });
     }
 
-    let queryStartResult: EnsureQueryStartedResult;
-    try {
-      queryStartResult = await this.ensureQueryStarted();
-    } catch (error) {
-      if (options?.prepend) {
-        messageQueue.remove(messageId);
-      }
-      throw error;
-    }
+    const queryStartResult: EnsureQueryStartedResult = await this.ensureQueryStarted();
     if (
       episodeGeneration !== undefined &&
       this.ctx.isRateLimitEpisodeSuperseded?.(episodeGeneration)
@@ -575,16 +561,10 @@ export class QueryLifecycleManager {
         `startQueryAndEnqueue: aborting retry of ${messageId} ` +
           `(rate-limit episode superseded during query startup).`
       );
-      if (messageQueue.remove(messageId)) {
-        this.logger.info(
-          `startQueryAndEnqueue: removed superseded retry message ${messageId} from the queue.`
-        );
-      }
       return 'aborted';
     }
     if (queryStartResult === 'blocked') {
       if (options?.prepend) {
-        messageQueue.remove(messageId);
         throw new Error(
           `Rate limit retry of ${messageId} is blocked on sdk_resume_choice; ` +
             `not reporting the recovery query as started.`
@@ -602,18 +582,19 @@ export class QueryLifecycleManager {
     }
 
     if (options?.prepend) {
-      if (
-        options.queryGeneration !== undefined &&
-        queryStartResult !== 'started' &&
-        this.ctx.getQueryGeneration?.() !== options.queryGeneration
-      ) {
-        messageQueue.remove(messageId);
+      if (querySuperseded()) {
         this.logger.info(
           `startQueryAndEnqueue: aborted prepend re-enqueue of ${messageId} ` +
-            `(the originating query was superseded).`
+            `(the originating query was superseded during query startup).`
         );
         return 'aborted';
       }
+      void messageQueue
+        .enqueueWithId(messageId, messageContent, false, { prepend: true })
+        .catch((error) => this.handleQueuedMessageFailure(messageId, messageContent, error))
+        .catch((handlerError) => {
+          this.logger.warn('Failed to handle queued message delivery error', handlerError);
+        });
       internalEventBus.publish('message.sent', { sessionId: session.id }).catch((error) => {
         this.logger.warn('Failed to emit message.sent event', error);
       });
