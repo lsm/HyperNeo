@@ -1204,6 +1204,22 @@ describe('QueryLifecycleManager', () => {
       expect(callOrder).toEqual(['enqueue', 'start']);
     });
 
+    test('aborts a prepend re-enqueue when the originating query was superseded (B5e)', async () => {
+      mockContext = createMockContext({ getQueryGeneration: () => 2 });
+      manager = new QueryLifecycleManager(mockContext);
+      const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-retry');
+
+      await expect(
+        manager.startQueryAndEnqueue('msg-retry', 'Hello', 7, {
+          prepend: true,
+          queryGeneration: 1,
+        })
+      ).resolves.toBe('aborted');
+
+      expect(enqueueSpy).not.toHaveBeenCalled();
+      expect(startStreamingCalled).toBe(false);
+    });
+
     test('emits message.sent event', async () => {
       spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-123');
 
@@ -1232,7 +1248,7 @@ describe('QueryLifecycleManager', () => {
         manager = new QueryLifecycleManager(mockContext);
         const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-123');
 
-        await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).resolves.toBeUndefined();
+        await expect(manager.startQueryAndEnqueue('msg-123', 'Hello')).resolves.toBe('aborted');
 
         expect(startStreamingCalled).toBe(false);
         expect(saveHyperNeoActionMessageSpy).toHaveBeenCalled();

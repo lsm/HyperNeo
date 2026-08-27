@@ -298,17 +298,32 @@ export class ProcessingStateManager {
     await this.setState({ status: 'waiting_for_input', pendingQuestion });
   }
 
-  async setRateLimitCooldown(state: {
-    retryCount: number;
-    maxRetries: number;
-    retryAt: number;
-  }): Promise<void> {
+  async setRateLimitCooldown(
+    state: {
+      retryCount: number;
+      maxRetries: number;
+      retryAt: number;
+    },
+    ownerGeneration?: number
+  ): Promise<void> {
+    if (ownerGeneration !== undefined && this.queryOwnerGeneration !== ownerGeneration) {
+      return;
+    }
+    const previousState = this.processingState;
     await this.setState({
       status: 'rate_limit_cooldown',
       retryCount: state.retryCount,
       maxRetries: state.maxRetries,
       retryAt: state.retryAt,
     });
+    if (
+      ownerGeneration !== undefined &&
+      this.queryOwnerGeneration !== ownerGeneration &&
+      this.processingState.status === 'rate_limit_cooldown' &&
+      (this.processingState as { retryAt?: number }).retryAt === state.retryAt
+    ) {
+      await this.setState(previousState);
+    }
   }
 
   isWaitingForInput(): boolean {
