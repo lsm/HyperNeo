@@ -831,6 +831,21 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
+          const discoveryInvalidating =
+            data.credentials !== undefined ||
+            updates.baseUrl !== undefined ||
+            updates.customEndpointConfigJson !== undefined ||
+            updates.isEnabled === false ||
+            (updates.configJson !== undefined &&
+              !isCurationOnlyConfigUpdate(existing.configJson, updates.configJson));
+          if (discoveryInvalidating) {
+            const configSource = updates.configJson ?? existing.configJson;
+            const strippedConfig = stripPersistedDiscovery(configSource);
+            if (strippedConfig !== configSource) {
+              updates.configJson = strippedConfig;
+            }
+          }
+
           if (data.credentials && existing.kind !== 'custom_endpoint') {
             try {
               if (data.credentials.apiKey) {
@@ -864,20 +879,14 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             record.configJson
           );
 
-          const discoveryInvalidating =
-            data.credentials !== undefined ||
-            updates.baseUrl !== undefined ||
-            updates.customEndpointConfigJson !== undefined ||
-            updates.isEnabled === false ||
-            (updates.configJson !== undefined && !curationOnlyConfigUpdate);
-
           if (shouldResync) {
             if (
               curationOnlyConfigUpdate &&
               updates.configJson !== undefined &&
               data.credentials === undefined &&
               updates.baseUrl === undefined &&
-              updates.customEndpointConfigJson === undefined
+              updates.customEndpointConfigJson === undefined &&
+              !discoveryInvalidating
             ) {
               const restoredConfig = restoreServerDiscoveredModels(
                 record.configJson,
@@ -886,12 +895,6 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
               if (restoredConfig !== record.configJson) {
                 record =
                   providerRepo.updateProvider(data.id, { configJson: restoredConfig }) ?? record;
-              }
-            } else if (discoveryInvalidating) {
-              const strippedConfig = stripPersistedDiscovery(record.configJson);
-              if (strippedConfig !== record.configJson) {
-                record =
-                  providerRepo.updateProvider(data.id, { configJson: strippedConfig }) ?? record;
               }
             }
             if (record.isEnabled === false) {

@@ -751,24 +751,23 @@ async function loadProviderModels(
 ): Promise<ProviderModelLoadResult> {
   try {
     const savedBaseUrl = getSavedBaseUrlForProvider(provider.id);
-    const routesThroughSavedEndpoint =
-      !options?.forceRemote &&
-      savedBaseUrl !== undefined &&
-      provider.listRemoteModels !== undefined;
-    if (!routesThroughSavedEndpoint && !(await provider.isAvailable())) {
+    const routesThroughListing = provider.listRemoteModels !== undefined;
+    const savedEndpointRoute =
+      routesThroughListing && !options?.forceRemote && savedBaseUrl !== undefined;
+    if (!savedEndpointRoute && !(await provider.isAvailable())) {
       return { status: 'unavailable', models: [] };
     }
-    const discovered =
-      (options?.forceRemote || routesThroughSavedEndpoint) && provider.listRemoteModels
-        ? await provider.listRemoteModels({
-            ...(options?.forceRemote ? { force: true } : {}),
-            ...(savedBaseUrl ? { baseUrl: savedBaseUrl } : {}),
-          })
-        : null;
+    const listRemoteModels = provider.listRemoteModels;
+    const discovered = listRemoteModels
+      ? await listRemoteModels({
+          ...(options?.forceRemote ? { force: true } : {}),
+          ...(savedBaseUrl ? { baseUrl: savedBaseUrl } : {}),
+        })
+      : null;
     const models = discovered
-      ? routesThroughSavedEndpoint
-        ? withCuratedEntries(provider.id, mergeDiscoveredWithStatic(provider.id, discovered))
-        : withCuratedEntries(provider.id, discovered)
+      ? options?.forceRemote
+        ? withCuratedEntries(provider.id, discovered)
+        : withCuratedEntries(provider.id, mergeDiscoveredWithStatic(provider.id, discovered))
       : await provider.getModels();
     if (
       models.length > 0 ||
