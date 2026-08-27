@@ -557,6 +557,46 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
   });
 });
 
+describe('createNodeRegistryEntries — dispatcher audit chokepoint', () => {
+  test('a dispatched mutating node action writes exactly one audit row', async () => {
+    const ctx = makeCtx();
+    try {
+      const auditRepo = new McpAuditLogRepository(ctx.db);
+      const registry = createActionRegistry(
+        composeRoleActionEntries(
+          'workflow_worker',
+          makeSpaceEntries([]),
+          createNodeRegistryEntries(
+            makeConfig(ctx, {
+              auditLogRepo: auditRepo,
+              ...keepCallbacks(ctx, ['onApproveTask']),
+            })
+          )
+        )
+      );
+
+      await runDispatchAction(
+        { registry, auditLogRepo: auditRepo },
+        {
+          actionName: 'approve_task',
+          params: {},
+          role: 'workflow_worker',
+          spaceId: SPACE_ID,
+          taskId: 'task-1',
+          workflowRunId: 'run-registry-node-test',
+          spaceLevel: 5,
+        }
+      );
+
+      const rows = auditRepo.listBySpace(SPACE_ID, 10, 0);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].toolName).toBe('approve_task');
+    } finally {
+      ctx.db.close();
+    }
+  });
+});
+
 describe('createNodeRegistryEntries — end-node callbacks', () => {
   test('submit_for_approval and mark_complete invoke their config callbacks', async () => {
     const ctx = makeCtx();
