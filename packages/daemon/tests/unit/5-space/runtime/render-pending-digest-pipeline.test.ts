@@ -48,6 +48,7 @@ interface Harness {
   rows: ExternalEventDeliveryRecord[];
   records: Map<string, ExternalEventRecord>;
   saved: SDKUserMessage[];
+  reopened: Array<{ sessionId: string; uuid: string }>;
   appended: SDKUserMessage[];
   marks: RenderPendingDigestLedgerMark[];
   listedScopes: unknown[];
@@ -72,6 +73,7 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
   const rows: ExternalEventDeliveryRecord[] = [];
   const records = new Map<string, ExternalEventRecord>();
   const saved: SDKUserMessage[] = [];
+  const reopened: Array<{ sessionId: string; uuid: string }> = [];
   const appended: SDKUserMessage[] = [];
   const marks: RenderPendingDigestLedgerMark[] = [];
   const listedScopes: unknown[] = [];
@@ -130,6 +132,9 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
       saved.push(message);
       return { dbId: `db-${uuid}`, replayed: false };
     },
+    reopenFailedDigest: (sessionId, uuid) => {
+      reopened.push({ sessionId, uuid });
+    },
     appendDigest: async (_sessionId, message) => {
       appended.push(message);
       return true;
@@ -144,6 +149,7 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
     rows,
     records,
     saved,
+    reopened,
     appended,
     marks,
     listedScopes,
@@ -749,8 +755,8 @@ describe('render-pending-digest pipeline', () => {
       ['ev-a', 'check'],
       ['ev-b', 'review'],
     ]);
-    h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b']));
-    h.saved.push(digestMembershipRow(['ev-a', 'ev-b']));
+    h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b'], 'failed'));
+    h.saved.push(digestMembershipRow(['ev-a', 'ev-b'], 'failed'));
     const outcome = await runRenderPendingDigest(h.deps, {
       sessionId: SESSION_ID,
       taskId: TARGET.taskId,
@@ -761,6 +767,20 @@ describe('render-pending-digest pipeline', () => {
     expect(outcome.replayed).toBe(true);
     expect(outcome.text).toBe('digest');
     expect(h.marks).toHaveLength(2);
+    expect(h.reopened).toEqual([
+      { sessionId: SESSION_ID, uuid: `${DETERMINISTIC_DIGEST_UUID_PREFIX}fixture-2` },
+    ]);
+  });
+
+  it('end to end: a fresh digest render never reopens a stored row', async () => {
+    const h = harness();
+    seedPending(h, [['ev-a', 'check']]);
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome.action).toBe('delivered');
+    expect(h.reopened).toEqual([]);
   });
 
   it('end to end: pending rows evidenced by consumed legacy rows finalize without re-rendering', async () => {

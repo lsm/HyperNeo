@@ -87,6 +87,7 @@ export interface RenderPendingDigestDeps {
     sessionId: string,
     message: SDKUserMessage
   ): Promise<RenderPendingDigestSavedDigest>;
+  reopenFailedDigest(sessionId: string, uuid: string): void;
   appendDigest(sessionId: string, message: SDKUserMessage): Promise<boolean>;
   markDeliveriesDelivered(
     target: RenderPendingDigestTarget,
@@ -499,6 +500,13 @@ export async function persistAndAppend(
   }
   if (droppedRendered || survivingRows.length === 0) {
     return { ...ctx, digestDbId: dbId, outcome: { action: 'skip', reason: 'no_claimable_events' } };
+  }
+  if (saved.replayed) {
+    try {
+      ctx.deps.reopenFailedDigest(ctx.sessionId, uuid);
+    } catch (error) {
+      return { ...ctx, outcome: { action: 'failed', stage: 'reopenFailedDigest', error } };
+    }
   }
   let accepted: boolean;
   try {
