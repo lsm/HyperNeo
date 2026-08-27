@@ -240,6 +240,10 @@ export class SDKMessageHandler {
     });
   }
 
+  getContextFetcher(): ContextFetcher {
+    return this.contextFetcher;
+  }
+
   resetCircuitBreaker(): void {
     this.circuitBreaker.reset();
     this.lastRateLimitInfo = null;

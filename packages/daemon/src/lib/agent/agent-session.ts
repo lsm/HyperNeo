@@ -39,8 +39,6 @@ const SESSION_RECONCILE_INTERVAL_MS = 60_000;
 
 const CLEAR_CONFIRM_TIMEOUT_MS = 45_000;
 
-const MID_TURN_USAGE_TIMEOUT_MS = 2_500;
-
 const MID_TURN_USAGE_REFRESH_INTERVAL_MS = 10_000;
 
 export class ClearConversationCancelledError extends Error {
@@ -149,7 +147,6 @@ import {
   contextBudgetThreshold,
   decideContextBudgetCompaction,
 } from './context-budget-decision.ts';
-import { ContextFetcher } from './context-fetcher.ts';
 import { ContextTracker } from './context-tracker.ts';
 import {
   runDeliveryTurnAdmission,
@@ -1594,17 +1591,9 @@ export class AgentSession
       ) {
         return null;
       }
-      if (!queryObject.getContextUsage) return stale;
-      const response = await Promise.race([
-        queryObject.getContextUsage(),
-        new Promise<undefined>((resolve) => {
-          const timer = setTimeout(() => resolve(undefined), MID_TURN_USAGE_TIMEOUT_MS);
-          if (typeof timer.unref === 'function') {
-            timer.unref();
-          }
-        }),
-      ]);
-      if (!response) return stale;
+      const info = await this.messageHandler
+        .getContextFetcher()
+        .fetch(queryObject, modelInfo ?? undefined);
       if (
         this.queryObject !== queryObject ||
         this.session.config.model !== fenceModel ||
@@ -1612,7 +1601,7 @@ export class AgentSession
       ) {
         return null;
       }
-      const info = ContextFetcher.toContextInfo(response, modelInfo ?? undefined);
+      if (!info) return stale;
       this.contextTracker.updateWithDetailedBreakdown(info);
       return info;
     } catch (error) {
