@@ -751,13 +751,12 @@ async function loadProviderModels(
 ): Promise<ProviderModelLoadResult> {
   try {
     const savedBaseUrl = getSavedBaseUrlForProvider(provider.id);
-    const routesThroughListing = provider.listRemoteModels !== undefined;
+    const listRemoteModels = provider.listRemoteModels?.bind(provider);
     const savedEndpointRoute =
-      routesThroughListing && !options?.forceRemote && savedBaseUrl !== undefined;
+      listRemoteModels !== undefined && !options?.forceRemote && savedBaseUrl !== undefined;
     if (!savedEndpointRoute && !(await provider.isAvailable())) {
       return { status: 'unavailable', models: [] };
     }
-    const listRemoteModels = provider.listRemoteModels;
     const discovered = listRemoteModels
       ? await listRemoteModels({
           ...(options?.forceRemote ? { force: true } : {}),
