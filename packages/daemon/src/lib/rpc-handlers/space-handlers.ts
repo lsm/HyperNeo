@@ -14,6 +14,7 @@ import type {
   SpaceWorkspace,
   SpaceWorkspaceAddParams,
   SpaceWorkspaceRemoveParams,
+  SpaceWorkspaceUpdateLabelParams,
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
@@ -524,6 +525,22 @@ export function setupSpaceHandlers(
     const params = (data ?? {}) as SpaceWorkspaceRemoveParams;
     const removed = spaceManager.removeWorkspace(params.spaceId, params.workspaceId);
     if (!removed) {
+      throw new Error(`Workspace not found: ${params.workspaceId}`);
+    }
+    return { success: true };
+  });
+
+  messageHub.onRequest('space.workspace.updateLabel', async (data) => {
+    const params = (data ?? {}) as SpaceWorkspaceUpdateLabelParams;
+    if (typeof params.label !== 'string') {
+      throw new Error('label must be a string');
+    }
+    const updated = spaceManager.updateWorkspaceLabel(
+      params.spaceId,
+      params.workspaceId,
+      params.label
+    );
+    if (!updated) {
       throw new Error(`Workspace not found: ${params.workspaceId}`);
     }
     return { success: true };

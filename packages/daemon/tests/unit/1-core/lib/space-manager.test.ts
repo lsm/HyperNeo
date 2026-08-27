@@ -458,6 +458,28 @@ describe('SpaceManager', () => {
       expect(manager.removeWorkspace(space.id, recordId)).toBe(true);
       expect(manager.listWorkspaces(space.id)).toHaveLength(1);
     });
+
+    it('notifies space_workspaces subscribers when deleting a space cascades its rows away', async () => {
+      const notifications: Array<{ table: string; scope?: { spaceId?: string } }> = [];
+      const notifyingManager = new SpaceManager(
+        db as any,
+        {
+          notifyChange: (table: string, scope?: { spaceId?: string }) => {
+            notifications.push({ table, scope });
+          },
+        } as never
+      );
+      const space = await notifyingManager.createSpace({
+        workspacePath: tmpDir,
+        name: 'Doomed',
+      });
+
+      const beforeDelete = notifications.length;
+      await expect(notifyingManager.deleteSpace(space.id)).resolves.toBe(true);
+      expect(notifications.slice(beforeDelete)).toEqual([
+        { table: 'space_workspaces', scope: { spaceId: space.id } },
+      ]);
+    });
   });
 
   describe('onSpaceResumedRegister', () => {

@@ -293,6 +293,12 @@ export interface SpaceWorkspaceRemoveParams {
   workspaceId: string;
 }
 
+export interface SpaceWorkspaceUpdateLabelParams {
+  spaceId: string;
+  workspaceId: string;
+  label: string;
+}
+
 export type SpaceTaskStatus =
   | 'draft'
   | 'open'
