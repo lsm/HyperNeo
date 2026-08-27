@@ -571,6 +571,53 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     }
   });
 
+  test('composed worker registry excludes mutating and destructive space actions', () => {
+    const nodeEntry = defineAction({
+      name: 'list_peers',
+      family: 'node',
+      safetyClass: 'read',
+      description: 'node entry',
+      paramsDoc: 'none',
+      paramsSchema: z.object({}),
+      handler: async () => null,
+    });
+    const spaceEntries = [
+      defineAction({
+        name: 'list_sessions',
+        family: 'space',
+        safetyClass: 'read',
+        description: 'space list',
+        paramsDoc: 'none',
+        paramsSchema: z.object({}),
+        handler: async () => null,
+      }),
+      defineAction({
+        name: 'change_plan',
+        family: 'space',
+        safetyClass: 'destructive',
+        description: 'space change plan',
+        paramsDoc: 'none',
+        paramsSchema: z.object({}),
+        handler: async () => null,
+      }),
+      defineAction({
+        name: 'delete_scheduled_task',
+        family: 'space',
+        safetyClass: 'destructive',
+        description: 'space delete schedule',
+        paramsDoc: 'none',
+        paramsSchema: z.object({}),
+        handler: async () => null,
+      }),
+    ];
+    const composed = composeRoleActionEntries('workflow_worker', spaceEntries, [nodeEntry]);
+    const registry = createActionRegistry(composed);
+    expect(registry.get('list_peers')).toBeDefined();
+    expect(registry.get('list_sessions')).toBeDefined();
+    expect(registry.get('change_plan')).toBeUndefined();
+    expect(registry.get('delete_scheduled_task')).toBeUndefined();
+  });
+
   test('end-to-end: dispatched approve_task on a worker registry routes to the node handler', async () => {
     const ctx = makeCtx();
     try {

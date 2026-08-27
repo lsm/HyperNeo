@@ -327,6 +327,20 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
   ];
 }
 
+const WORKER_SPACE_ACTION_ALLOWLIST = new Set([
+  'get_external_event',
+  'get_scheduled_task',
+  'get_session_detail',
+  'get_session_messages',
+  'get_workflow_detail',
+  'get_workflow_run',
+  'inactivity_config_get',
+  'list_scheduled_tasks',
+  'list_sessions',
+  'list_workflows',
+  'suggest_workflow',
+]);
+
 export function composeRoleActionEntries(
   role: SpaceMcpSessionRole,
   spaceEntries: readonly ActionDefinition[],
@@ -340,10 +354,13 @@ export function composeRoleActionEntries(
   }
 
   const nodeNames = new Set(nodeEntries.map((entry) => entry.name));
+  const isWorkerSpaceAllowed = (entry: ActionDefinition) =>
+    WORKER_SPACE_ACTION_ALLOWLIST.has(entry.name) && !workerOnlyNodeNames.has(entry.name);
+
   return [
     ...nodeEntries,
     ...spaceEntries
-      .filter((entry) => !nodeNames.has(entry.name) && !workerOnlyNodeNames.has(entry.name))
+      .filter((entry) => !nodeNames.has(entry.name) && isWorkerSpaceAllowed(entry))
       .map(withSpaceFamily),
   ];
 }
