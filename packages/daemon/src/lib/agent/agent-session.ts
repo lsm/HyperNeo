@@ -148,6 +148,8 @@ import {
   decideContextBudgetCompaction,
 } from './context-budget-decision.ts';
 import { ContextTracker } from './context-tracker.ts';
+import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
+import type { MidTurnBudgetInterruptOptions, MidTurnQueueSeam } from './message-queue.ts';
 import {
   runDeliveryTurnAdmission,
   type DeliveryTurnAdmissionDeps,
@@ -1530,38 +1532,15 @@ export class AgentSession
   }
 
   private async runMidTurnContextBudgetCheck(): Promise<void> {
-    if (this.pendingResumeAfterCompaction) return;
-    const status = this.stateManager.getState().status;
-    if (status === 'waiting_for_input' || status === 'rate_limit_cooldown') return;
-    if (this.isLimitRecoveryPending()) return;
-    if (!this.messageQueue.isRunning()) return;
-    const providerId = this.session.config.provider;
-    if (!providerId || providerId === 'acp') return;
-    if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return;
     const queryObject = this.queryObject;
     if (!queryObject?.interrupt) return;
-    const info = await this.refreshMidTurnContextInfo(queryObject);
-    if (!info || info.totalUsed <= 0) return;
-    if (this.stateManager.getState().status !== 'processing') return;
-    const configuredWindow = info.totalCapacity > 0 ? info.totalCapacity : undefined;
-    const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, info.autoCompactPercent);
-    const decision = decideContextBudgetCompaction({
-      totalUsed: info.totalUsed,
-      configuredWindow,
-      autoCompactPercent: info.autoCompactPercent,
-      sdkAutoCompactEnabled: info.isAutoCompactEnabled,
-      sdkAutoCompactThreshold: info.sdkAutoCompactThreshold,
-      cooldownActive:
-        this.contextTracker.isCoolingDown(budgetKey) &&
-        !this.messageQueue.hasOutstandingInternalCompaction(),
-      compactingActive: this.stateManager.getIsCompacting(),
-    });
-    if (decision.action !== 'compact') return;
+    const providerId = this.session.config.provider;
+    if (!providerId) return;
     const cancelAsyncMessage = queryObject.cancelAsyncMessage;
-    await this.messageQueue.runMidTurnBudgetInterrupt({
+    const opts: MidTurnBudgetInterruptOptions = {
       sessionId: this.session.id,
       providerId,
-      budgetKey,
+      budgetKey: 0,
       logger: this.logger,
       interrupt: () => queryObject.interrupt(),
       cancelAsyncMessage:
@@ -1590,6 +1569,42 @@ export class AgentSession
         this.db.getSDKMessageRepo().markDeliveryRetryableByUuid(this.session.id, uuid);
       },
       ownsTurn: () => this.queryObject === queryObject,
+    };
+    await runMidTurnBudgetPipeline({
+      opts,
+      queue: this.messageQueue as unknown as MidTurnQueueSeam,
+      phase: 'interrupt',
+      lateReceipt: null,
+      checkEligibility: () => {
+        if (this.pendingResumeAfterCompaction) return false;
+        const status = this.stateManager.getState().status;
+        if (status === 'waiting_for_input' || status === 'rate_limit_cooldown') return false;
+        if (this.isLimitRecoveryPending()) return false;
+        if (!this.messageQueue.isRunning()) return false;
+        if (providerId === 'acp') return false;
+        if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return false;
+        return true;
+      },
+      refreshUsage: () => this.refreshMidTurnContextInfo(queryObject),
+      decideCompaction: (info) => {
+        if (info.totalUsed <= 0) return false;
+        if (this.stateManager.getState().status !== 'processing') return false;
+        const configuredWindow = info.totalCapacity > 0 ? info.totalCapacity : undefined;
+        const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, info.autoCompactPercent);
+        opts.budgetKey = budgetKey;
+        const decision = decideContextBudgetCompaction({
+          totalUsed: info.totalUsed,
+          configuredWindow,
+          autoCompactPercent: info.autoCompactPercent,
+          sdkAutoCompactEnabled: info.isAutoCompactEnabled,
+          sdkAutoCompactThreshold: info.sdkAutoCompactThreshold,
+          cooldownActive:
+            this.contextTracker.isCoolingDown(budgetKey) &&
+            !this.messageQueue.hasOutstandingInternalCompaction(),
+          compactingActive: this.stateManager.getIsCompacting(),
+        });
+        return decision.action === 'compact';
+      },
     });
   }
 

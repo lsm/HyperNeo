@@ -2409,6 +2409,43 @@ describe('MessageQueue', () => {
       expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
     }, 15_000);
 
+    it('preserves a late receipt after its own recovery restart replaced the query', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-own-restart', 'own-restart-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      let ownsTurn = true;
+      const opts = makeInterruptOpts(q, {
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => true,
+        ownsTurn: () => ownsTurn,
+        restart: async (options?: { beforeStart?: () => void }) => {
+          ownsTurn = false;
+          options?.beforeStart?.();
+        },
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      releaseInterrupt({ still_queued: ['uuid-own-restart'] });
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-own-restart', 'own-restart-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+    }, 15_000);
+
     it('holds delivery behind a gate while survivors are cancelled and requeued', async () => {
       const q = new MessageQueue();
       q.start();

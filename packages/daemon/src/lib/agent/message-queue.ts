@@ -3,6 +3,7 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Logger } from '../logger.ts';
+import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
 import { buildQueueTimeoutError, resolveQueueTimeout } from './message-queue-timeout-policy.ts';
 
 function isToolResultContent(content: MessageContent): content is ToolResultContent {
@@ -36,6 +37,33 @@ interface QueuedMessage {
   onRejected?: (error: Error) => void;
 }
 
+export interface MidTurnQueueSeam {
+  armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void;
+  awaitInterruptDeadline(opts: MidTurnBudgetInterruptOptions): Promise<{
+    promise: Promise<{ still_queued: string[] } | undefined>;
+    timedOut: boolean;
+    hardFailed: boolean;
+    receipt?: { still_queued: string[] };
+  }>;
+  standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean;
+  openLateReceiptWindow(opts: MidTurnBudgetInterruptOptions): void;
+  processInterruptSurvivorReceipt(
+    opts: MidTurnBudgetInterruptOptions,
+    receipt: { still_queued: string[] } | undefined,
+    allowRestart: boolean
+  ): Promise<boolean>;
+  shouldEnqueueLateCompaction(): boolean;
+  hasOutstandingInternalCompaction(): boolean;
+  enqueueMidTurnCompaction(opts: MidTurnBudgetInterruptOptions, reason: string): void;
+  registerLateReceipt(
+    opts: MidTurnBudgetInterruptOptions,
+    interrupt: {
+      promise: Promise<{ still_queued: string[] } | undefined>;
+      timedOut: boolean;
+    }
+  ): void;
+}
+
 export interface MidTurnBudgetInterruptOptions {
   sessionId: string;
   providerId: string | undefined;
@@ -66,6 +94,10 @@ export class MessageQueue {
   private internalRestartFailed: boolean = false;
   private stopEpoch: number = 0;
   private restartStopEpoch: number = 0;
+  private recoveryRestarted: boolean = false;
+  private resolveEarlyDeliveryGate: (() => void) | undefined;
+  private resolveLateDeliveryGate: (() => void) | undefined;
+  private lateWindowRemovedCompactions: number = 0;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private nonCompactionSentSinceBoundary: boolean = false;
@@ -149,12 +181,21 @@ export class MessageQueue {
   }
 
   revokeDeliveredCompaction(messageId: string): boolean {
-    if (!this.internalCompactionIdsAwaitingBoundary.delete(messageId)) return false;
-    this.internalCompactionsAwaitingBoundary = Math.max(
-      0,
-      this.internalCompactionsAwaitingBoundary - 1
-    );
-    return true;
+    if (this.internalCompactionIdsAwaitingBoundary.delete(messageId)) {
+      this.internalCompactionsAwaitingBoundary = Math.max(
+        0,
+        this.internalCompactionsAwaitingBoundary - 1
+      );
+      return true;
+    }
+    for (const message of this.yielded) {
+      if (message.id === messageId && this.isInternalCompaction(message)) {
+        this.yielded.delete(message);
+        message.resolve(message.id);
+        return true;
+      }
+    }
+    return false;
   }
 
   private cancelInternalCompactionEntries(interrupted: boolean, includeYielded: boolean): number {
@@ -540,8 +581,8 @@ export class MessageQueue {
     return !this.isRunning();
   }
 
-  private standsDown(opts: MidTurnBudgetInterruptOptions): boolean {
-    if (opts.ownsTurn && !opts.ownsTurn()) return true;
+  standsDown(opts: MidTurnBudgetInterruptOptions): boolean {
+    if (!this.recoveryRestarted && opts.ownsTurn && !opts.ownsTurn()) return true;
     return this.userStoppedQueue();
   }
 
@@ -669,25 +710,31 @@ export class MessageQueue {
     return null;
   }
 
-  async runMidTurnBudgetInterrupt(opts: MidTurnBudgetInterruptOptions): Promise<void> {
+  armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
     this.internalRestartFailed = false;
+    this.recoveryRestarted = false;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
     opts.logger.info(
       `Daemon mid-turn context-budget interrupt for session ${opts.sessionId} ` +
         `(provider=${opts.providerId}, budget=${opts.budgetKey} tokens)`
     );
-
-    let resolveEarlyDeliveryGate: (() => void) | undefined;
     const earlyDeliveryGate = new Promise<void>((resolve) => {
-      resolveEarlyDeliveryGate = resolve;
+      this.resolveEarlyDeliveryGate = resolve;
     });
     this.setDeliveryGate(earlyDeliveryGate, { exclusive: true });
+  }
 
+  async awaitInterruptDeadline(opts: MidTurnBudgetInterruptOptions): Promise<{
+    promise: Promise<{ still_queued: string[] } | undefined>;
+    timedOut: boolean;
+    hardFailed: boolean;
+    receipt?: { still_queued: string[] };
+  }> {
     const interruptPromise = Promise.resolve().then(() => opts.interrupt());
     let receipt: { still_queued: string[] } | undefined;
     let timedOut = false;
-    let resumeArmed = true;
+    let hardFailed = false;
     let interruptTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       receipt = (await Promise.race([
@@ -705,7 +752,7 @@ export class MessageQueue {
     } catch (error) {
       if (timedOut) {
         if (this.standsDown(opts)) {
-          resumeArmed = false;
+          hardFailed = true;
           opts.onResumeClear();
         } else {
           opts.logger.warn(
@@ -716,7 +763,7 @@ export class MessageQueue {
           await this.finishSurvivorTeardownWithRestart(opts);
         }
       } else {
-        resumeArmed = false;
+        hardFailed = true;
         opts.onResumeClear();
         opts.logger.warn(
           `mid-turn context-budget interrupt failed for session ${opts.sessionId}:`,
@@ -728,27 +775,43 @@ export class MessageQueue {
         clearTimeout(interruptTimeoutTimer);
       }
     }
+    return { promise: interruptPromise, timedOut, hardFailed, receipt };
+  }
 
+  standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean {
+    return this.standsDown(opts);
+  }
+
+  async runMidTurnBudgetInterrupt(opts: MidTurnBudgetInterruptOptions): Promise<void> {
+    this.armInterruptCycle(opts);
+    const ctx = {
+      opts,
+      queue: this as unknown as MidTurnQueueSeam,
+      phase: 'interrupt' as const,
+      lateReceipt: null,
+      preArmed: true,
+      checkEligibility: undefined,
+      refreshUsage: undefined,
+      decideCompaction: undefined,
+    };
     try {
-      if (this.standsDown(opts)) {
-        opts.onResumeClear();
-        return;
-      }
-      if (timedOut || !resumeArmed) {
-        await this.processInterruptSurvivorReceipt(opts, receipt);
-      } else {
-        const restarted = await this.processInterruptSurvivorReceipt(opts, receipt);
-        if (!restarted && !this.standsDown(opts)) {
-          this.enqueueMidTurnCompaction(opts, 'mid-turn');
-        }
-      }
+      await runMidTurnBudgetPipeline(ctx);
     } finally {
-      resolveEarlyDeliveryGate?.();
+      this.resolveEarlyDeliveryGate?.();
+      this.resolveEarlyDeliveryGate = undefined;
     }
+  }
 
-    void interruptPromise.then(
+  registerLateReceipt(
+    opts: MidTurnBudgetInterruptOptions,
+    interrupt: {
+      promise: Promise<{ still_queued: string[] } | undefined>;
+      timedOut: boolean;
+    }
+  ): void {
+    void interrupt.promise.then(
       (lateReceipt) => {
-        if (!timedOut || !resumeArmed) return;
+        if (!interrupt.timedOut || !lateReceipt) return;
         void this.processLateInterruptReceipt(opts, lateReceipt).catch((error) => {
           opts.logger.warn(
             `late survivor cancellation after a slow mid-turn interrupt failed for ` +
@@ -758,46 +821,49 @@ export class MessageQueue {
         });
       },
       (error) => {
-        if (timedOut || !resumeArmed) return;
-        resumeArmed = false;
-        opts.onResumeClear();
+        if (interrupt.timedOut) return;
         opts.logger.warn(
           `late mid-turn context-budget interrupt failure for session ${opts.sessionId}:`,
           error
         );
+        opts.onResumeClear();
       }
     );
   }
 
-  private async processLateInterruptReceipt(
-    opts: MidTurnBudgetInterruptOptions,
-    receipt: { still_queued: string[] } | undefined
-  ): Promise<void> {
-    if (this.standsDown(opts)) {
-      opts.onResumeClear();
-      return;
-    }
-    const removedPendingCompactions = this.removePendingInternalCompactions();
-    let resolveLateGate: (() => void) | undefined;
+  openLateReceiptWindow(_opts: MidTurnBudgetInterruptOptions): void {
+    this.lateWindowRemovedCompactions = this.removePendingInternalCompactions();
     const lateGate = new Promise<void>((resolve) => {
-      resolveLateGate = resolve;
+      this.resolveLateDeliveryGate = resolve;
     });
     this.setDeliveryGate(lateGate, { exclusive: true });
+  }
+
+  shouldEnqueueLateCompaction(): boolean {
+    return this.lateWindowRemovedCompactions > 0 || this.internalRestartFailed;
+  }
+
+  private async processLateInterruptReceipt(
+    opts: MidTurnBudgetInterruptOptions,
+    receipt: { still_queued: string[] }
+  ): Promise<void> {
     try {
-      await this.processInterruptSurvivorReceipt(opts, receipt, false);
-      if (
-        !this.standsDown(opts) &&
-        (removedPendingCompactions > 0 || this.internalRestartFailed) &&
-        !this.hasOutstandingInternalCompaction()
-      ) {
-        this.enqueueMidTurnCompaction(opts, 'mid-turn-late');
-      }
+      await runMidTurnBudgetPipeline({
+        opts,
+        queue: this as unknown as MidTurnQueueSeam,
+        phase: 'late-receipt',
+        lateReceipt: receipt,
+        checkEligibility: undefined,
+        refreshUsage: undefined,
+        decideCompaction: undefined,
+      });
     } finally {
-      resolveLateGate?.();
+      this.resolveLateDeliveryGate?.();
+      this.resolveLateDeliveryGate = undefined;
     }
   }
 
-  private async processInterruptSurvivorReceipt(
+  async processInterruptSurvivorReceipt(
     opts: MidTurnBudgetInterruptOptions,
     receipt: { still_queued: string[] } | undefined,
     allowRestart = true
@@ -923,17 +989,19 @@ export class MessageQueue {
     );
   }
 
-  private async finishSurvivorTeardownWithRestart(
-    opts: MidTurnBudgetInterruptOptions
-  ): Promise<void> {
+  async finishSurvivorTeardownWithRestart(opts: MidTurnBudgetInterruptOptions): Promise<void> {
     let resolveDeliveryGate: (() => void) | undefined;
     const deliveryGate = new Promise<void>((resolve) => {
       resolveDeliveryGate = resolve;
     });
     const beforeStart = () => {
+      if (this.userStoppedQueue()) {
+        throw new Error('user stop observed during the recovery restart; aborting the replacement');
+      }
       this.setDeliveryGate(deliveryGate, { exclusive: true });
       this.enqueueMidTurnCompaction(opts, 'mid-turn-restart');
     };
+    this.recoveryRestarted = true;
     this.internalRestartInFlight = true;
     this.restartStopEpoch = this.stopEpoch;
     const restart = opts
@@ -971,7 +1039,7 @@ export class MessageQueue {
     resolveDeliveryGate?.();
   }
 
-  private enqueueMidTurnCompaction(opts: MidTurnBudgetInterruptOptions, reason: string): void {
+  enqueueMidTurnCompaction(opts: MidTurnBudgetInterruptOptions, reason: string): void {
     if (this.hasOutstandingInternalCompaction()) return;
     opts.contextTracker.markCompactionTriggered(opts.budgetKey);
     this.clearNonCompactionSentSinceBoundary();
