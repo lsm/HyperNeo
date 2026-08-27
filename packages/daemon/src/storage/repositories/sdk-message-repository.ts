@@ -9,6 +9,7 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import { Logger } from '../../lib/logger.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { withBusyRetry } from '../busy-retry.ts';
 import {
   buildFtsQuery,
@@ -32,6 +33,8 @@ import {
   decideMessageAdmission,
   extractReplacementEdges,
   normalizeMessageAdmissionInput,
+  type MessageAdmissionRecord,
+  type MessageAdmissionVariant,
   type SDKMessageReplacementEdge,
   type SendStatus,
 } from './sdk-message-admission.ts';
@@ -243,6 +246,77 @@ export function buildMessageSearchAdmissionLookupSql(
 }
 
 type TimestampComparison = '>' | '>=';
+
+interface SaveSdkMessageInput {
+  sessionId: string;
+  message: SDKMessage;
+  variant: MessageAdmissionVariant;
+  sendStatus: SendStatus | null;
+  origin?: MessageOrigin;
+}
+
+interface SaveSdkMessageSnapshot extends SaveSdkMessageInput {
+  dbId: string;
+}
+
+interface SaveSdkMessageAdmitted extends SaveSdkMessageSnapshot {
+  admission: MessageAdmissionRecord;
+  badgeUpdate: BadgeUpdateInstruction;
+}
+
+interface SaveSdkMessageDeps {
+  saveSDKMessageWithAdmission(ctx: SaveSdkMessageAdmitted): { dbId: string };
+  notifySessionsChanged(sessionId: string): void;
+  deleteSupersededMessageSearchRows(sessionId: string, message: SDKMessage): void;
+  logger: Logger;
+}
+
+type SaveSdkMessageCtx = SaveSdkMessageInput & { deps: SaveSdkMessageDeps };
+type SaveSdkMessageSnapshotCtx = SaveSdkMessageSnapshot & SaveSdkMessageCtx;
+type SaveSdkMessageAdmittedCtx = SaveSdkMessageAdmitted & SaveSdkMessageCtx;
+
+function snapshotSdkMessage(ctx: SaveSdkMessageCtx): SaveSdkMessageSnapshotCtx {
+  return { ...ctx, dbId: generateUUID() };
+}
+
+function admitSdkMessage(ctx: SaveSdkMessageSnapshotCtx): SaveSdkMessageAdmittedCtx {
+  const admission = decideMessageAdmission(normalizeMessageAdmissionInput(ctx.message), {
+    variant: ctx.variant,
+    sendStatus: ctx.sendStatus,
+    origin: ctx.origin,
+  });
+  return {
+    ...ctx,
+    admission,
+    badgeUpdate: planAdmissionBadgeUpdate(admission),
+  };
+}
+
+function saveSdkMessageAtomic(ctx: SaveSdkMessageAdmittedCtx): SaveSdkMessageAdmittedCtx {
+  const { dbId } = ctx.deps.saveSDKMessageWithAdmission(ctx);
+  return { ...ctx, dbId };
+}
+
+function publishSdkMessage(ctx: SaveSdkMessageAdmittedCtx): SaveSdkMessageAdmittedCtx {
+  try {
+    if (ctx.badgeUpdate.kind === 'delta') {
+      ctx.deps.notifySessionsChanged(ctx.sessionId);
+    }
+    ctx.deps.deleteSupersededMessageSearchRows(ctx.sessionId, ctx.message);
+  } catch (error) {
+    ctx.deps.logger.error('[Database] Post-commit side effects failed for SDK message:', error);
+    ctx.deps.logger.error('[Database] Message type:', ctx.message.type, 'Session:', ctx.sessionId);
+  }
+  return ctx;
+}
+
+const runSaveSdkMessage = (superpipe({})('save-sdk-message') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(snapshotSdkMessage, 'ctx', 'ctx')
+  .pipe(admitSdkMessage, 'ctx', 'ctx')
+  .pipe(saveSdkMessageAtomic, 'ctx', 'ctx')
+  .pipe(publishSdkMessage, 'ctx', 'ctx')
+  .end('ctx') as (ctx: SaveSdkMessageCtx) => SaveSdkMessageAdmittedCtx;
 
 export class SDKMessageRepository {
   private logger = new Logger('Database');
@@ -517,72 +591,78 @@ export class SDKMessageRepository {
 
   saveSDKMessage(sessionId: string, message: SDKMessage, origin?: MessageOrigin): boolean {
     try {
-      const id = generateUUID();
-      const admission = decideMessageAdmission(normalizeMessageAdmissionInput(message), {
+      const deps: SaveSdkMessageDeps = {
+        saveSDKMessageWithAdmission: (ctx) => this.saveSDKMessageWithAdmission(ctx),
+        notifySessionsChanged: (sessionId) => this.notifySessionsChanged(sessionId),
+        deleteSupersededMessageSearchRows: (sessionId, message) =>
+          this.deleteSupersededMessageSearchRows(sessionId, message),
+        logger: this.logger,
+      };
+      runSaveSdkMessage({
+        sessionId,
+        message,
         variant: 'sdk',
         sendStatus: null,
         origin,
+        deps,
       });
-      const badgeUpdate = planAdmissionBadgeUpdate(admission);
-      const messageType = message.type;
-      const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
-      const timestamp = new Date().toISOString();
-      const taskId = this.resolveTaskIdForSession(sessionId);
-
-      const stmt = this.db.prepare(
-        `INSERT INTO sdk_messages (
-					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
-					is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
-					sdk_uuid, replacement_metadata_normalized
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
-      );
-
-      const saveTransaction = this.db.transaction(() => {
-        const conversationTurnIndex = this.resolveConversationTurnIndex(
-          taskId,
-          sessionId,
-          admission.isConversationAnchor
-        );
-        const values = [
-          id,
-          sessionId,
-          messageType,
-          messageSubtype,
-          JSON.stringify(message),
-          timestamp,
-          origin ?? null,
-          admission.isRenderable,
-          admission.isTerminal,
-          admission.parentToolUseId,
-          taskId,
-        ];
-        stmt.run(...values, conversationTurnIndex, admission.sdkUuid);
-        if (admission.isTerminal && this.tableHasColumn('sdk_messages', 'consumed_seq')) {
-          const resultSeq = this.nextConsumedSeq();
-          if (resultSeq !== null) {
-            this.db
-              .prepare('UPDATE sdk_messages SET consumed_seq = ? WHERE id = ?')
-              .run(resultSeq, id);
-          }
-        }
-        this.saveReplacementEdges(id, sessionId, taskId, admission.replacementEdges);
-        this.scheduleMessageSearchIndex(id);
-        this.applyBadgeUpdate(sessionId, badgeUpdate);
-      });
-      withBusyRetry(() => saveTransaction());
-      try {
-        if (badgeUpdate.kind === 'delta') this.notifySessionsChanged(sessionId);
-        this.deleteSupersededMessageSearchRows(sessionId, message);
-      } catch (error) {
-        this.logger.error('[Database] Post-commit side effects failed for SDK message:', error);
-        this.logger.error('[Database] Message type:', message.type, 'Session:', sessionId);
-      }
       return true;
     } catch (error) {
       this.logger.error('[Database] Failed to save SDK message:', error);
       this.logger.error('[Database] Message type:', message.type, 'Session:', sessionId);
       return false;
     }
+  }
+
+  private saveSDKMessageWithAdmission(ctx: SaveSdkMessageAdmitted): { dbId: string } {
+    const { sessionId, dbId, message, admission, badgeUpdate, origin } = ctx;
+    const messageType = message.type;
+    const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
+    const timestamp = new Date().toISOString();
+    const taskId = this.resolveTaskIdForSession(sessionId);
+
+    const stmt = this.db.prepare(
+      `INSERT INTO sdk_messages (
+					id, session_id, message_type, message_subtype, sdk_message, timestamp, origin,
+					is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index,
+					sdk_uuid, replacement_metadata_normalized
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+    );
+
+    const saveTransaction = this.db.transaction(() => {
+      const conversationTurnIndex = this.resolveConversationTurnIndex(
+        taskId,
+        sessionId,
+        admission.isConversationAnchor
+      );
+      const values = [
+        dbId,
+        sessionId,
+        messageType,
+        messageSubtype,
+        JSON.stringify(message),
+        timestamp,
+        origin ?? null,
+        admission.isRenderable,
+        admission.isTerminal,
+        admission.parentToolUseId,
+        taskId,
+      ];
+      stmt.run(...values, conversationTurnIndex, admission.sdkUuid);
+      if (admission.isTerminal && this.tableHasColumn('sdk_messages', 'consumed_seq')) {
+        const resultSeq = this.nextConsumedSeq();
+        if (resultSeq !== null) {
+          this.db
+            .prepare('UPDATE sdk_messages SET consumed_seq = ? WHERE id = ?')
+            .run(resultSeq, dbId);
+        }
+      }
+      this.saveReplacementEdges(dbId, sessionId, taskId, admission.replacementEdges);
+      this.scheduleMessageSearchIndex(dbId);
+      this.applyBadgeUpdate(sessionId, badgeUpdate);
+    });
+    withBusyRetry(() => saveTransaction());
+    return { dbId };
   }
 
   getSDKMessages(
