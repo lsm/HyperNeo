@@ -216,11 +216,12 @@ describe('SpaceManager', () => {
     });
 
     it('rejects a secondary that duplicates the primary path', async () => {
+      const primaryRepo = gitRepo('primary');
       await expect(
         manager.createSpace({
-          workspacePath: tmpDir,
+          workspacePath: primaryRepo,
           name: 'Dup Primary',
-          additionalWorkspaces: [{ path: tmpDir }],
+          additionalWorkspaces: [{ path: primaryRepo }],
         })
       ).rejects.toThrow('already registered to this space');
       expect(await manager.listSpaces()).toHaveLength(0);
