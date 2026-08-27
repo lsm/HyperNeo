@@ -406,6 +406,15 @@ function buildMcpTargets(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
   const seen = new Set<string>();
   const targets: McpImportTarget[] = [];
 
+  const userBaseDir =
+    process.env.TEST_USER_SETTINGS_DIR || join(ctx.homeDirOverride ?? homedir(), '.claude');
+  const userMcp = join(userBaseDir, '.mcp.json');
+
+  if (ctx.includeUserConfig !== false) {
+    seen.add(userMcp);
+    targets.push({ path: userMcp, label: '' });
+  }
+
   for (const source of ctx.sources) {
     if (!source.path) continue;
     try {
@@ -413,18 +422,9 @@ function buildMcpTargets(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
       const targetPath = join(abs, '.mcp.json');
       if (seen.has(targetPath)) continue;
       seen.add(targetPath);
-      targets.push({ path: targetPath, label: source.label ?? '' });
+      const label = targetPath === userMcp ? '' : (source.label ?? '');
+      targets.push({ path: targetPath, label });
     } catch {}
-  }
-
-  if (ctx.includeUserConfig !== false) {
-    const userBaseDir =
-      process.env.TEST_USER_SETTINGS_DIR || join(ctx.homeDirOverride ?? homedir(), '.claude');
-    const userMcp = join(userBaseDir, '.mcp.json');
-    if (!seen.has(userMcp)) {
-      seen.add(userMcp);
-      targets.push({ path: userMcp, label: '' });
-    }
   }
 
   targets.sort((a, b) => a.path.localeCompare(b.path));
@@ -486,6 +486,32 @@ function findBestExistingMatch(
       best = row;
       bestRank = rank;
       if (rank === 0) break;
+    }
+  }
+  return best;
+}
+
+function findLegacyMatch(
+  rawName: string,
+  existingByName: Map<string, AppMcpServer>
+): AppMcpServer | undefined {
+  const exact = existingByName.get(rawName);
+  if (exact) return exact;
+
+  let best: AppMcpServer | undefined;
+  let bestN = Infinity;
+  const numericSuffixPattern = /^:([2-9]|[1-9]\d+)$/;
+
+  for (const [name, row] of existingByName) {
+    if (name === rawName) continue;
+    if (!name.startsWith(`${rawName}:`)) continue;
+    const suffix = name.slice(rawName.length);
+    const match = numericSuffixPattern.exec(suffix);
+    if (!match) continue;
+    const n = parseInt(match[1], 10);
+    if (n < bestN) {
+      bestN = n;
+      best = row;
     }
   }
   return best;
@@ -583,6 +609,13 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
             serverName,
             reserved: targetReserved,
           });
+      const req = ctx.service.buildCreateRequest(resolvedName, rawEntry, target.path);
+      if (!req) {
+        ctx.log.warn(
+          `[mcp-import] ${target.path}: skipping "${serverName}" — missing required fields`
+        );
+        continue;
+      }
       usedExistingNames.add(resolvedName);
       targetReserved.add(resolvedName);
       ctx.reserved?.add(resolvedName);
@@ -627,7 +660,11 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
         declaredNames.add(resolvedName);
 
         let existing = existingByName.get(resolvedName);
-        let legacy = rawName !== resolvedName ? existingByName.get(rawName) : undefined;
+        let legacy =
+          rawName !== resolvedName ? findLegacyMatch(rawName, existingByName) : undefined;
+        if (legacy && existing && legacy.id === existing.id) {
+          legacy = undefined;
+        }
         if (!existing) {
           existing = legacy;
           legacy = undefined;

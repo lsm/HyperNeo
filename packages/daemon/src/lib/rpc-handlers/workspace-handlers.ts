@@ -1,4 +1,3 @@
-import { join } from 'path';
 import type { MessageHub } from '@hyperneo/shared';
 import type { McpImportService } from '../mcp/index.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -35,7 +34,7 @@ export function setupWorkspaceHandlers(
 
     if (mcpImportService) {
       try {
-        const result = mcpImportService.refreshFromFile(join(workspacePath, '.mcp.json'));
+        const result = mcpImportService.refreshAllForPath(workspacePath);
         if (internalEventBus && (result.added > 0 || result.updated > 0 || result.removed > 0)) {
           internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
         }

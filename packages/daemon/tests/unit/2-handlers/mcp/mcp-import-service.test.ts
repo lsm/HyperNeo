@@ -637,5 +637,98 @@ describe('McpImportService', () => {
       expect(repo.getByName('migrate:fetch')!.enabled).toBe(true);
       expect(repo.getByName('fetch')).toBeNull();
     });
+
+    test('migrates suffixed legacy bare-name imports to the namespaced name on first sweep', () => {
+      const spaceRepo = new SpaceRepository(bunDb);
+      const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
+
+      const ws = mkdtempSync(join(tmpRoot, 'ws-suffix-'));
+      const file = join(ws, '.mcp.json');
+      writeMcpJson(file, { mcpServers: { fetch: { command: 'x' } } });
+
+      repo.create({
+        name: 'fetch',
+        sourceType: 'stdio',
+        command: 'other',
+        source: 'user',
+      });
+
+      service.refreshAll([ws]);
+      const legacy = repo.getByName('fetch:2');
+      expect(legacy).not.toBeNull();
+      expect(legacy!.sourcePath).toBe(file);
+      repo.update(legacy!.id, { enabled: true });
+
+      const space = spaceRepo.createSpace({
+        workspacePath: ws,
+        name: 'Migrate Suffix',
+        slug: 'migrate-suffix',
+      });
+      workspaceRepo.create({
+        spaceId: space.id,
+        path: ws,
+        label: 'migrate',
+        isPrimary: true,
+      });
+
+      const { results } = service.refreshAll();
+      const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
+      expect(byPath[file].updated).toBe(1);
+      expect(repo.getByName('migrate:fetch')).not.toBeNull();
+      expect(repo.getByName('migrate:fetch')!.id).toBe(legacy!.id);
+      expect(repo.getByName('migrate:fetch')!.enabled).toBe(true);
+      expect(repo.getByName('fetch:2')).toBeNull();
+    });
+
+    test('skips invalid entries before reserving the resolved name', () => {
+      const wsA = join(tmpRoot, 'a');
+      const wsB = join(tmpRoot, 'b');
+      mkdirSync(wsA, { recursive: true });
+      mkdirSync(wsB, { recursive: true });
+
+      const fileA = join(wsA, '.mcp.json');
+      const fileB = join(wsB, '.mcp.json');
+      writeMcpJson(fileA, {
+        mcpServers: {
+          bar: { command: 'a' },
+          foo: { type: 'http' },
+        },
+      });
+      writeMcpJson(fileB, {
+        mcpServers: {
+          foo: { command: 'b' },
+        },
+      });
+
+      service.refreshAll([
+        { path: wsA, label: 'repo' },
+        { path: wsB, label: 'repo' },
+      ]);
+
+      expect(repo.getByName('repo:bar')).not.toBeNull();
+      expect(repo.getByName('repo:foo')).not.toBeNull();
+      expect(repo.getByName('repo:foo:2')).toBeNull();
+      expect(repo.getByName('repo:foo')!.sourcePath).toBe(fileB);
+    });
+
+    test('keeps the user config unlabeled when it is also a Space workspace', () => {
+      const spaceRepo = new SpaceRepository(bunDb);
+
+      spaceRepo.createSpace({
+        workspacePath: tmpRoot,
+        name: 'User Workspace',
+        slug: 'user-workspace',
+      });
+      writeMcpJson(join(tmpRoot, '.mcp.json'), {
+        mcpServers: { global: { command: 'g' } },
+      });
+
+      const { results } = service.refreshAll();
+      const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
+
+      expect(byPath[join(tmpRoot, '.mcp.json')].status).toBe('ok');
+      expect(repo.getByName('global')).not.toBeNull();
+      expect(repo.listBySourcePath(join(tmpRoot, '.mcp.json'))).toHaveLength(1);
+    });
   });
 });

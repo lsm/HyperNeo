@@ -7,6 +7,11 @@ import { createTables } from '../../../../src/storage/schema';
 import { WorkspaceHistoryRepository } from '../../../../src/storage/repositories/workspace-history-repository';
 import { setupWorkspaceHandlers } from '../../../../src/lib/rpc-handlers/workspace-handlers';
 import type { MessageHub } from '@hyperneo/shared';
+import type { McpImportService } from '../../../../src/lib/mcp/mcp-import-service';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 
 type RequestHandler = (data: unknown) => unknown;
 
@@ -193,6 +198,29 @@ describe('workspace handlers', () => {
       await expect(handler({ path: filePath })).rejects.toThrow(
         'Workspace path is not a directory on the daemon machine'
       );
+    });
+
+    it('uses the namespace-aware MCP refresh path when a service is provided', async () => {
+      const workspace = makeWorkspace('with-mcp-service');
+      const refreshAllForPath = mock(() => ({
+        added: 1,
+        updated: 0,
+        removed: 0,
+        status: 'ok',
+        sourcePath: join(workspace, '.mcp.json'),
+      }));
+      const publishAsync = mock(() => Promise.resolve());
+      const mcpImportService = { refreshAllForPath } as unknown as McpImportService;
+      const bus = { publishAsync } as unknown as InternalEventBus<DaemonInternalEventMap>;
+
+      const { hub, handlers: localHandlers } = createMockMessageHub();
+      setupWorkspaceHandlers(hub, repo, mcpImportService, bus);
+
+      const handler = localHandlers.get('workspace.add')!;
+      await handler({ path: workspace });
+
+      expect(refreshAllForPath).toHaveBeenCalledWith(workspace);
+      expect(publishAsync).toHaveBeenCalledWith('mcp.registry.changed', { sessionId: 'global' });
     });
   });
 
