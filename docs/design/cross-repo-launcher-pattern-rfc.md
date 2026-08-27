@@ -201,7 +201,14 @@ The launcher contract extends the owner-review contract with:
   the tracked gated task, each with `cancel_workflow_run: true` when workflow-backed
   (a bare `cancel_task` terminalizes the task record but leaves the run's agents
   executing; the gated shapes never appear in `activeTaskId`, so cancelling only the
-  goal task misses them). Dispose **all** resulting pending notifications — the
+  goal task misses them). Cancellation is the settlement operation, not a step after
+  it: if B's active task reached `done` during settlement — or the forced cancel was
+  itself the settlement — a subsequent `cancel_task` on it fails (`done → cancelled`
+  and `cancelled → cancelled` are both invalid), which would abort the sequence before
+  the tracked gated task and its run are stopped, leaving stale-contract work mutating
+  repo B; a task settlement already terminalized gets only its run cancelled (the
+  idempotent run-cancellation surface) and never a second task-record cancellation.
+  Dispose **all** resulting pending notifications — the
   cancellations' (goal-linked tasks that had started yield one each) — consolidating
   them into **one** update-bearing review: two sequential update-bearing claims make
   each other stale, so inspect all results, apply the combined update once, and bare-
@@ -632,7 +639,11 @@ ADR 0004 applies to new combinators.
    goal explicitly cannot be reactivated — so an unrelated actor can permanently
    terminate the dependent objective while its gated task is pending or running;
    launcher/coordinator authority applies to every lifecycle transition on a pattern
-   goal while any hold or tracked gate is live, **and
+   goal throughout the live launcher objective, not only while a hold or tracked gate
+   is live — the trigger rule's own scope: an ordinary leading-work phase (active
+   task, no hold or gate recorded) is exactly when a membership-only `completed`/
+   `archived` write terminates a goal whose task keeps running, and archiving is
+   irreversible, breaking the launcher's ownership of the objective, **and
    goal-owner mutation routes join the authority machinery**: `assign_agent_to_goal`
    and the `spaceGoal.assignOwner` RPC both reach
    `SpaceLongHorizonAgentRepository.assignGoal`, which swaps the primary owner
@@ -668,7 +679,14 @@ ADR 0004 applies to new combinators.
    them when the prerequisite is later archived, so a gate A's success released would
    keep running although the dependency is no longer exactly `done`; archiving a
    consumed prerequisite therefore stops its started dependents and wakes the launcher
-   like any other revocation, and
+   like any other revocation; **success-producing transitions on tracked prerequisites
+   are guarded from the start** — while A is still `open`, `blocked`, or running,
+   `update_task(status: 'done')` is a valid transition behind a membership-only
+   check, and that forged success immediately releases the pointerless B gate (gated
+   shapes ignore B's paused status, so B can publish before the launcher reviews A),
+   so at the shared task-transition seam only the launcher/coordinator and the
+   runtime's legitimate completion path may write a success-producing transition on a
+   tracked prerequisite, and
    **consumption enforcement on every reopening path** — `update_task(status:
    'in_progress')` permits `done → in_progress` just as `retry_task` does, so a
    consumed standalone/Forge gate is guarded in the shared task-transition logic
