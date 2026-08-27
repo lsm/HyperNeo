@@ -152,6 +152,40 @@ describe('routeFeedSteerOutcome', () => {
       },
     },
     {
+      label: 'ack_timeout parks via requeueParked',
+      feed: { outcome: 'ack_timeout' },
+      parkCount: 0,
+      waitingForInput: false,
+      expected: {
+        mutation: 'requeueParked',
+        retryAt: PARK_AT,
+        settleSkipped: false,
+        result: { parked: 'steer_ack_timeout', retryAt: PARK_AT },
+      },
+    },
+    {
+      label: 'ack_timeout one under the steer budget still parks',
+      feed: { outcome: 'ack_timeout' },
+      parkCount: MAX_STEER_PARKS - 1,
+      waitingForInput: false,
+      expected: {
+        mutation: 'requeueParked',
+        retryAt: PARK_AT,
+        settleSkipped: false,
+        result: { parked: 'steer_ack_timeout', retryAt: PARK_AT },
+      },
+    },
+    {
+      label: 'ack_timeout at the steer budget dead-letters',
+      feed: { outcome: 'ack_timeout' },
+      parkCount: MAX_STEER_PARKS,
+      waitingForInput: false,
+      expected: {
+        deadLetter:
+          'Steer acknowledgment timed out past its budget — query never consumed the steer',
+      },
+    },
+    {
       label: 'promote',
       feed: { outcome: 'promote' },
       parkCount: 0,

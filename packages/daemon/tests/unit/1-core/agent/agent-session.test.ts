@@ -6566,6 +6566,165 @@ describe('AgentSession', () => {
         db.close();
       }
     });
+
+    it('releases the worker slot and requeues when a hung query never acknowledges an unclaimed steer', async () => {
+      const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '25';
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        const repo = db.getSDKMessageRepo();
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        await agentSession.stateManager.setProcessing('active-msg-uuid');
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const queue = agentSession.messageQueue;
+        const steerPromise = agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'ack_timeout' });
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
+        expect(queue.hasPendingOrInFlight(steerUuid)).toBe(false);
+        expect(queue.size()).toBe(0);
+      } finally {
+        if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+        else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
+        db.close();
+      }
+    });
+
+    it('releases the worker slot and requeues when a hung query never acknowledges a yielded steer', async () => {
+      const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '25';
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        const repo = db.getSDKMessageRepo();
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        await agentSession.stateManager.setProcessing('active-msg-uuid');
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const queue = agentSession.messageQueue;
+        const steerPromise = agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        queue.start();
+        const generator = queue.messageGenerator(sessionId, { suppressPreYieldCallback: true });
+        await generator.next();
+        expect(queue.hasYielded(steerUuid)).toBe(true);
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'ack_timeout' });
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
+        expect(queue.hasYielded(steerUuid)).toBe(false);
+        expect(queue.size()).toBe(0);
+      } finally {
+        if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+        else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
+        db.close();
+      }
+    });
+
+    it('an acknowledgment arriving before the timeout still consumes the steer', async () => {
+      const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '10000';
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        const repo = db.getSDKMessageRepo();
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        await agentSession.stateManager.setProcessing('active-msg-uuid');
+        agentSession.queryPromise = new Promise<void>(() => {});
+        const queue = agentSession.messageQueue;
+        const steerPromise = agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        queue.remove(steerUuid);
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'consumed' });
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('consumed');
+      } finally {
+        if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+        else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
+        db.close();
+      }
+    });
   });
 
   describe('delivery continuation hardening (A3a)', () => {

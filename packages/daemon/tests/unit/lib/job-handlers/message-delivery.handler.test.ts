@@ -363,6 +363,12 @@ describe('createMessageDeliveryHandler', () => {
         park: 'requeueParked',
       },
       {
+        label: 'ack_timeout',
+        feed: { outcome: 'ack_timeout' },
+        expected: { parked: 'steer_ack_timeout' },
+        park: 'requeueParked',
+      },
+      {
         label: 'promote',
         feed: { outcome: 'promote' },
         expected: { outcome: 'superseded', promoted: 'turn' },
@@ -470,6 +476,17 @@ describe('createMessageDeliveryHandler', () => {
       expect(jobQueue.requeueParked).not.toHaveBeenCalled();
     });
 
+    it('ack_timeout past MAX_STEER_PARKS dead-letters without requeueing', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({}, STEER_PAYLOAD);
+      session.feedResult = { outcome: 'ack_timeout' };
+      jobQueue.getParkCount.mockImplementation(() => MAX_STEER_PARKS);
+      await expect(handler(job, {})).rejects.toThrow(
+        'Steer acknowledgment timed out past its budget'
+      );
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+      expect(jobQueue.requeue).not.toHaveBeenCalled();
+    });
+
     it('a submitted steer preflight past MAX_ACP_STEER_PARKS dead-letters', async () => {
       const { handler, jobQueue, getMessageContent, job } = makeHarness({}, STEER_PAYLOAD);
       getMessageContent.mockImplementation(() => ({ content: 'steer', sendStatus: 'submitted' }));
@@ -506,6 +523,14 @@ describe('createMessageDeliveryHandler', () => {
       awaiting.session.feedResult = { outcome: 'awaiting_acceptance' };
       await awaiting.handler(awaiting.job, {});
       expect(awaiting.jobQueue.getParkCount).toHaveBeenCalledTimes(1);
+    });
+
+    it('ack_timeout reads the park count exactly once', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({}, STEER_PAYLOAD);
+      session.feedResult = { outcome: 'ack_timeout' };
+      const result = await handler(job, {});
+      expect(result).toMatchObject({ parked: 'steer_ack_timeout' });
+      expect(jobQueue.getParkCount).toHaveBeenCalledTimes(1);
     });
   });
 

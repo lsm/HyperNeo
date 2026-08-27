@@ -241,6 +241,12 @@ export const MANUAL_RECOVERY_PARK_MS = 5 * 60_000;
 
 export const MAX_STEER_PARKS = 60;
 
+export const STEER_ACK_TIMEOUT_MS = 30_000;
+
+export function steerAckTimeoutMs(): number {
+  return Number(process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS) || STEER_ACK_TIMEOUT_MS;
+}
+
 export type DriveTurnOutcome =
   | { outcome: 'completed' }
   | { outcome: 'blocked'; retryAt: number }
@@ -253,7 +259,8 @@ export type FeedSteerOutcome =
   | { outcome: 'awaiting_acceptance' }
   | { outcome: 'promote' }
   | { outcome: 'park' }
-  | { outcome: 'aborted' };
+  | { outcome: 'aborted' }
+  | { outcome: 'ack_timeout' };
 
 export interface MessageDeliveryAttemptObserver {
   reportStage(

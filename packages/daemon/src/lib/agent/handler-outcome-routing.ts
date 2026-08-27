@@ -18,7 +18,8 @@ export type HandlerJobResult =
         | 'limit_recovery'
         | 'turn_blocked'
         | 'turn_blocked_gate_open'
-        | 'acp_awaiting_acceptance';
+        | 'acp_awaiting_acceptance'
+        | 'steer_ack_timeout';
       retryAt: number;
     };
 
@@ -104,6 +105,21 @@ export function routeFeedSteerOutcome(
       retryAt,
       settleSkipped: false,
       result: { parked: 'acp_awaiting_acceptance', retryAt },
+    };
+  }
+  if (result.outcome === 'ack_timeout') {
+    if (args.parkCount >= MAX_STEER_PARKS) {
+      return {
+        deadLetter:
+          'Steer acknowledgment timed out past its budget — query never consumed the steer',
+      };
+    }
+    const retryAt = args.now + MESSAGE_DELIVERY_PARK_MS;
+    return {
+      mutation: 'requeueParked',
+      retryAt,
+      settleSkipped: false,
+      result: { parked: 'steer_ack_timeout', retryAt },
     };
   }
   if (result.outcome === 'promote') {
