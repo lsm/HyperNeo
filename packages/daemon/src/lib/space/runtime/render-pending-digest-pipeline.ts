@@ -267,14 +267,18 @@ export function reconcileDurable(ctx: RenderPendingDigestCtx): RenderPendingDige
       for (const eventId of ids) consumedDurableEventIds.add(eventId);
       continue;
     }
+    if (row.sendStatus === 'enqueued' || row.sendStatus === 'submitted') {
+      for (const eventId of ids) digestMembershipEventIds.add(eventId);
+      continue;
+    }
     digestMembershipRows.push({ message: row, eventIds: ids });
-    for (const eventId of ids) digestMembershipEventIds.add(eventId);
   }
   const candidateRows = (ctx.scopedRows ?? []).slice(0, TURN_END_DIGEST_SCAN_ROW_CAP);
   const pendingEventIdSet = new Set(
     candidateRows
       .filter((row) => ctx.deps.getEventById(row.eventId) !== null)
       .map((row) => row.eventId)
+      .filter((id) => !digestMembershipEventIds.has(id))
   );
   const replayMatch = digestMembershipRows.find(({ eventIds }) =>
     [...pendingEventIdSet].every((id) => eventIds.has(id))
@@ -320,7 +324,7 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
       continue;
     }
     if (ctx.legacyDurableEventIds?.has(row.eventId)) continue;
-    if (!ctx.replayable && ctx.digestMembershipEventIds?.has(row.eventId)) continue;
+    if (ctx.digestMembershipEventIds?.has(row.eventId)) continue;
     const immediate = ctx.deps.getDeliveryContent(
       ctx.sessionId,
       buildImmediateEventMessageUuid(row.eventId, row.deliveryKey)
@@ -438,16 +442,19 @@ export async function persistAndAppend(
     return { ...ctx, digestDbId: dbId, outcome: rechecked.outcome };
   }
   const target = ctx.target!;
+  const renderedEventIds = new Set((ctx.essences ?? []).map((essence) => essence.eventId));
   const survivingRows: ExternalEventDeliveryRecord[] = [];
+  let droppedRendered = false;
   for (const row of ctx.pendingRows ?? []) {
     const reason = rowTerminalReason(ctx, target, row);
     if (reason) {
       ctx.deps.failDeliveryTerminal(target, row.eventId, row.deliveryKey, reason);
+      if (renderedEventIds.has(row.eventId)) droppedRendered = true;
       continue;
     }
     survivingRows.push(row);
   }
-  if (survivingRows.length === 0) {
+  if (droppedRendered || survivingRows.length === 0) {
     return { ...ctx, digestDbId: dbId, outcome: { action: 'skip', reason: 'no_claimable_events' } };
   }
   let accepted: boolean;
@@ -467,7 +474,6 @@ export async function persistAndAppend(
       outcome: { action: 'held', reason: 'mailbox_rejected', uuid, dbId },
     };
   }
-  const renderedEventIds = new Set((ctx.essences ?? []).map((essence) => essence.eventId));
   const marks = survivingRows
     .filter((row) => renderedEventIds.has(row.eventId))
     .map((row) => ({ eventId: row.eventId, deliveryKey: row.deliveryKey }));
