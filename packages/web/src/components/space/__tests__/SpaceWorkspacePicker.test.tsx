@@ -178,6 +178,44 @@ describe('SpaceWorkspacePicker', () => {
     expect(mockCreate).toHaveBeenCalledWith('/projects/main');
   });
 
+  it('cancels a pending choice when unmounted before the registry settles', async () => {
+    let resolveList: (list: SpaceWorkspace[]) => void = () => {};
+    const listPromise = new Promise<SpaceWorkspace[]>((resolve) => {
+      resolveList = resolve;
+    });
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method: string) =>
+      method === 'space.workspace.list' ? listPromise : Promise.resolve({})
+    );
+
+    const { getByTestId, unmount } = render(
+      <Probe spaceId="space-1" fallbackPath="/projects/main" />
+    );
+    fireEvent.click(getByTestId('probe-create'));
+    unmount();
+    resolveList([makeWorkspace()]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('refetches the registry when starting a choice, picking up mutations from other clients', async () => {
+    stubRegistry(() => [makeWorkspace()]);
+    const { getByTestId } = render(<Probe spaceId="space-1" fallbackPath="/projects/main" />);
+    fireEvent.click(getByTestId('probe-create'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+    });
+    expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
+    mockCreate.mockClear();
+
+    stubRegistry(() => [makeWorkspace(), SECONDARY]);
+    fireEvent.click(getByTestId('probe-create'));
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
   it('resets the cached options and picker state when the space changes', async () => {
     stubRegistry((params) => (params.spaceId === 'space-1' ? [makeWorkspace(), SECONDARY] : []));
     const { getByTestId, rerender } = render(
