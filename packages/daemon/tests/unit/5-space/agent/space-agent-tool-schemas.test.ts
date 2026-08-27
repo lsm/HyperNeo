@@ -1,10 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import type { z } from 'zod';
 import {
+  EXTERNAL_EVENT_TOOL_SCHEMAS,
+  INACTIVITY_TOOL_SCHEMAS,
+  SCHEDULED_TOOL_SCHEMAS,
   SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS,
   SPACE_AGENT_TOOL_SCHEMAS,
   SPACE_FORGE_TOOL_SCHEMAS,
   SPACE_GOAL_TOOL_SCHEMAS,
+  type ExternalEventToolName,
+  type InactivityToolName,
+  type ScheduledToolName,
   type SpaceAgentLifecycleToolName,
   type SpaceAgentToolName,
   type SpaceForgeToolName,
@@ -1217,3 +1223,245 @@ runFamilyPins(
   SPACE_FORGE_TOOL_SCHEMAS as unknown as Record<string, z.ZodType>,
   FORGE_PINS
 );
+
+const SCHEDULED_TOOL_NAMES: ScheduledToolName[] = [
+  'create_scheduled_task',
+  'list_scheduled_tasks',
+  'get_scheduled_task',
+  'pause_scheduled_task',
+  'resume_scheduled_task',
+  'delete_scheduled_task',
+];
+
+const EXTERNAL_EVENT_TOOL_NAMES: ExternalEventToolName[] = [
+  'subscribe_agent_event',
+  'unsubscribe_agent_event',
+  'list_agent_event_subscriptions',
+  'get_external_event',
+];
+
+const INACTIVITY_TOOL_NAMES: InactivityToolName[] = [
+  'inactivity_config_get',
+  'inactivity_config_set_enabled',
+  'inactivity_config_set',
+  'inactivity_run_now',
+];
+
+interface ConditionalSafeParsePin {
+  tool: string;
+  schema: z.ZodType;
+  accepts: Array<{ input: unknown; data?: Record<string, unknown> }>;
+  rejects: unknown[];
+}
+
+const CONDITIONAL_SAFE_PARSE_PINS: ConditionalSafeParsePin[] = [
+  {
+    tool: 'create_scheduled_task',
+    schema: SCHEDULED_TOOL_SCHEMAS.create_scheduled_task,
+    accepts: [
+      {
+        input: {
+          title: 'T',
+          description: 'D',
+          trigger_type: 'at',
+          run_at: 1,
+        },
+        data: {
+          title: 'T',
+          description: 'D',
+          trigger_type: 'at',
+          run_at: 1,
+        },
+      },
+      {
+        input: {
+          title: 'T',
+          description: 'D',
+          trigger_type: 'cron',
+          cron_expression: '0 9 * * 1',
+        },
+        data: {
+          title: 'T',
+          description: 'D',
+          trigger_type: 'cron',
+          cron_expression: '0 9 * * 1',
+        },
+      },
+    ],
+    rejects: [{}, { title: 'T' }],
+  },
+  {
+    tool: 'list_scheduled_tasks',
+    schema: SCHEDULED_TOOL_SCHEMAS.list_scheduled_tasks,
+    accepts: [
+      { input: {}, data: {} },
+      { input: { status: 'active' }, data: { status: 'active' } },
+    ],
+    rejects: [{ status: 'invalid' }],
+  },
+  {
+    tool: 'get_scheduled_task',
+    schema: SCHEDULED_TOOL_SCHEMAS.get_scheduled_task,
+    accepts: [{ input: { schedule_id: 's1' }, data: { schedule_id: 's1' } }],
+    rejects: [{}],
+  },
+  {
+    tool: 'pause_scheduled_task',
+    schema: SCHEDULED_TOOL_SCHEMAS.pause_scheduled_task,
+    accepts: [{ input: { schedule_id: 's1' }, data: { schedule_id: 's1' } }],
+    rejects: [{}],
+  },
+  {
+    tool: 'resume_scheduled_task',
+    schema: SCHEDULED_TOOL_SCHEMAS.resume_scheduled_task,
+    accepts: [{ input: { schedule_id: 's1' }, data: { schedule_id: 's1' } }],
+    rejects: [{}],
+  },
+  {
+    tool: 'delete_scheduled_task',
+    schema: SCHEDULED_TOOL_SCHEMAS.delete_scheduled_task,
+    accepts: [{ input: { schedule_id: 's1' }, data: { schedule_id: 's1' } }],
+    rejects: [{}],
+  },
+  {
+    tool: 'subscribe_agent_event',
+    schema: EXTERNAL_EVENT_TOOL_SCHEMAS.subscribe_agent_event,
+    accepts: [
+      {
+        input: { agent_id: 'a1', topic_pattern: 'github/*' },
+        data: { agent_id: 'a1', topic_pattern: 'github/*' },
+      },
+      {
+        input: { agent_id: 'a1', topic_pattern: 'github/*', label: 'l1' },
+        data: { agent_id: 'a1', topic_pattern: 'github/*', label: 'l1' },
+      },
+    ],
+    rejects: [{}, { agent_id: 'a1' }],
+  },
+  {
+    tool: 'unsubscribe_agent_event',
+    schema: EXTERNAL_EVENT_TOOL_SCHEMAS.unsubscribe_agent_event,
+    accepts: [
+      {
+        input: { agent_id: 'a1', topic_pattern: 'github/*' },
+        data: { agent_id: 'a1', topic_pattern: 'github/*' },
+      },
+    ],
+    rejects: [{}],
+  },
+  {
+    tool: 'list_agent_event_subscriptions',
+    schema: EXTERNAL_EVENT_TOOL_SCHEMAS.list_agent_event_subscriptions,
+    accepts: [{ input: { agent_id: 'a1' }, data: { agent_id: 'a1' } }],
+    rejects: [{}],
+  },
+  {
+    tool: 'get_external_event',
+    schema: EXTERNAL_EVENT_TOOL_SCHEMAS.get_external_event,
+    accepts: [{ input: { eventId: 'e1' }, data: { eventId: 'e1' } }],
+    rejects: [{}, { eventId: '' }],
+  },
+  {
+    tool: 'inactivity_config_get',
+    schema: INACTIVITY_TOOL_SCHEMAS.inactivity_config_get,
+    accepts: [{ input: {}, data: {} }],
+    rejects: [1],
+  },
+  {
+    tool: 'inactivity_config_set_enabled',
+    schema: INACTIVITY_TOOL_SCHEMAS.inactivity_config_set_enabled,
+    accepts: [{ input: { enabled: true }, data: { enabled: true } }],
+    rejects: [{}, { enabled: 'yes' }],
+  },
+  {
+    tool: 'inactivity_config_set',
+    schema: INACTIVITY_TOOL_SCHEMAS.inactivity_config_set,
+    accepts: [
+      { input: {}, data: {} },
+      { input: { threshold_ms: 1000 }, data: { threshold_ms: 1000 } },
+      { input: { prompt: 'ping' }, data: { prompt: 'ping' } },
+      {
+        input: { threshold_ms: 2000, prompt: 'poke' },
+        data: { threshold_ms: 2000, prompt: 'poke' },
+      },
+    ],
+    rejects: [{ threshold_ms: -1 }, { threshold_ms: 1.5 }],
+  },
+  {
+    tool: 'inactivity_run_now',
+    schema: INACTIVITY_TOOL_SCHEMAS.inactivity_run_now,
+    accepts: [{ input: {}, data: {} }],
+    rejects: [1],
+  },
+];
+
+describe('SCHEDULED_TOOL_SCHEMAS', () => {
+  test('contains exactly the scheduled tools', () => {
+    expect(Object.keys(SCHEDULED_TOOL_SCHEMAS).sort()).toEqual([...SCHEDULED_TOOL_NAMES].sort());
+    expect(Object.keys(SCHEDULED_TOOL_SCHEMAS)).toHaveLength(6);
+  });
+
+  test('each schema value is a zod object schema with safeParse and a shape', () => {
+    for (const schema of Object.values(SCHEDULED_TOOL_SCHEMAS)) {
+      expect(typeof schema.safeParse).toBe('function');
+      expect(schema.shape).toBeDefined();
+    }
+  });
+});
+
+describe('EXTERNAL_EVENT_TOOL_SCHEMAS', () => {
+  test('contains exactly the external-event tools', () => {
+    expect(Object.keys(EXTERNAL_EVENT_TOOL_SCHEMAS).sort()).toEqual(
+      [...EXTERNAL_EVENT_TOOL_NAMES].sort()
+    );
+    expect(Object.keys(EXTERNAL_EVENT_TOOL_SCHEMAS)).toHaveLength(4);
+  });
+
+  test('each schema value is a zod object schema with safeParse and a shape', () => {
+    for (const schema of Object.values(EXTERNAL_EVENT_TOOL_SCHEMAS)) {
+      expect(typeof schema.safeParse).toBe('function');
+      expect(schema.shape).toBeDefined();
+    }
+  });
+});
+
+describe('INACTIVITY_TOOL_SCHEMAS', () => {
+  test('contains exactly the inactivity tools', () => {
+    expect(Object.keys(INACTIVITY_TOOL_SCHEMAS).sort()).toEqual([...INACTIVITY_TOOL_NAMES].sort());
+    expect(Object.keys(INACTIVITY_TOOL_SCHEMAS)).toHaveLength(4);
+  });
+
+  test('each schema value is a zod object schema with safeParse and a shape', () => {
+    for (const schema of Object.values(INACTIVITY_TOOL_SCHEMAS)) {
+      expect(typeof schema.safeParse).toBe('function');
+      expect(schema.shape).toBeDefined();
+    }
+  });
+});
+
+describe('conditional tool schema safeParse pins', () => {
+  test('pins cover every conditional tool', () => {
+    expect(CONDITIONAL_SAFE_PARSE_PINS.map((pin) => pin.tool).sort()).toEqual(
+      [...SCHEDULED_TOOL_NAMES, ...EXTERNAL_EVENT_TOOL_NAMES, ...INACTIVITY_TOOL_NAMES].sort()
+    );
+  });
+
+  for (const pin of CONDITIONAL_SAFE_PARSE_PINS) {
+    describe(pin.tool, () => {
+      for (const { input, data } of pin.accepts) {
+        test(`accepts ${JSON.stringify(input)}`, () => {
+          const result = pin.schema.safeParse(input);
+          expect(result.success).toBe(true);
+          if (data && result.success) {
+            expect(result.data).toEqual(data);
+          }
+        });
+      }
+      for (const input of pin.rejects) {
+        test(`rejects ${JSON.stringify(input)}`, () => {
+          expect(pin.schema.safeParse(input).success).toBe(false);
+        });
+      }
+    });
+  }
+});

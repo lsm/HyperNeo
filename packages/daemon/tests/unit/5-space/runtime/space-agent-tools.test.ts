@@ -33,13 +33,16 @@ import {
   createSpaceAgentToolHandlers,
   validateTemplateReminder,
 } from '../../../../src/lib/space/tools/space-agent-tools.ts';
-import { SPACE_AGENT_TOOL_SCHEMAS } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
 import {
+  EXTERNAL_EVENT_TOOL_SCHEMAS,
+  INACTIVITY_TOOL_SCHEMAS,
+  SCHEDULED_TOOL_SCHEMAS,
   SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS,
+  SPACE_AGENT_TOOL_SCHEMAS,
   SPACE_FORGE_TOOL_SCHEMAS,
   SPACE_GOAL_TOOL_SCHEMAS,
+  type SpaceAgentToolName,
 } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
-import type { SpaceAgentToolName } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
@@ -10807,5 +10810,126 @@ describe('createSpaceAgentToolHandlers — approve_task dynamic-level and audit 
 
     expect(parsed.success).toBe(true);
     expect(ctx.taskRepo.getTask(taskId)?.status).toBe('done');
+  });
+});
+
+describe('createSpaceAgentMcpServer — scheduled/external/inactivity schema extraction equivalence', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function makeConditionalServer() {
+    return createSpaceAgentMcpServer({
+      spaceId: ctx.spaceId,
+      db: ctx.db,
+      runtime: ctx.runtime,
+      workflowManager: ctx.workflowManager,
+      taskRepo: ctx.taskRepo,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunRepo: ctx.workflowRunRepo,
+      taskManager: ctx.taskManager,
+      spaceAgentManager: ctx.agentManager,
+      scheduleService: ctx.scheduleService,
+      externalEventStore: new ExternalEventStore(ctx.db),
+      inactivityConfigRepo: new SpaceAgentInactivityConfigRepository(ctx.db),
+      inactivityRunNow: mock(async () => {}),
+      myAgentId: 'lh-agent-1',
+    });
+  }
+
+  test('conditional server registers the extracted scheduled, external-event, and inactivity tools', () => {
+    const server = makeConditionalServer();
+    const names = getRegisteredToolNames(server);
+    for (const name of Object.keys(SCHEDULED_TOOL_SCHEMAS)) {
+      expect(names).toContain(name);
+    }
+    for (const name of Object.keys(EXTERNAL_EVENT_TOOL_SCHEMAS)) {
+      expect(names).toContain(name);
+    }
+    for (const name of Object.keys(INACTIVITY_TOOL_SCHEMAS)) {
+      expect(names).toContain(name);
+    }
+  });
+
+  test('each registered conditional tool schema is field-identical to the extracted schema', () => {
+    const server = makeConditionalServer();
+    const allSchemas: Record<string, z.ZodType> = {
+      ...SCHEDULED_TOOL_SCHEMAS,
+      ...EXTERNAL_EVENT_TOOL_SCHEMAS,
+      ...INACTIVITY_TOOL_SCHEMAS,
+    };
+    for (const [name, schema] of Object.entries(allSchemas)) {
+      const inputSchema = getRegisteredTool(server, name).inputSchema;
+      const extractedShape = (schema as unknown as { shape: Record<string, unknown> }).shape;
+      const registeredShape = hasParser(inputSchema)
+        ? (inputSchema as unknown as { shape: Record<string, unknown> }).shape
+        : (inputSchema as Record<string, unknown>);
+      expect(Object.keys(registeredShape).sort()).toEqual(Object.keys(extractedShape).sort());
+      for (const [key, field] of Object.entries(extractedShape)) {
+        expect(registeredShape[key]).toBe(field);
+      }
+    }
+  });
+
+  test('registered and extracted conditional schemas produce identical safeParse outcomes', () => {
+    const server = makeConditionalServer();
+    const allSchemas: Record<string, z.ZodType> = {
+      ...SCHEDULED_TOOL_SCHEMAS,
+      ...EXTERNAL_EVENT_TOOL_SCHEMAS,
+      ...INACTIVITY_TOOL_SCHEMAS,
+    };
+    const probes: Array<[string, unknown]> = [
+      [
+        'create_scheduled_task',
+        { title: 'T', description: 'D', trigger_type: 'cron', cron_expression: '0 9 * * 1' },
+      ],
+      ['create_scheduled_task', { title: 'T' }],
+      ['list_scheduled_tasks', {}],
+      ['list_scheduled_tasks', { status: 'completed' }],
+      ['list_scheduled_tasks', { status: 'invalid' }],
+      ['get_scheduled_task', { schedule_id: 's1' }],
+      ['get_scheduled_task', {}],
+      ['pause_scheduled_task', { schedule_id: 's1' }],
+      ['pause_scheduled_task', {}],
+      ['resume_scheduled_task', { schedule_id: 's1' }],
+      ['resume_scheduled_task', {}],
+      ['delete_scheduled_task', { schedule_id: 's1' }],
+      ['delete_scheduled_task', {}],
+      ['subscribe_agent_event', { agent_id: 'a1', topic_pattern: 'gh/*' }],
+      ['subscribe_agent_event', { agent_id: 'a1' }],
+      ['unsubscribe_agent_event', { agent_id: 'a1', topic_pattern: 'gh/*' }],
+      ['unsubscribe_agent_event', {}],
+      ['list_agent_event_subscriptions', { agent_id: 'a1' }],
+      ['list_agent_event_subscriptions', {}],
+      ['get_external_event', { eventId: 'e1' }],
+      ['get_external_event', {}],
+      ['get_external_event', { eventId: '' }],
+      ['inactivity_config_get', {}],
+      ['inactivity_config_get', 1],
+      ['inactivity_config_set_enabled', { enabled: true }],
+      ['inactivity_config_set_enabled', {}],
+      ['inactivity_config_set', { threshold_ms: 1000 }],
+      ['inactivity_config_set', { threshold_ms: -1 }],
+      ['inactivity_run_now', {}],
+      ['inactivity_run_now', 1],
+    ];
+
+    for (const [name, input] of probes) {
+      const inputSchema = getRegisteredTool(server, name).inputSchema;
+      const registered = (hasParser(inputSchema)
+        ? inputSchema
+        : z.object(inputSchema as Record<string, z.ZodType>)) as unknown as z.ZodType;
+      const extracted = allSchemas[name] as z.ZodType;
+      const registeredResult = registered.safeParse(input);
+      const extractedResult = extracted.safeParse(input);
+      expect(registeredResult.success).toBe(extractedResult.success);
+      if (registeredResult.success && extractedResult.success) {
+        expect(registeredResult.data).toEqual(extractedResult.data);
+      }
+    }
   });
 });

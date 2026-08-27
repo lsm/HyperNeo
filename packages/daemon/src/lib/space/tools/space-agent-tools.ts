@@ -109,23 +109,31 @@ import {
   CreateForgeScopeSchema,
   CreateForgeTaskProposalSchema,
   CreateGoalSchema,
+  CreateScheduledTaskSchema,
   CreateStandaloneTaskSchema,
   CreateTaskFromForgeProposalSchema,
+  DeleteScheduledTaskSchema,
   GetAgentSchema,
+  GetExternalEventSchema,
   GetForgeScopeSchema,
   GetForgeTimelineSchema,
   GetGoalSchema,
+  GetScheduledTaskSchema,
   GetSessionDetailSchema,
   GetSessionMessagesSchema,
   GetTaskDetailSchema,
   GetWorkflowDetailSchema,
   GetWorkflowRunSchema,
   GoalMetricsSchema,
+  InactivityConfigGetSchema,
+  InactivityConfigSetEnabledSchema,
+  InactivityConfigSetSchema,
+  InactivityRunNowSchema,
   InterruptSessionSchema,
   ListAgentEventSubscriptionsSchema,
   ListAgentRemindersSchema,
-  ListAgentTemplatesSchema,
   ListAgentsSchema,
+  ListAgentTemplatesSchema,
   ListForgeEvidenceSchema,
   ListForgeLessonsSchema,
   ListForgeMetricSnapshotsSchema,
@@ -133,21 +141,26 @@ import {
   ListForgeReviewBundleSchema,
   ListForgeScopesSchema,
   ListGoalEventsSchema,
-  ListGoalTasksSchema,
   ListGoalsSchema,
+  ListGoalTasksSchema,
+  ListScheduledTasksSchema,
   ListSessionsSchema,
   ListTaskMembersSchema,
   ListTasksSchema,
   ListWorkflowsSchema,
   PauseAgentSchema,
   PauseGoalSchema,
+  PauseScheduledTaskSchema,
   PublishTaskSchema,
   ReassignTaskSchema,
   ResolveForgeScopeSchema,
   ResumeGoalSchema,
+  ResumeScheduledTaskSchema,
   RetryTaskSchema,
   SendMessageToTaskSchema,
   SendSessionMessageSchema,
+  SESSION_MESSAGE_MAX_LIMIT,
+  SPACE_SESSION_MAX_LIMIT,
   SubscribeAgentEventSchema,
   SuggestWorkflowSchema,
   TriggerGoalTaskSchema,
@@ -162,8 +175,6 @@ import {
   UpdateGoalSchema,
   UpdateSessionStateSchema,
   UpdateTaskSchema,
-  SESSION_MESSAGE_MAX_LIMIT,
-  SPACE_SESSION_MAX_LIMIT,
 } from './space-agent-tool-schemas.ts';
 import { validateGlobPattern, validateSource } from '../../external-events/topic-validator.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
@@ -4428,7 +4439,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           'is not enough and you need the complete payload (incl. `rawPayload`, `body`, `actor`, `eventType`, ' +
           'source-native fields such as review `state`, check-run `conclusion`, diff `path`/`line`, etc.). ' +
           'Returns a not-found result for unknown ids.',
-        { eventId: z.string().min(1).describe('The id of the external event to fetch') },
+        GetExternalEventSchema.shape,
         (args) => handlers.get_external_event(args)
       )
     );
@@ -4641,81 +4652,37 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       tool(
         'create_scheduled_task',
         'Create a recurring (cron) or one-shot (at) scheduled task. When it fires, a real SpaceTask is created automatically.',
-        {
-          title: z.string().describe('Short title for the task template'),
-          description: z.string().describe('Detailed description for the task template'),
-          priority: z
-            .enum(['low', 'normal', 'high', 'urgent'])
-            .optional()
-            .describe('Task priority (default: normal)'),
-          workflow_id: z
-            .string()
-            .optional()
-            .describe('Preferred workflow ID to attach to created tasks'),
-          labels: z.array(z.string()).optional().describe('Labels to apply to created tasks'),
-          trigger_type: z
-            .enum(['cron', 'at'])
-            .describe('Trigger type: "cron" for recurring, "at" for one-shot'),
-          cron_expression: z
-            .string()
-            .optional()
-            .describe(
-              'Cron expression (e.g. "0 9 * * 1" for every Monday at 9am, "@daily", "@hourly"). Required when trigger_type is "cron".'
-            ),
-          run_at: z
-            .number()
-            .optional()
-            .describe(
-              'Unix timestamp in ms when the task should fire. Required when trigger_type is "at".'
-            ),
-          timezone: z
-            .string()
-            .optional()
-            .describe('IANA timezone string (default: "UTC"). Example: "America/New_York"'),
-        },
+        CreateScheduledTaskSchema.shape,
         (args) => handlers.create_scheduled_task(args)
       ),
       tool(
         'list_scheduled_tasks',
         'List all scheduled tasks for this space.',
-        {
-          status: z
-            .enum(['active', 'paused', 'completed'])
-            .optional()
-            .describe('Filter by schedule status (default: all)'),
-        },
+        ListScheduledTasksSchema.shape,
         (args) => handlers.list_scheduled_tasks(args)
       ),
       tool(
         'get_scheduled_task',
         'Get details of a specific scheduled task including last spawned task ID and next run time.',
-        {
-          schedule_id: z.string().describe('ID of the scheduled task to retrieve'),
-        },
+        GetScheduledTaskSchema.shape,
         (args) => handlers.get_scheduled_task(args)
       ),
       tool(
         'pause_scheduled_task',
         'Pause a schedule — stops creating new tasks until resumed.',
-        {
-          schedule_id: z.string().describe('ID of the scheduled task to pause'),
-        },
+        PauseScheduledTaskSchema.shape,
         (args) => handlers.pause_scheduled_task(args)
       ),
       tool(
         'resume_scheduled_task',
         'Resume a paused schedule, computing the next run time and re-enqueueing the job.',
-        {
-          schedule_id: z.string().describe('ID of the scheduled task to resume'),
-        },
+        ResumeScheduledTaskSchema.shape,
         (args) => handlers.resume_scheduled_task(args)
       ),
       tool(
         'delete_scheduled_task',
         'Permanently delete a scheduled task. Any pending job is cancelled.',
-        {
-          schedule_id: z.string().describe('ID of the scheduled task to delete'),
-        },
+        DeleteScheduledTaskSchema.shape,
         (args) => handlers.delete_scheduled_task(args)
       )
     );
@@ -4820,7 +4787,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       tool(
         'inactivity_config_get',
         "Return this agent's inactivity watchdog configuration: enabled, idle threshold in ms, nag prompt, and config revision.",
-        {},
+        InactivityConfigGetSchema.shape,
         async () => {
           if (!config.myAgentId) {
             throw new Error('No agent identity available for inactivity config');
@@ -4843,9 +4810,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       tool(
         'inactivity_config_set_enabled',
         'Enable, pause, or resume the inactivity watchdog for this agent. Pausing keeps the threshold and prompt but stops new nags until resumed.',
-        {
-          enabled: z.boolean().describe('true to enable or resume, false to pause'),
-        },
+        InactivityConfigSetEnabledSchema.shape,
         async (args) => {
           if (!config.myAgentId) {
             throw new Error('No agent identity available for inactivity config');
@@ -4878,18 +4843,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       tool(
         'inactivity_config_set',
         'Adjust the inactivity watchdog threshold (ms of idleness before a nag) or the nag prompt for this agent. Changing either bumps the config revision so a pending nag revalidates against the new settings.',
-        {
-          threshold_ms: z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .describe('Idle time in milliseconds before the agent is nagged'),
-          prompt: z
-            .string()
-            .optional()
-            .describe('Custom nag prompt; pass an empty string to clear'),
-        },
+        InactivityConfigSetSchema.shape,
         async (args) => {
           if (!config.myAgentId) {
             throw new Error('No agent identity available for inactivity config');
@@ -4909,7 +4863,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         tool(
           'inactivity_run_now',
           'Run the inactivity watchdog scan for this agent immediately, through the same admission gates as the periodic scan.',
-          {},
+          InactivityRunNowSchema.shape,
           async () => {
             if (!config.myAgentId) {
               throw new Error('No agent identity available for inactivity config');
