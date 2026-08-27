@@ -264,6 +264,7 @@ export class SpaceManager {
       spaces: this.spaceRepo,
       workspaces: this.workspaceRepo,
       sessionReferences: new SessionRepository(db),
+      transaction: <T>(fn: () => T) => db.transaction(fn, 'immediate')(),
     });
   }
 

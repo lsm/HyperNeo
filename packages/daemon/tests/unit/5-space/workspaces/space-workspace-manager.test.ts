@@ -130,6 +130,7 @@ function newManager(
     workspaces?: FakeWorkspaces;
     io?: WorkspaceValidationIo;
     sessionReferences?: WorkspaceSessionReferences;
+    transaction?: <T>(fn: () => T) => T;
   } = {}
 ): { manager: SpaceWorkspaceManager; workspaces: FakeWorkspaces } {
   const workspaces = options.workspaces ?? new FakeWorkspaces();
@@ -138,6 +139,7 @@ function newManager(
     workspaces,
     sessionReferences: options.sessionReferences ?? noActiveSessions,
     io: options.io ?? fakeIo(),
+    transaction: options.transaction,
   };
   return { manager: new SpaceWorkspaceManager(deps), workspaces };
 }
@@ -248,6 +250,21 @@ describe('registerWorkspace', () => {
     const err = await registrationError(manager, '/repo');
     expect(err.reason).toBe('duplicate_of_registered_workspace');
     expect(workspaces.rows).toHaveLength(0);
+  });
+
+  test('rejects when a concurrent writer nests a workspace before the insert transaction', async () => {
+    const workspaces = new FakeWorkspaces();
+    const lateRow = row(SPACE_A, '/work', 'late');
+    const { manager } = newManager({
+      workspaces,
+      transaction: (fn) => {
+        workspaces.rows.push(lateRow);
+        return fn();
+      },
+    });
+    const err = await registrationError(manager, '/work/sub-repo');
+    expect(err.reason).toBe('ambiguous_nesting');
+    expect(workspaces.rows).toEqual([lateRow]);
   });
 });
 
