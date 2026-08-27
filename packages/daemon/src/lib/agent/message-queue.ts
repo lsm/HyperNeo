@@ -53,6 +53,8 @@ export interface MidTurnQueueSeam {
     allowRestart: boolean
   ): Promise<boolean>;
   shouldEnqueueLateCompaction(removedPendingCompactions: number): boolean;
+  shouldSuppressPromptPhaseCompaction(): boolean;
+  noteBoundaryCompleted(): void;
   hasOutstandingInternalCompaction(): boolean;
   enqueueMidTurnCompaction(opts: MidTurnBudgetInterruptOptions, reason: string): void;
   registerLateReceipt(
@@ -95,6 +97,9 @@ export class MessageQueue {
   private stopEpoch: number = 0;
   private restartStopEpoch: number = 0;
   private recoveryRestarted: boolean = false;
+  private earlyGateReleasePending: boolean = false;
+  private midTurnCycleActive: boolean = false;
+  private midTurnBoundaryCompleted: boolean = false;
   private midTurnCompactionQueued: boolean = false;
   private cycleStartStopEpoch: number = 0;
   private cycleUserStopped: boolean = false;
@@ -416,6 +421,7 @@ export class MessageQueue {
     this.deliveryGate = null;
     this.deliveryGateExclusive = false;
     this.midTurnCompactionQueued = false;
+    this.midTurnCycleActive = false;
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -568,6 +574,10 @@ export class MessageQueue {
     this.stopEpoch += 1;
     this.running = false;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
+    const rejectedCompactions =
+      this.queue.some((message) => this.isInternalCompaction(message)) ||
+      [...this.claimed].some((message) => this.isInternalCompaction(message)) ||
+      [...this.yielded].some((message) => this.isInternalCompaction(message));
     this.internalCompactionsAwaitingBoundary = 0;
     this.internalCompactionIdsAwaitingBoundary.clear();
     this.nonCompactionSentSinceBoundary = false;
@@ -575,8 +585,9 @@ export class MessageQueue {
     this.deliveryGate = null;
     this.deliveryGateExclusive = false;
     this.midTurnCompactionQueued = false;
+    this.midTurnCycleActive = false;
     this.wakeWaiters();
-    if (deliveredCompactions) {
+    if (deliveredCompactions || rejectedCompactions) {
       this.onInternalCompactionsAborted?.();
     }
   }
@@ -586,8 +597,9 @@ export class MessageQueue {
   }
 
   private userStoppedQueue(): boolean {
-    const internalStops = this.recoveryRestarted ? 1 : 0;
-    if (this.stopEpoch - this.cycleStartStopEpoch > internalStops) {
+    const restartStopped =
+      this.recoveryRestarted && this.restartStopEpoch > this.cycleStartStopEpoch;
+    if (this.stopEpoch - this.cycleStartStopEpoch > (restartStopped ? 1 : 0)) {
       this.cycleUserStopped = true;
     }
     if (this.cycleUserStopped) return true;
@@ -734,6 +746,8 @@ export class MessageQueue {
     this.cycleStartStopEpoch = this.stopEpoch;
     this.cycleUserStopped = false;
     this.restartAbortedByStop = false;
+    this.midTurnCycleActive = true;
+    this.midTurnBoundaryCompleted = false;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
     opts.logger.info(
@@ -804,8 +818,13 @@ export class MessageQueue {
   }
 
   releaseEarlyDeliveryGate(): void {
+    if (this.internalRestartInFlight) {
+      this.earlyGateReleasePending = true;
+      return;
+    }
     this.resolveEarlyDeliveryGate?.();
     this.resolveEarlyDeliveryGate = undefined;
+    this.midTurnCycleActive = false;
   }
 
   async runMidTurnBudgetInterrupt(opts: MidTurnBudgetInterruptOptions): Promise<void> {
@@ -862,6 +881,16 @@ export class MessageQueue {
 
   shouldEnqueueLateCompaction(removedPendingCompactions: number): boolean {
     return removedPendingCompactions > 0 || this.internalRestartFailed;
+  }
+
+  noteBoundaryCompleted(): void {
+    if (this.midTurnCycleActive) {
+      this.midTurnBoundaryCompleted = true;
+    }
+  }
+
+  shouldSuppressPromptPhaseCompaction(): boolean {
+    return this.midTurnBoundaryCompleted;
   }
 
   private async processLateInterruptReceipt(
@@ -1037,6 +1066,7 @@ export class MessageQueue {
       resolveDeliveryGate = resolve;
     });
     const beforeStart = () => {
+      this.restartStopEpoch = this.stopEpoch;
       if (this.userStoppedQueue()) {
         this.restartAbortedByStop = true;
         throw new Error('user stop observed during the recovery restart; aborting the replacement');
@@ -1046,7 +1076,6 @@ export class MessageQueue {
     };
     this.recoveryRestarted = true;
     this.internalRestartInFlight = true;
-    this.restartStopEpoch = this.stopEpoch;
     const restart = opts
       .restart({ beforeStart })
       .catch((error) => {
@@ -1071,6 +1100,10 @@ export class MessageQueue {
       })
       .finally(() => {
         this.internalRestartInFlight = false;
+        if (this.earlyGateReleasePending) {
+          this.earlyGateReleasePending = false;
+          this.releaseEarlyDeliveryGate();
+        }
       });
     await Promise.race([
       restart,

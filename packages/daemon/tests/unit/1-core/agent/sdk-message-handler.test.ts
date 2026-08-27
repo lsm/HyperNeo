@@ -233,6 +233,7 @@ describe('SDKMessageHandler', () => {
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
       forgetSentPrompt: mock(() => {}),
       getSentPromptContent: mock(() => undefined),
+      noteBoundaryCompleted: mock(() => {}),
     } as unknown as MessageQueue;
 
     handleErrorSpy = mock(async () => {});

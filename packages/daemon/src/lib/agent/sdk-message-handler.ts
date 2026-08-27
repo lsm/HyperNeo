@@ -1699,6 +1699,7 @@ export class SDKMessageHandler {
       );
     }
     this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+    this.ctx.messageQueue.noteBoundaryCompleted();
     const boundaryInfo = contextTracker.getContextInfo();
     const boundaryCapacity =
       boundaryInfo && boundaryInfo.totalCapacity > 0 ? boundaryInfo.totalCapacity : undefined;

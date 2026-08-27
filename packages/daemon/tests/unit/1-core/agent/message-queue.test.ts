@@ -1901,6 +1901,116 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('reports queued compactions aborted by stop', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const abortedCallback = mock(() => {});
+      q.onInternalCompactionsAborted = abortedCallback;
+      const opts = makeInterruptOpts(q);
+      q.enqueueMidTurnCompaction(opts, 'test');
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
+
+      q.stop();
+
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+      expect(abortedCallback).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not reopen survivors after a user stop during a stalled recovery', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseRestart: (error: Error) => void = () => {};
+      const restartGate = new Promise<never>((_, reject) => {
+        releaseRestart = reject;
+      });
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-s'] }),
+        cancelAsyncMessage: async () => false,
+        restart: mock(() => restartGate),
+      });
+      const runPromise = q.runMidTurnBudgetInterrupt(opts);
+      await tick(30);
+      q.stop();
+      releaseRestart(new Error('restart failed before reaching its stop'));
+      await runPromise;
+
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      q.registerLateReceipt(opts, {
+        promise: Promise.resolve({ still_queued: ['uuid-s'] }),
+        timedOut: true,
+      });
+      await tick(30);
+
+      expect(enqueueSpy).not.toHaveBeenCalledWith(
+        'uuid-s',
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      );
+      q.stop();
+    });
+
+    it('keeps delivery gated until the recovery restart settles', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseRestart: () => void = () => {};
+      const restartGate = new Promise<void>((resolve) => {
+        releaseRestart = resolve;
+      });
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-s'] }),
+        cancelAsyncMessage: async () => false,
+        restart: mock(() => restartGate),
+      });
+      const runPromise = q.runMidTurnBudgetInterrupt(opts);
+      await tick(30);
+      q.releaseEarlyDeliveryGate();
+      const delivered = q.enqueueWithId('uuid-gated', 'content', false, {});
+      delivered.catch(() => {});
+      const generator = q.messageGenerator(testSessionId);
+      let got: { done: boolean; value: { message: { uuid: string }; onSent: () => void } } | null =
+        null;
+      const nextPromise = generator.next().then((entry) => {
+        got = entry;
+      });
+      await tick(30);
+      expect(got).toBeNull();
+
+      releaseRestart();
+      await runPromise;
+      await nextPromise;
+      expect(got?.value.message.uuid).toBe('uuid-gated');
+      got?.value.onSent();
+      await delivered;
+      q.stop();
+    });
+
+    it('suppresses the prompt-phase compaction when a boundary completed mid-cycle', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-s',
+        content: 'survivor-content',
+        internal: false,
+      } as never);
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => {
+          q.noteBoundaryCompleted();
+          return { still_queued: ['uuid-s'] };
+        },
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-s', 'survivor-content', false, {
+        durable: true,
+        prepend: true,
+      });
+      q.stop();
+    });
+
     it('keeps the removed-compaction count local to each late-receipt window', async () => {
       const q = new MessageQueue();
       q.start();
@@ -2275,8 +2385,9 @@ describe('MessageQueue', () => {
       const onResumeClear = mock(() => {});
       const opts = makeInterruptOpts(q, {
         interrupt: () => slowInterrupt,
-        restart: async () => {
+        restart: async (options) => {
           q.stop();
+          await options?.beforeStart?.();
           await restartHang;
         },
         onResumeClear,
@@ -2395,8 +2506,9 @@ describe('MessageQueue', () => {
       const opts = makeInterruptOpts(q, {
         interrupt: () => slowInterrupt,
         cancelAsyncMessage: async () => true,
-        restart: async () => {
+        restart: async (options) => {
           q.stop();
+          await options?.beforeStart?.();
           throw new Error('restart failed');
         },
       });

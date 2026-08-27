@@ -115,7 +115,11 @@ export function compactionStage(ctx: MidTurnBudgetCtx): MidTurnBudgetCtx {
   if (interrupt?.timedOut || interrupt?.hardFailed) {
     return ctx;
   }
-  if (!ctx.restarted && !ctx.queue.standsDownFor(ctx.opts)) {
+  if (
+    !ctx.restarted &&
+    !ctx.queue.standsDownFor(ctx.opts) &&
+    !ctx.queue.shouldSuppressPromptPhaseCompaction()
+  ) {
     ctx.queue.enqueueMidTurnCompaction(ctx.opts, 'mid-turn');
   }
   return ctx;
