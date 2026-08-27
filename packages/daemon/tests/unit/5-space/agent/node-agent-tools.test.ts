@@ -3379,3 +3379,94 @@ describe('node-agent-tools: pr_url payloads do not auto-subscribe', () => {
     expect(delivered[0]!.sessionId).toBe(ctx.reviewerSessionId);
   });
 });
+
+describe('node-agent-tools: audit row shape pins', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('successful approve_task delegation audits with the config task id and the run stamped', async () => {
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onApproveTask: async () => jsonResult({ success: true, task: { id: 'task-approved-pin' } }),
+        auditLogRepo: new McpAuditLogRepository(ctx.db),
+      })
+    );
+
+    const result = await handlers.approve_task({});
+    expect(JSON.parse(result.content[0].text).success).toBe(true);
+
+    const rows = new McpAuditLogRepository(ctx.db)
+      .listBySession(ctx.coderSessionId)
+      .filter((entry) => entry.toolName === 'approve_task');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      agentName: 'coder',
+      sessionId: ctx.coderSessionId,
+      spaceId: ctx.spaceId,
+      taskId: ctx.parentTaskId,
+      workflowRunId: ctx.workflowRunId,
+      paramsSummary: '{}',
+    });
+  });
+
+  test('a failed approve_task delegation writes no audit row', async () => {
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onApproveTask: async () => jsonResult({ success: false, error: 'still in review' }),
+        auditLogRepo: new McpAuditLogRepository(ctx.db),
+      })
+    );
+
+    const result = await handlers.approve_task({});
+    expect(JSON.parse(result.content[0].text).success).toBe(false);
+
+    const rows = new McpAuditLogRepository(ctx.db)
+      .listBySession(ctx.coderSessionId)
+      .filter((entry) => entry.toolName === 'approve_task');
+    expect(rows).toHaveLength(0);
+  });
+
+  test('an explicit task id from the delegated payload wins over the config task id fallback', async () => {
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onCreateStandaloneTask: async () =>
+          jsonResult({ success: true, task: { id: 'task-created-explicit-pin' } }),
+        auditLogRepo: new McpAuditLogRepository(ctx.db),
+      })
+    );
+
+    await handlers.create_standalone_task({ title: 'Audit pin task', description: '' });
+
+    const rows = new McpAuditLogRepository(ctx.db)
+      .listBySession(ctx.coderSessionId)
+      .filter((entry) => entry.toolName === 'create_standalone_task');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      taskId: 'task-created-explicit-pin',
+      workflowRunId: ctx.workflowRunId,
+      paramsSummary: JSON.stringify({ title: 'Audit pin task' }),
+    });
+  });
+
+  test('a throwing audit repository never breaks the delegated call', async () => {
+    const handlers = createNodeAgentToolHandlers(
+      makeConfig(ctx, {
+        onApproveTask: async () => jsonResult({ success: true }),
+        auditLogRepo: {
+          createEntry: () => {
+            throw new Error('audit store down');
+          },
+        } as unknown as McpAuditLogRepository,
+      })
+    );
+
+    const result = await handlers.approve_task({});
+    expect(JSON.parse(result.content[0].text).success).toBe(true);
+  });
+});
