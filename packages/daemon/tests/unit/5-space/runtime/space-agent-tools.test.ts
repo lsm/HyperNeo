@@ -34,6 +34,11 @@ import {
   validateTemplateReminder,
 } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { SPACE_AGENT_TOOL_SCHEMAS } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
+import {
+  SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS,
+  SPACE_FORGE_TOOL_SCHEMAS,
+  SPACE_GOAL_TOOL_SCHEMAS,
+} from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
 import type { SpaceAgentToolName } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
@@ -644,6 +649,150 @@ describe('createSpaceAgentMcpServer — base tool schema extraction equivalence'
         ? inputSchema
         : z.object(inputSchema as Record<string, z.ZodType>)) as unknown as z.ZodType;
       const extracted = SPACE_AGENT_TOOL_SCHEMAS[name] as z.ZodType;
+      const registeredResult = registered.safeParse(input);
+      const extractedResult = extracted.safeParse(input);
+      expect(registeredResult.success).toBe(extractedResult.success);
+      if (registeredResult.success && extractedResult.success) {
+        expect(registeredResult.data).toEqual(extractedResult.data);
+      }
+    }
+  });
+});
+
+describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction equivalence', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function makeServer(extra: Partial<Parameters<typeof createSpaceAgentMcpServer>[0]> = {}) {
+    return createSpaceAgentMcpServer({
+      spaceId: ctx.spaceId,
+      runtime: ctx.runtime,
+      workflowManager: ctx.workflowManager,
+      taskRepo: ctx.taskRepo,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunRepo: ctx.workflowRunRepo,
+      taskManager: ctx.taskManager,
+      spaceAgentManager: ctx.agentManager,
+      ...extra,
+    });
+  }
+
+  test('db-configured server registers exactly the base tools plus the 17 lifecycle tools', () => {
+    const server = makeServer({ db: ctx.db });
+    expect(getRegisteredToolNames(server).sort()).toEqual(
+      [
+        ...Object.keys(SPACE_AGENT_TOOL_SCHEMAS),
+        ...Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS),
+      ].sort()
+    );
+    expect(getRegisteredToolNames(server)).toHaveLength(41);
+  });
+
+  test('goal-configured server registers exactly the base tools plus the 9 goal tools', () => {
+    const server = makeServer({ goalService: ctx.goalService });
+    expect(getRegisteredToolNames(server).sort()).toEqual(
+      [...Object.keys(SPACE_AGENT_TOOL_SCHEMAS), ...Object.keys(SPACE_GOAL_TOOL_SCHEMAS)].sort()
+    );
+    expect(getRegisteredToolNames(server)).toHaveLength(33);
+  });
+
+  test('forge-configured server registers exactly the base tools plus the 23 Forge tools', () => {
+    const server = makeServer({
+      evolutionScopeService: ctx.evolutionScopeService,
+      evolutionEpisodeService: ctx.evolutionEpisodeService,
+    });
+    expect(getRegisteredToolNames(server).sort()).toEqual(
+      [...Object.keys(SPACE_AGENT_TOOL_SCHEMAS), ...Object.keys(SPACE_FORGE_TOOL_SCHEMAS)].sort()
+    );
+    expect(getRegisteredToolNames(server)).toHaveLength(47);
+  });
+
+  const FAMILY_MAPS: Record<string, Record<string, unknown>> = {
+    lifecycle: SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS,
+    goal: SPACE_GOAL_TOOL_SCHEMAS,
+    forge: SPACE_FORGE_TOOL_SCHEMAS,
+  };
+
+  function makeFamilyServers(): Record<string, ReturnType<typeof makeServer>> {
+    return {
+      lifecycle: makeServer({ db: ctx.db }),
+      goal: makeServer({ goalService: ctx.goalService }),
+      forge: makeServer({
+        evolutionScopeService: ctx.evolutionScopeService,
+        evolutionEpisodeService: ctx.evolutionEpisodeService,
+      }),
+    };
+  }
+
+  test('each registered family tool schema is field-identical to the extracted schema', () => {
+    const servers = makeFamilyServers();
+    for (const [family, map] of Object.entries(FAMILY_MAPS)) {
+      const server = servers[family];
+      for (const [name, schema] of Object.entries(map)) {
+        const inputSchema = getRegisteredTool(server, name).inputSchema;
+        const extractedShape = (schema as { shape: Record<string, unknown> }).shape;
+        const registeredShape = hasParser(inputSchema)
+          ? (inputSchema as unknown as { shape: Record<string, unknown> }).shape
+          : (inputSchema as Record<string, unknown>);
+        expect(Object.keys(registeredShape).sort()).toEqual(Object.keys(extractedShape).sort());
+        for (const [key, field] of Object.entries(extractedShape)) {
+          expect(registeredShape[key]).toBe(field);
+        }
+      }
+    }
+  });
+
+  test('registered and extracted family schemas produce identical safeParse outcomes', () => {
+    const servers = makeFamilyServers();
+    const probes: Array<[string, string, unknown]> = [
+      ['lifecycle', 'list_agents', { status: 'paused', compact: true }],
+      ['lifecycle', 'list_agents', { status: 'done' }],
+      ['lifecycle', 'create_agent', { name: 'W', thinking_level: 'think64k' }],
+      ['lifecycle', 'update_agent', { agent_id: 'a1', status: 'disabled', tools: null }],
+      ['lifecycle', 'update_agent', { agent_id: 'a1', setting_sources: ['bogus'] }],
+      ['lifecycle', 'create_agent_reminder', { agent_id: 'a1', message: '', remind_at: 1 }],
+      ['lifecycle', 'list_agent_reminders', { agent_id: 'a1', status: 'done' }],
+      ['lifecycle', 'subscribe_agent_event', { agent_id: 'a1', topic_pattern: 't/*' }],
+      ['goal', 'list_goals', { status: 'completed' }],
+      ['goal', 'list_goals', { status: 'disabled' }],
+      ['goal', 'create_goal', { title: 'T', progress: 101 }],
+      [
+        'goal',
+        'create_goal',
+        { title: 'T', metrics: { m: 1 }, check_in_cron_expression: '@hourly' },
+      ],
+      ['goal', 'update_goal', { goal_id: 'g1', check_in_cron_expression: null }],
+      ['goal', 'update_goal', { goal_id: 'g1', workspace_path: '/tmp/secondary-workspace' }],
+      ['goal', 'list_goal_tasks', { goal_id: 'g1', limit: 101 }],
+      ['goal', 'list_goal_events', { goal_id: 'g1', before: 1, before_id: 'e1' }],
+      ['forge', 'create_forge_scope', { kind: 'mission', name: 'N', objective: 'O' }],
+      ['forge', 'create_forge_scope', { kind: 'bogus', name: 'N', objective: 'O' }],
+      ['forge', 'update_forge_scope', { scope_id: 's1', policy_patch: { automation: {} } }],
+      ['forge', 'add_forge_metric_snapshot', { scope_id: 's1', values: { m: 1 }, source: 'CI' }],
+      ['forge', 'create_forge_episode', { scope_id: 's1', evidence_ids: [], time_window: null }],
+      ['forge', 'list_forge_proposals', { scope_id: 's1', status: 'created' }],
+      ['forge', 'update_forge_lesson', { lesson_id: 'l1', confidence: 1.5 }],
+      ['forge', 'create_task_from_forge_proposal', { proposal_id: 'p1', depends_on: ['t1'] }],
+      ['forge', 'apply_forge_rollup', { episode_id: 'e1', goal_update: { metrics: { m: 1 } } }],
+    ];
+
+    for (const [family, name, input] of probes) {
+      const inputSchema = getRegisteredTool(servers[family], name).inputSchema;
+      const registered = (hasParser(inputSchema)
+        ? inputSchema
+        : z.object(inputSchema as Record<string, z.ZodType>)) as unknown as z.ZodType;
+      const extracted = (
+        {
+          lifecycle: SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS,
+          goal: SPACE_GOAL_TOOL_SCHEMAS,
+          forge: SPACE_FORGE_TOOL_SCHEMAS,
+        } as Record<string, Record<string, z.ZodType>>
+      )[family][name];
       const registeredResult = registered.safeParse(input);
       const extractedResult = extracted.safeParse(input);
       expect(registeredResult.success).toBe(extractedResult.success);
