@@ -2100,7 +2100,14 @@ export class SpaceRuntime {
     try {
       const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
       if (outcome.action === 'delivered') {
-        this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid, outcome.eventIds);
+        try {
+          this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid, outcome.eventIds);
+        } catch (cleanupError) {
+          if (this.isTargetSessionLive(sessionId)) {
+            this.scheduleTurnEndDigestRetry(sessionId, taskId);
+          }
+          return { action: 'failed', stage: 'digestSupersede', error: cleanupError };
+        }
       } else {
         try {
           this.dropUncoveredDeferredDigestRows(sessionId, store);
@@ -2147,11 +2154,11 @@ export class SpaceRuntime {
         (eventId): eventId is string => typeof eventId === 'string'
       );
       if (eventIds.length === 0) continue;
-      const hasDeliveredMember =
+      const allMembersDelivered =
         targetWorkflowRunId !== undefined &&
         targetNodeId !== undefined &&
         targetAgentName !== undefined &&
-        eventIds.some((eventId) =>
+        eventIds.every((eventId) =>
           store
             .listDeliveries(eventId)
             .some(
@@ -2162,7 +2169,7 @@ export class SpaceRuntime {
                 delivery.state === 'delivered'
             )
         );
-      if (!hasDeliveredMember) {
+      if (!allMembersDelivered) {
         messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
       }
     }
@@ -2174,58 +2181,51 @@ export class SpaceRuntime {
     deliveredUuid: string | null,
     deliveredEventIds: string[]
   ): void {
-    try {
-      const messages = this.getSdkMessageRepo();
-      const deliveredEventIdSet = new Set(deliveredEventIds);
-      const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
-      const targetWorkflowRunId = execution?.workflowRunId;
-      const targetNodeId = execution?.workflowNodeId;
-      const targetAgentName = execution?.agentName;
-      const rows = messages
-        .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
-        .filter(
-          (row) =>
-            row.sendStatus === 'deferred' &&
-            (deliveredUuid === null || String(row.uuid) !== deliveredUuid)
-        );
-      for (const row of rows) {
-        const membership = (row as { externalEventIds?: unknown }).externalEventIds;
-        if (!Array.isArray(membership) || membership.length === 0) continue;
-        const eventIds = membership.filter(
-          (eventId): eventId is string => typeof eventId === 'string'
-        );
-        if (eventIds.length === 0) continue;
-        const isObsolete = eventIds.every((eventId) => {
-          if (deliveredEventIdSet.has(eventId)) return true;
-          if (targetWorkflowRunId && targetNodeId && targetAgentName) {
-            const terminalForTarget = store
-              .listDeliveries(eventId)
-              .some(
-                (delivery) =>
-                  delivery.workflowRunId === targetWorkflowRunId &&
-                  delivery.nodeId === targetNodeId &&
-                  delivery.agentName === targetAgentName &&
-                  (delivery.state === 'delivered' || delivery.state === 'failed')
-              );
-            if (terminalForTarget) return true;
-          }
-          const record = store.getById(eventId);
-          return (
-            record === null ||
-            record.state === 'failed' ||
-            record.state === 'ignored' ||
-            (targetNodeId === undefined && record.state === 'delivered')
-          );
-        });
-        if (isObsolete) {
-          messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
-        }
-      }
-    } catch (error) {
-      log.warn(
-        `SpaceRuntime: obsolete digest supersede for session ${sessionId} failed: ` +
-          `${formatCommandError(error)}`
+    const messages = this.getSdkMessageRepo();
+    const deliveredEventIdSet = new Set(deliveredEventIds);
+    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+    const targetWorkflowRunId = execution?.workflowRunId;
+    const targetNodeId = execution?.workflowNodeId;
+    const targetAgentName = execution?.agentName;
+    const rows = messages
+      .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
+      .filter(
+        (row) =>
+          row.sendStatus === 'deferred' &&
+          (deliveredUuid === null || String(row.uuid) !== deliveredUuid)
       );
+    for (const row of rows) {
+      const membership = (row as { externalEventIds?: unknown }).externalEventIds;
+      if (!Array.isArray(membership) || membership.length === 0) continue;
+      const eventIds = membership.filter(
+        (eventId): eventId is string => typeof eventId === 'string'
+      );
+      if (eventIds.length === 0) continue;
+      const isObsolete = eventIds.every((eventId) => {
+        if (deliveredEventIdSet.has(eventId)) return true;
+        if (targetWorkflowRunId && targetNodeId && targetAgentName) {
+          const terminalForTarget = store
+            .listDeliveries(eventId)
+            .some(
+              (delivery) =>
+                delivery.workflowRunId === targetWorkflowRunId &&
+                delivery.nodeId === targetNodeId &&
+                delivery.agentName === targetAgentName &&
+                (delivery.state === 'delivered' || delivery.state === 'failed')
+            );
+          if (terminalForTarget) return true;
+        }
+        const record = store.getById(eventId);
+        return (
+          record === null ||
+          record.state === 'failed' ||
+          record.state === 'ignored' ||
+          (targetNodeId === undefined && record.state === 'delivered')
+        );
+      });
+      if (isObsolete) {
+        messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+      }
     }
   }
 

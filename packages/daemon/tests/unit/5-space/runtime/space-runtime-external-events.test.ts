@@ -7186,6 +7186,70 @@ describe('SpaceRuntime external event subscriptions', () => {
         .get() as { n: number };
       expect(rows.n).toBe(0);
     });
+
+    test('flag on: a digest with a mixed delivered/pending membership is dropped on a rejected pull', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const deliveredMember = makeEvent({ id: 'evt-mixed-delivered', topic });
+      const pendingMember = makeEvent({ id: 'evt-mixed-pending', topic });
+      await eventService.publish(deliveredMember);
+      await eventService.publish(pendingMember);
+      const deliveredDelivery = eventStore.listDeliveries(deliveredMember.id)[0]!;
+      eventStore.markDeliveryDelivered(deliveredMember.id, deliveredDelivery.deliveryKey);
+      eventStore.markEventDeliveredIfAllDeliveriesDelivered(deliveredMember.id);
+      expect(eventStore.listDeliveries(pendingMember.id)[0]!.state).toBe('pending');
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-mixed',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-mixed',
+        'session-mixed',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+      taskRepo.updateTask(task.id, { status: 'stopped' });
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-mixed',
+        session_id: 'session-mixed',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'mixed membership digest' }] },
+        externalEventIds: [deliveredMember.id, pendingMember.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-mixed', orphan, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession('session-mixed', task.id);
+      expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+
+      const rows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-mixed'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .get() as { n: number };
+      expect(rows.n).toBe(0);
+    });
   });
 });
 
