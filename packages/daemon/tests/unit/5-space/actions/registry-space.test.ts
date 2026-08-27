@@ -185,18 +185,23 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('state writes carry static level 4; send_session_message gates conditionally in its handler', () => {
+  test('state writes and archive_task carry static level 4; send_session_message gates conditionally in its handler', () => {
     const ctx = makeCtx();
     try {
       const byName = new Map(
         createSpaceRegistryEntries(ctx.config).map((entry) => [entry.name, entry])
       );
-      for (const name of ['update_session_state', 'interrupt_session']) {
+      for (const name of ['update_session_state', 'interrupt_session', 'archive_task']) {
         expect(byName.get(name)?.autonomyRequirement).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
       expect(byName.get('send_session_message')?.autonomyRequirement).toBeUndefined();
       for (const [name] of EXPECTED_ENTRIES) {
-        if (['update_session_state', 'interrupt_session', 'approve_task'].includes(name)) continue;
+        if (
+          ['update_session_state', 'interrupt_session', 'archive_task', 'approve_task'].includes(
+            name
+          )
+        )
+          continue;
         expect(byName.get(name)?.autonomyRequirement).toBeUndefined();
       }
     } finally {

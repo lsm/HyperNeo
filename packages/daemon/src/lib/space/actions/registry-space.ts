@@ -47,6 +47,8 @@ import { type ActionDefinition, defineAction } from './registry.ts';
 
 const DEFAULT_COMPLETION_AUTONOMY_LEVEL = 5;
 
+const ARCHIVE_TASK_AUTONOMY_LEVEL = SESSION_WRITE_AUTONOMY_LEVEL;
+
 export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): ActionDefinition[] {
   const handlers = createSpaceAgentToolHandlers({ ...config, auditLogRepo: undefined });
 
@@ -399,8 +401,8 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       family: 'tasks',
       safetyClass: 'mutate',
       description:
-        'Retry a failed or cancelled task, optionally with an updated description; returns the restarted task.',
-      paramsDoc: 'task_id, description?',
+        'Retry a blocked, cancelled, or done task, optionally with an updated description; returns the restarted task.',
+      paramsDoc: 'task_id, description? (retryable statuses: blocked, cancelled, done)',
       paramsSchema: RetryTaskSchema,
       handler: (args) => handlers.retry_task(args),
     }),
@@ -419,7 +421,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       family: 'tasks',
       safetyClass: 'mutate',
       description:
-        'Change a task worker-agent or coder/general assignment (open, blocked, or cancelled tasks only); returns the updated task.',
+        'Validate a reassignment request for an open, blocked, cancelled, or done task; returns the task unchanged — assignment mutation is not implemented (fields removed in M71).',
       paramsDoc: 'task_id, custom_agent_id? (null clears), assigned_agent? (coder|general)',
       paramsSchema: ReassignTaskSchema,
       handler: (args) => handlers.reassign_task(args),
@@ -442,6 +444,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Archive a task — the true terminal state; archived tasks are excluded from queries and cannot be reactivated.',
       paramsDoc: 'task_id',
       paramsSchema: ArchiveTaskSchema,
+      autonomyRequirement: ARCHIVE_TASK_AUTONOMY_LEVEL,
       handler: (args) => handlers.archive_task(args),
     }),
     defineAction({
