@@ -31,6 +31,34 @@ export class SpaceWorkspaceRepository {
     return this.getById(id)!;
   }
 
+  createUnclaimed(params: {
+    spaceId: string;
+    path: string;
+    label?: string;
+    isPrimary?: boolean;
+  }): SpaceWorkspaceRecord | null {
+    const id = generateUUID();
+    const now = Date.now();
+    const result = this.db
+      .prepare(
+        `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM space_workspaces WHERE path = ?)`
+      )
+      .run(
+        id,
+        params.spaceId,
+        params.path,
+        params.label ?? '',
+        params.isPrimary ? 1 : 0,
+        now,
+        now,
+        params.path
+      );
+    if (result.changes === 0) return null;
+    return this.getById(id)!;
+  }
+
   getById(id: string): SpaceWorkspaceRecord | null {
     const row = this.db.prepare(`SELECT * FROM space_workspaces WHERE id = ?`).get(id) as
       | Record<string, unknown>

@@ -245,6 +245,7 @@ export interface SpaceCreateResult extends Space {
 export interface CreateSpaceParams {
   workspacePath: string;
   name: string;
+  additionalWorkspaces?: { path: string; label?: string }[];
   description?: string;
   backgroundContext?: string;
   instructions?: string;

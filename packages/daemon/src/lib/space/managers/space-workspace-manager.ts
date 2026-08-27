@@ -5,6 +5,7 @@ import type {
   SpaceWorkspaceRepository,
 } from '../../../storage/repositories/space-workspace-repository.ts';
 import {
+  checkWorkspaceRegistryGates,
   nodeWorkspaceValidationIo,
   validateWorkspaceRegistration,
   type WorkspaceRegistryClaim,
@@ -18,7 +19,7 @@ export type WorkspaceRegistryReader = Pick<SpaceRepository, 'getSpace' | 'listSp
 
 export type WorkspaceStore = Pick<
   SpaceWorkspaceRepository,
-  'create' | 'getById' | 'listBySpace' | 'delete'
+  'create' | 'createUnclaimed' | 'findOwnerByPath' | 'getById' | 'listBySpace' | 'delete'
 >;
 
 export interface WorkspaceSessionReferences {
@@ -30,6 +31,7 @@ export interface SpaceWorkspaceManagerDeps {
   workspaces: WorkspaceStore;
   sessionReferences: WorkspaceSessionReferences;
   io?: WorkspaceValidationIo;
+  transaction?: <T>(fn: () => T) => T;
 }
 
 export class WorkspaceRegistrationError extends Error {
@@ -86,6 +88,7 @@ interface RegisterWorkspaceCtx {
   spaces: WorkspaceRegistryReader;
   workspaces: WorkspaceStore;
   io: WorkspaceValidationIo;
+  transaction?: <T>(fn: () => T) => T;
   spaceId: string;
   rawPath: string;
   label?: string;
@@ -126,13 +129,43 @@ function registerEnsureAccepted(ctx: RegisterWorkspaceCtx): RegisterWorkspaceCtx
 function registerInsertWorkspace(ctx: RegisterWorkspaceCtx): RegisterWorkspaceCtx {
   const verdict = ctx.verdict!;
   if (!verdict.accepted) return ctx;
-  const record = ctx.workspaces.create({
-    spaceId: ctx.spaceId,
-    path: verdict.canonicalPath,
-    label: ctx.label,
-    isPrimary: false,
-  });
-  return { ...ctx, record };
+  const insert = (): RegisterWorkspaceCtx => {
+    const recheck = checkWorkspaceRegistryGates(
+      buildRegistrySnapshot(ctx.spaces, ctx.workspaces, ctx.spaceId),
+      { spaceId: ctx.spaceId, canonicalPath: verdict.canonicalPath }
+    );
+    if (!recheck.accepted) {
+      return {
+        ...ctx,
+        error: new WorkspaceRegistrationError(recheck.message, recheck.reason, recheck),
+      };
+    }
+    const record = ctx.workspaces.createUnclaimed({
+      spaceId: ctx.spaceId,
+      path: verdict.canonicalPath,
+      label: ctx.label,
+      isPrimary: false,
+    });
+    if (record) return { ...ctx, record };
+    const owner = ctx.workspaces.findOwnerByPath(verdict.canonicalPath);
+    const ownClaim = owner?.spaceId === ctx.spaceId;
+    const reason = ownClaim ? 'duplicate_of_registered_workspace' : 'path_claimed_by_another_space';
+    const message = ownClaim
+      ? `Workspace path is already registered to this space: ${verdict.canonicalPath}`
+      : `Workspace path is already claimed by space ${owner?.spaceId}: ${verdict.canonicalPath}`;
+    return {
+      ...ctx,
+      error: new WorkspaceRegistrationError(message, reason, {
+        accepted: false,
+        reason,
+        message,
+        canonicalPath: verdict.canonicalPath,
+        conflictPath: owner?.path,
+        conflictSpaceId: owner?.spaceId,
+      }),
+    };
+  };
+  return ctx.transaction ? ctx.transaction(insert) : insert();
 }
 
 const runRegisterWorkspace = (
@@ -253,6 +286,7 @@ export class SpaceWorkspaceManager {
       spaces: this.deps.spaces,
       workspaces: this.deps.workspaces,
       io: this.deps.io ?? nodeWorkspaceValidationIo,
+      transaction: this.deps.transaction,
       spaceId,
       rawPath,
       label,

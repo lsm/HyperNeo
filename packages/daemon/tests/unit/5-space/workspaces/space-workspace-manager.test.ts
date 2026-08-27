@@ -53,6 +53,7 @@ class FakeSpaces {
 class FakeWorkspaces {
   rows: SpaceWorkspaceRecord[];
   failCreateWith: Error | null = null;
+  claimRacedBy: SpaceWorkspaceRecord | null = null;
   private nextId = 0;
 
   constructor(initial: SpaceWorkspaceRecord[] = []) {
@@ -77,6 +78,21 @@ class FakeWorkspaces {
     };
     this.rows.push(record);
     return record;
+  }
+
+  createUnclaimed(params: {
+    spaceId: string;
+    path: string;
+    label?: string;
+    isPrimary?: boolean;
+  }): SpaceWorkspaceRecord | null {
+    if (this.claimRacedBy) return null;
+    return this.create(params);
+  }
+
+  findOwnerByPath(path: string): SpaceWorkspaceRecord | null {
+    if (this.claimRacedBy) return this.claimRacedBy;
+    return this.rows.find((r) => r.path === path) ?? null;
   }
 
   getById(id: string): SpaceWorkspaceRecord | null {
@@ -114,6 +130,7 @@ function newManager(
     workspaces?: FakeWorkspaces;
     io?: WorkspaceValidationIo;
     sessionReferences?: WorkspaceSessionReferences;
+    transaction?: <T>(fn: () => T) => T;
   } = {}
 ): { manager: SpaceWorkspaceManager; workspaces: FakeWorkspaces } {
   const workspaces = options.workspaces ?? new FakeWorkspaces();
@@ -122,6 +139,7 @@ function newManager(
     workspaces,
     sessionReferences: options.sessionReferences ?? noActiveSessions,
     io: options.io ?? fakeIo(),
+    transaction: options.transaction,
   };
   return { manager: new SpaceWorkspaceManager(deps), workspaces };
 }
@@ -213,6 +231,40 @@ describe('registerWorkspace', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(WorkspaceRegistrationError);
     expect((err as Error).message).toBe('disk full');
+  });
+
+  test('rejects when another space claims the path after validation', async () => {
+    const workspaces = new FakeWorkspaces();
+    workspaces.claimRacedBy = row(SPACE_B, '/repo', 'stolen');
+    const { manager } = newManager({ workspaces });
+    const err = await registrationError(manager, '/repo');
+    expect(err.reason).toBe('path_claimed_by_another_space');
+    expect(err.verdict.conflictSpaceId).toBe(SPACE_B);
+    expect(workspaces.rows).toHaveLength(0);
+  });
+
+  test('rejects when the same space claims the path after validation', async () => {
+    const workspaces = new FakeWorkspaces();
+    workspaces.claimRacedBy = row(SPACE_A, '/repo', 'stolen');
+    const { manager } = newManager({ workspaces });
+    const err = await registrationError(manager, '/repo');
+    expect(err.reason).toBe('duplicate_of_registered_workspace');
+    expect(workspaces.rows).toHaveLength(0);
+  });
+
+  test('rejects when a concurrent writer nests a workspace before the insert transaction', async () => {
+    const workspaces = new FakeWorkspaces();
+    const lateRow = row(SPACE_A, '/work', 'late');
+    const { manager } = newManager({
+      workspaces,
+      transaction: (fn) => {
+        workspaces.rows.push(lateRow);
+        return fn();
+      },
+    });
+    const err = await registrationError(manager, '/work/sub-repo');
+    expect(err.reason).toBe('ambiguous_nesting');
+    expect(workspaces.rows).toEqual([lateRow]);
   });
 });
 

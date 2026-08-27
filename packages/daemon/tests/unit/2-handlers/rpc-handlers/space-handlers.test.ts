@@ -346,6 +346,60 @@ describe('space-handlers', () => {
       expect(params.autonomyLevel).toBeUndefined();
     });
 
+    it('passes additionalWorkspaces through to SpaceManager.createSpace', async () => {
+      await call('space.create', {
+        workspacePath: '/tmp/x',
+        name: 'X',
+        additionalWorkspaces: [{ path: '/tmp/repo-a', label: 'Alpha' }, { path: '/tmp/repo-b' }],
+      });
+
+      const [params] = (spaceManager.createSpace as ReturnType<typeof mock>).mock.calls[0];
+      expect(params.additionalWorkspaces).toEqual([
+        { path: '/tmp/repo-a', label: 'Alpha' },
+        { path: '/tmp/repo-b' },
+      ]);
+    });
+
+    it('throws when an additional workspace has no path', async () => {
+      await expect(
+        call('space.create', {
+          workspacePath: '/tmp/x',
+          name: 'X',
+          additionalWorkspaces: [{ label: 'Alpha' }],
+        })
+      ).rejects.toThrow('additionalWorkspaces[0].path is required');
+    });
+
+    it('throws when an additional workspace path is not a string, before createSpace runs', async () => {
+      await expect(
+        call('space.create', {
+          workspacePath: '/tmp/x',
+          name: 'X',
+          additionalWorkspaces: [{ path: 123 }],
+        })
+      ).rejects.toThrow('additionalWorkspaces[0].path is required');
+      expect(spaceManager.createSpace).not.toHaveBeenCalled();
+    });
+
+    it('propagates registration errors and publishes nothing when a secondary is invalid', async () => {
+      (spaceManager.createSpace as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw registrationError(
+          'not_a_git_repository_root',
+          'Workspace path is not a git repository root: /tmp/plain-dir'
+        );
+      });
+
+      await expect(
+        call('space.create', {
+          workspacePath: '/tmp/x',
+          name: 'X',
+          additionalWorkspaces: [{ path: '/tmp/plain-dir' }],
+        })
+      ).rejects.toThrow('not a git repository root');
+      expect(internalEventBus.publish).not.toHaveBeenCalled();
+      expect(spaceManager.addSession).not.toHaveBeenCalled();
+    });
+
     it('creates space:chat:${spaceId} session when sessionManager is provided', async () => {
       const sessionManager = createMockSessionManager();
       setup(mockSpace, sessionManager);
