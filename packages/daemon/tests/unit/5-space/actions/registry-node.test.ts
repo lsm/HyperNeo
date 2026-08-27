@@ -487,6 +487,47 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     expect(registry.get('mark_complete')).toBeUndefined();
   });
 
+  test('space entries are normalized to the dispatcher family before dispatch', () => {
+    const spaceEntry = defineAction({
+      name: 'list_sessions',
+      family: 'sessions',
+      safetyClass: 'read',
+      description: 'Lists sessions in the space',
+      paramsDoc: 'none',
+      paramsSchema: z.object({}),
+      handler: async () => [],
+    });
+    const composed = composeRoleActionEntries('coordinator', [spaceEntry], []);
+    expect(composed[0].family).toBe('space');
+    const registry = createActionRegistry(composed);
+    expect(registry.get('list_sessions')?.family).toBe('space');
+  });
+
+  test('runDispatchAction accepts composed space entries from non-space families', async () => {
+    const spaceEntry = defineAction({
+      name: 'list_sessions',
+      family: 'sessions',
+      safetyClass: 'read',
+      description: 'Lists sessions in the space',
+      paramsDoc: 'none',
+      paramsSchema: z.object({}),
+      handler: async () => [],
+    });
+    const registry = createActionRegistry(
+      composeRoleActionEntries('coordinator', [spaceEntry], [])
+    );
+    const outcome = await runDispatchAction(
+      { registry },
+      {
+        actionName: 'list_sessions',
+        params: {},
+        role: 'coordinator',
+        spaceId: SPACE_ID,
+      }
+    );
+    expect(outcome.action).toBe('dispatched');
+  });
+
   test('coordinator, member, long-term, and non-space registries never include node family', () => {
     const nodeEntry = defineAction({
       name: 'list_peers',

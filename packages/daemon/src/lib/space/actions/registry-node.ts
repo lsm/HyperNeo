@@ -332,13 +332,18 @@ export function composeRoleActionEntries(
   spaceEntries: readonly ActionDefinition[],
   nodeEntries: readonly ActionDefinition[]
 ): ActionDefinition[] {
-  if (role !== 'workflow_worker') return [...spaceEntries];
-  const nodeNames = new Set(nodeEntries.map((entry) => entry.name));
   const workerOnlyNodeNames = new Set(['approve_task', 'submit_for_approval', 'mark_complete']);
+  const withSpaceFamily = (entry: ActionDefinition) => ({ ...entry, family: 'space' as const });
+
+  if (role !== 'workflow_worker') {
+    return spaceEntries.map(withSpaceFamily);
+  }
+
+  const nodeNames = new Set(nodeEntries.map((entry) => entry.name));
   return [
     ...nodeEntries,
-    ...spaceEntries.filter(
-      (entry) => !nodeNames.has(entry.name) && !workerOnlyNodeNames.has(entry.name)
-    ),
+    ...spaceEntries
+      .filter((entry) => !nodeNames.has(entry.name) && !workerOnlyNodeNames.has(entry.name))
+      .map(withSpaceFamily),
   ];
 }
