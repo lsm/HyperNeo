@@ -1836,6 +1836,71 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('recovers a yielded pre-acknowledgment survivor from its live queue entry', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('uuid-yielded', 'pending tool result', false, {});
+      delivered.catch(() => {});
+      const generator = q.messageGenerator(testSessionId);
+      const step = await generator.next();
+      expect(step.value.message.uuid).toBe('uuid-yielded');
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const requeuedCallback = mock(() => {});
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-yielded'] }),
+        onSurvivorRequeued: requeuedCallback,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).not.toHaveBeenCalledWith(
+        'uuid-yielded',
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      );
+      expect(requeuedCallback).toHaveBeenCalledWith('uuid-yielded');
+      expect(q.hasPendingOrClaimed('uuid-yielded')).toBe(true);
+      q.clear();
+      q.stop();
+    });
+
+    it('resets mid-turn state when clear() rejects a queued compaction', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const abortedCallback = mock(() => {});
+      q.onInternalCompactionsAborted = abortedCallback;
+      const opts = makeInterruptOpts(q);
+      q.enqueueMidTurnCompaction(opts, 'test');
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
+
+      q.clear();
+
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+      expect(abortedCallback).toHaveBeenCalledTimes(1);
+
+      const compaction = q.enqueue('/compact', true, { durable: true });
+      compaction.catch(() => {});
+      const toolResult = q.enqueueWithId(
+        'tool-result-after-clear',
+        [{ type: 'tool_result', tool_use_id: 'tu-2', content: 'done' }],
+        false,
+        { durable: true }
+      );
+
+      const generator = q.messageGenerator(testSessionId);
+      const first = await generator.next();
+      expect(first.value.message.uuid).toBe('tool-result-after-clear');
+      first.value.onSent();
+      await toolResult;
+
+      const second = await generator.next();
+      expect(second.value.message.internal).toBe(true);
+      second.value.onSent();
+      await compaction;
+      q.stop();
+    });
+
     it('gates delivery for the whole interrupt window', async () => {
       const q = new MessageQueue();
       q.start();

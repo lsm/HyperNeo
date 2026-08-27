@@ -407,12 +407,16 @@ export class MessageQueue {
     this.stopEpoch += 1;
     this.clearEpoch += 1;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
+    const rejectedCompactions =
+      this.queue.some((message) => this.isInternalCompaction(message)) ||
+      [...this.claimed].some((message) => this.isInternalCompaction(message));
     this.internalCompactionsAwaitingBoundary = 0;
     this.internalCompactionIdsAwaitingBoundary.clear();
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
     this.deliveryGate = null;
     this.deliveryGateExclusive = false;
+    this.midTurnCompactionQueued = false;
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -435,7 +439,7 @@ export class MessageQueue {
       msg.resolve(msg.id);
     }
     this.yielded.clear();
-    if (deliveredCompactions || yieldedCompactions.length > 0) {
+    if (deliveredCompactions || yieldedCompactions.length > 0 || rejectedCompactions) {
       this.onInternalCompactionsAborted?.();
     }
   }
@@ -968,6 +972,22 @@ export class MessageQueue {
           `${opts.sessionId}; a replacement compaction is enqueued after survivor ` +
           `processing`
       );
+      return;
+    }
+    if (this.requeueYielded(uuid)) {
+      opts.logger.info(
+        `requeued cancelled survivor ${uuid} for session ${opts.sessionId} from its ` +
+          `live in-flight entry before send acknowledgment`
+      );
+      try {
+        opts.onSurvivorRequeued?.(uuid);
+      } catch (error) {
+        opts.logger.warn(
+          `retryable-state update for requeued survivor ${uuid} failed for session ` +
+            `${opts.sessionId}:`,
+          error
+        );
+      }
       return;
     }
     let content = this.getSentPromptContent(uuid);
