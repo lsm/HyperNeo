@@ -342,6 +342,8 @@ class SpaceStore {
 
   private taskDetailPromises = new Map<string, Promise<SpaceTask | null>>();
 
+  private selectGeneration = 0;
+
   private workflowDetailFetchGens = new Map<string, number>();
 
   private workflowSummariesLoaded = false;
@@ -562,6 +564,7 @@ class SpaceStore {
     this.tasks.value = [];
     this.taskDetails.value = new Map();
     this.taskDetailPromises.clear();
+    this.selectGeneration += 1;
     this.workflowRuns.value = [];
     this.agents.value = [];
     this.agentTemplates.value = [];
@@ -2020,12 +2023,13 @@ class SpaceStore {
     if (!spaceId) return null;
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return null;
+    const generation = this.selectGeneration;
 
     const promise = hub
       .request<SpaceTask>('spaceTask.get', { spaceId, taskId })
       .then((task) => {
         if (!task) return null;
-        if (this.spaceId.value !== spaceId) return null;
+        if (this.selectGeneration !== generation) return null;
         this.taskDetails.value = new Map(this.taskDetails.value).set(taskId, task);
         return task;
       })
@@ -2034,7 +2038,9 @@ class SpaceStore {
         return null;
       })
       .finally(() => {
-        this.taskDetailPromises.delete(taskId);
+        if (this.taskDetailPromises.get(taskId) === promise) {
+          this.taskDetailPromises.delete(taskId);
+        }
       });
     this.taskDetailPromises.set(taskId, promise);
     return promise;

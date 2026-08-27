@@ -2728,6 +2728,60 @@ describe('SpaceStore — task detail cache', () => {
     ).toHaveLength(1);
     expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('fresh full');
   });
+
+  it('rejects a detail resolved after navigating away and back from an obsolete generation', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveFirst: (task: SpaceTask) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise<SpaceTask>((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+
+    const pending = spaceStore.ensureTaskDetail('t1');
+    await spaceStore.selectSpace('space-2');
+    await spaceStore.selectSpace('space-1');
+    resolveFirst({ ...makeTask('t1'), description: 'stale full' });
+    await expect(pending).resolves.toBeNull();
+
+    expect(spaceStore.taskDetails.value.size).toBe(0);
+  });
+
+  it('does not let a stale completion remove a newer in-flight request', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveFirst: (task: SpaceTask) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise<SpaceTask>((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+    const first = spaceStore.ensureTaskDetail('t1');
+    await spaceStore.selectSpace('space-2');
+    await spaceStore.selectSpace('space-1');
+
+    let resolveSecond: (task: SpaceTask) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise<SpaceTask>((resolve) => {
+          resolveSecond = resolve;
+        })
+    );
+    const second = spaceStore.ensureTaskDetail('t1');
+    resolveFirst({ ...makeTask('t1'), description: 'stale full' });
+    await expect(first).resolves.toBeNull();
+
+    const third = spaceStore.ensureTaskDetail('t1');
+    resolveSecond({ ...makeTask('t1'), description: 'fresh full' });
+    await expect(second).resolves.toHaveProperty('description', 'fresh full');
+    await expect(third).resolves.toHaveProperty('description', 'fresh full');
+
+    expect(
+      mockHub.request.mock.calls.filter((c: unknown[]) => c[0] === 'spaceTask.get')
+    ).toHaveLength(2);
+    expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('fresh full');
+  });
 });
 
 describe('SpaceStore — node execution LiveQuery subscriptions', () => {
