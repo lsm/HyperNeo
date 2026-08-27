@@ -19,7 +19,7 @@ import { SESSION_WRITE_AUTONOMY_LEVEL } from '../tools/tool-admission-gates.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
 
 export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): ActionDefinition[] {
-  const handlers = createSpaceAgentToolHandlers(config);
+  const handlers = createSpaceAgentToolHandlers({ ...config, auditLogRepo: undefined });
 
   const sessionEntries: ActionDefinition[] = [
     defineAction({
@@ -61,7 +61,6 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Send a user message to an ad-hoc session and optionally clear a pending question; returns the delivery result.',
       paramsDoc: 'session_id, message, answer_question?',
       paramsSchema: SendSessionMessageSchema,
-      autonomyRequirement: SESSION_WRITE_AUTONOMY_LEVEL,
       handler: (args) => handlers.send_session_message(args),
     }),
     defineAction({
@@ -95,7 +94,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       family: 'workflows',
       safetyClass: 'read',
       description:
-        'List every workflow in this space with its description and steps; returns id, handle, and node summaries.',
+        'List every workflow in this space; returns summaries with id, handle, description, tags, and node count.',
       paramsDoc: 'none',
       paramsSchema: ListWorkflowsSchema,
       handler: () => handlers.list_workflows(),
@@ -113,7 +112,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     defineAction({
       name: 'change_plan',
       family: 'workflows',
-      safetyClass: 'mutate',
+      safetyClass: 'destructive',
       description:
         'Update an active run description, or switch it to another workflow (cancels the run and starts a new one); returns the affected run(s).',
       paramsDoc: 'run_id, plus description? and/or workflow_id?/workflow_handle?',
@@ -135,7 +134,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       family: 'workflows',
       safetyClass: 'read',
       description:
-        'List all enabled workflows unranked for a described piece of work; returns id, handle, description, tags, and nodes.',
+        'List all enabled workflows unranked for a described piece of work; returns id, handle, description, tags, and node count.',
       paramsDoc: 'description (context only — every workflow is returned)',
       paramsSchema: SuggestWorkflowSchema,
       handler: (args) => handlers.suggest_workflow(args),

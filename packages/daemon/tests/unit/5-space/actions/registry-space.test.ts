@@ -10,9 +10,11 @@ import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-ag
 import {
   SPACE_AGENT_TOOL_SCHEMAS,
   type SpaceAgentToolName,
+  UpdateSessionStateSchema,
 } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';
+import type { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
@@ -38,6 +40,33 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    workspace_path TEXT,
+    created_at TEXT NOT NULL,
+    last_active_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    config TEXT NOT NULL,
+    metadata TEXT NOT NULL,
+    is_worktree INTEGER DEFAULT 0,
+    worktree_path TEXT,
+    main_repo_path TEXT,
+    worktree_branch TEXT,
+    git_branch TEXT,
+    sdk_session_id TEXT,
+    acp_session_id TEXT,
+    sdk_origin_path TEXT,
+    available_commands TEXT,
+    processing_state TEXT,
+    archived_at TEXT,
+    parent_id TEXT,
+    type TEXT DEFAULT 'worker',
+    session_context TEXT,
+    room_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.roomId') END) VIRTUAL,
+    space_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.spaceId') END) VIRTUAL,
+    task_id TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(session_context) THEN json_extract(session_context, '$.taskId') END) VIRTUAL
+  )`);
   db.prepare(
     `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
      allowed_models, session_ids, slug, status, created_at, updated_at)
@@ -90,7 +119,7 @@ const EXPECTED_ENTRIES: ReadonlyArray<readonly [string, string, string]> = [
   ['interrupt_session', 'sessions', 'mutate'],
   ['list_workflows', 'workflows', 'read'],
   ['get_workflow_run', 'workflows', 'read'],
-  ['change_plan', 'workflows', 'mutate'],
+  ['change_plan', 'workflows', 'destructive'],
   ['get_workflow_detail', 'workflows', 'read'],
   ['suggest_workflow', 'workflows', 'read'],
 ];
@@ -137,18 +166,18 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('session writes carry the session-write autonomy level; other entries carry none', () => {
+  test('state writes carry static level 4; send_session_message gates conditionally in its handler', () => {
     const ctx = makeCtx();
     try {
       const byName = new Map(
         createSpaceRegistryEntries(ctx.config).map((entry) => [entry.name, entry])
       );
-      for (const name of ['send_session_message', 'update_session_state', 'interrupt_session']) {
+      for (const name of ['update_session_state', 'interrupt_session']) {
         expect(byName.get(name)?.autonomyRequirement).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
+      expect(byName.get('send_session_message')?.autonomyRequirement).toBeUndefined();
       for (const [name] of EXPECTED_ENTRIES) {
-        if (['send_session_message', 'update_session_state', 'interrupt_session'].includes(name))
-          continue;
+        if (['update_session_state', 'interrupt_session'].includes(name)) continue;
         expect(byName.get(name)?.autonomyRequirement).toBeUndefined();
       }
     } finally {
@@ -182,6 +211,39 @@ describe('createSpaceRegistryEntries — conditional entries', () => {
 });
 
 describe('createSpaceRegistryEntries — handler wiring', () => {
+  test('registry-dispatched handlers write no legacy audit rows — audit belongs to the dispatcher choke point', async () => {
+    const auditRows: Array<Record<string, unknown>> = [];
+    const auditLogRepo = {
+      createEntry: (entry: Record<string, unknown>) => {
+        auditRows.push(entry);
+      },
+    } as unknown as McpAuditLogRepository;
+    const ctx = makeCtx({ auditLogRepo, getSpaceAutonomyLevel: async () => 5 });
+    try {
+      const now = new Date().toISOString();
+      ctx.db
+        .prepare(
+          `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, session_context)
+           VALUES ('sess-1', 'Stuck', ?, ?, 'active', '{}', '{}', ?)`
+        )
+        .run(now, now, JSON.stringify({ spaceId: SPACE_ID }));
+
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const updateSessionState = entries.find((entry) => entry.name === 'update_session_state');
+      if (!updateSessionState) throw new Error('update_session_state entry missing');
+      const result = (await updateSessionState.handler(
+        UpdateSessionStateSchema.parse({ session_id: 'sess-1', processing_state: 'running' })
+      )) as { content: Array<{ text: string }> };
+      const payload = JSON.parse(result.content[0].text) as { success: boolean; updated: boolean };
+
+      expect(payload.success).toBe(true);
+      expect(payload.updated).toBe(true);
+      expect(auditRows).toEqual([]);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
   test('dispatches through the underlying typed handlers', async () => {
     const ctx = makeCtx();
     try {
