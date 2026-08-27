@@ -705,6 +705,7 @@ describe('render-pending-digest pipeline', () => {
     if (outcome.action !== 'delivered') return;
     expect(outcome.uuid).toBe(`${DETERMINISTIC_DIGEST_UUID_PREFIX}fixture-2`);
     expect(outcome.replayed).toBe(true);
+    expect(outcome.text).toBe('digest');
     expect(outcome.eventIds).toEqual(['ev-b']);
     expect(h.marks).toEqual([{ eventId: 'ev-b', deliveryKey: 'delivery-ev-b' }]);
     expect(h.saved).toHaveLength(1);

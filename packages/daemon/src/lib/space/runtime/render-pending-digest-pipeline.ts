@@ -387,6 +387,18 @@ function deterministicDigestUuid(eventIds: string[]): string {
   return `${DETERMINISTIC_DIGEST_UUID_PREFIX}${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
 }
 
+function syntheticMessageText(message: SDKUserMessage): string {
+  const content = message.message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    const textBlock = content.find((block) => (block as { type?: string }).type === 'text') as
+      | { text?: unknown }
+      | undefined;
+    if (textBlock) return String(textBlock.text ?? '');
+  }
+  return '';
+}
+
 export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
   if (ctx.replayable && ctx.replayDigestMessage && ctx.replayEventIds) {
     const current = (ctx.essences ?? []).map((essence) => essence.eventId).sort();
@@ -396,6 +408,7 @@ export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
         ...ctx,
         digestUuid: String(ctx.replayDigestMessage.uuid),
         digestMessage: ctx.replayDigestMessage,
+        digestText: syntheticMessageText(ctx.replayDigestMessage),
       };
     }
   }
