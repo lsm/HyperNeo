@@ -710,7 +710,7 @@ export class MessageQueue {
     void interruptPromise.then(
       (lateReceipt) => {
         if (!timedOut || !resumeArmed) return;
-        void this.processInterruptSurvivorReceipt(opts, lateReceipt).catch((error) => {
+        void this.processLateInterruptReceipt(opts, lateReceipt).catch((error) => {
           opts.logger.warn(
             `late survivor cancellation after a slow mid-turn interrupt failed for ` +
               `session ${opts.sessionId}:`,
@@ -728,6 +728,26 @@ export class MessageQueue {
         );
       }
     );
+  }
+
+  private async processLateInterruptReceipt(
+    opts: MidTurnBudgetInterruptOptions,
+    receipt: { still_queued: string[] } | undefined
+  ): Promise<void> {
+    this.removePendingInternalCompactions();
+    let resolveLateGate: (() => void) | undefined;
+    const lateGate = new Promise<void>((resolve) => {
+      resolveLateGate = resolve;
+    });
+    this.setDeliveryGate(lateGate);
+    try {
+      const restarted = await this.processInterruptSurvivorReceipt(opts, receipt);
+      if (!restarted) {
+        this.enqueueMidTurnCompaction(opts, 'mid-turn-late');
+      }
+    } finally {
+      resolveLateGate?.();
+    }
   }
 
   private async processInterruptSurvivorReceipt(

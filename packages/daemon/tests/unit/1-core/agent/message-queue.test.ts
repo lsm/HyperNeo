@@ -6,6 +6,10 @@ import {
 } from '../../../../src/lib/agent/message-queue';
 import type { Logger } from '../../../../src/lib/logger';
 
+async function tick(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe('MessageQueue', () => {
   let queue: MessageQueue;
   const testSessionId = generateUUID();
@@ -1947,6 +1951,45 @@ describe('MessageQueue', () => {
       expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-phantom')).toBe(false);
       q.stop();
     });
+
+    it('re-asserts compaction-first ordering when a late receipt follows a restart', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-late-order', 'late-survivor', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let resolveInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        resolveInterrupt = resolve;
+      });
+      const restartMock = mock(async () => {});
+      const opts = makeInterruptOpts(q, {
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => true,
+        restart: restartMock,
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      resolveInterrupt({ still_queued: ['uuid-late-order'] });
+      await run;
+      await tick(50);
+
+      const replay = q.messageGenerator(testSessionId);
+      const first = await replay.next();
+      expect((first.value.message.message.content as Array<{ text?: string }>)[0].text).toBe(
+        '/compact'
+      );
+      first.value.onSent();
+      q.acknowledgeCompactionsAwaitingBoundary();
+      const second = await replay.next();
+      expect((second.value.message.message.content as Array<{ text?: string }>)[0].text).toBe(
+        'late-survivor'
+      );
+      second.value.onSent();
+      q.stop();
+    }, 15_000);
 
     it('holds delivery behind a gate while survivors are cancelled and requeued', async () => {
       const q = new MessageQueue();
