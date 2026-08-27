@@ -1310,6 +1310,10 @@ export class SDKMessageHandler {
     if (!isSDKSessionStateChangedMessage(message)) return;
     if (this.isInvocationStale(invocationGeneration)) {
       this.logger.warn('Ignoring session-state event from a replaced query.');
+      const staleOwner = this.invocationIdleOwner(invocationGeneration);
+      if (staleOwner) {
+        this.ctx.stateManager.cancelTerminalIdleArm(staleOwner);
+      }
       return;
     }
 

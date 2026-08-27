@@ -29,7 +29,7 @@ export class ProcessingStateManager {
   private nextIdleWaiterId = 0;
   private idleCallbackInFlight = false;
   private terminalIdleTransitions = 0;
-  private pendingTerminalIdleTransitions = 0;
+  private pendingTerminalIdleArms = new Map<number, number>();
   private queryOwnerGeneration = 0;
   private turnOwnerToken = 0;
 
@@ -73,6 +73,25 @@ export class ProcessingStateManager {
         currentOwner,
       })
     );
+  }
+
+  private takePendingTerminalArm(generation?: number): boolean {
+    const keys =
+      generation !== undefined ? [generation] : [-1, ...[...this.pendingTerminalIdleArms.keys()]];
+    for (const key of keys) {
+      const count = this.pendingTerminalIdleArms.get(key) ?? 0;
+      if (count <= 0) continue;
+      if (count <= 1) this.pendingTerminalIdleArms.delete(key);
+      else this.pendingTerminalIdleArms.set(key, count - 1);
+      return true;
+    }
+    return false;
+  }
+
+  private pendingTerminalArmTotal(): number {
+    let total = 0;
+    for (const count of this.pendingTerminalIdleArms.values()) total += count;
+    return total;
   }
 
   waitForIdleTransition(
@@ -121,8 +140,18 @@ export class ProcessingStateManager {
 
   beginTerminalIdle(owner?: IdleOwnerScope): void {
     this.terminalIdleTransitions += 1;
-    this.pendingTerminalIdleTransitions += 1;
+    const generation = owner?.queryGeneration ?? -1;
+    this.pendingTerminalIdleArms.set(
+      generation,
+      (this.pendingTerminalIdleArms.get(generation) ?? 0) + 1
+    );
     for (const waiter of this.admittedIdleWaiters(owner)) waiter.fireEnd();
+  }
+
+  cancelTerminalIdleArm(owner?: IdleOwnerScope): void {
+    if (!owner) return;
+    if (!this.takePendingTerminalArm(owner.queryGeneration)) return;
+    this.terminalIdleTransitions -= 1;
   }
 
   restoreFromDatabase(): void {
@@ -177,7 +206,7 @@ export class ProcessingStateManager {
   }
 
   isTerminalIdlePending(): boolean {
-    return this.pendingTerminalIdleTransitions > 0;
+    return this.pendingTerminalArmTotal() > 0;
   }
 
   async setIdle(opts?: {
@@ -188,11 +217,9 @@ export class ProcessingStateManager {
   }): Promise<void> {
     const transitionOwner = opts?.owner ?? this.getCurrentIdleOwner();
     const suppressDrain = opts?.suppressDeliveryWaiters || this.idleCallbackInFlight;
-    const consumesTerminalFence = this.pendingTerminalIdleTransitions > 0;
+    const consumesTerminalFence = this.takePendingTerminalArm(opts?.owner?.queryGeneration);
     const ownsTerminalTransition = !suppressDrain || consumesTerminalFence;
-    if (consumesTerminalFence) {
-      this.pendingTerminalIdleTransitions -= 1;
-    } else if (!suppressDrain) {
+    if (!consumesTerminalFence && !suppressDrain) {
       this.terminalIdleTransitions += 1;
     }
     if (!suppressDrain) {

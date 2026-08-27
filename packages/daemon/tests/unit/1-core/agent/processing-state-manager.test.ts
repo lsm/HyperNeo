@@ -523,6 +523,39 @@ describe('ProcessingStateManager', () => {
       expect(manager.getState().status).toBe('idle');
       expect(onIdleCallback).toHaveBeenCalledTimes(1);
     });
+
+    test('an owner settle consumes only its own generation arm; a stale idle cancels its orphan (B5e)', async () => {
+      manager.noteQueryOwnerGeneration(1);
+      manager.beginTerminalIdle(manager.idleOwnerForQuery(1));
+      manager.noteQueryOwnerGeneration(2);
+      manager.beginTerminalIdle(manager.idleOwnerForQuery(2));
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(2) });
+
+      expect(manager.isTerminalIdlePending()).toBe(true);
+
+      manager.cancelTerminalIdleArm(manager.idleOwnerForQuery(1));
+
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
+
+    test('an owner settle with no arm of its own never consumes a foreign generation arm', async () => {
+      manager.noteQueryOwnerGeneration(2);
+      manager.beginTerminalIdle(manager.idleOwnerForQuery(2));
+      await manager.setProcessing('successor-msg');
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(7) });
+
+      expect(manager.isTerminalIdlePending()).toBe(true);
+      expect(manager.getState().status).toBe('processing');
+      expect(manager.isTerminalIdleInFlight()).toBe(true);
+
+      await manager.setIdle({ owner: manager.idleOwnerForQuery(2) });
+
+      expect(manager.isTerminalIdlePending()).toBe(false);
+      expect(manager.isTerminalIdleInFlight()).toBe(false);
+    });
   });
 
   describe('onIdleCallback ordering (deferred restart)', () => {

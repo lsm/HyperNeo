@@ -80,6 +80,7 @@ describe('SDKMessageHandler', () => {
   let detectPhaseFromMessageSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let beginTerminalIdleSpy: ReturnType<typeof mock>;
+  let cancelTerminalIdleArmSpy: ReturnType<typeof mock>;
   let setCompactingSpy: ReturnType<typeof mock>;
   let getContextInfoSpy: ReturnType<typeof mock>;
   let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
@@ -158,10 +159,12 @@ describe('SDKMessageHandler', () => {
     beginTerminalIdleSpy = mock(() => {});
     setCompactingSpy = mock(async () => {});
     getStateSpy = mock(() => ({ phase: 'idle' }));
+    cancelTerminalIdleArmSpy = mock(() => {});
     mockStateManager = {
       detectPhaseFromMessage: detectPhaseFromMessageSpy,
       setIdle: setIdleSpy,
       beginTerminalIdle: beginTerminalIdleSpy,
+      cancelTerminalIdleArm: cancelTerminalIdleArmSpy,
       idleOwnerForQuery: mock((queryGeneration: number) => ({ queryGeneration, turnToken: 0 })),
       setCompacting: setCompactingSpy,
       getState: getStateSpy,
@@ -4536,13 +4539,14 @@ describe('SDKMessageHandler', () => {
       expect(publishedTopics()).not.toContain('query.trigger');
     });
 
-    it('a stale session-state idle does not settle idle and leaves the successor turn flags alone', async () => {
+    it('a stale session-state idle does not settle idle, cancels its orphaned arm, and leaves the successor turn flags alone', async () => {
       setGeneration(9);
       setIdleSpy.mockClear();
 
       await handler.handleMessage(sessionState('idle'), 2);
 
       expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({ queryGeneration: 2, turnToken: 0 });
       expect(publishedTopics()).not.toContain('query.trigger');
       expect(
         (handler as unknown as { usesSessionStateChangedTurnEnd: boolean })
