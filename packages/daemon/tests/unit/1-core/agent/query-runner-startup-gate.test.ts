@@ -190,6 +190,8 @@ describe('QueryRunner startup gate', () => {
         setIdle: setIdleSpy,
         setProcessing: async () => {},
         beginTerminalIdle: () => {},
+        idleOwnerForQuery: (generation: number) => ({ queryGeneration: generation, turnToken: 0 }),
+        cancelTerminalIdleArm: () => {},
       } as unknown as ProcessingStateManager,
       errorManager: { handleError: handleErrorSpy } as unknown as ErrorManager,
       logger: {

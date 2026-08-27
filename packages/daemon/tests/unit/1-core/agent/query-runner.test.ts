@@ -45,6 +45,8 @@ describe('QueryRunner', () => {
   let setIdleSpy: ReturnType<typeof mock>;
   let setProcessingSpy: ReturnType<typeof mock>;
   let beginTerminalIdleSpy: ReturnType<typeof mock>;
+  let idleOwnerForQuerySpy: ReturnType<typeof mock>;
+  let cancelTerminalIdleArmSpy: ReturnType<typeof mock>;
   let handleErrorSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
   let saveSDKMessageSpy: ReturnType<typeof mock>;
@@ -157,11 +159,18 @@ describe('QueryRunner', () => {
     setIdleSpy = mock(async () => {});
     setProcessingSpy = mock(async () => {});
     beginTerminalIdleSpy = mock(() => {});
+    idleOwnerForQuerySpy = mock((generation: number) => ({
+      queryGeneration: generation,
+      turnToken: 0,
+    }));
+    cancelTerminalIdleArmSpy = mock(() => {});
     mockStateManager = {
       getState: getStateSpy,
       setIdle: setIdleSpy,
       setProcessing: setProcessingSpy,
       beginTerminalIdle: beginTerminalIdleSpy,
+      idleOwnerForQuery: idleOwnerForQuerySpy,
+      cancelTerminalIdleArm: cancelTerminalIdleArmSpy,
     } as unknown as ProcessingStateManager;
 
     handleErrorSpy = mock(async () => {});
@@ -3016,6 +3025,61 @@ describe('QueryRunner', () => {
       expect(outcome).toBe('resolved');
       expect(route).toEqual(['begin', 'handle', 'idle', 'boundary']);
     });
+
+    it('arms the terminal route fence and settles both idles with the query-generation owner', async () => {
+      const { outcome } = await runTerminalFailure('terminal query failure');
+
+      expect(outcome).toBe('resolved');
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).toHaveBeenCalledWith({ queryGeneration: 1, turnToken: 0 });
+      expect(setIdleSpy.mock.calls).toEqual([
+        [{ owner: { queryGeneration: 1, turnToken: 0 } }],
+        [{ owner: { queryGeneration: 1, turnToken: 0 } }],
+      ]);
+      expect(cancelTerminalIdleArmSpy).not.toHaveBeenCalled();
+    });
+
+    it('cancels the orphaned route fence when a replacement supersedes the run mid-route', async () => {
+      handleErrorSpy.mockImplementation(async () => {
+        queryGeneration += 1;
+      });
+
+      const { outcome } = await runTerminalFailure('terminal query failure');
+
+      expect(outcome).toBe('resolved');
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledTimes(1);
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+    });
+
+    it('keeps replacement-owned turn fields when a successor starts during the finalizer idle', async () => {
+      setIdleSpy.mockImplementation(async () => {
+        if (setIdleSpy.mock.calls.length >= 2) {
+          queryGeneration += 1;
+        }
+      });
+
+      const { ctx, outcome } = await runTerminalFailure('terminal query failure', {}, (seeded) => {
+        (
+          seeded as unknown as {
+            _lastConsumedUserMessage: { uuid: string; content: string } | null;
+          }
+        )._lastConsumedUserMessage = { uuid: 'successor-msg', content: 'successor prompt' };
+      });
+
+      expect(outcome).toBe('resolved');
+      expect(ctx.queryPromise).not.toBeNull();
+      const runnerPrivate = runner as unknown as {
+        _lastConsumedUserMessage: { uuid: string } | null;
+      };
+      expect(runnerPrivate._lastConsumedUserMessage).toEqual({
+        uuid: 'successor-msg',
+        content: 'successor prompt',
+      });
+    });
   });
 
   describe('per-arm teardown-liturgy inventory', () => {
@@ -3110,6 +3174,11 @@ describe('QueryRunner', () => {
           beginTerminalIdle: mock(() => {
             events.push('terminal.begin');
           }),
+          idleOwnerForQuery: mock((generation: number) => ({
+            queryGeneration: generation,
+            turnToken: 0,
+          })),
+          cancelTerminalIdleArm: mock(() => {}),
         } as unknown as ProcessingStateManager,
         errorManager: {
           handleError: mock(async (): Promise<void> => {
@@ -4294,7 +4363,9 @@ describe('QueryRunner', () => {
       expect(buildSpy).toHaveBeenCalledTimes(2);
       expect(onRateLimitExhausted).toHaveBeenCalledTimes(1);
       expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
-      expect(setIdleSpy.mock.calls).toEqual([[{ suppressDeliveryWaiters: true }]]);
+      expect(setIdleSpy.mock.calls).toEqual([
+        [{ suppressDeliveryWaiters: true, owner: { queryGeneration: 1, turnToken: 0 } }],
+      ]);
     });
 
     it('should fence handled validation errors before rendering them', async () => {

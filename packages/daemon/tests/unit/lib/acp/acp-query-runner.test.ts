@@ -771,6 +771,28 @@ describe('AcpQueryRunner', () => {
     expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
   });
 
+  test('does not publish query.trigger when a replacement advanced the generation during the exit wait', async () => {
+    let signalProcessExit!: () => void;
+    const processExitedPromise = new Promise<void>((resolve) => {
+      signalProcessExit = resolve;
+    });
+    const { runner, ctx } = createRunnerFixture();
+    const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+    (ctx as unknown as { processExitedPromise: Promise<void> }).processExitedPromise =
+      processExitedPromise;
+
+    await runner.start();
+    await ctx.queryPromise;
+    (ctx.stateManager as unknown as { getState: () => { status: string } }).getState = () => ({
+      status: 'idle',
+    });
+    ctx.incrementQueryGeneration();
+
+    signalProcessExit();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
+  });
+
   test('aborts ACP submission when remove/defer already revoked the row (#3744696846)', async () => {
     const client = createMockClient();
     let promptBodyRan = false;

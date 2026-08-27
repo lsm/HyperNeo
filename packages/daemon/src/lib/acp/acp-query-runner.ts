@@ -937,6 +937,7 @@ export class AcpQueryRunner {
             if (
               turnCompletedNormally &&
               !this.ctx.isCleaningUp() &&
+              this.ctx.getQueryGeneration() === queryGeneration &&
               stateManager.getState().status === 'idle' &&
               session.config.queryMode !== 'manual'
             ) {

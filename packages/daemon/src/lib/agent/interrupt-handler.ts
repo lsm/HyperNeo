@@ -31,6 +31,8 @@ export interface InterruptHandlerContext {
   queryAbortController: AbortController | null;
   processExitedPromise: Promise<void> | null;
 
+  getQueryGeneration?(): number;
+
   getSdkCapabilities?(): ReadonlySet<string>;
 
   onInterruptRequested?(): void;
@@ -56,6 +58,7 @@ export class InterruptHandler {
     this.ctx.onInterruptRequested?.();
 
     const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
+    const interruptQueryGeneration = this.ctx.getQueryGeneration?.();
 
     if (!opts?.preserveDeliveryJobs) {
       const failedDbIds: string[] = [];
@@ -191,6 +194,13 @@ export class InterruptHandler {
         void Promise.all([oldQuerySettled, processExitSnapshot]).then(() => {
           if (this.deferredReplaySuppressed) return;
           if (this.ctx.stateManager.getState().status !== 'idle') return;
+          if (
+            interruptQueryGeneration !== undefined &&
+            this.ctx.getQueryGeneration &&
+            this.ctx.getQueryGeneration() !== interruptQueryGeneration
+          ) {
+            return;
+          }
           this.publishDeferredQueueTrigger();
         });
       }
