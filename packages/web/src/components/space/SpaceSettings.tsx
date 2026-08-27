@@ -125,10 +125,14 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
         if (workspaces === null) {
           setError(`Failed to load workspaces: ${rpcErrorMessage(err)}`);
         } else {
-          setActionError({
-            text: `Failed to refresh workspaces: ${rpcErrorMessage(err)}`,
-            kind: 'refresh',
-          });
+          setActionError((current) =>
+            current?.kind === 'action'
+              ? current
+              : {
+                  text: `Failed to refresh workspaces: ${rpcErrorMessage(err)}`,
+                  kind: 'refresh',
+                }
+          );
         }
       });
     return () => {
@@ -138,6 +142,10 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
 
   function reload() {
     setReloadToken((token) => token + 1);
+  }
+
+  function clearActionError() {
+    setActionError((current) => (current?.kind === 'action' ? null : current));
   }
 
   function requireHub() {
@@ -157,7 +165,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
     if (!hub) return;
     try {
       setAdding(true);
-      setActionError(null);
+      clearActionError();
       const added = await hub.request<SpaceWorkspace>('space.workspace.add', {
         spaceId,
         path,
@@ -185,7 +193,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
       });
       if (picked?.path) {
         setNewPath(picked.path);
-        setActionError(null);
+        clearActionError();
       }
     } catch (err) {
       setActionError({
@@ -205,7 +213,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
     if (!hub) return;
     try {
       setSavingLabelId(id);
-      setActionError(null);
+      clearActionError();
       await hub.request('space.workspace.updateLabel', {
         spaceId,
         workspaceId: id,
@@ -230,7 +238,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
     if (!hub) return;
     try {
       setRemovingId(workspace.id);
-      setActionError(null);
+      clearActionError();
       await hub.request('space.workspace.remove', { spaceId, workspaceId: workspace.id });
       setWorkspaces((current) => current?.filter((w) => w.id !== workspace.id) ?? current);
       reload();
@@ -273,7 +281,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
               data-testid="workspace-item"
             >
               <div class="min-w-0 flex-1">
-                {editing?.id === workspace.id ? (
+                {editing !== null && editing.id === workspace.id ? (
                   <div class="flex items-center gap-2">
                     <input
                       type="text"
@@ -332,14 +340,14 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
                 )}
                 <p class="truncate font-mono text-xs text-gray-400">{workspace.path}</p>
               </div>
-              {editing?.id !== workspace.id && (
+              {(editing === null || editing.id !== workspace.id) && (
                 <div class="flex flex-shrink-0 items-center gap-3">
                   <button
                     type="button"
                     data-testid="workspace-edit-label"
                     onClick={() => {
                       setEditing({ id: workspace.id, label: workspace.label });
-                      setActionError(null);
+                      clearActionError();
                     }}
                     class="text-xs text-gray-400 hover:text-gray-200"
                   >
