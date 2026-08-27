@@ -1533,6 +1533,10 @@ export class AgentSession
 
   private async runMidTurnContextBudgetCheck(): Promise<void> {
     if (this.pendingResumeAfterCompaction) return;
+    const status = this.stateManager.getState().status;
+    if (status === 'waiting_for_input' || status === 'rate_limit_cooldown') return;
+    if (this.isLimitRecoveryPending()) return;
+    if (!this.messageQueue.isRunning()) return;
     const providerId = this.session.config.provider;
     if (!providerId || providerId === 'acp') return;
     if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return;

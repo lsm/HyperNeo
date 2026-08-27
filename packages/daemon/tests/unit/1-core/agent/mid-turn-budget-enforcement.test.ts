@@ -51,13 +51,15 @@ function createAgentSession(): AgentSession {
     getConsumedUserMessagesAfterLatestInit: mock(() => []),
   } as unknown as Database;
 
-  return new AgentSession(
+  const session = new AgentSession(
     mockSession,
     mockDb,
     { event: mock(() => {}) } as MessageHub,
     makeEventBus(),
     mock(async () => 'test-api-key')
   );
+  session.messageQueue.start();
+  return session;
 }
 
 function makeUsageResponse() {
@@ -76,6 +78,7 @@ interface QueryHarness {
   setInterruptResult: (impl: () => Promise<{ still_queued: string[] } | undefined>) => void;
   cancelMock: ReturnType<typeof mock>;
   usageMock: ReturnType<typeof mock>;
+  interruptMock: ReturnType<typeof mock>;
 }
 
 function makeQuery(): QueryHarness {
@@ -84,9 +87,10 @@ function makeQuery(): QueryHarness {
   const state: { interruptImpl: () => Promise<{ still_queued: string[] } | undefined> } = {
     interruptImpl: async () => ({ still_queued: [] }),
   };
+  const interruptMock = mock(() => state.interruptImpl());
   const query = {
     async *[Symbol.asyncIterator]() {},
-    interrupt: () => state.interruptImpl(),
+    interrupt: () => interruptMock() as ReturnType<typeof state.interruptImpl>,
     cancelAsyncMessage: (uuid: string) => cancelMock(uuid),
     getContextUsage: () => usageMock(),
     close: () => {},
@@ -98,6 +102,7 @@ function makeQuery(): QueryHarness {
     },
     cancelMock,
     usageMock,
+    interruptMock,
   };
 }
 
@@ -324,6 +329,37 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     await session.midTurnContextBudgetCheck();
 
     expect(harness.usageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the mid-turn check in turn-end-protected states', async () => {
+    const setups: ((session: AgentSession) => unknown)[] = [
+      (session) =>
+        session.stateManager.setWaitingForInput({
+          toolUseId: 'tool-waiting',
+          questions: [],
+          askedAt: Date.now(),
+        }),
+      (session) =>
+        session.stateManager.setRateLimitCooldown({
+          retryCount: 1,
+          maxRetries: 3,
+          retryAt: Date.now() + 60_000,
+        }),
+      (session) => {
+        session.messageQueue.stop();
+      },
+    ];
+    for (const setup of setups) {
+      const session = createAgentSession();
+      const harness = makeQuery();
+      session.queryObject = harness.query;
+      await setup(session);
+
+      await session.midTurnContextBudgetCheck();
+
+      expect(harness.usageMock).toHaveBeenCalledTimes(0);
+      expect(harness.interruptMock).toHaveBeenCalledTimes(0);
+    }
   });
 
   it('enqueues compaction when the interrupt resolves without a receipt', async () => {
