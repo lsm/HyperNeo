@@ -498,6 +498,22 @@ describe('resolveWorkspaceSelection', () => {
     const resolved = await manager.resolveWorkspaceSelection(SPACE_A, ' docs ');
     expect(resolved).toBe('/sec');
   });
+
+  test('rejects a relative selection instead of resolving it against the daemon cwd', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/canon', 'w1', false, 'docs')]);
+    const { manager } = newManager({
+      workspaces,
+      io: fakeIo({ realpath: async () => '/canon' }),
+    });
+    const err = await manager
+      .resolveWorkspaceSelection(SPACE_A, 'project')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain('Unknown workspace "project"');
+    expect(message).toContain('not an absolute path');
+    expect(message).toContain('"docs" (/canon)');
+  });
 });
 
 describe('listWorkspaces', () => {

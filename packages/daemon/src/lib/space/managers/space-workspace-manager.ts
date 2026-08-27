@@ -440,7 +440,22 @@ function selectionWorkspaceChoices(ctx: ResolveSelectionCtx): string {
   return entries.length > 0 ? entries.join(', ') : '(none)';
 }
 
+function selectionUnknownError(ctx: ResolveSelectionCtx, cause: string): Error {
+  return new Error(
+    `Unknown workspace "${ctx.selection}" for space ${ctx.spaceId}: ${cause}. Registered workspaces: ${selectionWorkspaceChoices(ctx)}`
+  );
+}
+
 async function selectionResolveAsPath(ctx: ResolveSelectionCtx): Promise<ResolveSelectionCtx> {
+  if (!ctx.selection.startsWith('/')) {
+    return {
+      ...ctx,
+      error: selectionUnknownError(
+        ctx,
+        'not a registered workspace label and not an absolute path'
+      ),
+    };
+  }
   const result = await runResolveRegisteredWorkspace({
     spaces: ctx.spaces,
     workspaces: ctx.workspaces,
@@ -449,12 +464,7 @@ async function selectionResolveAsPath(ctx: ResolveSelectionCtx): Promise<Resolve
     rawPath: ctx.selection,
   });
   if (!result.error) return { ...ctx, resolvedPath: result.registeredPath };
-  return {
-    ...ctx,
-    error: new Error(
-      `Unknown workspace "${ctx.selection}" for space ${ctx.spaceId}: ${result.error.message}. Registered workspaces: ${selectionWorkspaceChoices(ctx)}`
-    ),
-  };
+  return { ...ctx, error: selectionUnknownError(ctx, result.error.message) };
 }
 
 const runResolveWorkspaceSelection = (
