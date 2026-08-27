@@ -9,7 +9,17 @@ import {
   SpaceWorkspaceRepository,
   type SpaceWorkspaceRecord,
 } from '../../../storage/repositories/space-workspace-repository.ts';
-import { SpaceWorkspaceManager } from './space-workspace-manager.ts';
+import {
+  buildRegistrySnapshot,
+  SpaceWorkspaceManager,
+  WorkspaceRegistrationError,
+} from './space-workspace-manager.ts';
+import {
+  nodeWorkspaceValidationIo,
+  validateWorkspaceRegistration,
+  type WorkspaceRegistrySnapshot,
+  type WorkspaceValidationIo,
+} from '../workspaces/workspace-validation-pipeline.ts';
 import { Logger } from '../../logger.ts';
 import { slugify, validateSlug } from '../slug.ts';
 import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@hyperneo/shared';
@@ -24,14 +34,21 @@ function deriveLabel(workspacePath: string): string {
   return parts[parts.length - 1] ?? '';
 }
 
+interface AdditionalWorkspacePlan {
+  path: string;
+  label?: string;
+}
+
 interface CreateSpaceCtx {
   db: BunDatabase;
   spaceRepo: SpaceRepository;
   workspaceRepo: SpaceWorkspaceRepository;
   params: CreateSpaceParams;
+  io?: WorkspaceValidationIo;
   resolvedPath?: string;
   isGit?: boolean;
   space?: Space;
+  additionalWorkspacePlans?: AdditionalWorkspacePlan[];
   error?: Error;
 }
 
@@ -118,6 +135,76 @@ function warnIfNotGit(ctx: CreateSpaceCtx): CreateSpaceCtx {
   return ctx;
 }
 
+async function validateAdditionalWorkspaces(ctx: CreateSpaceCtx): Promise<CreateSpaceCtx> {
+  const secondaries = ctx.params.additionalWorkspaces ?? [];
+  if (secondaries.length === 0 || !ctx.space) return ctx;
+  const io = ctx.io ?? nodeWorkspaceValidationIo;
+  let snapshot: WorkspaceRegistrySnapshot = buildRegistrySnapshot(
+    ctx.spaceRepo,
+    ctx.workspaceRepo,
+    ctx.space.id
+  );
+  const plans: AdditionalWorkspacePlan[] = [];
+  for (const secondary of secondaries) {
+    const verdict = await validateWorkspaceRegistration(io, snapshot, {
+      spaceId: ctx.space.id,
+      rawPath: secondary.path,
+    });
+    if (!verdict.accepted) {
+      return {
+        ...ctx,
+        error: new WorkspaceRegistrationError(verdict.message, verdict.reason, verdict),
+      };
+    }
+    plans.push({ path: verdict.canonicalPath, label: secondary.label });
+    snapshot = {
+      claims: [
+        ...snapshot.claims,
+        { spaceId: ctx.space.id, path: verdict.canonicalPath, source: 'registered_workspace' },
+      ],
+      workspaceCountForSpace: snapshot.workspaceCountForSpace + 1,
+    };
+  }
+  return { ...ctx, additionalWorkspacePlans: plans };
+}
+
+function insertAdditionalWorkspaces(ctx: CreateSpaceCtx): CreateSpaceCtx {
+  const plans = ctx.additionalWorkspacePlans ?? [];
+  if (ctx.error || plans.length === 0) return ctx;
+  try {
+    ctx.db.transaction(() => {
+      for (const plan of plans) {
+        ctx.workspaceRepo.create({
+          spaceId: ctx.space!.id,
+          path: plan.path,
+          label: plan.label,
+          isPrimary: false,
+        });
+      }
+    })();
+  } catch (err) {
+    return { ...ctx, error: err as Error };
+  }
+  return ctx;
+}
+
+function rollbackFailedCreate(ctx: CreateSpaceCtx): CreateSpaceCtx {
+  if (!ctx.error || !ctx.space) return ctx;
+  const spaceId = ctx.space.id;
+  try {
+    ctx.db.transaction(() => {
+      for (const record of ctx.workspaceRepo.listBySpace(spaceId)) {
+        ctx.workspaceRepo.delete(spaceId, record.id);
+      }
+      ctx.spaceRepo.deleteSpace(spaceId);
+    })();
+    return { ...ctx, space: undefined };
+  } catch (err) {
+    log.error(`failed to roll back space creation for ${spaceId}`, err);
+    return ctx;
+  }
+}
+
 const runCreateSpace = (
   superpipe({
     hasError: (ctx: CreateSpaceCtx) => ctx.error !== undefined,
@@ -134,6 +221,10 @@ const runCreateSpace = (
   .pipe(createSpaceAtomic, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe('hasSpace', 'ctx')
+  .pipe(validateAdditionalWorkspaces, 'ctx', 'ctx')
+  .pipe(insertAdditionalWorkspaces, 'ctx', 'ctx')
+  .pipe(rollbackFailedCreate, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
   .pipe(warnIfNotGit, 'ctx', 'ctx')
   .endAsync('ctx') as (input: CreateSpaceCtx) => Promise<CreateSpaceCtx>;
 

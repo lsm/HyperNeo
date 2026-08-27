@@ -134,6 +134,13 @@ export function setupSpaceHandlers(
     if (params.config?.maxConcurrentTasks !== undefined) {
       params.config.maxConcurrentTasks = validateConcurrentLimit(params.config.maxConcurrentTasks);
     }
+    if (params.additionalWorkspaces) {
+      for (const [index, workspace] of params.additionalWorkspaces.entries()) {
+        if (!workspace?.path) {
+          throw new Error(`additionalWorkspaces[${index}].path is required`);
+        }
+      }
+    }
 
     const space = await spaceManager.createSpace(params);
     const seedWarnings: string[] = [];

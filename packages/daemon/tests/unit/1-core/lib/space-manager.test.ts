@@ -163,6 +163,102 @@ describe('SpaceManager', () => {
     });
   });
 
+  describe('createSpace with additionalWorkspaces', () => {
+    function gitRepo(name: string): string {
+      const dir = mkdtempSync(join(tmpdir(), `space-create-${name}-`));
+      execSync('git init -q', { cwd: dir });
+      return realpathSync(dir);
+    }
+
+    function plainDir(name: string): string {
+      return realpathSync(mkdtempSync(join(tmpdir(), `space-create-${name}-`)));
+    }
+
+    function workspaceRowCount(): number {
+      return (db.prepare('SELECT COUNT(*) AS c FROM space_workspaces').get() as { c: number }).c;
+    }
+
+    it('registers the primary and every additional workspace', async () => {
+      const repoA = gitRepo('alpha');
+      const repoB = gitRepo('beta');
+
+      const space = await manager.createSpace({
+        workspacePath: tmpDir,
+        name: 'Multi',
+        additionalWorkspaces: [{ path: repoA, label: 'Alpha' }, { path: repoB }],
+      });
+
+      const workspaces = manager.listWorkspaces(space.id);
+      expect(workspaces).toHaveLength(3);
+      expect(workspaces.find((w) => w.isPrimary)!.path).toBe(space.workspacePath);
+      const secondaries = workspaces.filter((w) => !w.isPrimary);
+      expect(secondaries.map((w) => w.path).sort()).toEqual([repoA, repoB].sort());
+      expect(secondaries.find((w) => w.path === repoA)!.label).toBe('Alpha');
+      expect(secondaries.find((w) => w.path === repoB)!.label).toBe('');
+    });
+
+    it('rejects the whole create when a secondary is invalid and persists nothing', async () => {
+      const repoA = gitRepo('alpha');
+      const plain = plainDir('plain');
+
+      await expect(
+        manager.createSpace({
+          workspacePath: tmpDir,
+          name: 'Bad Secondary',
+          additionalWorkspaces: [{ path: repoA }, { path: plain }],
+        })
+      ).rejects.toThrow('not a git repository root');
+
+      expect(await manager.listSpaces()).toHaveLength(0);
+      expect(workspaceRowCount()).toBe(0);
+      const space = await manager.createSpace({ workspacePath: tmpDir, name: 'Retry' });
+      expect(manager.listWorkspaces(space.id)).toHaveLength(1);
+    });
+
+    it('rejects a secondary that duplicates the primary path', async () => {
+      await expect(
+        manager.createSpace({
+          workspacePath: tmpDir,
+          name: 'Dup Primary',
+          additionalWorkspaces: [{ path: tmpDir }],
+        })
+      ).rejects.toThrow('already registered to this space');
+      expect(await manager.listSpaces()).toHaveLength(0);
+    });
+
+    it('rejects duplicate secondaries within the same create', async () => {
+      const repo = gitRepo('dup');
+
+      await expect(
+        manager.createSpace({
+          workspacePath: tmpDir,
+          name: 'Dup Secondaries',
+          additionalWorkspaces: [
+            { path: repo, label: 'One' },
+            { path: repo, label: 'Two' },
+          ],
+        })
+      ).rejects.toThrow('already registered to this space');
+      expect(await manager.listSpaces()).toHaveLength(0);
+    });
+
+    it('rejects a secondary already claimed by another space', async () => {
+      const otherPrimary = plainDir('other-primary');
+      const claimed = gitRepo('claimed');
+      const first = await manager.createSpace({ workspacePath: claimed, name: 'First' });
+      expect(first.workspacePath).toBe(claimed);
+
+      await expect(
+        manager.createSpace({
+          workspacePath: otherPrimary,
+          name: 'Second',
+          additionalWorkspaces: [{ path: claimed }],
+        })
+      ).rejects.toThrow('already claimed');
+      expect((await manager.listSpaces()).map((s) => s.name)).toEqual(['First']);
+    });
+  });
+
   describe('getSpace', () => {
     it('returns space by ID', async () => {
       const created = await manager.createSpace({ workspacePath: tmpDir, name: 'P' });
