@@ -84,6 +84,7 @@ export interface JobQueueCandidateSelectionInput {
   exclude?: PayloadMatch;
   requireEqual?: PayloadMatch;
   excludeIds?: string[];
+  excludeSessionIds?: string[];
 }
 
 export interface JobQueueCandidateSelection {
@@ -108,6 +109,11 @@ export function buildJobQueueCandidateSelection(
   if (excludeIds.length > 0) {
     sql += ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})`;
     params.push(...excludeIds);
+  }
+  const excludeSessionIds = input.excludeSessionIds ?? [];
+  if (excludeSessionIds.length > 0) {
+    sql += ` AND COALESCE(json_extract(payload, '$.sessionId'), '') NOT IN (${excludeSessionIds.map(() => '?').join(',')})`;
+    params.push(...excludeSessionIds);
   }
   sql += ` ORDER BY priority DESC, run_at ASC, created_at ASC, rowid ASC LIMIT ?`;
   params.push(input.limit);
@@ -182,7 +188,8 @@ export class JobQueueRepository {
     queue: string,
     spec: PayloadMatch,
     limit: number = 1,
-    excludeIds?: string[]
+    excludeIds?: string[],
+    excludeSessionIds?: string[]
   ): Job[] {
     const claimed: Job[] = [];
 
@@ -193,6 +200,7 @@ export class JobQueueRepository {
         limit,
         requireEqual: spec,
         excludeIds,
+        excludeSessionIds,
       });
       const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
       this.claimRows(rows, claimed);
