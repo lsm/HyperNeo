@@ -282,3 +282,22 @@ export function validateWorkspaceRegistration(
       }
   );
 }
+
+export function checkWorkspaceRegistryGates(
+  snapshot: WorkspaceRegistrySnapshot,
+  input: { spaceId: string; canonicalPath: string }
+): WorkspaceValidationVerdict {
+  let ctx: WorkspaceValidationCtx = {
+    spaceId: input.spaceId,
+    rawPath: input.canonicalPath,
+    canonicalPath: input.canonicalPath,
+    io: nodeWorkspaceValidationIo,
+    snapshot,
+  };
+  ctx = ensureCrossSpaceExclusivity(ctx);
+  if (ctx.verdict) return ctx.verdict;
+  ctx = ensureNoAmbiguousNesting(ctx);
+  if (ctx.verdict) return ctx.verdict;
+  ctx = ensureUnderPerSpaceCap(ctx);
+  return ctx.verdict ?? { accepted: true, canonicalPath: input.canonicalPath };
+}

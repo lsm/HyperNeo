@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import {
   MAX_WORKSPACES_PER_SPACE,
+  checkWorkspaceRegistryGates,
   nodeWorkspaceValidationIo,
   validateWorkspaceRegistration,
   type WorkspaceRegistryClaim,
@@ -399,6 +400,57 @@ describe('workspace-validation-pipeline', () => {
       expect(verdict.accepted).toBe(false);
       if (verdict.accepted) return;
       expect(verdict.reason).toBe('not_a_git_repository_root');
+    });
+  });
+
+  describe('checkWorkspaceRegistryGates', () => {
+    test('accepts an unclaimed canonical path under the cap', () => {
+      const verdict = checkWorkspaceRegistryGates(snapshot([]), {
+        spaceId: SPACE_A,
+        canonicalPath: '/repo',
+      });
+      expect(verdict).toEqual({ accepted: true, canonicalPath: '/repo' });
+    });
+
+    test('rejects a path claimed by another space', () => {
+      const verdict = checkWorkspaceRegistryGates(snapshot([primaryClaim(SPACE_B, '/repo')]), {
+        spaceId: SPACE_A,
+        canonicalPath: '/repo',
+      });
+      expect(verdict.accepted).toBe(false);
+      if (verdict.accepted) return;
+      expect(verdict.reason).toBe('path_claimed_by_another_space');
+    });
+
+    test('rejects a duplicate of a same-space registered workspace', () => {
+      const verdict = checkWorkspaceRegistryGates(
+        snapshot([registeredClaim(SPACE_A, '/repo'), primaryClaim(SPACE_A, '/primary')]),
+        { spaceId: SPACE_A, canonicalPath: '/repo' }
+      );
+      expect(verdict.accepted).toBe(false);
+      if (verdict.accepted) return;
+      expect(verdict.reason).toBe('duplicate_of_registered_workspace');
+    });
+
+    test('rejects ambiguous nesting against a same-space workspace', () => {
+      const verdict = checkWorkspaceRegistryGates(snapshot([registeredClaim(SPACE_A, '/work')]), {
+        spaceId: SPACE_A,
+        canonicalPath: '/work/sub-repo',
+      });
+      expect(verdict.accepted).toBe(false);
+      if (verdict.accepted) return;
+      expect(verdict.reason).toBe('ambiguous_nesting');
+      expect(verdict.nestingDirection).toBe('candidate_inside_existing');
+    });
+
+    test('rejects when the per-space cap is reached', () => {
+      const verdict = checkWorkspaceRegistryGates(
+        snapshot([primaryClaim(SPACE_A, '/primary')], MAX_WORKSPACES_PER_SPACE),
+        { spaceId: SPACE_A, canonicalPath: '/repo' }
+      );
+      expect(verdict.accepted).toBe(false);
+      if (verdict.accepted) return;
+      expect(verdict.reason).toBe('workspace_cap_reached');
     });
   });
 });

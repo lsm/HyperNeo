@@ -15,6 +15,7 @@ import {
   WorkspaceRegistrationError,
 } from './space-workspace-manager.ts';
 import {
+  checkWorkspaceRegistryGates,
   nodeWorkspaceValidationIo,
   validateWorkspaceRegistration,
   type WorkspaceRegistrySnapshot,
@@ -177,19 +178,29 @@ function insertAdditionalWorkspaces(ctx: CreateSpaceCtx): CreateSpaceCtx {
   if (ctx.error || plans.length === 0) return ctx;
   try {
     ctx.db.transaction(() => {
+      const spaceId = ctx.space!.id;
+      let snapshot = buildRegistrySnapshot(ctx.spaceRepo, ctx.workspaceRepo, spaceId);
       for (const plan of plans) {
-        const owner = ctx.workspaceRepo.findOwnerByPath(plan.path);
-        if (owner && owner.spaceId !== ctx.space!.id) {
-          throw new Error(
-            `Workspace path is already claimed by space ${owner.spaceId}: ${plan.path}`
-          );
+        const verdict = checkWorkspaceRegistryGates(snapshot, {
+          spaceId,
+          canonicalPath: plan.path,
+        });
+        if (!verdict.accepted) {
+          throw new WorkspaceRegistrationError(verdict.message, verdict.reason, verdict);
         }
         ctx.workspaceRepo.create({
-          spaceId: ctx.space!.id,
+          spaceId,
           path: plan.path,
           label: plan.label,
           isPrimary: false,
         });
+        snapshot = {
+          claims: [
+            ...snapshot.claims,
+            { spaceId, path: plan.path, source: 'registered_workspace' },
+          ],
+          workspaceCountForSpace: snapshot.workspaceCountForSpace + 1,
+        };
       }
     }, 'immediate')();
   } catch (err) {
