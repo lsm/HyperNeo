@@ -9,6 +9,7 @@ import type {
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
+import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
@@ -77,6 +78,7 @@ export function assertValidSpaceTaskTransition(from: SpaceTaskStatus, to: SpaceT
 export class SpaceTaskManager {
   private taskRepo: SpaceTaskRepository;
   private worktreeRepo: SpaceWorktreeRepository;
+  private spaceRepo: SpaceRepository;
 
   constructor(
     private db: BunDatabase,
@@ -89,6 +91,7 @@ export class SpaceTaskManager {
   ) {
     this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
     this.worktreeRepo = new SpaceWorktreeRepository(db);
+    this.spaceRepo = new SpaceRepository(db);
   }
 
   async createTask(params: Omit<InternalCreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
@@ -114,6 +117,10 @@ export class SpaceTaskManager {
       throw new Error('Workspace path validation is not available');
     }
     const resolved = await this.resolveWorkspacePath(params.workspacePath);
+    const space = this.spaceRepo.getSpace(this.spaceId);
+    if (space && resolved === space.workspacePath) {
+      return { ...params, workspacePath: null } as T;
+    }
     return { ...params, workspacePath: resolved } as T;
   }
 

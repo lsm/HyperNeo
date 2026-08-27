@@ -1682,5 +1682,16 @@ describe('SpaceTaskManager', () => {
         manager.updateTask(task.id, { workspacePath: '/workspace/test' })
       ).rejects.toThrow('active or started agent session');
     });
+
+    it('normalizes the primary workspace path to null', async () => {
+      const task = await manager.createTask({
+        title: 'T',
+        description: '',
+        workspacePath: '/workspace/test',
+      });
+      expect(task.workspacePath).toBeNull();
+      const updated = await manager.updateTask(task.id, { title: 'New' });
+      expect(updated.workspacePath).toBeNull();
+    });
   });
 });

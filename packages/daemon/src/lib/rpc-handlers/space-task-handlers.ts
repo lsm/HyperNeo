@@ -14,7 +14,10 @@ import {
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceTaskManager } from '../space/managers/space-task-manager.ts';
+import {
+  assertValidSpaceTaskTransition,
+  type SpaceTaskManager,
+} from '../space/managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import { mapPostApprovalDispatchWarning } from '../space/runtime/post-approval-router.ts';
@@ -378,6 +381,8 @@ export function setupSpaceTaskHandlers(
       }
 
       if (updateParams.status !== currentTask.status) {
+        assertValidSpaceTaskTransition(currentTask.status, updateParams.status);
+
         if (
           currentTask.workflowRunId &&
           isWorkflowRecoveryTransition(currentTask.status, updateParams.status)
