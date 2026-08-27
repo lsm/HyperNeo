@@ -38,6 +38,7 @@ vi.mock('../../ui/Button', () => ({
 }));
 
 import { useSpaceWorkspaceChoice } from '../SpaceWorkspacePicker';
+import { connectionState } from '../../../lib/state';
 import type { SpaceWorkspace } from '@hyperneo/shared';
 
 function makeWorkspace(overrides: Partial<SpaceWorkspace> = {}): SpaceWorkspace {
@@ -83,16 +84,20 @@ function stubRegistry(handler: (params: { spaceId?: string }) => SpaceWorkspace[
   });
 }
 
+const initialConnectionState = connectionState.value;
+
 describe('SpaceWorkspacePicker', () => {
   beforeEach(() => {
     cleanup();
     mockRequest.mockReset();
     mockGetHubIfConnected.mockReset();
     mockCreate.mockReset();
+    connectionState.value = 'connected';
   });
 
   afterEach(() => {
     cleanup();
+    connectionState.value = initialConnectionState;
   });
 
   it('sources options from the registry primary-first and flows the selection into createSession', async () => {
@@ -188,11 +193,41 @@ describe('SpaceWorkspacePicker', () => {
       expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
     });
     fireEvent.click(getByTestId('probe-create'));
+    expect(mockCreate).not.toHaveBeenCalledWith(undefined);
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledWith('/projects/other');
     });
     expect(mockCreate).not.toHaveBeenCalledWith('/projects/docs');
     expect(mockCreate).not.toHaveBeenCalledWith('/projects/main');
+  });
+
+  it('refetches registry options after reconnection', async () => {
+    connectionState.value = 'disconnected';
+    mockGetHubIfConnected.mockReturnValue(null);
+    const { getByTestId, getByText } = render(
+      <Probe spaceId="space-1" fallbackPath="/projects/main" />
+    );
+    fireEvent.click(getByTestId('probe-create'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+    });
+    mockCreate.mockClear();
+
+    connectionState.value = 'connected';
+    stubRegistry(() => [makeWorkspace(), SECONDARY]);
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.workspace.list', { spaceId: 'space-1' });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    fireEvent.click(getByTestId('probe-create'));
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs');
+    });
   });
 
   it('creates directly with the primary workspace when only one is registered', async () => {

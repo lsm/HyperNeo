@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { SpaceWorkspace } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from '../../lib/connection-manager';
+import { connectionState } from '../../lib/state';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { cn } from '../../lib/utils';
@@ -11,6 +13,13 @@ interface SpaceWorkspaceRegistryState {
   spaceId: string;
   settled: boolean;
   list: SpaceWorkspaceOption[] | null;
+}
+
+interface SpaceWorkspaceRegistryGate {
+  spaceId: string;
+  done: boolean;
+  promise: Promise<void>;
+  resolve: () => void;
 }
 
 function workspaceLabel(workspace: SpaceWorkspaceOption): string {
@@ -27,32 +36,46 @@ function useSpaceWorkspaceRegistry(
   fallbackPath?: string | null
 ): { options: SpaceWorkspaceOption[]; settle: () => Promise<void> } {
   const [state, setState] = useState<SpaceWorkspaceRegistryState | null>(null);
-  const settleRef = useRef<Promise<void>>(Promise.resolve());
+  const gateRef = useRef<SpaceWorkspaceRegistryGate | null>(null);
+
+  if (gateRef.current?.spaceId !== spaceId) {
+    let resolveGate: () => void = () => {};
+    const promise = new Promise<void>((resolve) => {
+      resolveGate = resolve;
+    });
+    gateRef.current = { spaceId, done: false, promise, resolve: resolveGate };
+  }
+  const gate = gateRef.current;
+
+  const connected = connectionState.value === 'connected';
 
   useEffect(() => {
     let cancelled = false;
-    let markSettled: () => void = () => {};
-    settleRef.current = new Promise<void>((resolve) => {
-      markSettled = resolve;
-    });
-    const finish = (list: SpaceWorkspaceOption[] | null) => {
-      if (cancelled) return;
-      setState({ spaceId, settled: true, list });
-      markSettled();
+    const apply = (list: SpaceWorkspaceOption[] | null) => {
+      if (!cancelled) setState({ spaceId, settled: true, list });
     };
-    const hub = connectionManager.getHubIfConnected();
+    const settleGate = () => {
+      if (gate.done) return;
+      gate.done = true;
+      gate.resolve();
+    };
+    const hub = connected ? connectionManager.getHubIfConnected() : null;
     if (!hub) {
-      finish(null);
+      if (!gate.done) {
+        apply(null);
+        settleGate();
+      }
       return;
     }
     hub
       .request<SpaceWorkspaceOption[]>('space.workspace.list', { spaceId })
-      .then((list) => finish(list.length > 0 ? primaryFirst(list) : null))
-      .catch(() => finish(null));
+      .then((list) => apply(list.length > 0 ? primaryFirst(list) : null))
+      .catch(() => apply(null))
+      .finally(() => settleGate());
     return () => {
       cancelled = true;
     };
-  }, [spaceId]);
+  }, [spaceId, connected, gate]);
 
   let options: SpaceWorkspaceOption[] = [];
   if (state?.spaceId === spaceId && state.settled) {
@@ -63,7 +86,7 @@ function useSpaceWorkspaceRegistry(
     }
   }
 
-  return { options, settle: () => settleRef.current };
+  return { options, settle: () => gate.promise };
 }
 
 interface SpaceWorkspacePickerDialogProps {
@@ -124,6 +147,47 @@ function SpaceWorkspacePickerDialog({
   );
 }
 
+interface ChooseWorkspaceCtx {
+  inFlight: boolean;
+  settle: () => Promise<void>;
+  readOptions: () => SpaceWorkspaceOption[];
+  openPicker: (options: SpaceWorkspaceOption[]) => void;
+  create: (workspacePath?: string) => void;
+  options: SpaceWorkspaceOption[];
+  choice: 'picker' | 'direct';
+}
+
+async function awaitWorkspaceRegistry(ctx: ChooseWorkspaceCtx): Promise<ChooseWorkspaceCtx> {
+  await ctx.settle();
+  return ctx;
+}
+
+function decideWorkspaceChoice(ctx: ChooseWorkspaceCtx): ChooseWorkspaceCtx {
+  const options = ctx.readOptions();
+  return { ...ctx, options, choice: options.length > 1 ? 'picker' : 'direct' };
+}
+
+function applyWorkspaceChoice(ctx: ChooseWorkspaceCtx): ChooseWorkspaceCtx {
+  if (ctx.choice === 'picker') {
+    ctx.openPicker(ctx.options);
+  } else {
+    ctx.create(ctx.options[0]?.path);
+  }
+  return ctx;
+}
+
+const runChooseWorkspace = (
+  superpipe({
+    isDuplicateChoice: (ctx: ChooseWorkspaceCtx) => ctx.inFlight,
+  })('choose-workspace') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe('!isDuplicateChoice', 'ctx')
+  .pipe(awaitWorkspaceRegistry, 'ctx', 'ctx')
+  .pipe(decideWorkspaceChoice, 'ctx', 'ctx')
+  .pipe(applyWorkspaceChoice, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: ChooseWorkspaceCtx) => Promise<ChooseWorkspaceCtx>;
+
 export function useSpaceWorkspaceChoice(spaceId: string, fallbackPath?: string | null) {
   const { options, settle } = useSpaceWorkspaceRegistry(spaceId, fallbackPath);
   const optionsRef = useRef(options);
@@ -131,8 +195,10 @@ export function useSpaceWorkspaceChoice(spaceId: string, fallbackPath?: string |
   const [pickerOpen, setPickerOpen] = useState(false);
   const pendingCreateRef = useRef<((workspacePath: string) => void) | null>(null);
   const choosingRef = useRef(false);
+  const epochRef = useRef(0);
 
   useEffect(() => {
+    epochRef.current += 1;
     pendingCreateRef.current = null;
     choosingRef.current = false;
     setPickerOpen(false);
@@ -144,22 +210,27 @@ export function useSpaceWorkspaceChoice(spaceId: string, fallbackPath?: string |
   };
 
   const chooseWorkspace = (create: (workspacePath?: string) => void) => {
-    if (choosingRef.current) return;
+    const inFlight = choosingRef.current;
+    const epoch = epochRef.current;
     choosingRef.current = true;
-    void (async () => {
-      try {
-        await settle();
-        const current = optionsRef.current;
-        if (current.length > 1) {
-          pendingCreateRef.current = (workspacePath: string) => create(workspacePath);
-          setPickerOpen(true);
-        } else {
-          create(current[0]?.path);
-        }
-      } finally {
+    void runChooseWorkspace({
+      inFlight,
+      settle,
+      readOptions: () => optionsRef.current,
+      openPicker: () => {
+        if (epochRef.current !== epoch) return;
         choosingRef.current = false;
-      }
-    })();
+        pendingCreateRef.current = (workspacePath: string) => create(workspacePath);
+        setPickerOpen(true);
+      },
+      create: (workspacePath) => {
+        if (epochRef.current !== epoch) return;
+        choosingRef.current = false;
+        create(workspacePath);
+      },
+      options: [],
+      choice: 'direct',
+    });
   };
 
   const dialog = (

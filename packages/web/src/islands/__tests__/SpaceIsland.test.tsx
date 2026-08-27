@@ -7,6 +7,7 @@ const LAZY_LOAD_TIMEOUT = 5000;
 
 import type { Space, SpaceTask, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
+import { connectionState } from '../../lib/state';
 
 let mockLoading = signal(false);
 let mockError = signal<string | null>(null);
@@ -877,6 +878,8 @@ describe('SpaceIsland — sessions view', () => {
     mockCreateSession.mockResolvedValueOnce({ sessionId: 'new-session-456' });
     mockCurrentSpaceIdSignal.value = 'space-1';
     mockCurrentSpaceViewModeSignal.value = 'sessions';
+    const initialConnectionState = connectionState.value;
+    connectionState.value = 'connected';
     connectMockHub.current = { request: mockHubRequest };
     mockHubRequest.mockImplementation((method: string) => {
       if (method === 'space.workspace.list') {
@@ -934,6 +937,7 @@ describe('SpaceIsland — sessions view', () => {
     await waitFor(() => {
       expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-456');
     });
+    connectionState.value = initialConnectionState;
   });
 
   it('navigates after slug-routed session creation when canonical space still matches', async () => {
