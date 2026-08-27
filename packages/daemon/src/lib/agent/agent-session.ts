@@ -1570,42 +1570,46 @@ export class AgentSession
       },
       ownsTurn: () => this.queryObject === queryObject,
     };
-    await runMidTurnBudgetPipeline({
-      opts,
-      queue: this.messageQueue as unknown as MidTurnQueueSeam,
-      phase: 'interrupt',
-      lateReceipt: null,
-      checkEligibility: () => {
-        if (this.pendingResumeAfterCompaction) return false;
-        const status = this.stateManager.getState().status;
-        if (status === 'waiting_for_input' || status === 'rate_limit_cooldown') return false;
-        if (this.isLimitRecoveryPending()) return false;
-        if (!this.messageQueue.isRunning()) return false;
-        if (providerId === 'acp') return false;
-        if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return false;
-        return true;
-      },
-      refreshUsage: () => this.refreshMidTurnContextInfo(queryObject),
-      decideCompaction: (info) => {
-        if (info.totalUsed <= 0) return false;
-        if (this.stateManager.getState().status !== 'processing') return false;
-        const configuredWindow = info.totalCapacity > 0 ? info.totalCapacity : undefined;
-        const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, info.autoCompactPercent);
-        opts.budgetKey = budgetKey;
-        const decision = decideContextBudgetCompaction({
-          totalUsed: info.totalUsed,
-          configuredWindow,
-          autoCompactPercent: info.autoCompactPercent,
-          sdkAutoCompactEnabled: info.isAutoCompactEnabled,
-          sdkAutoCompactThreshold: info.sdkAutoCompactThreshold,
-          cooldownActive:
-            this.contextTracker.isCoolingDown(budgetKey) &&
-            !this.messageQueue.hasOutstandingInternalCompaction(),
-          compactingActive: this.stateManager.getIsCompacting(),
-        });
-        return decision.action === 'compact';
-      },
-    });
+    try {
+      await runMidTurnBudgetPipeline({
+        opts,
+        queue: this.messageQueue as unknown as MidTurnQueueSeam,
+        phase: 'interrupt',
+        lateReceipt: null,
+        checkEligibility: () => {
+          if (this.pendingResumeAfterCompaction) return false;
+          const status = this.stateManager.getState().status;
+          if (status === 'waiting_for_input' || status === 'rate_limit_cooldown') return false;
+          if (this.isLimitRecoveryPending()) return false;
+          if (!this.messageQueue.isRunning()) return false;
+          if (providerId === 'acp') return false;
+          if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return false;
+          return true;
+        },
+        refreshUsage: () => this.refreshMidTurnContextInfo(queryObject),
+        decideCompaction: (info) => {
+          if (info.totalUsed <= 0) return false;
+          if (this.stateManager.getState().status !== 'processing') return false;
+          const configuredWindow = info.totalCapacity > 0 ? info.totalCapacity : undefined;
+          const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, info.autoCompactPercent);
+          opts.budgetKey = budgetKey;
+          const decision = decideContextBudgetCompaction({
+            totalUsed: info.totalUsed,
+            configuredWindow,
+            autoCompactPercent: info.autoCompactPercent,
+            sdkAutoCompactEnabled: info.isAutoCompactEnabled,
+            sdkAutoCompactThreshold: info.sdkAutoCompactThreshold,
+            cooldownActive:
+              this.contextTracker.isCoolingDown(budgetKey) &&
+              !this.messageQueue.hasOutstandingInternalCompaction(),
+            compactingActive: this.stateManager.getIsCompacting(),
+          });
+          return decision.action === 'compact';
+        },
+      });
+    } finally {
+      this.messageQueue.releaseEarlyDeliveryGate();
+    }
   }
 
   private async refreshMidTurnContextInfo(queryObject: QueryLike): Promise<ContextInfo | null> {

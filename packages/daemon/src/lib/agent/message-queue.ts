@@ -782,6 +782,11 @@ export class MessageQueue {
     return this.standsDown(opts);
   }
 
+  releaseEarlyDeliveryGate(): void {
+    this.resolveEarlyDeliveryGate?.();
+    this.resolveEarlyDeliveryGate = undefined;
+  }
+
   async runMidTurnBudgetInterrupt(opts: MidTurnBudgetInterruptOptions): Promise<void> {
     this.armInterruptCycle(opts);
     const ctx = {
@@ -797,8 +802,7 @@ export class MessageQueue {
     try {
       await runMidTurnBudgetPipeline(ctx);
     } finally {
-      this.resolveEarlyDeliveryGate?.();
-      this.resolveEarlyDeliveryGate = undefined;
+      this.releaseEarlyDeliveryGate();
     }
   }
 

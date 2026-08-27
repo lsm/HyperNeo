@@ -50,6 +50,7 @@ function createAgentSession(): AgentSession {
     updateMessage: mock(() => {}),
     getSDKMessageCount: mock(() => 0),
     getConsumedUserMessagesAfterLatestInit: mock(() => []),
+    getMessageByStatusAndUuid: mock(() => undefined),
     getSDKMessageRepo: mock(() => ({
       getUserMessageContentByUuid: mock(() => null),
       markDeliveryRetryableByUuid: mock(() => null),
@@ -484,6 +485,32 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       false,
       { durable: true, prepend: true }
     );
+  });
+
+  it('drains the queue after the interrupt with compaction first', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    session.messageQueue.noteInternalCompactionSent({
+      id: 'uuid-drain',
+      content: 'drain survivor',
+      internal: false,
+    } as never);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-drain'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    const replay = session.messageQueue.messageGenerator(session.session.id);
+    const order: string[] = [];
+    for (let index = 0; index < 2; index++) {
+      const yielded = await replay.next();
+      order.push((yielded.value.message.message.content as Array<{ text?: string }>)[0].text ?? '');
+      yielded.value.onSent();
+      if (index === 0) {
+        session.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+      }
+    }
+    expect(order).toEqual(['/compact', 'drain survivor']);
   });
 
   it('aborts the interrupt when the turn stops during the usage refresh', async () => {
