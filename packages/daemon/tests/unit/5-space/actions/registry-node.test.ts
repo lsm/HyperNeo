@@ -429,6 +429,64 @@ describe('composeRoleActionEntries — approve_task collision resolution', () =>
     expect(registry.get('approve_task')).toBeUndefined();
   });
 
+  test('workflow_worker never falls back to the space end-node entries', () => {
+    const spaceEntries = [
+      defineAction({
+        name: 'approve_task',
+        family: 'space',
+        safetyClass: 'mutate',
+        description: 'space approve',
+        paramsDoc: 'task_id',
+        paramsSchema: z.object({ task_id: z.string() }),
+        handler: async () => null,
+      }),
+      defineAction({
+        name: 'submit_for_approval',
+        family: 'space',
+        safetyClass: 'mutate',
+        description: 'space submit',
+        paramsDoc: 'none',
+        paramsSchema: z.object({}),
+        handler: async () => null,
+      }),
+      defineAction({
+        name: 'mark_complete',
+        family: 'space',
+        safetyClass: 'mutate',
+        description: 'space mark',
+        paramsDoc: 'none',
+        paramsSchema: z.object({}),
+        handler: async () => null,
+      }),
+      defineAction({
+        name: 'list_sessions',
+        family: 'space',
+        safetyClass: 'read',
+        description: 'space list',
+        paramsDoc: 'none',
+        paramsSchema: z.object({}),
+        handler: async () => null,
+      }),
+    ];
+    const composed = composeRoleActionEntries('workflow_worker', spaceEntries, [
+      defineAction({
+        name: 'list_peers',
+        family: 'node',
+        safetyClass: 'read',
+        description: 'node entry',
+        paramsDoc: 'none',
+        paramsSchema: z.object({}),
+        handler: async () => null,
+      }),
+    ]);
+    const registry = createActionRegistry(composed);
+    expect(registry.get('list_peers')).toBeDefined();
+    expect(registry.get('list_sessions')).toBeDefined();
+    expect(registry.get('approve_task')).toBeUndefined();
+    expect(registry.get('submit_for_approval')).toBeUndefined();
+    expect(registry.get('mark_complete')).toBeUndefined();
+  });
+
   test('coordinator, member, long-term, and non-space registries never include node family', () => {
     const nodeEntry = defineAction({
       name: 'list_peers',

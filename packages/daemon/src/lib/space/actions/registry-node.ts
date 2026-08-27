@@ -334,7 +334,7 @@ export function composeRoleActionEntries(
 ): ActionDefinition[] {
   if (role !== 'workflow_worker') return [...spaceEntries];
   const nodeNames = new Set(nodeEntries.map((entry) => entry.name));
-  const workerOnlyNodeNames = new Set(['approve_task']);
+  const workerOnlyNodeNames = new Set(['approve_task', 'submit_for_approval', 'mark_complete']);
   return [
     ...nodeEntries,
     ...spaceEntries.filter(
