@@ -204,7 +204,11 @@ export default function SpaceIsland({
     navigateBack(() => navigateToSpace(navigationSpaceId));
   }, [navigationSpaceId]);
 
-  const workspaceChoice = useSpaceWorkspaceChoice(spaceId, space?.workspacePath);
+  const workspaceChoice = useSpaceWorkspaceChoice(
+    spaceId,
+    space?.workspacePath,
+    `${spaceId}:${viewMode}`
+  );
 
   const createSessionInWorkspace = useCallback(
     async (workspacePath?: string) => {

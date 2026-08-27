@@ -61,8 +61,16 @@ const SECONDARY = makeWorkspace({
   isPrimary: false,
 });
 
-function Probe({ spaceId, fallbackPath }: { spaceId: string; fallbackPath?: string | null }) {
-  const { chooseWorkspace, dialog } = useSpaceWorkspaceChoice(spaceId, fallbackPath);
+function Probe({
+  spaceId,
+  fallbackPath,
+  scope,
+}: {
+  spaceId: string;
+  fallbackPath?: string | null;
+  scope?: string;
+}) {
+  const { chooseWorkspace, dialog } = useSpaceWorkspaceChoice(spaceId, fallbackPath, scope);
   return (
     <div>
       <button
@@ -230,6 +238,30 @@ describe('SpaceWorkspacePicker', () => {
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledWith('/projects/main');
     });
+  });
+
+  it('cancels a pending choice when the choice scope changes', async () => {
+    let resolveList: (list: SpaceWorkspace[]) => void = () => {};
+    const listPromise = new Promise<SpaceWorkspace[]>((resolve) => {
+      resolveList = resolve;
+    });
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method: string) =>
+      method === 'space.workspace.list' ? listPromise : Promise.resolve({})
+    );
+
+    const { getByTestId, rerender } = render(
+      <Probe spaceId="space-1" fallbackPath="/projects/main" scope="space-1:sessions" />
+    );
+    fireEvent.click(getByTestId('probe-create'));
+    rerender(<Probe spaceId="space-1" fallbackPath="/projects/main" scope="space-1:overview" />);
+
+    resolveList([makeWorkspace(), SECONDARY]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockCreate).not.toHaveBeenCalled();
+
+    rerender(<Probe spaceId="space-1" fallbackPath="/projects/main" scope="space-1:sessions" />);
+    expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
   });
 
   it('resets the cached options and picker state when the space changes', async () => {

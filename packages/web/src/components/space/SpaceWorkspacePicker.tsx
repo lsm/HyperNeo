@@ -235,7 +235,11 @@ const runChooseWorkspace = (
   .pipe(applyWorkspaceChoice, 'ctx', 'ctx')
   .endAsync('ctx') as (input: ChooseWorkspaceCtx) => Promise<ChooseWorkspaceCtx>;
 
-export function useSpaceWorkspaceChoice(spaceId: string, fallbackPath?: string | null) {
+export function useSpaceWorkspaceChoice(
+  spaceId: string,
+  fallbackPath?: string | null,
+  choiceScope = spaceId
+) {
   const { options, settle, refresh } = useSpaceWorkspaceRegistry(spaceId, fallbackPath);
   const optionsRef = useRef(options);
   optionsRef.current = options;
@@ -243,15 +247,21 @@ export function useSpaceWorkspaceChoice(spaceId: string, fallbackPath?: string |
   const pendingCreateRef = useRef<((workspacePath: string) => void) | null>(null);
   const choosingRef = useRef(false);
   const epochRef = useRef(0);
+  const epochScopeRef = useRef(choiceScope);
 
-  useEffect(() => {
+  if (epochScopeRef.current !== choiceScope) {
+    epochScopeRef.current = choiceScope;
+    epochRef.current += 1;
     pendingCreateRef.current = null;
     choosingRef.current = false;
+  }
+
+  useEffect(() => {
     setPickerOpen(false);
     return () => {
       epochRef.current += 1;
     };
-  }, [spaceId]);
+  }, [choiceScope]);
 
   const closePicker = () => {
     pendingCreateRef.current = null;
