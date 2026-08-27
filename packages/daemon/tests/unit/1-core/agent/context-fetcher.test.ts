@@ -1,6 +1,5 @@
-import { describe, it, expect, mock, spyOn, afterEach } from 'bun:test';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import type { Query, SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import { ContextFetcher } from '../../../../src/lib/agent/context-fetcher';
 import { setModelsCache } from '../../../../src/lib/model-service';
 
@@ -1129,6 +1128,25 @@ describe('ContextFetcher.fetch', () => {
     const recovered = await fetcher.fetch(query);
     expect(getContextUsage).toHaveBeenCalledTimes(2);
     expect(recovered).toBeNull();
+  }, 20000);
+
+  it('supersedes a timed-out usage request instead of retaining it as in-flight', async () => {
+    let calls = 0;
+    const getContextUsage = mock(() => {
+      calls += 1;
+      if (calls === 1) return new Promise<SdkResponse>(() => {});
+      return Promise.resolve(baseResponse({ totalTokens: 4200, percentage: 2.1 }));
+    });
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('timeout-supersede-session');
+    const first = await fetcher.fetch(query);
+    expect(first).toBeNull();
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+
+    const second = await fetcher.fetch(query);
+    expect(getContextUsage).toHaveBeenCalledTimes(2);
+    expect(second?.totalUsed).toBe(4200);
   }, 20000);
 
   it('returns null when the SDK usage call throws synchronously', async () => {

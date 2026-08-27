@@ -4380,6 +4380,57 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
       });
 
+      it('does not run turn-end enforcement for nested subagent results', async () => {
+        const { getContextUsageSpy, h } = budgetCase();
+
+        await h.handleMessage({
+          type: 'result',
+          subtype: 'success',
+          uuid: 'nested-result-uuid',
+          parent_tool_use_id: 'outer-agent-tool-use',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).not.toHaveBeenCalled();
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('clears a dead delivered compaction without immediately re-enqueueing', async () => {
+        hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+        const { h } = budgetCase();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+        expect(clearCompactionCooldownSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('suppresses the compaction decision while limit recovery owns the turn', async () => {
+        (mockContext as { isLimitRecoveryPending?: () => boolean }).isLimitRecoveryPending = mock(
+          () => true
+        );
+        const { getContextUsageSpy, h } = budgetCase();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
       it('does not enqueue /compact for non-PROVIDER_NO_SDK_AUTO_COMPACT providers (SDK handles)', async () => {
         setModelsCache(
           new Map([

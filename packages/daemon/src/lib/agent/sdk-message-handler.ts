@@ -1011,13 +1011,13 @@ export class SDKMessageHandler {
         isTopLevelResult && this.ctx.stateManager.getIsCompacting()
           ? this.ctx.stateManager.setCompacting(false)
           : null;
-      if (!enforcedTurnEnd) {
+      if (isTopLevelResult && !enforcedTurnEnd) {
         await this.refreshContextUsage('turn-end');
       }
       await compactingClear;
     }
 
-    if (isSDKResultMessage(message)) {
+    if (isTopLevelResult && isSDKResultMessage(message)) {
       if (settlesArmedClearError) {
         this.clearIdleSuppression();
       }
@@ -1611,6 +1611,12 @@ export class SDKMessageHandler {
         ) {
           return;
         }
+        if (
+          this.ctx.stateManager.getState().status === 'rate_limit_cooldown' ||
+          (this.ctx.isLimitRecoveryPending?.() ?? false)
+        ) {
+          return;
+        }
         const deadDeliveredCompaction =
           reason === 'turn-end' &&
           this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
@@ -1624,6 +1630,7 @@ export class SDKMessageHandler {
             `clearing stale compaction cooldown for session ${session.id} after a ` +
               `delivered /compact ended without a compact boundary`
           );
+          return;
         }
         const effectiveWindow =
           contextInfo.totalCapacity > 0 ? contextInfo.totalCapacity : modelInfo?.contextWindow;
