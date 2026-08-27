@@ -79,7 +79,6 @@ import {
   SpaceTaskManager,
   VALID_SPACE_TASK_TRANSITIONS,
 } from '../managers/space-task-manager.ts';
-import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
 import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
@@ -3298,9 +3297,6 @@ export class SpaceRuntime {
         ? (workflow?.nodes.find((n) => n.id === approvalAuthorityNodeId) ?? null)
         : null;
     const approvalAuthorityName = approvalAuthorityNode?.name;
-    const routeWorkspacePath = space
-      ? resolveTaskWorkspace(space, approvedTask)
-      : (approvedTask.workspacePath ?? undefined);
     const routeContext: PostApprovalRouteContext = {
       ...contextExtras,
       ...(resolvedPrUrl ? { pr_url: resolvedPrUrl } : {}),
@@ -3311,8 +3307,8 @@ export class SpaceRuntime {
       space_id: spaceId,
       autonomyLevel: space?.autonomyLevel,
       autonomy_level: space?.autonomyLevel,
-      workspacePath: routeWorkspacePath,
-      workspace_path: routeWorkspacePath,
+      workspacePath: space?.workspacePath,
+      workspace_path: space?.workspacePath,
       ...(approvalAuthorityName ? { approval_authority: approvalAuthorityName } : {}),
     };
     let routeResult: PostApprovalRouteResult;
