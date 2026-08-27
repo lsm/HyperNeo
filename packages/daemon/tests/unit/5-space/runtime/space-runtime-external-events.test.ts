@@ -7125,6 +7125,67 @@ describe('SpaceRuntime external event subscriptions', () => {
         .get() as { n: number };
       expect(rows.n).toBe(0);
     });
+
+    test('flag on: an admission-rejected pull drops the deferred digest rows', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+      await eventService.publish(
+        makeEvent({
+          id: 'evt-admission-pending',
+          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+        })
+      );
+      expect(eventStore.listDeliveries('evt-admission-pending')[0]!.state).toBe('pending');
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-admission',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-admission',
+        'session-admission',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+      taskRepo.updateTask(task.id, { status: 'stopped' });
+
+      const messages = new SDKMessageRepository(db);
+      const orphan = {
+        type: 'user',
+        uuid: 'digest-orphan-admission',
+        session_id: 'session-admission',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale admission digest' }] },
+        externalEventIds: ['evt-never-published'],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-admission', orphan, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession('session-admission', task.id);
+      expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+
+      const rows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-admission'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .get() as { n: number };
+      expect(rows.n).toBe(0);
+    });
   });
 });
 

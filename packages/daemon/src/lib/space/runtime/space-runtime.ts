@@ -1897,6 +1897,9 @@ export class SpaceRuntime {
         `SpaceRuntime: failed to process immediate-tier event ${payload.eventId} for ` +
           `${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
       );
+      if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
+        this.scheduleTurnEndDigestRetry(target.sessionId, target.taskId, true);
+      }
     } finally {
       this.immediateDispatchesInFlight.delete(deliveryKey);
     }
@@ -1923,9 +1926,7 @@ export class SpaceRuntime {
           if (outcome?.action === 'delivered') {
             this.turnEndDigestRetryCounts.delete(sessionId);
             this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
-          } else if (outcome?.action === 'failed' || outcome?.action === 'held') {
-            this.scheduleTurnEndDigestRetry(sessionId, taskId);
-          } else {
+          } else if (outcome?.action !== 'failed' && outcome?.action !== 'held') {
             this.turnEndDigestRetryCounts.delete(sessionId);
           }
         })
@@ -1948,11 +1949,18 @@ export class SpaceRuntime {
       });
       if (role !== 'turn') return;
       const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
-      void session?.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
+      if (session?.stateManager) {
+        void session.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
+      }
     } catch (error) {
+      try {
+        this.getSdkMessageRepo().updateMessageStatus([dbId], 'deferred');
+      } catch {
+        // ignore revert failure
+      }
       log.warn(
-        `SpaceRuntime: turn-end digest handoff for session ${sessionId} failed: ` +
-          `${formatCommandError(error)}`
+        `SpaceRuntime: turn-end digest handoff for session ${sessionId} failed, ` +
+          `row reverted to deferred: ${formatCommandError(error)}`
       );
     }
   }
@@ -1976,8 +1984,6 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store) return null;
     const messages = this.getSdkMessageRepo();
-    let freshDigestDbId: string | null = null;
-    let replayDigestDbId: string | null = null;
     const deps: RenderPendingDigestDeps = {
       getExecutionByAgentSessionId: (targetSessionId) => {
         const execution = this.config.nodeExecutionRepo.getByAgentSessionId(targetSessionId);
@@ -2058,13 +2064,9 @@ export class SpaceRuntime {
         const uuid = String(message.uuid);
         for (const status of DIGEST_REPLAY_LOOKUP_STATUSES) {
           const existing = messages.getMessageByStatusAndUuid(targetSessionId, status, uuid);
-          if (existing) {
-            replayDigestDbId = existing.dbId;
-            return { dbId: existing.dbId, replayed: true };
-          }
+          if (existing) return { dbId: existing.dbId, replayed: true };
         }
         const dbId = messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
-        freshDigestDbId = dbId;
         return { dbId, replayed: false };
       },
       reopenFailedDigest: (targetSessionId, uuid) => {
@@ -2083,26 +2085,43 @@ export class SpaceRuntime {
         }
       },
     };
-    const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
-    if (outcome.action !== 'delivered') {
-      for (const digestDbId of [freshDigestDbId, replayDigestDbId]) {
-        if (digestDbId !== null) {
-          messages.deletePendingUserMessage(sessionId, digestDbId, 'deferred');
+    try {
+      const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
+      if (outcome.action === 'delivered') {
+        this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid, outcome.eventIds);
+      } else {
+        this.dropDeferredDigestRows(sessionId);
+        if (
+          (outcome.action === 'failed' || outcome.action === 'held') &&
+          this.isTargetSessionLive(sessionId)
+        ) {
+          this.scheduleTurnEndDigestRetry(sessionId, taskId);
         }
       }
-      if (
-        (outcome.action === 'failed' || outcome.action === 'held') &&
-        this.isTargetSessionLive(sessionId)
-      ) {
+      return outcome;
+    } catch (error) {
+      if (this.isTargetSessionLive(sessionId)) {
         this.scheduleTurnEndDigestRetry(sessionId, taskId);
       }
+      return { action: 'failed', stage: 'renderPendingDigest', error };
     }
-    if (outcome.action === 'delivered') {
-      this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid, outcome.eventIds);
-    } else if (outcome.action === 'skip' && outcome.reason === 'no_pending_events') {
-      this.supersedeObsoleteDigestRows(sessionId, store, null, []);
+  }
+
+  private dropDeferredDigestRows(sessionId: string): void {
+    try {
+      const messages = this.getSdkMessageRepo();
+      const rows = messages
+        .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
+        .filter((row) => row.sendStatus === 'deferred');
+      for (const row of rows) {
+        messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+      }
+    } catch (error) {
+      log.warn(
+        `SpaceRuntime: digest row drop for session ${sessionId} failed: ` +
+          `${formatCommandError(error)}`
+      );
     }
-    return outcome;
   }
 
   private supersedeObsoleteDigestRows(
