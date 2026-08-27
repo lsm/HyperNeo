@@ -3,7 +3,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { navigateToSpaceTasks } from '../../lib/router';
 import { currentSpaceTasksFilterTabSignal } from '../../lib/signals';
-import { spaceStore } from '../../lib/space-store';
+import { type SummarySpaceTask, spaceStore } from '../../lib/space-store';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
 import { toast } from '../../lib/toast';
@@ -987,7 +987,7 @@ function TaskGroupList({
   spaceId,
   onTaskClick,
 }: {
-  tasks: SpaceTask[];
+  tasks: SummarySpaceTask[];
   taskById: ReadonlyMap<string, SpaceTask>;
   tab: Exclude<TaskFilterTab, 'scheduled'>;
   spaceId: string;
@@ -1010,6 +1010,7 @@ function TaskGroupList({
               t.id,
               t.title,
               t.status,
+              t.resultTruncated ? t.updatedAt : 0,
               t.result ?? '',
               t.blockReason ?? '',
               t.pendingCheckpointType ?? '',

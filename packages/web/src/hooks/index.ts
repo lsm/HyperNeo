@@ -71,6 +71,7 @@ export {
 } from './useReferenceAutocomplete';
 export { useViewportSafety } from './useViewportSafety';
 export { useClickOutside } from './useClickOutside';
+export { useResolvedSpaceTask } from './useResolvedSpaceTask';
 export {
   useTargetSessionContext,
   type UseTargetSessionContextResult,

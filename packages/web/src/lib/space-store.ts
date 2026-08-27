@@ -70,8 +70,13 @@ export interface SpaceSessionRow {
   lastActiveAt: number;
 }
 
+export type SummarySpaceTask = SpaceTask & {
+  descriptionTruncated?: boolean;
+  resultTruncated?: boolean;
+};
+
 export interface SpaceWithTasks extends Space {
-  tasks: SpaceTask[];
+  tasks: SummarySpaceTask[];
   sessions: SpaceSessionSummary[];
 }
 
@@ -189,7 +194,9 @@ class SpaceStore {
 
   readonly space = signal<Space | null>(null);
 
-  readonly tasks = signal<SpaceTask[]>([]);
+  readonly tasks = signal<SummarySpaceTask[]>([]);
+
+  readonly taskDetails = signal<ReadonlyMap<string, SpaceTask>>(new Map());
 
   readonly workflowRuns = signal<SpaceWorkflowRun[]>([]);
 
@@ -333,6 +340,10 @@ class SpaceStore {
 
   private workflowDetailPromises = new Map<string, Promise<SpaceWorkflow | null>>();
 
+  private taskDetailPromises = new Map<string, Promise<SpaceTask | null>>();
+
+  private selectGeneration = 0;
+
   private workflowDetailFetchGens = new Map<string, number>();
 
   private workflowSummariesLoaded = false;
@@ -406,7 +417,9 @@ class SpaceStore {
 
     try {
       const hub = await connectionManager.getHub();
-      const enriched = await hub.request<SpaceWithTasks[]>('space.listWithTasks', {});
+      const enriched = await hub.request<SpaceWithTasks[]>('space.listWithTasks', {
+        summary: true,
+      });
       const spaces = (enriched ?? []).map(
         ({ tasks: _tasks, sessions: _sessions, ...space }) => space
       );
@@ -468,6 +481,7 @@ class SpaceStore {
           taskId: string;
           task: SpaceTask;
         }>('space.task.created', (event) => {
+          this.seedTaskDetail(event.task);
           const swt = this.spacesWithTasks.value;
           const idx = swt.findIndex((s) => s.id === event.spaceId);
           if (idx >= 0) {
@@ -490,6 +504,7 @@ class SpaceStore {
           taskId: string;
           task: SpaceTask;
         }>('space.task.updated', (event) => {
+          this.seedTaskDetail(event.task);
           const swt = this.spacesWithTasks.value;
           const idx = swt.findIndex((s) => s.id === event.spaceId);
           if (idx >= 0) {
@@ -547,6 +562,9 @@ class SpaceStore {
 
     this.space.value = null;
     this.tasks.value = [];
+    this.taskDetails.value = new Map();
+    this.taskDetailPromises.clear();
+    this.selectGeneration += 1;
     this.workflowRuns.value = [];
     this.agents.value = [];
     this.agentTemplates.value = [];
@@ -674,6 +692,7 @@ class SpaceStore {
       task: SpaceTask;
     }>('space.task.created', (event) => {
       if (event.spaceId === spaceId) {
+        this.seedTaskDetail(event.task);
         this.tasks.value = this.upsertTaskOnePerRun(this.tasks.value, event.task);
       }
     });
@@ -686,6 +705,7 @@ class SpaceStore {
       task: SpaceTask;
     }>('space.task.updated', (event) => {
       if (event.spaceId === spaceId) {
+        this.seedTaskDetail(event.task);
         this.tasks.value = this.upsertTaskOnePerRun(this.tasks.value, event.task);
       }
     });
@@ -916,10 +936,13 @@ class SpaceStore {
 
     const overview = await hub.request<{
       space: Space;
-      tasks: SpaceTask[];
+      tasks: SummarySpaceTask[];
       workflowRuns: SpaceWorkflowRun[];
       sessions: string[];
-    }>('space.overview', isUUID(spaceIdOrSlug) ? { id: spaceIdOrSlug } : { slug: spaceIdOrSlug });
+    }>('space.overview', {
+      ...(isUUID(spaceIdOrSlug) ? { id: spaceIdOrSlug } : { slug: spaceIdOrSlug }),
+      summary: true,
+    });
 
     if (!overview) {
       this.error.value = 'Space not found';
@@ -1981,6 +2004,47 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     return hub.request<SpaceWorkspace[]>('space.workspace.list', { spaceId });
+  }
+
+  private seedTaskDetail(task: SpaceTask): void {
+    const existing = this.taskDetails.value.get(task.id);
+    if (!existing || existing === task) return;
+    if ('descriptionTruncated' in task || 'resultTruncated' in task) return;
+    if (task.updatedAt < existing.updatedAt) return;
+    this.taskDetails.value = new Map(this.taskDetails.value).set(task.id, task);
+  }
+
+  async ensureTaskDetail(taskId: string, minUpdatedAt = 0): Promise<SpaceTask | null> {
+    const cached = this.taskDetails.value.get(taskId);
+    if (cached && cached.updatedAt >= minUpdatedAt) return cached;
+    const existing = this.taskDetailPromises.get(taskId);
+    if (existing) return existing;
+
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return null;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) return null;
+    const generation = this.selectGeneration;
+
+    const promise = hub
+      .request<SpaceTask>('spaceTask.get', { spaceId, taskId })
+      .then((task) => {
+        if (!task) return null;
+        if (this.selectGeneration !== generation) return null;
+        this.taskDetails.value = new Map(this.taskDetails.value).set(taskId, task);
+        return task;
+      })
+      .catch((err) => {
+        logger.error('Failed to fetch task detail:', err);
+        return null;
+      })
+      .finally(() => {
+        if (this.taskDetailPromises.get(taskId) === promise) {
+          this.taskDetailPromises.delete(taskId);
+        }
+      });
+    this.taskDetailPromises.set(taskId, promise);
+    return promise;
   }
 
   async fetchTaskGroup(

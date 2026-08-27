@@ -19,6 +19,7 @@ const currentSpaceCanonicalIdSignal = signal<string | null>(null);
 let mockEventHandlers: Map<string, (event: unknown) => void>;
 let mockEventHandlerSets: Map<string, Set<(event: unknown) => void>>;
 let mockHub: ReturnType<typeof makeMockHub>;
+let taskDetailResult: SpaceTask | null = null;
 
 function fireMockEvent(eventName: string, data: unknown): void {
   mockEventHandlerSets.get(eventName)?.forEach((h) => {
@@ -268,6 +269,10 @@ function makeMockHub() {
         ];
       }
       if (method === 'spaceTask.create') return makeTask('new-task');
+      if (method === 'spaceTask.get')
+        return (
+          taskDetailResult ?? { ...makeTask(params?.taskId as string), description: 'full text' }
+        );
       if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
       if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
       if (method === 'spaceAgent.create') return { agent: makeAgent('new-agent') };
@@ -444,7 +449,10 @@ describe('SpaceStore — space selection', () => {
 
   it('fetches initial state on selectSpace()', async () => {
     await spaceStore.selectSpace('space-1');
-    expect(mockHub.request).toHaveBeenCalledWith('space.overview', { slug: 'space-1' });
+    expect(mockHub.request).toHaveBeenCalledWith('space.overview', {
+      slug: 'space-1',
+      summary: true,
+    });
     expect(spaceStore.space.value?.id).toBe('space-1');
   });
 
@@ -2378,7 +2386,7 @@ describe('SpaceStore — initGlobalList', () => {
   it('fetches space list and populates spaces signal', async () => {
     await spaceStore.initGlobalList();
 
-    expect(mockHub.request).toHaveBeenCalledWith('space.listWithTasks', {});
+    expect(mockHub.request).toHaveBeenCalledWith('space.listWithTasks', { summary: true });
     expect(spaceStore.spaces.value).toHaveLength(2);
     expect(spaceStore.spaces.value[0].id).toBe('s1');
     expect(spaceStore.spaces.value[1].id).toBe('s2');
@@ -2503,7 +2511,7 @@ describe('SpaceStore — refresh', () => {
 
     await spaceStore.refresh();
 
-    expect(mockHub.request).toHaveBeenCalledWith('space.listWithTasks', {});
+    expect(mockHub.request).toHaveBeenCalledWith('space.listWithTasks', { summary: true });
   });
 
   it('does not re-init global list when never initialized', async () => {
@@ -2518,7 +2526,10 @@ describe('SpaceStore — refresh', () => {
 
     await spaceStore.refresh();
 
-    expect(mockHub.request).toHaveBeenCalledWith('space.overview', { slug: 'space-1' });
+    expect(mockHub.request).toHaveBeenCalledWith('space.overview', {
+      slug: 'space-1',
+      summary: true,
+    });
   });
 
   it('is a no-op for space state when no space is selected', async () => {
@@ -2605,6 +2616,193 @@ function makeNodeExecution(overrides: Partial<NodeExecution> = {}): NodeExecutio
     lastActivityAt: overrides.lastActivityAt ?? null,
   };
 }
+
+describe('SpaceStore — task detail cache', () => {
+  beforeEach(async () => {
+    taskDetailResult = null;
+    await resetStore();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it('fetches full task detail once, sharing in-flight and cached calls per task id', async () => {
+    await spaceStore.selectSpace('space-1');
+    taskDetailResult = { ...makeTask('t1'), description: 'full description' };
+    mockHub.request.mockClear();
+
+    const [a, b] = await Promise.all([
+      spaceStore.ensureTaskDetail('t1'),
+      spaceStore.ensureTaskDetail('t1'),
+    ]);
+    const third = await spaceStore.ensureTaskDetail('t1');
+
+    expect(a?.description).toBe('full description');
+    expect(b).toBe(a);
+    expect(third).toBe(a);
+    const getCalls = mockHub.request.mock.calls.filter((c: unknown[]) => c[0] === 'spaceTask.get');
+    expect(getCalls).toHaveLength(1);
+    expect(getCalls[0][1]).toEqual({ spaceId: 'space-1', taskId: 't1' });
+    expect(spaceStore.taskDetails.value.get('t1')).toBe(a);
+  });
+
+  it('refreshes cached detail from full space.task.updated events without refetching', async () => {
+    await spaceStore.selectSpace('space-1');
+    taskDetailResult = { ...makeTask('t1'), description: 'full description' };
+    await spaceStore.ensureTaskDetail('t1');
+    mockHub.request.mockClear();
+
+    const eventTask = {
+      ...makeTask('t1'),
+      description: 'updated full description',
+      updatedAt: Date.now() + 1,
+    };
+    fireMockEvent('space.task.updated', {
+      sessionId: 'session-1',
+      spaceId: 'space-1',
+      taskId: 't1',
+      task: eventTask,
+    });
+
+    expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('updated full description');
+    await expect(spaceStore.ensureTaskDetail('t1')).resolves.toBe(eventTask);
+    expect(
+      mockHub.request.mock.calls.filter((c: unknown[]) => c[0] === 'spaceTask.get')
+    ).toHaveLength(0);
+  });
+
+  it('does not cache tasks whose detail was never requested', async () => {
+    await spaceStore.selectSpace('space-1');
+
+    fireMockEvent('space.task.updated', {
+      sessionId: 'session-1',
+      spaceId: 'space-1',
+      taskId: 't9',
+      task: makeTask('t9'),
+    });
+
+    expect(spaceStore.taskDetails.value.size).toBe(0);
+  });
+
+  it('does not seed the cache from event payloads carrying summary markers', async () => {
+    await spaceStore.selectSpace('space-1');
+    taskDetailResult = { ...makeTask('t1'), description: 'full description' };
+    await spaceStore.ensureTaskDetail('t1');
+
+    fireMockEvent('space.task.updated', {
+      sessionId: 'session-1',
+      spaceId: 'space-1',
+      taskId: 't1',
+      task: {
+        ...makeTask('t1'),
+        description: 'truncated',
+        updatedAt: Date.now() + 1,
+        descriptionTruncated: true,
+      },
+    });
+
+    expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('full description');
+  });
+
+  it('clears cached details when the selected space changes', async () => {
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.ensureTaskDetail('t1');
+    expect(spaceStore.taskDetails.value.size).toBe(1);
+
+    await spaceStore.clearSpace();
+
+    expect(spaceStore.taskDetails.value.size).toBe(0);
+    await expect(spaceStore.ensureTaskDetail('t1')).resolves.toBeNull();
+  });
+
+  it('does not write a detail resolved after a space switch into the fresh cache', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveGet: (task: SpaceTask) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise<SpaceTask>((resolve) => {
+          resolveGet = resolve;
+        })
+    );
+
+    const pending = spaceStore.ensureTaskDetail('t1');
+    await spaceStore.clearSpace();
+    resolveGet({ ...makeTask('t1'), description: 'full description' });
+    await expect(pending).resolves.toBeNull();
+
+    expect(spaceStore.taskDetails.value.size).toBe(0);
+  });
+
+  it('refetches when the cached detail is staler than the requested freshness', async () => {
+    await spaceStore.selectSpace('space-1');
+    taskDetailResult = { ...makeTask('t1'), description: 'stale full', updatedAt: 10 };
+    await spaceStore.ensureTaskDetail('t1');
+    taskDetailResult = { ...makeTask('t1'), description: 'fresh full', updatedAt: 20 };
+    mockHub.request.mockClear();
+
+    await expect(spaceStore.ensureTaskDetail('t1', 20)).resolves.toHaveProperty(
+      'description',
+      'fresh full'
+    );
+
+    expect(
+      mockHub.request.mock.calls.filter((c: unknown[]) => c[0] === 'spaceTask.get')
+    ).toHaveLength(1);
+    expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('fresh full');
+  });
+
+  it('rejects a detail resolved after navigating away and back from an obsolete generation', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveFirst: (task: SpaceTask) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise<SpaceTask>((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+
+    const pending = spaceStore.ensureTaskDetail('t1');
+    await spaceStore.selectSpace('space-2');
+    await spaceStore.selectSpace('space-1');
+    resolveFirst({ ...makeTask('t1'), description: 'stale full' });
+    await expect(pending).resolves.toBeNull();
+
+    expect(spaceStore.taskDetails.value.size).toBe(0);
+  });
+
+  it('does not let a stale completion remove a newer in-flight request', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveFirst: (task: SpaceTask) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise<SpaceTask>((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+    const first = spaceStore.ensureTaskDetail('t1');
+    await spaceStore.selectSpace('space-2');
+    await spaceStore.selectSpace('space-1');
+
+    let resolveSecond: (task: SpaceTask) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise<SpaceTask>((resolve) => {
+          resolveSecond = resolve;
+        })
+    );
+    const second = spaceStore.ensureTaskDetail('t1');
+    resolveFirst({ ...makeTask('t1'), description: 'stale full' });
+    await expect(first).resolves.toBeNull();
+
+    const third = spaceStore.ensureTaskDetail('t1');
+    resolveSecond({ ...makeTask('t1'), description: 'fresh full' });
+    await expect(second).resolves.toHaveProperty('description', 'fresh full');
+    await expect(third).resolves.toHaveProperty('description', 'fresh full');
+
+    expect(
+      mockHub.request.mock.calls.filter((c: unknown[]) => c[0] === 'spaceTask.get')
+    ).toHaveLength(2);
+    expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('fresh full');
+  });
+});
 
 describe('SpaceStore — node execution LiveQuery subscriptions', () => {
   beforeEach(resetStore);

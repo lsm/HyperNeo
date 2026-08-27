@@ -423,6 +423,8 @@ describe('TaskAuxiliaryPanel — artifacts section', () => {
       get spaceStore() {
         return {
           tasks: mockTasks,
+          taskDetails: signal(new Map()),
+          ensureTaskDetail: vi.fn().mockResolvedValue(null),
           space: signal(null),
           ensureConfigData: vi.fn().mockResolvedValue(undefined),
           fetchEvolutionScope: vi.fn().mockResolvedValue(null),

@@ -17,6 +17,8 @@ const {
   mockUpdateTask,
   mockSubmitForReview,
   mockPublishTask,
+  mockTaskDetails,
+  mockEnsureTaskDetail,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
     return { value: initial };
@@ -36,6 +38,8 @@ const {
     mockUpdateTask: vi.fn().mockResolvedValue(undefined),
     mockSubmitForReview: vi.fn().mockResolvedValue(undefined),
     mockPublishTask: vi.fn().mockResolvedValue(undefined),
+    mockTaskDetails: makeSignal(new Map()),
+    mockEnsureTaskDetail: vi.fn().mockResolvedValue(null),
   };
 });
 
@@ -71,6 +75,8 @@ vi.mock('../../../lib/space-store', () => ({
   spaceStore: {
     space: mockSpace,
     tasks: mockTasks,
+    taskDetails: mockTaskDetails,
+    ensureTaskDetail: mockEnsureTaskDetail,
     goals: mockGoals,
     workflows: mockWorkflows,
     workflowRuns: mockWorkflowRuns,
@@ -88,7 +94,9 @@ import { currentSpaceGoalIdSignal, currentSpaceScopeIdSignal } from '../../../li
 
 const NOW = 1_700_000_000_000;
 
-function makeTask(overrides: Partial<SpaceTask> = {}): SpaceTask {
+function makeTask(
+  overrides: Partial<SpaceTask> & { descriptionTruncated?: boolean } = {}
+): SpaceTask {
   return {
     id: 'task-1',
     spaceId: 'space-1',
@@ -152,6 +160,7 @@ describe('TaskAuxiliaryPanel', () => {
       updatedAt: NOW,
     };
     mockTasks.value = [makeTask({ preferredWorkflowId: 'workflow-1' })];
+    mockTaskDetails.value = new Map();
     mockGoals.value = [
       {
         id: 'goal-1',
@@ -258,6 +267,30 @@ describe('TaskAuxiliaryPanel', () => {
     await waitFor(() =>
       expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { description: 'Updated description' })
     );
+  });
+
+  it('keeps the description editor disabled while the full description is loading', () => {
+    mockTasks.value = [makeTask({ descriptionTruncated: true })];
+
+    const { getByPlaceholderText } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />
+    );
+
+    const textarea = getByPlaceholderText('Add a description…') as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(true);
+  });
+
+  it('enables the description editor once the full detail is cached', () => {
+    mockTasks.value = [makeTask({ descriptionTruncated: true })];
+    mockTaskDetails.value = new Map([['task-1', makeTask({ description: 'full description' })]]);
+
+    const { getByPlaceholderText } = render(
+      <TaskAuxiliaryPanel spaceId="space-1" taskId="task-1" />
+    );
+
+    const textarea = getByPlaceholderText('Add a description…') as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(false);
+    expect(textarea.value).toBe('full description');
   });
 
   it('persists a workflow selection from the Details row', async () => {

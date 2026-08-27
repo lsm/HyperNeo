@@ -1,7 +1,7 @@
 // @ts-nocheck
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
 import type { SpaceTask, TaskSchedule } from '@hyperneo/shared';
 
@@ -253,6 +253,28 @@ describe('SpaceTasks', () => {
     fireEvent.click(getAllByText('Action')[0]);
     expect(await findByText('Task t1')).toBeTruthy();
     expect(await findByText('Task t2')).toBeTruthy();
+  });
+
+  it('refetches a task group when a truncated-summary task advances only in updatedAt', async () => {
+    mockCurrentSpaceTasksFilterTabSignal.value = 'action';
+    const blocked = {
+      ...makeTask('t1', 'blocked', {
+        blockReason: 'agent_error',
+        result: 'truncated prefix',
+        updatedAt: 1000,
+      }),
+      resultTruncated: true,
+    };
+    mockTasks.value = [blocked];
+    render(<SpaceTasks spaceId="space-1" />);
+    await waitFor(() => expect(mockFetchTaskGroup).toHaveBeenCalled());
+    mockFetchTaskGroup.mockClear();
+
+    act(() => {
+      mockTasks.value = [{ ...blocked, updatedAt: 2000 }];
+    });
+
+    await waitFor(() => expect(mockFetchTaskGroup).toHaveBeenCalled());
   });
 
   it('displays archived tasks in the completed tab as an Archived group', async () => {

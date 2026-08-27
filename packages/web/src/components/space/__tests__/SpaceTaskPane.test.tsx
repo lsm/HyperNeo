@@ -116,6 +116,8 @@ vi.mock('../../../lib/space-store', () => ({
   get spaceStore() {
     return {
       tasks: mockTasks,
+      taskDetails: signal(new Map()),
+      ensureTaskDetail: vi.fn().mockResolvedValue(null),
       agents: mockAgents,
       workflows: mockWorkflows,
       workflowRuns: mockWorkflowRuns,
