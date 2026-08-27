@@ -64,7 +64,8 @@ export interface RenderPendingDigestDeps {
   listUserMessagesByStatus(
     sessionId: string,
     status: LegacyDurableScanStatus | 'consumed',
-    limit: number
+    limit: number,
+    direction: 'asc' | 'desc'
   ): SDKUserMessage[];
   listUserMessagesByUuidPrefix(
     sessionId: string,
@@ -272,7 +273,8 @@ function collectConsumedEvidence(ctx: RenderPendingDigestCtx): Set<string> {
       ctx.deps.listUserMessagesByStatus(
         ctx.sessionId,
         'consumed',
-        TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP
+        TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
+        'desc'
       )
     )
   );
@@ -296,7 +298,8 @@ export function reconcileDurable(ctx: RenderPendingDigestCtx): RenderPendingDige
     const rows = ctx.deps.listUserMessagesByStatus(
       ctx.sessionId,
       status,
-      TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP
+      TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
+      'desc'
     );
     for (const eventId of durableRowEventIds(rows)) legacyDurableEventIds.add(eventId);
   }
@@ -307,7 +310,8 @@ export function reconcileDurable(ctx: RenderPendingDigestCtx): RenderPendingDige
         ctx.deps.listUserMessagesByStatus(
           ctx.sessionId,
           'consumed',
-          TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP
+          TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
+          'desc'
         )
       )
     );

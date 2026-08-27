@@ -106,7 +106,7 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
     isTaskAdmissible: () => admissibility.taskAdmissible,
     isTaskTerminal: () => admissibility.taskTerminal,
     isSpacePaused: () => admissibility.spacePaused,
-    listUserMessagesByStatus: (_sessionId, status, _limit) =>
+    listUserMessagesByStatus: (_sessionId, status, _limit, _direction) =>
       status === 'consumed' ? consumedRows : (legacyRows.get(status) ?? []),
     listUserMessagesByUuidPrefix: () => digestRows,
     getDeliveryContent: (_sessionId, uuid) => deliveryContent.get(uuid) ?? null,
