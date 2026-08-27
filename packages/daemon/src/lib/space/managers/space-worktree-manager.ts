@@ -1,20 +1,379 @@
 import { execFileSync } from 'node:child_process';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
-import { worktreeSlug } from '../worktree-slug.ts';
+import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { Logger } from '../../logger.ts';
-import { retryWithBackoff } from '../runtime/retry-utils.ts';
-import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
 import { getWorktreeBaseDir } from '../../worktree-path-utils.ts';
+import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
+import { retryWithBackoff } from '../runtime/retry-utils.ts';
+import { worktreeSlug } from '../worktree-slug.ts';
 
 export interface SpaceWorktreeInfo {
   slug: string;
   taskId: string;
   path: string;
 }
+
+function resolveRepoRoot(repoRoot: string): { commandCwd: string; dirKey: string } {
+  let cwdRoot = repoRoot;
+  try {
+    cwdRoot = realpathSync(repoRoot);
+  } catch {
+    return { commandCwd: repoRoot, dirKey: repoRoot };
+  }
+  let commonDir = '';
+  try {
+    const commonDirRaw = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+      cwd: cwdRoot,
+      encoding: 'utf8',
+      timeout: 30_000,
+    }).trim();
+    if (commonDirRaw) {
+      commonDir = isAbsolute(commonDirRaw) ? commonDirRaw : resolve(cwdRoot, commonDirRaw);
+    }
+  } catch {}
+  if (!commonDir) {
+    return { commandCwd: cwdRoot, dirKey: cwdRoot };
+  }
+  try {
+    const topLevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: cwdRoot,
+      encoding: 'utf8',
+      timeout: 30_000,
+    }).trim();
+    return { commandCwd: topLevel || cwdRoot, dirKey: commonDir };
+  } catch {
+    return { commandCwd: cwdRoot, dirKey: commonDir };
+  }
+}
+
+function legacyWorktreeDirs(
+  worktreeRepo: SpaceWorktreeRepository,
+  currentProjectDir: string
+): string[] {
+  const dirs = new Set<string>();
+  for (const path of worktreeRepo.listPaths()) {
+    const projectDir = dirname(dirname(path));
+    if (projectDir !== currentProjectDir) dirs.add(projectDir);
+  }
+  return [...dirs];
+}
+
+function worktreeGitDir(worktreePath: string): string | null {
+  try {
+    const raw = readFileSync(join(worktreePath, '.git'), 'utf8').trim();
+    const gitdir = raw.startsWith('gitdir:') ? raw.slice('gitdir:'.length).trim() : '';
+    if (!gitdir) return null;
+    return isAbsolute(gitdir) ? gitdir : resolve(worktreePath, gitdir);
+  } catch {
+    return null;
+  }
+}
+
+function writeWorktreeClaim(worktreePath: string, spaceId: string, taskId: string): void {
+  const gitdir = worktreeGitDir(worktreePath);
+  if (!gitdir) return;
+  try {
+    writeFileSync(join(gitdir, 'hyperneo-claim'), `${spaceId}\n${taskId}`);
+  } catch {}
+}
+
+function readWorktreeClaim(worktreePath: string): { spaceId: string; taskId: string } | null {
+  const gitdir = worktreeGitDir(worktreePath);
+  if (!gitdir) return null;
+  try {
+    const raw = readFileSync(join(gitdir, 'hyperneo-claim'), 'utf8').trim();
+    const [spaceId, taskId] = raw.split('\n');
+    if (spaceId && taskId) return { spaceId, taskId };
+  } catch {}
+  return null;
+}
+
+function worktreeCurrentBranch(worktreePath: string): string | null {
+  try {
+    return execFileSync('git', ['-C', worktreePath, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function isRegisteredWorktree(commandCwd: string, worktreePath: string): boolean {
+  try {
+    const list = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+      cwd: commandCwd,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    let target: string | null = null;
+    try {
+      target = realpathSync(worktreePath);
+    } catch {
+      return false;
+    }
+    for (const line of list.split('\n')) {
+      if (!line.startsWith('worktree ')) continue;
+      const candidate = line.slice('worktree '.length).trim();
+      let normalized: string | null = null;
+      try {
+        normalized = realpathSync(candidate);
+      } catch {
+        continue;
+      }
+      if (normalized === target) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function isLiveRegisteredWorktree(commandCwd: string, worktreePath: string): boolean {
+  return existsSync(join(worktreePath, '.git')) && isRegisteredWorktree(commandCwd, worktreePath);
+}
+
+interface CreateTaskWorktreeCtx {
+  worktreeRepo: SpaceWorktreeRepository;
+  spaceRepo: SpaceRepository;
+  logger: Logger;
+  spaceId: string;
+  taskId: string;
+  taskTitle: string;
+  taskNumber: number;
+  baseBranch?: string;
+  repoRoot?: string;
+  workspacePath?: string;
+  repo?: { commandCwd: string; dirKey: string };
+  worktreesDir?: string;
+  slug?: string;
+  worktreePath?: string;
+  branchName?: string;
+  result?: { path: string; slug: string };
+}
+
+function createLoadSpace(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  const space = ctx.spaceRepo.getSpace(ctx.spaceId);
+  if (!space) {
+    throw new Error(`Space not found: ${ctx.spaceId}`);
+  }
+  return { ...ctx, workspacePath: space.workspacePath };
+}
+
+function createResolveRepo(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  return { ...ctx, repo: resolveRepoRoot(ctx.repoRoot ?? ctx.workspacePath!) };
+}
+
+function createFindExistingRecord(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  const existing = ctx.worktreeRepo.getByTaskId(ctx.spaceId, ctx.taskId);
+  if (existing) {
+    return { ...ctx, result: { path: existing.path, slug: existing.slug } };
+  }
+  return ctx;
+}
+
+function createEnsureWorktreesDir(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  const worktreesDir = getWorktreeBaseDir(ctx.repo!.dirKey, (msg) => ctx.logger.warn(msg));
+  if (!existsSync(worktreesDir)) {
+    mkdirSync(worktreesDir, { recursive: true });
+  }
+  return { ...ctx, worktreesDir };
+}
+
+function createWriteRepoCwdSentinel(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  try {
+    writeFileSync(join(ctx.worktreesDir!, '..', '.hyperneo-repo-cwd'), ctx.repo!.commandCwd);
+  } catch {}
+  return ctx;
+}
+
+function createComputeSlug(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  const slugPrefixes = [
+    `${ctx.worktreesDir!}${sep}`,
+    ...legacyWorktreeDirs(ctx.worktreeRepo, dirname(ctx.worktreesDir!)).map(
+      (dir) => join(dir, 'worktrees') + sep
+    ),
+  ];
+  const existingSlugs = [
+    ...ctx.worktreeRepo.listSlugs(ctx.spaceId),
+    ...slugPrefixes.flatMap((prefix) => ctx.worktreeRepo.listSlugsUnderPath(prefix)),
+  ];
+  return { ...ctx, slug: worktreeSlug(ctx.taskTitle, ctx.taskNumber, existingSlugs) };
+}
+
+function createDeriveTarget(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  return {
+    ...ctx,
+    worktreePath: join(ctx.worktreesDir!, ctx.slug!),
+    branchName: `space/${ctx.slug}`,
+  };
+}
+
+function createRecoverStaleTarget(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  const repo = ctx.repo!;
+  const worktreePath = ctx.worktreePath!;
+  const branchName = ctx.branchName!;
+  if (existsSync(worktreePath)) {
+    if (isLiveRegisteredWorktree(repo.commandCwd, worktreePath)) {
+      const claim = readWorktreeClaim(worktreePath);
+      const currentBranch = worktreeCurrentBranch(worktreePath);
+      if (
+        claim?.spaceId === ctx.spaceId &&
+        claim.taskId === ctx.taskId &&
+        currentBranch === branchName
+      ) {
+        ctx.logger.warn(
+          `Adopting orphaned worktree at ${worktreePath} left by a crashed creation for task ${ctx.taskId}`
+        );
+        ctx.worktreeRepo.create({
+          spaceId: ctx.spaceId,
+          taskId: ctx.taskId,
+          slug: ctx.slug!,
+          path: worktreePath,
+        });
+        return { ...ctx, result: { path: worktreePath, slug: ctx.slug! } };
+      }
+      throw new Error(
+        `Worktree path ${worktreePath} is already in use by a live registered worktree; refusing to recreate it for task ${ctx.taskId}`
+      );
+    }
+    ctx.logger.warn(
+      `Stale worktree directory detected at ${worktreePath} — removing before recreating`
+    );
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
+        cwd: repo.commandCwd,
+        timeout: 30_000,
+      });
+    } catch {
+      if (!isLiveRegisteredWorktree(repo.commandCwd, worktreePath)) {
+        rmSync(worktreePath, { recursive: true, force: true });
+      }
+    }
+  }
+  return ctx;
+}
+
+function createPruneWorktrees(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  try {
+    execFileSync('git', ['worktree', 'prune'], {
+      cwd: ctx.repo!.commandCwd,
+      timeout: 30_000,
+    });
+  } catch {}
+  return ctx;
+}
+
+function createCleanupStaleBranch(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  const branchName = ctx.branchName!;
+  try {
+    const branches = execFileSync('git', ['branch', '--list', branchName], {
+      cwd: ctx.repo!.commandCwd,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    if (branches.trim().length > 0) {
+      ctx.logger.warn(`Stale branch detected: ${branchName} — deleting before recreating`);
+      execFileSync('git', ['branch', '-D', branchName], {
+        cwd: ctx.repo!.commandCwd,
+        timeout: 30_000,
+      });
+    }
+  } catch (err) {
+    ctx.logger.warn(
+      `Failed to clean up stale branch ${branchName}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  return ctx;
+}
+
+async function createAddWorktree(ctx: CreateTaskWorktreeCtx): Promise<CreateTaskWorktreeCtx> {
+  const repo = ctx.repo!;
+  const worktreePath = ctx.worktreePath!;
+  const branchName = ctx.branchName!;
+  try {
+    await retryWithBackoff(
+      () =>
+        Promise.resolve(
+          execFileSync(
+            'git',
+            ['worktree', 'add', worktreePath, '-b', branchName, ctx.baseBranch ?? 'HEAD'],
+            {
+              cwd: repo.commandCwd,
+              timeout: 30_000,
+              stdio: 'pipe',
+            }
+          )
+        ),
+      {
+        maxRetries: MAX_NETWORK_RETRIES,
+        delaysMs: NETWORK_RETRY_DELAYS_MS,
+        isRetryable: (err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes('already exists')) return false;
+          if (msg.toLowerCase().includes('fatal:')) return false;
+          return true;
+        },
+        onRetry: (attempt, err) => {
+          ctx.logger.warn(
+            `git worktree add failed (attempt ${attempt}), retrying: ` +
+              `${err instanceof Error ? err.message : String(err)}`
+          );
+        },
+      }
+    );
+  } catch (err) {
+    if (existsSync(worktreePath) && !isLiveRegisteredWorktree(repo.commandCwd, worktreePath)) {
+      try {
+        rmSync(worktreePath, { recursive: true, force: true });
+      } catch {}
+    }
+    throw new Error(
+      `Failed to create worktree for task ${ctx.taskId}: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  return ctx;
+}
+
+function createPersistWorktree(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  writeWorktreeClaim(ctx.worktreePath!, ctx.spaceId, ctx.taskId);
+  ctx.worktreeRepo.create({
+    spaceId: ctx.spaceId,
+    taskId: ctx.taskId,
+    slug: ctx.slug!,
+    path: ctx.worktreePath!,
+  });
+  ctx.logger.info(
+    `Created worktree for task ${ctx.taskId} at ${ctx.worktreePath} (branch: ${ctx.branchName})`
+  );
+  return { ...ctx, result: { path: ctx.worktreePath!, slug: ctx.slug! } };
+}
+
+const runCreateTaskWorktree = (
+  superpipe({
+    hasResult: (ctx: CreateTaskWorktreeCtx) => ctx.result !== undefined,
+  })('create-task-worktree') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(createLoadSpace, 'ctx', 'ctx')
+  .pipe(createResolveRepo, 'ctx', 'ctx')
+  .pipe(createFindExistingRecord, 'ctx', 'ctx')
+  .pipe('!hasResult', 'ctx')
+  .pipe(createEnsureWorktreesDir, 'ctx', 'ctx')
+  .pipe(createWriteRepoCwdSentinel, 'ctx', 'ctx')
+  .pipe(createComputeSlug, 'ctx', 'ctx')
+  .pipe(createDeriveTarget, 'ctx', 'ctx')
+  .pipe(createRecoverStaleTarget, 'ctx', 'ctx')
+  .pipe('!hasResult', 'ctx')
+  .pipe(createPruneWorktrees, 'ctx', 'ctx')
+  .pipe(createCleanupStaleBranch, 'ctx', 'ctx')
+  .pipe(createAddWorktree, 'ctx', 'ctx')
+  .pipe(createPersistWorktree, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: CreateTaskWorktreeCtx) => Promise<CreateTaskWorktreeCtx>;
 
 export class SpaceWorktreeManager {
   private worktreeRepo: SpaceWorktreeRepository;
@@ -26,54 +385,6 @@ export class SpaceWorktreeManager {
     this.spaceRepo = new SpaceRepository(db);
   }
 
-  private resolveRepoRoot(repoRoot: string): { commandCwd: string; dirKey: string } {
-    let cwdRoot = repoRoot;
-    try {
-      cwdRoot = realpathSync(repoRoot);
-    } catch {
-      return { commandCwd: repoRoot, dirKey: repoRoot };
-    }
-    let commonDir = '';
-    try {
-      const commonDirRaw = execFileSync('git', ['rev-parse', '--git-common-dir'], {
-        cwd: cwdRoot,
-        encoding: 'utf8',
-        timeout: 30_000,
-      }).trim();
-      if (commonDirRaw) {
-        commonDir = isAbsolute(commonDirRaw) ? commonDirRaw : resolve(cwdRoot, commonDirRaw);
-      }
-    } catch {}
-    if (!commonDir) {
-      return { commandCwd: cwdRoot, dirKey: cwdRoot };
-    }
-    try {
-      const topLevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-        cwd: cwdRoot,
-        encoding: 'utf8',
-        timeout: 30_000,
-      }).trim();
-      return { commandCwd: topLevel || cwdRoot, dirKey: commonDir };
-    } catch {
-      return { commandCwd: cwdRoot, dirKey: commonDir };
-    }
-  }
-
-  private legacyWorktreeDirs(currentProjectDir: string): string[] {
-    const dirs = new Set<string>();
-    for (const path of this.worktreeRepo.listPaths()) {
-      const projectDir = dirname(dirname(path));
-      if (projectDir !== currentProjectDir) dirs.add(projectDir);
-    }
-    return [...dirs];
-  }
-
-  private isLiveRegisteredWorktree(commandCwd: string, worktreePath: string): boolean {
-    return (
-      existsSync(join(worktreePath, '.git')) && this.isRegisteredWorktree(commandCwd, worktreePath)
-    );
-  }
-
   async createTaskWorktree(
     spaceId: string,
     taskId: string,
@@ -82,147 +393,18 @@ export class SpaceWorktreeManager {
     baseBranch?: string,
     repoRoot?: string
   ): Promise<{ path: string; slug: string }> {
-    const space = this.spaceRepo.getSpace(spaceId);
-    if (!space) {
-      throw new Error(`Space not found: ${spaceId}`);
-    }
-    const repo = this.resolveRepoRoot(repoRoot ?? space.workspacePath);
-
-    const existing = this.worktreeRepo.getByTaskId(spaceId, taskId);
-    if (existing) {
-      return { path: existing.path, slug: existing.slug };
-    }
-
-    const worktreesDir = getWorktreeBaseDir(repo.dirKey, (msg) => this.logger.warn(msg));
-    if (!existsSync(worktreesDir)) {
-      mkdirSync(worktreesDir, { recursive: true });
-    }
-
-    try {
-      writeFileSync(join(worktreesDir, '..', '.hyperneo-repo-cwd'), repo.commandCwd);
-    } catch {}
-
-    const slugPrefixes = [
-      `${worktreesDir}${sep}`,
-      ...this.legacyWorktreeDirs(dirname(worktreesDir)).map((dir) => join(dir, 'worktrees') + sep),
-    ];
-    const existingSlugs = [
-      ...this.worktreeRepo.listSlugs(spaceId),
-      ...slugPrefixes.flatMap((prefix) => this.worktreeRepo.listSlugsUnderPath(prefix)),
-    ];
-    const slug = worktreeSlug(taskTitle, taskNumber, existingSlugs);
-
-    const worktreePath = join(worktreesDir, slug);
-    const branchName = `space/${slug}`;
-
-    if (existsSync(worktreePath)) {
-      if (this.isLiveRegisteredWorktree(repo.commandCwd, worktreePath)) {
-        const claim = this.readWorktreeClaim(worktreePath);
-        const currentBranch = this.worktreeCurrentBranch(worktreePath);
-        if (claim?.spaceId === spaceId && claim.taskId === taskId && currentBranch === branchName) {
-          this.logger.warn(
-            `Adopting orphaned worktree at ${worktreePath} left by a crashed creation for task ${taskId}`
-          );
-          this.worktreeRepo.create({ spaceId, taskId, slug, path: worktreePath });
-          return { path: worktreePath, slug };
-        }
-        throw new Error(
-          `Worktree path ${worktreePath} is already in use by a live registered worktree; refusing to recreate it for task ${taskId}`
-        );
-      }
-      this.logger.warn(
-        `Stale worktree directory detected at ${worktreePath} — removing before recreating`
-      );
-      try {
-        execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
-          cwd: repo.commandCwd,
-          timeout: 30_000,
-        });
-      } catch {
-        if (!this.isLiveRegisteredWorktree(repo.commandCwd, worktreePath)) {
-          rmSync(worktreePath, { recursive: true, force: true });
-        }
-      }
-    }
-
-    try {
-      execFileSync('git', ['worktree', 'prune'], {
-        cwd: repo.commandCwd,
-        timeout: 30_000,
-      });
-    } catch {}
-
-    try {
-      const branches = execFileSync('git', ['branch', '--list', branchName], {
-        cwd: repo.commandCwd,
-        encoding: 'utf8',
-        timeout: 30_000,
-      });
-      if (branches.trim().length > 0) {
-        this.logger.warn(`Stale branch detected: ${branchName} — deleting before recreating`);
-        execFileSync('git', ['branch', '-D', branchName], {
-          cwd: repo.commandCwd,
-          timeout: 30_000,
-        });
-      }
-    } catch (err) {
-      this.logger.warn(
-        `Failed to clean up stale branch ${branchName}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    try {
-      await retryWithBackoff(
-        () =>
-          Promise.resolve(
-            execFileSync(
-              'git',
-              ['worktree', 'add', worktreePath, '-b', branchName, baseBranch ?? 'HEAD'],
-              {
-                cwd: repo.commandCwd,
-                timeout: 30_000,
-                stdio: 'pipe',
-              }
-            )
-          ),
-        {
-          maxRetries: MAX_NETWORK_RETRIES,
-          delaysMs: NETWORK_RETRY_DELAYS_MS,
-          isRetryable: (err: unknown) => {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (msg.includes('already exists')) return false;
-            if (msg.toLowerCase().includes('fatal:')) return false;
-            return true;
-          },
-          onRetry: (attempt, err) => {
-            this.logger.warn(
-              `git worktree add failed (attempt ${attempt}), retrying: ` +
-                `${err instanceof Error ? err.message : String(err)}`
-            );
-          },
-        }
-      );
-    } catch (err) {
-      if (
-        existsSync(worktreePath) &&
-        !this.isLiveRegisteredWorktree(repo.commandCwd, worktreePath)
-      ) {
-        try {
-          rmSync(worktreePath, { recursive: true, force: true });
-        } catch {}
-      }
-      throw new Error(
-        `Failed to create worktree for task ${taskId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
-    this.writeWorktreeClaim(worktreePath, spaceId, taskId);
-    this.worktreeRepo.create({ spaceId, taskId, slug, path: worktreePath });
-
-    this.logger.info(
-      `Created worktree for task ${taskId} at ${worktreePath} (branch: ${branchName})`
-    );
-    return { path: worktreePath, slug };
+    const ctx = await runCreateTaskWorktree({
+      worktreeRepo: this.worktreeRepo,
+      spaceRepo: this.spaceRepo,
+      logger: this.logger,
+      spaceId,
+      taskId,
+      taskTitle,
+      taskNumber,
+      baseBranch,
+      repoRoot,
+    });
+    return ctx.result!;
   }
 
   private resolveWorktreeRepoRoot(worktreePath: string, fallback: string): string {
@@ -240,7 +422,7 @@ export class SpaceWorktreeManager {
       try {
         const stored = readFileSync(commandCwdSentinel, 'utf8').trim();
         if (stored && existsSync(stored)) {
-          if (!storedKey || this.resolveRepoRoot(stored).dirKey === storedKey) return stored;
+          if (!storedKey || resolveRepoRoot(stored).dirKey === storedKey) return stored;
         }
       } catch {}
     }
@@ -258,77 +440,6 @@ export class SpaceWorktreeManager {
       } catch {}
     }
     return fallback;
-  }
-
-  private worktreeGitDir(worktreePath: string): string | null {
-    try {
-      const raw = readFileSync(join(worktreePath, '.git'), 'utf8').trim();
-      const gitdir = raw.startsWith('gitdir:') ? raw.slice('gitdir:'.length).trim() : '';
-      if (!gitdir) return null;
-      return isAbsolute(gitdir) ? gitdir : resolve(worktreePath, gitdir);
-    } catch {
-      return null;
-    }
-  }
-
-  private writeWorktreeClaim(worktreePath: string, spaceId: string, taskId: string): void {
-    const gitdir = this.worktreeGitDir(worktreePath);
-    if (!gitdir) return;
-    try {
-      writeFileSync(join(gitdir, 'hyperneo-claim'), `${spaceId}\n${taskId}`);
-    } catch {}
-  }
-
-  private readWorktreeClaim(worktreePath: string): { spaceId: string; taskId: string } | null {
-    const gitdir = this.worktreeGitDir(worktreePath);
-    if (!gitdir) return null;
-    try {
-      const raw = readFileSync(join(gitdir, 'hyperneo-claim'), 'utf8').trim();
-      const [spaceId, taskId] = raw.split('\n');
-      if (spaceId && taskId) return { spaceId, taskId };
-    } catch {}
-    return null;
-  }
-
-  private worktreeCurrentBranch(worktreePath: string): string | null {
-    try {
-      return execFileSync('git', ['-C', worktreePath, 'rev-parse', '--abbrev-ref', 'HEAD'], {
-        encoding: 'utf8',
-        timeout: 30_000,
-      }).trim();
-    } catch {
-      return null;
-    }
-  }
-
-  private isRegisteredWorktree(commandCwd: string, worktreePath: string): boolean {
-    try {
-      const list = execFileSync('git', ['worktree', 'list', '--porcelain'], {
-        cwd: commandCwd,
-        encoding: 'utf8',
-        timeout: 30_000,
-      });
-      let target: string | null = null;
-      try {
-        target = realpathSync(worktreePath);
-      } catch {
-        return false;
-      }
-      for (const line of list.split('\n')) {
-        if (!line.startsWith('worktree ')) continue;
-        const candidate = line.slice('worktree '.length).trim();
-        let normalized: string | null = null;
-        try {
-          normalized = realpathSync(candidate);
-        } catch {
-          continue;
-        }
-        if (normalized === target) return true;
-      }
-      return false;
-    } catch {
-      return false;
-    }
   }
 
   async removeTaskWorktree(spaceId: string, taskId: string): Promise<void> {
