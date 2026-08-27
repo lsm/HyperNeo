@@ -1,0 +1,727 @@
+# RFC: Cross-Repo Launcher Pattern (Orchestrator Agent + Per-Repo Goals)
+
+Status: Proposed — **decision recorded: prompt-only** (ratified on merge; §7).
+Date: 2026-08-25. Tracks issue #2538 (WS 20/20, terminal slice of the multi-workspace
+epic spanning #2519–#2536). Companion usage doc: #2537 lands the `docs/features/`
+multi-workspace page; this RFC owns the orchestration pattern only.
+
+## 1. Problem
+
+The multi-workspace epic lets one Space register several repositories and binds every
+task and goal to exactly one of them. Two invariants follow (#2537):
+
+- **One task, one repo / one session, one repo.** A task's worktree is created inside
+  its bound repo; a workflow run still freezes a single PR (#2537 lists this as a kept
+  limitation).
+- **A repo belongs to exactly one Space.** Path registration is unique across spaces —
+  an epic invariant (#2537) enforced through #2522's cross-space path lookup.
+
+So no single task can ever coordinate two repos. Path uniqueness also does **not**
+imply that two repos share a Space — repo A in Space X and repo B in Space Y satisfies
+the invariant — but every goal/task tool an orchestrator has is scoped to its own Space,
+and the message resolver hard-rejects cross-Space targets. This RFC therefore takes a
+**prerequisite** rather than inferring one: the pattern covers objectives whose repos
+are all registered in the **same** Space (the scenario in §2 registers both). Objectives
+spanning two Spaces are explicitly unsupported for v1 (§7). Within one Space, what is
+missing is the layer *above* tasks: an agent that owns two repo-bound goals and moves
+them toward one objective, deciding when progress on one goal releases, withholds, or
+rewrites work on the other. This RFC names that pattern, binds it to the primitives the
+epic ships, and decides whether anything new must be built.
+
+## 2. Real usage scenario
+
+**Ship `messages.search` end to end.** A Space "platform" registers two workspaces:
+
+- **Repo A** — the HyperNeo monorepo. Goal A: *land the conversation-search RPC plus the
+  FTS migration and release the daemon* (`feat(daemon): messages.search RPC`).
+- **Repo B** — a downstream TypeScript SDK repo. Goal B: *ship `client.messages.search()`
+  with typed request/response helpers, runnable examples, and a `2.4.0` release*.
+
+The couplings that force orchestration rather than two independent goals:
+
+1. **Hard gate.** B's release task cannot start meaningfully before A's migration + RPC
+   merge; releasing against a speculative contract produces a broken SDK version.
+2. **Soft, bidirectional gate.** A's request/response field naming should be reviewed for
+   SDK ergonomics *before* A merges — B's owner reacts to A's in-flight task, not only to
+   its terminal outcome.
+3. **Slip propagation.** If A's merge slips past B's release date, B must pause rather
+   than publish stale typings.
+4. **Drift correction.** If a follow-up change in A alters the contract after B's task
+   started, B's in-flight work must be corrected, not discovered broken at B's CI.
+
+The same shape covers an app repo + docs-site pair (docs publish gates on the app
+release; screenshots must show the shipped UI) and a monorepo + deployment-config pair.
+All variants share the skeleton: per-repo goals, one hard gate at an artifact boundary,
+soft gates around contract quality, and correction on drift.
+
+## 3. Verified substrate
+
+Everything below exists on `dev` or is an approved in-flight epic slice. The pattern in
+§4–§6 is assembled from these pieces; nothing else is assumed.
+
+**Workspace binding (epic).**
+
+| Primitive | Status |
+| --- | --- |
+| `space_workspaces` registry, `UNIQUE(space_id, path)`, one primary per Space | landed, migration 217 (#2521) |
+| `SpaceWorkspaceRepository` CRUD + cross-space path lookup | in flight (#2522) |
+| `space_goals.workspacePath` pinning | landed, migration 218 (#2535 17a) |
+| `space_tasks.workspace_path` + shared types | landed, migration 219 (#2527) |
+| Goal-pinned tasks inherit the goal's workspace; central `resolveTaskWorkspace()`; `createTaskWorktree(repoRoot)`; task RPC/tool `workspacePath` params | in flight (#2528–#2531, #2535 rest) |
+
+**Goal machinery (shipped).**
+
+- The goal model carries `workspacePath` (migration 218) and `primaryOwnerAgentId`, plus
+  rolling `summary`, `metrics`, `progress`, `nextSteps`, `activeTaskId`/`lastTaskId`, a
+  check-in cadence held on a linked `TaskSchedule` (created from
+  `checkInCronExpression`/`checkInTimezone`), and a monotonic `revision`. (The service
+  layer accepts these fields; exposing `workspacePath` on the MCP tool schemas arrives
+  with #2531/#2535 — spawn paths today still resolve from the Space primary.)
+- `trigger_goal_task` creates a goal-linked task immediately, or queues **one** follow-up
+  when a goal task is already active and `autoTriggerNext` is set — execution through
+  the goal's active-task pointer is serial by construction, though pointerless
+  Forge-proposal tasks run outside that slot and can proceed concurrently with it (§5
+  accounts for them).
+- Goal-linked task terminal outcomes produce durable outcome notifications in the same
+  transaction as the terminal write; they wake the **primary owner** (or the coordinator
+  fallback when no usable owner exists — `goals/goal-owner-resolution.ts`), are recovered
+  at startup (`SpaceRuntimeService.recoverPendingOutcomeNotifications`), and are disposed
+  through `review_goal_outcome`: identity-bound claim, revision CAS, acknowledge/reject/
+  supersede dispositions, idempotent retries.
+- The inactivity nag (`deliverLongHorizonAgentNag`) re-prompts an owner sitting on pending
+  notifications; `review_goal_outcome` with no arguments discovers claimable notifications.
+- `create_standalone_task` supports `depends_on` (same-Space task IDs; blocked until every
+  dependency is `done`, cascade-cancelled, cycles rejected).
+- `pause_goal` / `resume_goal`, `retry_task` / `reassign_task`, `interrupt_session`, and
+  `send_message_to_task` are owner-reachable tools.
+
+**Long-horizon (LH) agents (shipped).**
+
+- LH agents are durable Space actors with their own persistent session, created in the
+  Space **primary** workspace with `worktreeMode: 'direct'`
+  (`space-runtime-service.ts`, `ensureLongHorizonAgentSession`) — an LH agent is not
+  itself inside either repo's worktree.
+- Their sessions get the `space-agent-tools` MCP (86 tools: sessions, tasks, goals, forge,
+  schedules, agent admin), `agent-memory`, and `db-query`; prompts append
+  `LONG_HORIZON_OWNER_REVIEW_CONTRACT` and `LONG_HORIZON_SCHEDULING_GUARDRAIL`
+  (`packages/prompts/src/agents/`).
+- The owner-review contract already defines the single-owner loop: create goals, delegate
+  via `trigger_goal_task`, review outcomes via `review_goal_outcome`, create follow-ups.
+  Workers report outcomes in tasks; only the owner mutates goal rolling state.
+- Durable reminders (`create_agent_reminder`) and external-event subscriptions
+  (`subscribe_agent_event`) exist; goal check-ins create ordinary Space tasks.
+
+**Messaging (shipped).**
+
+- `send_message` is a **workflow-node-agent** tool (node-agent MCP), scoped by the run's
+  channel topology. LH agents do not have it.
+- LH agents reach running task members with `send_message_to_task` and any Space session
+  with `send_session_message` (autonomy-gated).
+
+## 4. The launcher pattern
+
+A **launcher** is an ordinary LH agent that owns ≥2 goals pinned to distinct registered
+workspaces plus a doctrine for sequencing them. No new runtime concept is introduced.
+
+**Role.**
+
+- The launcher's own session stays in the Space primary workspace. It never edits either
+  repo directly; every repo mutation flows through a task bound to that repo — normally
+  goal-linked, except the hard-gated artifact steps §5 carves out as standalone gated
+  tasks. This respects one-task-one-repo and one-session-one-repo, keeps each repo's PR frozen
+  per run, and keeps the orchestrator's deliverable — goal state and gated sequencing —
+  out of the repos it coordinates.
+- One launcher owns the whole objective. Workers stay single-goal and single-repo; they
+  report outcomes in their tasks and do not see the other goal (per the existing
+  owner-review contract division).
+
+**Prompt surface (the only artifact this decision produces).**
+
+The doctrine is prompt content, deliverable two ways:
+
+- **Zero-code:** any LH agent can carry the doctrine in its `instructions`
+  (`create_agent` / `update_agent`) — `buildLongHorizonAgentSessionConfig` already
+  appends agent instructions to every LH session prompt. This is usable only once the
+  workspace parameters ship (#2531/#2535): today's creation tools cannot pin a goal or
+  task to repo B, so until then the pattern needs goals provisioned by a surface that
+  can, or it degrades to launching B's work in the Space primary.
+- **Packaged:** a long-horizon template family file (e.g. `cross-repo-launcher.md`,
+  alongside `release-manager.md` and peers) registered in the daemon's
+  `LONG_HORIZON_AGENT_TEMPLATES` array, with the whole contract embedded in the
+  template's `instructions` (`create_agent_from_template` copies them verbatim).
+  Deliberately **not** a new append in `buildLongHorizonAgentSessionConfig`: that
+  builder is shared by every LH agent with no template-family branch, so a global
+  `CROSS_REPO_LAUNCHER_CONTRACT` append would teach coordinators, release managers, and
+  auditors the multi-goal launcher doctrine. This is mechanical registration of existing
+  prompt machinery, not new runtime behavior (§7).
+
+The launcher contract extends the owner-review contract with:
+
+- **Declare the contract between goals** in each goal's `nextSteps`: what each goal is
+  waiting on, in terms the other goal's task outcomes can satisfy ("B 2.4.0 waits on A
+  task #N done: RPC + migration merged; field names frozen as listed").
+- **The launcher is the sole trigger authority.** Pattern goals run with `autoTriggerNext`
+  disabled: a queued successor is auto-created *and claimed* inside the terminal
+  transaction — before the launcher reviews the outcome — so the goal's pointer is
+  already occupied with stale-`nextSteps` work when the launcher wakes. If a goal is
+  found with a queued successor active on wake, reconcile it through the drift sequence
+  (pause → cancel) before re-triggering.
+- **Choose the gate mechanism per coupling** using the taxonomy in §5 — hard artifact
+  gates become gated tasks (`depends_on`); judgment gates `pause_goal` the dependent
+  goal for the gate's duration with the condition recorded in `nextSteps`.
+- **Keep one leading goal.** At least one goal always has an active or triggerable task;
+  if every goal is waiting on another, pause the dependent goals and escalate (§6).
+- **Correct on drift.** When a gating goal's later outcome invalidates dependent work:
+  **validate the decision first** — re-read A (`get_goal`) and drain **all** of A's
+  pending outcomes, consolidating them into one update-bearing review (an ordinary
+  active task and a pointerless Forge task can terminalize concurrently; deciding on
+  the wake-causing notification alone misses the other result, and the first review
+  leaves the rest stale) — a bare acknowledge skips the revision
+  gate — `applyRevisionMatchGate` only checks when an update is present — and pausing B
+  before this check would leave an unjustified cross-goal mutation with no rollback if
+  the review returns `stale_revision`). Then — **pausing B first when it is found
+  active with `autoTriggerNext` and a queued run** (forcing settlement while B is still
+  active would let the terminal transaction create and claim the queued stale
+  successor) — **perform the attributed pause first** when settlement will be needed:
+  settling an active task while `autoTriggerNext` holds lets the terminal transaction
+  create and claim the queued stale successor; for a retained-cadence B, snapshot and
+  clear the cadence before that pause (settlement empties the pointer against a live
+  schedule otherwise, matching the gate-setup ordering) — then settle B's active task
+  (terminal state reached or forced) and drain B's own pending outcomes — a
+  completed-but-unreviewed Forge outcome, or an active completion racing the pause,
+  with anything staled by the pause's revision bump consolidated and resubmitted
+  through the stale-review path rather than result-losingly bare-acknowledged. Then
+  confirm B is paused —
+  an existing paused
+  state satisfies this (the hard-gate doctrine leaves B paused while its gated task
+  runs, and `pauseGoal` rejects non-active goals); when the pause is fresh, it also
+  prevents a cancel while B is active with `autoTriggerNext` set from making the
+  terminal transaction create the queued stale successor immediately. Then cancel
+  **everything of B's that is running the stale contract** — the active goal task *and*
+  the tracked gated task, each with `cancel_workflow_run: true` when workflow-backed
+  (a bare `cancel_task` terminalizes the task record but leaves the run's agents
+  executing; the gated shapes never appear in `activeTaskId`, so cancelling only the
+  goal task misses them). Cancellation is the settlement operation, not a step after
+  it: if B's active task reached `done` during settlement — or the forced cancel was
+  itself the settlement — a subsequent `cancel_task` on it fails (`done → cancelled`
+  and `cancelled → cancelled` are both invalid), which would abort the sequence before
+  the tracked gated task and its run are stopped, leaving stale-contract work mutating
+  repo B; a task settlement already terminalized gets only its run cancelled (the
+  idempotent run-cancellation surface) and never a second task-record cancellation.
+  Dispose **all** resulting pending notifications — the
+  cancellations' (goal-linked tasks that had started yield one each) — consolidating
+  them into **one** update-bearing review: two sequential update-bearing claims make
+  each other stale, so inspect all results, apply the combined update once, and bare-
+  acknowledge the rest before any later `update_goal`. Then record the
+  fresh contract in B's `nextSteps`. Dispose **all** pending B outcomes **before** that
+  `update_goal` — a Forge-gated task that already finished before the drift has one the
+  cancellations did not produce, and recording the contract first bumps B's revision so
+  that review is denied `stale_revision` (bare acknowledgement would drop its result
+  from the rolling state). Release distinguishes hold reasons: a pause this sequence or the
+  hard-gate setup introduced is released (recreating the gate re-pauses as needed);
+  only an unrelated human or judgment hold keeps B paused, with the drift outcome
+  recorded against that hold's `nextSteps`. When releasing, apply the §5 release
+  protocol in full — including the cadence snapshot/clear/restore cycle.
+  (`interrupt_session` alone only stops the current turn; the task stays active and a
+  subsequent `trigger_goal_task` would throw or merely queue.)
+- **No tight loops.** Cross-goal re-evaluation rides the launcher's own reminders and
+  the gating goal's wakes/check-ins — the scheduling guardrail's durable-vs-transient
+  rule already forbids in-turn polling for durable concerns.
+
+**Tool surface.** Unchanged: the existing 86 `space-agent-tools`. The loop concretely
+uses `create_goal`, `trigger_goal_task`, `review_goal_outcome`, `update_goal`,
+`pause_goal`/`resume_goal`, `list_goal_tasks`/`get_task_detail`/`list_tasks`,
+`create_standalone_task` (`depends_on`), `cancel_task` (`cancel_workflow_run: true` for
+workflow-backed tasks), `send_message_to_task`, `create_agent_reminder`,
+`subscribe_agent_event` — with `workspacePath` parameters on task/goal creation tools
+arriving with #2531/#2535.
+
+## 5. Synchronization points: goal tools vs `send_message`
+
+**Decision: synchronize on the goal plane only.** The outcome-notification loop *is* the
+sync point. A's goal-linked task reaching a reportable terminal state wakes the launcher;
+`review_goal_outcome` is where the sync decision is made and recorded — durable,
+identity-bound, revision-CAS'd, restart-safe, and auditable in `space_goal_events`.
+`update_goal`/`nextSteps` on the dependent goal is the record of "what B is waiting on".
+
+`send_message` is rejected as a sync mechanism for v1:
+
+- It is worker-plane plumbing scoped to a workflow run's channel topology; LH agents do
+  not have it, and extending it to LH agents would add an ephemeral, unaudited channel
+  beside the durable one. Sync decisions that live only in messages are lost to the next
+  wake and invisible in goal history. Message-plane loops are also actively discouraged
+  by the runtime: pending node-agent deliveries carry a 60 s TTL / 3 attempts, and cyclic
+  channel ping-pong trips a dead-loop guard (15 round-trips per 5 minutes).
+- The message resolver hard-rejects any cross-Space target, confirming that multi-repo
+  sync is single-Space messaging at most.
+- The one legitimate pre-terminal need in the scenario — steering A's task on SDK
+  ergonomics before it merges — is already served by `send_message_to_task`, which
+  reaches a running task's members (and queues for inactive ones) without new topology.
+
+**Gating taxonomy.**
+
+| Coupling | Mechanism | Enforced by |
+| --- | --- | --- |
+| Hard artifact gate (B's task cannot start without A's artifact) | Gated task with `depends_on` (standalone, or atomic via a Forge proposal — shapes below), created only after the setup protocol has run **and** the pause is confirmed to belong to this gate (an unrelated human, judgment, or durable-wait hold defers gated-task creation entirely — gated shapes neither claim B's pointer nor consult its paused status, so A reaching `done` would start and publish B's task under the unresolved hold), with one further drain immediately before the gated shape is created (the setup cancellation itself produces outcomes) | Runtime: blocked until the dependency is exactly `done` (`approved`/`review` do not release it); a cancelled dependency cascade-cancels dependents; a failed one blocks **running** dependents with `dependency_failed`, while a pre-start dependent merely stays `open` but unschedulable (§5 rebinding covers it). The pause is required doctrine: gated shapes never claim B's active-task pointer, so a B check-in fire could otherwise spawn a separate ungated goal task and perform the release the gate exists to prevent. The launcher releases B **only when the gated step completes successfully** — a `blocked`/`cancelled` gated step keeps B paused for retry or escalation. A successful **final** step (the §2 release itself) completes goal B instead of resuming it (resuming with a cadence would schedule more work after the release shipped); an **intermediate** step resumes B — for the **Forge** shape only after that outcome is reviewed (the notification records at the paused goal's revision, and a `resume_goal` in between bumps the revision so the review fails `stale_revision`); the standalone shape may resume immediately after terminal inspection. For a retained-cadence B, the cadence additionally stays cleared through the explicitly triggered follow-up's reviewed outcome for **both** gated shapes — the Forge task never occupied `activeTaskId`, so restoring on its own review alone re-exposes the empty pointer to a scheduled fire before the launcher's trigger |
+| Judgment gate (partial completion quality must be reviewed) | Hold B paused with the condition recorded in B's `nextSteps`, using the setup protocol below; release per the release protocol once the gating outcome is reviewed | Prompt doctrine. A withheld `trigger_goal_task` alone does **not** hold: with a check-in schedule configured, the scheduled fire creates a goal task and claims B's empty active-task pointer without consulting `nextSteps` — pausing suspends that schedule too |
+| Durable wait (A slipped/blocked indefinitely) | Hold B paused with the wait recorded, using the setup protocol below; release per the release protocol when A recovers | Prompt doctrine; visible in goal state/UI |
+| Milestone release (partial completion of A releases B) | Milestones listed in A's `nextSteps`/`metrics`; B's gate names the milestone; launcher reviews A's terminal outcome against it | Prompt doctrine |
+
+**Gate setup and release protocol** (applies to every soft-gate row, and to the hard
+gate's hold lifecycle):
+
+- **Setup:** for a retained-cadence goal, snapshot and clear the cadence **first**
+  (`check_in_cron_expression: null` after recording cron/timezone durably) — settling
+  tasks below empties the pointer while the schedule is still live until the later
+  pause, so a due check-in could claim it in the window; the clearing mutation itself
+  advances the revision, so pending outcomes drained afterwards are **consolidated into
+  one** update-bearing resubmission against the post-clear revision (sequential
+  per-outcome resubmissions cannot work — the first success advances the revision and
+  denies the rest), with remaining notifications bare-acknowledged; then drain
+  B's pending
+  outcomes first — settling only the tasks the hold must
+  stop (their terminal state reached or forced) before the final drain, and reconciling
+  any completion racing the pause, since the pause is itself a revision-changing
+  mutation; an outcome that still races the pause is resubmitted against the
+  post-pause revision through the documented stale-review resubmission path. Tasks the
+  hold deliberately retains (durable-wait independence) are not settled here — their
+  races are handled by the release step's pre-resume review. Then persist the hold
+  identity and intended ownership in **the keyed operational store — before the pause
+  mutation** (a crash between the pause and the write would leave B durably paused with
+  no record of who may resume it; update or remove the record if the pause fails);
+  until that store ships, agent memory is the only stand-in and carries the loss risks
+  described below. The human-readable condition mirrors in `nextSteps` for visibility
+  (outcome reviews
+  replace `nextSteps` wholesale, so a marker recorded only there is erased before
+  release revalidates it). Operational state lives as **one keyed record per goal**
+  (holds, saved cadence values, and each tracked gated task/proposal ID — updated
+  atomically around gated-task creation and terminal cleanup, since a standalone task
+  has no goal link and never occupies the pointer, so this record is the only place its
+  identity survives), refreshed as a whole on every
+  change **under record-level CAS semantics** (or handler-side atomic per-hold
+  mutations): the launcher owner and an authorized coordinator can update concurrently,
+  and two read-modify-write refreshes would silently erase one actor's hold or
+  gated-task identity, after which a later release resumes B under an unresolved gate. **Storage prerequisite, stated honestly:** agent memory does not currently
+  qualify — the consolidation job's duplicate admission compares content regardless of
+  key (so structurally similar per-goal records can merge and lose one goal's state)
+  and its TTL prunes a long-lived hold record — so a consolidation-exempt store (or an
+  explicit exemption transparently usable through existing memory tools) **with an
+  agent-facing read/write surface scoped to the goal's authorized launcher owner or
+  coordinator, enforced in the tool handler rather than by convention** (these records
+  are safety-critical: another Space agent overwriting one could forge pause ownership,
+  delete the tracked gate, or lose gated work) is a **prerequisite enabler** of the
+  launcher template slice — without the surface the template cannot follow its own
+  safety protocol — tracked in §7/§8; closing the gated-task identity gap requires creation
+  itself to be crash-safe for **both** shapes: `create_standalone_task` accepting an
+  idempotency key or a combined create-and-record transaction, and the Forge path
+  (`create_forge_task_proposal` → `create_task_from_forge_proposal`) either gaining the
+  same atomicity or the doctrine requiring explicit reconciliation of goal/scope tasks
+  and proposals before any recreation — a store-side key alone cannot associate work
+  already created before the crash, and recovery would still duplicate it or strand the
+  first goal-linked task untracked; until it ships, only the zero-code instructions path is
+  usable, with
+  hold/cadence durability limited accordingly. Then
+  pause — `pause_goal` only if B is active, using the **attributable operation** (the
+  combined hold-and-pause transaction or pause caller token the store surface
+  provides), since a separate pause-then-confirm pair cannot distinguish a crashed own
+  pause from an externally won race; an
+  already-paused goal instead records the additional hold and marks that this sequence
+  does **not** own the pause. Ownership transfers between launcher holds: when the
+  owning hold resolves while other recorded launcher holds remain, it transfers pause
+  ownership to a surviving hold before deleting its own record — and a sole surviving
+  deferred hard gate takes ownership and recreates its gated shape whenever **any**
+  conflicting hold clears, whether or not the resolving hold owned the pause.
+  Otherwise the first hold's release leaves B paused under an ownerless pause that no
+  surviving hold may lift, or deadlocks a deferred gate behind a resolved hold. Then
+  cancel what
+  the hold must stop: every active goal task for a judgment gate **or a hard gate**, and
+  for a durable wait only dependency-sensitive ones (independent work may deliberately
+  continue under the wait) — plus, for either hold, any tracked gated task (both gated shapes bypass
+  the active-task pointer and ignore the paused status), each with
+  `cancel_workflow_run: true` when workflow-backed; then dispose/consolidate every
+  resulting outcome (one update-bearing review; bare-acknowledge the rest) — and since
+  an outcome review replaces `nextSteps` wholesale, that review's `next_steps` **must
+  carry the hold condition forward** (or `nextSteps` is rewritten after disposal), so
+  the visible wait reason survives while B remains paused. For the
+  hard gate, drain once more immediately before creating the gated shape — the setup
+  cancellation itself produces outcomes.
+- **Release:** review any outcome produced while held — including one a deliberately
+  retained task produces racing the resume — before resuming (the resume
+  bumps the revision; a stale review then needs the documented resubmission against
+  fresh state); clear any retained cadence **before** `resume_goal` — first
+  durably recording its cron expression and timezone in the **keyed operational store**
+  (agent memory only as the pre-store stand-in) — never goal
+  `nextSteps`, which outcome reviews replace wholesale, losing a saved marker —
+  because clearing (`check_in_cron_expression: null`) hard-deletes the schedule and its
+  values cannot be recovered from the goal afterwards; resuming reactivates the
+  schedule against an empty pointer. Restore it — recreating from the recorded values —
+  only after the explicitly triggered replacement's outcome is reviewed; a retained
+  task's own reviewed outcome counts as the restoration boundary **only when that task
+  still occupies B's active-task pointer across resume** — once terminalization has
+  cleared it, restoring on its review alone re-exposes the empty pointer to a scheduled
+  fire; handle this sequence's own hold record by ownership: an **owned** hold becomes
+  a **released tombstone** deleted only after `resume_goal` succeeds — deleting first
+  leaves a crash window where B is paused with nothing proving ownership, so the
+  non-owner rule would forbid the woken launcher from resuming; a **non-owned** hold
+  can never resume the goal, so its record is deleted at transfer or on observing the
+  external lift rather than held for a resume that cannot happen — in all cases no
+  stale record survives to read as an unresolved overlapping gate; revalidate that no other recorded hold
+  remains; resume **only when this sequence owns the pause** — a pause owned by an
+  unrecorded actor (a human or another tool) is never released by inference from an
+  empty store; it lifts when its owner clears it or transfers ownership explicitly,
+  which is why pre-existing pauses are persisted in the same per-goal store, and when
+  the launcher later observes such a goal active again it **reconciles**: the
+  external-hold record is cleared as lifted-by-owner **and any surviving launcher hold
+  immediately acquires the pause** — re-pausing on its own authority, taking ownership,
+  re-running setup's cancellation/drain steps for anything another actor started in the
+  window, and creating a sole deferred hard gate when applicable; if the inspection
+  finds B **terminal** (`completed` rather than resumed), reconciliation performs the
+  same crash-safe hold/cadence cleanup as launcher-driven completion; when **no** launcher
+  hold survives, reconciliation instead continues the deferred release path **with the
+  cadence still cleared**: B is active again but its pointer stays empty until that
+  path's explicit trigger, and restoring the snapshot on reactivation alone would let a
+  due check-in claim the pointer and start stale-`nextSteps` work before the deferred
+  release finishes — the cadence is restored only after the explicitly triggered
+  replacement's outcome is reviewed, exactly as the release protocol already requires;
+  the observation reminder below, not the schedule, watches the interval, so B does not
+  linger unobserved —
+  and because goal resume is not an LH wake source and the cleared cadence cannot fire,
+  a durable observation reminder **stays armed for the full lifetime of the external
+  pause**, **armed before each pause-state inspection** (arm-then-inspect under the
+  one-live-reminder rule of the standalone loop below) — bounded escalation to the
+  human is layered on top of it, but
+  re-arming never terminates while the pause lasts, so the human resuming B is always
+  followed by an observing wake —
+  otherwise B stays
+  active under conditions the launcher still treats as unresolved while no gate can
+  ever be created;
+  re-trigger only when the active-task pointer is confirmed empty (with a
+  retained task's terminal outcome already reviewed per the release step above); a
+  cross-goal condition still unresolved keeps the cadence cleared, because a scheduled
+  fire does not consult `nextSteps`.
+- **Terminal handling:** a standalone gated task's terminal result is recorded into
+  B's rolling state (`update_goal`) at **every** terminal state — success or failure —
+  before resuming, completing, rebinding, or recreating (standalone tasks have no goal
+  link or outcome notification, so this record is the only trace). Consuming that
+  terminal result must be race-safe — a same-Space actor's `retry_task` can reopen a
+  `done` gate between observation and these calls, and nothing else rejects the stale
+  decision — via a terminal-generation CAS/lease on the task or a combined
+  consume-result-and-`update_goal` operation in the store surface — for **both**
+  shapes: the Forge consumption marker's write atomically validates the task's current
+  terminal generation too, so an actor reopening the gate between outcome-read and
+  marker-write cannot have its stale success consumed as real. Consumption is
+  persisted per gated shape (the standalone task ID, or the Forge proposal/task pair)
+  and enforced in the shared task-transition path — every reopening route
+  (`retry_task`, `update_task(status: 'in_progress')`, any future tool) checks it — so
+  a consumed gate cannot be reopened to rerun the release under a completed goal
+  except through launcher coordination; a successful
+  **final** step then completes goal B rather than resuming it — resolving the
+  hard-gate hold record in the operational store and discarding any saved cadence state
+  as part of completion, so a later reopened goal does not inherit a stale hold.
+  Completion and cleanup span separate tool surfaces, so the store first records a
+  **completion intent** and reconciles it on either side of the status mutation (or the
+  surface provides a combined goal-and-store transaction): otherwise a restart between
+  them leaves a completed goal with a live hold or a paused goal whose hold was
+  prematurely removed, and a reopen before recovery re-pauses it — for
+  the Forge shape
+  only after that successful outcome is reviewed (completion is itself a
+  revision-changing mutation; skipping the review leaves a bare acknowledgement that
+  loses the final release result); an unsuccessful Forge
+  outcome is reviewed while B stays paused, before rebinding, recreating, or otherwise
+  mutating the goal — and the failed gate's own workflow run is cancelled
+  (`cancel_workflow_run: true`) with any superseding cancellation outcome disposed
+  before recreation, since settlement clears bookkeeping but not the run.
+
+The plain goal tools have **no atomic creation path**: `trigger_goal_task` accepts only
+`goal_id`, while `create_standalone_task` accepts `depends_on` but creates a task with
+no goal link — and unlinked tasks do not report outcomes through the goal notification
+loop (`handleTaskTerminal` ignores them). Two shipped shapes:
+
+- **Standalone gated task:** `create_standalone_task(depends_on=[A's task])` for the
+  specific artifact-bound step, **passing B's registered workspace explicitly** — the
+  task is deliberately unlinked and inherits nothing, so omitting the parameter makes
+  resolution fall back to the Space primary and the release step runs in repo A (the
+  Forge shape inherits the pin through its goal link). Runtime-enforced from creation,
+  but outside the goal's
+  outcome loop — nothing wakes the launcher when it finishes or fails (`space.task.updated`
+  is not an LH wake source, and polling is forbidden), so the launcher must arm a durable
+  reminder (`create_agent_reminder`, one-shot by construction) when the dependency can
+  release the task, and **arm the next one before each inspection** — arm-then-inspect,
+  not inspect-then-arm: a launcher turn or daemon death between reading the task and
+  re-arming would otherwise leave it terminal with no pending wake. A fired reminder is
+  consumed by arming the replacement; when the inspection finds a terminal state the
+  new reminder simply expires harmlessly. Arm-then-inspect re-arms **one live
+  reminder, not one per wake**: `create_agent_reminder` always inserts a fresh record
+  and the reminder surface exposes listing only — no cancellation or keyed upsert — so
+  a re-arm taken while a previous reminder is still pending (another wake, an A
+  outcome or the inactivity nag, arriving before it fires) leaves both armed, and
+  every duplicate that later fires arms its own successor — parallel wake loops for
+  the gate's lifetime. The launcher therefore records the outstanding observation
+  reminder in its operational record and re-arms only when the previous one has fired
+  or been consumed, until the reminder surface gains an idempotent replacement
+  operation. Re-arming continues until terminality —
+  bounded human escalation layers on top rather than replacing it, since a later
+  completion would otherwise go unwoken. Prefer
+  the Forge shape when the goal has a scope: its goal link produces a real outcome wake.
+- **Forge-proposal gated task** (atomic, goal-linked): when the dependent goal has a
+  linked Forge scope (`create_forge_scope_from_goal`), `create_forge_task_proposal` →
+  `create_task_from_forge_proposal(depends_on=[A's task])` persists `goalId` and
+  `dependsOn` in one transaction, so the gated task reports outcomes through the goal
+  loop. It does **not** claim the goal's single active-task pointer — acceptable for a
+  hard-gated side step, which should not occupy the goal's serial slot anyway. Because
+  a **pre-start** administrative cancellation of this shape emits no outcome
+  notification (`startedAt: null`), the launcher keeps an arm-before-inspect reminder
+  on the Forge dependent until it starts or terminalizes — the goal link alone is no
+  wake source before first start.
+- **Rebinding on retry:** dependencies bind to a specific task ID — and a **pre-start**
+  cancellation of A produces no outcome wake at all (the reportable-terminal predicate
+  treats a `startedAt: null` cancellation as administrative), so with the pattern's
+  no-cadence default the launcher learns of it only from its own reminder: arm one
+  whenever a pre-start gated prerequisite is at risk, and **re-arm before each
+  inspection for the prerequisite's entire pre-start lifetime** (arm-then-inspect),
+  stopping only once it starts or terminalizes — an administrative pre-start
+  cancellation produces no wake of its own, so without the loop B stays paused behind
+  a cancelled gate indefinitely. When A's gated
+  prerequisite task terminally fails and the doctrine re-triggers a fresh A task, the
+  gated B task stays bound to the dead ID — a pre-start gated task is not even visibly
+  blocked (it remains `open` but unschedulable, since only running dependents get
+  `dependency_failed`). Rebind B with `update_task(depends_on=…)` only while B is
+  **pre-start** (`open`) — a `blocked` dependent whose workflow had already started (A
+  reached `done`, B started, then A regressed) reopens with its old workflow agents
+  still mutating repo B, so it is cancelled (`cancel_workflow_run: true`) and recreated
+  instead — and rewrite the persisted contract to match: B's `nextSteps`
+  condition and its operational-store hold/gate record must name the replacement
+  prerequisite ID, since recovery deriving the gate from stale text keeps B paused or
+  escalates after the replacement already succeeded. A
+  **cascade-cancelled** B (A was cancelled) must also be recreated — and note the
+  cancellation is not guaranteed to stop started work: `cancel_task`'s cascade only
+  recurses into `open` dependents and cancels only the requested task's run, so after
+  cancelling A the launcher inspects B and explicitly cancels any **started** gated
+  task with `cancel_workflow_run: true` before recreating it. If the cancelled
+  gated task had **started**, dispose its outcome notification first (an active-work
+  cancellation produces one; a pre-start cancellation produces none — the
+  reportable-terminal predicate is administrative-terminal for `startedAt: null` — so
+  do not wait for a notification that cannot exist; the standalone shape never
+  produces one). Recreation of the
+  Forge shape requires a **new** proposal: re-invoking `create_task_from_forge_proposal`
+  on the already-created proposal silently returns the existing (cancelled) task —
+  detect it by inspecting the returned task's id/status, since the MCP response does not
+  expose a creation flag.
+
+One further runtime gap bounds what doctrine can promise: when another actor retries
+a **completed** prerequisite (`retry_task` reopens `done` as `in_progress`), started
+dependents are neither re-blocked nor is any wake emitted — the gate silently stops
+being enforced until the launcher happens to observe it (§7's dependency-reopen lease
+is the fix). The tempting alternative — `trigger_goal_task` on B, then attaching
+`depends_on` with
+`update_task` — is **rejected as unsafe**: if dispatch already started the task, adding
+an unmet dependency transitions it to terminal `blocked` (`dependency_added`), which
+fires the goal terminal seam, clears the goal's `activeTaskId`, and records a **false
+terminal outcome**; the later dependency unblock reopens the task without reclaiming
+the goal pointer, so a second goal task can run concurrently with the supposedly gated
+one, and the task's workflow run is never stopped. An atomic `depends_on` on the plain
+goal-linked creation tools is recorded as the top deferred primitive in §7.
+
+**Partial-completion semantics.** Observable sync events are **task-terminal outcomes** —
+per-goal execution is serial and outcome notifications fire at reportable terminal
+transitions, not mid-task. A gate that must release "when A's contract fields are frozen"
+therefore binds to the task that freezes them: split A's work into goal-linked tasks whose
+boundaries are the gate-worthy milestones ("RPC + migration merged, fields frozen" as its
+own task) rather than expecting mid-task milestone events. This is a real limitation of
+prompt-only, accepted deliberately (§7 records the revisit trigger).
+
+## 6. Failure handling and backoff
+
+| Failure | Existing mechanism | Launcher doctrine |
+| --- | --- | --- |
+| Launcher misses a wake (asleep/restarted) | Pending notification + inactivity nag; identity-less discovery via `review_goal_outcome()` | Respond on the next wake or launcher reminder. Goals in a launcher objective therefore default to **no check-in schedule**: while an outcome sits unreviewed, the goal's own check-in fire would create a new task from stale `nextSteps` on the cleared pointer, and any goal mutation — including a `pause_goal` — bumps the revision so the pending outcome's goal-state update is CAS-rejected. If a cadence must be retained, **clear it before triggering** (`update_goal` `check_in_cron_expression: null` — the MCP schema field is snake-case) and keep it cleared through outcome review — the trigger→pause sequence is non-atomic (`space.task.created` is published before `trigger_goal_task` returns, so a fast-terminating task records its notification before any pause, and the pause's revision bump then rejects the review as `stale_revision`). Restore the cadence only after the replacement task's outcome is **reviewed**, not merely claimed — restoring is itself a post-trigger revision bump |
+| Launcher wakes but never reviews | Nag re-prompts the **same** agent — but only if the inactivity watchdog is configured and **enabled** for the launcher agent (`inactivity_config_set` + `inactivity_config_set_enabled`; a freshly created launcher has neither, so deployment must set it up or the asserted backstop does not exist); there is no auto-escalation on repeated ignored wakes | Accepted v1 failure mode, stated honestly: a wedged owner leaves notifications pending indefinitely. Pending notifications have **no human-facing surface today** (no web/RPC query exposes them) — humans can only infer trouble from stalled goal state. Notification visibility plus bounded escalation are folded into the deferred primitive (§7) |
+| Daemon restart mid-loop | Unconsumed notifications persist in the terminal transaction and are recovered at startup; an **acknowledged** notification is terminal and never redelivered — so a restart inside a multi-call sequence (acknowledge-then-cancel, acknowledge-then-trigger) loses the wake with work half-done | Arm a durable reminder **before the first cross-goal mutation** of any multi-call sequence — setup (pause/cancel/create-gate) as well as acknowledge-then-act loops: a pre-start cancellation produces no notification at all, so a restart after it leaves B paused with no pending wake. An interrupted loop then still wakes the launcher to re-derive state from goals and tasks; do not treat any multi-tool sequence as transactionally restart-safe |
+| A's task fails or blocks | Reportable-terminal outcome wake reaches launcher; the terminal seam has already cleared the goal's active-task pointer — unless `autoTriggerNext` had a queued successor, which is auto-created and claimed inside the terminal transaction (§4 disables this; reconcile through the drift sequence if found) | **Dispose the failed outcome first** — acknowledge it with the retry reason as its goal-state update — and inspect and cancel any workflow run the blocked transition left executing (the terminal seam clears the pointer without stopping the run; the old agents would otherwise mutate repo A concurrently with the retry), disposing the resulting outcome — then re-trigger: claiming the replacement task bumps the revision, so a review attempted after the trigger is rejected `stale_revision`. Re-trigger with `trigger_goal_task` (the goal-linked path that reclaims the pointer via CAS), at most twice with recorded reasons — **not** `retry_task`: it reopens the task without reclaiming the pointer, so a check-in or later trigger can start a concurrent task and break serial execution. Rebind any gated dependent task to the fresh prerequisite ID (§5). A retained check-in cadence follows the §6 rule — snapshotted to the keyed operational store (persisted before the clear) and cleared before triggering — and **stays cleared across the whole retry chain**, restored only after an outcome that will not be retried (the success, or exhaustion), since restoring between attempts exposes the empty pointer to a scheduled fire. On the exhaustion branch A's cadence is never restored. If retries are exhausted: (0) for a retained-cadence A, snapshot and clear the cadence first (persisting the snapshot before the clear), then persist an intended exhaustion hold **before** pausing and ensure A's goal is paused — confirming that intent requires provable attribution (a combined hold-and-pause transaction in the store surface, or a pause token from `pause_goal` identifying the caller), since a crash between pausing and confirming is indistinguishable from losing the race; without attribution the intent downgrades to an external non-owner hold when the goal was already paused by someone else; A's pointer is empty and a firing check-in would launch a third attempt beyond the limit; (1) likewise for B: snapshot/clear any restored cadence first, acquire B's **attributed pause** before settlement (settling an active B task while the goal is active lets the terminal transaction claim a queued successor; one created by a lost race is cancelled with its run), settle its active task, drain its existing outcomes (reconciling a racing completion; anything still racing uses the stale-review resubmission path), then persist the intended hold under the same rule (a hard gate will have paused it already with a recorded owner); (2) cancel B's active task (`cancel_workflow_run: true` where applicable) **and the tracked gated task** — a still-open gated task survives the pause and auto-starts if a human later retries A to `done`; (3) dispose every pending notification the cancellations produce — only **started** goal-linked cancellations yield one; a pre-start cancellation is administrative and yields none, so never wait for it; (4) record in `nextSteps` and escalate (below). (`reassign_task` is also currently inert — it ignores its assignment arguments.) |
+| Contract drift after B started | A's follow-up outcome wakes launcher; the revision gate protects **A's** rolling state only when the review carries a goal-state update (§4 requires one) | Validate A first, drain B's existing outcomes, then pause B, cancel its active **and tracked gated** tasks (`cancel_workflow_run: true` for workflow-backed ones), dispose all resulting notifications — consolidating concurrent cancellation outcomes into **one** update-bearing review (two sequential update-bearing claims make each other stale) — record the fresh contract, release per §4's hold-reason rules. Known limitation: the CAS does not extend to B — updating B goes through `update_goal`, which has no observed-revision parameter, so a concurrent human edit to B can be overwritten (last-writer-wins; §7) |
+| Deadlock (every goal waiting on another) | None — this is a judgment state | Doctrine: set an agent reminder (`create_agent_reminder`) **before** pausing — `pause_goal` also pauses the goal's check-in schedule, so check-ins cannot serve as the safety net while paused — then snapshot and clear each affected goal's retained cadence first — persisting every snapshot in the operational-state store **before** issuing the clear, so recovery after a crash in this window can complete either the restore or the pause path (settlement below empties pointers against a live schedule otherwise) — then acquire the **attributed pause** per goal (combined transaction/pause token; a queued successor created by a lost race is cancelled with its run), settle each goal's active tasks (terminal state reached or forced), cancel each settled workflow-backed task's run (`cancel_workflow_run: true` — settlement clears the pointer without stopping the run) **and each goal's tracked gated task with its run** (gated tasks bypass the pointer and ignore paused status, so a prerequisite completing mid-setup can dispatch them), disposing any resulting Forge outcome, then drain their pending outcomes (reconciling completions racing the pause; anything still racing uses the stale-review resubmission path), **re-run the deadlock predicate** (a drained outcome may itself release a dependency and dissolve the cycle) — if it no longer holds, **release any temporary owned pauses acquired during setup through the normal protocol with the cadence still cleared** (external pauses stay with their owners) before abandoning the branch, since otherwise paused work stays held though the deadlock disappeared; the snapshot rides that release path and is restored only after its explicitly triggered replacement's outcome is reviewed — settlement has emptied the pointer, so restoring before the release finishes lets a `resume_goal`-reactivated schedule claim the empty pointer and start stale-`nextSteps` work ahead of the launcher's own trigger — and only if it still holds: persist a hold record per goal in the operational store — **promoting the already-acquired attributed pause into that durable record rather than issuing a second `pause_goal`, which rejects non-active goals**; goals still active despite a lost acquisition race get an external non-owner record — then escalate to the human, releasing later through the normal protocol; never spin |
+| Escalated decision pending (draft-task path) | Completing the standalone draft, a manual goal update, or a resume all produce no LH wake; the recovery reminder is one-shot | Arm-before-inspect reminder loop until the escalated decision is **consumed** (same shape as the standalone-gate loop), with bounded human escalation layered on top |
+| Human decision needed | `send_session_message` to the Space chat / coordinator session (checks the **minimum of the Space and launcher-agent autonomy levels — both must be ≥4**; template creation assigns the template's suggested level capped by the creator's, so a fresh launcher can silently be below it); below that: durable high-priority draft task + the decision recorded in goal `nextSteps` | Escalate by pausing the blocked goals and stating the decision needed in one place; do not hold blocked work "in flight". Treat Space and launcher autonomy ≥4 as deployment prerequisites for the messaging path |
+
+Backoff policy: cross-goal re-evaluation rides the launcher's own reminders and the
+**gating** goal's outcome wakes — pattern goals default to no check-in schedule (§6
+explains why a firing check-in is not a benign re-evaluation wake), and a gated (paused)
+goal's schedule is suspended by design. Within a goal, the existing single-active-task +
+queued-follow-up shape already prevents overlap storms; the launcher adds no polling.
+
+## 7. Decision
+
+**Prompt-only** — scoped: build no new *orchestration* runtime primitive or behavior.
+The follow-up spawned from this RFC is prompt content — a launcher template registered in
+the daemon's existing `LONG_HORIZON_AGENT_TEMPLATES` array, contract embedded in the
+template's `instructions` (§4; `create_agent_from_template` copies them, and no shared
+session-builder append is needed) — plus a section in #2537's usage doc. One scoped,
+non-orchestration exception is required for safety: the **consolidation-exempt
+operational-state store** of §5 — including its launcher-facing read/write surface,
+without which the template cannot follow its own safety protocol — must land before or
+with the launcher template slice, because without it the doctrine has nowhere durable to
+keep hold ownership and saved cadence values (consolidating agent memory silently loses
+them). It is an enabling
+prerequisite tracked in §8, not an orchestration primitive; until it ships only the
+zero-code path is usable, with hold/cadence durability limited accordingly. No new
+pipeline logic is introduced, so the epic's superpipe guidance (ADR 0004) does not
+engage; if a deferred primitive below is ever built, its admission/binding logic composes
+as a direct superpipe pipeline.
+
+**Why.** Every load-bearing mechanism is verified shipped or in-flight (§3): per-repo
+goal/task binding, serial execution through each goal's active-task pointer
+(pointerless Forge tasks aside, §5), durable owner wakes with CAS disposal,
+`depends_on` (the standalone gated-task shape in §5), pause/resume, reminders/check-ins,
+and a nag backstop. The pattern itself is unproven — prompt doctrine must be exercised
+on a real deployment before primitives are justified, the same sequencing discipline
+ADR 0004 applies to new combinators.
+
+**Deferred primitive candidates, with explicit revisit triggers.**
+
+1. **`depends_on` on the plain goal-linked creation tools** (atomic hard-gate creation
+   without the Forge-scope prerequisite or the active-task-claim caveat; removes the
+   §5 visibility gap and its unsafe attach alternative) — the most likely first
+   primitive; revisit when a real launcher deployment uses hard gates at all.
+2. **Cross-goal dependency** (goal-level `depends_on` or gate events, UI-visible) —
+   revisit after ≥2 real launcher deployments show repeated premature triggers of the
+   dependent goal, or humans routinely needing to see the gate in the UI.
+3. **Mid-task milestone events** — revisit when a scenario genuinely needs sub-task
+   granularity and task-splitting proves too coarse.
+4. **LH-agent `send_message`** — revisit only with a steering need `send_message_to_task`
+   cannot reach.
+5. **Bounded escalation + visibility for ignored outcome wakes** (coordinator/human
+   notification after N ignored nags, and a human-facing surface for pending
+   notifications, §6) — revisit once a real deployment shows the accepted failure mode
+   actually occurring.
+6. **Revision CAS on `update_goal`** (observed-revision parameter, so dependent-goal
+   updates get the same staleness protection outcome reviews already have, §6) —
+   revisit when concurrent human/agent goal edits cause a real lost update.
+7. **Launcher operational-state machinery**, a bundle of scoped daemon changes that
+   are **prerequisite enablers** of the template slice rather than revisit-triggered
+   primitives — they ship with the template slice or block it:
+   (a) the consolidation-exempt store for hold records, saved cadence values, and
+   tracked gated-task identities, with its owner/coordinator-scoped read/write surface
+   (§5's storage gap: agent memory merges by content and TTL-prunes long-lived holds);
+   (b) crash-safe gated-task creation (`create_standalone_task` idempotency key /
+   combined create-and-record, Forge-path atomicity or reconciliation — §5);
+   (c) the attributable pause operation (combined hold-and-pause transaction or pause
+   caller token — §6) and an **idempotent workflow-run cancellation surface** (or
+   durable cancellation intent / combined cancel-task-and-run operation): `cancel_task`
+   performs `cancelTaskCascade` before its run-cancellation branch, so a crash between
+   them strands a live run behind a `cancelled` task that `retry_task` cannot recover
+   (`cancelled → cancelled` is rejected) — §6;
+   (d) race-safe terminal handling — a terminal-generation CAS/lease for consuming
+   standalone results and a recoverable completion-intent reconciliation (§5), plus
+   **tracked-gate mutation protection**: from gate creation **until its terminal
+   generation is consumed by the launcher** — not merely while a prerequisite is
+   unmet; after A reaches `done` an unrelated actor could still transition the open or
+   running gate directly to `done` and have the protocol consume a forged success —
+   dependency replacement/removal and status transitions on it
+   are restricted to the launcher or authorized coordinator (an unrelated actor could
+   otherwise clear `depends_on` to make the release dispatch early or forge a `done`
+   that the protocol consumes as success) — and so is **every other mutable field**:
+   `update_task` lets any same-Space actor replace a pre-start gate's `title`,
+   `description`, or `priority`, and the workflow reads those fields when the
+   dependency later releases, so an unrelated edit makes the correctly blocked task
+   execute different release instructions while the consumption protocol still accepts
+   its eventual success; all mutable fields of a tracked gate stay owner/coordinator-
+   only until its terminal generation is consumed, the runtime's own execution
+   transitions excepted;
+   (e) **hold- and authority-enforcing goal handlers** — `resume_goal` currently checks
+   only goal membership, so an unrelated agent can lift a launcher hold before
+   reminder-based reconciliation re-pauses it; hold enforcement covers every reactivation route at the shared goal-mutation seam —
+   `resume_goal` **and** `update_goal(status: 'active')`, whose handler reactivates the
+   linked schedule after only a membership check — rejecting work under an unresolved
+   launcher hold except for the authorized owner/coordinator, **and lifecycle
+   authority covers every terminal transition, not only reactivation**:
+   `update_goal(status: 'completed' | 'archived')` is likewise permitted by
+   `SpaceGoalService.updateGoal` after the handler's membership check, and an archived
+   goal explicitly cannot be reactivated — so an unrelated actor can permanently
+   terminate the dependent objective while its gated task is pending or running;
+   launcher/coordinator authority applies to every lifecycle transition on a pattern
+   goal throughout the live launcher objective, not only while a hold or tracked gate
+   is live — the trigger rule's own scope: an ordinary leading-work phase (active
+   task, no hold or gate recorded) is exactly when a membership-only `completed`/
+   `archived` write terminates a goal whose task keeps running, and archiving is
+   irreversible, breaking the launcher's ownership of the objective, **and
+   goal-owner mutation routes join the authority machinery**: `assign_agent_to_goal`
+   and the `spaceGoal.assignOwner` RPC both reach
+   `SpaceLongHorizonAgentRepository.assignGoal`, which swaps the primary owner
+   immediately — pending outcome wakes then re-resolve to the new agent while the
+   launcher's holds, reminders, and operational records remain with the original
+   orchestration, so the new owner claims outcomes without the doctrine and the
+   original launcher never receives the wake it needs to release or correct B — during
+   a live launcher objective, reassignment is rejected or its operational state and
+   authority transfer atomically with the owner, **and
+   pattern-goal triggers stay launcher-only even when no hold is recorded** — including
+   scheduled check-in fires, which create and claim goal tasks directly through
+   `task-schedule-fire.handler` and bypass `trigger_goal_task`, so the firing path
+   enforces the same authority or pattern goals retain no cadence at all (§6 defaults
+   to none) — and Forge automation, whose enqueue paths (`onExternalEventPublished`,
+   `onSelfNag` → `createReviewTask`) create pointerless goal-linked tasks outside the
+   trigger handler, so pattern goals either disable Forge automation or every
+   automation enqueue/execution path applies the same launcher-authority check, as
+   does **manual** proposal/task creation (`create_forge_task_proposal` →
+   `create_task_from_forge_proposal`, currently membership-checked only) — and the direct
+   MessageHub RPC route: `spaceGoal.createImmediateTask` (`space-goal-handlers.ts`)
+   invokes `SpaceGoalService.createImmediateTask` after only a Space-membership check,
+   bypassing the trigger handler with no actor identity, so it joins the same
+   launcher-authority check or immediate-task creation funnels through one actor-aware
+   service seam every creation route shares. Sole trigger authority holds throughout
+   the objective, not only during holds; plus
+   **dependency-reopen leases enforced at the shared task-transition seam** — every
+   reopen path for a `done` prerequisite (`retry_task`, `update_task(status:
+   'in_progress')`, future tools alike, not only "retried" ones) stops its started
+   dependents and wakes the launcher instead of silently revoking the gate — the lease
+   equally covers **every transition away from a consumed prerequisite success, not
+   only reopens**: `archive_task` accepts `done → archived` after a membership-only
+   check, and `setTaskStatus` unblocks dependents on `done` without stopping or waking
+   them when the prerequisite is later archived, so a gate A's success released would
+   keep running although the dependency is no longer exactly `done`; archiving a
+   consumed prerequisite therefore stops its started dependents and wakes the launcher
+   like any other revocation; **success-producing transitions on tracked prerequisites
+   are guarded from the start** — while A is still `open`, `blocked`, or running,
+   `update_task(status: 'done')` is a valid transition behind a membership-only
+   check, and that forged success immediately releases the pointerless B gate (gated
+   shapes ignore B's paused status, so B can publish before the launcher reviews A),
+   so at the shared task-transition seam only the launcher/coordinator and the
+   runtime's legitimate completion path may write a success-producing transition on a
+   tracked prerequisite, and
+   **consumption enforcement on every reopening path** — `update_task(status:
+   'in_progress')` permits `done → in_progress` just as `retry_task` does, so a
+   consumed standalone/Forge gate is guarded in the shared task-transition logic
+   (consumption persisted per gated shape, checked before any reopen) rather than
+   tool-by-tool; a reopen after B completed must be rejected or coordinated through
+   the launcher instead of silently rerunning the old release workflow (§5) — and
+   **reopen authority extends to every task linked to a live pattern goal, not only
+   gated shapes and prerequisites**: an ordinary goal-linked A/B task that completed
+   and was reviewed can still be reopened by an unrelated same-Space actor through
+   `retry_task` or `update_task(status: 'in_progress')`; its active-task pointer was
+   cleared at terminal handling, so the reopened workflow resumes without reclaiming
+   the pointer — mutating the repo concurrently with the launcher's current task and
+   producing no launcher wake — so the shared task-transition seam applies the same
+   launcher/coordinator authority to reopens of any pattern-goal-linked task (§5).
+
+**Rejected alternatives.**
+
+- *Build a new primitive now*: fails the evidence bar; risks encoding an orchestration
+  model before one has run.
+- *Cross-Space orchestration*: out of scope — goal/task tools and message delivery are
+  per-Space, so objectives whose repos live in different Spaces need cross-Space
+  primitives that nothing here justifies yet (§1 prerequisite).
+- *Orchestrator session spanning both repos*: violates one-session-one-repo and puts the
+  coordinator inside the repos it is supposed to arbitrate.
+- *Do nothing (no prompt artifact)*: the pattern works only if the doctrine is written
+  down; ad-hoc per-agent improvisation is exactly what the standing prompt contracts
+  (`LONG_HORIZON_OWNER_REVIEW_CONTRACT`) exist to prevent.
+
+## 8. Follow-ups (out of scope here)
+
+Implementation issues spawned from this decision: the launcher operational-state
+machinery bundle (store + surface, crash-safe creation, attributable pause,
+race-safe terminal handling, hold-enforcing handlers — §5/§7 prerequisites landing
+before or with the template slice and blocking it otherwise), the launcher
+prompt template slice (template registration, mechanical per §7), the
+usage-doc section (with #2537), and — only on hitting a §7 revisit trigger — a primitive
+proposal. Nothing in this RFC requires new daemon *orchestration* behavior; the
+operational-state machinery bundle is the scoped daemon prerequisite set.
