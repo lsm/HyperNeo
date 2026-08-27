@@ -319,6 +319,10 @@ export class SpaceManager {
     return this.workspaceManager.listWorkspaces(spaceId);
   }
 
+  async resolveRegisteredWorkspacePath(spaceId: string, rawPath: string): Promise<string> {
+    return this.workspaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath);
+  }
+
   async getSpace(id: string): Promise<Space | null> {
     return this.spaceRepo.getSpace(id);
   }

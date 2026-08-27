@@ -327,6 +327,19 @@ describe('space-task-handlers', () => {
 
       expect(taskManager.createTask).not.toHaveBeenCalled();
     });
+
+    it('forwards workspacePath to taskManager.createTask', async () => {
+      await call('spaceTask.create', {
+        spaceId: 'space-1',
+        title: 'T',
+        description: 'D',
+        workspacePath: '/secondary',
+      });
+
+      expect(taskManager.createTask).toHaveBeenCalledWith(
+        expect.objectContaining({ workspacePath: '/secondary' })
+      );
+    });
   });
 
   describe('spaceTask.list', () => {
@@ -850,6 +863,20 @@ describe('space-task-handlers', () => {
         taskId: 'task-1',
         task: expect.objectContaining({ status: 'in_progress' }),
       });
+    });
+
+    it('forwards workspacePath to taskManager.updateTask', async () => {
+      await call('spaceTask.update', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        workspacePath: '/secondary',
+      });
+
+      expect(taskManager.updateTask).toHaveBeenCalledWith(
+        'task-1',
+        expect.objectContaining({ workspacePath: '/secondary' }),
+        expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+      );
     });
 
     it("writes 'stopped' via plain setTaskStatus for non-workflow tasks (nothing to park)", async () => {

@@ -317,4 +317,23 @@ export class SpaceWorkspaceManager {
     if (result.error) throw result.error;
     return result.rows ?? [];
   }
+
+  async resolveRegisteredWorkspacePath(spaceId: string, rawPath: string): Promise<string> {
+    if (!this.deps.spaces.getSpace(spaceId)) {
+      throw new Error(`Space not found: ${spaceId}`);
+    }
+
+    const io = this.deps.io ?? nodeWorkspaceValidationIo;
+    let canonicalPath: string;
+    try {
+      canonicalPath = await io.realpath(rawPath);
+    } catch {
+      throw new Error(`Workspace path does not exist: ${rawPath}`);
+    }
+
+    const snapshot = buildRegistrySnapshot(this.deps.spaces, this.deps.workspaces, spaceId);
+    const claim = snapshot.claims.find((c) => c.spaceId === spaceId && c.path === canonicalPath);
+    if (claim) return claim.path;
+    throw new Error(`Workspace path is not registered to space: ${rawPath}`);
+  }
 }

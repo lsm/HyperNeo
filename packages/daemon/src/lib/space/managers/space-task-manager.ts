@@ -15,6 +15,8 @@ import { Logger } from '../../logger.ts';
 import type { EvolutionScopeService } from '../evolution-scope-service.ts';
 import { arraysEqual } from '../../utils/array-utils.ts';
 
+export type WorkspacePathResolver = (rawPath: string) => Promise<string>;
+
 const log = new Logger('space-task-manager');
 
 export const VALID_SPACE_TASK_TRANSITIONS: Record<SpaceTaskStatus, SpaceTaskStatus[]> = {
@@ -80,17 +82,36 @@ export class SpaceTaskManager {
     private reactiveDb?: ReactiveDatabase,
     private evolutionScopeService?: EvolutionScopeService,
     private onTaskReopened?: (taskId: string) => void,
-    private onTerminalTransition?: (taskId: string, fromStatus: SpaceTaskStatus) => void
+    private onTerminalTransition?: (taskId: string, fromStatus: SpaceTaskStatus) => void,
+    private resolveWorkspacePath?: WorkspacePathResolver
   ) {
     this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
   }
 
   async createTask(params: Omit<InternalCreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
-    if (params.dependsOn && params.dependsOn.length > 0) {
-      await this.validateDependencyIds(params.dependsOn);
+    const resolvedParams = await this.resolveWorkspacePathParam(params);
+
+    if (resolvedParams.dependsOn && resolvedParams.dependsOn.length > 0) {
+      await this.validateDependencyIds(resolvedParams.dependsOn);
     }
 
-    return this.taskRepo.createTask({ ...params, spaceId: this.spaceId });
+    return this.taskRepo.createTask({ ...resolvedParams, spaceId: this.spaceId });
+  }
+
+  private async resolveWorkspacePathParam<T extends { workspacePath?: string | null }>(
+    params: T
+  ): Promise<T> {
+    if (params.workspacePath === undefined || params.workspacePath === null) {
+      return { ...params, workspacePath: null } as T;
+    }
+    if (params.workspacePath.length === 0) {
+      return { ...params, workspacePath: null } as T;
+    }
+    if (!this.resolveWorkspacePath) {
+      return params;
+    }
+    const resolved = await this.resolveWorkspacePath(params.workspacePath);
+    return { ...params, workspacePath: resolved } as T;
   }
 
   async getTask(taskId: string): Promise<SpaceTask | null> {
@@ -425,23 +446,26 @@ export class SpaceTaskManager {
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
   ): Promise<SpaceTask> {
+    const resolvedParams = await this.resolveWorkspacePathParam(params);
+
     const task = await this.getTask(taskId);
     if (!task) {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    if (params.status !== undefined && params.status !== task.status) {
+    if (resolvedParams.status !== undefined && resolvedParams.status !== task.status) {
       throw new Error('Use setTaskStatus to change task status — it enforces valid transitions');
     }
 
-    if (params.dependsOn !== undefined) {
-      await this.validateDependencyIds(params.dependsOn, taskId);
+    if (resolvedParams.dependsOn !== undefined) {
+      await this.validateDependencyIds(resolvedParams.dependsOn, taskId);
     }
 
     const depsChanged =
-      params.dependsOn !== undefined && !arraysEqual(task.dependsOn ?? [], params.dependsOn);
+      resolvedParams.dependsOn !== undefined &&
+      !arraysEqual(task.dependsOn ?? [], resolvedParams.dependsOn);
 
-    const { status: _status, ...repoParams } = params;
+    const { status: _status, ...repoParams } = resolvedParams;
     const updated = this.taskRepo.updateTask(taskId, repoParams);
     if (!updated) {
       throw new Error(`Failed to update task: ${taskId}`);

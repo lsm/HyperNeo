@@ -330,6 +330,43 @@ describe('removeWorkspace', () => {
   });
 });
 
+describe('resolveRegisteredWorkspacePath', () => {
+  test('resolves the primary path from space.workspacePath when no primary row exists', async () => {
+    const { manager } = newManager();
+    const resolved = await manager.resolveRegisteredWorkspacePath(SPACE_A, '/primary-a');
+    expect(resolved).toBe('/primary-a');
+  });
+
+  test('resolves a secondary workspace path', async () => {
+    const workspaces = new FakeWorkspaces([
+      row(SPACE_A, '/primary-a', 'primary', true),
+      row(SPACE_A, '/sec', 'w2'),
+    ]);
+    const { manager } = newManager({ workspaces });
+    const resolved = await manager.resolveRegisteredWorkspacePath(SPACE_A, '/sec');
+    expect(resolved).toBe('/sec');
+  });
+
+  test('canonicalizes the raw path through io.realpath before matching', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/canon', 'w1')]);
+    const { manager } = newManager({
+      workspaces,
+      io: fakeIo({ realpath: async () => '/canon' }),
+    });
+    const resolved = await manager.resolveRegisteredWorkspacePath(SPACE_A, '/raw');
+    expect(resolved).toBe('/canon');
+  });
+
+  test('rejects an unregistered path with a clear error', async () => {
+    const { manager } = newManager();
+    const err = await manager
+      .resolveRegisteredWorkspacePath(SPACE_A, '/unregistered')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('Workspace path is not registered to space: /unregistered');
+  });
+});
+
 describe('listWorkspaces', () => {
   test('returns the repository rows of the space', () => {
     const workspaces = new FakeWorkspaces([

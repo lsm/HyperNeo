@@ -538,7 +538,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       evolutionScopeService,
       (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
       (taskId, fromStatus) =>
-        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true })
+        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
+      (rawPath) => deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
     );
   };
 
@@ -1186,7 +1187,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       evolutionScopeService,
       (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
       (taskId, fromStatus) =>
-        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true })
+        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
+      (rawPath) => deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
     );
   };
   const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());

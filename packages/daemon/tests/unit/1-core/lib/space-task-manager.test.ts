@@ -25,7 +25,18 @@ describe('SpaceTaskManager', () => {
       name: 'Test',
     });
     spaceId = space.id;
-    manager = new SpaceTaskManager(db as any, spaceId);
+    manager = new SpaceTaskManager(
+      db as any,
+      spaceId,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async (rawPath: string) => {
+        if (rawPath === '/workspace/test' || rawPath === '/secondary') return rawPath;
+        throw new Error(`Workspace path is not registered to space: ${rawPath}`);
+      }
+    );
   });
 
   afterEach(() => {
@@ -1589,6 +1600,46 @@ describe('SpaceTaskManager', () => {
       const after = await manager.getTask(task.id);
       expect(after?.pendingCheckpointType).toBe('task_completion');
       expect(after?.pendingCompletionReason).toBe('r');
+    });
+  });
+
+  describe('workspacePath validation', () => {
+    it('omission stores null', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      expect(task.workspacePath).toBeNull();
+    });
+
+    it('accepts a secondary workspace path and round-trips', async () => {
+      const task = await manager.createTask({
+        title: 'T',
+        description: '',
+        workspacePath: '/secondary',
+      });
+      const fetched = await manager.getTask(task.id);
+      expect(fetched!.workspacePath).toBe('/secondary');
+    });
+
+    it('rejects an unregistered workspace path', async () => {
+      await expect(
+        manager.createTask({
+          title: 'T',
+          description: '',
+          workspacePath: '/unregistered',
+        })
+      ).rejects.toThrow('Workspace path is not registered to space: /unregistered');
+    });
+
+    it('updates to a secondary workspace path and round-trips', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      const updated = await manager.updateTask(task.id, { workspacePath: '/secondary' });
+      expect(updated.workspacePath).toBe('/secondary');
+    });
+
+    it('rejects an unregistered workspace path on update', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await expect(manager.updateTask(task.id, { workspacePath: '/unregistered' })).rejects.toThrow(
+        'Workspace path is not registered to space: /unregistered'
+      );
     });
   });
 });
