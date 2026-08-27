@@ -1956,7 +1956,7 @@ export class SpaceRuntime {
       try {
         this.getSdkMessageRepo().updateMessageStatus([dbId], 'deferred');
       } catch {
-        // ignore revert failure
+        void error;
       }
       log.warn(
         `SpaceRuntime: turn-end digest handoff for session ${sessionId} failed, ` +
