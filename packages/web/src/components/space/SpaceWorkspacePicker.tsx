@@ -130,9 +130,11 @@ export function useSpaceWorkspaceChoice(spaceId: string, fallbackPath?: string |
   optionsRef.current = options;
   const [pickerOpen, setPickerOpen] = useState(false);
   const pendingCreateRef = useRef<((workspacePath: string) => void) | null>(null);
+  const choosingRef = useRef(false);
 
   useEffect(() => {
     pendingCreateRef.current = null;
+    choosingRef.current = false;
     setPickerOpen(false);
   }, [spaceId]);
 
@@ -142,14 +144,20 @@ export function useSpaceWorkspaceChoice(spaceId: string, fallbackPath?: string |
   };
 
   const chooseWorkspace = (create: (workspacePath?: string) => void) => {
+    if (choosingRef.current) return;
+    choosingRef.current = true;
     void (async () => {
-      await settle();
-      const current = optionsRef.current;
-      if (current.length > 1) {
-        pendingCreateRef.current = (workspacePath: string) => create(workspacePath);
-        setPickerOpen(true);
-      } else {
-        create(current[0]?.path);
+      try {
+        await settle();
+        const current = optionsRef.current;
+        if (current.length > 1) {
+          pendingCreateRef.current = (workspacePath: string) => create(workspacePath);
+          setPickerOpen(true);
+        } else {
+          create(current[0]?.path);
+        }
+      } finally {
+        choosingRef.current = false;
       }
     })();
   };
