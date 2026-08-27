@@ -52,6 +52,7 @@ export interface MidTurnBudgetInterruptOptions {
   onResumeClear: () => void;
   getDurableMessageContent?: (uuid: string) => string | MessageContent[] | undefined;
   onSurvivorRequeued?: (uuid: string) => void;
+  ownsTurn?: () => boolean;
 }
 
 export class MessageQueue {
@@ -63,6 +64,8 @@ export class MessageQueue {
   private deliveryGateExclusive: boolean = false;
   private internalRestartInFlight: boolean = false;
   private internalRestartFailed: boolean = false;
+  private stopEpoch: number = 0;
+  private restartStopEpoch: number = 0;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private nonCompactionSentSinceBoundary: boolean = false;
@@ -353,6 +356,7 @@ export class MessageQueue {
   }
 
   clear(): void {
+    this.stopEpoch += 1;
     this.clearEpoch += 1;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     this.internalCompactionsAwaitingBoundary = 0;
@@ -510,6 +514,7 @@ export class MessageQueue {
   }
 
   stop(): void {
+    this.stopEpoch += 1;
     this.running = false;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     this.internalCompactionsAwaitingBoundary = 0;
@@ -529,7 +534,15 @@ export class MessageQueue {
   }
 
   private userStoppedQueue(): boolean {
-    return !this.isRunning() && !this.internalRestartInFlight && !this.internalRestartFailed;
+    if (this.stopEpoch > this.restartStopEpoch + 1) return !this.isRunning();
+    if (this.internalRestartInFlight) return false;
+    if (this.internalRestartFailed) return false;
+    return !this.isRunning();
+  }
+
+  private standsDown(opts: MidTurnBudgetInterruptOptions): boolean {
+    if (opts.ownsTurn && !opts.ownsTurn()) return true;
+    return this.userStoppedQueue();
   }
 
   async *messageGenerator(
@@ -691,7 +704,7 @@ export class MessageQueue {
       ])) as { still_queued: string[] } | undefined;
     } catch (error) {
       if (timedOut) {
-        if (this.userStoppedQueue()) {
+        if (this.standsDown(opts)) {
           resumeArmed = false;
           opts.onResumeClear();
         } else {
@@ -717,7 +730,7 @@ export class MessageQueue {
     }
 
     try {
-      if (this.userStoppedQueue()) {
+      if (this.standsDown(opts)) {
         opts.onResumeClear();
         return;
       }
@@ -725,7 +738,7 @@ export class MessageQueue {
         await this.processInterruptSurvivorReceipt(opts, receipt);
       } else {
         const restarted = await this.processInterruptSurvivorReceipt(opts, receipt);
-        if (!restarted && !this.userStoppedQueue()) {
+        if (!restarted && !this.standsDown(opts)) {
           this.enqueueMidTurnCompaction(opts, 'mid-turn');
         }
       }
@@ -760,11 +773,11 @@ export class MessageQueue {
     opts: MidTurnBudgetInterruptOptions,
     receipt: { still_queued: string[] } | undefined
   ): Promise<void> {
-    if (this.userStoppedQueue()) {
+    if (this.standsDown(opts)) {
       opts.onResumeClear();
       return;
     }
-    this.removePendingInternalCompactions();
+    const removedPendingCompactions = this.removePendingInternalCompactions();
     let resolveLateGate: (() => void) | undefined;
     const lateGate = new Promise<void>((resolve) => {
       resolveLateGate = resolve;
@@ -772,7 +785,11 @@ export class MessageQueue {
     this.setDeliveryGate(lateGate, { exclusive: true });
     try {
       await this.processInterruptSurvivorReceipt(opts, receipt, false);
-      if (!this.userStoppedQueue()) {
+      if (
+        !this.standsDown(opts) &&
+        (removedPendingCompactions > 0 || this.internalRestartFailed) &&
+        !this.hasOutstandingInternalCompaction()
+      ) {
         this.enqueueMidTurnCompaction(opts, 'mid-turn-late');
       }
     } finally {
@@ -790,7 +807,7 @@ export class MessageQueue {
     const toRequeue: string[] = [];
     if (typeof opts.cancelAsyncMessage !== 'function') {
       toRequeue.push(...survivors);
-      if (this.userStoppedQueue()) {
+      if (this.standsDown(opts)) {
         opts.onResumeClear();
         return false;
       }
@@ -837,7 +854,7 @@ export class MessageQueue {
       }
       toRequeue.push(uuid);
     }
-    if (this.userStoppedQueue()) {
+    if (this.standsDown(opts)) {
       opts.onResumeClear();
       return false;
     }
@@ -918,6 +935,7 @@ export class MessageQueue {
       this.enqueueMidTurnCompaction(opts, 'mid-turn-restart');
     };
     this.internalRestartInFlight = true;
+    this.restartStopEpoch = this.stopEpoch;
     const restart = opts
       .restart({ beforeStart })
       .catch((error) => {
@@ -928,6 +946,7 @@ export class MessageQueue {
           error
         );
         if (!this.hasOutstandingInternalCompaction()) {
+          this.enqueueMidTurnCompaction(opts, 'mid-turn-restart-failed');
           opts.contextTracker.clearCompactionCooldown();
           opts.onResumeClear();
         } else {

@@ -1589,6 +1589,7 @@ export class AgentSession
       onSurvivorRequeued: (uuid) => {
         this.db.getSDKMessageRepo().markDeliveryRetryableByUuid(this.session.id, uuid);
       },
+      ownsTurn: () => this.queryObject === queryObject,
     });
   }
 

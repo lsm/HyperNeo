@@ -1963,7 +1963,9 @@ describe('MessageQueue', () => {
       const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
         resolveInterrupt = resolve;
       });
-      const restartMock = mock(async () => {});
+      const restartMock = mock(async (options?: { beforeStart?: () => void }) => {
+        options?.beforeStart?.();
+      });
       const opts = makeInterruptOpts(q, {
         interrupt: () => slowInterrupt,
         cancelAsyncMessage: async () => true,
@@ -2194,7 +2196,6 @@ describe('MessageQueue', () => {
         durable: true,
         prepend: true,
       });
-      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(true);
       expect(onResumeClear).not.toHaveBeenCalled();
     }, 15_000);
 
@@ -2315,6 +2316,97 @@ describe('MessageQueue', () => {
         prepend: true,
       });
       expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(true);
+    }, 15_000);
+
+    it('stands down when the user stops during an in-flight recovery restart', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseRestart: () => void = () => {};
+      const restartHang = new Promise<void>((resolve) => {
+        releaseRestart = resolve;
+      });
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts(q, {
+        interrupt: () => slowInterrupt,
+        restart: async () => {
+          q.stop();
+          await restartHang;
+        },
+        onResumeClear,
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      q.stop();
+      releaseInterrupt({ still_queued: ['uuid-user-stop'] });
+      releaseRestart();
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy).not.toHaveBeenCalled();
+      expect(onResumeClear).toHaveBeenCalledTimes(1);
+    }, 15_000);
+
+    it('stands down when turn ownership changed during the interrupt', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let owns = true;
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-ownership'] }),
+        cancelAsyncMessage: async () => true,
+        ownsTurn: () => owns,
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const onResumeClear = mock(() => {});
+      opts.onResumeClear = onResumeClear;
+      owns = false;
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).not.toHaveBeenCalled();
+      expect(onResumeClear).toHaveBeenCalledTimes(1);
+      q.stop();
+    });
+
+    it('skips a second compaction when the recovery boundary already completed', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const compact = q.enqueueWithId('compact-done', '/compact', true, { durable: true });
+      const prelude = q.messageGenerator(testSessionId);
+      (await prelude.next()).value.onSent();
+      await compact;
+      q.acknowledgeCompactionsAwaitingBoundary();
+      const sent = q.enqueueWithId('uuid-acked', 'acked-survivor', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts(q, {
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => true,
+        restart: async () => {},
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      releaseInterrupt({ still_queued: ['uuid-acked'] });
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-acked', 'acked-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
     }, 15_000);
 
     it('holds delivery behind a gate while survivors are cancelled and requeued', async () => {
