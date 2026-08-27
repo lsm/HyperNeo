@@ -7,9 +7,8 @@ import {
   deferredExternalEventEntryEvents,
   type ExternalEventEssenceEntry,
   parseDeferredDeliveryRow,
-  parseDeferredExternalEventText,
 } from '../../external-events/deferred-event-digest.ts';
-import { formatExternalEventEssence } from '../../external-events/event-essence.ts';
+import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
 import type {
   ExternalEventDeliveryRecord,
   ExternalEventRecord,
@@ -175,23 +174,7 @@ export const TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP = TURN_END_DIGEST_SCAN_ROW
 export const LEGACY_DURABLE_SCAN_STATUSES = ['deferred', 'enqueued', 'submitted'] as const;
 
 function eventRecordEssence(record: ExternalEventRecord): ExternalEventEssenceEntry | null {
-  const event = record.event;
-  const parsed = parseDeferredExternalEventText(
-    formatExternalEventEssence({
-      namespaceId: event.spaceId,
-      spaceId: event.spaceId,
-      eventId: event.id,
-      source: event.source,
-      topic: event.topic,
-      dedupeKey: event.dedupeKey,
-      summary: event.summary,
-      externalUrl: event.externalUrl,
-      payload: event.payload,
-      occurredAt: event.occurredAt,
-      ingestedAt: event.ingestedAt,
-    })
-  );
-  return parsed && parsed.kind === 'event' ? parsed.essence : null;
+  return essenceEntryFromExternalEvent(record.event);
 }
 
 export function resolveTarget(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
