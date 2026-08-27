@@ -4611,6 +4611,19 @@ describe('SDKMessageHandler', () => {
         expect(clearCompactionCooldownSpy).toHaveBeenCalledTimes(1);
       });
 
+      it('ignores turn-end enforcement from a replaced query generation', async () => {
+        hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+        (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+        const { getContextUsageSpy, h } = budgetCase();
+
+        await h.handleMessage(turnEndResult(), 3);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).not.toHaveBeenCalled();
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
       it('holds the delivery gate until the trailing session_state_changed idle lands', async () => {
         const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
           ({

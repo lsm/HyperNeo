@@ -65,15 +65,22 @@ const DELIVERY_GATE_WINDOW_MS = 5000;
 function boundedDeliveryGate(gate: Promise<void>, deadlineAt?: number): Promise<void> {
   const windowMs =
     deadlineAt === undefined ? DELIVERY_GATE_WINDOW_MS : Math.max(0, deadlineAt - Date.now());
-  return Promise.race([
-    gate,
-    new Promise<void>((resolve) => {
-      const timer = setTimeout(() => resolve(), windowMs);
-      if (typeof timer.unref === 'function') {
-        timer.unref();
-      }
-    }),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bounded = new Promise<void>((resolve) => {
+    timer = setTimeout(() => resolve(), windowMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  });
+  void gate.then(
+    () => {
+      if (timer) clearTimeout(timer);
+    },
+    () => {
+      if (timer) clearTimeout(timer);
+    }
+  );
+  return Promise.race([gate, bounded]);
 }
 
 export type SuppressedResultOutcome = 'confirmed' | 'reset' | 'cancelled';
@@ -143,7 +150,7 @@ export class SDKMessageHandler {
 
   private trailingIdleGateRelease: (() => void) | null = null;
 
-  private compactionEnqueuedMidTurn: boolean = false;
+  private compactionEnqueuedMidTurnGeneration: number | null | undefined = undefined;
 
   private currentThinkingTokensEstimate: number | null = null;
   private lastStampedThinkingTokensEstimate: number = 0;
@@ -827,7 +834,7 @@ export class SDKMessageHandler {
     }
 
     if (await this.acknowledgePersistedUserMessage(message)) {
-      this.maybeRefreshContextOnEvent(message);
+      this.maybeRefreshContextOnEvent(message, invocationGeneration);
       return;
     }
 
@@ -950,7 +957,7 @@ export class SDKMessageHandler {
       }
       await this.recordResultUsageMetadata(message as SDKResultMessage);
       const compactingClear = this.clearStaleCompacting();
-      await this.refreshContextUsage('turn-end');
+      await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
       await compactingClear;
       return;
     }
@@ -974,7 +981,7 @@ export class SDKMessageHandler {
         this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(turnEndGate));
         const compactingClear = this.clearStaleCompacting();
         try {
-          await this.refreshContextUsage('turn-end');
+          await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
           enforcedTurnEnd = true;
           await compactingClear;
           await this.settleIdleForInvocation(invocationGeneration);
@@ -1026,7 +1033,7 @@ export class SDKMessageHandler {
         if (this.expectsSessionStateIdleAfterResult) {
           this.armTrailingIdleDeliveryGate();
         }
-        await this.refreshContextUsage('turn-end');
+        await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
       }
       await compactingClear;
     }
@@ -1038,7 +1045,7 @@ export class SDKMessageHandler {
       return;
     }
 
-    this.maybeRefreshContextOnEvent(message);
+    this.maybeRefreshContextOnEvent(message, invocationGeneration);
   }
 
   private async handleSystemMessage(message: SDKMessage): Promise<void> {
@@ -1618,22 +1625,27 @@ export class SDKMessageHandler {
     await stateManager.setCompacting(false);
     this.ctx.messageQueue.clearNonCompactionSentSinceBoundary();
 
-    void this.refreshContextUsage('compact-boundary');
+    void this.refreshContextUsage('compact-boundary', undefined, invocationGeneration);
   }
 
-  private maybeRefreshContextOnEvent(_message: SDKMessage): void {
+  private maybeRefreshContextOnEvent(
+    _message: SDKMessage,
+    invocationGeneration?: number | null
+  ): void {
     this.eventsSinceContextRefresh += 1;
     if (this.eventsSinceContextRefresh >= CONTEXT_REFRESH_EVENT_INTERVAL) {
-      void this.refreshContextUsage('event-tick');
+      void this.refreshContextUsage('event-tick', undefined, invocationGeneration);
     }
   }
 
   private isContextRefreshStale(
     queryObject: QueryLike,
     model: string | undefined,
-    provider: string | undefined
+    provider: string | undefined,
+    invocationGeneration?: number | null
   ): boolean {
     return (
+      this.isInvocationStale(invocationGeneration ?? null) ||
       this.ctx.queryObject !== queryObject ||
       this.ctx.session.config.model !== model ||
       this.ctx.session.config.provider !== provider
@@ -1657,9 +1669,12 @@ export class SDKMessageHandler {
 
   private refreshContextUsage(
     reason: 'event-tick' | 'turn-end' | 'compact-boundary',
-    deadlineAt?: number
+    deadlineAt?: number,
+    invocationGeneration?: number | null
   ): Promise<void> {
     this.eventsSinceContextRefresh = 0;
+
+    if (this.isInvocationStale(invocationGeneration ?? null)) return Promise.resolve();
 
     if (this.pendingContextRefresh) {
       if (reason === 'event-tick') {
@@ -1668,7 +1683,7 @@ export class SDKMessageHandler {
       const chainDeadline = deadlineAt ?? Date.now() + DELIVERY_GATE_WINDOW_MS;
       const pending = this.pendingContextRefresh;
       this.pendingContextRefresh = pending.then(() =>
-        this.refreshContextUsage(reason, chainDeadline)
+        this.refreshContextUsage(reason, chainDeadline, invocationGeneration)
       );
       this.ctx.messageQueue.setDeliveryGate(
         boundedDeliveryGate(
@@ -1694,8 +1709,21 @@ export class SDKMessageHandler {
           !this.ctx.messageQueue.hasQueuedInternalCompaction() &&
           !this.ctx.messageQueue.hasInFlightInternalCompaction() &&
           !this.ctx.stateManager.getIsCompacting();
-        if (this.compactionEnqueuedMidTurn) {
-          this.compactionEnqueuedMidTurn = false;
+        if (this.compactionEnqueuedMidTurnGeneration !== undefined) {
+          const deferralOwnsThisTurn =
+            this.compactionEnqueuedMidTurnGeneration === (invocationGeneration ?? null);
+          this.compactionEnqueuedMidTurnGeneration = undefined;
+          if (deferralOwnsThisTurn) {
+            clearedDeadCompaction = false;
+          } else if (deadDeliveredCompaction) {
+            this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+            contextTracker.clearCompactionCooldown();
+            this.logger.info(
+              `clearing stale compaction cooldown for session ${session.id} after a ` +
+                `delivered /compact ended without a compact boundary`
+            );
+            clearedDeadCompaction = true;
+          }
         } else if (deadDeliveredCompaction) {
           this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
           contextTracker.clearCompactionCooldown();
@@ -1706,12 +1734,18 @@ export class SDKMessageHandler {
           clearedDeadCompaction = true;
         }
         const modelInfo = await getSessionModelInfo(session);
-        if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
+        if (
+          this.isContextRefreshStale(queryObject, fenceModel, fenceProvider, invocationGeneration)
+        )
+          return;
         const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
           queryObject,
           modelInfo
         );
-        if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
+        if (
+          this.isContextRefreshStale(queryObject, fenceModel, fenceProvider, invocationGeneration)
+        )
+          return;
         if (!contextInfo) return;
         contextTracker.updateWithDetailedBreakdown(contextInfo);
         const publishProjection = internalEventBus
@@ -1725,7 +1759,9 @@ export class SDKMessageHandler {
               error
             );
           });
-        if (!this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) {
+        if (
+          !this.isContextRefreshStale(queryObject, fenceModel, fenceProvider, invocationGeneration)
+        ) {
           const outcome = enforceContextBudget({
             sessionId: session.id,
             providerId: session.config.provider,
@@ -1739,7 +1775,7 @@ export class SDKMessageHandler {
             stateManager: this.ctx.stateManager,
             logger: this.logger,
             onCompactionAbandoned: () => {
-              this.compactionEnqueuedMidTurn = false;
+              this.compactionEnqueuedMidTurnGeneration = undefined;
             },
           });
           if (
@@ -1747,7 +1783,7 @@ export class SDKMessageHandler {
             reason === 'event-tick' &&
             this.ctx.stateManager.getState().status === 'processing'
           ) {
-            this.compactionEnqueuedMidTurn = true;
+            this.compactionEnqueuedMidTurnGeneration = invocationGeneration ?? null;
           }
         }
         await boundedDeliveryGate(
