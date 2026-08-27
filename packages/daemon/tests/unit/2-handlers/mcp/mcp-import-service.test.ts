@@ -406,6 +406,31 @@ describe('McpImportService', () => {
       expect(repo.getByName('present')).not.toBeNull();
     });
 
+    test('missing still-registered workspace `.mcp.json` prunes its previously imported rows', () => {
+      const wsA = mkdtempSync(join(tmpRoot, 'ws-still-'));
+      const fileA = join(wsA, '.mcp.json');
+      writeMcpJson(fileA, { mcpServers: { present: { command: 'x' } } });
+
+      const wsB = mkdtempSync(join(tmpRoot, 'ws-missing-'));
+      const fileB = join(wsB, '.mcp.json');
+      writeMcpJson(fileB, { mcpServers: { stale: { command: 'y' } } });
+
+      service.refreshAll([wsA, wsB]);
+      expect(repo.getByName('present')).not.toBeNull();
+      expect(repo.getByName('stale')).not.toBeNull();
+
+      unlinkSync(fileB);
+
+      const { results } = service.refreshAll([wsA, wsB]);
+      const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
+
+      expect(byPath[fileA].status).toBe('ok');
+      expect(byPath[fileB].status).toBe('missing');
+      expect(byPath[fileB].removed).toBe(1);
+      expect(repo.getByName('present')).not.toBeNull();
+      expect(repo.getByName('stale')).toBeNull();
+    });
+
     test('session handler module does not reference McpImportService (scan-never-on-session-create contract)', () => {
       const sessionHandlersPath = join(
         __dirname,
@@ -646,18 +671,14 @@ describe('McpImportService', () => {
       const file = join(ws, '.mcp.json');
       writeMcpJson(file, { mcpServers: { fetch: { command: 'x' } } });
 
-      repo.create({
-        name: 'fetch',
+      const legacy = repo.create({
+        name: 'fetch:2',
         sourceType: 'stdio',
-        command: 'other',
-        source: 'user',
+        command: 'x',
+        source: 'imported',
+        sourcePath: file,
       });
-
-      service.refreshAll([ws]);
-      const legacy = repo.getByName('fetch:2');
-      expect(legacy).not.toBeNull();
-      expect(legacy!.sourcePath).toBe(file);
-      repo.update(legacy!.id, { enabled: true });
+      repo.update(legacy.id, { enabled: true });
 
       const space = spaceRepo.createSpace({
         workspacePath: ws,
@@ -675,7 +696,7 @@ describe('McpImportService', () => {
       const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
       expect(byPath[file].updated).toBe(1);
       expect(repo.getByName('migrate:fetch')).not.toBeNull();
-      expect(repo.getByName('migrate:fetch')!.id).toBe(legacy!.id);
+      expect(repo.getByName('migrate:fetch')!.id).toBe(legacy.id);
       expect(repo.getByName('migrate:fetch')!.enabled).toBe(true);
       expect(repo.getByName('fetch:2')).toBeNull();
     });

@@ -646,7 +646,6 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
           resolvedName = existing.name;
         } else {
           const reservedForName = new Set([...targetReserved, ...allBases]);
-          reservedForName.delete(base);
           resolvedName = resolveWorkspaceMcpServerName({
             label: target.label,
             serverName,
@@ -688,6 +687,16 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     }
 
     const existingRows = ctx.db.appMcpServers.listBySourcePath(decl.target.path);
+
+    if (decl.status === 'missing') {
+      for (const row of existingRows) {
+        if (ctx.db.appMcpServers.delete(row.id)) {
+          result.removed += 1;
+        }
+      }
+      continue;
+    }
+
     const existingByName = new Map(existingRows.map((row) => [row.name, row]));
     const declaredNames = new Set<string>();
 
