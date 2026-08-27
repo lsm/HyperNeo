@@ -575,4 +575,54 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       { durable: true }
     );
   }, 15_000);
+
+  it('rechecks the budget after a concurrent hook arrives mid-check', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+
+    const first = session.midTurnContextBudgetCheck();
+    session.session.config.model = 'other-model';
+    await session.midTurnContextBudgetCheck();
+    await first;
+
+    expect(harness.interruptMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stale cycle clear cannot disarm a newer armed resume', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    const pendingEnqueues: Array<{
+      resolve: (messageId: string) => void;
+      reject: (error: Error) => void;
+    }> = [];
+    spyOn(session.messageQueue, 'enqueue').mockImplementation(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          pendingEnqueues.push({ resolve, reject });
+        })
+    );
+
+    await session.midTurnContextBudgetCheck();
+    expect(pendingEnqueues.length).toBe(1);
+    session.clearPendingResumeAfterCompaction();
+    session.contextTracker.clearCompactionCooldown();
+
+    await session.midTurnContextBudgetCheck();
+    expect(pendingEnqueues.length).toBe(2);
+
+    pendingEnqueues[0].reject(new Error('compaction enqueue failed'));
+    await tick(10);
+    expect(
+      (session as unknown as { pendingResumeAfterCompaction: boolean }).pendingResumeAfterCompaction
+    ).toBe(true);
+
+    pendingEnqueues[1].reject(new Error('compaction enqueue failed'));
+    await tick(10);
+    expect(
+      (session as unknown as { pendingResumeAfterCompaction: boolean }).pendingResumeAfterCompaction
+    ).toBe(false);
+    session.messageQueue.stop();
+  });
 });

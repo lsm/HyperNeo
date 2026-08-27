@@ -1901,6 +1901,37 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('keeps the removed-compaction count local to each late-receipt window', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const queued = q.enqueueWithId('compact-window', '/compact', true, { durable: true });
+      queued.catch(() => {});
+      let releaseWindow1: (cancelled: boolean) => void = () => {};
+      const window1Cancel = new Promise<boolean>((resolve) => {
+        releaseWindow1 = resolve;
+      });
+      const opts1 = makeInterruptOpts(q, { cancelAsyncMessage: () => window1Cancel });
+      const opts2 = makeInterruptOpts(q, {});
+      q.armInterruptCycle(opts1);
+      q.registerLateReceipt(opts1, {
+        promise: Promise.resolve({ still_queued: ['survivor-1'] }),
+        timedOut: true,
+      });
+      q.armInterruptCycle(opts2);
+      q.registerLateReceipt(opts2, {
+        promise: Promise.resolve({ still_queued: ['survivor-2'] }),
+        timedOut: true,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      releaseWindow1(true);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
+      q.clear();
+      q.stop();
+    });
+
     it('gates delivery for the whole interrupt window', async () => {
       const q = new MessageQueue();
       q.start();

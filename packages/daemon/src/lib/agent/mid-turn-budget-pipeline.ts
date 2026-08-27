@@ -87,8 +87,9 @@ export async function survivorsStage(ctx: MidTurnBudgetCtx): Promise<MidTurnBudg
   const receipt = inLatePhase(ctx)
     ? (ctx.lateReceipt ?? undefined)
     : (ctx.interrupt?.receipt ?? undefined);
+  let removedPendingCompactions = 0;
   if (inLatePhase(ctx)) {
-    ctx.queue.openLateReceiptWindow(ctx.opts);
+    removedPendingCompactions = ctx.queue.openLateReceiptWindow(ctx.opts);
   }
   const allowRestart = !inLatePhase(ctx);
   const restarted = await ctx.queue.processInterruptSurvivorReceipt(
@@ -96,14 +97,14 @@ export async function survivorsStage(ctx: MidTurnBudgetCtx): Promise<MidTurnBudg
     receipt,
     allowRestart
   );
-  return { ...ctx, restarted };
+  return { ...ctx, restarted, removedPendingCompactions };
 }
 
 export function compactionStage(ctx: MidTurnBudgetCtx): MidTurnBudgetCtx {
   if (inLatePhase(ctx)) {
     if (
       !ctx.queue.standsDownFor(ctx.opts) &&
-      ctx.queue.shouldEnqueueLateCompaction() &&
+      ctx.queue.shouldEnqueueLateCompaction(ctx.removedPendingCompactions) &&
       !ctx.queue.hasOutstandingInternalCompaction()
     ) {
       ctx.queue.enqueueMidTurnCompaction(ctx.opts, 'mid-turn-late');

@@ -46,13 +46,13 @@ export interface MidTurnQueueSeam {
     receipt?: { still_queued: string[]; cancelled?: string[] };
   }>;
   standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean;
-  openLateReceiptWindow(opts: MidTurnBudgetInterruptOptions): void;
+  openLateReceiptWindow(opts: MidTurnBudgetInterruptOptions): number;
   processInterruptSurvivorReceipt(
     opts: MidTurnBudgetInterruptOptions,
     receipt: { still_queued: string[]; cancelled?: string[] } | undefined,
     allowRestart: boolean
   ): Promise<boolean>;
-  shouldEnqueueLateCompaction(): boolean;
+  shouldEnqueueLateCompaction(removedPendingCompactions: number): boolean;
   hasOutstandingInternalCompaction(): boolean;
   enqueueMidTurnCompaction(opts: MidTurnBudgetInterruptOptions, reason: string): void;
   registerLateReceipt(
@@ -100,7 +100,6 @@ export class MessageQueue {
   private cycleUserStopped: boolean = false;
   private restartAbortedByStop: boolean = false;
   private resolveEarlyDeliveryGate: (() => void) | undefined;
-  private lateWindowRemovedCompactions: number = 0;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private nonCompactionSentSinceBoundary: boolean = false;
@@ -857,12 +856,12 @@ export class MessageQueue {
     );
   }
 
-  openLateReceiptWindow(_opts: MidTurnBudgetInterruptOptions): void {
-    this.lateWindowRemovedCompactions = this.removePendingInternalCompactions();
+  openLateReceiptWindow(_opts: MidTurnBudgetInterruptOptions): number {
+    return this.removePendingInternalCompactions();
   }
 
-  shouldEnqueueLateCompaction(): boolean {
-    return this.lateWindowRemovedCompactions > 0 || this.internalRestartFailed;
+  shouldEnqueueLateCompaction(removedPendingCompactions: number): boolean {
+    return removedPendingCompactions > 0 || this.internalRestartFailed;
   }
 
   private async processLateInterruptReceipt(
