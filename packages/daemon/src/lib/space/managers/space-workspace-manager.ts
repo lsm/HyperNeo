@@ -19,7 +19,7 @@ export type WorkspaceRegistryReader = Pick<SpaceRepository, 'getSpace' | 'listSp
 
 export type WorkspaceStore = Pick<
   SpaceWorkspaceRepository,
-  'create' | 'createUnclaimed' | 'findOwnerByPath' | 'getById' | 'listBySpace' | 'delete'
+  'create' | 'createUnclaimed' | 'findOwnerByPath' | 'getById' | 'listBySpace' | 'updateLabel' | 'delete'
 >;
 
 export interface WorkspaceSessionReferences {
@@ -350,6 +350,39 @@ const runResolveRegisteredWorkspace = (
   .pipe(resolveMatchRegisteredPath, 'ctx', 'ctx')
   .endAsync('ctx') as (input: ResolveWorkspaceCtx) => Promise<ResolveWorkspaceCtx>;
 
+interface UpdateLabelCtx {
+  workspaces: WorkspaceStore;
+  spaceId: string;
+  workspaceId: string;
+  label: string;
+  workspace?: SpaceWorkspaceRecord;
+  updated: boolean;
+}
+
+function updateLabelLoadWorkspace(ctx: UpdateLabelCtx): UpdateLabelCtx {
+  const workspace = ctx.workspaces.getById(ctx.workspaceId);
+  if (!workspace || workspace.spaceId !== ctx.spaceId) return ctx;
+  return { ...ctx, workspace };
+}
+
+function updateLabelWrite(ctx: UpdateLabelCtx): UpdateLabelCtx {
+  return {
+    ...ctx,
+    updated: ctx.workspaces.updateLabel(ctx.spaceId, ctx.workspaceId, ctx.label),
+  };
+}
+
+const runUpdateWorkspaceLabel = (
+  superpipe({
+    workspaceMissing: (ctx: UpdateLabelCtx) => ctx.workspace === undefined,
+  })('workspace-update-label') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(updateLabelLoadWorkspace, 'ctx', 'ctx')
+  .pipe('!workspaceMissing', 'ctx')
+  .pipe(updateLabelWrite, 'ctx', 'ctx')
+  .end('ctx') as (input: UpdateLabelCtx) => UpdateLabelCtx;
+
 export class SpaceWorkspaceManager {
   constructor(private readonly deps: SpaceWorkspaceManagerDeps) {}
 
@@ -408,5 +441,16 @@ export class SpaceWorkspaceManager {
       throw new Error(`Workspace path is not registered to space: ${rawPath}`);
     }
     return result.registeredPath;
+  }
+
+  updateWorkspaceLabel(spaceId: string, workspaceId: string, label: string): boolean {
+    const result = runUpdateWorkspaceLabel({
+      workspaces: this.deps.workspaces,
+      spaceId,
+      workspaceId,
+      label,
+      updated: false,
+    });
+    return result.updated;
   }
 }

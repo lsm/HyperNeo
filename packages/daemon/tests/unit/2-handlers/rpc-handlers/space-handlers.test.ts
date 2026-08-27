@@ -131,6 +131,7 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
     registerWorkspace: mock(async () => mockWorkspace),
     removeWorkspace: mock(() => true),
     listWorkspaces: mock(() => [mockWorkspace]),
+    updateWorkspaceLabel: mock(() => true),
   } as unknown as SpaceManager;
 }
 
@@ -1038,6 +1039,46 @@ describe('space-handlers', () => {
       await expect(
         call('space.workspace.remove', { spaceId: 'space-1', workspaceId: 'ws-2' })
       ).rejects.toThrow('2 active sessions reference it');
+    });
+  });
+
+  describe('space.workspace.updateLabel', () => {
+    beforeEach(() => setup());
+
+    it('updates the label and returns success', async () => {
+      const result = await call('space.workspace.updateLabel', {
+        spaceId: 'space-1',
+        workspaceId: 'ws-1',
+        label: 'renamed',
+      });
+
+      expect(result).toEqual({ success: true });
+      expect(spaceManager.updateWorkspaceLabel).toHaveBeenCalledWith('space-1', 'ws-1', 'renamed');
+    });
+
+    it('throws when the manager reports the workspace missing', async () => {
+      (spaceManager.updateWorkspaceLabel as ReturnType<typeof mock>).mockImplementation(
+        () => false
+      );
+
+      await expect(
+        call('space.workspace.updateLabel', {
+          spaceId: 'space-1',
+          workspaceId: 'ws-ghost',
+          label: 'renamed',
+        })
+      ).rejects.toThrow('Workspace not found: ws-ghost');
+    });
+
+    it('throws when label is not a string', async () => {
+      await expect(
+        call('space.workspace.updateLabel', {
+          spaceId: 'space-1',
+          workspaceId: 'ws-1',
+          label: 42,
+        })
+      ).rejects.toThrow('label must be a string');
+      expect(spaceManager.updateWorkspaceLabel).not.toHaveBeenCalled();
     });
   });
 });

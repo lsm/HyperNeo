@@ -3652,6 +3652,32 @@ function buildSpaceSessionsScopeFilter(
   };
 }
 
+const SPACE_WORKSPACES_BY_SPACE_SQL = `
+SELECT
+  id,
+  space_id as spaceId,
+  path,
+  label,
+  is_primary as isPrimary,
+  created_at as createdAt,
+  updated_at as updatedAt
+FROM space_workspaces
+WHERE space_id = ?
+ORDER BY is_primary DESC, created_at ASC, id ASC
+`;
+
+function mapSpaceWorkspaceRow(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: row.id,
+    spaceId: row.spaceId,
+    path: row.path,
+    label: row.label,
+    isPrimary: row.isPrimary === 1,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
   [
     'sessionGroupMessages.byGroup',
@@ -3734,6 +3760,14 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       sql: MCP_ENABLEMENT_BY_SPACE_SQL,
       paramCount: 1,
       mapRow: mapMcpEnablementBySpaceRow,
+    },
+  ],
+  [
+    'spaceWorkspaces.bySpace',
+    {
+      sql: SPACE_WORKSPACES_BY_SPACE_SQL,
+      paramCount: 1,
+      mapRow: mapSpaceWorkspaceRow,
     },
   ],
   [
@@ -3997,7 +4031,11 @@ export function setupLiveQueryHandlers(
       if (!workflowRun) {
         throw new Error(`Unauthorized: workflow run "${workflowRunId}" not found`);
       }
-    } else if (queryName === 'spaceSessions.bySpace' || queryName === 'mcpEnablement.bySpace') {
+    } else if (
+      queryName === 'spaceSessions.bySpace' ||
+      queryName === 'mcpEnablement.bySpace' ||
+      queryName === 'spaceWorkspaces.bySpace'
+    ) {
       const spaceId = params[0] as string;
       if (!stmtSpace.get(spaceId)) {
         throw new Error(`Unauthorized: space "${spaceId}" not found`);

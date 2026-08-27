@@ -104,6 +104,14 @@ class FakeWorkspaces {
     return this.rows.filter((r) => r.spaceId === spaceId);
   }
 
+  updateLabel(spaceId: string, workspaceId: string, label: string): boolean {
+    const row = this.rows.find((r) => r.id === workspaceId && r.spaceId === spaceId);
+    if (!row) return false;
+    row.label = label;
+    row.updatedAt = 1;
+    return true;
+  }
+
   delete(spaceId: string, workspaceId: string): boolean {
     const index = this.rows.findIndex((r) => r.id === workspaceId && r.spaceId === spaceId);
     if (index === -1) return false;
@@ -412,5 +420,26 @@ describe('listWorkspaces', () => {
   test('throws for an unknown space', () => {
     const { manager } = newManager({ spaces: [] });
     expect(() => manager.listWorkspaces('ghost')).toThrow('Space not found: ghost');
+  });
+});
+
+describe('updateWorkspaceLabel', () => {
+  test('updates the label of the workspace and returns true', () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/sec', 'w2')]);
+    const { manager } = newManager({ workspaces });
+    expect(manager.updateWorkspaceLabel(SPACE_A, 'w2', 'renamed')).toBe(true);
+    expect(workspaces.rows[0]!.label).toBe('renamed');
+  });
+
+  test('returns false for an unknown workspace id', () => {
+    const { manager } = newManager();
+    expect(manager.updateWorkspaceLabel(SPACE_A, 'ghost', 'renamed')).toBe(false);
+  });
+
+  test('returns false when the workspace belongs to another space and leaves it untouched', () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_B, '/sec', 'w2')]);
+    const { manager } = newManager({ workspaces });
+    expect(manager.updateWorkspaceLabel(SPACE_A, 'w2', 'renamed')).toBe(false);
+    expect(workspaces.rows[0]!.label).toBe('');
   });
 });

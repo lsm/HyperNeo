@@ -354,7 +354,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     );
 
     const spaceRepo = earlySpaceRepo;
-    const spaceManager = new SpaceManager(db.getDatabase());
+    const spaceManager = new SpaceManager(db.getDatabase(), reactiveDb);
 
     const authManager = new AuthManager(db, config);
     await authManager.initialize();

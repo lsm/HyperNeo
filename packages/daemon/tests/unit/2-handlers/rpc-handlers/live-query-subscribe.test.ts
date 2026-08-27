@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { ErrorCode, MessageHubHandlerError } from '@hyperneo/shared';
 import { setupLiveQueryHandlers } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository';
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -134,6 +135,16 @@ function createDb() {
 			name TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS space_workspaces (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			path TEXT NOT NULL,
+			label TEXT NOT NULL DEFAULT '',
+			is_primary INTEGER NOT NULL DEFAULT 0 CHECK(is_primary IN (0, 1)),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, path)
 		);
 		CREATE TABLE IF NOT EXISTS space_workflow_runs (
 			id TEXT PRIMARY KEY,
@@ -505,6 +516,73 @@ describe('setupLiveQueryHandlers', () => {
       subscriptionId: 'sub-other',
     });
     expect(result).toEqual({ ok: true });
+  });
+
+  test('subscribe spaceWorkspaces.bySpace: nonexistent space rejected', async () => {
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceWorkspaces.bySpace',
+        params: ['space-missing'],
+        subscriptionId: 'sub-ws-missing',
+      })
+    ).rejects.toThrow('Unauthorized: space "space-missing" not found');
+  });
+
+  test('spaceWorkspaces.bySpace snapshots the registry and deltas on every registry write', async () => {
+    const now = Date.now();
+    db.exec(
+      `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+       VALUES ('space-ws-1', 'space-ws-1', '/repos/primary', 'Space WS', ${now}, ${now})`
+    );
+    const repo = new SpaceWorkspaceRepository(db, reactiveDb);
+    const primary = repo.create({
+      spaceId: 'space-ws-1',
+      path: '/repos/primary',
+      label: 'primary',
+      isPrimary: true,
+    });
+    const flush = () => new Promise((r) => setTimeout(r, 10));
+
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'spaceWorkspaces.bySpace',
+      params: ['space-ws-1'],
+      subscriptionId: 'sub-ws',
+    });
+    expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
+    expect(setup.sentMessages[0].message.data.rows).toEqual([
+      {
+        id: primary.id,
+        spaceId: 'space-ws-1',
+        path: '/repos/primary',
+        label: 'primary',
+        isPrimary: true,
+        createdAt: primary.createdAt,
+        updatedAt: primary.updatedAt,
+      },
+    ]);
+
+    const secondary = repo.create({ spaceId: 'space-ws-1', path: '/repos/secondary' });
+    await flush();
+    const added = setup.sentMessages.at(-1)!;
+    expect(added.message.method).toBe('liveQuery.delta');
+    expect(added.message.data.added).toHaveLength(1);
+    expect(added.message.data.added![0]).toMatchObject({
+      id: secondary.id,
+      path: '/repos/secondary',
+      isPrimary: false,
+    });
+
+    repo.updateLabel('space-ws-1', secondary.id, 'renamed');
+    await flush();
+    const updated = setup.sentMessages.at(-1)!;
+    expect(updated.message.method).toBe('liveQuery.delta');
+    expect(updated.message.data.updated).toMatchObject([{ id: secondary.id, label: 'renamed' }]);
+
+    repo.delete('space-ws-1', secondary.id);
+    await flush();
+    const removed = setup.sentMessages.at(-1)!;
+    expect(removed.message.method).toBe('liveQuery.delta');
+    expect(removed.message.data.removed).toMatchObject([{ id: secondary.id }]);
   });
 
   test('subscribe: snapshot delivered immediately on subscribe', async () => {

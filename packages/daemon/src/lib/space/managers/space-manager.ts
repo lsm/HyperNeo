@@ -3,6 +3,7 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
@@ -259,9 +260,12 @@ export class SpaceManager {
   private onSpacePausedCallbacks: Array<(spaceId: string) => void> = [];
   private onSpaceStoppedCallbacks: Array<(spaceId: string) => void> = [];
 
-  constructor(private db: BunDatabase) {
+  constructor(
+    private db: BunDatabase,
+    reactiveDb?: ReactiveDatabase
+  ) {
     this.spaceRepo = new SpaceRepository(db);
-    this.workspaceRepo = new SpaceWorkspaceRepository(db);
+    this.workspaceRepo = new SpaceWorkspaceRepository(db, reactiveDb);
     this.taskRepo = new SpaceTaskRepository(db);
     this.workspaceManager = new SpaceWorkspaceManager({
       spaces: this.spaceRepo,
@@ -328,6 +332,10 @@ export class SpaceManager {
 
   async resolveRegisteredWorkspacePath(spaceId: string, rawPath: string): Promise<string> {
     return this.workspaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath);
+  }
+
+  updateWorkspaceLabel(spaceId: string, workspaceId: string, label: string): boolean {
+    return this.workspaceManager.updateWorkspaceLabel(spaceId, workspaceId, label);
   }
 
   async getSpace(id: string): Promise<Space | null> {

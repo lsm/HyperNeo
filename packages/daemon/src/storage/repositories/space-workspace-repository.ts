@@ -1,5 +1,6 @@
-import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
+import type { ReactiveDatabase } from '../reactive-database.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 export interface SpaceWorkspaceRecord {
   id: string;
@@ -12,7 +13,10 @@ export interface SpaceWorkspaceRecord {
 }
 
 export class SpaceWorkspaceRepository {
-  constructor(private db: BunDatabase) {}
+  constructor(
+    private db: BunDatabase,
+    private reactiveDb?: ReactiveDatabase
+  ) {}
 
   create(params: {
     spaceId: string;
@@ -28,6 +32,7 @@ export class SpaceWorkspaceRepository {
          VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(id, params.spaceId, params.path, params.label ?? '', params.isPrimary ? 1 : 0, now, now);
+    this.reactiveDb?.notifyChange('space_workspaces', { spaceId: params.spaceId });
     return this.getById(id)!;
   }
 
@@ -100,6 +105,7 @@ export class SpaceWorkspaceRepository {
         `UPDATE space_workspaces SET label = ?, updated_at = ? WHERE space_id = ? AND id = ?`
       )
       .run(label, Date.now(), spaceId, workspaceId);
+    if (result.changes > 0) this.reactiveDb?.notifyChange('space_workspaces', { spaceId });
     return result.changes > 0;
   }
 
@@ -107,6 +113,7 @@ export class SpaceWorkspaceRepository {
     const result = this.db
       .prepare(`DELETE FROM space_workspaces WHERE space_id = ? AND id = ?`)
       .run(spaceId, workspaceId);
+    if (result.changes > 0) this.reactiveDb?.notifyChange('space_workspaces', { spaceId });
     return result.changes > 0;
   }
 
