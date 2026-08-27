@@ -6,6 +6,7 @@ import {
   VALID_SPACE_TASK_TRANSITIONS,
 } from '../../../../src/lib/space/managers/space-task-manager';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceWorktreeRepository } from '../../../../src/storage/repositories/space-worktree-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceTaskManager', () => {
@@ -1650,6 +1651,24 @@ describe('SpaceTaskManager', () => {
       });
       const updated = await manager.updateTask(task.id, { title: 'New title' });
       expect(updated.workspacePath).toBe('/secondary');
+    });
+
+    it('rejects workspacePath change when a worktree already exists', async () => {
+      const task = await manager.createTask({
+        title: 'T',
+        description: '',
+        workspacePath: '/secondary',
+      });
+      const worktreeRepo = new SpaceWorktreeRepository(db as never);
+      worktreeRepo.create({
+        spaceId,
+        taskId: task.id,
+        slug: 't-1',
+        path: '/workspace/test/.hyperneo-worktrees/t-1',
+      });
+      await expect(
+        manager.updateTask(task.id, { workspacePath: '/workspace/test' })
+      ).rejects.toThrow('already has a worktree');
     });
   });
 });

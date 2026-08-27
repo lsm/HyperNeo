@@ -10,6 +10,7 @@ import type {
 import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { Logger } from '../../logger.ts';
 import type { EvolutionScopeService } from '../evolution-scope-service.ts';
@@ -75,6 +76,7 @@ export function assertValidSpaceTaskTransition(from: SpaceTaskStatus, to: SpaceT
 
 export class SpaceTaskManager {
   private taskRepo: SpaceTaskRepository;
+  private worktreeRepo: SpaceWorktreeRepository;
 
   constructor(
     private db: BunDatabase,
@@ -86,6 +88,7 @@ export class SpaceTaskManager {
     private resolveWorkspacePath?: WorkspacePathResolver
   ) {
     this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
+    this.worktreeRepo = new SpaceWorktreeRepository(db);
   }
 
   async createTask(params: Omit<InternalCreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
@@ -455,6 +458,16 @@ export class SpaceTaskManager {
 
     if (resolvedParams.status !== undefined && resolvedParams.status !== task.status) {
       throw new Error('Use setTaskStatus to change task status — it enforces valid transitions');
+    }
+
+    const targetWorkspacePath = resolvedParams.workspacePath;
+    if (targetWorkspacePath !== undefined && targetWorkspacePath !== task.workspacePath) {
+      const worktree = this.worktreeRepo.getByTaskId(this.spaceId, taskId);
+      if (worktree) {
+        throw new Error(
+          `Cannot change task workspace path: task ${taskId} already has a worktree at ${worktree.path}`
+        );
+      }
     }
 
     if (resolvedParams.dependsOn !== undefined) {

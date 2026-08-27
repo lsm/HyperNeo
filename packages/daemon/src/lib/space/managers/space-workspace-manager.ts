@@ -26,10 +26,15 @@ export interface WorkspaceSessionReferences {
   countActiveSessionsByWorkspacePath(spaceId: string, workspacePath: string): number;
 }
 
+export interface WorkspaceTaskReferences {
+  countActiveTasksByWorkspacePath(spaceId: string, workspacePath: string): number;
+}
+
 export interface SpaceWorkspaceManagerDeps {
   spaces: WorkspaceRegistryReader;
   workspaces: WorkspaceStore;
   sessionReferences: WorkspaceSessionReferences;
+  taskReferences: WorkspaceTaskReferences;
   io?: WorkspaceValidationIo;
   transaction?: <T>(fn: () => T) => T;
 }
@@ -48,7 +53,7 @@ export class WorkspaceRegistrationError extends Error {
 export class WorkspaceRemovalBlockedError extends Error {
   constructor(
     message: string,
-    readonly reason: 'primary' | 'active_sessions'
+    readonly reason: 'primary' | 'active_sessions' | 'active_tasks'
   ) {
     super(message);
     this.name = 'WorkspaceRemovalBlockedError';
@@ -186,6 +191,7 @@ const runRegisterWorkspace = (
 interface RemoveWorkspaceCtx {
   workspaces: WorkspaceStore;
   sessionReferences: WorkspaceSessionReferences;
+  taskReferences: WorkspaceTaskReferences;
   spaceId: string;
   workspaceId: string;
   workspace?: SpaceWorkspaceRecord;
@@ -226,6 +232,22 @@ function removeGuardActiveSessions(ctx: RemoveWorkspaceCtx): RemoveWorkspaceCtx 
   };
 }
 
+function removeGuardActiveTasks(ctx: RemoveWorkspaceCtx): RemoveWorkspaceCtx {
+  const workspace = ctx.workspace!;
+  const activeTaskCount = ctx.taskReferences.countActiveTasksByWorkspacePath(
+    ctx.spaceId,
+    workspace.path
+  );
+  if (activeTaskCount === 0) return ctx;
+  return {
+    ...ctx,
+    blocked: new WorkspaceRemovalBlockedError(
+      `Cannot remove workspace ${ctx.workspaceId} while ${activeTaskCount} active task(s) reference it`,
+      'active_tasks'
+    ),
+  };
+}
+
 function removeDeleteWorkspace(ctx: RemoveWorkspaceCtx): RemoveWorkspaceCtx {
   return { ...ctx, removed: ctx.workspaces.delete(ctx.spaceId, ctx.workspaceId) };
 }
@@ -242,6 +264,8 @@ const runRemoveWorkspace = (
   .pipe(removeGuardPrimary, 'ctx', 'ctx')
   .pipe('!hasBlocked', 'ctx')
   .pipe(removeGuardActiveSessions, 'ctx', 'ctx')
+  .pipe('!hasBlocked', 'ctx')
+  .pipe(removeGuardActiveTasks, 'ctx', 'ctx')
   .pipe('!hasBlocked', 'ctx')
   .pipe(removeDeleteWorkspace, 'ctx', 'ctx')
   .end('ctx') as (input: RemoveWorkspaceCtx) => RemoveWorkspaceCtx;
@@ -352,6 +376,7 @@ export class SpaceWorkspaceManager {
     const result = runRemoveWorkspace({
       workspaces: this.deps.workspaces,
       sessionReferences: this.deps.sessionReferences,
+      taskReferences: this.deps.taskReferences,
       spaceId,
       workspaceId,
       removed: false,

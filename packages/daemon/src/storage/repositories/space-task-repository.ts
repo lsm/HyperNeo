@@ -760,6 +760,17 @@ export class SpaceTaskRepository {
     this.reactiveDb?.notifyChange('space_tasks');
   }
 
+  countActiveByWorkspacePath(spaceId: string, workspacePath: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM space_tasks
+         WHERE space_id = ? AND workspace_path = ?
+           AND status NOT IN ('done', 'cancelled', 'archived')`
+      )
+      .get(spaceId, workspacePath) as { c: number } | undefined;
+    return row?.c ?? 0;
+  }
+
   promoteDraftTasksByCreator(createdByTaskId: string): number {
     const rows = this.db
       .prepare(`SELECT id FROM space_tasks WHERE created_by_task_id = ? AND status = 'draft'`)
