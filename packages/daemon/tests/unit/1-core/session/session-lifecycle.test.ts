@@ -182,6 +182,9 @@ import {
 import type { ToolsConfigManager } from '../../../../src/lib/session/tools-config';
 import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import type { Database } from '../../../../src/storage/database';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { Database as RawDatabase } from '../../../../src/storage/sqlite-compat';
+import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SessionLifecycle', () => {
   let lifecycle: SessionLifecycle;
@@ -488,6 +491,120 @@ describe('SessionLifecycle', () => {
       ).rejects.toThrow('is not registered to space');
 
       expect(mockWorktreeManager.removeWorktree).toHaveBeenCalled();
+    });
+
+    describe('space workspace admission against the real registry', () => {
+      let rawDb: RawDatabase;
+      let repo: SessionRepository;
+
+      beforeEach(() => {
+        rawDb = new RawDatabase(':memory:');
+        createSpaceTables(rawDb);
+        for (const [id, slug, path, name] of [
+          ['space-1', 'space-one', '/w/primary', 'Space One'],
+          ['space-2', 'space-two', '/other/primary', 'Space Two'],
+        ] as const) {
+          rawDb
+            .prepare(
+              `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 0, 0)`
+            )
+            .run(id, slug, path, name);
+        }
+        rawDb
+          .prepare(
+            `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
+             VALUES ('ws-sec', 'space-1', '/w/secondary', 'secondary', 0, 0, 0)`
+          )
+          .run();
+
+        repo = new SessionRepository(rawDb);
+
+        mockDb = {
+          createSession: (
+            session: Session,
+            options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
+          ) => repo.createSession(session, options),
+          isWorkspaceRegisteredToSpace: (spaceId: string, workspacePath: string) =>
+            repo.isWorkspaceRegisteredToSpace(spaceId, workspacePath),
+          getGlobalSettings: mock(() => ({
+            ...DEFAULT_GLOBAL_SETTINGS,
+            settingSources: ['user', 'project', 'local'],
+          })),
+        } as unknown as Database;
+
+        lifecycle = new SessionLifecycle(
+          mockDb,
+          mockWorktreeManager,
+          mockSessionCache,
+          mockInternalEventBus,
+          mockMessageHub,
+          config,
+          mockToolsConfigManager,
+          mockAgentSessionFactory
+        );
+      });
+
+      afterEach(() => {
+        rawDb.close();
+      });
+
+      const countSessions = () =>
+        (rawDb.prepare('SELECT COUNT(*) AS count FROM sessions').get() as { count: number }).count;
+
+      it('rejects a space session whose workspacePath is not registered to the space', async () => {
+        await expect(
+          lifecycle.create({ spaceId: 'space-1', workspacePath: '/w/unregistered' })
+        ).rejects.toThrow('Workspace /w/unregistered is not registered to space space-1');
+
+        expect(countSessions()).toBe(0);
+      });
+
+      it('rejects a space session whose workspacePath is registered to a different space', async () => {
+        await expect(
+          lifecycle.create({ spaceId: 'space-1', workspacePath: '/other/primary' })
+        ).rejects.toThrow('is not registered to space space-1');
+
+        expect(countSessions()).toBe(0);
+      });
+
+      it('admits a space session on the primary workspace', async () => {
+        const sessionId = await lifecycle.create({
+          spaceId: 'space-1',
+          workspacePath: '/w/primary',
+        });
+
+        const stored = repo.getSession(sessionId);
+        expect(stored?.workspacePath).toBe('/w/primary');
+        expect(stored?.context).toEqual({ spaceId: 'space-1' });
+      });
+
+      it('admits a space session on a registered secondary workspace', async () => {
+        const sessionId = await lifecycle.create({
+          spaceId: 'space-1',
+          workspacePath: '/w/secondary',
+        });
+
+        const stored = repo.getSession(sessionId);
+        expect(stored?.workspacePath).toBe('/w/secondary');
+        expect(stored?.context).toEqual({ spaceId: 'space-1' });
+      });
+
+      it('leaves non-space sessions unaffected by the space workspace registry', async () => {
+        const sessionId = await lifecycle.create({ workspacePath: '/w/unregistered' });
+
+        const stored = repo.getSession(sessionId);
+        expect(stored?.workspacePath).toBe('/w/unregistered');
+        expect(stored?.context).toBeUndefined();
+      });
+
+      it('still admits a space session without a workspacePath', async () => {
+        const sessionId = await lifecycle.create({ spaceId: 'space-1' });
+
+        const stored = repo.getSession(sessionId);
+        expect(stored?.workspacePath).toBeNull();
+        expect(stored?.context).toEqual({ spaceId: 'space-1' });
+      });
     });
 
     it('should not use worktree choice flow for non-worker sessions', async () => {
