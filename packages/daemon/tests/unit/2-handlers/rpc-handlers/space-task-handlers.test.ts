@@ -583,9 +583,6 @@ describe('space-task-handlers', () => {
     it('propagates invalid-transition error when archiving from in_progress', async () => {
       const inProgressTask = { ...mockTask, status: 'in_progress' as const };
       setup(mockSpace, inProgressTask);
-      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(
-        new Error("Invalid status transition from 'in_progress' to 'archived'. Allowed: none")
-      );
 
       await expect(
         call('spaceTask.update', {
@@ -827,9 +824,6 @@ describe('space-task-handlers', () => {
     it('propagates invalid-transition error when reactivating an archived task', async () => {
       const archivedTask = { ...mockTask, status: 'archived' as const };
       setup(mockSpace, archivedTask);
-      (taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(
-        new Error("Invalid status transition from 'archived' to 'in_progress'. Allowed: none")
-      );
 
       await expect(
         call('spaceTask.update', {
