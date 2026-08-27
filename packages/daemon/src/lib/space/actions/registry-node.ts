@@ -1,20 +1,36 @@
+import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
+import { wrapHandlerWithHooks } from '../runtime/workflow-hook-engine.ts';
 import {
   createNodeAgentToolHandlers,
   type NodeAgentToolsConfig,
 } from '../tools/node-agent-tools.ts';
 import {
+  ApproveTaskSchema,
+  MarkCompleteSchema,
+  SubmitForApprovalSchema,
+} from '../tools/task-agent-tool-schemas.ts';
+import {
+  ArchiveTaskSchema,
+  CreateStandaloneTaskSchema,
   GetExternalEventSchema,
+  GetTaskSchema,
+  ListArtifactsSchema,
+  ListAuditEntriesSchema,
   ListChannelsSchema,
   ListDeliveriesSchema,
   ListPeersSchema,
   ListReachableAgentsSchema,
   ListSubscriptionsSchema,
+  ListTasksSchema,
+  PublishTaskSchema,
   RestoreNodeAgentSchema,
+  SaveArtifactSchema,
   SendMessageSchema,
   SubscribeExternalEventSchema,
   SubscribePrEventsSchema,
   UnsubscribeExternalEventSchema,
 } from '../tools/node-agent-tool-schemas.ts';
+import type { ToolResult } from '../tools/tool-result.ts';
 import { type ActionDefinition, defineAction, type ActionEntry } from './registry.ts';
 
 function nodeAction<P>(entry: Omit<ActionEntry<P>, 'family'>): ActionDefinition {
@@ -22,16 +38,36 @@ function nodeAction<P>(entry: Omit<ActionEntry<P>, 'family'>): ActionDefinition 
 }
 
 export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionDefinition[] {
-  const handlers = createNodeAgentToolHandlers({ ...config, auditLogRepo: undefined });
+  const handlers = createNodeAgentToolHandlers(config);
   const {
+    onSubmitForApproval,
+    onMarkComplete,
     onSubscribeExternalEvent,
     onUnsubscribeExternalEvent,
     onListSubscriptions,
     externalEventStore,
+    artifactRepo,
+    onCreateStandaloneTask,
+    onPublishTask,
+    onArchiveTask,
+    onApproveTask,
+    taskRepo,
+    auditLogRepo,
+    hookEngine,
   } = config;
   const externalEventSubscriptions = Boolean(
     onSubscribeExternalEvent && onUnsubscribeExternalEvent
   );
+  const hookMeta = {
+    sessionId: config.mySessionId,
+    agentName: config.myAgentName,
+    nodeId: config.workflowNodeId,
+    taskId: config.taskId,
+  };
+  const handlerMap = handlers as unknown as Record<
+    string,
+    (...args: unknown[]) => Promise<ToolResult>
+  >;
 
   return [
     nodeAction({
@@ -142,5 +178,160 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
       paramsSchema: RestoreNodeAgentSchema,
       handler: handlers.restore_node_agent,
     }),
+    ...(artifactRepo
+      ? [
+          nodeAction({
+            name: 'save_artifact',
+            safetyClass: 'mutate',
+            description:
+              'Persist a structured fact to the run artifact store as one of link/commit_set/check/metric/decision/note.',
+            paramsDoc: 'shape, kind?, key?, summary?, data?',
+            paramsSchema: SaveArtifactSchema,
+            handler: handlers.save_artifact,
+          }),
+          nodeAction({
+            name: 'list_artifacts',
+            safetyClass: 'read',
+            description:
+              'List artifacts for the current run, optionally filtered by nodeId or shape.',
+            paramsDoc: 'nodeId?, type?',
+            paramsSchema: ListArtifactsSchema,
+            handler: handlers.list_artifacts,
+          }),
+        ]
+      : []),
+    ...(onCreateStandaloneTask
+      ? [
+          nodeAction({
+            name: 'create_standalone_task',
+            safetyClass: 'mutate',
+            description:
+              'Create a task request in this space with optional priority, workflow, dependencies, and draft flag.',
+            paramsDoc:
+              'title, description, priority?, custom_agent_id?, workflow_id?, depends_on?, draft?',
+            paramsSchema: CreateStandaloneTaskSchema,
+            handler: handlers.create_standalone_task,
+          }),
+        ]
+      : []),
+    ...(onPublishTask
+      ? [
+          nodeAction({
+            name: 'publish_task',
+            safetyClass: 'mutate',
+            description: 'Publish a draft task (draft to open) so orchestration can pick it up.',
+            paramsDoc: 'task_id',
+            paramsSchema: PublishTaskSchema,
+            handler: handlers.publish_task,
+          }),
+        ]
+      : []),
+    ...(onArchiveTask
+      ? [
+          nodeAction({
+            name: 'archive_task',
+            safetyClass: 'destructive',
+            description:
+              'Archive a task; archived tasks are excluded from most queries and cannot be reactivated.',
+            paramsDoc: 'task_id',
+            paramsSchema: ArchiveTaskSchema,
+            handler: handlers.archive_task,
+          }),
+        ]
+      : []),
+    ...(onApproveTask
+      ? [
+          nodeAction({
+            name: 'approve_task',
+            safetyClass: 'mutate',
+            description:
+              'Self-approve THIS task as done and close the loop (terminal); autonomy must meet the workflow completion level.',
+            paramsDoc: 'none',
+            paramsSchema: ApproveTaskSchema,
+            autonomyRequirement: config.workflow?.completionAutonomyLevel ?? 5,
+            handler: handlers.approve_task,
+          }),
+        ]
+      : []),
+    ...(onSubmitForApproval
+      ? [
+          nodeAction({
+            name: 'submit_for_approval',
+            safetyClass: 'mutate',
+            description: 'Request human sign-off for THIS task completion (terminal).',
+            paramsDoc: 'reason?',
+            paramsSchema: SubmitForApprovalSchema,
+            handler: wrapHandlerWithHooks(
+              'submit_for_approval',
+              onSubmitForApproval,
+              hookEngine,
+              handlerMap,
+              hookMeta
+            ),
+          }),
+        ]
+      : []),
+    ...(onMarkComplete
+      ? [
+          nodeAction({
+            name: 'mark_complete',
+            safetyClass: 'mutate',
+            description:
+              'Finish post-approval work: transition THIS task from approved to done (routed post-approval session only).',
+            paramsDoc: 'goal_update? (legacy, optional)',
+            paramsSchema: MarkCompleteSchema,
+            handler: wrapHandlerWithHooks(
+              'mark_complete',
+              onMarkComplete,
+              hookEngine,
+              handlerMap,
+              hookMeta
+            ),
+          }),
+        ]
+      : []),
+    ...(taskRepo
+      ? [
+          nodeAction({
+            name: 'list_tasks',
+            safetyClass: 'read',
+            description: 'List tasks in this space with optional status filter and compact mode.',
+            paramsDoc: 'status?, compact?, limit?, offset?',
+            paramsSchema: ListTasksSchema,
+            handler: handlers.list_tasks,
+          }),
+          nodeAction({
+            name: 'get_task',
+            safetyClass: 'read',
+            description: 'Read one task with status, result, and metadata.',
+            paramsDoc: 'task_number? or task_id? (one required)',
+            paramsSchema: GetTaskSchema,
+            handler: handlers.get_task,
+          }),
+        ]
+      : []),
+    ...(auditLogRepo
+      ? [
+          nodeAction({
+            name: 'list_audit_entries',
+            safetyClass: 'read',
+            description:
+              'List MCP audit log entries for this space, optionally filtered by task or session.',
+            paramsDoc: 'task_id?, session_id?, limit?, offset?',
+            paramsSchema: ListAuditEntriesSchema,
+            handler: handlers.list_audit_entries,
+          }),
+        ]
+      : []),
   ];
+}
+
+export function composeRoleActionEntries(
+  role: SpaceMcpSessionRole,
+  spaceEntries: readonly ActionDefinition[],
+  nodeEntries: readonly ActionDefinition[]
+): ActionDefinition[] {
+  if (role !== 'workflow_worker') return [...spaceEntries];
+  const nodeNames = new Set(nodeEntries.map((entry) => entry.name));
+  return [...nodeEntries, ...spaceEntries.filter((entry) => !nodeNames.has(entry.name))];
 }
