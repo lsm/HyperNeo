@@ -327,16 +327,7 @@ function resolveBuildSnapshot(ctx: ResolveWorkspaceCtx): ResolveWorkspaceCtx {
   return { ...ctx, snapshot: buildRegistrySnapshot(ctx.spaces, ctx.workspaces, ctx.spaceId) };
 }
 
-async function resolveMatchRegisteredPath(ctx: ResolveWorkspaceCtx): Promise<ResolveWorkspaceCtx> {
-  const space = ctx.spaces.getSpace(ctx.spaceId);
-  if (space?.workspacePath) {
-    try {
-      const primaryCanonical = await ctx.io.realpath(space.workspacePath);
-      if (primaryCanonical === ctx.canonicalPath) {
-        return { ...ctx, registeredPath: ctx.canonicalPath };
-      }
-    } catch {}
-  }
+function resolveMatchRegisteredPath(ctx: ResolveWorkspaceCtx): ResolveWorkspaceCtx {
   const claim = ctx.snapshot!.claims.find(
     (c) => c.spaceId === ctx.spaceId && c.path === ctx.canonicalPath
   );
