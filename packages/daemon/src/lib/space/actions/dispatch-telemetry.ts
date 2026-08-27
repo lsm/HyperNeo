@@ -57,7 +57,7 @@ export function resolveRateAdmissionOptions(
 export function createRateAdmission(options: RateAdmissionOptions | null): RateAdmission {
   if (!options) return () => true;
   const { maxDispatchesPerWindow, windowMs } = options;
-  const now = options.now ?? performance.now;
+  const now = options.now ?? (() => performance.now());
   let windowStart = now();
   let admitted = 0;
   return () => {

@@ -192,6 +192,13 @@ describe('rate admission — window enforcement', () => {
       globalThis.performance = realPerformance;
     }
   });
+
+  test('the default clock works without any test substitution — bound receiver, no Illegal invocation', () => {
+    const admit = createRateAdmission({ maxDispatchesPerWindow: 2, windowMs: 60_000 });
+    expect(admit()).toBe(true);
+    expect(admit()).toBe(true);
+    expect(admit()).toBe(false);
+  });
 });
 
 describe('dispatch telemetry through runDispatchAction', () => {

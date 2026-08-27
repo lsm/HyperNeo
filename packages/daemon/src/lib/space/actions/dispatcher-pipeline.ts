@@ -292,17 +292,17 @@ export async function runDispatchAction(
   deps: DispatchActionDeps,
   input: DispatchActionInput
 ): Promise<DispatchActionOutcome> {
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   try {
     const ctx = await run({ ...input, deps });
     const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
-    await emitDispatchTelemetry(deps, input, ctx.action, outcome, Date.now() - startedAt);
+    await emitDispatchTelemetry(deps, input, ctx.action, outcome, performance.now() - startedAt);
     return outcome;
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     const outcome = failedOutcome(error);
     const action = deps.registry.get(input.actionName);
-    await emitDispatchTelemetry(deps, input, action, outcome, Date.now() - startedAt);
+    await emitDispatchTelemetry(deps, input, action, outcome, performance.now() - startedAt);
     return outcome;
   }
 }
