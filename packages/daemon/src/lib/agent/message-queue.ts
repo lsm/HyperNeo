@@ -60,6 +60,7 @@ export class MessageQueue {
   private running: boolean = false;
   private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
   private deliveryGate: Promise<void> | null = null;
+  private deliveryGateExclusive: boolean = false;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private nonCompactionSentSinceBoundary: boolean = false;
@@ -226,7 +227,7 @@ export class MessageQueue {
     return false;
   }
 
-  setDeliveryGate(gate: Promise<void>): void {
+  setDeliveryGate(gate: Promise<void>, options?: { exclusive?: boolean }): void {
     const previous = this.deliveryGate;
     const composed = previous
       ? previous.then(
@@ -235,15 +236,18 @@ export class MessageQueue {
         )
       : gate;
     this.deliveryGate = composed;
+    this.deliveryGateExclusive = options?.exclusive ?? false;
     void composed.then(
       () => {
         if (this.deliveryGate === composed) {
           this.deliveryGate = null;
+          this.deliveryGateExclusive = false;
         }
       },
       () => {
         if (this.deliveryGate === composed) {
           this.deliveryGate = null;
+          this.deliveryGateExclusive = false;
         }
       }
     );
@@ -615,8 +619,12 @@ export class MessageQueue {
         if (!this.running) return null;
       }
 
-      const bypassIndex =
-        this.deliveryGate || this.hasOutstandingInternalCompaction() ? this.gatedBypassIndex() : 0;
+      let bypassIndex = 0;
+      if (this.deliveryGate) {
+        bypassIndex = this.deliveryGateExclusive ? -1 : this.gatedBypassIndex();
+      } else if (this.hasOutstandingInternalCompaction()) {
+        bypassIndex = this.gatedBypassIndex();
+      }
 
       if (bypassIndex === -1) {
         await Promise.race([
@@ -652,7 +660,7 @@ export class MessageQueue {
     const earlyDeliveryGate = new Promise<void>((resolve) => {
       resolveEarlyDeliveryGate = resolve;
     });
-    this.setDeliveryGate(earlyDeliveryGate);
+    this.setDeliveryGate(earlyDeliveryGate, { exclusive: true });
 
     const interruptPromise = Promise.resolve().then(() => opts.interrupt());
     let receipt: { still_queued: string[] } | undefined;
@@ -674,12 +682,17 @@ export class MessageQueue {
       ])) as { still_queued: string[] } | undefined;
     } catch (error) {
       if (timedOut) {
-        opts.logger.warn(
-          `mid-turn context-budget interrupt for session ${opts.sessionId} is slow to ` +
-            `acknowledge; restarting the query to recover`
-        );
-        this.clearNonCompactionSentSinceBoundary();
-        await this.finishSurvivorTeardownWithRestart(opts);
+        if (!this.isRunning()) {
+          resumeArmed = false;
+          opts.onResumeClear();
+        } else {
+          opts.logger.warn(
+            `mid-turn context-budget interrupt for session ${opts.sessionId} is slow to ` +
+              `acknowledge; restarting the query to recover`
+          );
+          this.clearNonCompactionSentSinceBoundary();
+          await this.finishSurvivorTeardownWithRestart(opts);
+        }
       } else {
         resumeArmed = false;
         opts.onResumeClear();
@@ -695,6 +708,10 @@ export class MessageQueue {
     }
 
     try {
+      if (!this.isRunning()) {
+        opts.onResumeClear();
+        return;
+      }
       if (timedOut || !resumeArmed) {
         await this.processInterruptSurvivorReceipt(opts, receipt);
       } else {
@@ -734,17 +751,19 @@ export class MessageQueue {
     opts: MidTurnBudgetInterruptOptions,
     receipt: { still_queued: string[] } | undefined
   ): Promise<void> {
+    if (!this.isRunning()) {
+      opts.onResumeClear();
+      return;
+    }
     this.removePendingInternalCompactions();
     let resolveLateGate: (() => void) | undefined;
     const lateGate = new Promise<void>((resolve) => {
       resolveLateGate = resolve;
     });
-    this.setDeliveryGate(lateGate);
+    this.setDeliveryGate(lateGate, { exclusive: true });
     try {
-      const restarted = await this.processInterruptSurvivorReceipt(opts, receipt);
-      if (!restarted) {
-        this.enqueueMidTurnCompaction(opts, 'mid-turn-late');
-      }
+      await this.processInterruptSurvivorReceipt(opts, receipt, false);
+      this.enqueueMidTurnCompaction(opts, 'mid-turn-late');
     } finally {
       resolveLateGate?.();
     }
@@ -752,7 +771,8 @@ export class MessageQueue {
 
   private async processInterruptSurvivorReceipt(
     opts: MidTurnBudgetInterruptOptions,
-    receipt: { still_queued: string[] } | undefined
+    receipt: { still_queued: string[] } | undefined,
+    allowRestart = true
   ): Promise<boolean> {
     const survivors = receipt?.still_queued ?? [];
     if (survivors.length === 0) return false;
@@ -760,8 +780,11 @@ export class MessageQueue {
     if (typeof opts.cancelAsyncMessage !== 'function') {
       toRequeue.push(...survivors);
       this.requeueCollectedSurvivors(opts, toRequeue);
-      await this.finishSurvivorTeardownWithRestart(opts);
-      return true;
+      if (allowRestart) {
+        await this.finishSurvivorTeardownWithRestart(opts);
+        return true;
+      }
+      return false;
     }
     let needsRestart = false;
     for (let index = 0; index < survivors.length; index++) {
@@ -800,7 +823,7 @@ export class MessageQueue {
       toRequeue.push(uuid);
     }
     this.requeueCollectedSurvivors(opts, toRequeue);
-    if (needsRestart) {
+    if (needsRestart && allowRestart) {
       await this.finishSurvivorTeardownWithRestart(opts);
       return true;
     }
@@ -839,7 +862,15 @@ export class MessageQueue {
         );
       }
     );
-    opts.onSurvivorRequeued?.(uuid);
+    try {
+      opts.onSurvivorRequeued?.(uuid);
+    } catch (error) {
+      opts.logger.warn(
+        `retryable-state update for requeued survivor ${uuid} failed for session ` +
+          `${opts.sessionId}:`,
+        error
+      );
+    }
     opts.logger.info(
       `requeued cancelled survivor ${uuid} for session ${opts.sessionId} ` +
         `to run after the pending compaction`
@@ -854,7 +885,7 @@ export class MessageQueue {
       resolveDeliveryGate = resolve;
     });
     const beforeStart = () => {
-      this.setDeliveryGate(deliveryGate);
+      this.setDeliveryGate(deliveryGate, { exclusive: true });
       this.enqueueMidTurnCompaction(opts, 'mid-turn-restart');
     };
     const restart = opts.restart({ beforeStart }).catch((error) => {

@@ -1991,6 +1991,132 @@ describe('MessageQueue', () => {
       q.stop();
     }, 15_000);
 
+    it('does not restart the replacement query when a late receipt cannot cancel', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-late-norestart', 'late-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let resolveInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        resolveInterrupt = resolve;
+      });
+      const restartMock = mock(async () => {});
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts(q, {
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => false,
+        restart: restartMock,
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      resolveInterrupt({ still_queued: ['uuid-late-norestart'] });
+      await run;
+      await tick(50);
+
+      expect(restartMock).toHaveBeenCalledTimes(1);
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-late-norestart', 'late-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      q.stop();
+    }, 15_000);
+
+    it('keeps the compaction protocol when the retryable-state update throws', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-throw-cb', 'survivor-cb', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const warnMock = mock(() => {});
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-throw-cb'] }),
+        cancelAsyncMessage: async () => true,
+        onSurvivorRequeued: () => {
+          throw new Error('sqlite busy');
+        },
+        logger: { info: mock(() => {}), warn: warnMock } as never,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-throw-cb', 'survivor-cb', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(true);
+      q.stop();
+    });
+
+    it('stands down when the user stops the turn during the interrupt', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const onResumeClear = mock(() => {});
+      const restartMock = mock(async () => {});
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => {
+          q.stop();
+          return { still_queued: ['uuid-stopped'] };
+        },
+        restart: restartMock,
+        onResumeClear,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(onResumeClear).toHaveBeenCalledTimes(1);
+      expect(restartMock).not.toHaveBeenCalled();
+      expect(enqueueSpy).not.toHaveBeenCalled();
+    });
+
+    it('blocks bypass-eligible tool results during the interrupt window', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const interruptGate = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const opts = makeInterruptOpts(q, {
+        interrupt: () => interruptGate,
+      });
+      void q
+        .enqueueWithId(
+          'uuid-tool-result',
+          [{ type: 'tool_result' as const, tool_use_id: 'tu-1', content: 'tool output' }],
+          false,
+          {}
+        )
+        .catch(() => {});
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      const generator = q.messageGenerator(testSessionId);
+      const first = generator.next();
+      const yieldedEarly = await Promise.race([
+        first.then(() => true),
+        new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), 100);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        }),
+      ]);
+      expect(yieldedEarly).toBe(false);
+
+      releaseInterrupt({ still_queued: [] });
+      await run;
+      const yielded = await first;
+      expect(yielded.done).toBe(false);
+      yielded.value.onSent();
+      q.stop();
+    });
+
     it('holds delivery behind a gate while survivors are cancelled and requeued', async () => {
       const q = new MessageQueue();
       q.start();
