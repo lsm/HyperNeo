@@ -66,6 +66,7 @@ interface RefreshMcpImportsCtx {
   results?: ImportResult[];
   orphanPruned?: number;
   skipOrphanPrune?: boolean;
+  includeUserConfig?: boolean;
   result?: RefreshAllResult;
 }
 
@@ -217,7 +218,7 @@ export class McpImportService {
 
   refreshAll(
     sources?: readonly (string | McpImportSource)[],
-    opts?: { skipOrphanPrune?: boolean }
+    opts?: { skipOrphanPrune?: boolean; includeUserConfig?: boolean }
   ): RefreshAllResult {
     let mcpSources: McpImportSource[];
     if (sources === undefined) {
@@ -242,6 +243,7 @@ export class McpImportService {
       log: this.log,
       service: this,
       skipOrphanPrune: opts?.skipOrphanPrune,
+      includeUserConfig: opts?.includeUserConfig,
     });
     return ctx.result ?? { results: [], orphanPruned: 0 };
   }
@@ -272,7 +274,10 @@ export class McpImportService {
     }) ?? { path: absoluteWorkspacePath, label: '' };
 
     const targetPath = join(absoluteWorkspacePath, '.mcp.json');
-    const result = this.refreshAll([source], { skipOrphanPrune: true });
+    const result = this.refreshAll([source], {
+      skipOrphanPrune: true,
+      includeUserConfig: false,
+    });
     return (
       result.results.find((r) => r.sourcePath === targetPath) ?? {
         sourcePath: targetPath,
@@ -293,7 +298,7 @@ export class McpImportService {
     const seen = new Set<string>();
     const out: McpImportSource[] = [];
 
-    for (const space of spaceRepo.listSpaces(false)) {
+    for (const space of spaceRepo.listSpaces(true)) {
       for (const ws of workspaceRepo.listBySpace(space.id)) {
         if (!ws.path) continue;
         try {
@@ -412,12 +417,14 @@ function buildMcpTargets(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     } catch {}
   }
 
-  const userBaseDir =
-    process.env.TEST_USER_SETTINGS_DIR || join(ctx.homeDirOverride ?? homedir(), '.claude');
-  const userMcp = join(userBaseDir, '.mcp.json');
-  if (!seen.has(userMcp)) {
-    seen.add(userMcp);
-    targets.push({ path: userMcp, label: '' });
+  if (ctx.includeUserConfig !== false) {
+    const userBaseDir =
+      process.env.TEST_USER_SETTINGS_DIR || join(ctx.homeDirOverride ?? homedir(), '.claude');
+    const userMcp = join(userBaseDir, '.mcp.json');
+    if (!seen.has(userMcp)) {
+      seen.add(userMcp);
+      targets.push({ path: userMcp, label: '' });
+    }
   }
 
   targets.sort((a, b) => a.path.localeCompare(b.path));
@@ -443,6 +450,24 @@ function matchExistingRank(storedName: string, serverName: string, label: string
       return parseInt(suffix, 10);
     }
   }
+
+  if (label === '' && serverName) {
+    const rawSegments = serverName.split(':');
+    const storedSegments = storedName.split(':');
+    if (storedSegments.length > rawSegments.length) {
+      const tail = storedSegments.slice(-rawSegments.length).join(':');
+      if (tail === serverName) return 1;
+    }
+    if (storedSegments.length > rawSegments.length + 1) {
+      const last = storedSegments[storedSegments.length - 1];
+      if (/^(?:[2-9]|[1-9]\d+)$/.test(last)) {
+        const stripped = storedSegments.slice(0, -1);
+        const tail = stripped.slice(-rawSegments.length).join(':');
+        if (tail === serverName) return 1 + parseInt(last, 10);
+      }
+    }
+  }
+
   return -1;
 }
 
