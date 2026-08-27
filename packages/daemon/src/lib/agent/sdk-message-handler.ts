@@ -142,6 +142,8 @@ export class SDKMessageHandler {
 
   private trailingIdleGateRelease: (() => void) | null = null;
 
+  private compactionEnqueuedMidTurn: boolean = false;
+
   private currentThinkingTokensEstimate: number | null = null;
   private lastStampedThinkingTokensEstimate: number = 0;
 
@@ -1545,7 +1547,6 @@ export class SDKMessageHandler {
     if (!isSDKCompactBoundary(message)) return;
 
     this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
-    await stateManager.setCompacting(false);
     const boundaryInfo = contextTracker.getContextInfo();
     const boundaryCapacity =
       boundaryInfo && boundaryInfo.totalCapacity > 0 ? boundaryInfo.totalCapacity : undefined;
@@ -1554,6 +1555,7 @@ export class SDKMessageHandler {
         ? undefined
         : contextBudgetThreshold(boundaryCapacity, boundaryInfo?.autoCompactPercent)
     );
+    await stateManager.setCompacting(false);
     this.ctx.messageQueue.clearNonCompactionSentSinceBoundary();
 
     void this.refreshContextUsage('compact-boundary');
@@ -1625,7 +1627,9 @@ export class SDKMessageHandler {
           !this.ctx.messageQueue.hasQueuedInternalCompaction() &&
           !this.ctx.messageQueue.hasInFlightInternalCompaction() &&
           !this.ctx.stateManager.getIsCompacting();
-        if (deadDeliveredCompaction) {
+        if (this.compactionEnqueuedMidTurn) {
+          this.compactionEnqueuedMidTurn = false;
+        } else if (deadDeliveredCompaction) {
           this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
           contextTracker.clearCompactionCooldown();
           this.logger.info(
@@ -1654,58 +1658,64 @@ export class SDKMessageHandler {
               error
             );
           });
-        if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
+        const enforceContextBudget = async (): Promise<void> => {
+          if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
 
-        const providerId = session.config.provider;
-        if (
-          !providerId ||
-          providerId === 'acp' ||
-          NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)
-        ) {
-          return;
-        }
-        if (
-          this.ctx.stateManager.getState().status === 'rate_limit_cooldown' ||
-          (this.ctx.isLimitRecoveryPending?.() ?? false)
-        ) {
-          return;
-        }
-        if (clearedDeadCompaction) {
-          return;
-        }
-        const effectiveWindow =
-          contextInfo.totalCapacity > 0 ? contextInfo.totalCapacity : modelInfo?.contextWindow;
-        const effectivePercent = contextInfo.autoCompactPercent;
-        const budgetKey = contextBudgetThreshold(effectiveWindow ?? 0, effectivePercent);
-        if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
-          return;
-        }
-        const decision = decideContextBudgetCompaction({
-          totalUsed: contextInfo.totalUsed,
-          configuredWindow: effectiveWindow,
-          autoCompactPercent: effectivePercent,
-          sdkAutoCompactEnabled: contextInfo.isAutoCompactEnabled,
-          sdkAutoCompactThreshold: contextInfo.sdkAutoCompactThreshold,
-          cooldownActive: contextTracker.isCoolingDown(budgetKey),
-          compactingActive: this.ctx.stateManager.getIsCompacting(),
-        });
-        if (decision.action === 'compact') {
-          contextTracker.markCompactionTriggered(budgetKey);
-          this.logger.info(
-            `Daemon context-budget compaction for session ${session.id} ` +
-              `(provider=${providerId}, reason=${decision.reason}, ` +
-              `${contextInfo.totalUsed} >= ${budgetKey} of ${effectiveWindow ?? 0} tokens)`
-          );
-          void this.ctx.messageQueue
-            .enqueue('/compact', true, { durable: true, prepend: true })
-            .catch((error) => {
-              if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
-                return;
-              }
-              this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
-              contextTracker.clearCompactionCooldown();
-            });
-        }
+          const providerId = session.config.provider;
+          if (
+            !providerId ||
+            providerId === 'acp' ||
+            NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)
+          ) {
+            return;
+          }
+          if (
+            this.ctx.stateManager.getState().status === 'rate_limit_cooldown' ||
+            (this.ctx.isLimitRecoveryPending?.() ?? false)
+          ) {
+            return;
+          }
+          if (clearedDeadCompaction) {
+            return;
+          }
+          const effectiveWindow =
+            contextInfo.totalCapacity > 0 ? contextInfo.totalCapacity : modelInfo?.contextWindow;
+          const effectivePercent = contextInfo.autoCompactPercent;
+          const budgetKey = contextBudgetThreshold(effectiveWindow ?? 0, effectivePercent);
+          if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
+            return;
+          }
+          const decision = decideContextBudgetCompaction({
+            totalUsed: contextInfo.totalUsed,
+            configuredWindow: effectiveWindow,
+            autoCompactPercent: effectivePercent,
+            sdkAutoCompactEnabled: contextInfo.isAutoCompactEnabled,
+            sdkAutoCompactThreshold: contextInfo.sdkAutoCompactThreshold,
+            cooldownActive: contextTracker.isCoolingDown(budgetKey),
+            compactingActive: this.ctx.stateManager.getIsCompacting(),
+          });
+          if (decision.action === 'compact') {
+            contextTracker.markCompactionTriggered(budgetKey);
+            this.logger.info(
+              `Daemon context-budget compaction for session ${session.id} ` +
+                `(provider=${providerId}, reason=${decision.reason}, ` +
+                `${contextInfo.totalUsed} >= ${budgetKey} of ${effectiveWindow ?? 0} tokens)`
+            );
+            if (reason === 'event-tick') {
+              this.compactionEnqueuedMidTurn = true;
+            }
+            void this.ctx.messageQueue
+              .enqueue('/compact', true, { durable: true, prepend: true })
+              .catch((error) => {
+                if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
+                  return;
+                }
+                this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
+                contextTracker.clearCompactionCooldown();
+              });
+          }
+        };
+        await enforceContextBudget();
         await boundedDeliveryGate(
           publishProjection.then(() => undefined),
           gateDeadline

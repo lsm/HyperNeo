@@ -104,13 +104,31 @@ export class MessageQueue {
     if (this.internalCompactionsAwaitingBoundary > 0) {
       this.internalCompactionsAwaitingBoundary -= 1;
     }
+    this.cancelInternalCompactionEntries();
+    this.recentSentPrompts.clear();
+    this.wakeWaiters();
+  }
+
+  private cancelInternalCompactionEntries(): void {
     this.queue = this.queue.filter((message) => {
       if (!this.isInternalCompaction(message)) return true;
       message.resolve(message.id);
       return false;
     });
-    this.recentSentPrompts.clear();
-    this.wakeWaiters();
+    this.claimed = new Set(
+      [...this.claimed].filter((message) => {
+        if (!this.isInternalCompaction(message)) return true;
+        message.resolve(message.id);
+        return false;
+      })
+    );
+    this.yielded = new Set(
+      [...this.yielded].filter((message) => {
+        if (!this.isInternalCompaction(message)) return true;
+        message.resolve(message.id);
+        return false;
+      })
+    );
   }
 
   hasCompactionsAwaitingBoundary(): boolean {
@@ -426,25 +444,7 @@ export class MessageQueue {
     this.running = false;
     this.internalCompactionsAwaitingBoundary = 0;
     this.nonCompactionSentSinceBoundary = false;
-    this.queue = this.queue.filter((message) => {
-      if (!this.isInternalCompaction(message)) return true;
-      message.resolve(message.id);
-      return false;
-    });
-    this.claimed = new Set(
-      [...this.claimed].filter((message) => {
-        if (!this.isInternalCompaction(message)) return true;
-        message.resolve(message.id);
-        return false;
-      })
-    );
-    this.yielded = new Set(
-      [...this.yielded].filter((message) => {
-        if (!this.isInternalCompaction(message)) return true;
-        message.resolve(message.id);
-        return false;
-      })
-    );
+    this.cancelInternalCompactionEntries();
     this.deliveryGate = null;
     this.wakeWaiters();
   }

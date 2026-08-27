@@ -4491,6 +4491,69 @@ describe('SDKMessageHandler', () => {
         expect(opened).toBe(true);
       });
 
+      it('does not treat the ordinary turn result as a dead compaction after a mid-turn enqueue', async () => {
+        hasQueuedMessagesSpy.mockImplementation(() => true);
+        const { h } = budgetCase();
+
+        for (let i = 0; i < 5; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+
+        hasQueuedMessagesSpy.mockImplementation(() => false);
+        hasOutstandingInternalCompactionSpy.mockImplementation(() => true);
+        hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+        expect(clearCompactionCooldownSpy).not.toHaveBeenCalled();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+        expect(clearCompactionCooldownSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('awaits the context publication on non-enforcement exits', async () => {
+        let resolvePublish: (() => void) | undefined;
+        mockInternalEventBus.publish = mock((event: string) => {
+          if (event !== 'context.updated') return Promise.resolve();
+          return new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          });
+        });
+        const { h } = budgetCase({
+          provider: 'anthropic',
+          model: 'sonnet',
+          window: 200_000,
+          totalUsed: 190_000,
+        });
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+
+        let settled = false;
+        void handled.then(() => {
+          settled = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(settled).toBe(false);
+
+        resolvePublish?.();
+        await handled;
+      });
+
       it('holds the delivery gate until the trailing session_state_changed idle lands', async () => {
         const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
           ({
