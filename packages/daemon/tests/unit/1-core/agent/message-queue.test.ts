@@ -1010,6 +1010,19 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('a compact boundary cancels a queued internal compaction instead of double-compacting', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const compaction = q.enqueue('/compact', true, { durable: true, prepend: true });
+      expect(q.hasQueuedInternalCompaction()).toBe(true);
+
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.hasQueuedInternalCompaction()).toBe(false);
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+      await compaction;
+      q.stop();
+    });
+
     it('a queue restart clears outstanding compaction state so prompts are not held', async () => {
       const q = new MessageQueue();
       q.start();

@@ -104,6 +104,11 @@ export class MessageQueue {
     if (this.internalCompactionsAwaitingBoundary > 0) {
       this.internalCompactionsAwaitingBoundary -= 1;
     }
+    this.queue = this.queue.filter((message) => {
+      if (!this.isInternalCompaction(message)) return true;
+      message.resolve(message.id);
+      return false;
+    });
     this.recentSentPrompts.clear();
     this.wakeWaiters();
   }
