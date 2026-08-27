@@ -1085,7 +1085,10 @@ export class AcpQueryRunner {
           : undefined;
 
       if (!recoveryState.rateLimitCooldownScheduled) {
-        stateManager.beginTerminalIdle();
+        if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
+          return;
+        }
+        stateManager.beginTerminalIdle(stateManager.idleOwnerForQuery(queryGeneration));
         await errorManager.handleError(
           session.id,
           error instanceof Error ? error : new Error(errorMessage),
@@ -1100,7 +1103,11 @@ export class AcpQueryRunner {
             startupTimeoutMs: getStartupTimeoutMs(),
           }
         );
-        await stateManager.setIdle();
+        if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
+          stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
+          return;
+        }
+        await stateManager.setIdle({ owner: stateManager.idleOwnerForQuery(queryGeneration) });
       }
     }
   }
