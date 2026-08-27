@@ -412,5 +412,27 @@ describe('McpImportService', () => {
       expect(results).toHaveLength(2);
       expect(repo.listBySourcePath(join(ws, '.mcp.json'))).toHaveLength(1);
     });
+
+    test('continues the sweep when one workspace file is malformed and preserves its existing rows', () => {
+      const wsGood = mkdtempSync(join(tmpRoot, 'ws-good-'));
+      const goodFile = join(wsGood, '.mcp.json');
+      writeMcpJson(goodFile, { mcpServers: { good: { command: 'x' } } });
+
+      const wsBad = mkdtempSync(join(tmpRoot, 'ws-bad-'));
+      const badFile = join(wsBad, '.mcp.json');
+      writeMcpJson(badFile, { mcpServers: { stale: { command: 'y' } } });
+      service.refreshAll([wsBad]);
+
+      writeFileSync(badFile, '{ not json', 'utf-8');
+
+      const { results } = service.refreshAll([wsGood, wsBad]);
+      const byStatus = Object.fromEntries(results.map((r) => [r.sourcePath, r.status]));
+
+      expect(byStatus[goodFile]).toBe('ok');
+      expect(byStatus[badFile]).toBe('malformed');
+      expect(repo.getByName('good')).not.toBeNull();
+      expect(repo.getByName('stale')).not.toBeNull();
+      expect(repo.getByName('stale')!.sourcePath).toBe(badFile);
+    });
   });
 });
