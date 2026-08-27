@@ -2682,6 +2682,26 @@ describe('SpaceStore — task detail cache', () => {
     expect(spaceStore.taskDetails.value.size).toBe(0);
   });
 
+  it('does not seed the cache from event payloads carrying summary markers', async () => {
+    await spaceStore.selectSpace('space-1');
+    taskDetailResult = { ...makeTask('t1'), description: 'full description' };
+    await spaceStore.ensureTaskDetail('t1');
+
+    fireMockEvent('space.task.updated', {
+      sessionId: 'session-1',
+      spaceId: 'space-1',
+      taskId: 't1',
+      task: {
+        ...makeTask('t1'),
+        description: 'truncated',
+        updatedAt: Date.now() + 1,
+        descriptionTruncated: true,
+      },
+    });
+
+    expect(spaceStore.taskDetails.value.get('t1')?.description).toBe('full description');
+  });
+
   it('clears cached details when the selected space changes', async () => {
     await spaceStore.selectSpace('space-1');
     await spaceStore.ensureTaskDetail('t1');

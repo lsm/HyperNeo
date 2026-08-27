@@ -2009,6 +2009,7 @@ class SpaceStore {
   private seedTaskDetail(task: SpaceTask): void {
     const existing = this.taskDetails.value.get(task.id);
     if (!existing || existing === task) return;
+    if ('descriptionTruncated' in task || 'resultTruncated' in task) return;
     if (task.updatedAt < existing.updatedAt) return;
     this.taskDetails.value = new Map(this.taskDetails.value).set(task.id, task);
   }
