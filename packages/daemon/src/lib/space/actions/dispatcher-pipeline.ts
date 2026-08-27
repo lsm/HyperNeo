@@ -31,6 +31,7 @@ export type DispatchTelemetryEvent = {
   workflowRunId?: string;
   outcome: 'dispatched' | 'denied' | 'failed';
   reason?: string;
+  elapsedMs?: number;
   timestamp: number;
 };
 
@@ -232,7 +233,8 @@ export function formatResult(ctx: DispatchActionCtx): DispatchActionCtx {
 export function buildDispatchTelemetryEvent(
   input: DispatchActionInput,
   action: RegisteredAction | undefined,
-  outcome: DispatchActionOutcome
+  outcome: DispatchActionOutcome,
+  elapsedMs?: number
 ): DispatchTelemetryEvent {
   return {
     actionName: action?.name ?? input.actionName,
@@ -244,6 +246,7 @@ export function buildDispatchTelemetryEvent(
     workflowRunId: input.workflowRunId,
     outcome: outcome.action,
     reason: outcome.action === 'denied' ? outcome.reason : undefined,
+    elapsedMs,
     timestamp: Date.now(),
   };
 }
@@ -252,10 +255,11 @@ export async function emitDispatchTelemetry(
   deps: DispatchActionDeps,
   input: DispatchActionInput,
   action: RegisteredAction | undefined,
-  outcome: DispatchActionOutcome
+  outcome: DispatchActionOutcome,
+  elapsedMs?: number
 ): Promise<void> {
   if (!deps.emitTelemetry) return;
-  const event = buildDispatchTelemetryEvent(input, action, outcome);
+  const event = buildDispatchTelemetryEvent(input, action, outcome, elapsedMs);
   try {
     await deps.emitTelemetry(event);
   } catch {}
@@ -288,16 +292,17 @@ export async function runDispatchAction(
   deps: DispatchActionDeps,
   input: DispatchActionInput
 ): Promise<DispatchActionOutcome> {
+  const startedAt = Date.now();
   try {
     const ctx = await run({ ...input, deps });
     const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
-    await emitDispatchTelemetry(deps, input, ctx.action, outcome);
+    await emitDispatchTelemetry(deps, input, ctx.action, outcome, Date.now() - startedAt);
     return outcome;
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     const outcome = failedOutcome(error);
     const action = deps.registry.get(input.actionName);
-    await emitDispatchTelemetry(deps, input, action, outcome);
+    await emitDispatchTelemetry(deps, input, action, outcome, Date.now() - startedAt);
     return outcome;
   }
 }
