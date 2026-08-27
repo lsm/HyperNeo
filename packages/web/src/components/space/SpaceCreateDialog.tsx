@@ -15,9 +15,14 @@ interface SpaceCreateDialogProps {
 }
 
 interface ExtraWorkspaceRow {
+  id: number;
   path: string;
   label: string;
 }
+
+const MAX_ADDITIONAL_WORKSPACES = 7;
+
+let extraWorkspaceRowSeq = 0;
 
 function basenameFromPath(p: string): string {
   const normalized = p.replace(/[/\\]+$/, '');
@@ -69,13 +74,13 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
     if (path !== null) handlePathInput(path);
   };
 
-  const updateExtraWorkspace = (index: number, patch: Partial<ExtraWorkspaceRow>) => {
-    setExtraWorkspaces((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const updateExtraWorkspace = (id: number, patch: Partial<ExtraWorkspaceRow>) => {
+    setExtraWorkspaces((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   };
 
-  const handleExtraBrowse = async (index: number) => {
+  const handleExtraBrowse = async (id: number) => {
     const path = await pickFolder();
-    if (path !== null) updateExtraWorkspace(index, { path });
+    if (path !== null) updateExtraWorkspace(id, { path });
   };
 
   const handleSubmit = async (e: Event) => {
@@ -83,6 +88,14 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
 
     if (!workspacePath.trim()) {
       setError('Workspace path is required');
+      return;
+    }
+
+    const partialIndex = extraWorkspaces.findIndex(
+      (row) => row.path.trim() === '' && row.label.trim() !== ''
+    );
+    if (partialIndex !== -1) {
+      setError(`Additional workspace ${partialIndex + 1}: path is required`);
       return;
     }
 
@@ -181,8 +194,14 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
             </label>
             <button
               type="button"
-              onClick={() => setExtraWorkspaces((prev) => [...prev, { path: '', label: '' }])}
-              class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              disabled={extraWorkspaces.length >= MAX_ADDITIONAL_WORKSPACES}
+              onClick={() =>
+                setExtraWorkspaces((prev) => [
+                  ...prev,
+                  { id: ++extraWorkspaceRowSeq, path: '', label: '' },
+                ])
+              }
+              class="text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:text-gray-600 disabled:hover:text-gray-600"
             >
               + Add workspace
             </button>
@@ -195,7 +214,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
             <div class="space-y-2">
               {extraWorkspaces.map((row, index) => (
                 <div
-                  key={index}
+                  key={row.id}
                   class="rounded-lg border border-dark-600 bg-dark-800/50 p-3 space-y-2"
                 >
                   <div class="flex gap-2">
@@ -203,7 +222,9 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
                       type="text"
                       value={row.path}
                       onInput={(e) =>
-                        updateExtraWorkspace(index, { path: (e.target as HTMLInputElement).value })
+                        updateExtraWorkspace(row.id, {
+                          path: (e.target as HTMLInputElement).value,
+                        })
                       }
                       placeholder="/Users/you/projects/other-repo"
                       class="flex-1 min-w-0 bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
@@ -212,7 +233,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
                     {nativeFolderPickerAvailable && (
                       <button
                         type="button"
-                        onClick={() => handleExtraBrowse(index)}
+                        onClick={() => handleExtraBrowse(row.id)}
                         title="Browse on this computer"
                         class="px-3 py-2.5 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-300 hover:text-gray-100 border border-dark-600 transition-colors shrink-0 text-sm font-medium"
                       >
@@ -222,7 +243,7 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
                     <button
                       type="button"
                       onClick={() =>
-                        setExtraWorkspaces((prev) => prev.filter((_, i) => i !== index))
+                        setExtraWorkspaces((prev) => prev.filter((entry) => entry.id !== row.id))
                       }
                       aria-label={`Remove additional workspace ${index + 1}`}
                       class="text-gray-400 hover:text-red-400 transition-colors shrink-0 px-1"
@@ -241,7 +262,9 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
                     type="text"
                     value={row.label}
                     onInput={(e) =>
-                      updateExtraWorkspace(index, { label: (e.target as HTMLInputElement).value })
+                      updateExtraWorkspace(row.id, {
+                        label: (e.target as HTMLInputElement).value,
+                      })
                     }
                     placeholder="Label (optional)"
                     class="w-full bg-dark-800 border border-dark-700 rounded-lg px-4 py-2 text-gray-100

@@ -427,4 +427,68 @@ describe('SpaceCreateDialog', () => {
       ).toBe('/projects/picked-extra');
     });
   });
+
+  it('applies a pending folder pick to its own row after earlier rows are removed', async () => {
+    vi.mocked(hasNativeFolderPicker).mockReturnValue(true);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    let resolvePick: (value: { path: string | null }) => void = () => {};
+    mockRequest.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePick = resolve;
+        })
+    );
+
+    const { getByText, getAllByText, getAllByLabelText, getAllByPlaceholderText } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.click(getAllByText('Browse')[2]);
+    fireEvent.click(getAllByLabelText('Remove additional workspace 1')[0]);
+
+    resolvePick({ path: '/projects/picked-second' });
+
+    await waitFor(() => {
+      expect(
+        (getAllByPlaceholderText('/Users/you/projects/other-repo')[0] as HTMLInputElement).value
+      ).toBe('/projects/picked-second');
+    });
+  });
+
+  it('rejects a row with a label but no path', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue(SPACE_MOCK);
+
+    const { getByText, getByPlaceholderText, getAllByPlaceholderText, getByRole, findByText } =
+      render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.input(getAllByPlaceholderText('Label (optional)')[0], {
+      target: { value: 'Orphan label' },
+    });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    expect(await findByText('Additional workspace 1: path is required')).toBeTruthy();
+    expect(mockRequest).not.toHaveBeenCalled();
+  });
+
+  it('caps additional rows at the daemon workspace limit', () => {
+    const { getByText, getAllByPlaceholderText } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    for (let i = 0; i < 8; i++) {
+      fireEvent.click(getByText('+ Add workspace'));
+    }
+
+    expect(getAllByPlaceholderText('/Users/you/projects/other-repo')).toHaveLength(7);
+    expect((getByText('+ Add workspace') as HTMLButtonElement).disabled).toBe(true);
+  });
 });
