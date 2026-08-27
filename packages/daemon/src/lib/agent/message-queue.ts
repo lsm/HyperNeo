@@ -100,7 +100,6 @@ export class MessageQueue {
   private cycleUserStopped: boolean = false;
   private restartAbortedByStop: boolean = false;
   private resolveEarlyDeliveryGate: (() => void) | undefined;
-  private resolveLateDeliveryGate: (() => void) | undefined;
   private lateWindowRemovedCompactions: number = 0;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
@@ -572,6 +571,7 @@ export class MessageQueue {
     this.cancelInternalCompactionEntries(true, true);
     this.deliveryGate = null;
     this.deliveryGateExclusive = false;
+    this.midTurnCompactionQueued = false;
     this.wakeWaiters();
     if (deliveredCompactions) {
       this.onInternalCompactionsAborted?.();
@@ -855,10 +855,6 @@ export class MessageQueue {
 
   openLateReceiptWindow(_opts: MidTurnBudgetInterruptOptions): void {
     this.lateWindowRemovedCompactions = this.removePendingInternalCompactions();
-    const lateGate = new Promise<void>((resolve) => {
-      this.resolveLateDeliveryGate = resolve;
-    });
-    this.setDeliveryGate(lateGate, { exclusive: true });
   }
 
   shouldEnqueueLateCompaction(): boolean {
@@ -869,6 +865,11 @@ export class MessageQueue {
     opts: MidTurnBudgetInterruptOptions,
     receipt: { still_queued: string[] }
   ): Promise<void> {
+    let resolveLateGate: (() => void) | undefined;
+    const lateGate = new Promise<void>((resolve) => {
+      resolveLateGate = resolve;
+    });
+    this.setDeliveryGate(lateGate, { exclusive: true });
     try {
       await runMidTurnBudgetPipeline({
         opts,
@@ -880,8 +881,7 @@ export class MessageQueue {
         decideCompaction: undefined,
       });
     } finally {
-      this.resolveLateDeliveryGate?.();
-      this.resolveLateDeliveryGate = undefined;
+      resolveLateGate?.();
     }
   }
 

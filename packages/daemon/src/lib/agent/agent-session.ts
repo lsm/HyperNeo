@@ -1571,7 +1571,16 @@ export class AgentSession
         return kickoff;
       },
       onSurvivorRequeued: (uuid) => {
-        this.db.getSDKMessageRepo().markDeliveryRetryableByUuid(this.session.id, uuid);
+        const dbId = this.db.getSDKMessageRepo().markDeliveryRetryableByUuid(this.session.id, uuid);
+        if (dbId) {
+          void this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: this.session.id,
+              messageIds: [dbId],
+              status: 'enqueued',
+            })
+            .catch(() => {});
+        }
       },
       ownsTurn: () => this.queryObject === queryObject,
     };
