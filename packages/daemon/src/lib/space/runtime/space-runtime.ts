@@ -5967,7 +5967,7 @@ export class SpaceRuntime {
         continue;
       }
 
-      if (!tam.isSessionAlive(execution.agentSessionId)) continue;
+      if (!tam.isSessionInMemory(execution.agentSessionId)) continue;
       const session = tam.getAgentSessionById?.(execution.agentSessionId);
       const processingState = session?.getProcessingState();
       if (processingState?.status === 'waiting_for_input') continue;
@@ -6335,7 +6335,7 @@ export class SpaceRuntime {
           continue;
         }
 
-        if (tam.isSessionAlive(execution.agentSessionId)) {
+        if (tam.isSessionInMemory(execution.agentSessionId)) {
           continue;
         }
 
@@ -6550,7 +6550,7 @@ export class SpaceRuntime {
         execution.status === 'pending' &&
         preTickPendingIds.has(execution.id) &&
         execution.agentSessionId &&
-        tam.isSessionAlive(execution.agentSessionId)
+        tam.isSessionInMemory(execution.agentSessionId)
       ) {
         aliveSessionIds.add(execution.agentSessionId);
       }
@@ -6923,7 +6923,7 @@ export class SpaceRuntime {
             continue;
           }
 
-          if (execution.agentSessionId && tam.isSessionAlive(execution.agentSessionId)) {
+          if (execution.agentSessionId && tam.isSessionInMemory(execution.agentSessionId)) {
             await tam.flushPendingMessagesForTarget(
               runId,
               execution.agentName,
@@ -6938,7 +6938,7 @@ export class SpaceRuntime {
             continue;
           }
 
-          if (execution.agentSessionId && !tam.isSessionAlive(execution.agentSessionId)) {
+          if (execution.agentSessionId && !tam.isSessionInMemory(execution.agentSessionId)) {
             this.resetWorkflowNodeExecutionForSpawnRetry(
               runId,
               execution,

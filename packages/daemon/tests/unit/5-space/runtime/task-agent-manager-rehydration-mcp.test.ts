@@ -255,6 +255,24 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(registered.get(SUB_SESSION_ID)).toBe(cachedFake.agentSession);
   });
 
+  test('refuses to rehydrate a session whose DB row is archived (#3109)', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as {
+        config: { db: { getSession: (id: string) => { status: string } | null } };
+      }
+    ).config.db.getSession = (id: string) =>
+      id === SUB_SESSION_ID ? { id, status: 'archived' } : null;
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => makeFakeAgentSession('never').agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    const rehydrated = await rehydrateOf(tam)(SUB_SESSION_ID);
+
+    expect(rehydrated).toBeNull();
+    expect(restoreSpy).toHaveBeenCalledTimes(0);
+  });
+
   test('a failed start unwinds registration so the next rehydrate starts fresh', async () => {
     const { tam, unregistered } = makeManager();
     const failing = makeFakeAgentSession(SUB_SESSION_ID, { failStart: true });
