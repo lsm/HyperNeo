@@ -14,6 +14,7 @@ export interface ActionEntry<P> {
   readonly safetyClass?: ActionSafetyClass;
   readonly description: string;
   readonly paramsDoc: string;
+  readonly returnsHint?: string;
   readonly paramsSchema: z.ZodType<P>;
   readonly autonomyRequirement?: number | ActionAutonomyResolver<P>;
   readonly handler: (params: P) => Promise<unknown>;
@@ -25,6 +26,7 @@ export interface ActionDefinition {
   readonly safetyClass?: ActionSafetyClass;
   readonly description: string;
   readonly paramsDoc: string;
+  readonly returnsHint?: string;
   readonly paramsSchema: z.ZodType<unknown>;
   readonly autonomyRequirement?: number | ErasedActionAutonomyResolver;
   readonly handler: ErasedActionHandler;
