@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { z } from 'zod';
 import type { ModelInfo } from '@hyperneo/shared';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
@@ -32,6 +33,8 @@ import {
   createSpaceAgentToolHandlers,
   validateTemplateReminder,
 } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import { SPACE_AGENT_TOOL_SCHEMAS } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
+import type { SpaceAgentToolName } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
@@ -544,6 +547,110 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).toContain('resolve_forge_scope');
     expect(names).toContain('update_forge_lesson');
     expect(names).toContain('create_task_from_forge_proposal');
+  });
+});
+
+describe('createSpaceAgentMcpServer — base tool schema extraction equivalence', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function makeBaseServer() {
+    return createSpaceAgentMcpServer({
+      spaceId: ctx.spaceId,
+      runtime: ctx.runtime,
+      workflowManager: ctx.workflowManager,
+      taskRepo: ctx.taskRepo,
+      nodeExecutionRepo: ctx.nodeExecutionRepo,
+      workflowRunRepo: ctx.workflowRunRepo,
+      taskManager: ctx.taskManager,
+      spaceAgentManager: ctx.agentManager,
+    });
+  }
+
+  test('minimal server registers exactly the 24 extracted base tools', () => {
+    const server = makeBaseServer();
+    expect(getRegisteredToolNames(server).sort()).toEqual(
+      Object.keys(SPACE_AGENT_TOOL_SCHEMAS).sort()
+    );
+  });
+
+  test('each registered base tool schema is field-identical to the extracted schema', () => {
+    const server = makeBaseServer();
+    for (const [name, schema] of Object.entries(SPACE_AGENT_TOOL_SCHEMAS)) {
+      const inputSchema = getRegisteredTool(server, name).inputSchema;
+      const extractedShape = (schema as { shape: Record<string, unknown> }).shape;
+      const registeredShape = hasParser(inputSchema)
+        ? (inputSchema as unknown as { shape: Record<string, unknown> }).shape
+        : (inputSchema as Record<string, unknown>);
+      expect(Object.keys(registeredShape).sort()).toEqual(Object.keys(extractedShape).sort());
+      for (const [key, field] of Object.entries(extractedShape)) {
+        expect(registeredShape[key]).toBe(field);
+      }
+    }
+  });
+
+  test('registered and extracted schemas produce identical safeParse outcomes', () => {
+    const server = makeBaseServer();
+    const probes: Array<[SpaceAgentToolName, unknown]> = [
+      ['list_sessions', {}],
+      ['list_sessions', { limit: 101 }],
+      ['get_session_detail', { session_id: 's1' }],
+      ['get_session_detail', {}],
+      ['get_session_messages', { session_id: 's1' }],
+      ['get_session_messages', { session_id: 's1', limit: 101 }],
+      ['send_session_message', { session_id: 's1', message: 'hi' }],
+      ['send_session_message', { session_id: 's1', message: '' }],
+      ['update_session_state', { session_id: 's1', processing_state: 'running' }],
+      ['update_session_state', { session_id: 's1', processing_state: 'archived' }],
+      ['interrupt_session', { session_id: 's1', reason: 'stuck' }],
+      ['interrupt_session', {}],
+      ['list_workflows', {}],
+      ['get_workflow_run', { run_id: 'r1' }],
+      ['get_workflow_run', {}],
+      ['change_plan', { run_id: 'r1', workflow_handle: 'wf' }],
+      ['change_plan', {}],
+      ['get_workflow_detail', {}],
+      ['suggest_workflow', { description: 'work' }],
+      ['suggest_workflow', {}],
+      ['list_tasks', { status: 'in_progress', compact: true }],
+      ['list_tasks', { status: 'rate_limited' }],
+      ['create_standalone_task', { title: 'T', description: 'D', draft: true }],
+      ['create_standalone_task', { title: 'T' }],
+      ['get_task_detail', { task_number: 5 }],
+      ['update_task', { task_id: 't1', status: 'rate_limited' }],
+      ['update_task', { task_id: 't1', status: 'paused' }],
+      ['retry_task', { task_id: 't1' }],
+      ['cancel_task', { task_id: 't1', cancel_workflow_run: true }],
+      ['reassign_task', { task_id: 't1', custom_agent_id: null }],
+      ['reassign_task', { task_id: 't1', assigned_agent: 'qa' }],
+      ['publish_task', { task_id: 't1' }],
+      ['archive_task', { task_id: 't1' }],
+      ['send_message_to_task', { message: 'hello', task_number: 37 }],
+      ['send_message_to_task', { message: 'hi', task_number: 0 }],
+      ['list_task_members', { task_id: 't1' }],
+      ['approve_task', { task_id: 't1', reason: 'ok' }],
+      ['approve_pending_completion', { task_id: 't1', approved: false, reason: null }],
+      ['approve_pending_completion', { task_id: 't1' }],
+    ];
+
+    for (const [name, input] of probes) {
+      const inputSchema = getRegisteredTool(server, name).inputSchema;
+      const registered = (hasParser(inputSchema)
+        ? inputSchema
+        : z.object(inputSchema as Record<string, z.ZodType>)) as unknown as z.ZodType;
+      const extracted = SPACE_AGENT_TOOL_SCHEMAS[name] as z.ZodType;
+      const registeredResult = registered.safeParse(input);
+      const extractedResult = extracted.safeParse(input);
+      expect(registeredResult.success).toBe(extractedResult.success);
+      if (registeredResult.success && extractedResult.success) {
+        expect(registeredResult.data).toEqual(extractedResult.data);
+      }
+    }
   });
 });
 
