@@ -47,7 +47,7 @@ function enforcementHarness(overrides?: {
 
   const input: ContextBudgetEnforcementInput = {
     sessionId: 'enforcement-session',
-    providerId: overrides?.providerId ?? 'openrouter',
+    providerId: 'providerId' in (overrides ?? {}) ? overrides?.providerId : 'openrouter',
     reason: 'turn-end',
     contextInfo,
     fallbackContextWindow: 262_144,

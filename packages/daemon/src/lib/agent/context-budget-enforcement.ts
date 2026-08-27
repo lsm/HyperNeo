@@ -97,8 +97,8 @@ const runEnforceContextBudget = (
     deadCompactionCleared: (ctx: ContextBudgetEnforcementCtx) => ctx.clearedDeadCompaction,
     compactionOutstanding: (ctx: ContextBudgetEnforcementCtx) =>
       ctx.messageQueue.hasOutstandingInternalCompaction(),
-    budgetRequiresCompaction: (ctx: ContextBudgetEnforcementCtx) =>
-      ctx.decision?.action === 'compact',
+    budgetRequiresNoCompaction: (ctx: ContextBudgetEnforcementCtx) =>
+      ctx.decision?.action !== 'compact',
   })('enforce-context-budget') as PipelineAPI
 )
   .input(['ctx'])
@@ -108,7 +108,7 @@ const runEnforceContextBudget = (
   .pipe(resolveBudgetThresholds, 'ctx', 'ctx')
   .pipe('!compactionOutstanding', 'ctx')
   .pipe(runContextBudgetDecision, 'ctx', 'ctx')
-  .pipe('budgetRequiresCompaction', 'ctx')
+  .pipe('!budgetRequiresNoCompaction', 'ctx')
   .pipe(enqueueBudgetCompaction, 'ctx', 'ctx')
   .end('ctx') as (ctx: ContextBudgetEnforcementCtx) => ContextBudgetEnforcementCtx;
 
