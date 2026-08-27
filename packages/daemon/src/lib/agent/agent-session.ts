@@ -1574,8 +1574,18 @@ export class AgentSession
       onResumeClear: () => {
         this.pendingResumeAfterCompaction = false;
       },
-      getDurableMessageContent: (uuid) =>
-        this.db.getSDKMessageRepo().getUserMessageContentByUuid(this.session.id, uuid) ?? undefined,
+      getDurableMessageContent: (uuid) => {
+        const repo = this.db.getSDKMessageRepo();
+        const kickoff = repo.getUserMessageContentByUuid(this.session.id, uuid);
+        if (kickoff === null || kickoff === undefined) return undefined;
+        const batchUuids = this.db
+          .getJobQueueRepo?.()
+          ?.getActiveDeliveryBatchUuids(this.session.id, uuid);
+        if (batchUuids && batchUuids.length > 1) {
+          return this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids).content;
+        }
+        return kickoff;
+      },
       onSurvivorRequeued: (uuid) => {
         this.db.getSDKMessageRepo().markDeliveryRetryableByUuid(this.session.id, uuid);
       },

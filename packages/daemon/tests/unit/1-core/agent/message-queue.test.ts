@@ -2255,6 +2255,68 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('stands down when the user stops the turn during survivor cancellation', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-stop-cancel', 'survivor-stop', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const restartMock = mock(async () => {});
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-stop-cancel'] }),
+        cancelAsyncMessage: async () => {
+          q.stop();
+          return true;
+        },
+        restart: restartMock,
+        onResumeClear,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-stop-cancel')).toBe(false);
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+      expect(restartMock).not.toHaveBeenCalled();
+      expect(onResumeClear).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves a late receipt after the recovery restart fails', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-late-failed', 'late-survivor', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts(q, {
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => true,
+        restart: async () => {
+          q.stop();
+          throw new Error('restart failed');
+        },
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      releaseInterrupt({ still_queued: ['uuid-late-failed'] });
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-late-failed', 'late-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(true);
+    }, 15_000);
+
     it('holds delivery behind a gate while survivors are cancelled and requeued', async () => {
       const q = new MessageQueue();
       q.start();

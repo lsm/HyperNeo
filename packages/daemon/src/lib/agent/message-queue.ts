@@ -62,6 +62,7 @@ export class MessageQueue {
   private deliveryGate: Promise<void> | null = null;
   private deliveryGateExclusive: boolean = false;
   private internalRestartInFlight: boolean = false;
+  private internalRestartFailed: boolean = false;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private nonCompactionSentSinceBoundary: boolean = false;
@@ -527,6 +528,10 @@ export class MessageQueue {
     return this.running;
   }
 
+  private userStoppedQueue(): boolean {
+    return !this.isRunning() && !this.internalRestartInFlight && !this.internalRestartFailed;
+  }
+
   async *messageGenerator(
     sessionId: string,
     options?: { suppressPreYieldCallback?: boolean }
@@ -652,6 +657,7 @@ export class MessageQueue {
   }
 
   async runMidTurnBudgetInterrupt(opts: MidTurnBudgetInterruptOptions): Promise<void> {
+    this.internalRestartFailed = false;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
     opts.logger.info(
@@ -685,7 +691,7 @@ export class MessageQueue {
       ])) as { still_queued: string[] } | undefined;
     } catch (error) {
       if (timedOut) {
-        if (!this.isRunning() && !this.internalRestartInFlight) {
+        if (this.userStoppedQueue()) {
           resumeArmed = false;
           opts.onResumeClear();
         } else {
@@ -711,7 +717,7 @@ export class MessageQueue {
     }
 
     try {
-      if (!this.isRunning() && !this.internalRestartInFlight) {
+      if (this.userStoppedQueue()) {
         opts.onResumeClear();
         return;
       }
@@ -719,7 +725,7 @@ export class MessageQueue {
         await this.processInterruptSurvivorReceipt(opts, receipt);
       } else {
         const restarted = await this.processInterruptSurvivorReceipt(opts, receipt);
-        if (!restarted) {
+        if (!restarted && !this.userStoppedQueue()) {
           this.enqueueMidTurnCompaction(opts, 'mid-turn');
         }
       }
@@ -754,7 +760,7 @@ export class MessageQueue {
     opts: MidTurnBudgetInterruptOptions,
     receipt: { still_queued: string[] } | undefined
   ): Promise<void> {
-    if (!this.isRunning() && !this.internalRestartInFlight) {
+    if (this.userStoppedQueue()) {
       opts.onResumeClear();
       return;
     }
@@ -766,7 +772,9 @@ export class MessageQueue {
     this.setDeliveryGate(lateGate, { exclusive: true });
     try {
       await this.processInterruptSurvivorReceipt(opts, receipt, false);
-      this.enqueueMidTurnCompaction(opts, 'mid-turn-late');
+      if (!this.userStoppedQueue()) {
+        this.enqueueMidTurnCompaction(opts, 'mid-turn-late');
+      }
     } finally {
       resolveLateGate?.();
     }
@@ -782,6 +790,10 @@ export class MessageQueue {
     const toRequeue: string[] = [];
     if (typeof opts.cancelAsyncMessage !== 'function') {
       toRequeue.push(...survivors);
+      if (this.userStoppedQueue()) {
+        opts.onResumeClear();
+        return false;
+      }
       this.requeueCollectedSurvivors(opts, toRequeue);
       if (allowRestart) {
         await this.finishSurvivorTeardownWithRestart(opts);
@@ -824,6 +836,10 @@ export class MessageQueue {
         break;
       }
       toRequeue.push(uuid);
+    }
+    if (this.userStoppedQueue()) {
+      opts.onResumeClear();
+      return false;
     }
     this.requeueCollectedSurvivors(opts, toRequeue);
     if (needsRestart && allowRestart) {
@@ -905,6 +921,7 @@ export class MessageQueue {
     const restart = opts
       .restart({ beforeStart })
       .catch((error) => {
+        this.internalRestartFailed = true;
         opts.logger.warn(
           `query restart after unconfirmed survivor cancellation failed for ` +
             `session ${opts.sessionId}:`,
