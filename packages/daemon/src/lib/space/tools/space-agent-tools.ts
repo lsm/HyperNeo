@@ -88,28 +88,78 @@ import {
   resolveEffectiveAutonomyLevel,
 } from './tool-admission-gates.ts';
 import {
+  AddForgeManualNoteSchema,
+  AddForgeMetricSnapshotSchema,
+  ApplyForgeRollupSchema,
   ApprovePendingCompletionSchema,
   ApproveTaskSchema,
+  ArchiveAgentSchema,
   ArchiveTaskSchema,
+  AssignAgentToForgeScopeSchema,
+  AssignAgentToGoalSchema,
+  AttachForgeTaskEvidenceSchema,
+  AttachForgeWorkflowRunEvidenceSchema,
   CancelTaskSchema,
   ChangePlanSchema,
+  CreateAgentFromTemplateSchema,
+  CreateAgentReminderSchema,
+  CreateAgentSchema,
+  CreateForgeEpisodeSchema,
+  CreateForgeScopeFromGoalSchema,
+  CreateForgeScopeSchema,
+  CreateForgeTaskProposalSchema,
+  CreateGoalSchema,
   CreateStandaloneTaskSchema,
+  CreateTaskFromForgeProposalSchema,
+  GetAgentSchema,
+  GetForgeScopeSchema,
+  GetForgeTimelineSchema,
+  GetGoalSchema,
   GetSessionDetailSchema,
   GetSessionMessagesSchema,
   GetTaskDetailSchema,
   GetWorkflowDetailSchema,
   GetWorkflowRunSchema,
+  GoalMetricsSchema,
   InterruptSessionSchema,
+  ListAgentEventSubscriptionsSchema,
+  ListAgentRemindersSchema,
+  ListAgentTemplatesSchema,
+  ListAgentsSchema,
+  ListForgeEvidenceSchema,
+  ListForgeLessonsSchema,
+  ListForgeMetricSnapshotsSchema,
+  ListForgeProposalsSchema,
+  ListForgeReviewBundleSchema,
+  ListForgeScopesSchema,
+  ListGoalEventsSchema,
+  ListGoalTasksSchema,
+  ListGoalsSchema,
   ListSessionsSchema,
   ListTaskMembersSchema,
   ListTasksSchema,
   ListWorkflowsSchema,
+  PauseAgentSchema,
+  PauseGoalSchema,
   PublishTaskSchema,
   ReassignTaskSchema,
+  ResolveForgeScopeSchema,
+  ResumeGoalSchema,
   RetryTaskSchema,
   SendMessageToTaskSchema,
   SendSessionMessageSchema,
+  SubscribeAgentEventSchema,
   SuggestWorkflowSchema,
+  TriggerGoalTaskSchema,
+  UnassignAgentFromForgeScopeSchema,
+  UnassignAgentFromGoalSchema,
+  UnsubscribeAgentEventSchema,
+  UpdateAgentSchema,
+  UpdateForgeEpisodeSchema,
+  UpdateForgeLessonSchema,
+  UpdateForgeScopeSchema,
+  UpdateForgeTaskProposalSchema,
+  UpdateGoalSchema,
   UpdateSessionStateSchema,
   UpdateTaskSchema,
   SESSION_MESSAGE_MAX_LIMIT,
@@ -4116,9 +4166,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
   const handlers = createSpaceAgentToolHandlers(config);
 
-  const agentStatusSchema = z.enum(['active', 'paused', 'disabled', 'archived']);
-  const thinkingLevelSchema = z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k']);
-  const settingSourcesSchema = z.array(z.enum(['user', 'project', 'local']));
   // oxlint-disable-next-line typescript/no-explicit-any -- SDK tool list is heterogeneous by schema.
   const tools: SdkMcpToolDefinition<any>[] = [
     tool(
@@ -4273,191 +4320,100 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       tool(
         'list_agents',
         'List long-horizon Space agents in this space.',
-        {
-          status: agentStatusSchema.optional().describe('Filter by agent lifecycle status'),
-          compact: z.boolean().optional().describe('Return compact agent summaries'),
-        },
+        ListAgentsSchema.shape,
         (args) => handlers.list_agents(args)
       ),
-      tool(
-        'get_agent',
-        'Get one long-horizon Space agent by ID.',
-        { agent_id: z.string().describe('Long-horizon agent ID') },
-        (args) => handlers.get_agent(args)
+      tool('get_agent', 'Get one long-horizon Space agent by ID.', GetAgentSchema.shape, (args) =>
+        handlers.get_agent(args)
       ),
       tool(
         'create_agent',
         'Create a long-horizon Space agent. Tool-permission changes are validated against the known tool allowlist.',
-        {
-          name: z.string().min(1).describe('Agent name, unique within the space'),
-          description: z.string().optional().describe('Agent specialization summary'),
-          model: z.string().optional().describe('Model override'),
-          thinking_level: thinkingLevelSchema.optional().describe('Thinking level override'),
-          provider: z.string().optional().describe('Provider override'),
-          custom_prompt: z
-            .string()
-            .nullable()
-            .optional()
-            .describe('Operator prompt for this agent'),
-          tools: z.array(z.string()).optional().describe('Tool allowlist override'),
-          setting_sources: settingSourcesSchema
-            .nullable()
-            .optional()
-            .describe('Settings sources for this agent'),
-        },
+        CreateAgentSchema.shape,
         (args) => handlers.create_agent(args)
       ),
       tool(
         'create_agent_from_template',
         'Create a long-horizon Space agent from a built-in template. Accepts a worker preset name (Coder, Reviewer, QA, ...) or a long-horizon template key (marketing.default, security-auditor.default, ...). Long-horizon templates seed their suggested event subscriptions and reminders. Call list_agent_templates to discover available templates.',
-        {
-          template_name: z
-            .string()
-            .describe(
-              'Worker preset name (Coder, Reviewer, QA) or long-horizon template key (marketing.default, security-auditor.default)'
-            ),
-          name: z
-            .string()
-            .optional()
-            .describe('Optional new agent name; defaults to template name/display name'),
-          model: z.string().optional().describe('Model override'),
-          provider: z.string().optional().describe('Provider override'),
-          thinking_level: thinkingLevelSchema.optional().describe('Thinking level override'),
-        },
+        CreateAgentFromTemplateSchema.shape,
         (args) => handlers.create_agent_from_template(args)
       ),
       tool(
         'list_agent_templates',
         'List the built-in agent templates available to create_agent_from_template: worker presets (Coder, Reviewer, QA, ...) and long-horizon templates (marketing.default, security-auditor.default, ...).',
-        {},
+        ListAgentTemplatesSchema.shape,
         () => handlers.list_agent_templates()
       ),
       tool(
         'update_agent',
         'Update a long-horizon Space agent. Autonomy/tool-permission escalation is limited by manager validation and audited.',
-        {
-          agent_id: z.string().describe('Long-horizon agent ID'),
-          name: z.string().optional().describe('New agent name'),
-          status: agentStatusSchema.optional().describe('Lifecycle status'),
-          description: z.string().nullable().optional().describe('New description'),
-          model: z.string().nullable().optional().describe('Model override, or null to clear'),
-          thinking_level: thinkingLevelSchema
-            .nullable()
-            .optional()
-            .describe('Thinking level override, or null to clear'),
-          provider: z
-            .string()
-            .nullable()
-            .optional()
-            .describe('Provider override, or null to clear'),
-          custom_prompt: z
-            .string()
-            .nullable()
-            .optional()
-            .describe('Prompt override, or null to clear'),
-          tools: z
-            .array(z.string())
-            .nullable()
-            .optional()
-            .describe('Tool allowlist override, or null to clear'),
-          setting_sources: settingSourcesSchema
-            .nullable()
-            .optional()
-            .describe('Settings sources override, or null to clear'),
-        },
+        UpdateAgentSchema.shape,
         (args) => handlers.update_agent(args)
       ),
       tool(
         'pause_agent',
         'Pause a long-horizon Space agent without deleting it.',
-        { agent_id: z.string().describe('Long-horizon agent ID') },
+        PauseAgentSchema.shape,
         (args) => handlers.pause_agent(args)
       ),
       tool(
         'archive_agent',
         'Archive a long-horizon Space agent.',
-        { agent_id: z.string().describe('Long-horizon agent ID') },
+        ArchiveAgentSchema.shape,
         (args) => handlers.archive_agent(args)
       ),
       tool(
         'assign_agent_to_goal',
         'Assign a long-horizon Space agent to a goal.',
-        {
-          agent_id: z.string().describe('Long-horizon agent ID'),
-          goal_id: z.string().describe('Goal ID'),
-        },
+        AssignAgentToGoalSchema.shape,
         (args) => handlers.assign_agent_to_goal(args)
       ),
       tool(
         'unassign_agent_from_goal',
         'Remove a long-horizon Space agent goal assignment.',
-        {
-          agent_id: z.string().describe('Long-horizon agent ID'),
-          goal_id: z.string().describe('Goal ID'),
-        },
+        UnassignAgentFromGoalSchema.shape,
         (args) => handlers.unassign_agent_from_goal(args)
       ),
       tool(
         'assign_agent_to_forge_scope',
         'Assign a long-horizon Space agent to a Forge scope.',
-        {
-          agent_id: z.string().describe('Long-horizon agent ID'),
-          scope_id: z.string().describe('Forge scope ID'),
-        },
+        AssignAgentToForgeScopeSchema.shape,
         (args) => handlers.assign_agent_to_forge_scope(args)
       ),
       tool(
         'unassign_agent_from_forge_scope',
         'Remove a long-horizon Space agent Forge scope assignment.',
-        {
-          agent_id: z.string().describe('Long-horizon agent ID'),
-          scope_id: z.string().describe('Forge scope ID'),
-        },
+        UnassignAgentFromForgeScopeSchema.shape,
         (args) => handlers.unassign_agent_from_forge_scope(args)
       ),
       tool(
         'create_agent_reminder',
         'Create a reminder for a long-horizon Space agent.',
-        {
-          agent_id: z.string().describe('Long-horizon agent ID'),
-          message: z.string().min(1).describe('Reminder message'),
-          remind_at: z.number().int().describe('Reminder timestamp in ms since epoch'),
-        },
+        CreateAgentReminderSchema.shape,
         (args) => handlers.create_agent_reminder(args)
       ),
       tool(
         'list_agent_reminders',
         'List reminders for a long-horizon Space agent.',
-        {
-          agent_id: z.string().describe('Long-horizon agent ID'),
-          status: z.enum(['active', 'done', 'cancelled']).optional().describe('Reminder status'),
-        },
+        ListAgentRemindersSchema.shape,
         (args) => handlers.list_agent_reminders(args)
       ),
       tool(
         'subscribe_agent_event',
         'Record an external-event subscription for a long-horizon Space agent.',
-        {
-          agent_id: z.string().describe('Long-horizon agent ID'),
-          topic_pattern: z.string().describe('External event topic glob pattern'),
-          label: z.string().optional().describe('Human-readable subscription label'),
-        },
+        SubscribeAgentEventSchema.shape,
         (args) => handlers.subscribe_agent_event(args)
       ),
       tool(
         'unsubscribe_agent_event',
         'Remove an external-event subscription from a long-horizon Space agent.',
-        {
-          agent_id: z.string().describe('Long-horizon agent ID'),
-          topic_pattern: z.string().describe('External event topic glob pattern'),
-          label: z.string().optional().describe('Human-readable subscription label'),
-        },
+        UnsubscribeAgentEventSchema.shape,
         (args) => handlers.unsubscribe_agent_event(args)
       ),
       tool(
         'list_agent_event_subscriptions',
         'List external-event subscriptions for a long-horizon Space agent.',
-        { agent_id: z.string().describe('Long-horizon agent ID') },
+        ListAgentEventSubscriptionsSchema.shape,
         (args) => handlers.list_agent_event_subscriptions(args)
       )
     );
@@ -4478,502 +4434,203 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
     );
   }
 
-  const goalStatusSchema = z.enum(['active', 'paused', 'completed', 'archived']);
-  const goalTypeSchema = z.enum(['one_shot', 'measurable', 'recurring']);
-  const goalMetricsSchema = z.record(
-    z.string(),
-    z.union([z.string(), z.number(), z.boolean(), z.null()])
-  );
-
   if (config.goalService) {
-    const goalUpdateShape = {
-      title: z.string().min(1).optional().describe('New goal title'),
-      description: z.string().optional().describe('New goal description'),
-      status: goalStatusSchema.optional().describe('New lifecycle status'),
-      type: goalTypeSchema.optional().describe('Goal type'),
-      priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('Goal priority'),
-      labels: z.array(z.string()).optional().describe('Labels for future goal tasks'),
-      metrics: goalMetricsSchema.optional().describe('Structured measurement state'),
-      summary: z.string().optional().describe('Rolling summary of current goal state'),
-      progress: z.number().int().min(0).max(100).optional().describe('Progress percentage 0-100'),
-      next_steps: z.array(z.string()).optional().describe('Rolling list of next steps'),
-      preferred_workflow_id: z
-        .string()
-        .nullable()
-        .optional()
-        .describe('Preferred workflow ID for future goal tasks'),
-      auto_trigger_next: z
-        .boolean()
-        .optional()
-        .describe(
-          'Queue one follow-up run when trigger is called while another goal task is active'
-        ),
-      check_in_cron_expression: z
-        .string()
-        .nullable()
-        .optional()
-        .describe(
-          'Edit the recurring check-in schedule in place. Omit to leave it unchanged. ' +
-            'A cron expression (e.g. "0 9 * * 1" or "@hourly") updates the linked schedule ' +
-            'cadence (creating one if none) and reschedules the next fire atomically. ' +
-            'null removes the schedule. Never creates/detaches tasks or touches pendingNextRun.'
-        ),
-      check_in_timezone: z
-        .string()
-        .optional()
-        .describe('IANA timezone applied with check_in_cron_expression (e.g. "UTC").'),
-      workspace_path: z
-        .string()
-        .nullable()
-        .optional()
-        .describe(
-          'Registered secondary workspace path to pin this goal to. Omit to leave unchanged, null to unpin back to the space primary workspace.'
-        ),
-    };
-
     tools.push(
       tool(
         'list_goals',
         'List long-horizon goals in this space. Use this before changing goal progress or creating goal tasks.',
-        { status: goalStatusSchema.optional().describe('Filter by goal status') },
+        ListGoalsSchema.shape,
         (args) => handlers.list_goals(args)
       ),
       tool(
         'get_goal',
         'Get one goal with rolling state, active task pointers, next check-in, metrics, and next steps.',
-        { goal_id: z.string().describe('Goal ID') },
+        GetGoalSchema.shape,
         (args) => handlers.get_goal(args)
       ),
       tool(
         'create_goal',
         'Create a long-horizon goal in this space. Optionally schedule recurring check-ins or trigger the first task immediately.',
-        {
-          title: z.string().min(1).describe('Goal title'),
-          description: z.string().optional().describe('Goal description'),
-          type: goalTypeSchema.optional().describe('Goal type'),
-          priority: z
-            .enum(['low', 'normal', 'high', 'urgent'])
-            .optional()
-            .describe('Goal priority'),
-          labels: z.array(z.string()).optional().describe('Labels for future goal tasks'),
-          metrics: goalMetricsSchema.optional().describe('Initial structured metric state'),
-          summary: z.string().optional().describe('Initial rolling summary'),
-          progress: z.number().int().min(0).max(100).optional().describe('Initial progress 0-100'),
-          next_steps: z.array(z.string()).optional().describe('Initial next steps'),
-          preferred_workflow_id: z
-            .string()
-            .nullable()
-            .optional()
-            .describe('Preferred workflow ID for goal tasks'),
-          auto_trigger_next: z
-            .boolean()
-            .optional()
-            .describe('Queue one follow-up run when a trigger happens while active task exists'),
-          check_in_cron_expression: z
-            .string()
-            .optional()
-            .describe('Cron expression for recurring check-in task creation'),
-          check_in_timezone: z.string().optional().describe('IANA timezone for check-ins'),
-          trigger_immediately: z
-            .boolean()
-            .optional()
-            .describe('Create first goal task immediately'),
-          owner_agent_id: z
-            .string()
-            .nullable()
-            .optional()
-            .describe(
-              'Long-horizon agent id to assign as the goal primary owner atomically at creation. Defaults to the calling agent (self-claim) or the coordinator when absent.'
-            ),
-          workspace_path: z
-            .string()
-            .nullable()
-            .optional()
-            .describe(
-              'Registered secondary workspace path to pin this goal to. Omit or null for the space primary workspace.'
-            ),
-        },
+        CreateGoalSchema.shape,
         (args) => handlers.create_goal(args)
       ),
       tool(
         'update_goal',
         'Update public goal fields and rolling state. Use summary/progress/metrics/next_steps to keep long-horizon state current. check_in_cron_expression/check_in_timezone edit a recurring goal check-in schedule in place (set, change cadence/timezone, or null to remove) and take effect immediately — the next fire is rescheduled atomically. Internal fields like activeTaskId and taskScheduleId are not writable.',
-        { goal_id: z.string().describe('Goal ID'), ...goalUpdateShape },
+        UpdateGoalSchema.shape,
         (args) => handlers.update_goal(args)
       ),
       tool(
         'pause_goal',
         'Pause an active goal and its linked check-in schedule if present.',
-        { goal_id: z.string().describe('Goal ID') },
+        PauseGoalSchema.shape,
         (args) => handlers.pause_goal(args)
       ),
       tool(
         'resume_goal',
         'Resume a paused goal and re-enable its linked check-in schedule if present.',
-        { goal_id: z.string().describe('Goal ID') },
+        ResumeGoalSchema.shape,
         (args) => handlers.resume_goal(args)
       ),
       tool(
         'trigger_goal_task',
         'Create an immediate task for a goal. If another goal task is active and auto_trigger_next is true, queues one follow-up instead of overlapping work.',
-        { goal_id: z.string().describe('Goal ID') },
+        TriggerGoalTaskSchema.shape,
         (args) => handlers.trigger_goal_task(args)
       ),
       tool(
         'list_goal_tasks',
         "List tasks linked to a goal in this space, optionally filtered by status. Returns a bounded page (default 20, max 100) of compact task summaries (id, task_number, title, status, priority, createdAt, updatedAt) ordered by most-recently-created; results omit description and result. Pass the last item's createdAt as `before` and its id as `before_id` to fetch the next page. Use `get_task_detail` to retrieve the full record for any task whose outcome you need to inspect.",
-        {
-          goal_id: z.string().describe('Goal ID'),
-          status: z
-            .enum([
-              'draft',
-              'open',
-              'in_progress',
-              'review',
-              'approved',
-              'done',
-              'blocked',
-              'cancelled',
-              'archived',
-            ])
-            .optional()
-            .describe('Filter by linked task status'),
-          limit: z
-            .number()
-            .int()
-            .min(1)
-            .max(100)
-            .optional()
-            .describe('Max tasks to return (default 20)'),
-          before: z
-            .number()
-            .int()
-            .optional()
-            .describe('Return tasks created before this timestamp (cursor)'),
-          before_id: z.string().optional().describe('Cursor id for same-timestamp pagination'),
-        },
+        ListGoalTasksSchema.shape,
         (args) => handlers.list_goal_tasks(args)
       ),
       tool(
         'list_goal_events',
         'List append-only history events for a goal. Use this to understand why the current rolling state changed before updating it.',
-        {
-          goal_id: z.string().describe('Goal ID'),
-          limit: z.number().int().min(1).max(100).optional().describe('Max events to return'),
-          before: z.number().int().optional().describe('Return events before this timestamp'),
-          before_id: z
-            .string()
-            .optional()
-            .describe('Cursor event ID for same-timestamp pagination'),
-        },
+        ListGoalEventsSchema.shape,
         (args) => handlers.list_goal_events(args)
       )
     );
   }
 
   if (config.evolutionScopeService && config.evolutionEpisodeService) {
-    const forgeScopeKindSchema = z.enum(['mission', 'project', 'campaign', 'workflow', 'custom']);
-    const forgePolicySchema = z.record(z.string(), z.unknown());
-    const metricDefinitionSchema = z.object({
-      key: z.string().min(1).describe('Stable metric key'),
-      label: z.string().min(1).describe('Human-readable metric label'),
-      description: z.string().optional().describe('What this metric measures'),
-      direction: z.enum(['increase', 'decrease', 'target', 'maintain']),
-      targetValue: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
-      unit: z.string().optional(),
-    });
-    const metricValuesSchema = z.record(
-      z.string(),
-      z.union([z.string(), z.number(), z.boolean(), z.null()])
-    );
-    const metadataSchema = z.record(z.string(), z.unknown());
-    const episodeStatusSchema = z.enum(['draft', 'accepted', 'dismissed']);
-    const lessonStatusSchema = z.enum(['candidate', 'active', 'dismissed']);
-    const proposalUpdateStatusSchema = z.enum(['proposed', 'accepted', 'dismissed']);
-    const proposalStatusSchema = z.enum(['proposed', 'accepted', 'dismissed', 'created']);
-    const prioritySchema = z.enum(['low', 'normal', 'high', 'urgent']);
-
     tools.push(
       tool(
         'create_forge_scope',
         'Create a Forge EvolutionScope in this space. Use goal_id to link it to a recurring goal; policy can include episodeJudgeModel and other judge guidance.',
-        {
-          goal_id: z.string().nullable().optional().describe('Optional linked SpaceGoal ID'),
-          kind: forgeScopeKindSchema.describe('Scope kind'),
-          name: z.string().min(1).describe('Scope name'),
-          objective: z.string().min(1).describe('Scope objective'),
-          parent_scope_id: z.string().nullable().optional().describe('Optional parent scope ID'),
-          metric_definitions: z
-            .array(metricDefinitionSchema)
-            .optional()
-            .describe('Metric definitions tracked by this scope'),
-          policy: forgePolicySchema.optional().describe('Scope policy JSON for judge guidance'),
-        },
+        CreateForgeScopeSchema.shape,
         (args) => handlers.create_forge_scope(args)
       ),
       tool(
         'create_forge_scope_from_goal',
         'Create a mission Forge scope linked to an existing SpaceGoal, defaulting name/objective from the goal.',
-        {
-          goal_id: z.string().describe('SpaceGoal ID in this space'),
-          name: z.string().optional().describe('Override scope name'),
-          objective: z.string().optional().describe('Override scope objective'),
-          metric_definitions: z.array(metricDefinitionSchema).optional(),
-          policy: forgePolicySchema.optional(),
-        },
+        CreateForgeScopeFromGoalSchema.shape,
         (args) => handlers.create_forge_scope_from_goal(args)
       ),
       tool(
         'list_forge_scopes',
         'List Forge scopes in this space, optionally filtered by linked goal or kind.',
-        {
-          goal_id: z
-            .string()
-            .nullable()
-            .optional()
-            .describe('Filter by linked goal ID; null means unlinked scopes'),
-          kind: forgeScopeKindSchema.optional().describe('Filter by scope kind'),
-        },
+        ListForgeScopesSchema.shape,
         (args) => handlers.list_forge_scopes(args)
       ),
       tool(
         'get_forge_scope',
         'Get one Forge scope in this space, including linked goal, metric definitions, and policy.',
-        { scope_id: z.string().describe('EvolutionScope ID') },
+        GetForgeScopeSchema.shape,
         (args) => handlers.get_forge_scope(args)
       ),
       tool(
         'update_forge_scope',
         'Update a Forge scope. Use goal_id to link/unlink a goal. Prefer policy_patch to deep-merge policy fields (e.g. automation.completedTaskThreshold, episodeJudgeModel, episodeJudgeProvider) without clobbering the rest; policy replaces policy JSON wholesale. episode_judge_model/episode_judge_provider are convenience setters folded into the patch. Changes take effect immediately.',
-        {
-          scope_id: z.string().describe('EvolutionScope ID'),
-          goal_id: z.string().nullable().optional().describe('Linked SpaceGoal ID; null unlinks'),
-          kind: forgeScopeKindSchema.optional(),
-          name: z.string().min(1).optional(),
-          objective: z.string().min(1).optional(),
-          parent_scope_id: z.string().nullable().optional(),
-          metric_definitions: z.array(metricDefinitionSchema).optional(),
-          policy: forgePolicySchema
-            .optional()
-            .describe(
-              'Full policy JSON replacement. Ignored when policy_patch (or ' +
-                'episode_judge_*) is also supplied — policy_patch takes precedence.'
-            ),
-          policy_patch: forgePolicySchema
-            .optional()
-            .describe(
-              'Partial policy to deep-merge onto the existing policy ' +
-                '(automation.* is nested-merged; null values clear a key). Takes ' +
-                'precedence over a full `policy`. Matches the UI.'
-            ),
-          episode_judge_model: z
-            .string()
-            .nullable()
-            .optional()
-            .describe('Set policy.episodeJudgeModel (folded into policy_patch)'),
-          episode_judge_provider: z
-            .string()
-            .nullable()
-            .optional()
-            .describe('Set policy.episodeJudgeProvider (folded into policy_patch)'),
-        },
+        UpdateForgeScopeSchema.shape,
         (args) => handlers.update_forge_scope(args)
       ),
       tool(
         'get_forge_timeline',
         'Get scope overview/timeline: scope, evidence, and metric snapshots.',
-        { scope_id: z.string().describe('EvolutionScope ID') },
+        GetForgeTimelineSchema.shape,
         (args) => handlers.get_forge_timeline(args)
       ),
       tool(
         'add_forge_manual_note',
         'Attach manual note evidence to a Forge scope.',
-        {
-          scope_id: z.string().describe('EvolutionScope ID'),
-          summary: z.string().min(1).describe('Evidence note text'),
-          metadata: metadataSchema.optional(),
-          created_at: z.number().int().optional().describe('Optional timestamp ms'),
-        },
+        AddForgeManualNoteSchema.shape,
         (args) => handlers.add_forge_manual_note(args)
       ),
       tool(
         'attach_forge_task_evidence',
         'Attach a completed or relevant SpaceTask as Forge evidence. If scope_id omitted, resolves from task.evolutionScopeId or task.goalId.',
-        {
-          task_id: z.string().describe('SpaceTask ID'),
-          scope_id: z.string().optional().describe('Optional explicit EvolutionScope ID'),
-          summary: z.string().optional(),
-          metadata: metadataSchema.optional(),
-        },
+        AttachForgeTaskEvidenceSchema.shape,
         (args) => handlers.attach_forge_task_evidence(args)
       ),
       tool(
         'attach_forge_workflow_run_evidence',
         'Attach a workflow run as Forge evidence. If scope_id omitted, resolves via first task in the run.',
-        {
-          workflow_run_id: z.string().describe('Workflow run ID'),
-          scope_id: z.string().optional().describe('Optional explicit EvolutionScope ID'),
-          summary: z.string().optional(),
-          metadata: metadataSchema.optional(),
-        },
+        AttachForgeWorkflowRunEvidenceSchema.shape,
         (args) => handlers.attach_forge_workflow_run_evidence(args)
       ),
       tool(
         'add_forge_metric_snapshot',
         'Add metric snapshot evidence to a Forge scope.',
-        {
-          scope_id: z.string().describe('EvolutionScope ID'),
-          values: metricValuesSchema.describe('Metric values keyed by metric name'),
-          source: z.string().min(1).describe('Source label, e.g. manual, CI, analytics'),
-          note: z.string().nullable().optional(),
-          captured_at: z.number().int().optional().describe('Optional timestamp ms'),
-          summary: z.string().optional().describe('Optional evidence summary'),
-          metadata: metadataSchema.optional(),
-        },
+        AddForgeMetricSnapshotSchema.shape,
         (args) => handlers.add_forge_metric_snapshot(args)
       ),
       tool(
         'list_forge_evidence',
         'List evidence refs for a Forge scope.',
-        { scope_id: z.string().describe('EvolutionScope ID') },
+        ListForgeEvidenceSchema.shape,
         (args) => handlers.list_forge_evidence(args)
       ),
       tool(
         'list_forge_metric_snapshots',
         'List metric snapshots for a Forge scope.',
-        { scope_id: z.string().describe('EvolutionScope ID') },
+        ListForgeMetricSnapshotsSchema.shape,
         (args) => handlers.list_forge_metric_snapshots(args)
       ),
       tool(
         'create_forge_episode',
         'Generate a draft Forge episode from selected evidence. Calls the episode judge; LLM/model/auth errors are surfaced clearly.',
-        {
-          scope_id: z.string().describe('EvolutionScope ID'),
-          evidence_ids: z.array(z.string()).min(1).describe('Evidence IDs from this scope'),
-          time_window: z
-            .object({ start: z.number().int(), end: z.number().int() })
-            .nullable()
-            .optional(),
-          confirm_low_confidence: z
-            .boolean()
-            .optional()
-            .describe('Allow low-confidence generation when preflight warns evidence is thin'),
-        },
+        CreateForgeEpisodeSchema.shape,
         (args) => handlers.create_forge_episode(args)
       ),
       tool(
         'list_forge_review_bundle',
         'List episodes, lessons, and task proposals for reviewing a Forge scope.',
-        { scope_id: z.string().describe('EvolutionScope ID') },
+        ListForgeReviewBundleSchema.shape,
         (args) => handlers.list_forge_review_bundle(args)
       ),
       tool(
         'list_forge_lessons',
         'List Forge lessons for a scope, optionally filtered by status.',
-        {
-          scope_id: z.string().describe('EvolutionScope ID'),
-          status: lessonStatusSchema.optional(),
-        },
+        ListForgeLessonsSchema.shape,
         (args) => handlers.list_forge_lessons(args)
       ),
       tool(
         'list_forge_proposals',
         'List Forge task proposals for a scope, optionally filtered by status.',
-        {
-          scope_id: z.string().describe('EvolutionScope ID'),
-          status: proposalStatusSchema.optional(),
-        },
+        ListForgeProposalsSchema.shape,
         (args) => handlers.list_forge_proposals(args)
       ),
       tool(
         'resolve_forge_scope',
         'Resolve a Forge scope from a linked goal_id or task_id when scope_id is unknown.',
-        {
-          goal_id: z.string().optional(),
-          task_id: z.string().optional(),
-        },
+        ResolveForgeScopeSchema.shape,
         (args) => handlers.resolve_forge_scope(args)
       ),
       tool(
         'update_forge_episode',
         'Accept, dismiss, or edit a Forge episode draft. Use status accepted/dismissed only after explicit decision.',
-        {
-          episode_id: z.string().describe('EvolutionEpisode ID'),
-          status: episodeStatusSchema.optional(),
-          title: z.string().min(1).optional(),
-          outcome_summary: z.string().optional(),
-        },
+        UpdateForgeEpisodeSchema.shape,
         (args) => handlers.update_forge_episode(args)
       ),
       tool(
         'update_forge_lesson',
         'Activate, dismiss, or edit a candidate lesson. Activation requires explicit tool call.',
-        {
-          lesson_id: z.string().describe('EvolutionLesson ID'),
-          status: lessonStatusSchema.optional(),
-          applies_to: z.array(z.string()).optional(),
-          rule: z.string().min(1).optional(),
-          why: z.string().optional(),
-          confidence: z.number().min(0).max(1).optional(),
-        },
+        UpdateForgeLessonSchema.shape,
         (args) => handlers.update_forge_lesson(args)
       ),
       tool(
         'create_forge_task_proposal',
         'Create a Forge task proposal manually for this scope. Later use create_task_from_forge_proposal to make a real SpaceTask.',
-        {
-          scope_id: z.string().describe('EvolutionScope ID'),
-          title: z.string().min(1),
-          description: z.string(),
-          reason: z.string(),
-          priority: prioritySchema.optional(),
-          evidence_episode_ids: z.array(z.string()).optional(),
-        },
+        CreateForgeTaskProposalSchema.shape,
         (args) => handlers.create_forge_task_proposal(args)
       ),
       tool(
         'update_forge_task_proposal',
         'Edit, accept, or dismiss a Forge task proposal. Creating a SpaceTask is separate and explicit.',
-        {
-          proposal_id: z.string().describe('TaskProposal ID'),
-          title: z.string().min(1).optional(),
-          description: z.string().optional(),
-          reason: z.string().optional(),
-          priority: prioritySchema.optional(),
-          status: proposalUpdateStatusSchema.optional(),
-        },
+        UpdateForgeTaskProposalSchema.shape,
         (args) => handlers.update_forge_task_proposal(args)
       ),
       tool(
         'create_task_from_forge_proposal',
         'Create a real SpaceTask from a Forge proposal, preserving linked goalId and evolutionScopeId. Supports structured dependencies via depends_on so prerequisite checks are attached atomically before runtime pickup. Idempotent when task already exists.',
-        {
-          proposal_id: z.string().describe('TaskProposal ID'),
-          title: z.string().optional().describe('Optional edited task title'),
-          description: z.string().optional().describe('Optional edited task description'),
-          reason: z.string().optional().describe('Optional edited proposal reason'),
-          priority: prioritySchema.optional(),
-          depends_on: z
-            .array(z.string())
-            .optional()
-            .describe(
-              'List of task IDs this task depends on. All must be in the same space. Dependencies are persisted during task creation so the runtime cannot launch the task before they are attached.'
-            ),
-        },
+        CreateTaskFromForgeProposalSchema.shape,
         (args) => handlers.create_task_from_forge_proposal(args)
       ),
       tool(
         'apply_forge_rollup',
         'Accept a Forge episode and roll summary/progress/metrics/next steps into its linked recurring goal.',
-        {
-          episode_id: z.string().describe('EvolutionEpisode ID'),
-          goal_update: z.object({
-            summary: z.string().optional(),
-            progress: z.number().int().min(0).max(100).optional(),
-            next_steps: z.array(z.string()).optional(),
-            metrics: goalMetricsSchema.optional(),
-          }),
-        },
+        ApplyForgeRollupSchema.shape,
         (args) => handlers.apply_forge_rollup(args)
       )
     );
@@ -5098,7 +4755,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             ),
           summary: z.string().optional().describe('Replace the goal rolling summary'),
           next_steps: z.array(z.string()).optional().describe('Replace the goal next steps'),
-          metrics: goalMetricsSchema.optional().describe('Replace the given goal metric values'),
+          metrics: GoalMetricsSchema.optional().describe('Replace the given goal metric values'),
           observations: z
             .array(
               z.object({
