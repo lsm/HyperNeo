@@ -526,6 +526,7 @@ interface CommitSavedConfigDiscoveryRefreshCtx {
   providerId: string;
   rowId: string;
   savedConfig: { baseUrl?: string; configJson?: string };
+  discoveryBaseUrl: string | undefined;
   originalConfigJson: string | undefined;
   credentialsAtStart: string;
   clearsAtStart: number;
@@ -564,7 +565,7 @@ function persistLastGoodSlice(
       ctx.deps.providerRepo,
       ctx.currentRecord!,
       ctx.discovered,
-      ctx.deps.provider.getDiscoveryEndpointFingerprint?.(ctx.savedConfig.baseUrl)
+      ctx.deps.provider.getDiscoveryEndpointFingerprint?.(ctx.discoveryBaseUrl)
     );
   } catch (persistError) {
     ctx.deps.provider.clearModelCache?.();
@@ -772,11 +773,12 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     } = await import('../model-service.js');
     const clearsAtStart = getModelsCacheClearSequence();
     const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
+    const discoveryBaseUrl = record.baseUrl || undefined;
     const credentialsAtStart = JSON.stringify((await provider.getCredentials?.()) ?? null);
 
     const discoveryPromise = provider.listRemoteModels({
       force: true,
-      ...(record.baseUrl ? { baseUrl: record.baseUrl } : {}),
+      ...(discoveryBaseUrl ? { baseUrl: discoveryBaseUrl } : {}),
     });
     let discovered: ModelInfo[];
     try {
@@ -823,6 +825,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         providerId: record.providerId,
         rowId: request.id,
         savedConfig,
+        discoveryBaseUrl,
         originalConfigJson: record.configJson,
         credentialsAtStart,
         clearsAtStart,
@@ -972,12 +975,14 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             updates.isEnabled === false ||
             (updates.configJson !== undefined &&
               !isCurationOnlyConfigUpdate(existing.configJson, updates.configJson));
+          let strippedRowOriginalConfig: { value: string | undefined } | undefined;
           if (discoveryInvalidating) {
             const configSource = updates.configJson ?? existing.configJson;
             const strippedConfig = stripPersistedDiscovery(configSource);
             if (strippedConfig !== configSource) {
               providerRepo.updateProvider(data.id, { configJson: strippedConfig });
               updates.configJson = strippedConfig;
+              strippedRowOriginalConfig = { value: existing.configJson };
             }
           }
 
@@ -995,6 +1000,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
                 updates.authType = 'oauth';
               }
             } catch (err) {
+              if (strippedRowOriginalConfig) {
+                providerRepo.updateProvider(data.id, {
+                  configJson: strippedRowOriginalConfig.value,
+                });
+              }
               rethrowKeychainError(err, 'update', existing.providerId);
             }
           }

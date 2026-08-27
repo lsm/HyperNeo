@@ -1510,6 +1510,39 @@ describe('Provider RPC handlers', () => {
       expect(JSON.parse(finalConfigJson).discoveredModels.fingerprint).toBe('f'.repeat(300));
     });
 
+    it('omits the baseUrl override and fingerprints the effective endpoint when the saved base URL is empty', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        baseUrl: '',
+      });
+      let fingerprintedBaseUrl: string | undefined | 'unset' = 'unset';
+      const { listRemoteModels } = registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+        getDiscoveryEndpointFingerprint: (discoveryBaseUrl?: string) => {
+          fingerprintedBaseUrl = discoveryBaseUrl;
+          return 'fp-effective-endpoint';
+        },
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(listRemoteModels).toHaveBeenCalledWith({ force: true });
+      expect(fingerprintedBaseUrl).toBeUndefined();
+      const persisted = parsePersisted(repo.getProvider(created.id)?.configJson) as {
+        discoveredModels: { fingerprint?: string };
+      };
+      expect(persisted.discoveredModels.fingerprint).toBe('fp-effective-endpoint');
+    });
+
     it('caps the persisted blob by remaining config capacity for large existing payloads', async () => {
       const pad = 'x'.repeat(63_000);
       const created = repo.createProvider({
@@ -2237,6 +2270,34 @@ describe('Provider RPC handlers', () => {
 
       const after = repo.getProvider(created.id);
       expect(after?.authType).toBe('none');
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('restores the pre-strip row when credential storage fails during a discovery-invalidating update', async () => {
+      const originalConfig = JSON.stringify({
+        region: 'china',
+        discoveredModels: { models: [{ id: 'remote-a' }] },
+      });
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: originalConfig,
+      });
+      creds.storeApiKey = mock(async () => {
+        throw new KeychainUnavailableError('User interaction is not allowed.');
+      });
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.update')!(
+          { id: created.id, params: {}, credentials: { apiKey: 'sk-new' } },
+          {}
+        )
+      ).rejects.toThrow('macOS Keychain is locked or unavailable');
+
+      expect(repo.getProvider(created.id)?.configJson).toBe(originalConfig);
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
 
