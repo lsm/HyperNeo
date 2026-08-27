@@ -6650,20 +6650,35 @@ describe('SpaceRuntime external event subscriptions', () => {
 
       const deadline = Date.now() + 5000;
       let pendingState = 'pending';
+      let digestRows: Array<{ id: string; sdk_uuid: string; send_status: string }> = [];
       while (Date.now() < deadline) {
         pendingState = eventStore.listDeliveries(pendingEvents[0]!.id)[0]!.state;
-        if (pendingState === 'delivered') break;
+        digestRows = db
+          .prepare(
+            `SELECT id, sdk_uuid, send_status FROM sdk_messages
+             WHERE session_id = 'session-immediate-deferred' AND sdk_uuid LIKE 'digest-%'`
+          )
+          .all() as Array<{ id: string; sdk_uuid: string; send_status: string }>;
+        if (pendingState === 'delivered' && digestRows.length > 0) break;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       expect(pendingState).toBe('delivered');
-
-      const digestRows = db
-        .prepare(
-          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-immediate-deferred'
-           AND sdk_uuid LIKE 'digest-%'`
-        )
-        .all() as Array<{ sdk_uuid: string }>;
       expect(digestRows).toHaveLength(1);
+      expect(digestRows[0]!.send_status).toBe('enqueued');
+
+      const jobs = db
+        .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
+        .all() as Array<{ payload: string }>;
+      const payloads = jobs.map((job) => JSON.parse(job.payload) as Record<string, unknown>);
+      expect(
+        payloads.some(
+          (payload) =>
+            payload.sessionId === 'session-immediate-deferred' &&
+            payload.messageUuid === digestRows[0]!.sdk_uuid &&
+            payload.role === 'turn' &&
+            payload.origin === 'space_inject'
+        )
+      ).toBe(true);
     }, 10_000);
   });
 

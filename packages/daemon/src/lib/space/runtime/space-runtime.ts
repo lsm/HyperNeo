@@ -23,6 +23,7 @@ import {
 } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { isSDKResultError, isSDKResultSuccess } from '@hyperneo/shared/sdk';
+import { deliverMessage } from '../../agent/message-delivery.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import {
   ChannelCycleRepository,
@@ -1900,14 +1901,37 @@ export class SpaceRuntime {
     const timer = setTimeout(() => {
       this.turnEndDigestRetryTimers.delete(sessionId);
       if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
-      void this.renderPendingDigestForSession(sessionId, taskId).catch((error) => {
-        log.warn(
-          `SpaceRuntime: turn-end digest retry for session ${sessionId} failed: ` +
-            `${formatCommandError(error)}`
-        );
-      });
+      void this.renderPendingDigestForSession(sessionId, taskId)
+        .then((outcome) => {
+          if (outcome?.action === 'delivered') {
+            this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
+          }
+        })
+        .catch((error) => {
+          log.warn(
+            `SpaceRuntime: turn-end digest retry for session ${sessionId} failed: ` +
+              `${formatCommandError(error)}`
+          );
+        });
     }, EXTERNAL_EVENT_RETRY_DELAY_MS);
     this.turnEndDigestRetryTimers.set(sessionId, timer);
+  }
+
+  private handoffDigestDelivery(sessionId: string, messageUuid: string, dbId: string): void {
+    try {
+      this.getSdkMessageRepo().updateMessageStatus([dbId], 'enqueued');
+      const role = deliverMessage(this.getJobQueueRepo(), sessionId, messageUuid, {
+        origin: 'space_inject',
+      });
+      if (role !== 'turn') return;
+      const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
+      void session?.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
+    } catch (error) {
+      log.warn(
+        `SpaceRuntime: turn-end digest handoff for session ${sessionId} failed: ` +
+          `${formatCommandError(error)}`
+      );
+    }
   }
 
   private consumeImmediateTierRateBudget(target: WorkflowSubscriptionTarget): boolean {
