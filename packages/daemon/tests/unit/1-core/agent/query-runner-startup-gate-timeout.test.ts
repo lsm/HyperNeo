@@ -441,6 +441,9 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 1);
     spawnNexts[0][0].resolve({ value: statusBlipMessage(), done: false });
 
+    await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 2);
+    expect(ctx.firstMessageReceived).toBe(false);
+
     await assertShortTimeoutActive();
     await waitFor(() => events.includes('spawn1'));
     await ctx.queryPromise;
@@ -475,15 +478,17 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
   });
 
   it('disarms at the first meaningful message when status blips arrive first', async () => {
-    const { runner } = createRunner('s1');
+    const { runner, ctx } = createRunner('s1');
     runner.start();
 
     await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 1);
     spawnNexts[0][0].resolve({ value: statusBlipMessage(), done: false });
     await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 2);
+    expect(ctx.firstMessageReceived).toBe(false);
     spawnNexts[0][1].resolve({ value: sdkMessage(), done: false });
 
     await waitFor(() => events.filter((event) => event === 'free:s1').length === 1);
+    await waitFor(() => ctx.firstMessageReceived === true);
     await assertNoStartupAbort(1);
     expect(events.filter((event) => event === 'free:s1').length).toBe(1);
   });

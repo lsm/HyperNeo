@@ -938,10 +938,9 @@ export class QueryRunner {
             this.ctx.startupTimeoutTimer = null;
           }
           releaseStartupPermit('first_message');
+          this.ctx.firstMessageReceived = true;
           this._consumedUserMessages.delete(queryGeneration);
         }
-
-        this.ctx.firstMessageReceived = true;
 
         try {
           await this.handleSDKMessage(message as SDKMessage, queryGeneration);
