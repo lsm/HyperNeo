@@ -40,6 +40,12 @@ function armGate(spaceId: string, connected: boolean): SpaceWorkspaceRegistryGat
   return { spaceId, connected, done: false, promise, resolve: resolveGate };
 }
 
+function releaseGate(gate: SpaceWorkspaceRegistryGate): void {
+  if (gate.done) return;
+  gate.done = true;
+  gate.resolve();
+}
+
 function useSpaceWorkspaceRegistry(
   spaceId: string,
   fallbackPath?: string | null
@@ -55,15 +61,19 @@ function useSpaceWorkspaceRegistry(
 
   const connected = connectionState.value === 'connected';
 
+  const installGate = (gate: SpaceWorkspaceRegistryGate) => {
+    const superseded = gateRef.current;
+    gateRef.current = gate;
+    if (superseded && superseded !== gate) releaseGate(superseded);
+  };
+
   if (gateRef.current?.spaceId !== spaceId || gateRef.current.connected !== connected) {
-    gateRef.current = armGate(spaceId, connected);
+    installGate(armGate(spaceId, connected));
   }
 
   const startLookup = (gate: SpaceWorkspaceRegistryGate) => {
     const settleGate = () => {
-      if (gate.done) return;
-      gate.done = true;
-      gate.resolve();
+      releaseGate(gate);
     };
     const apply = (list: SpaceWorkspaceOption[] | null) => {
       if (gateRef.current !== gate) return;
@@ -88,15 +98,13 @@ function useSpaceWorkspaceRegistry(
     if (!gate) return;
     startLookup(gate);
     return () => {
-      if (gate.done) return;
-      gate.done = true;
-      gate.resolve();
+      releaseGate(gate);
     };
   }, [spaceId, connected]);
 
   const refresh = () => {
     const gate = armGate(spaceId, connected);
-    gateRef.current = gate;
+    installGate(gate);
     startLookup(gate);
   };
 
@@ -237,7 +245,6 @@ export function useSpaceWorkspaceChoice(spaceId: string, fallbackPath?: string |
   const epochRef = useRef(0);
 
   useEffect(() => {
-    epochRef.current += 1;
     pendingCreateRef.current = null;
     choosingRef.current = false;
     setPickerOpen(false);

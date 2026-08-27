@@ -216,6 +216,22 @@ describe('SpaceWorkspacePicker', () => {
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
+  it('does not hang when the connection drops while a refresh lookup is pending', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method: string) =>
+      method === 'space.workspace.list' ? new Promise(() => {}) : Promise.resolve({})
+    );
+
+    const { getByTestId } = render(<Probe spaceId="space-1" fallbackPath="/projects/main" />);
+    fireEvent.click(getByTestId('probe-create'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    connectionState.value = 'disconnected';
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+    });
+  });
+
   it('resets the cached options and picker state when the space changes', async () => {
     stubRegistry((params) => (params.spaceId === 'space-1' ? [makeWorkspace(), SECONDARY] : []));
     const { getByTestId, rerender } = render(
