@@ -8,6 +8,7 @@ import { createReactiveDatabase } from '../../../../src/storage/reactive-databas
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository';
+import { WorkspaceHistoryRepository } from '../../../../src/storage/repositories/workspace-history-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { McpImportService } from '../../../../src/lib/mcp/mcp-import-service';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -24,7 +25,12 @@ function buildTestDb(): {
   createSpaceTables(bunDb);
   const reactiveDb = createReactiveDatabase({ getDatabase: () => bunDb } as never);
   const repo = new AppMcpServerRepository(bunDb, reactiveDb);
-  const db = { appMcpServers: repo, getDatabase: () => bunDb } as unknown as Database;
+  const workspaceHistory = new WorkspaceHistoryRepository(bunDb);
+  const db = {
+    appMcpServers: repo,
+    getDatabase: () => bunDb,
+    workspaceHistory,
+  } as unknown as Database;
   return { bunDb, reactiveDb, repo, db };
 }
 
@@ -212,6 +218,17 @@ describe('McpImportService', () => {
       expect(repo.getByName('ok')).not.toBeNull();
       expect(repo.getByName('bad-stdio')).toBeNull();
       expect(repo.getByName('bad-http')).toBeNull();
+    });
+
+    test('skips entries with unsupported explicit type', () => {
+      const file = join(tmpRoot, '.mcp.json');
+      writeMcpJson(file, {
+        mcpServers: { bad: { type: 'websocket', command: 'x' } },
+      });
+
+      const result = service.refreshFromFile(file);
+      expect(result.added).toBe(0);
+      expect(repo.getByName('bad')).toBeNull();
     });
 
     test('imports http entries when type=http is declared', () => {
@@ -569,6 +586,56 @@ describe('McpImportService', () => {
       const { orphanPruned } = service.refreshAll();
       expect(orphanPruned).toBe(1);
       expect(repo.getByName('gone:stale')).toBeNull();
+    });
+
+    test('keeps plain workspace history imports on refreshAll', () => {
+      const workspaceHistory = new WorkspaceHistoryRepository(bunDb);
+
+      const ws = mkdtempSync(join(tmpRoot, 'ws-history-'));
+      const file = join(ws, '.mcp.json');
+      writeMcpJson(file, { mcpServers: { plain: { command: 'x' } } });
+
+      workspaceHistory.upsert(ws);
+      service.refreshFromFile(file);
+      expect(repo.getByName('plain')).not.toBeNull();
+
+      const { orphanPruned } = service.refreshAll();
+      expect(orphanPruned).toBe(0);
+      expect(repo.getByName('plain')).not.toBeNull();
+    });
+
+    test('migrates legacy bare-name imports to the namespaced name on first sweep', () => {
+      const spaceRepo = new SpaceRepository(bunDb);
+      const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
+
+      const ws = mkdtempSync(join(tmpRoot, 'ws-migrate-'));
+      const file = join(ws, '.mcp.json');
+      writeMcpJson(file, { mcpServers: { fetch: { command: 'x' } } });
+
+      service.refreshFromFile(file);
+      const legacy = repo.getByName('fetch');
+      expect(legacy).not.toBeNull();
+      repo.update(legacy!.id, { enabled: true });
+
+      const space = spaceRepo.createSpace({
+        workspacePath: ws,
+        name: 'Migrate',
+        slug: 'migrate',
+      });
+      workspaceRepo.create({
+        spaceId: space.id,
+        path: ws,
+        label: 'migrate',
+        isPrimary: true,
+      });
+
+      const { results } = service.refreshAll();
+      const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
+      expect(byPath[file].updated).toBe(1);
+      expect(repo.getByName('migrate:fetch')).not.toBeNull();
+      expect(repo.getByName('migrate:fetch')!.id).toBe(legacy!.id);
+      expect(repo.getByName('migrate:fetch')!.enabled).toBe(true);
+      expect(repo.getByName('fetch')).toBeNull();
     });
   });
 });

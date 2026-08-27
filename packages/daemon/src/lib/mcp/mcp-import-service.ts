@@ -47,6 +47,7 @@ interface McpSourceDeclaration {
   status: 'ok' | 'missing' | 'malformed';
   error?: string;
   entries?: Record<string, McpJsonEntry>;
+  rawNames?: Record<string, string>;
 }
 
 interface RefreshMcpImportsCtx {
@@ -67,8 +68,11 @@ function inferSourceType(entry: McpJsonEntry | null | undefined): 'stdio' | 'sse
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     return null;
   }
-  if (entry.type === 'stdio' || entry.type === 'sse' || entry.type === 'http') {
-    return entry.type;
+  if (entry.type) {
+    if (entry.type === 'stdio' || entry.type === 'sse' || entry.type === 'http') {
+      return entry.type;
+    }
+    return null;
   }
   if (entry.url && !entry.command) return 'http';
   return 'stdio';
@@ -264,6 +268,19 @@ export class McpImportService {
       }
     }
 
+    const historyRepo = this.db.workspaceHistory;
+    if (historyRepo) {
+      for (const row of historyRepo.list(100)) {
+        if (!row.path) continue;
+        try {
+          const abs = resolve(row.path);
+          if (seen.has(abs)) continue;
+          seen.add(abs);
+          out.push({ path: abs, label: '' });
+        } catch {}
+      }
+    }
+
     return out;
   }
 
@@ -421,6 +438,7 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     for (const name of existingNames) targetReserved.delete(name);
 
     const entries: Record<string, McpJsonEntry> = {};
+    const rawNames: Record<string, string> = {};
     for (const [serverName, rawEntry] of Object.entries(entriesByServerName).sort(([a], [b]) =>
       a.localeCompare(b)
     )) {
@@ -436,9 +454,10 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
       targetReserved.add(resolvedName);
       ctx.reserved?.add(resolvedName);
       entries[resolvedName] = rawEntry;
+      rawNames[resolvedName] = serverName;
     }
 
-    declarations.push({ target, status: 'ok', entries });
+    declarations.push({ target, status: 'ok', entries, rawNames });
     results.push(result);
   }
 
@@ -458,12 +477,13 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
 
     const existingRows = ctx.db.appMcpServers.listBySourcePath(decl.target.path);
     const existingByName = new Map(existingRows.map((row) => [row.name, row]));
-    const declaredNames = new Set(Object.keys(decl.entries ?? {}));
+    const declaredNames = new Set<string>();
 
     if (decl.status === 'ok') {
       for (const [resolvedName, entry] of Object.entries(decl.entries ?? {}).sort(([a], [b]) =>
         a.localeCompare(b)
       )) {
+        const rawName = decl.rawNames?.[resolvedName] ?? resolvedName;
         const req = ctx.service.buildCreateRequest(resolvedName, entry, decl.target.path);
         if (!req) {
           ctx.log.warn(
@@ -471,8 +491,15 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
           );
           continue;
         }
+        declaredNames.add(resolvedName);
 
-        const existing = existingByName.get(resolvedName);
+        let existing = existingByName.get(resolvedName);
+        let legacy = rawName !== resolvedName ? existingByName.get(rawName) : undefined;
+        if (!existing) {
+          existing = legacy;
+          legacy = undefined;
+        }
+
         if (!existing) {
           try {
             ctx.db.appMcpServers.create(req);
@@ -485,9 +512,12 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
           continue;
         }
 
-        if (!fieldsEqual(existing, req)) {
+        const shouldMergeEnabled = !!legacy && legacy.enabled && !existing.enabled;
+        const needsName = existing.name !== resolvedName;
+        if (needsName || !fieldsEqual(existing, req) || shouldMergeEnabled) {
           try {
-            ctx.db.appMcpServers.update(existing.id, {
+            const updates: Record<string, unknown> = {
+              name: resolvedName,
               description: req.description,
               sourceType: req.sourceType,
               command: req.command,
@@ -495,7 +525,17 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
               env: req.env,
               url: req.url,
               headers: req.headers,
-            });
+            };
+            if (shouldMergeEnabled) updates.enabled = true;
+            ctx.db.appMcpServers.update(existing.id, updates as never);
+            existing.name = resolvedName;
+            existing.enabled = shouldMergeEnabled ? true : existing.enabled;
+            existing.sourceType = req.sourceType;
+            existing.command = req.command;
+            existing.args = req.args;
+            existing.env = req.env;
+            existing.url = req.url;
+            existing.headers = req.headers;
             result.updated += 1;
           } catch (err) {
             ctx.log.warn(
