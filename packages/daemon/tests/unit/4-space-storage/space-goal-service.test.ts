@@ -1162,4 +1162,92 @@ describe('SpaceGoalService', () => {
     expect(notificationRepo.listPendingByGoal(goal.id)).toHaveLength(0);
     expect(taskRepo.getTask(task.task!.id)?.result).toBeNull();
   });
+
+  describe('goal workspacePath validation', () => {
+    let resolvingService: SpaceGoalService;
+
+    beforeEach(() => {
+      resolvingService = new SpaceGoalService({
+        goalRepo,
+        goalEventRepo,
+        taskRepo,
+        spaceRepo,
+        scheduleService,
+        db: db as never,
+        outcomeNotificationRepo: notificationRepo,
+        resolveWorkspacePath: async (_spaceId: string, rawPath: string) => {
+          if (rawPath === '/workspace/test' || rawPath === '/secondary') return rawPath;
+          throw new Error(`Workspace path is not registered to space: ${rawPath}`);
+        },
+      });
+    });
+
+    it('stores null when createGoal omits workspacePath', () => {
+      const goal = resolvingService.createGoal({ spaceId, title: 'Unpinned' });
+      expect(goal.workspacePath).toBeNull();
+      expect(resolvingService.getGoal(goal.id)?.workspacePath).toBeNull();
+    });
+
+    it('resolves a registered secondary workspace and pins it on the goal row', () => {
+      const goal = resolvingService.createGoal({
+        spaceId,
+        title: 'Pinned',
+        workspacePath: '/secondary',
+      });
+      expect(goal.workspacePath).toBe('/secondary');
+      expect(resolvingService.getGoal(goal.id)?.workspacePath).toBe('/secondary');
+    });
+
+    it('rejects an unregistered workspace path through the resolver', async () => {
+      await expect(
+        resolvingService.resolveGoalWorkspacePath(spaceId, '/unregistered')
+      ).rejects.toThrow('Workspace path is not registered to space: /unregistered');
+    });
+
+    it('normalizes the primary workspace path to null', async () => {
+      await expect(
+        resolvingService.resolveGoalWorkspacePath(spaceId, '/workspace/test')
+      ).resolves.toBeNull();
+    });
+
+    it('resolves an empty string to null and passes undefined through', async () => {
+      await expect(resolvingService.resolveGoalWorkspacePath(spaceId, '')).resolves.toBeNull();
+      await expect(
+        resolvingService.resolveGoalWorkspacePath(spaceId, undefined)
+      ).resolves.toBeUndefined();
+    });
+
+    it('fails closed when no resolver is wired', async () => {
+      await expect(service.resolveGoalWorkspacePath(spaceId, '/secondary')).rejects.toThrow(
+        'Workspace path validation is not available'
+      );
+    });
+
+    it('pins a secondary workspace on update and round-trips', () => {
+      const goal = resolvingService.createGoal({ spaceId, title: 'T' });
+      const updated = resolvingService.updateGoal(goal.id, { workspacePath: '/secondary' });
+      expect(updated.workspacePath).toBe('/secondary');
+      expect(resolvingService.getGoal(goal.id)?.workspacePath).toBe('/secondary');
+    });
+
+    it('clears the workspace with an explicit null update', () => {
+      const goal = resolvingService.createGoal({
+        spaceId,
+        title: 'T',
+        workspacePath: '/secondary',
+      });
+      const updated = resolvingService.updateGoal(goal.id, { workspacePath: null });
+      expect(updated.workspacePath).toBeNull();
+    });
+
+    it('leaves the workspace unchanged when an update omits it', () => {
+      const goal = resolvingService.createGoal({
+        spaceId,
+        title: 'T',
+        workspacePath: '/secondary',
+      });
+      const updated = resolvingService.updateGoal(goal.id, { title: 'Renamed' });
+      expect(updated.workspacePath).toBe('/secondary');
+    });
+  });
 });

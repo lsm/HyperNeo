@@ -282,3 +282,78 @@ describe('spaceGoal owner handlers', () => {
     ).rejects.toThrow(/Goal not found/);
   });
 });
+
+describe('spaceGoal workspacePath resolution', () => {
+  function makeGoalHarness(goalService: Record<string, unknown>) {
+    const { hub, handlers } = createMockHub();
+    setupSpaceGoalHandlers(hub, {
+      goalService: goalService as unknown as SpaceGoalService,
+      spaceManager: {
+        getSpace: mock(async () => ({ id: SPACE_ID, status: 'active' })),
+      } as unknown as SpaceManager,
+      longHorizonAgentRepo: makeRepoMock({ action: 'no_recipient' }),
+    });
+    return { handlers };
+  }
+
+  it('spaceGoal.create resolves workspacePath before creating', async () => {
+    const resolveGoalWorkspacePath = mock(async () => '/resolved/secondary');
+    const createGoal = mock(() => ({ id: 'goal-2', workspacePath: '/resolved/secondary' }));
+    const { handlers } = makeGoalHarness({
+      getGoal: mock(() => null),
+      resolveGoalWorkspacePath,
+      createGoal,
+    });
+    const result = await handlers.get('spaceGoal.create')!(
+      { spaceId: SPACE_ID, title: 'T', workspacePath: '/raw/secondary' },
+      makeContext()
+    );
+    expect(resolveGoalWorkspacePath).toHaveBeenCalledWith(SPACE_ID, '/raw/secondary');
+    expect(createGoal).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'T', workspacePath: '/resolved/secondary' }),
+      { source: 'rpc' }
+    );
+    expect(result).toEqual({
+      goal: { id: 'goal-2', workspacePath: '/resolved/secondary' },
+    });
+  });
+
+  it('spaceGoal.create rejects when the workspace is not registered', async () => {
+    const { handlers } = makeGoalHarness({
+      getGoal: mock(() => null),
+      resolveGoalWorkspacePath: mock(async () => {
+        throw new Error('Workspace path is not registered to space: /nope');
+      }),
+      createGoal: mock(() => {
+        throw new Error('createGoal must not run');
+      }),
+    });
+    await expect(
+      handlers.get('spaceGoal.create')!(
+        { spaceId: SPACE_ID, title: 'T', workspacePath: '/nope' },
+        makeContext()
+      )
+    ).rejects.toThrow('Workspace path is not registered to space: /nope');
+  });
+
+  it('spaceGoal.update resolves workspacePath into the update params', async () => {
+    const resolveGoalWorkspacePath = mock(async () => '/resolved/secondary');
+    const updateGoal = mock(() => ({ id: GOAL_ID, workspacePath: '/resolved/secondary' }));
+    const { handlers } = makeGoalHarness({
+      getGoal: mock(() => ({ id: GOAL_ID, spaceId: SPACE_ID })),
+      resolveGoalWorkspacePath,
+      updateGoal,
+    });
+    const result = await handlers.get('spaceGoal.update')!(
+      { spaceId: SPACE_ID, goalId: GOAL_ID, workspacePath: '/raw/secondary' },
+      makeContext()
+    );
+    expect(resolveGoalWorkspacePath).toHaveBeenCalledWith(SPACE_ID, '/raw/secondary');
+    expect(updateGoal).toHaveBeenCalledWith(
+      GOAL_ID,
+      expect.objectContaining({ workspacePath: '/resolved/secondary' }),
+      { source: 'rpc' }
+    );
+    expect(result).toEqual({ goal: { id: GOAL_ID, workspacePath: '/resolved/secondary' } });
+  });
+});

@@ -166,6 +166,7 @@ type GoalToolUpdateArgs = {
   auto_trigger_next?: boolean;
   check_in_cron_expression?: string | null;
   check_in_timezone?: string;
+  workspace_path?: string | null;
 };
 
 type SpaceSessionStatusFilter = 'active' | 'idle' | 'waiting_for_input' | 'error' | 'archived';
@@ -223,6 +224,7 @@ function normalizeGoalUpdateArgs(args: GoalToolUpdateArgs) {
     autoTriggerNext: args.auto_trigger_next,
     checkInCronExpression: args.check_in_cron_expression,
     checkInTimezone: args.check_in_timezone,
+    workspacePath: args.workspace_path,
   };
 }
 
@@ -3180,10 +3182,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       check_in_timezone?: string;
       trigger_immediately?: boolean;
       owner_agent_id?: string | null;
+      workspace_path?: string | null;
     }): Promise<ToolResult> {
       try {
         const primaryOwnerAgentId = resolveCreateGoalOwnerId(args.owner_agent_id);
-        const goal = requireGoalService().createGoal(
+        const goalService = requireGoalService();
+        const goal = goalService.createGoal(
           {
             spaceId,
             title: args.title,
@@ -3201,6 +3205,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             checkInTimezone: args.check_in_timezone,
             triggerImmediately: args.trigger_immediately,
             primaryOwnerAgentId,
+            workspacePath: await goalService.resolveGoalWorkspacePath(spaceId, args.workspace_path),
           },
           goalToolContext
         );
@@ -3222,9 +3227,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       try {
         requireGoalInSpace(args.goal_id);
         const { goal_id: goalId, ...updates } = args;
-        const goal = requireGoalService().updateGoal(
+        const goalService = requireGoalService();
+        const goal = goalService.updateGoal(
           goalId,
-          normalizeGoalUpdateArgs(updates),
+          {
+            ...normalizeGoalUpdateArgs(updates),
+            workspacePath: await goalService.resolveGoalWorkspacePath(
+              spaceId,
+              updates.workspace_path
+            ),
+          },
           goalToolContext
         );
         logAudit('update_goal', { goal_id: goalId, fields: Object.keys(updates) });
@@ -4691,6 +4703,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         .string()
         .optional()
         .describe('IANA timezone applied with check_in_cron_expression (e.g. "UTC").'),
+      workspace_path: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          'Registered secondary workspace path to pin this goal to. Omit to leave unchanged, null to unpin back to the space primary workspace.'
+        ),
     };
 
     tools.push(
@@ -4746,6 +4765,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
             .optional()
             .describe(
               'Long-horizon agent id to assign as the goal primary owner atomically at creation. Defaults to the calling agent (self-claim) or the coordinator when absent.'
+            ),
+          workspace_path: z
+            .string()
+            .nullable()
+            .optional()
+            .describe(
+              'Registered secondary workspace path to pin this goal to. Omit or null for the space primary workspace.'
             ),
         },
         (args) => handlers.create_goal(args)
