@@ -894,6 +894,8 @@ export class SDKMessageHandler {
 
     if (!deferredSuccessfully) {
       this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
+      releaseTurnEndGate?.();
+      releaseTurnEndGate = null;
       if (this.matchesArmedClearResult(message)) {
         this.clearIdleSuppression();
       }
@@ -951,6 +953,8 @@ export class SDKMessageHandler {
         message,
       });
     } catch (error) {
+      releaseTurnEndGate?.();
+      releaseTurnEndGate = null;
       if (observesArmedClearResult) {
         this.clearIdleSuppression();
       }

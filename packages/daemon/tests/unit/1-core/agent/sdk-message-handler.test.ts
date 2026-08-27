@@ -491,6 +491,31 @@ describe('SDKMessageHandler', () => {
       expect(publishSpy).not.toHaveBeenCalled();
     });
 
+    it('releases the turn-end gate when a top-level result fails to save', async () => {
+      saveSDKMessageSpy.mockReturnValue(false);
+      mockContext.queryObject = null;
+
+      const message: SDKMessage = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        parent_tool_use_id: null,
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(setDeliveryGateSpy).toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+    });
+
     it('should mark user messages as synthetic', async () => {
       const message: SDKMessage = {
         type: 'user',
