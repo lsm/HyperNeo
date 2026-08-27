@@ -9,6 +9,14 @@ import {
   isValidModel,
   resolveModelAlias,
   resolveModelAliasUnfiltered,
+  mergeDiscoveredWithStatic,
+  fallbackModelsFor,
+  extractPersistedDiscoveredWrapper,
+  setProviderRepository,
+  endpointMatchingPersistedDiscovered,
+  schedulePendingSliceRelease,
+  releaseAppliedProviderSlice,
+  mergePendingProviderSlices,
   getProviderCatalogModels,
   bumpProviderCatalogEpoch,
   getProviderCatalogEpoch,
@@ -26,6 +34,7 @@ import {
   markRefreshAttemptedFor,
 } from '../../../../src/lib/model-service';
 import type { ModelInfo } from '@hyperneo/shared';
+import type { Provider } from '@hyperneo/shared/provider';
 import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
@@ -133,6 +142,463 @@ describe('Model Service', () => {
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
       clearModelsCache('session-123');
       expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+    });
+  });
+
+  describe('mergeDiscoveredWithStatic', () => {
+    it('merges discovered models over static models for the same provider', () => {
+      const discovered = [
+        {
+          ...mockModels[0],
+          id: 'sonnet',
+          name: 'Discovered Sonnet',
+          provider: 'anthropic',
+        },
+      ];
+
+      const merged = mergeDiscoveredWithStatic('anthropic', discovered);
+
+      expect(
+        merged.some((model) => model.id === 'sonnet' && model.name === 'Discovered Sonnet')
+      ).toBe(true);
+      expect(merged.some((model) => model.id === 'opus')).toBe(true);
+      expect(merged.some((model) => model.id === 'haiku')).toBe(true);
+    });
+
+    it('keeps discovered-only models when there is no matching static entry', () => {
+      const discovered = [
+        {
+          id: 'new-glm',
+          name: 'New GLM',
+          alias: 'new-glm',
+          family: 'glm',
+          provider: 'glm',
+          contextWindow: 128000,
+          description: 'New GLM model',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ];
+
+      const merged = mergeDiscoveredWithStatic('glm', discovered);
+
+      expect(merged.some((model) => model.id === 'new-glm')).toBe(true);
+      expect(merged.some((model) => model.family === 'glm' && model.id !== 'new-glm')).toBe(true);
+    });
+
+    it('returns static models when discovered is empty', () => {
+      const merged = mergeDiscoveredWithStatic('anthropic', []);
+
+      expect(merged.map((model) => model.id).sort()).toEqual(['haiku', 'opus', 'sonnet']);
+    });
+  });
+
+  describe('fallbackModelsFor', () => {
+    function providerStub(cached: ModelInfo[] | null = null): Provider {
+      return {
+        id: 'test-provider',
+        getCachedModels: () => cached,
+      } as unknown as Provider;
+    }
+
+    it('returns cached models when a provider has them', () => {
+      const cached = [
+        {
+          id: 'cached-model',
+          name: 'Cached Model',
+          alias: 'cached-model',
+          family: 'test-provider',
+          provider: 'test-provider',
+          contextWindow: 128000,
+          description: 'cached',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ];
+
+      expect(fallbackModelsFor(providerStub(cached))).toEqual(cached);
+    });
+
+    it('merges persisted-only models with cached models', () => {
+      const cached = [
+        {
+          id: 'cached-model',
+          name: 'Cached Model',
+          alias: 'cached-model',
+          family: 'test-provider',
+          provider: 'test-provider',
+          contextWindow: 128000,
+          description: 'cached',
+          releaseDate: '2026-01-01',
+          available: true,
+        },
+      ];
+      const persisted = [
+        {
+          id: 'persisted-only',
+          name: 'Persisted Only',
+          contextWindow: 256000,
+          thinkingModes: 'off' as const,
+        },
+      ];
+
+      const models = fallbackModelsFor(providerStub(cached), persisted);
+
+      expect(models.map((model) => model.id).sort()).toEqual(['cached-model', 'persisted-only']);
+      expect(models.find((model) => model.id === 'persisted-only')).toEqual({
+        id: 'persisted-only',
+        name: 'Persisted Only',
+        alias: '',
+        family: 'test-provider',
+        provider: 'test-provider',
+        contextWindow: 256000,
+        description: 'Persisted Only via test-provider',
+        releaseDate: '',
+        available: true,
+        thinkingModes: 'off',
+      });
+    });
+
+    it('falls back to static metadata for the provider', () => {
+      const models = fallbackModelsFor({ id: 'anthropic' } as unknown as Provider);
+
+      expect(models.map((model) => model.id).sort()).toEqual(['haiku', 'opus', 'sonnet']);
+    });
+
+    it('hydrates persisted discovered models not present in static metadata', () => {
+      const persisted = [
+        { id: 'extra-sonnet', contextWindow: 256000 },
+        { id: 'opus', name: 'Opus Override' },
+      ];
+
+      const models = fallbackModelsFor({ id: 'anthropic' } as unknown as Provider, persisted);
+
+      expect(
+        models.some((model) => model.id === 'extra-sonnet' && model.contextWindow === 256000)
+      ).toBe(true);
+      expect(models.some((model) => model.id === 'opus' && model.name !== 'Opus Override')).toBe(
+        true
+      );
+      expect(models.filter((model) => model.id === 'opus').length).toBe(1);
+    });
+
+    it('fills in default metadata for persisted entries without static coverage', () => {
+      const persisted = [
+        { id: 'persisted-only', name: 'Persisted Only', thinkingModes: 'off' as const },
+      ];
+
+      const model = fallbackModelsFor({ id: 'custom' } as unknown as Provider, persisted).find(
+        (m) => m.id === 'persisted-only'
+      );
+
+      expect(model).toEqual({
+        id: 'persisted-only',
+        name: 'Persisted Only',
+        alias: '',
+        family: 'custom',
+        provider: 'custom',
+        contextWindow: 128000,
+        description: 'Persisted Only via custom',
+        releaseDate: '',
+        available: true,
+        thinkingModes: 'off',
+      });
+    });
+  });
+
+  describe('extractPersistedDiscoveredWrapper', () => {
+    it('returns null for undefined config', () => {
+      expect(extractPersistedDiscoveredWrapper(undefined)).toBeNull();
+    });
+
+    it('returns null for invalid JSON', () => {
+      expect(extractPersistedDiscoveredWrapper('not-json')).toBeNull();
+    });
+
+    it('returns null when there is no discoveredModels object', () => {
+      expect(
+        extractPersistedDiscoveredWrapper(JSON.stringify({ baseUrl: 'http://example.com' }))
+      ).toBeNull();
+    });
+
+    it('extracts models, optional fingerprint, and metadata overrides', () => {
+      const result = extractPersistedDiscoveredWrapper(
+        JSON.stringify({
+          discoveredModels: {
+            fingerprint: 'fingerprint-1',
+            models: [
+              { id: 'model-1', name: 'Model One' },
+              {
+                id: 'model-2',
+                contextWindow: 256000,
+                preferContextWindowMetadata: true,
+                description: 'Persisted model two',
+                available: false,
+                thinkingModes: 'granular',
+              },
+            ],
+          },
+        })
+      );
+
+      expect(result).toEqual({
+        fingerprint: 'fingerprint-1',
+        models: [
+          { id: 'model-1', name: 'Model One' },
+          {
+            id: 'model-2',
+            contextWindow: 256000,
+            preferContextWindowMetadata: true,
+            description: 'Persisted model two',
+            available: false,
+            thinkingModes: 'granular',
+          },
+        ],
+      });
+    });
+
+    it('skips malformed entries and ignores non-string names', () => {
+      const result = extractPersistedDiscoveredWrapper(
+        JSON.stringify({
+          discoveredModels: {
+            models: [
+              { id: 'valid', name: 'Valid' },
+              { name: 'missing id' },
+              { id: 123 },
+              { id: 'm', name: 42 },
+            ],
+          },
+        })
+      );
+
+      expect(result).toEqual({ models: [{ id: 'valid', name: 'Valid' }, { id: 'm' }] });
+    });
+  });
+
+  describe('setProviderRepository and endpointMatchingPersistedDiscovered', () => {
+    function makeRepo(configJson?: string) {
+      return {
+        getProviderByProviderId: (providerId: string) =>
+          providerId === 'remote' ? { id: 'record-1', providerId: 'remote', configJson } : null,
+      } as unknown as Parameters<typeof setProviderRepository>[0];
+    }
+
+    function providerWithFingerprint(fingerprint: string) {
+      return {
+        id: 'remote',
+        getDiscoveryEndpointFingerprint: () => fingerprint,
+      } as unknown as Provider;
+    }
+
+    afterEach(() => {
+      setProviderRepository(null);
+    });
+
+    it('returns empty when the provider has no saved record', () => {
+      setProviderRepository({
+        getProviderByProviderId: () => null,
+      } as unknown as Parameters<typeof setProviderRepository>[0]);
+
+      expect(endpointMatchingPersistedDiscovered(providerWithFingerprint('fp'))).toEqual([]);
+    });
+
+    it('matches persisted models when the endpoint fingerprint matches', () => {
+      setProviderRepository(
+        makeRepo(
+          JSON.stringify({
+            discoveredModels: {
+              fingerprint: 'fp-1',
+              models: [{ id: 'saved-1' }],
+            },
+          })
+        )
+      );
+
+      expect(endpointMatchingPersistedDiscovered(providerWithFingerprint('fp-1'))).toEqual([
+        { id: 'saved-1' },
+      ]);
+    });
+
+    it('returns empty when the endpoint fingerprint no longer matches', () => {
+      setProviderRepository(
+        makeRepo(
+          JSON.stringify({
+            discoveredModels: {
+              fingerprint: 'fp-old',
+              models: [{ id: 'saved-1' }],
+            },
+          })
+        )
+      );
+
+      expect(endpointMatchingPersistedDiscovered(providerWithFingerprint('fp-new'))).toEqual([]);
+    });
+
+    it('rejects persisted models when the provider can fingerprint but the wrapper has none', () => {
+      setProviderRepository(
+        makeRepo(
+          JSON.stringify({
+            discoveredModels: {
+              models: [{ id: 'saved-1' }],
+            },
+          })
+        )
+      );
+
+      expect(endpointMatchingPersistedDiscovered(providerWithFingerprint('fp-1'))).toEqual([]);
+    });
+
+    it('trusts persisted models when the provider does not expose a fingerprint', () => {
+      setProviderRepository(
+        makeRepo(
+          JSON.stringify({
+            discoveredModels: {
+              fingerprint: 'fp-1',
+              models: [{ id: 'saved-1' }],
+            },
+          })
+        )
+      );
+
+      expect(endpointMatchingPersistedDiscovered({ id: 'remote' } as unknown as Provider)).toEqual([
+        { id: 'saved-1' },
+      ]);
+    });
+
+    it('returns empty when fingerprint computation throws', () => {
+      setProviderRepository(
+        makeRepo(
+          JSON.stringify({
+            discoveredModels: {
+              fingerprint: 'fp-1',
+              models: [{ id: 'saved-1' }],
+            },
+          })
+        )
+      );
+
+      expect(
+        endpointMatchingPersistedDiscovered({
+          id: 'remote',
+          getDiscoveryEndpointFingerprint: () => {
+            throw new Error('malformed endpoint');
+          },
+        } as unknown as Provider)
+      ).toEqual([]);
+    });
+  });
+
+  describe('pendingSliceReleases', () => {
+    function providerSliceModel(providerId: string): ModelInfo {
+      return {
+        id: `${providerId}-model`,
+        name: `${providerId} Model`,
+        alias: `${providerId}-model`,
+        family: providerId,
+        provider: providerId,
+        contextWindow: 128000,
+        description: `${providerId} model`,
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+    }
+
+    beforeEach(() => {
+      clearModelsCache();
+    });
+
+    it('merges a pending slice into each load result and retains it across loads', () => {
+      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
+      schedulePendingSliceRelease('beta');
+
+      const merged = mergePendingProviderSlices('global', [providerSliceModel('alpha')]);
+      expect(merged.some((model) => model.provider === 'beta')).toBe(true);
+
+      const mergedAgain = mergePendingProviderSlices('global', [providerSliceModel('alpha')]);
+      expect(mergedAgain).toEqual(merged);
+    });
+
+    it('releaseAppliedProviderSlice deletes the slice and release marker immediately', () => {
+      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
+      schedulePendingSliceRelease('beta');
+      releaseAppliedProviderSlice('beta');
+
+      expect(mergePendingProviderSlices('global', [providerSliceModel('alpha')])).toEqual([
+        providerSliceModel('alpha'),
+      ]);
+    });
+
+    it('releases a pending slice only when a newer load for that provider is merged', () => {
+      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
+      schedulePendingSliceRelease('beta');
+
+      const olderLoad = mergePendingProviderSlices(
+        'global',
+        [providerSliceModel('alpha')],
+        0,
+        new Set(['alpha'])
+      );
+      expect(olderLoad.some((model) => model.provider === 'beta')).toBe(true);
+
+      const newerLoad = mergePendingProviderSlices(
+        'global',
+        [providerSliceModel('alpha'), providerSliceModel('beta')],
+        1,
+        new Set(['beta'])
+      );
+      expect(newerLoad).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
+
+      expect(mergePendingProviderSlices('global', [providerSliceModel('alpha')])).toEqual([
+        providerSliceModel('alpha'),
+      ]);
+    });
+
+    it('keeps the pending slice when a newer load does not contain that provider', () => {
+      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
+      schedulePendingSliceRelease('beta');
+
+      const newerLoadWithoutBeta = mergePendingProviderSlices(
+        'global',
+        [providerSliceModel('alpha')],
+        1,
+        new Set(['alpha'])
+      );
+      expect(newerLoadWithoutBeta).toEqual([
+        providerSliceModel('alpha'),
+        providerSliceModel('beta'),
+      ]);
+
+      const newerLoadWithBeta = mergePendingProviderSlices(
+        'global',
+        [providerSliceModel('alpha'), providerSliceModel('beta')],
+        2,
+        new Set(['beta'])
+      );
+      expect(newerLoadWithBeta).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
+    });
+
+    it('keeps the pending slice when the newer load failed and supplied only fallback models', () => {
+      updateProviderModelsInCache('beta', [providerSliceModel('beta')]);
+      schedulePendingSliceRelease('beta');
+
+      const failedFallbackLoad = mergePendingProviderSlices(
+        'global',
+        [providerSliceModel('alpha'), providerSliceModel('beta')],
+        1
+      );
+      expect(failedFallbackLoad).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
+
+      const successfulLoad = mergePendingProviderSlices(
+        'global',
+        [providerSliceModel('alpha'), providerSliceModel('beta')],
+        2,
+        new Set(['beta'])
+      );
+      expect(successfulLoad).toEqual([providerSliceModel('alpha'), providerSliceModel('beta')]);
+
+      expect(mergePendingProviderSlices('global', [providerSliceModel('alpha')])).toEqual([
+        providerSliceModel('alpha'),
+      ]);
     });
   });
 

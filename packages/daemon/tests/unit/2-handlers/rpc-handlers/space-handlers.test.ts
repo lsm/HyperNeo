@@ -25,6 +25,14 @@ import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
+type SummaryTask = SpaceTask & { descriptionTruncated?: boolean; resultTruncated?: boolean };
+type OverviewResult = {
+  space: Space;
+  tasks: SummaryTask[];
+  workflowRuns: SpaceWorkflowRun[];
+  sessions: string[];
+};
+type ListWithTasksResult = Space & { tasks: SummaryTask[]; sessions: unknown[] };
 
 const NOW = Date.now();
 
@@ -55,8 +63,19 @@ const mockTask: SpaceTask = {
   status: 'open',
   priority: 'normal',
   dependsOn: [],
+  result: null,
   createdAt: NOW,
   updatedAt: NOW,
+};
+
+const LONG_DESCRIPTION = 'a'.repeat(300);
+const LONG_RESULT = 'b'.repeat(260);
+const SURROGATE_DESCRIPTION = `${'a'.repeat(239)}😀${'b'.repeat(10)}`;
+
+const mockLongTask: SpaceTask = {
+  ...mockTask,
+  description: LONG_DESCRIPTION,
+  result: LONG_RESULT,
 };
 
 const mockRun: SpaceWorkflowRun = {
@@ -566,6 +585,58 @@ describe('space-handlers', () => {
     });
   });
 
+  describe('space.listWithTasks', () => {
+    beforeEach(() => setup());
+
+    it('returns spaces with full tasks and sessions by default', async () => {
+      const result = (await call('space.listWithTasks', {})) as ListWithTasksResult[];
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(mockSpace.id);
+      expect(result[0].tasks).toEqual([mockTask]);
+      expect(result[0].sessions).toEqual([]);
+    });
+
+    it('preserves full task fields without summary flag', async () => {
+      taskRepo.listBySpace = mock(() => [mockLongTask]);
+
+      const result = (await call('space.listWithTasks', {
+        includeArchived: true,
+      })) as ListWithTasksResult[];
+
+      expect(result[0].tasks[0].description).toBe(LONG_DESCRIPTION);
+      expect(result[0].tasks[0].result).toBe(LONG_RESULT);
+      expect('descriptionTruncated' in result[0].tasks[0]).toBe(false);
+      expect('resultTruncated' in result[0].tasks[0]).toBe(false);
+    });
+
+    it('truncates description and result with summary flag', async () => {
+      taskRepo.listBySpace = mock(() => [mockLongTask]);
+
+      const result = (await call('space.listWithTasks', {
+        summary: true,
+      })) as ListWithTasksResult[];
+      const task = result[0].tasks[0];
+
+      expect(task.description).toBe(LONG_DESCRIPTION.slice(0, 240));
+      expect(task.descriptionTruncated).toBe(true);
+      expect(task.result).toBe(LONG_RESULT.slice(0, 240));
+      expect(task.resultTruncated).toBe(true);
+    });
+
+    it('keeps short task fields unchanged and flags as not truncated', async () => {
+      const result = (await call('space.listWithTasks', {
+        summary: true,
+      })) as ListWithTasksResult[];
+      const task = result[0].tasks[0];
+
+      expect(task.description).toBe(mockTask.description);
+      expect(task.descriptionTruncated).toBe(false);
+      expect(task.result).toBe(mockTask.result);
+      expect(task.resultTruncated).toBe(false);
+    });
+  });
+
   describe('space.get', () => {
     beforeEach(() => setup());
 
@@ -875,6 +946,63 @@ describe('space-handlers', () => {
       await expect(call('space.overview', { id: 'ghost' })).rejects.toThrow(
         'Space not found: ghost'
       );
+    });
+
+    it('preserves full task fields without summary flag', async () => {
+      taskRepo.listBySpace = mock(() => [mockLongTask]);
+
+      const result = (await call('space.overview', {
+        id: 'space-1',
+        summary: false,
+      })) as OverviewResult;
+
+      expect(result.tasks[0].description).toBe(LONG_DESCRIPTION);
+      expect(result.tasks[0].result).toBe(LONG_RESULT);
+      expect(result.tasks[0].descriptionTruncated).toBeUndefined();
+      expect(result.tasks[0].resultTruncated).toBeUndefined();
+    });
+
+    it('truncates description and result with summary flag', async () => {
+      taskRepo.listBySpace = mock(() => [mockLongTask]);
+
+      const result = (await call('space.overview', {
+        id: 'space-1',
+        summary: true,
+      })) as OverviewResult;
+      const task = result.tasks[0];
+
+      expect(task.description).toBe(LONG_DESCRIPTION.slice(0, 240));
+      expect(task.descriptionTruncated).toBe(true);
+      expect(task.result).toBe(LONG_RESULT.slice(0, 240));
+      expect(task.resultTruncated).toBe(true);
+    });
+
+    it('keeps short task fields unchanged and flags as not truncated', async () => {
+      const result = (await call('space.overview', {
+        id: 'space-1',
+        summary: true,
+      })) as OverviewResult;
+      const task = result.tasks[0];
+
+      expect(task.description).toBe(mockTask.description);
+      expect(task.descriptionTruncated).toBe(false);
+      expect(task.result).toBe(mockTask.result);
+      expect(task.resultTruncated).toBe(false);
+    });
+
+    it('does not split a surrogate pair at the 240-char boundary', async () => {
+      taskRepo.listBySpace = mock(() => [
+        { ...mockTask, description: SURROGATE_DESCRIPTION, result: null },
+      ]);
+
+      const result = (await call('space.overview', {
+        id: 'space-1',
+        summary: true,
+      })) as OverviewResult;
+      const task = result.tasks[0];
+
+      expect(task.description).toBe('a'.repeat(239));
+      expect(task.descriptionTruncated).toBe(true);
     });
   });
 
