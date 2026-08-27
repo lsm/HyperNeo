@@ -216,7 +216,9 @@ describe('applyRoleAdmission', () => {
 
   test('admits the registry-space families wherever space is admitted', () => {
     const registry = createActionRegistry(
-      (['sessions', 'workflows', 'tasks'] as const).map((family) =>
+      (
+        ['sessions', 'workflows', 'tasks', 'scheduled', 'external_events', 'inactivity'] as const
+      ).map((family) =>
         defineAction({
           name: `probe_${family}`,
           family,
@@ -230,7 +232,14 @@ describe('applyRoleAdmission', () => {
     );
     const roles = ['coordinator', 'ad_hoc_member', 'workflow_worker', 'long_term_agent'] as const;
     for (const role of roles) {
-      for (const family of ['sessions', 'workflows', 'tasks'] as const) {
+      for (const family of [
+        'sessions',
+        'workflows',
+        'tasks',
+        'scheduled',
+        'external_events',
+        'inactivity',
+      ] as const) {
         const ctx = applyRoleAdmission(
           applySafetyClass(
             resolveAction(buildCtx({ actionName: `probe_${family}`, role }, { registry }))

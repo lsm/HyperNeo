@@ -65,7 +65,15 @@ export interface DispatchActionCtx extends DispatchActionInput {
   outcome?: DispatchActionOutcome;
 }
 
-const SPACE_ADMISSION_FAMILIES = ['space', 'sessions', 'workflows', 'tasks'] as const;
+const SPACE_ADMISSION_FAMILIES = [
+  'space',
+  'sessions',
+  'workflows',
+  'tasks',
+  'scheduled',
+  'external_events',
+  'inactivity',
+] as const;
 
 const ROLE_ACTION_FAMILY_ALLOWLIST: Record<SpaceMcpSessionRole, readonly string[]> = {
   coordinator: SPACE_ADMISSION_FAMILIES,

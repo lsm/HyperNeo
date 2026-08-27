@@ -1,16 +1,18 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
+import type { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import {
   type ActionDefinition,
   createActionRegistry,
 } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
-import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
 import {
   EXTERNAL_EVENT_TOOL_SCHEMAS,
   INACTIVITY_TOOL_SCHEMAS,
@@ -18,14 +20,13 @@ import {
 } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { DEFAULT_INACTIVITY_THRESHOLD_MS } from '../../../../src/lib/space/tools/space-agent-tools.ts';
-import type { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import {
   SpaceAgentInactivityClaimRepository,
   SpaceAgentInactivityConfigRepository,
 } from '../../../../src/storage/repositories/space-agent-inactivity-repository.ts';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
@@ -38,6 +39,10 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const SPACE_ID = 'space-registry-part-c-test';
 const LHA_ID = 'lha-1';
+
+const stubTaskAgentManager = {
+  injectSubSessionMessage: async () => 'sdk-message-stub',
+} as unknown as TaskAgentManager;
 
 interface PartCCtx {
   db: BunDatabase;
@@ -105,6 +110,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): PartCCtx {
     workflowRunRepo,
     taskManager: new SpaceTaskManager(db, SPACE_ID),
     spaceAgentManager,
+    taskAgentManager: stubTaskAgentManager,
     scheduleService: new ScheduleService({
       db,
       scheduleRepo: new TaskScheduleRepository(db),
@@ -139,6 +145,19 @@ const EXPECTED_BASE: Array<[string, string, string]> = [
   ['change_plan', 'workflows', 'destructive'],
   ['get_workflow_detail', 'workflows', 'read'],
   ['suggest_workflow', 'workflows', 'read'],
+  ['list_tasks', 'tasks', 'read'],
+  ['create_standalone_task', 'tasks', 'mutate'],
+  ['get_task_detail', 'tasks', 'read'],
+  ['update_task', 'tasks', 'mutate'],
+  ['retry_task', 'tasks', 'mutate'],
+  ['cancel_task', 'tasks', 'mutate'],
+  ['reassign_task', 'tasks', 'mutate'],
+  ['publish_task', 'tasks', 'mutate'],
+  ['archive_task', 'tasks', 'destructive'],
+  ['send_message_to_task', 'tasks', 'mutate'],
+  ['list_task_members', 'tasks', 'read'],
+  ['approve_task', 'tasks', 'mutate'],
+  ['approve_pending_completion', 'tasks', 'human_only'],
 ];
 
 const EXPECTED_PART_C: Array<[string, string, string]> = [

@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import {
+  type ActionDefinition,
   createActionRegistry,
   defineAction,
-  type ActionDefinition,
 } from '../../../../src/lib/space/actions/registry.ts';
 
 const taskActionSchema = z.object({ taskId: z.string() });

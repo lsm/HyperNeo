@@ -2,6 +2,10 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import {
+  clearStructuredLogSubscribers,
+  subscribeToStructuredLogs,
+} from '../../../../src/lib/logger';
+import {
   createRateAdmission,
   emitActionDispatchedEvent,
   RATE_ADMISSION_WINDOW_MS,
@@ -9,14 +13,10 @@ import {
   SPACE_ACTIONS_RATE_LIMIT_ENV,
 } from '../../../../src/lib/space/actions/dispatch-telemetry.ts';
 import {
-  runDispatchAction,
   type DispatchTelemetryEvent,
+  runDispatchAction,
 } from '../../../../src/lib/space/actions/dispatcher-pipeline.ts';
 import { createActionRegistry, defineAction } from '../../../../src/lib/space/actions/registry.ts';
-import {
-  clearStructuredLogSubscribers,
-  subscribeToStructuredLogs,
-} from '../../../../src/lib/logger';
 
 describe('emitActionDispatchedEvent', () => {
   test('emits an action.dispatched structured log with the dispatch fields', () => {

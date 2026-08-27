@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import {
+  type BuildCallActionDescriptionInput,
   buildCallActionDescription,
   CODER_HOT_ACTIONS,
   GENERAL_HOT_ACTIONS,
@@ -9,12 +10,11 @@ import {
   RESEARCH_HOT_ACTIONS,
   REVIEWER_HOT_ACTIONS,
   ROLE_HOT_ACTIONS,
-  type BuildCallActionDescriptionInput,
 } from '../../../../src/lib/space/actions/description-generator.ts';
 import {
+  type ActionDefinition,
   createActionRegistry,
   defineAction,
-  type ActionDefinition,
 } from '../../../../src/lib/space/actions/registry.ts';
 
 const ANY_SCHEMA = z.object({});
