@@ -172,6 +172,7 @@ import {
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   signalDeliveryConsumed,
+  steerAckTimeoutMs,
   throwIfDeliveryAborted,
   waitForDeliveryAbort,
   withSessionLock,
@@ -2607,11 +2608,17 @@ export class AgentSession
     const steerQueryEnded: Promise<'query_ended'> = this.queryPromise
       ? this.queryPromise.catch(() => {}).then(() => 'query_ended' as const)
       : Promise.resolve('query_ended');
-    let steerWinner: 'acknowledged' | 'query_ended' = 'query_ended';
+    const ackTimeoutMs = steerAckTimeoutMs();
+    let ackTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const steerAckTimeout = new Promise<'ack_timeout'>((resolve) => {
+      ackTimeoutId = setTimeout(() => resolve('ack_timeout' as const), ackTimeoutMs);
+    });
+    let steerWinner: 'acknowledged' | 'query_ended' | 'ack_timeout' = 'query_ended';
     try {
       steerWinner = await Promise.race([
         action.acknowledgment.then(() => 'acknowledged' as const),
         steerQueryEnded,
+        steerAckTimeout,
         aborted.promise,
       ]);
     } catch (error) {
@@ -2624,11 +2631,34 @@ export class AgentSession
       }
     } finally {
       aborted.cancel();
+      if (ackTimeoutId !== undefined) clearTimeout(ackTimeoutId);
     }
     if (steerWinner === 'query_ended') {
       this.messageQueue.requeueYielded(messageUuid);
       this.reopenDeliveryForRetry(messageUuid);
       throw new Error('Steer target query ended before the SDK consumed the steer');
+    }
+    if (steerWinner === 'ack_timeout') {
+      if (this.messageQueue.hasYielded(messageUuid)) {
+        this.logger.warn(
+          `delivery-steer: acknowledgment wait timed out after ${ackTimeoutMs}ms with the ` +
+            `steer already yielded to the SDK (uuid=${messageUuid}, ` +
+            `session=${this.session.id}); settling it as acknowledged like the queue's own ` +
+            `durable yield timeout instead of requeueing content the live query may still execute`
+        );
+        this.messageQueue.acknowledgeYielded(messageUuid);
+      } else {
+        this.logger.warn(
+          `delivery-steer: the SDK did not acknowledge the steer within ${ackTimeoutMs}ms ` +
+            `(uuid=${messageUuid}, session=${this.session.id}); releasing the worker slot, ` +
+            `dropping the unconsumed queue admission, and requeueing the steer`
+        );
+        if (!this.messageQueue.remove(messageUuid)) {
+          this.messageQueue.acknowledgeYielded(messageUuid);
+        }
+        this.reopenDeliveryForRetry(messageUuid);
+        return { outcome: 'ack_timeout' };
+      }
     }
     if (claimGuard && !claimGuard()) {
       return { outcome: 'aborted' };
