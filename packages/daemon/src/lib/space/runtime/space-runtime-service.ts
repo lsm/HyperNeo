@@ -1271,8 +1271,8 @@ export class SpaceRuntimeService {
     return this.runtime.renderPendingDigestForSession(sessionId, taskId);
   }
 
-  reconcilePersistedDigestRowsForSession(sessionId: string, taskId?: string): void {
-    this.runtime.reconcilePersistedDigestRowsForSession(sessionId, taskId);
+  reconcilePersistedDigestRowsForSession(sessionId: string, taskId?: string): boolean {
+    return this.runtime.reconcilePersistedDigestRowsForSession(sessionId, taskId);
   }
 
   unregisterSubscription(

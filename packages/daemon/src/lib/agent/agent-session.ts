@@ -358,7 +358,7 @@ export class AgentSession
     import('../space/runtime/render-pending-digest-pipeline.ts').RenderPendingDigestOutcome | null
   >;
 
-  reconcilePersistedDigestRows?: (sessionId: string, taskId?: string) => void;
+  reconcilePersistedDigestRows?: (sessionId: string, taskId?: string) => boolean;
 
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository.ts').McpEnablementRepository {
     return this.db.mcpEnablement;

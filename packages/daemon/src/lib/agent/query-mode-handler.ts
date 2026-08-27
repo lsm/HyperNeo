@@ -42,7 +42,7 @@ export interface QueryModeHandlerContext {
     sessionId: string,
     taskId?: string
   ): Promise<RenderPendingDigestOutcome | null>;
-  reconcilePersistedDigestRows?(sessionId: string, taskId?: string): void;
+  reconcilePersistedDigestRows?(sessionId: string, taskId?: string): boolean;
 
   ensureQueryStarted(): Promise<void>;
 }
@@ -97,7 +97,9 @@ export class QueryModeHandler {
         }
       } else if (this.ctx.reconcilePersistedDigestRows) {
         try {
-          this.ctx.reconcilePersistedDigestRows(session.id, session.context?.taskId);
+          if (!this.ctx.reconcilePersistedDigestRows(session.id, session.context?.taskId)) {
+            excludeDigestRows = true;
+          }
         } catch (error) {
           logger.warn(
             `flag-off digest reconcile failed for session ${session.id}: ` +

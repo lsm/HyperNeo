@@ -7322,7 +7322,9 @@ describe('SpaceRuntime external event subscriptions', () => {
         'evt-flagoff-b',
       ]);
 
-      runtime.reconcilePersistedDigestRowsForSession('session-flagoff-pending', task.id);
+      expect(
+        runtime.reconcilePersistedDigestRowsForSession('session-flagoff-pending', task.id)
+      ).toBe(true);
 
       expect(deferredDigestRows('session-flagoff-pending')).toHaveLength(0);
       for (const eventId of ['evt-flagoff-a', 'evt-flagoff-b']) {
@@ -7344,11 +7346,38 @@ describe('SpaceRuntime external event subscriptions', () => {
         'evt-flagoff-d',
       ]);
 
-      runtime.reconcilePersistedDigestRowsForSession('session-flagoff-owed', task.id);
+      expect(runtime.reconcilePersistedDigestRowsForSession('session-flagoff-owed', task.id)).toBe(
+        true
+      );
 
       const rows = deferredDigestRows('session-flagoff-owed');
       expect(rows).toHaveLength(1);
       expect(rows[0]!.sdk_uuid).toBe('digest-owed-row');
+    });
+
+    test('a session unbound from its execution reconciles as unverifiable without deleting rows', async () => {
+      const { task } = await attachSessionWithPendingMembers('session-flagoff-unbound', [
+        'evt-flagoff-e',
+        'evt-flagoff-f',
+      ]);
+      for (const eventId of ['evt-flagoff-e', 'evt-flagoff-f']) {
+        const delivery = eventStore.listDeliveries(eventId)[0]!;
+        eventStore.markDeliveriesDeliveredAtomic([{ eventId, deliveryKey: delivery.deliveryKey }]);
+      }
+      saveDeferredDigestRow('session-flagoff-unbound', 'digest-owed-unbound', [
+        'evt-flagoff-e',
+        'evt-flagoff-f',
+      ]);
+      const execution = nodeExecutionRepo.listByAgentSessionId('session-flagoff-unbound')[0]!;
+      nodeExecutionRepo.update(execution.id, { agentSessionId: null });
+
+      expect(
+        runtime.reconcilePersistedDigestRowsForSession('session-flagoff-unbound', task.id)
+      ).toBe(false);
+
+      const rows = deferredDigestRows('session-flagoff-unbound');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.sdk_uuid).toBe('digest-owed-unbound');
     });
 
     test('a session with no digest rows reconciles without side effects', () => {

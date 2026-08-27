@@ -436,6 +436,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
     let reconcileCalls: Array<{ sessionId: string; taskId?: string }>;
     let reconcileError: Error | null;
     let reconcileImpl: (() => void) | null;
+    let reconcileVerified: boolean;
 
     beforeEach(() => {
       previousFlag = process.env[FLAG_ENV];
@@ -443,10 +444,12 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       reconcileCalls = [];
       reconcileError = null;
       reconcileImpl = null;
+      reconcileVerified = true;
       handlerContext.reconcilePersistedDigestRows = (sessionId, taskId) => {
         reconcileCalls.push({ sessionId, taskId });
         if (reconcileError) throw reconcileError;
         reconcileImpl?.();
+        return reconcileVerified;
       };
     });
 
@@ -523,6 +526,26 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       ).toBe(true);
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]?.uuid).toBe('uuid-task');
+    });
+
+    it('flag off: an unverifiable reconcile excludes digest rows and leaves them deferred', async () => {
+      reconcileVerified = false;
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow('db-digest-u', 'digest-u-0005', 'owed digest text'),
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(1);
+      expect(reconcileCalls).toHaveLength(1);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      expect(statusUpdates.some((update) => update.dbIds.includes('db-digest-u'))).toBe(false);
     });
 
     it('flag off: without a reconcile bridge the flush excludes digest rows it cannot verify', async () => {
