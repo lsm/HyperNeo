@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const taskDetailsSignal = signal<ReadonlyMap<string, SpaceTask>>(new Map());
+const connectionStateSignal = signal<'connected' | 'disconnected'>('connected');
 
 vi.mock('../../lib/space-store', () => ({
   spaceStore: {
@@ -17,6 +18,16 @@ vi.mock('../../lib/space-store', () => ({
     ensureTaskDetail: mocks.ensureTaskDetail,
   },
 }));
+
+vi.mock('../../lib/state', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    get connectionState() {
+      return connectionStateSignal;
+    },
+  };
+});
 
 import { useResolvedSpaceTask } from '../useResolvedSpaceTask';
 import type { SummarySpaceTask } from '../../lib/space-store';
@@ -54,6 +65,7 @@ function makeSummaryTask(overrides: Partial<SummarySpaceTask> = {}): SummarySpac
 describe('useResolvedSpaceTask', () => {
   beforeEach(() => {
     taskDetailsSignal.value = new Map();
+    connectionStateSignal.value = 'connected';
     mocks.ensureTaskDetail.mockReset();
     mocks.ensureTaskDetail.mockResolvedValue(null);
   });
@@ -148,6 +160,32 @@ describe('useResolvedSpaceTask', () => {
       await vi.advanceTimersByTimeAsync(60000);
     });
     expect(mocks.ensureTaskDetail).toHaveBeenCalledTimes(3);
+
+    vi.useRealTimers();
+  });
+
+  it('resumes detail loading when connectivity returns after exhaustion', async () => {
+    vi.useFakeTimers();
+    const task = makeSummaryTask();
+    mocks.ensureTaskDetail.mockResolvedValue(null);
+
+    renderHook(() => useResolvedSpaceTask(task));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+    expect(mocks.ensureTaskDetail).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      connectionStateSignal.value = 'disconnected';
+    });
+    await act(async () => {
+      connectionStateSignal.value = 'connected';
+    });
+
+    expect(mocks.ensureTaskDetail).toHaveBeenCalledTimes(4);
 
     vi.useRealTimers();
   });
