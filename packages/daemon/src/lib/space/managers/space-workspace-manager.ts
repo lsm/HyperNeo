@@ -19,7 +19,13 @@ export type WorkspaceRegistryReader = Pick<SpaceRepository, 'getSpace' | 'listSp
 
 export type WorkspaceStore = Pick<
   SpaceWorkspaceRepository,
-  'create' | 'createUnclaimed' | 'findOwnerByPath' | 'getById' | 'listBySpace' | 'updateLabel' | 'delete'
+  | 'create'
+  | 'createUnclaimed'
+  | 'findOwnerByPath'
+  | 'getById'
+  | 'listBySpace'
+  | 'updateLabel'
+  | 'delete'
 >;
 
 export interface WorkspaceSessionReferences {

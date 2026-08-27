@@ -262,7 +262,7 @@ export class SpaceManager {
 
   constructor(
     private db: BunDatabase,
-    reactiveDb?: ReactiveDatabase
+    private reactiveDb?: ReactiveDatabase
   ) {
     this.spaceRepo = new SpaceRepository(db);
     this.workspaceRepo = new SpaceWorkspaceRepository(db, reactiveDb);
@@ -476,7 +476,11 @@ export class SpaceManager {
       return false;
     }
 
-    return this.spaceRepo.deleteSpace(id);
+    const deleted = this.spaceRepo.deleteSpace(id);
+    if (deleted) {
+      this.reactiveDb?.notifyChange('space_workspaces', { spaceId: id });
+    }
+    return deleted;
   }
 
   async addSession(spaceId: string, sessionId: string): Promise<Space> {

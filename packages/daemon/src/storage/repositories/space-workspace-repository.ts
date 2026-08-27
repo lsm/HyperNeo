@@ -61,6 +61,7 @@ export class SpaceWorkspaceRepository {
         params.path
       );
     if (result.changes === 0) return null;
+    this.reactiveDb?.notifyChange('space_workspaces', { spaceId: params.spaceId });
     return this.getById(id)!;
   }
 

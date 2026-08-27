@@ -3678,6 +3678,16 @@ function mapSpaceWorkspaceRow(row: Record<string, unknown>): Record<string, unkn
   };
 }
 
+function buildSpaceWorkspacesScopeFilter(
+  params: ReadonlyArray<unknown>
+): (scope: TableChangeScope) => boolean {
+  const spaceId = params[0] as string;
+  return (scope) => {
+    if (!scope.spaceId) return true;
+    return scope.spaceId === spaceId;
+  };
+}
+
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
   [
     'sessionGroupMessages.byGroup',
@@ -3768,6 +3778,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       sql: SPACE_WORKSPACES_BY_SPACE_SQL,
       paramCount: 1,
       mapRow: mapSpaceWorkspaceRow,
+      buildScopeFilter: buildSpaceWorkspacesScopeFilter,
     },
   ],
   [

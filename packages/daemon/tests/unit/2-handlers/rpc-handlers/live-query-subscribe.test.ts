@@ -585,6 +585,39 @@ describe('setupLiveQueryHandlers', () => {
     expect(removed.message.data.removed).toMatchObject([{ id: secondary.id }]);
   });
 
+  test('spaceWorkspaces.bySpace skips reevaluation for other spaces scoped writes', async () => {
+    const now = Date.now();
+    for (const id of ['space-ws-a', 'space-ws-b']) {
+      db.exec(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+         VALUES ('${id}', '${id}', '/repos/${id}', '${id}', ${now}, ${now})`
+      );
+    }
+    const repo = new SpaceWorkspaceRepository(db, reactiveDb);
+
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'spaceWorkspaces.bySpace',
+      params: ['space-ws-a'],
+      subscriptionId: 'sub-ws-a',
+    });
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'spaceWorkspaces.bySpace',
+      params: ['space-ws-b'],
+      subscriptionId: 'sub-ws-b',
+    });
+    const messagesFor = (subscriptionId: string) =>
+      setup.sentMessages.filter((sent) => sent.message.data.subscriptionId === subscriptionId);
+    expect(messagesFor('sub-ws-a')).toHaveLength(1);
+    expect(messagesFor('sub-ws-b')).toHaveLength(1);
+
+    const created = repo.create({ spaceId: 'space-ws-a', path: '/repos/a' });
+    repo.updateLabel('space-ws-a', created.id, 'x');
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(messagesFor('sub-ws-a').length).toBeGreaterThanOrEqual(2);
+    expect(messagesFor('sub-ws-b')).toHaveLength(1);
+  });
+
   test('subscribe: snapshot delivered immediately on subscribe', async () => {
     insertMcpServer(db, 'mcp-1', 'alpha');
     const result = await setup.callHandler('liveQuery.subscribe', {
