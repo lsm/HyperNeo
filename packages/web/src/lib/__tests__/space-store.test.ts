@@ -254,6 +254,19 @@ function makeMockHub() {
       if (method === 'space.stop') return { ...makeSpace(), stopped: true };
       if (method === 'space.start') return { ...makeSpace(), stopped: false, paused: false };
       if (method === 'space.update') return makeSpace();
+      if (method === 'space.workspace.list') {
+        return [
+          {
+            id: 'ws-1',
+            spaceId: 'space-1',
+            path: '/workspace',
+            label: 'Main',
+            isPrimary: true,
+            createdAt: 0,
+            updatedAt: 0,
+          },
+        ];
+      }
       if (method === 'spaceTask.create') return makeTask('new-task');
       if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
       if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
@@ -1702,6 +1715,16 @@ describe('SpaceStore — CRUD methods', () => {
       description: 'desc',
     });
     expect(task.id).toBe('new-task');
+  });
+
+  it('listWorkspaces calls space.workspace.list RPC and returns workspaces', async () => {
+    await spaceStore.selectSpace('space-1');
+    const workspaces = await spaceStore.listWorkspaces();
+
+    expect(mockHub.request).toHaveBeenCalledWith('space.workspace.list', { spaceId: 'space-1' });
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces[0].path).toBe('/workspace');
+    expect(workspaces[0].isPrimary).toBe(true);
   });
 
   it('updateTask calls spaceTask.update RPC with taskId (not id)', async () => {

@@ -13,7 +13,11 @@ import {
   SDK_TRANSCRIPT_RETENTION_DAYS,
   withSdkTranscriptRetention,
 } from '../../../../src/lib/agent/sdk-transcript-retention';
-import { setModelsCache } from '../../../../src/lib/model-service';
+import {
+  bumpProviderCatalogEpoch,
+  clearModelsCache,
+  setModelsCache,
+} from '../../../../src/lib/model-service';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
 import { SkillsManager } from '../../../../src/lib/skills-manager';
@@ -128,6 +132,613 @@ describe('QueryOptionsBuilder', () => {
           { signal: new AbortController().signal }
         )
       ).toEqual({ behavior: 'cancelled' });
+    });
+
+    describe('refusal fallback model curation', () => {
+      afterEach(() => {
+        getProviderRegistry().setCuratedModels('anthropic', undefined);
+      });
+
+      it('drops a curated-out fallback model and the refusal dialog opt-in at build time', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'sonnet' }]);
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        expect(options.fallbackModel).toBeUndefined();
+        expect(options.supportedDialogKinds).toBeUndefined();
+      });
+
+      it('drops a fallback that stays curated-listed but is missing from the model catalog', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'ghost-fallback' }]);
+        try {
+          mockSession.config.fallbackModel = 'ghost-fallback';
+          const options = await builder.build();
+          expect(options.fallbackModel).toBeUndefined();
+          expect(options.supportedDialogKinds).toBeUndefined();
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+        }
+      });
+
+      it('keeps a fallback model that survives curation', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        expect(options.fallbackModel).toBe('haiku');
+        expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+      });
+
+      it('declines the refusal dialog when the fallback becomes curated out after build', async () => {
+        try {
+          mockSession.config.fallbackModel = 'haiku';
+          const options = await builder.build();
+          getProviderRegistry().setCuratedModels('anthropic', []);
+
+          const response = await options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: new AbortController().signal, requestId: 'test' }
+          );
+
+          expect(response).toEqual({ behavior: 'cancelled' });
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+        }
+      });
+
+      it('approves the refusal dialog while the fallback remains visible', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
+        try {
+          mockSession.config.fallbackModel = 'haiku';
+          const options = await builder.build();
+
+          const response = await options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: new AbortController().signal, requestId: 'test' }
+          );
+
+          expect(response).toEqual({ behavior: 'completed', result: { continue: true } });
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+        }
+      });
+
+      it('declines the refusal dialog when the session fallback changes during a turn', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        mockSession.config.fallbackModel = 'opus';
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
+      it('declines the refusal dialog when the primary model changes after build', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        mockSession.config.model = 'sonnet';
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
+      it('declines the refusal dialog when session-scoped provider settings change after build', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        mockSession.config = { ...mockSession.config, providerConfig: { baseUrl: 'http://new' } };
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
+      it('validates a session-scoped provider fallback against the curated set only', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'ghost-fallback' }]);
+        try {
+          mockSession.config.fallbackModel = 'ghost-fallback';
+          mockSession.config.providerConfig = { apiKey: 'sk-session-scoped' };
+          const options = await builder.build();
+          expect(options.fallbackModel).toBeDefined();
+          expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
+      it('keeps an exact capacity-tagged curated fallback in a scoped session', async () => {
+        getProviderRegistry().setCuratedModels('kimi', [{ id: 'moonshot-k3-128k' }]);
+        try {
+          mockSession.config.provider = 'kimi';
+          mockSession.config.model = 'kimi-k3';
+          mockSession.config.fallbackModel = 'moonshot-k3-128k';
+          mockSession.config.providerConfig = { apiKey: 'sk-session-scoped' };
+
+          const options = await builder.build();
+
+          expect(options.fallbackModel).toBeDefined();
+          expect(options.supportedDialogKinds).toEqual(['refusal_fallback_prompt']);
+        } finally {
+          getProviderRegistry().setCuratedModels('kimi', undefined);
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
+      it('treats a region-scoped provider as session-scoped', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'ghost-fallback' }]);
+        try {
+          mockSession.config.fallbackModel = 'ghost-fallback';
+          mockSession.config.providerConfig = { region: 'global' };
+          const options = await builder.build();
+          expect(options.fallbackModel).toBeDefined();
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
+      it('declines the refusal dialog when the session region changes after build', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        mockSession.config.providerConfig = { region: 'china' };
+        const options = await builder.build();
+        mockSession.config = { ...mockSession.config, providerConfig: { region: 'global' } };
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
+      it('declines the refusal dialog when the fallback changes during the async curation check', async () => {
+        getProviderRegistry().setCuratedModels('anthropic', [{ id: 'haiku' }]);
+        try {
+          mockSession.config.fallbackModel = 'haiku';
+          const options = await builder.build();
+
+          const pending = options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: new AbortController().signal, requestId: 'test' }
+          );
+          mockSession.config = { ...mockSession.config, fallbackModel: 'opus' };
+
+          await expect(pending).resolves.toEqual({ behavior: 'cancelled' });
+        } finally {
+          getProviderRegistry().setCuratedModels('anthropic', undefined);
+        }
+      });
+
+      it('keeps a scoped fallback mapped by the session-scoped catalog', async () => {
+        getProviderRegistry().register({
+          id: 'scoped-catalog-test',
+          displayName: 'Scoped Catalog Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          getModelsForSessionConfig: async () => [
+            {
+              id: 'qwen3:14b',
+              name: 'Qwen 3 14B',
+              alias: 'qwen3',
+              family: 'qwen',
+              provider: 'scoped-catalog-test',
+              contextWindow: 128000,
+              description: 'Qwen 3 14B',
+              releaseDate: '',
+              available: true,
+            },
+          ],
+          ownsModel: () => false,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as Provider);
+        getProviderRegistry().setCuratedModels('scoped-catalog-test', [{ id: 'qwen3' }]);
+        try {
+          mockSession.config.provider = 'scoped-catalog-test';
+          mockSession.config.model = 'qwen3:14b';
+          mockSession.config.fallbackModel = 'qwen3:14b';
+          mockSession.config.providerConfig = { baseUrl: 'http://127.0.0.1:11434' };
+          setModelsCache(
+            new Map([
+              [
+                'global',
+                [
+                  {
+                    id: 'qwen3:8b',
+                    name: 'Qwen 3 8B',
+                    alias: 'qwen3',
+                    family: 'qwen',
+                    provider: 'scoped-catalog-test',
+                    contextWindow: 128000,
+                    description: 'Qwen 3 8B',
+                    releaseDate: '',
+                    available: true,
+                  },
+                ],
+              ],
+            ])
+          );
+
+          const options = await builder.build();
+
+          expect(options.fallbackModel).toBe('qwen3:14b');
+        } finally {
+          getProviderRegistry().unregister('scoped-catalog-test');
+          getProviderRegistry().setCuratedModels('scoped-catalog-test', undefined);
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.providerConfig = undefined;
+          setModelsCache(new Map());
+        }
+      });
+
+      it('declines the refusal dialog when the active provider catalog revision changed after build', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        bumpProviderCatalogEpoch('kimi');
+
+        const unaffected = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+        expect(unaffected).toEqual({ behavior: 'completed', result: { continue: true } });
+
+        bumpProviderCatalogEpoch('anthropic');
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
+      it('declines the refusal dialog after an auth-driven cache clear bumps the provider revision', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        clearModelsCache(undefined, 'anthropic');
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: new AbortController().signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
+      it('declines the refusal dialog when the dialog signal is already aborted', async () => {
+        mockSession.config.fallbackModel = 'haiku';
+        const options = await builder.build();
+        const aborted = new AbortController();
+        aborted.abort();
+
+        const response = await options.onUserDialog?.(
+          { dialogKind: 'refusal_fallback_prompt', payload: {} },
+          { signal: aborted.signal, requestId: 'test' }
+        );
+
+        expect(response).toEqual({ behavior: 'cancelled' });
+      });
+
+      it('declines the refusal dialog when the signal aborts during scoped discovery', async () => {
+        let scopedFetchCount = 0;
+        let releaseFetch: (() => void) | undefined;
+        getProviderRegistry().register({
+          id: 'scoped-abort-test',
+          displayName: 'Scoped Abort Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          getModelsForSessionConfig: async () => {
+            scopedFetchCount += 1;
+            if (scopedFetchCount > 1) {
+              await new Promise<void>((resolve) => {
+                releaseFetch = resolve;
+              });
+            }
+            return [
+              {
+                id: 'qwen3:14b',
+                name: 'Qwen 3 14B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'scoped-abort-test',
+                contextWindow: 128000,
+                description: 'Qwen 3 14B',
+                releaseDate: '',
+                available: true,
+              },
+            ];
+          },
+          ownsModel: () => false,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as Provider);
+        getProviderRegistry().setCuratedModels('scoped-abort-test', [{ id: 'qwen3' }]);
+        try {
+          mockSession.config.provider = 'scoped-abort-test';
+          mockSession.config.model = 'qwen3:14b';
+          mockSession.config.fallbackModel = 'qwen3:14b';
+          mockSession.config.providerConfig = { baseUrl: 'http://127.0.0.1:11434' };
+
+          const options = await builder.build();
+          expect(scopedFetchCount).toBe(1);
+
+          clearModelsCache(mockSession.id);
+          const controller = new AbortController();
+          const pending = options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: controller.signal, requestId: 'test' }
+          );
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          controller.abort();
+          releaseFetch?.();
+          const response = await pending;
+
+          expect(response).toEqual({ behavior: 'cancelled' });
+          expect(scopedFetchCount).toBe(2);
+        } finally {
+          getProviderRegistry().unregister('scoped-abort-test');
+          getProviderRegistry().setCuratedModels('scoped-abort-test', undefined);
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
+      it('drops a fallback rejected by provider-native model validation at build time', async () => {
+        getProviderRegistry().register({
+          id: 'allowlist-test',
+          displayName: 'Allowlist Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          ownsModel: () => true,
+          getModelForTier: () => undefined,
+          buildSdkConfig: (modelId: string) => {
+            if (modelId === 'blocked-fallback') {
+              throw new Error("model 'blocked-fallback' is not in the configured allowlist");
+            }
+            return { envVars: {}, isAnthropicCompatible: false };
+          },
+        } as unknown as Provider);
+        try {
+          mockSession.config.provider = 'allowlist-test';
+          mockSession.config.model = 'allowed-model';
+          mockSession.config.fallbackModel = 'blocked-fallback';
+
+          const options = await builder.build();
+
+          expect(options.fallbackModel).toBeUndefined();
+          expect(options.supportedDialogKinds).toBeUndefined();
+
+          mockSession.config.fallbackModel = 'allowed-model';
+          const keptOptions = await builder.build();
+          expect(keptOptions.fallbackModel).toBe('allowed-model');
+        } finally {
+          getProviderRegistry().unregister('allowlist-test');
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.model = 'default';
+          mockSession.config.fallbackModel = undefined;
+        }
+      });
+
+      it('skips scoped catalog discovery when no curation is configured', async () => {
+        let scopedFetchCount = 0;
+        getProviderRegistry().register({
+          id: 'scoped-skip-test',
+          displayName: 'Scoped Skip Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          getModelsForSessionConfig: async () => {
+            scopedFetchCount += 1;
+            return [
+              {
+                id: 'qwen3:14b',
+                name: 'Qwen 3 14B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'scoped-skip-test',
+                contextWindow: 128000,
+                description: 'Qwen 3 14B',
+                releaseDate: '',
+                available: true,
+              },
+            ];
+          },
+          ownsModel: () => false,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as Provider);
+        try {
+          mockSession.config.provider = 'scoped-skip-test';
+          mockSession.config.model = 'qwen3:14b';
+          mockSession.config.fallbackModel = 'qwen3:14b';
+          mockSession.config.providerConfig = { baseUrl: 'http://127.0.0.1:11434' };
+
+          const options = await builder.build();
+          expect(options.fallbackModel).toBe('qwen3:14b');
+          expect(scopedFetchCount).toBe(0);
+
+          getProviderRegistry().setCuratedModels('scoped-skip-test', [{ id: 'qwen3' }]);
+          const curatedOptions = await builder.build();
+          expect(curatedOptions.fallbackModel).toBe('qwen3:14b');
+          expect(scopedFetchCount).toBe(1);
+        } finally {
+          getProviderRegistry().unregister('scoped-skip-test');
+          getProviderRegistry().setCuratedModels('scoped-skip-test', undefined);
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
+      it('declines the dialog without scoped discovery when scoped credentials changed while the dialog was pending', async () => {
+        let scopedFetchCount = 0;
+        getProviderRegistry().register({
+          id: 'scoped-identity-test',
+          displayName: 'Scoped Identity Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          getModelsForSessionConfig: async () => {
+            scopedFetchCount += 1;
+            return [
+              {
+                id: 'qwen3:14b',
+                name: 'Qwen 3 14B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'scoped-identity-test',
+                contextWindow: 128000,
+                description: 'Qwen 3 14B',
+                releaseDate: '',
+                available: true,
+              },
+            ];
+          },
+          ownsModel: () => false,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as Provider);
+        getProviderRegistry().setCuratedModels('scoped-identity-test', [{ id: 'qwen3' }]);
+        try {
+          mockSession.config.provider = 'scoped-identity-test';
+          mockSession.config.model = 'qwen3:14b';
+          mockSession.config.fallbackModel = 'qwen3:14b';
+          mockSession.config.providerConfig = {
+            baseUrl: 'http://127.0.0.1:11434',
+            apiKey: 'old-key',
+          };
+
+          const options = await builder.build();
+          expect(options.fallbackModel).toBe('qwen3:14b');
+          expect(scopedFetchCount).toBe(1);
+
+          mockSession.config = {
+            ...mockSession.config,
+            providerConfig: { baseUrl: 'http://127.0.0.1:11434', apiKey: 'new-key' },
+          };
+
+          const response = await options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: new AbortController().signal, requestId: 'test' }
+          );
+
+          expect(response).toEqual({ behavior: 'cancelled' });
+          expect(scopedFetchCount).toBe(1);
+        } finally {
+          getProviderRegistry().unregister('scoped-identity-test');
+          getProviderRegistry().setCuratedModels('scoped-identity-test', undefined);
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.providerConfig = undefined;
+        }
+      });
+
+      it('declines the dialog when scoped settings change during the dialog scoped discovery', async () => {
+        let scopedFetchCount = 0;
+        getProviderRegistry().register({
+          id: 'scoped-race-test',
+          displayName: 'Scoped Race Test',
+          capabilities: {
+            streaming: true,
+            extendedThinking: false,
+            maxContextWindow: 128000,
+            functionCalling: true,
+            vision: false,
+          },
+          isAvailable: async () => true,
+          getModels: async () => [],
+          getModelsForSessionConfig: async () => {
+            scopedFetchCount += 1;
+            if (scopedFetchCount > 1) {
+              mockSession.config = {
+                ...mockSession.config,
+                providerConfig: { baseUrl: 'http://127.0.0.1:11434', apiKey: 'rotated' },
+              };
+            }
+            return [
+              {
+                id: 'qwen3:14b',
+                name: 'Qwen 3 14B',
+                alias: 'qwen3',
+                family: 'qwen',
+                provider: 'scoped-race-test',
+                contextWindow: 128000,
+                description: 'Qwen 3 14B',
+                releaseDate: '',
+                available: true,
+              },
+            ];
+          },
+          ownsModel: () => false,
+          getModelForTier: () => undefined,
+          buildSdkConfig: () => ({ envVars: {}, isAnthropicCompatible: false }),
+        } as unknown as Provider);
+        getProviderRegistry().setCuratedModels('scoped-race-test', [{ id: 'qwen3' }]);
+        try {
+          mockSession.config.provider = 'scoped-race-test';
+          mockSession.config.model = 'qwen3:14b';
+          mockSession.config.fallbackModel = 'qwen3:14b';
+          mockSession.config.providerConfig = {
+            baseUrl: 'http://127.0.0.1:11434',
+            apiKey: 'old-key',
+          };
+
+          const options = await builder.build();
+          expect(scopedFetchCount).toBe(1);
+
+          clearModelsCache(mockSession.id);
+          const response = await options.onUserDialog?.(
+            { dialogKind: 'refusal_fallback_prompt', payload: {} },
+            { signal: new AbortController().signal, requestId: 'test' }
+          );
+
+          expect(response).toEqual({ behavior: 'cancelled' });
+          expect(scopedFetchCount).toBe(2);
+        } finally {
+          getProviderRegistry().unregister('scoped-race-test');
+          getProviderRegistry().setCuratedModels('scoped-race-test', undefined);
+          mockSession.config.provider = 'anthropic';
+          mockSession.config.providerConfig = undefined;
+        }
+      });
     });
 
     it('should include agents when configured', async () => {
@@ -354,7 +965,7 @@ describe('QueryOptionsBuilder', () => {
       expect(buildProviderSettings('glm', 1_000_000)).toBeUndefined();
     });
 
-    it('should enable SDK auto-compaction for non-native providers with context windows', () => {
+    it('should pass the full context window for non-native providers (SDK derives its own threshold)', () => {
       expect(buildProviderSettings('openrouter', 1_000_000)).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
@@ -362,6 +973,47 @@ describe('QueryOptionsBuilder', () => {
       expect(buildProviderSettings('ollama', 32_000)).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 32_000,
+      });
+    });
+
+    it('should stretch the armed window for percents above the SDK default so the trigger lands on target', () => {
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 95)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 223_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 91)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 215_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 100)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 233_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 90)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 213_000,
+      });
+    });
+
+    it('should arm the SDK at the configured threshold plus the provider reserve for percents below the default', () => {
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 50)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 133_000,
+      });
+      expect(buildProviderSettings('openrouter', 200_000, undefined, 10)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 53_000,
+      });
+    });
+
+    it('should ignore the percent for kimi models and arm the real window', () => {
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code', 50)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
+      });
+      expect(buildProviderSettings('kimi', 262_144, 'kimi-k2.7-code', 90)).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 262_144,
       });
     });
 
@@ -430,7 +1082,49 @@ describe('QueryOptionsBuilder', () => {
       resetProviderRegistry();
     });
 
-    it('should enable SDK auto-compaction for OpenRouter models with their context window', async () => {
+    it('wires a PostToolUse hook that invokes the mid-turn context budget check', async () => {
+      registerOpenRouterProvider();
+      setModelsCache(new Map());
+      const budgetCheck = mock(() => {});
+      mockSession.config.provider = 'openrouter';
+      mockSession.config.model = 'any-model';
+      const options = await new QueryOptionsBuilder({
+        ...mockContext,
+        midTurnContextBudgetCheck: budgetCheck,
+      }).build();
+
+      const postToolUse = options.hooks?.PostToolUse;
+      expect(postToolUse).toBeDefined();
+      expect(postToolUse!.length).toBeGreaterThan(0);
+
+      const hook = postToolUse![0]!.hooks[0]!;
+      await hook({ hook_event_name: 'PostToolUse' } as never, undefined, {
+        signal: new AbortController().signal,
+      });
+      expect(budgetCheck).toHaveBeenCalledTimes(1);
+    });
+
+    it('wires the mid-turn context budget check into PostToolUseFailure as well', async () => {
+      registerOpenRouterProvider();
+      setModelsCache(new Map());
+      const budgetCheck = mock(() => {});
+      mockSession.config.provider = 'openrouter';
+      mockSession.config.model = 'any-model';
+      const options = await new QueryOptionsBuilder({
+        ...mockContext,
+        midTurnContextBudgetCheck: budgetCheck,
+      }).build();
+
+      const postToolUseFailure = options.hooks?.PostToolUseFailure;
+      expect(postToolUseFailure).toBeDefined();
+      const guardEntry = postToolUseFailure![0]!;
+      await guardEntry.hooks[0]!({ hook_event_name: 'PostToolUseFailure' } as never, undefined, {
+        signal: new AbortController().signal,
+      });
+      expect(budgetCheck).toHaveBeenCalledTimes(1);
+    });
+
+    it('should enable SDK auto-compaction for OpenRouter models with their full context window (percent enforcement lives in the daemon backstop)', async () => {
       registerOpenRouterProvider();
       setModelsCache(
         new Map([
@@ -444,6 +1138,14 @@ describe('QueryOptionsBuilder', () => {
                 contextWindow: 1_000_000,
                 available: true,
               },
+              {
+                id: 'pct-model',
+                name: 'Percent Model',
+                provider: 'openrouter',
+                contextWindow: 1_000_000,
+                autoCompactPercent: 80,
+                available: true,
+              },
             ],
           ],
         ])
@@ -454,6 +1156,13 @@ describe('QueryOptionsBuilder', () => {
       expect(options.settings).toEqual({
         autoCompactEnabled: true,
         autoCompactWindow: 1_000_000,
+        cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
+      });
+      mockSession.config.model = 'pct-model';
+      const pctOptions = await builder.build();
+      expect(pctOptions.settings).toEqual({
+        autoCompactEnabled: true,
+        autoCompactWindow: 833_000,
         cleanupPeriodDays: SDK_TRANSCRIPT_RETENTION_DAYS,
       });
     });
@@ -861,6 +1570,71 @@ describe('QueryOptionsBuilder', () => {
         {} as import('@anthropic-ai/claude-agent-sdk').Options
       );
       expect(result.thinking).toEqual({ type: 'enabled', budgetTokens: 16000 });
+    });
+
+    it('does not force an enabled budget when the Kimi K2.7 fallback is curated out', () => {
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3[1m]' }]);
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-k3';
+        mockSession.config.fallbackModel = 'kimi-k2.7-code';
+        mockSession.config.thinkingLevel = 'off';
+
+        const result = builder.addSessionStateOptions(
+          {} as import('@anthropic-ai/claude-agent-sdk').Options
+        );
+        expect(result.thinking).toBeUndefined();
+      } finally {
+        getProviderRegistry().setCuratedModels('kimi', undefined);
+      }
+    });
+
+    it('does not force an enabled budget for a fallback dropped by build', async () => {
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3[1m]' }]);
+      process.env.KIMI_API_KEY = 'test-kimi-key';
+      process.env.KIMI_BASE_URL = 'http://127.0.0.1:9';
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-k3';
+        mockSession.config.fallbackModel = 'kimi-k2.7-code';
+        mockSession.config.thinkingLevel = 'off';
+
+        await builder.build();
+        const result = builder.addSessionStateOptions(
+          {} as import('@anthropic-ai/claude-agent-sdk').Options
+        );
+
+        expect(result.thinking).toBeUndefined();
+      } finally {
+        process.env.KIMI_API_KEY = '';
+        process.env.KIMI_BASE_URL = '';
+        getProviderRegistry().setCuratedModels('kimi', undefined);
+      }
+    });
+
+    it('keeps the thinking derivation tied to the fallback captured at build', async () => {
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi-k3[1m]' }]);
+      process.env.KIMI_API_KEY = 'test-kimi-key';
+      process.env.KIMI_BASE_URL = 'http://127.0.0.1:9';
+      try {
+        mockSession.config.provider = 'kimi';
+        mockSession.config.model = 'kimi-k3';
+        mockSession.config.fallbackModel = 'k3';
+        mockSession.config.thinkingLevel = 'off';
+
+        await builder.build();
+        mockSession.config.fallbackModel = 'kimi-k2.7-code';
+
+        const result = builder.addSessionStateOptions(
+          {} as import('@anthropic-ai/claude-agent-sdk').Options
+        );
+
+        expect(result.thinking).toBeUndefined();
+      } finally {
+        process.env.KIMI_API_KEY = '';
+        process.env.KIMI_BASE_URL = '';
+        getProviderRegistry().setCuratedModels('kimi', undefined);
+      }
     });
 
     it('allows mixed Kimi K2.7 primary and K3 fallback when K2.7 forces enabled thinking', () => {
@@ -1294,6 +2068,21 @@ describe('QueryOptionsBuilder', () => {
       expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('AskUserQuestion');
       expect(options.hooks?.PreToolUse?.[0]?.hooks[0]).toBe(auqHook);
       expect(options.hooks?.PreToolUse?.[1]?.matcher).toBeUndefined();
+    });
+
+    it('prefers the per-build askUserQuestionHook override over the shared field', async () => {
+      const fieldHook = (async () => ({})) as unknown as Parameters<
+        QueryOptionsBuilder['setAskUserQuestionHook']
+      >[0];
+      const overrideHook = (async () => ({})) as unknown as Parameters<
+        QueryOptionsBuilder['setAskUserQuestionHook']
+      >[0];
+      builder.setAskUserQuestionHook(fieldHook);
+      const options = await builder.build({ askUserQuestionHook: overrideHook });
+
+      expect(options.hooks?.PreToolUse?.[0]?.matcher).toBe('AskUserQuestion');
+      expect(options.hooks?.PreToolUse?.[0]?.hooks[0]).toBe(overrideHook);
+      expect(options.hooks?.PreToolUse?.[0]?.hooks[0]).not.toBe(fieldHook);
     });
 
     it('installs a Bash-matcher scope hook from scoped Bash allowedTools entries', async () => {

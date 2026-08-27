@@ -58,6 +58,8 @@ const SESSION_LIST_EXCLUDED_TYPES = new Set<string>([
   'space_task_agent',
 ]);
 
+const MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW = 100;
+
 function mapSessionGroupMessageRow(row: Record<string, unknown>): Record<string, unknown> {
   const sourceType = row.sourceType;
   const groupId = String(row.groupId ?? '');
@@ -1877,7 +1879,7 @@ github_events AS (
     1 AS isRenderable,
     0 AS isTerminal,
     NULL AS turnUserMessageId,
-    NULL AS insOrder
+    ge.rowid AS insOrder
   FROM target_task tt
   JOIN space_github_events ge ON ge.task_id = tt.id
   WHERE ge.state IN ('routed', 'delivered')
@@ -1977,7 +1979,7 @@ sdk_rows_numbered AS (
     r.*,
     ROW_NUMBER() OVER (
       PARTITION BY r.sessionId
-      ORDER BY r.createdAt ASC, r.id ASC
+      ORDER BY r.createdAt ASC, r.insOrder ASC
     ) AS rowPos
   FROM sdk_rows_raw r
 ),
@@ -2094,16 +2096,136 @@ SELECT
   deliveryState,
   createdAt,
   turnUserMessageId,
-  parentToolUseId
+  parentToolUseId,
+  insOrder
 FROM joined
-ORDER BY createdAt ASC, id ASC
+ORDER BY createdAt ASC, insOrder ASC, kind ASC, id ASC
 `.trim();
 
 export const SPACE_TASK_MESSAGES_COMPACT_RECENT_TURNS = 100;
 
 export const SPACE_TASK_MESSAGES_COMPACT_TOOL_SUMMARY_LIMIT = 3;
 
-const SPACE_TASK_CONV_BASE_CTE = `
+const SPACE_TASK_MESSAGES_COMPACT_ARTIFACT_PIN_LIMIT = 100;
+
+const SPACE_TASK_CONV_ARTIFACT_STATE_CTES = `artifact_tool_blocks AS (
+  SELECT
+    sm.id AS id,
+    sm.session_id AS sessionId,
+    CAST(ROUND((julianday(sm.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt,
+    sm.rowid AS insOrder,
+    json_extract(b.value, '$.name') AS toolName,
+    json_extract(b.value, '$.input.file_path') AS filePath
+  FROM target_task tt
+  JOIN sdk_messages sm ON sm.task_id = tt.id
+  CROSS JOIN json_each(
+    CASE
+      WHEN json_valid(sm.sdk_message)
+        AND json_type(sm.sdk_message, '$.message.content') = 'array'
+      THEN sm.sdk_message
+    END,
+    '$.message.content'
+  ) b
+  WHERE sm.message_type = 'assistant'
+    AND instr(sm.sdk_message, 'tool_use') > 0
+    AND CASE
+      WHEN json_valid(b.value) THEN CASE
+        WHEN json_type(b.value) = 'object' THEN 1
+        ELSE 0
+      END
+      ELSE 0
+    END
+    AND json_type(b.value, '$.id') = 'text'
+    AND json_extract(b.value, '$.type') = 'tool_use'
+    AND (
+      json_extract(b.value, '$.name') NOT IN ('Write', 'Edit', 'MultiEdit')
+      OR CASE
+        WHEN json_extract(b.value, '$.name') = 'Write' THEN
+          json_type(b.value, '$.input.file_path') = 'text'
+          AND json_type(b.value, '$.input.content') = 'text'
+        WHEN json_extract(b.value, '$.name') = 'Edit' THEN
+          json_type(b.value, '$.input.file_path') = 'text'
+          AND json_type(b.value, '$.input.old_string') = 'text'
+          AND json_type(b.value, '$.input.new_string') = 'text'
+        ELSE
+          json_type(b.value, '$.input.file_path') = 'text'
+          AND EXISTS (
+            SELECT 1 FROM (
+              SELECT me.value AS editValue
+              FROM json_each(b.value, '$.input.edits') me
+              WHERE CASE
+                WHEN json_valid(me.value) THEN CASE
+                  WHEN json_type(me.value) = 'object' THEN 1
+                  ELSE 0
+                END
+                ELSE 0
+              END
+              ORDER BY me.key
+              LIMIT 1
+            ) firstEdit
+            WHERE json_type(firstEdit.editValue, '$.old_string') = 'text'
+              AND json_type(firstEdit.editValue, '$.new_string') = 'text'
+          )
+      END
+    )
+    AND (
+      json_extract(b.value, '$.name') != 'TodoWrite'
+      OR (
+        json_type(b.value, '$.input.todos') = 'array'
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(b.value, '$.input.todos') te
+          WHERE CASE
+            WHEN json_valid(te.value) THEN CASE
+              WHEN json_type(te.value) = 'object' THEN CASE
+                WHEN json_type(te.value, '$.content') = 'text'
+                  THEN json_type(te.value, '$.status') != 'text'
+                ELSE 1
+              END
+              ELSE 1
+            END
+            ELSE 1
+          END
+        )
+      )
+    )
+),
+artifact_state_rows AS (
+  SELECT id FROM (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (ORDER BY createdAt DESC, insOrder DESC) AS pinRank
+    FROM (
+      SELECT id, createdAt, insOrder FROM (
+        SELECT
+          id,
+          createdAt,
+          insOrder,
+          ROW_NUMBER() OVER (
+            PARTITION BY filePath ORDER BY createdAt DESC, insOrder DESC
+          ) AS pathRank
+        FROM artifact_tool_blocks
+        WHERE toolName IN ('Write', 'Edit', 'MultiEdit')
+          AND filePath IS NOT NULL
+      ) WHERE pathRank = 1
+      UNION
+      SELECT id, createdAt, insOrder FROM (
+        SELECT
+          id,
+          createdAt,
+          insOrder,
+          ROW_NUMBER() OVER (
+            PARTITION BY sessionId ORDER BY createdAt DESC, insOrder DESC
+          ) AS sessionRank
+        FROM artifact_tool_blocks
+        WHERE toolName = 'TodoWrite'
+      ) WHERE sessionRank = 1
+    )
+  ) WHERE pinRank <= ${SPACE_TASK_MESSAGES_COMPACT_ARTIFACT_PIN_LIMIT}
+),
+`;
+
+function spaceTaskConvBaseCte(admitArtifactState: boolean): string {
+  return `
 WITH target_task AS (
   SELECT *
   FROM space_tasks
@@ -2136,7 +2258,7 @@ github_events AS (
     1 AS isRenderable,
     0 AS isTerminal,
     NULL AS turnIndex,
-    NULL AS insOrder
+    ge.rowid AS insOrder
   FROM target_task tt
   JOIN space_github_events ge ON ge.task_id = tt.id
   WHERE ge.state IN ('routed', 'delivered')
@@ -2179,7 +2301,7 @@ recent_turns AS (
   )
 ),
 ${TASK_SHUTDOWN_BOUNDARY_CTE_SQL},
-sdk_rows AS (
+${admitArtifactState ? SPACE_TASK_CONV_ARTIFACT_STATE_CTES : ''}sdk_rows AS (
   SELECT
     sm.id AS id,
     sm.session_id AS sessionId,
@@ -2202,7 +2324,7 @@ sdk_rows AS (
     sm.sdk_message AS content,
     sm.origin AS origin,
     ${SPACE_TASK_DELIVERY_STATE_CASE}
-    CAST((julianday(sm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt,
+    CAST(ROUND((julianday(sm.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt,
     sm.parent_tool_use_id AS parentToolUseId,
     sm.is_renderable AS isRenderable,
     sm.is_terminal AS isTerminal,
@@ -2232,6 +2354,16 @@ sdk_rows AS (
       sm.message_type = 'user'
       AND COALESCE(sm.send_status, 'consumed') NOT IN ('consumed', 'failed')
     )
+    OR (
+      sm.message_type = 'hyperneo_action'
+      AND COALESCE(
+        CASE
+          WHEN json_valid(sm.sdk_message) THEN json_extract(sm.sdk_message, '$.resolved')
+        END,
+        1
+      ) = 0
+    )
+    ${admitArtifactState ? 'OR sm.id IN (SELECT id FROM artifact_state_rows)' : ''}
   )
     AND (
       sm.message_type != 'system'
@@ -2270,10 +2402,11 @@ joined AS (
     insOrder
   FROM sdk_rows
 )
-`.trim();
+  `.trim();
+}
 
 const SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL = `
-${SPACE_TASK_CONV_BASE_CTE},
+${spaceTaskConvBaseCte(true)},
 -- Assistant rows with a non-empty text block, ranked newest-first per segment.
 assistant_text AS (
   SELECT sessionId, turnIndex, id,
@@ -2284,7 +2417,14 @@ assistant_text AS (
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE json_extract(b.value, '$.type') = 'text'
+      WHERE CASE
+        WHEN json_valid(b.value) THEN CASE
+          WHEN json_type(b.value) = 'object'
+            THEN json_extract(b.value, '$.type')
+          ELSE NULL
+        END
+        ELSE NULL
+      END = 'text'
         AND TRIM(COALESCE(json_extract(b.value, '$.text'), '')) != ''
     )
 ),
@@ -2298,7 +2438,14 @@ assistant_thinking AS (
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE json_extract(b.value, '$.type') = 'thinking'
+      WHERE CASE
+        WHEN json_valid(b.value) THEN CASE
+          WHEN json_type(b.value) = 'object'
+            THEN json_extract(b.value, '$.type')
+          ELSE NULL
+        END
+        ELSE NULL
+      END = 'thinking'
         AND TRIM(COALESCE(json_extract(b.value, '$.thinking'), '')) != ''
     )
 ),
@@ -2312,7 +2459,14 @@ assistant_tool AS (
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE json_extract(b.value, '$.type') = 'tool_use'
+      WHERE CASE
+        WHEN json_valid(b.value) THEN CASE
+          WHEN json_type(b.value) = 'object'
+            THEN json_extract(b.value, '$.type')
+          ELSE NULL
+        END
+        ELSE NULL
+      END = 'tool_use'
     )
 ),
 -- The summary row id(s) per (session, turn): assistant text if any, else
@@ -2339,7 +2493,7 @@ seg_summary AS (
       WHERE th.sessionId = tu.sessionId AND th.turnIndex = tu.turnIndex
     )
 ),
-selected_ids AS (
+base_selection AS (
   -- Every anchor (renderable user message) — never swallowed.
   SELECT id FROM joined WHERE messageType = 'user' AND isRenderable = 1
   UNION ALL
@@ -2388,41 +2542,165 @@ selected_ids AS (
     AND json_type(content, '$.message.content') = 'array'
     AND EXISTS (
       SELECT 1 FROM json_each(content, '$.message.content') b
-      WHERE json_extract(b.value, '$.type') = 'tool_use'
-        AND json_extract(b.value, '$.name') IN ('Write', 'Edit', 'MultiEdit', 'TodoWrite')
+      WHERE CASE
+        WHEN json_valid(b.value) THEN CASE
+          WHEN json_type(b.value) = 'object'
+            THEN json_extract(b.value, '$.name')
+          ELSE NULL
+        END
+        ELSE NULL
+      END IN ('Write', 'Edit', 'MultiEdit', 'TodoWrite')
+        AND CASE
+          WHEN json_valid(b.value) THEN CASE
+            WHEN json_type(b.value) = 'object'
+              THEN json_extract(b.value, '$.type')
+            ELSE NULL
+          END
+          ELSE NULL
+        END = 'tool_use'
     )
     AND NOT EXISTS (SELECT 1 FROM seg_summary ss WHERE ss.id = joined.id)
   UNION ALL
   -- Per-segment summary (assistant text -> thinking -> last N tools).
   SELECT id FROM seg_summary
+),
+hook_rows AS (
+  SELECT id FROM joined
+  WHERE messageType = 'system'
+    AND COALESCE(
+      CASE WHEN json_valid(content) THEN json_extract(content, '$.subtype') END,
+      ''
+    ) IN ('hook_started', 'hook_progress', 'hook_response')
+),
+tail_eligible AS (
+  SELECT id FROM base_selection
+  UNION
+  SELECT id FROM hook_rows
+),
+session_candidates AS (
+  SELECT
+    j.id AS id,
+    j.sessionId AS sessionId,
+    j.isTerminal AS isTerminalRow,
+    j.turnIndex AS turnIndex,
+    ROW_NUMBER() OVER (
+      PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
+    ) AS candRank
+  FROM joined j
+  WHERE j.sessionId IS NOT NULL
+    AND (
+      j.messageType IN ('assistant', 'result')
+      OR (
+        j.messageType = 'system'
+        AND json_valid(j.content)
+        AND COALESCE(json_extract(j.content, '$.subtype'), '')
+          IN ('api_retry', 'hook_started', 'hook_progress', 'hook_response')
+      )
+    )
+),
+active_sessions AS (
+  SELECT sessionId
+  FROM session_candidates c
+  WHERE c.candRank = 1
+    AND COALESCE(c.isTerminalRow, 0) = 0
+    AND c.turnIndex = (
+      SELECT j2.turnIndex
+      FROM joined j2
+      WHERE j2.sessionId = c.sessionId
+      ORDER BY j2.createdAt DESC, j2.insOrder DESC
+      LIMIT 1
+    )
+),
+active_session_tails AS (
+  SELECT id
+  FROM (
+    SELECT
+      j.id AS id,
+      j.kind AS kind,
+      ROW_NUMBER() OVER (
+        PARTITION BY j.sessionId ORDER BY j.createdAt DESC, j.insOrder DESC
+      ) AS sessionRank
+    FROM joined j
+    WHERE j.sessionId IS NOT NULL
+      AND j.id IN (SELECT id FROM tail_eligible)
+      AND j.sessionId IN (SELECT sessionId FROM active_sessions)
+  )
+  WHERE sessionRank = 1
+    AND kind != 'github'
+),
+selected_ids AS (
+  SELECT id FROM base_selection
+  UNION ALL
+  SELECT id FROM active_session_tails
+),
+ranked_rows AS (
+  SELECT
+    j.id AS id,
+    j.sessionId AS sessionId,
+    j.kind AS kind,
+    j.role AS role,
+    j.label AS label,
+    j.nodeExecutionId AS nodeExecutionId,
+    j.taskId AS taskId,
+    j.taskTitle AS taskTitle,
+    j.messageType AS messageType,
+    j.content AS content,
+    j.origin AS origin,
+    j.deliveryState AS deliveryState,
+    j.createdAt AS createdAt,
+    j.turnIndex AS turnIndex,
+    j.parentToolUseId AS parentToolUseId,
+    j.insOrder AS insOrder,
+    (
+      (
+        j.messageType = 'hyperneo_action'
+        AND COALESCE(
+          CASE WHEN json_valid(j.content) THEN json_extract(j.content, '$.resolved') END,
+          1
+        ) = 0
+      )
+      OR (j.messageType = 'user' AND j.deliveryState IN ('queued', 'processing', 'retrying'))
+      OR j.id IN (SELECT id FROM artifact_state_rows)
+    ) AS pinned
+  FROM joined j
+  JOIN (SELECT DISTINCT id FROM selected_ids) s ON s.id = j.id
+),
+ordinary_ranked AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      ORDER BY createdAt DESC, insOrder DESC, kind DESC, id DESC
+    ) AS ordinaryRank
+  FROM ranked_rows
+  WHERE NOT pinned
+    AND id NOT IN (SELECT id FROM active_session_tails)
 )
 SELECT
-  j.id,
-  j.sessionId,
-  j.kind,
-  j.role,
-  j.label,
-  j.nodeExecutionId,
-  j.taskId,
-  j.taskTitle,
-  j.messageType,
-  j.content,
-  j.origin,
-  j.deliveryState,
-  j.createdAt,
-  j.turnIndex,
-  j.parentToolUseId,
-  j.insOrder AS insOrder
-FROM joined j
-JOIN selected_ids s ON s.id = j.id
--- Tiebreak same-millisecond rows by insertion order (sm.rowid), not the random
--- UUID id, so e.g. several queued prompts consumed in the same ms render in
--- queue order, not shuffled (#2338).
-ORDER BY j.createdAt ASC, j.insOrder ASC
+  id,
+  sessionId,
+  kind,
+  role,
+  label,
+  nodeExecutionId,
+  taskId,
+  taskTitle,
+  messageType,
+  content,
+  origin,
+  deliveryState,
+  createdAt,
+  turnIndex,
+  parentToolUseId,
+  insOrder
+FROM ranked_rows
+WHERE pinned
+  OR id IN (SELECT id FROM active_session_tails)
+  OR id IN (SELECT id FROM ordinary_ranked WHERE ordinaryRank <= ?)
+ORDER BY createdAt ASC, insOrder ASC, kind ASC, id ASC
 `.trim();
 
 export const SPACE_TASK_ACTIVE_TURN_ENTRIES_BY_TASK_SQL = `
-${SPACE_TASK_CONV_BASE_CTE},
+${spaceTaskConvBaseCte(false)},
 active_turn AS (
   -- The active roster turn per session = the conversation turn holding the
   -- session's most recent AGENT/operational row, and only when that row is not
@@ -3374,6 +3652,42 @@ function buildSpaceSessionsScopeFilter(
   };
 }
 
+const SPACE_WORKSPACES_BY_SPACE_SQL = `
+SELECT
+  id,
+  space_id as spaceId,
+  path,
+  label,
+  is_primary as isPrimary,
+  created_at as createdAt,
+  updated_at as updatedAt
+FROM space_workspaces
+WHERE space_id = ?
+ORDER BY is_primary DESC, created_at ASC, id ASC
+`;
+
+function mapSpaceWorkspaceRow(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: row.id,
+    spaceId: row.spaceId,
+    path: row.path,
+    label: row.label,
+    isPrimary: row.isPrimary === 1,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function buildSpaceWorkspacesScopeFilter(
+  params: ReadonlyArray<unknown>
+): (scope: TableChangeScope) => boolean {
+  const spaceId = params[0] as string;
+  return (scope) => {
+    if (!scope.spaceId) return true;
+    return scope.spaceId === spaceId;
+  };
+}
+
 export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
   [
     'sessionGroupMessages.byGroup',
@@ -3418,7 +3732,7 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
     'spaceTaskMessages.byTask.compact',
     {
       sql: SPACE_TASK_MESSAGES_BY_TASK_COMPACT_SQL,
-      paramCount: 1,
+      paramCount: 2,
       debounceMs: DEBOUNCE_SPACE_TASK_FEEDS_MS,
       mapRow: mapSpaceTaskMessageRow,
       buildScopeFilter: buildTaskScopeFilter,
@@ -3456,6 +3770,15 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
       sql: MCP_ENABLEMENT_BY_SPACE_SQL,
       paramCount: 1,
       mapRow: mapMcpEnablementBySpaceRow,
+    },
+  ],
+  [
+    'spaceWorkspaces.bySpace',
+    {
+      sql: SPACE_WORKSPACES_BY_SPACE_SQL,
+      paramCount: 1,
+      mapRow: mapSpaceWorkspaceRow,
+      buildScopeFilter: buildSpaceWorkspacesScopeFilter,
     },
   ],
   [
@@ -3626,7 +3949,8 @@ export function setupLiveQueryHandlers(
   const stmtSession = db.prepare('SELECT id FROM sessions WHERE id = ?');
 
   messageHub.onRequest('liveQuery.subscribe', (data, context) => {
-    const { queryName, params, subscriptionId } = data as LiveQuerySubscribeRequest;
+    const { queryName, subscriptionId } = data as LiveQuerySubscribeRequest;
+    const params = [...((data as LiveQuerySubscribeRequest).params ?? [])];
     const { clientId, sessionId } = context;
 
     if (!clientId) {
@@ -3638,6 +3962,10 @@ export function setupLiveQueryHandlers(
     const namedQuery = activeRegistry.get(queryName);
     if (!namedQuery) {
       throw new Error(`Unknown query name: "${queryName}"`);
+    }
+
+    if (queryName === 'spaceTaskMessages.byTask.compact' && params.length === 1) {
+      params.push(MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW);
     }
 
     if (params.length !== namedQuery.paramCount) {
@@ -3681,6 +4009,19 @@ export function setupLiveQueryHandlers(
       if (!spaceTask) {
         throw new Error(`Unauthorized: space task "${taskId}" not found`);
       }
+      if (queryName === 'spaceTaskMessages.byTask.compact') {
+        const limit = params[1];
+        if (
+          typeof limit !== 'number' ||
+          !Number.isInteger(limit) ||
+          limit <= 0 ||
+          limit > MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW
+        ) {
+          throw new Error(
+            `Unauthorized: spaceTaskMessages.byTask.compact limit must be an integer in [1, ${MAX_SPACE_TASK_MESSAGES_COMPACT_WINDOW}], got ${String(limit)}`
+          );
+        }
+      }
     } else if (queryName === 'actorMessages.byWorkflowRun') {
       const workflowRunId = params[0] as string;
       if (params.some((param) => param !== workflowRunId)) {
@@ -3701,7 +4042,11 @@ export function setupLiveQueryHandlers(
       if (!workflowRun) {
         throw new Error(`Unauthorized: workflow run "${workflowRunId}" not found`);
       }
-    } else if (queryName === 'spaceSessions.bySpace' || queryName === 'mcpEnablement.bySpace') {
+    } else if (
+      queryName === 'spaceSessions.bySpace' ||
+      queryName === 'mcpEnablement.bySpace' ||
+      queryName === 'spaceWorkspaces.bySpace'
+    ) {
       const spaceId = params[0] as string;
       if (!stmtSpace.get(spaceId)) {
         throw new Error(`Unauthorized: space "${spaceId}" not found`);

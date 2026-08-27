@@ -1,23 +1,24 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageHub, ModelInfo, Session } from '@hyperneo/shared';
+import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
+import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
+import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
-import type { Session, MessageHub, ModelInfo } from '@hyperneo/shared';
-import type { Provider, ProviderSdkConfig } from '@hyperneo/shared/provider';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
-import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { waitForDeliveryConsumption } from '../../../../src/lib/agent/message-delivery';
-import type { Database } from '../../../../src/storage/database';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
-import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
-import { setModelsCache } from '../../../../src/lib/model-service';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import type { Database } from '../../../../src/storage/database';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 class TranslatingMockProvider implements Provider {
   readonly id = 'anthropic-codex';
@@ -79,9 +80,14 @@ describe('SDKMessageHandler', () => {
   let detectPhaseFromMessageSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let beginTerminalIdleSpy: ReturnType<typeof mock>;
+  let cancelTerminalIdleArmSpy: ReturnType<typeof mock>;
   let setCompactingSpy: ReturnType<typeof mock>;
+  let getIsCompactingSpy: ReturnType<typeof mock>;
   let getContextInfoSpy: ReturnType<typeof mock>;
   let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
+  let isCoolingDownSpy: ReturnType<typeof mock>;
+  let markCompactionTriggeredSpy: ReturnType<typeof mock>;
+  let clearCompactionCooldownSpy: ReturnType<typeof mock>;
   let enqueueMessageSpy: ReturnType<typeof mock>;
   let handleErrorSpy: ReturnType<typeof mock>;
   let lifecycleStopSpy: ReturnType<typeof mock>;
@@ -89,6 +95,13 @@ describe('SDKMessageHandler', () => {
   let hasPendingOrClaimedSpy: ReturnType<typeof mock>;
   let hasYieldedSpy: ReturnType<typeof mock>;
   let acknowledgeYieldedSpy: ReturnType<typeof mock>;
+  let setDeliveryGateSpy: ReturnType<typeof mock>;
+  let hasQueuedMessagesSpy: ReturnType<typeof mock>;
+  let hasOutstandingInternalCompactionSpy: ReturnType<typeof mock>;
+  let hasCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
+  let pruneSentPromptsSpy: ReturnType<typeof mock>;
+  let acknowledgeCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
+  let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
   let bumpDeliveryTurnActivitySpy: ReturnType<typeof mock>;
 
@@ -156,23 +169,33 @@ describe('SDKMessageHandler', () => {
     setIdleSpy = mock(async () => {});
     beginTerminalIdleSpy = mock(() => {});
     setCompactingSpy = mock(async () => {});
+    getIsCompactingSpy = mock(() => false);
     getStateSpy = mock(() => ({ phase: 'idle' }));
+    cancelTerminalIdleArmSpy = mock(() => {});
     mockStateManager = {
       detectPhaseFromMessage: detectPhaseFromMessageSpy,
       setIdle: setIdleSpy,
       beginTerminalIdle: beginTerminalIdleSpy,
+      cancelTerminalIdleArm: cancelTerminalIdleArmSpy,
+      idleOwnerForQuery: mock((queryGeneration: number) => ({ queryGeneration, turnToken: 0 })),
       setCompacting: setCompactingSpy,
+      getIsCompacting: getIsCompactingSpy,
       getState: getStateSpy,
     } as unknown as ProcessingStateManager;
 
     getContextInfoSpy = mock(() => ({ totalTokens: 1000, maxTokens: 128000 }));
     updateWithDetailedBreakdownSpy = mock(() => {});
+    isCoolingDownSpy = mock(() => false);
+    markCompactionTriggeredSpy = mock(() => {});
+    clearCompactionCooldownSpy = mock(() => {});
     mockContextTracker = {
       getContextInfo: getContextInfoSpy,
       updateWithDetailedBreakdown: updateWithDetailedBreakdownSpy,
       shouldCompact: mock(() => false),
       shouldCompactAt: mock(() => false),
-      markCompactionTriggered: mock(() => {}),
+      isCoolingDown: isCoolingDownSpy,
+      markCompactionTriggered: markCompactionTriggeredSpy,
+      clearCompactionCooldown: clearCompactionCooldownSpy,
     } as unknown as ContextTracker;
 
     enqueueMessageSpy = mock(async () => 'context-id');
@@ -180,6 +203,13 @@ describe('SDKMessageHandler', () => {
     hasPendingOrClaimedSpy = mock(() => false);
     hasYieldedSpy = mock(() => false);
     acknowledgeYieldedSpy = mock(() => false);
+    setDeliveryGateSpy = mock(() => {});
+    hasQueuedMessagesSpy = mock(() => false);
+    hasOutstandingInternalCompactionSpy = mock(() => false);
+    hasCompactionsAwaitingBoundarySpy = mock(() => false);
+    pruneSentPromptsSpy = mock(() => {});
+    acknowledgeCompactionsAwaitingBoundarySpy = mock(() => {});
+    clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
       enqueue: enqueueMessageSpy,
       enqueueWithId: mock(async () => {}),
@@ -187,6 +217,19 @@ describe('SDKMessageHandler', () => {
       hasPendingOrClaimed: hasPendingOrClaimedSpy,
       hasYielded: hasYieldedSpy,
       acknowledgeYielded: acknowledgeYieldedSpy,
+      setDeliveryGate: setDeliveryGateSpy,
+      hasQueuedMessages: hasQueuedMessagesSpy,
+      hasOutstandingInternalCompaction: hasOutstandingInternalCompactionSpy,
+      hasQueuedInternalCompaction: mock(() => false),
+      hasInFlightInternalCompaction: mock(() => false),
+      hasCompactionsAwaitingBoundary: hasCompactionsAwaitingBoundarySpy,
+      hasOutstandingNonCompactionMessages: mock(() => false),
+      isRunning: mock(() => true),
+      pruneSentPrompts: pruneSentPromptsSpy,
+      acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
+      clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
+      forgetSentPrompt: mock(() => {}),
+      getSentPromptContent: mock(() => undefined),
     } as unknown as MessageQueue;
 
     handleErrorSpy = mock(async () => {});
@@ -446,6 +489,62 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(publishSpy).not.toHaveBeenCalled();
+    });
+
+    it('releases the turn-end gate when saving a top-level result throws', async () => {
+      saveSDKMessageSpy.mockImplementation(() => {
+        throw new Error('db down');
+      });
+      mockContext.queryObject = null;
+
+      const message: SDKMessage = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        parent_tool_use_id: null,
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      await expect(handler.handleMessage(message)).rejects.toThrow('db down');
+
+      let opened = false;
+      void (setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>).then(() => {
+        opened = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(opened).toBe(true);
+    });
+
+    it('releases the turn-end gate when a top-level result fails to save', async () => {
+      saveSDKMessageSpy.mockReturnValue(false);
+      mockContext.queryObject = null;
+
+      const message: SDKMessage = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        parent_tool_use_id: null,
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(setDeliveryGateSpy).toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
     });
 
     it('should mark user messages as synthetic', async () => {
@@ -2449,6 +2548,11 @@ describe('SDKMessageHandler', () => {
         model: 'gpt-5.4',
         fallbackModel: 'gpt-5.4-mini',
       };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
 
       await handler.handleMessage({
         type: 'system',
@@ -2466,6 +2570,507 @@ describe('SDKMessageHandler', () => {
           config: expect.objectContaining({ model: 'gpt-5.4-mini' }),
         })
       );
+    });
+
+    it('skips scoped catalog discovery when no curation is configured', async () => {
+      const provider = new TranslatingMockProvider();
+      let scopedFetchCount = 0;
+      (
+        provider as unknown as {
+          getModelsForSessionConfig: (config: unknown) => Promise<ModelInfo[]>;
+        }
+      ).getModelsForSessionConfig = async () => {
+        scopedFetchCount += 1;
+        return [];
+      };
+      getProviderRegistry().register(provider);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        providerConfig: { baseUrl: 'http://scoped.example' },
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        scopedBaseUrl: 'http://scoped.example',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(scopedFetchCount).toBe(0);
+      expect(mockSession.config.model).toBe('gpt-5.4-mini');
+      expect(updateSessionSpy).toHaveBeenCalled();
+    });
+
+    it('treats fallback resolution failure as a stale retry instead of throwing', async () => {
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'missing-provider',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'missing-provider',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('should skip fallback persistence when the provider epoch changed after build', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        providerEpoch: getProviderCatalogEpoch('anthropic-codex') + 5,
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist a retry event for a fallback replaced after build', async () => {
+      const provider = new TranslatingMockProvider();
+      provider.translateModelIdForSdk = () => 'default';
+      provider.getModels = async () => [];
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [
+        { id: 'gpt-5.4-mini' },
+        { id: 'gpt-5.4-turbo' },
+      ]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-turbo',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'default',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist a curated-out fallback model', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist the fallback when the session config changes during the curation check', async () => {
+      const provider = new TranslatingMockProvider();
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT 5.4 Mini',
+            alias: 'gpt54mini',
+            family: 'gpt',
+            provider: 'anthropic-codex',
+            contextWindow: 100000,
+            description: 'GPT 5.4 Mini',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      const pending = handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mockSession.config = { ...mockSession.config, fallbackModel: undefined };
+
+      await pending;
+
+      expect(mockSession.config.fallbackModel).toBeUndefined();
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist the fallback when it changes during fallback resolution', async () => {
+      const provider = new TranslatingMockProvider();
+      (provider as unknown as { ensureBridgeStarted: () => Promise<void> }).ensureBridgeStarted =
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 8));
+        };
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      const pending = handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mockSession.config = { ...mockSession.config, fallbackModel: 'opus' };
+
+      await pending;
+
+      expect(mockSession.config.fallbackModel).toBe('opus');
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist the fallback when the primary model changes during the curation check', async () => {
+      const provider = new TranslatingMockProvider();
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT 5.4 Mini',
+            alias: 'gpt54mini',
+            family: 'gpt',
+            provider: 'anthropic-codex',
+            contextWindow: 100000,
+            description: 'GPT 5.4 Mini',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      const pending = handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mockSession.config = { ...mockSession.config, model: 'gpt-5.4-turbo' };
+
+      await pending;
+
+      expect(mockSession.config.model).toBe('gpt-5.4-turbo');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist the fallback when session-scoped provider settings change during the curation check', async () => {
+      const provider = new TranslatingMockProvider();
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT 5.4 Mini',
+            alias: 'gpt54mini',
+            family: 'gpt',
+            provider: 'anthropic-codex',
+            contextWindow: 100000,
+            description: 'GPT 5.4 Mini',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      const pending = handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mockSession.config = { ...mockSession.config, providerConfig: { apiKey: 'sk-new-endpoint' } };
+
+      await pending;
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist the fallback when the session region changes during the curation check', async () => {
+      const provider = new TranslatingMockProvider();
+      provider.getModels = async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return [
+          {
+            id: 'gpt-5.4-mini',
+            name: 'GPT 5.4 Mini',
+            alias: 'gpt54mini',
+            family: 'gpt',
+            provider: 'anthropic-codex',
+            contextWindow: 100000,
+            description: 'GPT 5.4 Mini',
+            releaseDate: '',
+            available: true,
+          },
+        ];
+      };
+      getProviderRegistry().register(provider);
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      const pending = handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      mockSession.config = { ...mockSession.config, providerConfig: { region: 'global' } };
+
+      await pending;
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist an SDK fallback that no longer maps to the configured fallback', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      getProviderRegistry().setCuratedModels('anthropic-codex', [
+        { id: 'gpt-5.4' },
+        { id: 'gpt-5.4-mini' },
+      ]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'gpt-5.4',
+        fallback_model: 'claude-opus-4-7',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist a retry event after the primary model changed since build', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4-turbo',
+        fallbackModel: 'gpt-5.4-mini',
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4-turbo');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist a retry event after session-scoped settings changed since build', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      getProviderRegistry().setCuratedModels('anthropic-codex', [{ id: 'gpt-5.4-mini' }]);
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+        providerConfig: { apiKey: 'sk-new-endpoint' },
+      };
+      markBuiltFallbackIdentity(mockSession, {
+        providerId: 'anthropic-codex',
+        primaryModel: 'gpt-5.4',
+        fallbackModel: 'gpt-5.4-mini',
+      });
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'claude-opus-4-7',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist an SDK fallback when no fallback is configured', async () => {
+      getProviderRegistry().register(new TranslatingMockProvider());
+      mockSession.config = {
+        ...mockSession.config,
+        provider: 'anthropic-codex',
+        model: 'gpt-5.4',
+        fallbackModel: undefined,
+      };
+
+      await handler.handleMessage({
+        type: 'system',
+        subtype: 'model_refusal_fallback',
+        direction: 'retry',
+        original_model: 'gpt-5.4',
+        fallback_model: 'claude-sonnet-4-20250514',
+        content: 'Retrying with fallback model',
+      } as unknown as SDKMessage);
+
+      expect(mockSession.config.model).toBe('gpt-5.4');
+      expect(updateSessionSpy).not.toHaveBeenCalled();
     });
 
     describe('refusal rewind target plumbing (refused_user_message_uuid)', () => {
@@ -2972,6 +3577,28 @@ describe('SDKMessageHandler', () => {
 
       expect(setCompactingSpy).not.toHaveBeenCalled();
     });
+
+    it('clears stale compacting state when a result arrives without a boundary', async () => {
+      getIsCompactingSpy.mockImplementation(() => true);
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'stale-compact-uuid',
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(setCompactingSpy).toHaveBeenCalledWith(false);
+    });
   });
 
   describe('handleCompactBoundary', () => {
@@ -3028,6 +3655,87 @@ describe('SDKMessageHandler', () => {
       expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
       expect(updateWithDetailedBreakdownSpy).toHaveBeenCalled();
       expect(mockMessageQueue.enqueueWithId).not.toHaveBeenCalled();
+    });
+
+    it('keys the boundary cooldown to the tracked active budget when known', async () => {
+      getContextInfoSpy.mockImplementation(() => ({
+        totalUsed: 10_000,
+        totalCapacity: 262_144,
+        percentUsed: 3,
+        breakdown: {},
+      }));
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(markCompactionTriggeredSpy).toHaveBeenCalledWith(235_929);
+    });
+
+    it('ignores compact boundaries from a replaced query generation', async () => {
+      (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message, 3);
+
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+      expect(setCompactingSpy).not.toHaveBeenCalled();
+    });
+
+    it('asks the session to resume pending work after a compaction boundary', async () => {
+      mockContext.queryObject = null;
+      const resumeSpy = mock(() => {});
+      (
+        mockContext as { resumePendingWorkAfterCompaction?: () => void }
+      ).resumePendingWorkAfterCompaction = resumeSpy;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(resumeSpy).toHaveBeenCalledTimes(1);
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(clearNonCompactionSentSinceBoundarySpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('acknowledges the compact boundary before the compacting-state publication settles', async () => {
+      let releaseSetCompacting!: () => void;
+      setCompactingSpy.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseSetCompacting = resolve;
+          })
+      );
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      const handled = handler.handleMessage(message);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+
+      releaseSetCompacting();
+      await handled;
     });
   });
 
@@ -3468,6 +4176,731 @@ describe('SDKMessageHandler', () => {
         setModelsCache(new Map());
       });
 
+      function budgetCase(opts?: {
+        provider?: string;
+        model?: string;
+        window?: number;
+        totalUsed?: number;
+        sdkMaxTokens?: number;
+        isAutoCompactEnabled?: boolean;
+      }) {
+        const provider = opts?.provider ?? 'openrouter';
+        const model = opts?.model ?? 'deepseek-v4';
+        const window = opts?.window ?? 1_000_000;
+        setModelsCache(
+          new Map([
+            [
+              'global',
+              [
+                {
+                  id: model,
+                  name: model,
+                  provider,
+                  contextWindow: window,
+                  available: true,
+                },
+              ],
+            ],
+          ])
+        );
+        const totalUsed = opts?.totalUsed ?? 950_000;
+        const getContextUsageSpy = mock(async () => ({
+          categories: [{ name: 'Messages', tokens: totalUsed }],
+          totalTokens: totalUsed,
+          maxTokens: opts?.sdkMaxTokens ?? window,
+          rawMaxTokens: opts?.sdkMaxTokens ?? window,
+          percentage: Math.round((totalUsed / window) * 100),
+          gridRows: [],
+          model,
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: opts?.isAutoCompactEnabled ?? true,
+          apiUsage: null,
+        }));
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+        mockContext.session.config.provider = provider;
+        mockContext.session.config.model = model;
+        return { getContextUsageSpy, h: new SDKMessageHandler(mockContext) };
+      }
+
+      function turnEndResult(): SDKMessage {
+        return {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+      }
+
+      it('enqueues /compact once when the budget is exceeded with an unknown SDK threshold', async () => {
+        const { getContextUsageSpy, h } = budgetCase();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+        expect(getIsCompactingSpy).toHaveBeenCalled();
+        expect(isCoolingDownSpy).toHaveBeenCalled();
+      });
+
+      it('arms the turn-end delivery gate before awaiting the stale compacting publication', async () => {
+        let compacting = true;
+        let releaseCompacting!: () => void;
+        getIsCompactingSpy.mockImplementation(() => compacting);
+        setCompactingSpy.mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              compacting = false;
+              releaseCompacting = resolve;
+            })
+        );
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(setCompactingSpy).toHaveBeenCalledWith(false);
+        expect(setDeliveryGateSpy).toHaveBeenCalled();
+
+        releaseCompacting();
+        await handled;
+        expect(setIdleSpy).toHaveBeenCalled();
+      });
+
+      it('arms the delivery gate for an enforcement-capable event-tick refresh while prompts are queued', async () => {
+        hasQueuedMessagesSpy.mockImplementation(() => true);
+        const { getContextUsageSpy, h } = budgetCase();
+
+        for (let i = 0; i < 5; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalled();
+        expect(setDeliveryGateSpy).toHaveBeenCalled();
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+      });
+
+      it('drops an over-budget refresh whose query was replaced before usage resolved', async () => {
+        let resolveUsage: ((value: unknown) => void) | undefined;
+        const getContextUsageSpy = mock(
+          () =>
+            new Promise((resolve) => {
+              resolveUsage = resolve;
+            })
+        );
+        const { h } = budgetCase();
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        mockContext.queryObject = { getContextUsage: mock(async () => ({})) } as never;
+
+        resolveUsage?.({
+          categories: [{ name: 'Messages', tokens: 950_000 }],
+          totalTokens: 950_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 95,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        });
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('still enqueues /compact when a context.updated subscriber rejects', async () => {
+        emitSpy.mockImplementation((event: string) =>
+          event === 'context.updated' ? Promise.reject(new Error('bus down')) : Promise.resolve()
+        );
+        const { h } = budgetCase();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+      });
+
+      it('never enqueues the SDK /compact command for ACP sessions', async () => {
+        const { getContextUsageSpy, h } = budgetCase({
+          provider: 'acp',
+          model: 'acp-agent-model',
+          window: 200_000,
+          totalUsed: 190_000,
+          isAutoCompactEnabled: false,
+        });
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('drops the compaction decision when the session model changes during usage sampling', async () => {
+        let resolveSampling: (() => void) | undefined;
+        const getContextUsageSpy = mock(
+          () =>
+            new Promise((resolve) => {
+              resolveSampling = () =>
+                resolve({
+                  categories: [{ name: 'Messages', tokens: 950_000 }],
+                  totalTokens: 950_000,
+                  maxTokens: 1_000_000,
+                  rawMaxTokens: 1_000_000,
+                  percentage: 95,
+                  gridRows: [],
+                  model: 'deepseek-v4',
+                  memoryFiles: [],
+                  mcpTools: [],
+                  agents: [],
+                  isAutoCompactEnabled: true,
+                  apiUsage: null,
+                });
+            })
+        );
+        const { h } = budgetCase();
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        mockContext.session.config.model = 'switched-model';
+        resolveSampling?.();
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('samples fresh usage at turn end even when an event-tick refresh is still pending', async () => {
+        let first = true;
+        let resolveFirst: ((value: unknown) => void) | undefined;
+        const getContextUsageSpy = mock(() => {
+          if (first) {
+            first = false;
+            return new Promise((resolve) => {
+              resolveFirst = resolve;
+            });
+          }
+          return Promise.resolve({
+            categories: [{ name: 'Messages', tokens: 950_000 }],
+            totalTokens: 950_000,
+            maxTokens: 1_000_000,
+            rawMaxTokens: 1_000_000,
+            percentage: 95,
+            gridRows: [],
+            model: 'deepseek-v4',
+            memoryFiles: [],
+            mcpTools: [],
+            agents: [],
+            isAutoCompactEnabled: true,
+            apiUsage: null,
+          });
+        });
+        const { h } = budgetCase();
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+
+        for (let i = 0; i < 5; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        resolveFirst?.({
+          categories: [{ name: 'Messages', tokens: 10_000 }],
+          totalTokens: 10_000,
+          maxTokens: 1_000_000,
+          rawMaxTokens: 1_000_000,
+          percentage: 1,
+          gridRows: [],
+          model: 'deepseek-v4',
+          memoryFiles: [],
+          mcpTools: [],
+          agents: [],
+          isAutoCompactEnabled: true,
+          apiUsage: null,
+        });
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(2);
+        expect(markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+      });
+
+      it('enqueues /compact without waiting for a stalled context.updated publication', async () => {
+        let resolvePublish: (() => void) | undefined;
+        mockInternalEventBus.publish = mock((event: string) => {
+          if (event !== 'context.updated') return Promise.resolve();
+          return new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          });
+        });
+        const { getContextUsageSpy, h } = budgetCase();
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).toHaveBeenCalled();
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+
+        resolvePublish?.();
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not count nested results as event ticks', async () => {
+        const { getContextUsageSpy, h } = budgetCase();
+
+        for (let i = 0; i < 4; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+        await h.handleMessage({
+          type: 'result',
+          subtype: 'success',
+          uuid: 'nested-result-uuid',
+          parent_tool_use_id: 'outer-tool-use',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('does not run turn-end enforcement for nested subagent results', async () => {
+        const { getContextUsageSpy, h } = budgetCase();
+
+        await h.handleMessage({
+          type: 'result',
+          subtype: 'success',
+          uuid: 'nested-result-uuid',
+          parent_tool_use_id: 'outer-agent-tool-use',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+          total_cost_usd: 0.001,
+          modelUsage: {},
+        } as unknown as SDKMessage);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).not.toHaveBeenCalled();
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('clears a dead delivered compaction without immediately re-enqueueing', async () => {
+        hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+        const { h } = budgetCase();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+        expect(clearCompactionCooldownSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('clears a dead delivered compaction even when turn-end sampling fails', async () => {
+        hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+        const { h } = budgetCase();
+        mockContext.queryObject = {
+          getContextUsage: mock(async () => {
+            throw new Error('SDK exploded');
+          }),
+        } as never;
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+        expect(clearCompactionCooldownSpy).toHaveBeenCalledTimes(1);
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('arms the turn-end gate before the sdk.message publication', async () => {
+        let resolvePublish!: () => void;
+        emitSpy.mockImplementation(
+          (event: string) =>
+            new Promise<void>((resolve) => {
+              if (event === 'sdk.message') {
+                resolvePublish = resolve;
+              } else {
+                resolve();
+              }
+            })
+        );
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(setDeliveryGateSpy).toHaveBeenCalled();
+
+        resolvePublish();
+        await handled;
+      });
+
+      it('keeps the turn-end gate closed until result handling completes', async () => {
+        const releaseIdle: Array<() => void> = [];
+        setIdleSpy.mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseIdle.push(resolve);
+            })
+        );
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const turnEndSegment = setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>;
+        let opened = false;
+        void turnEndSegment.then(() => {
+          opened = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(opened).toBe(false);
+
+        releaseIdle[0]();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(false);
+
+        for (const release of releaseIdle.slice(1)) release();
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(true);
+      });
+
+      it('does not arm the turn-end gate for a stale top-level result', async () => {
+        (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+        const { h } = budgetCase({ totalUsed: 950_000 });
+
+        await h.handleMessage(turnEndResult(), 5);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(setDeliveryGateSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('ignores a trailing idle from a superseded query generation', async () => {
+        let current = 5;
+        (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(
+          () => current
+        );
+        const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+          ({
+            type: 'system',
+            subtype: 'session_state_changed',
+            state,
+            uuid: `state-${state}`,
+            session_id: 'sdk-session-123',
+          }) as unknown as SDKMessage;
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        await h.handleMessage(sessionState('busy'), 5);
+        await h.handleMessage(turnEndResult(), 5);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        current = 7;
+        await h.handleMessage(sessionState('idle'), 7);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(setIdleSpy).not.toHaveBeenCalled();
+      });
+
+      it('releases the turn-end gate when phase detection throws', async () => {
+        detectPhaseFromMessageSpy.mockImplementation(async () => {
+          throw new Error('phase failed');
+        });
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        await expect(h.handleMessage(turnEndResult())).rejects.toThrow('phase failed');
+
+        let opened = false;
+        void (setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>).then(() => {
+          opened = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(true);
+      });
+
+      it('releases the turn-end gate when result handling throws', async () => {
+        emitSpy.mockImplementation((event: string) =>
+          event === 'session.errorClear'
+            ? Promise.reject(new Error('pub failed'))
+            : Promise.resolve()
+        );
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        await expect(h.handleMessage(turnEndResult())).rejects.toThrow('pub failed');
+
+        let opened = false;
+        void (setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>).then(() => {
+          opened = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(true);
+      });
+
+      it('holds the delivery gate closed through the terminal idle transition', async () => {
+        let idleReleased = false;
+        const releaseIdle: Array<() => void> = [];
+        setIdleSpy.mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              if (idleReleased) resolve();
+              else releaseIdle.push(resolve);
+            })
+        );
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const turnEndSegment = setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>;
+        let opened = false;
+        void turnEndSegment.then(() => {
+          opened = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(opened).toBe(false);
+        expect(setIdleSpy).toHaveBeenCalled();
+
+        idleReleased = true;
+        for (const release of releaseIdle) release();
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(true);
+      });
+
+      it('does not treat the ordinary turn result as a dead compaction after a mid-turn enqueue', async () => {
+        hasQueuedMessagesSpy.mockImplementation(() => true);
+        getStateSpy.mockImplementation(() => ({ status: 'processing', phase: 'streaming' }));
+        const { h } = budgetCase();
+
+        for (let i = 0; i < 5; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+
+        hasQueuedMessagesSpy.mockImplementation(() => false);
+        hasOutstandingInternalCompactionSpy.mockImplementation(() => true);
+        hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+        expect(clearCompactionCooldownSpy).not.toHaveBeenCalled();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+        expect(clearCompactionCooldownSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('awaits the context publication on non-enforcement exits', async () => {
+        let resolvePublish: (() => void) | undefined;
+        mockInternalEventBus.publish = mock((event: string) => {
+          if (event !== 'context.updated') return Promise.resolve();
+          return new Promise<void>((resolve) => {
+            resolvePublish = resolve;
+          });
+        });
+        const { h } = budgetCase({
+          provider: 'anthropic',
+          model: 'sonnet',
+          window: 200_000,
+          totalUsed: 190_000,
+        });
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+
+        let settled = false;
+        void handled.then(() => {
+          settled = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(settled).toBe(false);
+
+        resolvePublish?.();
+        await handled;
+      });
+
+      it('does not defer dead-compaction cleanup for an event-tick compaction enqueued while idle', async () => {
+        hasQueuedMessagesSpy.mockImplementation(() => true);
+        const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+          ({
+            type: 'system',
+            subtype: 'session_state_changed',
+            state,
+            uuid: `state-${state}`,
+            session_id: 'sdk-session-123',
+          }) as unknown as SDKMessage;
+        const { h } = budgetCase();
+
+        for (let i = 0; i < 4; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+        await h.handleMessage(sessionState('idle'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+
+        hasQueuedMessagesSpy.mockImplementation(() => false);
+        hasOutstandingInternalCompactionSpy.mockImplementation(() => true);
+        hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+        expect(clearCompactionCooldownSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('ignores turn-end enforcement from a replaced query generation', async () => {
+        hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+        (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+        const { getContextUsageSpy, h } = budgetCase();
+
+        await h.handleMessage(turnEndResult(), 3);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).not.toHaveBeenCalled();
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
+      it('holds the delivery gate until the trailing session_state_changed idle lands', async () => {
+        const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+          ({
+            type: 'system',
+            subtype: 'session_state_changed',
+            state,
+            uuid: `state-${state}`,
+            session_id: 'sdk-session-123',
+          }) as unknown as SDKMessage;
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        await h.handleMessage(sessionState('busy'));
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const trailingSegment = setDeliveryGateSpy.mock.calls.at(-2)?.[0] as Promise<void>;
+        let opened = false;
+        void trailingSegment.then(() => {
+          opened = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(opened).toBe(false);
+
+        await h.handleMessage(sessionState('idle'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(true);
+      });
+
+      it('suppresses the compaction decision while limit recovery owns the turn', async () => {
+        (mockContext as { isLimitRecoveryPending?: () => boolean }).isLimitRecoveryPending = mock(
+          () => true
+        );
+        const { getContextUsageSpy, h } = budgetCase();
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
+        expect(markCompactionTriggeredSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+      });
+
       it('does not enqueue /compact for non-PROVIDER_NO_SDK_AUTO_COMPACT providers (SDK handles)', async () => {
         setModelsCache(
           new Map([
@@ -3527,7 +4960,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('does not enqueue /compact for custom-provider sessions (SDK handles via Options.settings)', async () => {
@@ -3588,7 +5024,10 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('does not enqueue /compact for native anthropic provider (SDK handles)', async () => {
@@ -3649,7 +5088,10 @@ describe('SDKMessageHandler', () => {
 
         expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
         expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true);
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
       });
 
       it('does not enqueue /compact when model info is missing', async () => {
@@ -3695,132 +5137,58 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
-      it('does NOT enqueue /compact for global Kimi (SDK native auto-compact handles it)', async () => {
-        setModelsCache(
-          new Map([
-            [
-              'global',
-              [
-                {
-                  id: 'kimi-k2.7-code',
-                  name: 'Kimi K2.7 Code',
-                  provider: 'kimi',
-                  contextWindow: 262_144,
-                  preferContextWindowMetadata: true,
-                  available: true,
-                },
-              ],
-            ],
-          ])
-        );
+      it('clears the pending post-compaction resume when the turn-end decision is not a compaction', async () => {
+        const clearSpy = mock(() => {});
+        (
+          mockContext as { clearPendingResumeAfterCompaction?: () => void }
+        ).clearPendingResumeAfterCompaction = clearSpy;
+        const { h } = budgetCase({ totalUsed: 50_000 });
 
-        const getContextUsageSpy = mock(async () => ({
-          categories: [{ name: 'Messages', tokens: 250_000 }],
-          totalTokens: 250_000,
-          maxTokens: 200_000,
-          rawMaxTokens: 200_000,
-          percentage: 125,
-          gridRows: [],
-          model: 'kimi-k2.7-code',
-          memoryFiles: [],
-          mcpTools: [],
-          agents: [],
-          isAutoCompactEnabled: true,
-          apiUsage: null,
-        }));
-
-        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
-        mockContext.session.config.provider = 'kimi';
-        mockContext.session.config.model = 'kimi-k2.7-code';
-        mockContextTracker.shouldCompactAt = mock(() => true);
-
-        const h = new SDKMessageHandler(mockContext);
-
-        const resultMessage: SDKMessage = {
-          type: 'result',
-          subtype: 'success',
-          uuid: 'result-uuid',
-          usage: {
-            input_tokens: 10,
-            output_tokens: 5,
-            cache_read_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-          },
-          total_cost_usd: 0.001,
-          modelUsage: {},
-        } as unknown as SDKMessage;
-
-        await h.handleMessage(resultMessage);
+        await h.handleMessage(turnEndResult());
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+        expect(clearSpy).toHaveBeenCalledTimes(1);
       });
 
-      it('does NOT enqueue /compact for China Kimi (SDK native auto-compact handles it)', async () => {
-        setModelsCache(
-          new Map([
-            [
-              'global',
-              [
-                {
-                  id: 'kimi-for-coding',
-                  name: 'Kimi For Coding',
-                  provider: 'kimi',
-                  contextWindow: 262_144,
-                  preferContextWindowMetadata: true,
-                  available: true,
-                },
-              ],
-            ],
-          ])
-        );
+      it('keeps the pending post-compaction resume while a daemon compaction is queued or running', async () => {
+        const clearSpy = mock(() => {});
+        (
+          mockContext as { clearPendingResumeAfterCompaction?: () => void }
+        ).clearPendingResumeAfterCompaction = clearSpy;
+        hasOutstandingInternalCompactionSpy.mockImplementation(() => true);
+        const { h } = budgetCase();
 
-        const getContextUsageSpy = mock(async () => ({
-          categories: [{ name: 'Messages', tokens: 250_000 }],
-          totalTokens: 250_000,
-          maxTokens: 200_000,
-          rawMaxTokens: 200_000,
-          percentage: 125,
-          gridRows: [],
-          model: 'kimi-for-coding',
-          memoryFiles: [],
-          mcpTools: [],
-          agents: [],
-          isAutoCompactEnabled: true,
-          apiUsage: null,
-        }));
-
-        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
-        mockContext.session.config.provider = 'kimi';
-        mockContext.session.config.model = 'kimi-for-coding';
-        mockContextTracker.shouldCompactAt = mock(() => true);
-
-        const h = new SDKMessageHandler(mockContext);
-
-        const resultMessage: SDKMessage = {
-          type: 'result',
-          subtype: 'success',
-          uuid: 'result-uuid',
-          usage: {
-            input_tokens: 10,
-            output_tokens: 5,
-            cache_read_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-          },
-          total_cost_usd: 0.001,
-          modelUsage: {},
-        } as unknown as SDKMessage;
-
-        await h.handleMessage(resultMessage);
+        await h.handleMessage(turnEndResult());
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(getContextUsageSpy).toHaveBeenCalledTimes(1);
-        expect(mockContextTracker.shouldCompactAt).not.toHaveBeenCalled();
-        expect(mockContextTracker.markCompactionTriggered).not.toHaveBeenCalled();
-        expect(enqueueMessageSpy).not.toHaveBeenCalled();
+        expect(enqueueMessageSpy).not.toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+        expect(clearSpy).not.toHaveBeenCalled();
+      });
+
+      it('asks the session to resume pending work when a turn-end refresh finds no context info', async () => {
+        const resumeSpy = mock(() => {});
+        (
+          mockContext as { resumePendingWorkAfterCompaction?: () => void }
+        ).resumePendingWorkAfterCompaction = resumeSpy;
+        (
+          mockContext as { clearPendingResumeAfterCompaction?: () => void }
+        ).clearPendingResumeAfterCompaction = mock(() => {});
+        const getContextUsageSpy = mock(async () => null);
+        const { h } = budgetCase();
+        mockContext.queryObject = { getContextUsage: getContextUsageSpy } as never;
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getContextUsageSpy).toHaveBeenCalled();
+        expect(resumeSpy).toHaveBeenCalledTimes(1);
       });
     });
 
@@ -3961,6 +5329,117 @@ describe('SDKMessageHandler', () => {
       getMessageByStatusAndUuidSpy.mockImplementation(() => ({ id: 'db-consumed' }));
       handler.markMessageAccepted('msg-accepted');
       expect(onDeliveryTurnAccepted).toHaveBeenCalled();
+    });
+  });
+
+  describe('query-owner idle filter (B5e)', () => {
+    const makeResult = (): SDKMessage =>
+      ({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        parent_tool_use_id: null,
+        usage: { input_tokens: 10, output_tokens: 5 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      }) as unknown as SDKMessage;
+
+    const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+      ({
+        type: 'system',
+        subtype: 'session_state_changed',
+        state,
+        uuid: `state-${state}`,
+        session_id: 'sdk-session-123',
+      }) as unknown as SDKMessage;
+
+    const publishedTopics = () => emitSpy.mock.calls.map((call) => call[0] as string);
+    const idleSettleArgs = () => setIdleSpy.mock.calls.map((call) => call[0]);
+    const setGeneration = (value: number): void => {
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => value
+      );
+    };
+
+    it('a current result settles idle with the invocation query owner and replays', async () => {
+      setGeneration(3);
+
+      await handler.handleMessage(makeResult(), 3);
+
+      expect(beginTerminalIdleSpy).toHaveBeenCalledWith({ queryGeneration: 3, turnToken: 0 });
+      expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 3, turnToken: 0 } });
+      expect(publishedTopics()).toContain('query.trigger');
+    });
+
+    it('a stale result arms and settles with its own owner (paired) and skips the turn replay', async () => {
+      setGeneration(9);
+
+      await handler.handleMessage(makeResult(), 2);
+
+      expect(beginTerminalIdleSpy).toHaveBeenCalledWith({ queryGeneration: 2, turnToken: 0 });
+      expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 2, turnToken: 0 } });
+      expect(publishedTopics()).not.toContain('query.trigger');
+    });
+
+    it('a result going stale during the errorClear publication skips the turn replay', async () => {
+      let generation = 3;
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => generation
+      );
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'session.errorClear') generation = 9;
+      });
+
+      await handler.handleMessage(makeResult(), 3);
+
+      expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 3, turnToken: 0 } });
+      expect(publishedTopics()).not.toContain('query.trigger');
+    });
+
+    it('a stale session-state idle does not settle idle, cancels its orphaned arm, and leaves the successor turn flags alone', async () => {
+      setGeneration(9);
+      setIdleSpy.mockClear();
+
+      await handler.handleMessage(sessionState('idle'), 2);
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({ queryGeneration: 2, turnToken: 0 });
+      expect(publishedTopics()).not.toContain('query.trigger');
+      expect(
+        (handler as unknown as { usesSessionStateChangedTurnEnd: boolean })
+          .usesSessionStateChangedTurnEnd
+      ).toBe(false);
+    });
+
+    it('a stale session-state busy event does not arm the successor turn-end expectations', async () => {
+      setGeneration(9);
+
+      await handler.handleMessage(sessionState('busy'), 2);
+
+      const flags = handler as unknown as {
+        usesSessionStateChangedTurnEnd: boolean;
+        expectsSessionStateIdleAfterResult: boolean;
+      };
+      expect(flags.usesSessionStateChangedTurnEnd).toBe(false);
+      expect(flags.expectsSessionStateIdleAfterResult).toBe(false);
+    });
+
+    it('an idle event going stale during the finishTurn await keeps the successor turn flags', async () => {
+      let generation = 3;
+      (mockContext as unknown as { getQueryGeneration: () => number }).getQueryGeneration = mock(
+        () => generation
+      );
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'query.trigger') generation = 9;
+      });
+
+      await handler.handleMessage(sessionState('idle'), 3);
+
+      expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 3, turnToken: 0 } });
+      expect(
+        (handler as unknown as { usesSessionStateChangedTurnEnd: boolean })
+          .usesSessionStateChangedTurnEnd
+      ).toBe(true);
     });
   });
 

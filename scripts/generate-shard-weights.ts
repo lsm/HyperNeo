@@ -148,7 +148,7 @@ export function listSplitSpecs(suite: ShardSuite): SplitSpec[] {
     '  IFS=\'|\' read -r prefix count globs weights <<< "$spec"',
     '  IFS=\';\' read -ra glob_list <<< "$globs"',
     '  for g in "${glob_list[@]}"; do',
-    `    for f in \${${rootVar}}/\$g; do`,
+    `    for f in \${${rootVar}}/$g; do`,
     '      [ -f "$f" ] || continue',
     '      printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$prefix" "$count" "$globs" "$weights" "${f#"$REPO_ROOT"/}"',
     '    done',

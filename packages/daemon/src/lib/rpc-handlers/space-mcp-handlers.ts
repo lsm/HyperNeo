@@ -10,11 +10,11 @@ import type {
   McpImportsRefreshRequest,
   McpImportsRefreshResponse,
 } from '@hyperneo/shared';
-import { homedir } from 'node:os';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import { buildMcpJsonPaths, scanMcpImports } from '../mcp/import-scanner.ts';
+import { resolve } from 'node:path';
+import type { ImportResult, McpImportService } from '../mcp/index.ts';
 import { Logger } from '../logger.ts';
 
 const log = new Logger('space-mcp-handlers');
@@ -36,7 +36,8 @@ export function setupSpaceMcpHandlers(
   messageHub: MessageHub,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   db: Database,
-  spaceManager: SpaceManager
+  spaceManager: SpaceManager,
+  mcpImportService?: McpImportService
 ): void {
   messageHub.onRequest('space.mcp.list', async (data) => {
     const { spaceId } = data as SpaceMcpListRequest;
@@ -115,36 +116,49 @@ export function setupSpaceMcpHandlers(
 
   messageHub.onRequest('mcp.imports.refresh', async (data) => {
     const { workspacePath } = (data ?? {}) as McpImportsRefreshRequest;
+    const notes: string[] = [];
+    let added = 0;
+    let updated = 0;
+    let removed = 0;
 
-    const workspacePaths: string[] = [];
-    if (workspacePath && typeof workspacePath === 'string') {
-      workspacePaths.push(workspacePath);
-    } else {
-      const spaces = await spaceManager.listSpaces(true);
-      for (const s of spaces) {
-        if (s.workspacePath) workspacePaths.push(s.workspacePath);
-      }
+    if (!mcpImportService) {
+      return { ok: true, imported: 0, removed: 0, notes } satisfies McpImportsRefreshResponse;
     }
 
-    const mcpJsonPaths = buildMcpJsonPaths({
-      workspacePaths,
-      homeDir: homedir(),
-    });
+    if (workspacePath && typeof workspacePath === 'string') {
+      const result: ImportResult = mcpImportService.refreshAllForPath(resolve(workspacePath));
+      added = result.added;
+      updated = result.updated;
+      removed = result.removed;
+      if (result.status === 'malformed') {
+        notes.push(`${result.sourcePath}: parse error — ${result.error ?? 'invalid file'}`);
+      } else if (result.status === 'failed') {
+        notes.push(`${result.sourcePath}: import failed — ${result.error ?? 'unknown error'}`);
+      }
+    } else {
+      const result = mcpImportService.refreshAll();
+      for (const r of result.results) {
+        if (r.status === 'malformed') {
+          notes.push(`${r.sourcePath}: parse error — ${r.error ?? 'invalid file'}`);
+        } else if (r.status === 'failed') {
+          notes.push(`${r.sourcePath}: import failed — ${r.error ?? 'unknown error'}`);
+        }
+      }
+      added = result.results.reduce((sum, r) => sum + r.added, 0);
+      updated = result.results.reduce((sum, r) => sum + r.updated, 0);
+      removed = result.results.reduce((sum, r) => sum + r.removed, 0) + result.orphanPruned;
+    }
 
-    const result = await scanMcpImports(db.appMcpServers, { mcpJsonPaths });
-
-    if (result.imported > 0 || result.removed > 0) {
+    if (added > 0 || updated > 0 || removed > 0) {
       emitChanged(internalEventBus);
     }
-    log.info(
-      `mcp.imports.refresh: imported=${result.imported} removed=${result.removed} notes=${result.notes.length}`
-    );
+    log.info(`mcp.imports.refresh: imported=${added} removed=${removed} notes=${notes.length}`);
 
     return {
       ok: true,
-      imported: result.imported,
-      removed: result.removed,
-      notes: result.notes,
+      imported: added + updated,
+      removed,
+      notes,
     } satisfies McpImportsRefreshResponse;
   });
 }

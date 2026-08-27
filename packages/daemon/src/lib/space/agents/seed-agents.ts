@@ -138,7 +138,7 @@ const PRESET_AGENTS: PresetDefinition[] = [
     name: 'QA',
     handle: 'qa',
     description:
-      'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
+      'Quality assurance specialist. Validates the reviewer-approved pull request by exercising real application behavior, not by re-running automated test suites; confirms required CI is green before terminal approval.',
     tools: QA_TOOLS,
     customPrompt: QA_SYSTEM_CONTRACT,
   },

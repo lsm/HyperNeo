@@ -8,6 +8,7 @@ import type { ProcessingStateManager } from '../../../../src/lib/agent/processin
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import {
   buildProviderSettings,
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   PROVIDER_NO_SDK_AUTO_COMPACT,
   shouldUseHyperNeoCompactFallback,
 } from '../../../../src/lib/agent/query-options-builder';
@@ -23,8 +24,8 @@ import type {
 } from '../../../../src/lib/internal-event-bus';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import {
-  getModelContextWindow,
   codexBackendContextWindow,
+  getModelContextWindow,
   MODEL_CONTEXT_WINDOWS,
 } from '../../../../src/lib/providers/codex-models';
 import { KimiProvider } from '../../../../src/lib/providers/kimi-provider';
@@ -200,6 +201,22 @@ describe('N3: NeoKai (HyperNeo) fallback applied only where intended', () => {
     expect(PROVIDER_NO_SDK_AUTO_COMPACT.size).toBe(0);
   });
 
+  it('the four native context-window providers are exactly the documented set', () => {
+    expect([...NATIVE_CONTEXT_WINDOW_PROVIDER_IDS].sort()).toEqual(
+      ['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm'].sort()
+    );
+  });
+
+  it.each([
+    ['anthropic', 200_000],
+    ['anthropic-copilot', 200_000],
+    ['anthropic-codex', 272_000],
+    ['glm', 1_000_000],
+  ] as const)('%s ignores the configured window entirely (SDK keeps its own compaction)', (providerId, window) => {
+    expect(buildProviderSettings(providerId, window)).toBeUndefined();
+    expect(buildProviderSettings(providerId, window, 'any-model')).toBeUndefined();
+  });
+
   it.each([
     ['anthropic', 'anthropic'],
     ['anthropic-copilot', 'anthropic-copilot'],
@@ -242,6 +259,7 @@ function driveCompactionRefresh(opts: {
   contextWindow: number;
   totalUsed: number;
   sdkMaxTokens?: number;
+  compactingActive?: boolean;
 }): CompactionRefreshHarness {
   const session: Session = {
     id: 'compact-session',
@@ -290,11 +308,15 @@ function driveCompactionRefresh(opts: {
     subscribe: mock(() => () => {}),
   } as unknown as InternalEventBus<DaemonInternalEventMap>;
 
+  let compacting = opts.compactingActive ?? false;
   const stateManager = {
     detectPhaseFromMessage: mock(async () => {}),
     beginTerminalIdle: mock(() => {}),
     setIdle: mock(async () => {}),
-    setCompacting: mock(async () => {}),
+    setCompacting: mock(async (value: boolean) => {
+      compacting = value;
+    }),
+    getIsCompacting: mock(() => compacting),
     getState: mock(() => ({ phase: 'idle' })),
   } as unknown as ProcessingStateManager;
 
@@ -302,6 +324,7 @@ function driveCompactionRefresh(opts: {
     getContextInfo: mock(() => ({ totalTokens: 1000, maxTokens: 128000 })),
     updateWithDetailedBreakdown: mock(() => {}),
     shouldCompact: mock(() => false),
+    isCoolingDown: mock(() => false),
     shouldCompactAt: shouldCompactAtSpy,
     markCompactionTriggered: markCompactionTriggeredSpy,
   } as unknown as ContextTracker;
@@ -310,6 +333,16 @@ function driveCompactionRefresh(opts: {
     enqueue: enqueueSpy,
     enqueueWithId: mock(async () => {}),
     clear: mock(() => {}),
+    setDeliveryGate: mock(() => {}),
+    hasQueuedMessages: mock(() => false),
+    hasOutstandingInternalCompaction: mock(() => false),
+    hasCompactionsAwaitingBoundary: mock(() => false),
+    hasQueuedInternalCompaction: mock(() => false),
+    hasInFlightInternalCompaction: mock(() => false),
+    pruneSentPrompts: mock(() => {}),
+    acknowledgeCompactionsAwaitingBoundary: mock(() => {}),
+    clearNonCompactionSentSinceBoundary: mock(() => {}),
+    isRunning: mock(() => true),
   } as unknown as MessageQueue;
 
   const errorManager = { handleError: mock(async () => {}) } as unknown as ErrorManager;
@@ -408,7 +441,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
   });
 
   it('Codex-mini (128k) session near capacity does NOT enqueue /compact', async () => {
@@ -444,7 +480,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
   });
 
-  it('Kimi K3 (1M) session near capacity does NOT enqueue /compact', async () => {
+  it('Kimi K3 (1M) session near capacity enqueues /compact exactly once (daemon backstop)', async () => {
     setModelsCache(
       new Map([
         [
@@ -476,11 +512,15 @@ describe('N4: literal /compact never enters the transcript or provider request',
 
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
-    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
-    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true);
+    expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
+    expect(harness.enqueueSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('holds across the Kimi/Codex model matrix (every canonical model near capacity, no /compact)', async () => {
+  it('splits across the Kimi/Codex model matrix near capacity (kimi backstops, codex native)', async () => {
     const kimiCases = KimiProvider.MODELS.map((m) => ({
       provider: 'kimi',
       model: m.id,
@@ -495,13 +535,12 @@ describe('N4: literal /compact never enters the transcript or provider request',
       contextWindow: MODEL_CONTEXT_WINDOWS[id],
       sdkMaxTokens: MODEL_CONTEXT_WINDOWS[id],
     }));
-    const matrix = [...kimiCases, ...codexCases];
 
     expect(kimiCases.map((c) => c.model).sort()).toEqual(
       ['k3-256k', 'kimi-for-coding', 'kimi-k2.7-code-highspeed', 'kimi-k3[1m]'].sort()
     );
 
-    for (const c of matrix) {
+    for (const c of [...kimiCases, ...codexCases]) {
       setModelsCache(
         new Map([
           [
@@ -527,11 +566,27 @@ describe('N4: literal /compact never enters the transcript or provider request',
       });
       await harness.handler.handleMessage(resultMessage());
       await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(harness.enqueueSpy, `${c.provider}/${c.model}`).not.toHaveBeenCalledWith(
-        '/compact',
-        true
-      );
-      expect(harness.markCompactionTriggeredSpy, `${c.provider}/${c.model}`).not.toHaveBeenCalled();
+      if (c.provider === 'kimi') {
+        expect(harness.enqueueSpy, `${c.provider}/${c.model}`).toHaveBeenCalledWith(
+          '/compact',
+          true,
+          { durable: true, prepend: true }
+        );
+        expect(
+          harness.markCompactionTriggeredSpy,
+          `${c.provider}/${c.model}`
+        ).toHaveBeenCalledTimes(1);
+      } else {
+        expect(harness.enqueueSpy, `${c.provider}/${c.model}`).not.toHaveBeenCalledWith(
+          '/compact',
+          true,
+          { durable: true, prepend: true }
+        );
+        expect(
+          harness.markCompactionTriggeredSpy,
+          `${c.provider}/${c.model}`
+        ).not.toHaveBeenCalled();
+      }
     }
   });
 
@@ -608,10 +663,19 @@ describe('N4: literal /compact never enters the transcript or provider request',
         }
       }
     })();
+    const boundarySimulator = (async () => {
+      while (yielded.length < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        if (queue.hasCompactionsAwaitingBoundary()) {
+          queue.acknowledgeCompactionsAwaitingBoundary();
+        }
+      }
+    })();
 
     await queue.enqueue('/compact', true);
     await queue.enqueue('fix the bug', false);
     await consumer;
+    await boundarySimulator;
 
     expect(yielded).toHaveLength(2);
     expect(yielded[0].internal).toBe(true);
@@ -622,44 +686,120 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(replay?.content).toEqual([{ type: 'text', text: 'fix the bug' }]);
   });
 
-  it('when the dormant fallback fires, the handler enqueues /compact as internal (production call site)', async () => {
-    const TEST_PROVIDER = 'test-fallback-provider';
-    const fallbackSet = PROVIDER_NO_SDK_AUTO_COMPACT as Set<string>;
-    fallbackSet.add(TEST_PROVIDER);
-    try {
-      setModelsCache(
-        new Map([
+  it('when the context budget is exceeded on a custom provider, the handler enqueues /compact as internal (production call site)', async () => {
+    const TEST_PROVIDER = 'test-budget-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
           [
-            'global',
-            [
-              {
-                id: 'fb-model',
-                name: 'Fallback Model',
-                provider: TEST_PROVIDER,
-                contextWindow: 200_000,
-                available: true,
-              },
-            ],
+            {
+              id: 'budget-model',
+              name: 'Budget Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              available: true,
+            },
           ],
-        ])
-      );
-      const harness = driveCompactionRefresh({
-        provider: TEST_PROVIDER,
-        model: 'fb-model',
-        contextWindow: 200_000,
-        totalUsed: 195_000,
-        sdkMaxTokens: 200_000,
-      });
-      await harness.handler.handleMessage(resultMessage());
-      await new Promise((resolve) => setTimeout(resolve, 0));
+        ],
+      ])
+    );
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'budget-model',
+      contextWindow: 200_000,
+      totalUsed: 185_000,
+      sdkMaxTokens: 200_000,
+    });
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
-      expect(harness.shouldCompactAtSpy).toHaveBeenCalled();
-      expect(harness.markCompactionTriggeredSpy).toHaveBeenCalled();
-      expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true);
-    } finally {
-      fallbackSet.delete(TEST_PROVIDER);
-      setModelsCache(new Map());
+    expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
+    expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
+    expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
+  });
+
+  it('an active SDK compaction suppresses the backstop during mid-turn event refreshes', async () => {
+    const TEST_PROVIDER = 'test-compacting-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'compacting-model',
+              name: 'Compacting Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'compacting-model',
+      contextWindow: 200_000,
+      totalUsed: 185_000,
+      sdkMaxTokens: 200_000,
+      compactingActive: true,
+    });
+    for (let i = 0; i < 5; i++) {
+      await harness.handler.handleMessage({
+        type: 'assistant',
+        uuid: `tick-${i}`,
+        message: { role: 'assistant', content: [] },
+      } as unknown as SDKMessage);
     }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.getContextUsageSpy).toHaveBeenCalled();
+    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
+  });
+
+  it('a result clears stale compacting state before deciding, so an over-budget session still enqueues', async () => {
+    const TEST_PROVIDER = 'test-stale-compacting-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'stale-compacting-model',
+              name: 'Stale Compacting Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'stale-compacting-model',
+      contextWindow: 200_000,
+      totalUsed: 185_000,
+      sdkMaxTokens: 200_000,
+      compactingActive: true,
+    });
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
   });
 });

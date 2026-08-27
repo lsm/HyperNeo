@@ -1,21 +1,18 @@
 import type {
-  CreateSpaceWorkerAgentParams,
   CreateSpaceGoalParams,
-  CreateSpaceTaskParams,
-  CreateSpaceWorkflowParams,
   CreateSpaceLongHorizonAgentReminderParams,
   CreateSpaceLongHorizonAgentSubscriptionParams,
+  CreateSpaceTaskParams,
+  CreateSpaceWorkerAgentParams,
+  CreateSpaceWorkflowParams,
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
-  MessageImage,
   MessageDeliveryMode,
+  MessageImage,
   NodeExecution,
   PaginatedSpaceTaskResult,
   RuntimeState,
   Space,
-  SpaceWorkerAgent,
-  SpaceWorkerAgentPromotionDraft,
-  SpaceWorkerAgentSyncPreview,
   SpaceBlockReason,
   SpaceGoal,
   SpaceGoalEvent,
@@ -29,21 +26,25 @@ import type {
   SpaceTaskActivityMember,
   SpaceTaskPriority,
   SpaceTaskStatus,
+  SpaceWorkerAgent,
+  SpaceWorkerAgentPromotionDraft,
+  SpaceWorkerAgentSyncPreview,
   SpaceWorkflow,
   SpaceWorkflowRun,
   SpaceWorkflowSummary,
+  SpaceWorkflowSyncPreview,
+  SpaceWorkspace,
   TaskSchedule,
   TaskScheduleStatus,
   TaskScheduleTriggerType,
-  UpdateSpaceWorkerAgentParams,
+  UpdateSpaceGoalParams,
   UpdateSpaceLongHorizonAgentParams,
   UpdateSpaceLongHorizonAgentSubscriptionParams,
-  UpdateSpaceGoalParams,
   UpdateSpaceParams,
   UpdateSpaceTaskParams,
+  UpdateSpaceWorkerAgentParams,
   UpdateSpaceWorkflowParams,
   WorkflowRunArtifact,
-  SpaceWorkflowSyncPreview,
 } from '@hyperneo/shared';
 import { isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
@@ -233,6 +234,8 @@ class SpaceStore {
 
   readonly sessions = signal<SpaceSessionRow[]>([]);
 
+  readonly workspaces = signal<SpaceWorkspace[]>([]);
+
   updateSession(sessionId: string, patch: Partial<Omit<SpaceSessionRow, 'id'>>): void {
     this.sessions.value = this.sessions.value.map((s) =>
       s.id === sessionId ? { ...s, ...patch } : s
@@ -242,6 +245,10 @@ class SpaceStore {
   private spaceSessionsCleanupFns: Array<() => void> = [];
 
   private activeSpaceSessionsSubscriptionId: string | null = null;
+
+  private spaceWorkspacesCleanupFns: Array<() => void> = [];
+
+  private activeSpaceWorkspacesSubscriptionId: string | null = null;
 
   private updateRuntimeState(space: Space): void {
     if (space.status === 'archived') {
@@ -565,6 +572,7 @@ class SpaceStore {
     this.nodeExecPromise = null;
     this.activeNodeExecRunId = null;
     this.sessions.value = [];
+    this.workspaces.value = [];
     this.schedules.value = [];
     this.goals.value = [];
     this.goalEvents.value = new Map();
@@ -572,6 +580,7 @@ class SpaceStore {
     this.clearWorkflowDetailCache();
     this.workflowVersions.value = new Map();
     this.disposeSpaceSessionsSubscription();
+    this.disposeSpaceWorkspacesSubscription();
 
     this.spaceId.value = spaceIdOrSlug;
 
@@ -621,6 +630,8 @@ class SpaceStore {
     this.cleanupFunctions.push(unsubSpaceUpdated);
 
     this.subscribeSpaceSessions(hub, spaceId);
+
+    this.subscribeSpaceWorkspaces(hub, spaceId);
 
     const unsubSpaceArchived = hub.onEvent<{
       sessionId: string;
@@ -1705,6 +1716,85 @@ class SpaceStore {
       });
   }
 
+  private subscribeSpaceWorkspaces(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    spaceId: string
+  ): void {
+    const subscriptionId = `spaceWorkspaces-bySpace-${spaceId}`;
+    if (this.activeSpaceWorkspacesSubscriptionId === subscriptionId) return;
+    this.disposeSpaceWorkspacesSubscription();
+    this.activeSpaceWorkspacesSubscriptionId = subscriptionId;
+
+    const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+      if (event.subscriptionId !== subscriptionId) return;
+      if (this.activeSpaceWorkspacesSubscriptionId !== subscriptionId) return;
+      this.workspaces.value = (event.rows as SpaceWorkspace[]) ?? [];
+    });
+    this.spaceWorkspacesCleanupFns.push(unsubSnapshot);
+
+    const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+      if (event.subscriptionId !== subscriptionId) return;
+      if (this.activeSpaceWorkspacesSubscriptionId !== subscriptionId) return;
+      const current = this.workspaces.value;
+      const next = new Map(current.map((w) => [w.id, w]));
+      for (const row of (event.removed ?? []) as SpaceWorkspace[]) next.delete(row.id);
+      for (const row of (event.updated ?? []) as SpaceWorkspace[]) next.set(row.id, row);
+      for (const row of (event.added ?? []) as SpaceWorkspace[]) next.set(row.id, row);
+      this.workspaces.value = [...next.values()];
+    });
+    this.spaceWorkspacesCleanupFns.push(unsubDelta);
+
+    const unsubReconnect = hub.onConnection((state) => {
+      if (state !== 'connected') return;
+      if (this.activeSpaceWorkspacesSubscriptionId !== subscriptionId) return;
+      hub
+        .request('liveQuery.subscribe', {
+          queryName: 'spaceWorkspaces.bySpace',
+          params: [spaceId],
+          subscriptionId,
+        })
+        .catch((err) => {
+          logger.warn('Workspace LiveQuery re-subscribe failed:', err);
+        });
+    });
+    this.spaceWorkspacesCleanupFns.push(unsubReconnect);
+
+    this.spaceWorkspacesCleanupFns.push(() => {
+      hub.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {});
+    });
+
+    hub
+      .request('liveQuery.subscribe', {
+        queryName: 'spaceWorkspaces.bySpace',
+        params: [spaceId],
+        subscriptionId,
+      })
+      .catch((err) => {
+        logger.warn('Workspace LiveQuery subscribe failed:', err);
+      });
+  }
+
+  private disposeSpaceWorkspacesSubscription(): void {
+    for (const cleanup of this.spaceWorkspacesCleanupFns) {
+      try {
+        cleanup();
+      } catch {}
+    }
+    this.spaceWorkspacesCleanupFns = [];
+
+    if (this.activeSpaceWorkspacesSubscriptionId) {
+      const hub = connectionManager.getHubIfConnected();
+      if (hub) {
+        hub
+          .request('liveQuery.unsubscribe', {
+            subscriptionId: this.activeSpaceWorkspacesSubscriptionId,
+          })
+          .catch(() => {});
+      }
+      this.activeSpaceWorkspacesSubscriptionId = null;
+    }
+  }
+
   private disposeSpaceSessionsSubscription(): void {
     for (const cleanup of this.spaceSessionsCleanupFns) {
       try {
@@ -1752,7 +1842,9 @@ class SpaceStore {
     this.workflowDetailsRetryPending = false;
     this.workflowDetailsLoadGeneration += 1;
     this.sessions.value = [];
+    this.workspaces.value = [];
     this.disposeSpaceSessionsSubscription();
+    this.disposeSpaceWorkspacesSubscription();
 
     try {
       await this.fetchAndResolveSpace(spaceId);
@@ -1882,6 +1974,16 @@ class SpaceStore {
 
     const task = await hub.request<SpaceTask>('spaceTask.create', { ...params, spaceId });
     return task;
+  }
+
+  async listWorkspaces(): Promise<SpaceWorkspace[]> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    return hub.request<SpaceWorkspace[]>('space.workspace.list', { spaceId });
   }
 
   async fetchTaskGroup(

@@ -1,6 +1,7 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { GlobalSettings, SessionSettings } from '@hyperneo/shared';
+import { bumpProviderCatalogEpoch, clearModelsCache } from '../model-service.js';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { Database } from '../../storage/database.ts';
 import type { McpImportService } from '../mcp/index.ts';
@@ -9,11 +10,32 @@ import { withVoiceCredentialLock } from './voice-credential-lock.ts';
 
 export const VOICE_CREDENTIAL_PROVIDER_ID = 'voice-transcription';
 
+function providerIdsFromAllowlistEnv(): string[] {
+  const raw = process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS;
+  if (!raw?.trim()) return [];
+  return Array.from(
+    new Set(
+      raw
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          const [provider, ...rest] = entry.split(':');
+          return rest.length > 0 ? provider : '';
+        })
+        .filter(Boolean)
+    )
+  );
+}
+
 export async function syncProviderModelAllowlists(
   allowlists?: Record<string, string[]>
 ): Promise<void> {
+  const previousProviderIds = providerIdsFromAllowlistEnv();
+  for (const providerId of new Set([...previousProviderIds, ...Object.keys(allowlists ?? {})])) {
+    bumpProviderCatalogEpoch(providerId);
+  }
   applyProviderModelAllowlistsToEnv(allowlists);
-  const { clearModelsCache } = await import('../model-service.ts');
   clearModelsCache();
 }
 
@@ -222,8 +244,7 @@ export function registerSettingsHandlers(
     if (!mcpImportService) {
       return { results: [] };
     }
-    const workspacePaths = db.workspaceHistory.list(100).map((row) => row.path);
-    const { results, orphanPruned } = mcpImportService.refreshAll(workspacePaths);
+    const { results, orphanPruned } = mcpImportService.refreshAll();
     internalEventBus.publishAsync('settings.updated', {
       namespaceId: 'global',
       settings: sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager),

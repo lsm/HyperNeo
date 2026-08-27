@@ -600,7 +600,7 @@ describe('preset agent exact definitions', () => {
       Reviewer:
         'Code review specialist. Reviews pull requests for correctness, style, and test coverage. ' +
         'Bash is permission-scoped to read-only gh PR inspection and review posting.',
-      QA: 'Quality assurance specialist. Verifies test coverage, runs test suites, and checks CI pipeline status.',
+      QA: 'Quality assurance specialist. Validates the reviewer-approved pull request by exercising real application behavior, not by re-running automated test suites; confirms required CI is green before terminal approval.',
     };
 
     for (const agent of seeded) {

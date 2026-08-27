@@ -7,6 +7,7 @@ import type { SpaceTask, TaskSchedule } from '@hyperneo/shared';
 
 let mockTasks: ReturnType<typeof signal<SpaceTask[]>>;
 const mockSchedules = signal<unknown[]>([]);
+const mockWorkspaces = signal<unknown[]>([]);
 const mockListSchedules = vi.fn(async () => {});
 
 const { filterTabBridge, idBridge } = vi.hoisted(() => ({
@@ -57,6 +58,7 @@ vi.mock('../../../lib/space-store', () => ({
     return {
       tasks: mockTasks,
       schedules: mockSchedules,
+      workspaces: mockWorkspaces,
       listSchedules: mockListSchedules,
       fetchTaskGroup: mockFetchTaskGroup,
     };
@@ -160,6 +162,7 @@ describe('SpaceTasks', () => {
     cleanup();
     mockTasks.value = [];
     mockSchedules.value = [];
+    mockWorkspaces.value = [];
     mockCurrentSpaceTasksFilterTabSignal.value = 'active';
     mockCurrentSpaceIdSignal.value = null;
     mockNavigateToSpaceTasks.mockClear();
@@ -360,6 +363,23 @@ describe('SpaceTasks', () => {
     mockTasks.value = [makeTask('t1', 'open', { taskNumber: 42 })];
     const { findByText } = render(<SpaceTasks spaceId="space-1" />);
     expect(await findByText('#42')).toBeTruthy();
+  });
+
+  it('shows workspace badge for non-primary-bound tasks and hides it for primary-bound tasks', async () => {
+    mockWorkspaces.value = [
+      { id: 'ws-1', spaceId: 'space-1', path: '/primary', label: 'Main', isPrimary: true },
+      { id: 'ws-2', spaceId: 'space-1', path: '/secondary/docs', label: 'Docs', isPrimary: false },
+    ];
+    mockTasks.value = [
+      makeTask('t1', 'open', { workspacePath: '/primary' }),
+      makeTask('t2', 'open', { workspacePath: '/secondary/docs' }),
+    ];
+    const { findAllByTestId, getByText } = render(<SpaceTasks spaceId="space-1" />);
+    const badges = await findAllByTestId('task-workspace-badge');
+    expect(badges).toHaveLength(1);
+    expect(badges[0].textContent).toBe('Docs');
+    expect(getByText('Task t1')).toBeTruthy();
+    expect(getByText('Task t2')).toBeTruthy();
   });
 
   it('does not show count badge when count is 0', () => {
@@ -686,6 +706,33 @@ describe('SpaceTasks', () => {
           taskNumber: 1,
           updatedAt: now - 1000,
           result: 'Blocked: needs human input',
+        }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      rerender(<SpaceTasks spaceId="space-1" />);
+      await waitFor(() => {
+        expect(mockFetchTaskGroup.mock.calls.length).toBeGreaterThan(callsAfterMount);
+      });
+    });
+
+    it('refetches when a task workspace binding changes', async () => {
+      const now = Date.now();
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000 }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      const { findByText, rerender } = render(<SpaceTasks spaceId="space-1" />);
+      expect(await findByText('Task t1')).toBeTruthy();
+      await waitFor(() => {
+        expect(mockFetchTaskGroup).toHaveBeenCalled();
+      });
+      const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
+
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', {
+          taskNumber: 1,
+          updatedAt: now - 1000,
+          workspacePath: '/spaces/s1/docs',
         }),
         makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
       ];

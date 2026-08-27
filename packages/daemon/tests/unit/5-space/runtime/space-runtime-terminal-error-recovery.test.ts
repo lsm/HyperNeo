@@ -114,6 +114,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
   function makeTam(
     overrides: {
       isSessionAlive?: (sessionId: string) => boolean;
+      isSessionInMemory?: (sessionId: string) => boolean;
       injectRuntimeRecoveryMessage?: (sessionId: string, message: string) => Promise<string>;
     } = {}
   ) {
@@ -122,6 +123,7 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     const spawnSnapshots: Array<{ agentSessionIdAtSpawn: string | null }> = [];
     return {
       isSessionAlive: overrides.isSessionAlive ?? (() => true),
+      isSessionInMemory: overrides.isSessionInMemory ?? overrides.isSessionAlive ?? (() => true),
       isExecutionSpawning: () => false,
       isSpawning: () => false,
       isTaskAgentAlive: () => true,

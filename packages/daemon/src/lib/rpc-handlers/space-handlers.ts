@@ -11,6 +11,10 @@ import type {
   UpdateSpaceParams,
   SpaceTask,
   SpaceWorkflowRun,
+  SpaceWorkspace,
+  SpaceWorkspaceAddParams,
+  SpaceWorkspaceRemoveParams,
+  SpaceWorkspaceUpdateLabelParams,
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
@@ -130,6 +134,13 @@ export function setupSpaceHandlers(
     }
     if (params.config?.maxConcurrentTasks !== undefined) {
       params.config.maxConcurrentTasks = validateConcurrentLimit(params.config.maxConcurrentTasks);
+    }
+    if (params.additionalWorkspaces) {
+      for (const [index, workspace] of params.additionalWorkspaces.entries()) {
+        if (typeof workspace?.path !== 'string' || workspace.path.trim() === '') {
+          throw new Error(`additionalWorkspaces[${index}].path is required`);
+        }
+      }
     }
 
     const space = await spaceManager.createSpace(params);
@@ -493,5 +504,45 @@ export function setupSpaceHandlers(
     };
 
     return result;
+  });
+
+  messageHub.onRequest('space.workspace.list', async (data) => {
+    const params = (data ?? {}) as { spaceId: string };
+    return spaceManager.listWorkspaces(params.spaceId) satisfies SpaceWorkspace[];
+  });
+
+  messageHub.onRequest('space.workspace.add', async (data) => {
+    const params = (data ?? {}) as SpaceWorkspaceAddParams;
+    const workspace = await spaceManager.registerWorkspace(
+      params.spaceId,
+      params.path,
+      params.label
+    );
+    return workspace satisfies SpaceWorkspace;
+  });
+
+  messageHub.onRequest('space.workspace.remove', async (data) => {
+    const params = (data ?? {}) as SpaceWorkspaceRemoveParams;
+    const removed = spaceManager.removeWorkspace(params.spaceId, params.workspaceId);
+    if (!removed) {
+      throw new Error(`Workspace not found: ${params.workspaceId}`);
+    }
+    return { success: true };
+  });
+
+  messageHub.onRequest('space.workspace.updateLabel', async (data) => {
+    const params = (data ?? {}) as SpaceWorkspaceUpdateLabelParams;
+    if (typeof params.label !== 'string') {
+      throw new Error('label must be a string');
+    }
+    const updated = spaceManager.updateWorkspaceLabel(
+      params.spaceId,
+      params.workspaceId,
+      params.label
+    );
+    if (!updated) {
+      throw new Error(`Workspace not found: ${params.workspaceId}`);
+    }
+    return { success: true };
   });
 }

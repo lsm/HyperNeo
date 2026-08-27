@@ -198,7 +198,8 @@ describe('SessionManager', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'Test Session',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -212,7 +213,8 @@ describe('SessionManager', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: '/custom/path',
-        })
+        }),
+        expect.anything()
       );
     });
   });

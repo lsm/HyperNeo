@@ -8,16 +8,21 @@ const SDK_AUTO_COMPACT_RESERVE_TOKENS = 33_000;
 
 const KIMI_RESERVE_TOKENS = 45_000;
 
+export function autoCompactReserveTokens(providerId?: string): number {
+  return providerId === 'kimi' ? KIMI_RESERVE_TOKENS : SDK_AUTO_COMPACT_RESERVE_TOKENS;
+}
+
 export function reserveBasedThreshold(contextWindow: number, providerId?: string): number {
   if (!Number.isFinite(contextWindow) || contextWindow <= 0) return 0;
-  const reserve = providerId === 'kimi' ? KIMI_RESERVE_TOKENS : SDK_AUTO_COMPACT_RESERVE_TOKENS;
-  return Math.max(1, contextWindow - reserve);
+  return Math.max(1, contextWindow - autoCompactReserveTokens(providerId));
 }
 
 export class ContextTracker {
   private currentContextInfo: ContextInfo | null = null;
 
   private lastCompactionTriggerAt = 0;
+
+  private lastCompactionBudgetKey: number | undefined;
 
   constructor(
     private sessionId: string,
@@ -74,7 +79,24 @@ export class ContextTracker {
     return true;
   }
 
-  markCompactionTriggered(): void {
+  markCompactionTriggered(budgetKey?: number): void {
     this.lastCompactionTriggerAt = Date.now();
+    this.lastCompactionBudgetKey = budgetKey;
+  }
+
+  isCoolingDown(budgetKey?: number, cooldownMs = DEFAULT_COMPACTION_COOLDOWN_MS): boolean {
+    if (
+      this.lastCompactionBudgetKey !== undefined &&
+      budgetKey !== undefined &&
+      this.lastCompactionBudgetKey !== budgetKey
+    ) {
+      return false;
+    }
+    return Date.now() - this.lastCompactionTriggerAt < cooldownMs;
+  }
+
+  clearCompactionCooldown(): void {
+    this.lastCompactionTriggerAt = 0;
+    this.lastCompactionBudgetKey = undefined;
   }
 }

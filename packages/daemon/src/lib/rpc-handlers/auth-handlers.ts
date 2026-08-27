@@ -17,6 +17,7 @@ import {
   KeychainUnavailableError,
 } from '../credentials/credential-store.js';
 import { getProviderRegistry } from '../providers/registry.ts';
+import { bumpProviderCatalogEpoch } from '../model-service.js';
 import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
 import { registerBuiltInProvider } from '../providers/factory.js';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository.ts';
@@ -45,7 +46,7 @@ async function clearCacheAndNotifyProvidersChanged(
     }
   }
   const { clearModelsCache } = await import('../model-service.js');
-  clearModelsCache();
+  clearModelsCache(undefined, providerId);
   internalEventBus?.publishAsync('providers.changed', { sessionId: 'global' });
 }
 
@@ -159,6 +160,7 @@ export function setupAuthHandlers(
         let unsubscribe: (() => void) | undefined;
         const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
           let storeError: unknown;
+          bumpProviderCatalogEpoch(providerId);
           if (credentials.type === 'oauth') {
             try {
               await credentialManager?.storeOAuthTokens(providerId, credentials);
@@ -213,6 +215,7 @@ export function setupAuthHandlers(
       }
 
       try {
+        bumpProviderCatalogEpoch(providerId);
         const hasEnvironmentCredentials = await providerEnvCoordinator.runWithLease(
           'provider-credential-manager.hasEnvironmentCredentials',
           () => credentialManager?.hasEnvironmentCredentials(providerId) ?? false
@@ -312,6 +315,7 @@ export function setupAuthHandlers(
       }
 
       try {
+        bumpProviderCatalogEpoch(providerId);
         const refreshed = await provider.refreshToken();
         if (!refreshed) {
           await removeCredentialsOrKeychainError(credentialManager, providerId);

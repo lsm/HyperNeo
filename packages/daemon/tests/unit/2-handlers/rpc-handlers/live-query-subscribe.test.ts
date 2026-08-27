@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageHub } from '@hyperneo/shared';
 import { ErrorCode, MessageHubHandlerError } from '@hyperneo/shared';
 import { setupLiveQueryHandlers } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository';
 import { LiveQueryEngine } from '../../../../src/storage/live-query';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
@@ -135,6 +136,16 @@ function createDb() {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS space_workspaces (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			path TEXT NOT NULL,
+			label TEXT NOT NULL DEFAULT '',
+			is_primary INTEGER NOT NULL DEFAULT 0 CHECK(is_primary IN (0, 1)),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(space_id, path)
+		);
 		CREATE TABLE IF NOT EXISTS space_workflow_runs (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
@@ -143,6 +154,75 @@ function createDb() {
 			description TEXT,
 			status TEXT NOT NULL,
 			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS space_tasks (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_number INTEGER NOT NULL DEFAULT 1,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			priority TEXT NOT NULL DEFAULT 'normal',
+			assigned_agent TEXT,
+			custom_agent_id TEXT,
+			agent_name TEXT,
+			completion_summary TEXT,
+			workflow_run_id TEXT,
+			workflow_node_id TEXT,
+			task_agent_session_id TEXT,
+			post_approval_session_id TEXT,
+			depends_on TEXT NOT NULL DEFAULT '[]',
+			current_step TEXT,
+			error TEXT,
+			result TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS node_executions (
+			id TEXT PRIMARY KEY,
+			workflow_run_id TEXT NOT NULL,
+			workflow_node_id TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			agent_id TEXT,
+			agent_session_id TEXT,
+			status TEXT NOT NULL DEFAULT 'pending',
+			result TEXT,
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS space_agents (
+			id TEXT PRIMARY KEY,
+			name TEXT
+		);
+		CREATE TABLE IF NOT EXISTS space_github_events (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			task_id TEXT,
+			source TEXT NOT NULL,
+			delivery_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			action TEXT NOT NULL,
+			repo_owner TEXT NOT NULL,
+			repo_name TEXT NOT NULL,
+			pr_number INTEGER NOT NULL,
+			pr_url TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			actor_type TEXT NOT NULL,
+			body TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			external_url TEXT NOT NULL DEFAULT '',
+			external_id TEXT NOT NULL DEFAULT '',
+			occurred_at INTEGER NOT NULL,
+			dedupe_key TEXT NOT NULL,
+			raw_payload TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'received',
+			matched_by TEXT,
+			confidence TEXT,
+			route_note TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)
@@ -193,6 +273,19 @@ function insertWorkflowRun(db: BunDatabase, runId: string) {
 			id, space_id, workflow_id, title, description, status, config, created_at, updated_at
 		) VALUES (
 			'${runId}', 'space-test-1', 'workflow-test-1', 'Test Run', '', 'in_progress', '{}', ${now}, ${now}
+		)`
+  );
+}
+
+function insertSpaceTask(db: BunDatabase, id: string, spaceId: string = 'space-test-1') {
+  const now = Date.now();
+  db.exec(
+    `INSERT OR IGNORE INTO space_tasks (
+			id, space_id, task_number, title, description, status, priority, assigned_agent, agent_name,
+			workflow_run_id, workflow_node_id, task_agent_session_id, depends_on, created_at, updated_at
+		) VALUES (
+			'${id}', '${spaceId}', 1, 'Test Task', '', 'in_progress', 'normal', 'coder', NULL,
+			NULL, NULL, NULL, '[]', ${now}, ${now}
 		)`
   );
 }
@@ -308,10 +401,39 @@ describe('setupLiveQueryHandlers', () => {
     await expect(
       setup.callHandler('liveQuery.subscribe', {
         queryName: 'spaceTaskMessages.byTask.compact',
-        params: ['space-task-does-not-exist'],
+        params: ['space-task-does-not-exist', 20],
         subscriptionId: 'sub-1',
       })
     ).rejects.toThrow('Unauthorized');
+  });
+
+  test('subscribe spaceTaskMessages.byTask.compact: rejects invalid window limit', async () => {
+    insertSpaceTask(db, taskId);
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceTaskMessages.byTask.compact',
+        params: [taskId, 0],
+        subscriptionId: 'sub-1',
+      })
+    ).rejects.toThrow('limit');
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceTaskMessages.byTask.compact',
+        params: [taskId, 101],
+        subscriptionId: 'sub-2',
+      })
+    ).rejects.toThrow('limit');
+  });
+
+  test('subscribe spaceTaskMessages.byTask.compact: legacy single-param subscriptions get the default window', async () => {
+    insertSpaceTask(db, taskId);
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceTaskMessages.byTask.compact',
+        params: [taskId],
+        subscriptionId: 'sub-legacy',
+      })
+    ).resolves.toBeDefined();
   });
 
   test('subscribe actorMessages.byWorkflowRun: mismatched run params rejected', async () => {
@@ -394,6 +516,106 @@ describe('setupLiveQueryHandlers', () => {
       subscriptionId: 'sub-other',
     });
     expect(result).toEqual({ ok: true });
+  });
+
+  test('subscribe spaceWorkspaces.bySpace: nonexistent space rejected', async () => {
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName: 'spaceWorkspaces.bySpace',
+        params: ['space-missing'],
+        subscriptionId: 'sub-ws-missing',
+      })
+    ).rejects.toThrow('Unauthorized: space "space-missing" not found');
+  });
+
+  test('spaceWorkspaces.bySpace snapshots the registry and deltas on every registry write', async () => {
+    const now = Date.now();
+    db.exec(
+      `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+       VALUES ('space-ws-1', 'space-ws-1', '/repos/primary', 'Space WS', ${now}, ${now})`
+    );
+    const repo = new SpaceWorkspaceRepository(db, reactiveDb);
+    const primary = repo.create({
+      spaceId: 'space-ws-1',
+      path: '/repos/primary',
+      label: 'primary',
+      isPrimary: true,
+    });
+    const flush = () => new Promise((r) => setTimeout(r, 10));
+
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'spaceWorkspaces.bySpace',
+      params: ['space-ws-1'],
+      subscriptionId: 'sub-ws',
+    });
+    expect(setup.sentMessages[0].message.method).toBe('liveQuery.snapshot');
+    expect(setup.sentMessages[0].message.data.rows).toEqual([
+      {
+        id: primary.id,
+        spaceId: 'space-ws-1',
+        path: '/repos/primary',
+        label: 'primary',
+        isPrimary: true,
+        createdAt: primary.createdAt,
+        updatedAt: primary.updatedAt,
+      },
+    ]);
+
+    const secondary = repo.create({ spaceId: 'space-ws-1', path: '/repos/secondary' });
+    await flush();
+    const added = setup.sentMessages.at(-1)!;
+    expect(added.message.method).toBe('liveQuery.delta');
+    expect(added.message.data.added).toHaveLength(1);
+    expect(added.message.data.added![0]).toMatchObject({
+      id: secondary.id,
+      path: '/repos/secondary',
+      isPrimary: false,
+    });
+
+    repo.updateLabel('space-ws-1', secondary.id, 'renamed');
+    await flush();
+    const updated = setup.sentMessages.at(-1)!;
+    expect(updated.message.method).toBe('liveQuery.delta');
+    expect(updated.message.data.updated).toMatchObject([{ id: secondary.id, label: 'renamed' }]);
+
+    repo.delete('space-ws-1', secondary.id);
+    await flush();
+    const removed = setup.sentMessages.at(-1)!;
+    expect(removed.message.method).toBe('liveQuery.delta');
+    expect(removed.message.data.removed).toMatchObject([{ id: secondary.id }]);
+  });
+
+  test('spaceWorkspaces.bySpace skips reevaluation for other spaces scoped writes', async () => {
+    const now = Date.now();
+    for (const id of ['space-ws-a', 'space-ws-b']) {
+      db.exec(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+         VALUES ('${id}', '${id}', '/repos/${id}', '${id}', ${now}, ${now})`
+      );
+    }
+    const repo = new SpaceWorkspaceRepository(db, reactiveDb);
+
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'spaceWorkspaces.bySpace',
+      params: ['space-ws-a'],
+      subscriptionId: 'sub-ws-a',
+    });
+    await setup.callHandler('liveQuery.subscribe', {
+      queryName: 'spaceWorkspaces.bySpace',
+      params: ['space-ws-b'],
+      subscriptionId: 'sub-ws-b',
+    });
+    const messagesFor = (subscriptionId: string) =>
+      setup.sentMessages.filter((sent) => sent.message.data.subscriptionId === subscriptionId);
+    expect(messagesFor('sub-ws-a')).toHaveLength(1);
+    expect(messagesFor('sub-ws-b')).toHaveLength(1);
+
+    const created = repo.create({ spaceId: 'space-ws-a', path: '/repos/a' });
+    repo.updateLabel('space-ws-a', created.id, 'x');
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(messagesFor('sub-ws-a').length).toBeGreaterThanOrEqual(2);
+    expect(messagesFor('sub-ws-b')).toHaveLength(1);
   });
 
   test('subscribe: snapshot delivered immediately on subscribe', async () => {

@@ -1,7 +1,8 @@
-import type { UUID } from 'crypto';
 import type { MessageContent, ToolResultContent } from '@hyperneo/shared';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { generateUUID } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { UUID } from 'crypto';
+import { buildQueueTimeoutError, resolveQueueTimeout } from './message-queue-timeout-policy.ts';
 
 function isToolResultContent(content: MessageContent): content is ToolResultContent {
   return content.type === 'tool_result' && 'tool_use_id' in content;
@@ -37,6 +38,10 @@ export class MessageQueue {
   private waiters: Array<() => void> = [];
   private running: boolean = false;
   private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
+  private deliveryGate: Promise<void> | null = null;
+  private internalCompactionsAwaitingBoundary: number = 0;
+  private nonCompactionSentSinceBoundary: boolean = false;
+  private recentSentPrompts: Map<string, string | MessageContent[]> = new Map();
 
   overrideTimeoutMsForTest(ms: number): void {
     this.timeoutMs = ms;
@@ -54,14 +59,158 @@ export class MessageQueue {
 
   onMessageEnqueued?: (messageId: string, queuedAt: number) => void;
 
+  onInternalCompactionsAborted?: () => void;
+
   private wakeWaiters(): void {
     this.waiters.forEach((waiter) => waiter());
     this.waiters = [];
   }
 
-  async enqueue(content: string | MessageContent[], internal: boolean = false): Promise<string> {
+  private noteInternalCompactionSent(message: QueuedMessage): void {
+    if (this.isInternalCompaction(message)) {
+      this.internalCompactionsAwaitingBoundary += 1;
+    } else {
+      this.nonCompactionSentSinceBoundary = true;
+      this.recentSentPrompts.delete(message.id);
+      this.recentSentPrompts.set(message.id, message.content);
+      if (this.recentSentPrompts.size > 32) {
+        const oldest = this.recentSentPrompts.keys().next().value;
+        if (oldest !== undefined) {
+          this.recentSentPrompts.delete(oldest);
+        }
+      }
+    }
+  }
+
+  private isInternalCompaction(message: QueuedMessage): boolean {
+    return (
+      message.internal === true &&
+      typeof message.content === 'string' &&
+      message.content === '/compact'
+    );
+  }
+
+  pruneSentPrompts(): void {
+    this.recentSentPrompts.clear();
+  }
+
+  getSentPromptContent(messageId: string): string | MessageContent[] | undefined {
+    return this.recentSentPrompts.get(messageId);
+  }
+
+  forgetSentPrompt(messageId: string): void {
+    this.recentSentPrompts.delete(messageId);
+  }
+
+  acknowledgeCompactionsAwaitingBoundary(): void {
+    if (this.internalCompactionsAwaitingBoundary > 0) {
+      this.internalCompactionsAwaitingBoundary -= 1;
+    }
+    this.cancelInternalCompactionEntries(false, false);
+    this.recentSentPrompts.clear();
+    this.wakeWaiters();
+  }
+
+  private cancelInternalCompactionEntries(interrupted: boolean, includeYielded: boolean): void {
+    const settle = (message: QueuedMessage) => {
+      if (interrupted) {
+        message.reject(new Error('Interrupted by user'));
+      } else {
+        message.resolve(message.id);
+      }
+    };
+    this.queue = this.queue.filter((message) => {
+      if (!this.isInternalCompaction(message)) return true;
+      settle(message);
+      return false;
+    });
+    this.claimed = new Set(
+      [...this.claimed].filter((message) => {
+        if (!this.isInternalCompaction(message)) return true;
+        settle(message);
+        return false;
+      })
+    );
+    if (includeYielded) {
+      this.yielded = new Set(
+        [...this.yielded].filter((message) => {
+          if (!this.isInternalCompaction(message)) return true;
+          settle(message);
+          return false;
+        })
+      );
+    }
+  }
+
+  hasCompactionsAwaitingBoundary(): boolean {
+    return this.internalCompactionsAwaitingBoundary > 0;
+  }
+
+  clearNonCompactionSentSinceBoundary(): void {
+    this.nonCompactionSentSinceBoundary = false;
+  }
+
+  hasQueuedInternalCompaction(): boolean {
+    return this.queue.some((message) => this.isInternalCompaction(message));
+  }
+
+  hasInFlightInternalCompaction(): boolean {
+    for (const message of this.claimed) {
+      if (this.isInternalCompaction(message)) return true;
+    }
+    for (const message of this.yielded) {
+      if (this.isInternalCompaction(message)) return true;
+    }
+    return false;
+  }
+
+  hasOutstandingInternalCompaction(): boolean {
+    if (this.internalCompactionsAwaitingBoundary > 0) return true;
+    return this.hasQueuedInternalCompaction() || this.hasInFlightInternalCompaction();
+  }
+
+  hasOutstandingNonCompactionMessages(): boolean {
+    if (this.nonCompactionSentSinceBoundary) return true;
+    if (this.queue.some((message) => !this.isInternalCompaction(message))) return true;
+    for (const message of this.claimed) {
+      if (!this.isInternalCompaction(message)) return true;
+    }
+    for (const message of this.yielded) {
+      if (!this.isInternalCompaction(message)) return true;
+    }
+    return false;
+  }
+
+  setDeliveryGate(gate: Promise<void>): void {
+    const previous = this.deliveryGate;
+    const composed = previous
+      ? previous.then(
+          () => gate,
+          () => gate
+        )
+      : gate;
+    this.deliveryGate = composed;
+    void composed.then(
+      () => {
+        if (this.deliveryGate === composed) {
+          this.deliveryGate = null;
+        }
+      },
+      () => {
+        if (this.deliveryGate === composed) {
+          this.deliveryGate = null;
+        }
+      }
+    );
+  }
+
+  async enqueue(
+    content: string | MessageContent[],
+    internal: boolean = false,
+    options?: { durable?: boolean; prepend?: boolean }
+  ): Promise<string> {
     const messageId = generateUUID();
-    await this.enqueueWithId(messageId, content, internal);
+    await this.enqueueWithId(messageId, content, internal, options);
     return messageId;
   }
 
@@ -124,33 +273,41 @@ export class MessageQueue {
       clearTimeout(queuedMessage.timeoutId);
     }
     queuedMessage.timeoutId = setTimeout(() => {
-      const timeoutError = new Error(
-        `Message queue timeout: SDK did not consume message ${queuedMessage.id} within ${this.timeoutMs / 1000}s. ` +
-          `This usually indicates an SDK internal error. Please try again or create a new session.`
-      );
-      timeoutError.name = 'MessageQueueTimeoutError';
       const index = this.queue.indexOf(queuedMessage);
-      if (index !== -1) {
+      const decision = resolveQueueTimeout({
+        pending: index !== -1,
+        claimed: this.claimed.has(queuedMessage),
+        yielded: this.yielded.has(queuedMessage),
+        durable: queuedMessage.durable === true,
+      });
+      if (decision.action === 'none') return;
+      if (decision.removeFrom === 'pending') {
         this.queue.splice(index, 1);
-        queuedMessage.reject(timeoutError);
-        return;
+      } else if (decision.removeFrom === 'claimed') {
+        this.claimed.delete(queuedMessage);
+      } else {
+        this.yielded.delete(queuedMessage);
       }
-      if (this.claimed.delete(queuedMessage)) {
-        queuedMessage.reject(timeoutError);
-        return;
-      }
-      if (this.yielded.delete(queuedMessage)) {
-        if (queuedMessage.durable) {
-          queuedMessage.resolve(queuedMessage.id);
-        } else {
-          queuedMessage.reject(timeoutError);
+      if (decision.action === 'resolve') {
+        if (decision.removeFrom === 'yielded') {
+          this.noteInternalCompactionSent(queuedMessage);
         }
+        queuedMessage.resolve(queuedMessage.id);
+        return;
       }
+      queuedMessage.reject(
+        buildQueueTimeoutError({ messageId: queuedMessage.id, timeoutMs: this.timeoutMs })
+      );
     }, this.timeoutMs);
   }
 
   clear(): void {
     this.clearEpoch += 1;
+    const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
+    this.internalCompactionsAwaitingBoundary = 0;
+    this.nonCompactionSentSinceBoundary = false;
+    this.recentSentPrompts.clear();
+    this.deliveryGate = null;
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -165,6 +322,7 @@ export class MessageQueue {
       msg.reject(new Error('Interrupted by user'));
     }
     this.claimed.clear();
+    const yieldedCompactions = [...this.yielded].filter((msg) => this.isInternalCompaction(msg));
     for (const msg of this.yielded) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -172,6 +330,9 @@ export class MessageQueue {
       msg.resolve(msg.id);
     }
     this.yielded.clear();
+    if (deliveredCompactions || yieldedCompactions.length > 0) {
+      this.onInternalCompactionsAborted?.();
+    }
   }
 
   getClearEpoch(): number {
@@ -207,6 +368,10 @@ export class MessageQueue {
     return this.getPendingOrInFlightContent(messageId) !== null;
   }
 
+  hasQueuedMessages(): boolean {
+    return this.queue.length > 0;
+  }
+
   hasPendingOrClaimed(messageId: string): boolean {
     if (this.queue.some((message) => message.id === messageId)) return true;
     for (const message of this.claimed) {
@@ -226,6 +391,7 @@ export class MessageQueue {
     for (const message of this.yielded) {
       if (message.id !== messageId) continue;
       this.yielded.delete(message);
+      this.noteInternalCompactionSent(message);
       message.resolve(message.id);
       return true;
     }
@@ -292,7 +458,15 @@ export class MessageQueue {
 
   stop(): void {
     this.running = false;
+    const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
+    this.internalCompactionsAwaitingBoundary = 0;
+    this.nonCompactionSentSinceBoundary = false;
+    this.cancelInternalCompactionEntries(true, true);
+    this.deliveryGate = null;
     this.wakeWaiters();
+    if (deliveredCompactions) {
+      this.onInternalCompactionsAborted?.();
+    }
   }
 
   isRunning(): boolean {
@@ -366,6 +540,7 @@ export class MessageQueue {
         message: sdkUserMessage,
         onSent: () => {
           if (this.yielded.delete(queuedMessage)) {
+            this.noteInternalCompactionSent(queuedMessage);
             queuedMessage.resolve(queuedMessage.id);
           }
         },
@@ -373,19 +548,48 @@ export class MessageQueue {
     }
   }
 
+  private gatedBypassIndex(): number {
+    const toolResultIndex = this.queue.findIndex(
+      (message) =>
+        typeof message.content !== 'string' &&
+        message.content.some((block) => isToolResultContent(block))
+    );
+    if (toolResultIndex !== -1) return toolResultIndex;
+    return this.queue.findIndex((message) => this.isInternalCompaction(message));
+  }
+
   private async waitForNextMessage(): Promise<QueuedMessage | null> {
-    while (this.running && this.queue.length === 0) {
-      await new Promise<void>((resolve) => {
-        this.waiters.push(resolve);
-      });
+    while (this.running) {
+      while (this.queue.length === 0) {
+        if (!this.running) return null;
+        await new Promise<void>((resolve) => {
+          this.waiters.push(resolve);
+        });
+        if (!this.running) return null;
+      }
+
+      const bypassIndex =
+        this.deliveryGate || this.hasOutstandingInternalCompaction() ? this.gatedBypassIndex() : 0;
+
+      if (bypassIndex === -1) {
+        await Promise.race([
+          ...(this.deliveryGate ? [this.deliveryGate.catch(() => {})] : []),
+          new Promise<void>((resolve) => {
+            this.waiters.push(resolve);
+          }),
+        ]);
+        if (!this.running) return null;
+        continue;
+      }
 
       if (!this.running) return null;
-    }
 
-    const message = this.queue.shift() || null;
-    if (message) {
-      this.claimed.add(message);
+      const message = this.queue.splice(bypassIndex, 1)[0];
+      if (message) {
+        this.claimed.add(message);
+        return message;
+      }
     }
-    return message;
+    return null;
   }
 }

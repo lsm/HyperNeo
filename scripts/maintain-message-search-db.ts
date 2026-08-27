@@ -7,12 +7,19 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   unlinkSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { getDataDir } from '../packages/daemon/src/lib/data-dir.ts';
+import {
+  acquireDatabaseLock,
+  liveLockHolderPid,
+  releaseDatabaseLock,
+  staleTakeoverHint,
+} from './rebuild-daemon-db.ts';
 
 const DEFAULT_DB_PATH = join(getDataDir(), 'data', 'daemon.db');
 const BACKUPS_TO_KEEP = 3;
@@ -53,6 +60,7 @@ function parseArgs(argv: string[]): Options {
   }
 
   options.dbPath = resolve(options.dbPath);
+  if (existsSync(options.dbPath)) options.dbPath = realpathSync(options.dbPath);
   return options;
 }
 
@@ -69,6 +77,14 @@ Options:
 }
 
 function assertDaemonStopped(dbPath: string, force: boolean): void {
+  const linkCount = statSync(dbPath).nlink;
+  if (linkCount > 1) {
+    throw new Error(
+      `Database ${dbPath} has ${linkCount} hard links; lock files are per-path, so another` +
+        ` name may be the one a running daemon is guarding. Remove the extra hard links` +
+        ` and retry.`
+    );
+  }
   const lockPath = `${dbPath}.lock`;
   if (!existsSync(lockPath)) return;
 
@@ -154,6 +170,35 @@ if (!existsSync(options.dbPath)) {
   throw new Error(`Database not found: ${options.dbPath}`);
 }
 assertDaemonStopped(options.dbPath, options.force);
+if (!acquireDatabaseLock(options.dbPath)) {
+  const livePid = liveLockHolderPid(`${options.dbPath}.lock`);
+  const takeover = existsSync(`${options.dbPath}.lock.takeover`);
+  if (livePid !== null) {
+    if (options.force) {
+      console.warn(
+        `Warning: daemon lock is held by live PID ${livePid}; continuing due to --force.`
+      );
+    } else {
+      throw new Error(
+        `Refusing to maintain a database used by live HyperNeo daemon PID ${livePid}.\n` +
+          `Stop the daemon first, or pass --force if you understand the risk.\n` +
+          `Database: ${options.dbPath}`
+      );
+    }
+  } else if (takeover) {
+    throw new Error(
+      `Refusing to maintain ${options.dbPath} while another process is reclaiming the stale` +
+        ` lock.${staleTakeoverHint(options.dbPath)}`
+    );
+  } else if (options.force) {
+    console.warn('Warning: proceeding without the exclusive daemon lock due to --force.');
+  } else {
+    throw new Error(
+      `Could not acquire the daemon lock for ${options.dbPath} after repeated attempts.` +
+        staleTakeoverHint(options.dbPath)
+    );
+  }
+}
 await confirm(options);
 
 const beforeSize = statSync(options.dbPath).size;
@@ -183,6 +228,8 @@ try {
 } finally {
   db.close();
 }
+
+releaseDatabaseLock();
 
 const afterSize = statSync(options.dbPath).size;
 console.log(

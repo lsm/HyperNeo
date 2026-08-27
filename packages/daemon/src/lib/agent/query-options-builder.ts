@@ -1,5 +1,3 @@
-import { KimiProvider } from '../providers/kimi-provider.js';
-import { getDataDir } from '../data-dir.ts';
 import type {
   CanUseTool,
   HookCallback,
@@ -24,43 +22,52 @@ import {
   isMcpServerSkillConfig,
   normalizeThinkingLevel,
   PROVIDER_THINKING_MODES,
+  resolveAutoCompactPercent,
   THINKING_LEVEL_TOKENS,
 } from '@hyperneo/shared';
 import type { McpServerConfig } from '@hyperneo/shared/types/sdk-config';
-import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
 import type { PermissionMode } from '@hyperneo/shared/types/settings';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { Database } from '../../storage/database.ts';
 import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
 import type { McpEnablementRepository } from '../../storage/repositories/mcp-enablement-repository.ts';
-import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
+import { getDataDir } from '../data-dir.ts';
 import { Logger } from '../logger.ts';
-import { getSessionModelInfo } from '../model-service.ts';
+import { resolveMcpServers, scopeChainForSession } from '../mcp/resolve-mcp-servers.ts';
+import {
+  getProviderCatalogEpoch,
+  getSessionModelInfo,
+  isCuratedOutModel,
+} from '../model-service.ts';
+import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
 import {
   getProviderContextManager,
   getProviderRegistry,
   initializeProviders,
   waitForOptionalProviderRegistration,
 } from '../providers/factory.js';
-import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { KimiProvider } from '../providers/kimi-provider.js';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../space/agents/custom-agent.ts';
+import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
 import {
   builtinSkillPluginPath,
   defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper.ts';
 import { getCoordinatorAgents } from './coordinator-agents.ts';
+import { autoCompactReserveTokens } from './context-tracker.js';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
-import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
   resolveConfig,
 } from './output-limiter-hook.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from './sdk-cli-resolver.js';
-import { createBashScopeHook, extractBashScopePrefixes } from './bash-scope.ts';
+import { withSdkTranscriptRetention } from './sdk-transcript-retention.ts';
 
 const log = new Logger('QueryOptionsBuilder');
 
@@ -199,7 +206,8 @@ export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
 export function buildProviderSettings(
   providerId: string,
   contextWindow?: number | null,
-  modelId?: string | null
+  modelId?: string | null,
+  autoCompactPercent?: number | null
 ): Settings | undefined {
   if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) {
     return undefined;
@@ -212,14 +220,17 @@ export function buildProviderSettings(
     };
   }
 
-  if (shouldUseHyperNeoCompactFallback(providerId)) {
-    return { autoCompactEnabled: false };
-  }
-
-  const autoCompactWindow = contextWindow;
-  if (!autoCompactWindow) {
+  if (!contextWindow) {
     return undefined;
   }
+
+  const hasExplicitPercent =
+    typeof autoCompactPercent === 'number' && Number.isFinite(autoCompactPercent);
+  const autoCompactWindow =
+    providerId === 'kimi' || !hasExplicitPercent
+      ? contextWindow
+      : Math.floor((contextWindow * resolveAutoCompactPercent(autoCompactPercent)) / 100) +
+        autoCompactReserveTokens(providerId);
 
   return {
     autoCompactEnabled: true,
@@ -231,6 +242,7 @@ export interface QueryOptionsBuilderContext {
   readonly session: Session;
   readonly settingsManager: SettingsManager;
   readonly db?: Database;
+  midTurnContextBudgetCheck?(): Promise<void>;
   consumePendingResumeSessionAt?(): string | undefined;
   peekPendingResumeSessionAt?(): string | undefined;
   readonly skillsManager?: SkillsManager;
@@ -240,10 +252,32 @@ export interface QueryOptionsBuilderContext {
   readonly toolGuards?: DeclarativeToolGuard[];
 }
 
+export interface BuiltFallbackIdentity {
+  providerId: string;
+  primaryModel: string | undefined;
+  fallbackModel: string | undefined;
+  scopedApiKey?: string;
+  scopedBaseUrl?: string;
+  scopedRegion?: string;
+  providerEpoch?: number;
+}
+
+const builtFallbackBySession = new WeakMap<object, BuiltFallbackIdentity>();
+
+export function markBuiltFallbackIdentity(session: object, identity: BuiltFallbackIdentity): void {
+  builtFallbackBySession.set(session, identity);
+}
+
+export function getBuiltFallbackIdentity(session: object): BuiltFallbackIdentity | undefined {
+  return builtFallbackBySession.get(session);
+}
+
 export class QueryOptionsBuilder {
   private canUseTool?: CanUseTool;
   private askUserQuestionHook?: HookCallback;
   private deferredPermissionMode?: PermissionMode;
+  private effectiveFallbackCaptured = false;
+  private effectiveFallbackModel?: string;
   private readonly logger = new Logger('QueryOptionsBuilder');
 
   constructor(private ctx: QueryOptionsBuilderContext) {}
@@ -284,7 +318,7 @@ export class QueryOptionsBuilder {
     return Object.keys(merged).length > 0 ? merged : undefined;
   }
 
-  async build(): Promise<Options> {
+  async build(overrides?: { askUserQuestionHook?: HookCallback }): Promise<Options> {
     const config = this.ctx.session.config;
 
     await this.ctx.settingsManager.prepareSDKOptions();
@@ -299,22 +333,69 @@ export class QueryOptionsBuilder {
     const modelInfo = await getSessionModelInfo(this.ctx.session);
     const sdkModelId = providerContext.getSdkModelId();
     let sdkFallbackModel: string | undefined;
+    const providerEpoch = getProviderCatalogEpoch(providerId);
     if (config.fallbackModel) {
-      const contextManager = getProviderContextManager();
-      const fallbackSession = {
-        ...this.ctx.session,
-        config: { ...this.ctx.session.config, model: config.fallbackModel },
-      };
-      await contextManager.ensureContextReady(fallbackSession);
-      const fallbackContext = contextManager.createContext(fallbackSession);
-      sdkFallbackModel = fallbackContext.getSdkModelId();
+      const sessionScopedProvider = Boolean(
+        config.providerConfig?.apiKey ||
+          config.providerConfig?.baseUrl ||
+          config.providerConfig?.region
+      );
+      const outcome = await decideFallbackModelCuration({
+        providerId,
+        fallbackModel: config.fallbackModel,
+        cacheKey: this.ctx.session.id,
+        providerConfig: config.providerConfig ?? {},
+        sessionScopedProvider,
+        signalAborted: false,
+        guardsIntact: () => true,
+      });
+      if (outcome === 'excluded') {
+        this.logger.warn(
+          `Ignoring curated-out fallback model '${config.fallbackModel}' for provider '${providerId}'`
+        );
+      } else if (outcome === 'allowed') {
+        const contextManager = getProviderContextManager();
+        const fallbackSession = {
+          ...this.ctx.session,
+          config: { ...this.ctx.session.config, model: config.fallbackModel },
+        };
+        try {
+          await contextManager.ensureContextReady(fallbackSession);
+          const fallbackContext = contextManager.createContext(fallbackSession);
+          sdkFallbackModel = fallbackContext.getSdkModelId();
+        } catch {
+          this.logger.warn(
+            `Ignoring fallback model '${config.fallbackModel}' rejected by provider '${providerId}'`
+          );
+        }
+      }
     }
+
+    const configuredFallbackModel = sdkFallbackModel ? config.fallbackModel : undefined;
+    const configuredPrimaryModel = config.model;
+    const configuredScopedApiKey = config.providerConfig?.apiKey;
+    const configuredScopedBaseUrl = config.providerConfig?.baseUrl;
+    const configuredScopedRegion = config.providerConfig?.region;
+    this.effectiveFallbackCaptured = true;
+    this.effectiveFallbackModel = configuredFallbackModel;
+    markBuiltFallbackIdentity(this.ctx.session, {
+      providerId,
+      primaryModel: config.model,
+      fallbackModel: configuredFallbackModel,
+      scopedApiKey: configuredScopedApiKey,
+      scopedBaseUrl: configuredScopedBaseUrl,
+      scopedRegion:
+        typeof config.providerConfig?.region === 'string'
+          ? config.providerConfig.region
+          : undefined,
+      providerEpoch,
+    });
 
     const systemPromptConfig = this.buildSystemPrompt();
     const disallowedTools = this.getDisallowedTools();
     const allowedTools = this.getAllowedTools();
     const additionalDirectories = this.getAdditionalDirectories();
-    const hooks = this.buildHooks();
+    const hooks = this.buildHooks(overrides?.askUserQuestionHook ?? this.askUserQuestionHook);
     const permissionMode = this.getPermissionMode();
     const pluginsFromSkills = [
       ...this.buildPluginsFromSkills(),
@@ -366,7 +447,12 @@ export class QueryOptionsBuilder {
       settingSources:
         config.settingSources ?? this.ctx.settingsManager.getGlobalSettings().settingSources,
       settings: withSdkTranscriptRetention(
-        buildProviderSettings(providerId, modelInfo?.contextWindow, this.ctx.session.config.model)
+        buildProviderSettings(
+          providerId,
+          modelInfo?.contextWindow,
+          this.ctx.session.config.model,
+          modelInfo?.autoCompactPercent
+        )
       ),
 
       includePartialMessages: config.includePartialMessages ?? isMessageDeliveryV2Enabled(),
@@ -376,13 +462,43 @@ export class QueryOptionsBuilder {
       hooks,
 
       canUseTool: this.canUseTool,
-      onUserDialog: async (request) => {
-        if (request.dialogKind === 'refusal_fallback_prompt') {
-          return { behavior: 'completed', result: { continue: true } };
+      onUserDialog: async (request, { signal }) => {
+        if (request.dialogKind !== 'refusal_fallback_prompt') return { behavior: 'cancelled' };
+        if (!configuredFallbackModel) {
+          return { behavior: 'cancelled' };
         }
-        return { behavior: 'cancelled' };
+        const guardsIntact = () => {
+          const configNow = this.ctx.session.config;
+          return (
+            !signal.aborted &&
+            getProviderCatalogEpoch(providerId) === providerEpoch &&
+            (configNow.provider ?? 'anthropic') === providerId &&
+            configNow.fallbackModel === configuredFallbackModel &&
+            configNow.model === configuredPrimaryModel &&
+            configNow.providerConfig?.apiKey === configuredScopedApiKey &&
+            configNow.providerConfig?.baseUrl === configuredScopedBaseUrl &&
+            configNow.providerConfig?.region === configuredScopedRegion
+          );
+        };
+        const outcome = await decideFallbackModelCuration({
+          providerId,
+          fallbackModel: configuredFallbackModel,
+          cacheKey: this.ctx.session.id,
+          providerConfig: this.ctx.session.config.providerConfig ?? {},
+          sessionScopedProvider: Boolean(
+            this.ctx.session.config.providerConfig?.apiKey ||
+              this.ctx.session.config.providerConfig?.baseUrl ||
+              this.ctx.session.config.providerConfig?.region
+          ),
+          signalAborted: signal.aborted,
+          guardsIntact,
+        });
+        if (outcome !== 'allowed') {
+          return { behavior: 'cancelled' };
+        }
+        return { behavior: 'completed', result: { continue: true } };
       },
-      supportedDialogKinds: config.fallbackModel ? ['refusal_fallback_prompt'] : undefined,
+      supportedDialogKinds: sdkFallbackModel ? ['refusal_fallback_prompt'] : undefined,
     };
 
     if (this.ctx.session.type === 'space_chat') {
@@ -544,8 +660,10 @@ export class QueryOptionsBuilder {
         }
       }
 
-      const fallbackModel = this.ctx.session.config.fallbackModel;
-      if (fallbackModel) {
+      const fallbackModel = this.effectiveFallbackCaptured
+        ? this.effectiveFallbackModel
+        : this.ctx.session.config.fallbackModel;
+      if (fallbackModel && !isCuratedOutModel(fallbackModel, providerId)) {
         const primaryIsK3 = KimiProvider.isKimiK3Model(selectedModel);
         const fallbackIsK3 = KimiProvider.isKimiK3Model(fallbackModel);
         const primaryIsK2 = KimiProvider.isKimiK2Point7Model(selectedModel);
@@ -861,15 +979,15 @@ CRITICAL RULES:
     return 'bypassPermissions';
   }
 
-  private buildHooks(): Options['hooks'] {
+  private buildHooks(askUserQuestionHook?: HookCallback): Options['hooks'] {
     const hooks: NonNullable<Options['hooks']> = {};
     const preToolUse: NonNullable<Options['hooks']>['PreToolUse'] = [];
 
-    if (this.askUserQuestionHook) {
+    if (askUserQuestionHook) {
       preToolUse.push({
         matcher: 'AskUserQuestion',
         timeout: 86400,
-        hooks: [this.askUserQuestionHook],
+        hooks: [askUserQuestionHook],
       });
     }
 
@@ -918,15 +1036,33 @@ CRITICAL RULES:
       hooks.PreToolUse = preToolUse;
     }
 
-    const postHooks: NonNullable<Options['hooks']>['PostToolUse'] = [
-      { hooks: [loopDetectorHooks.postToolUse] },
-    ];
+    const budgetGuardHook = this.ctx.midTurnContextBudgetCheck
+      ? async (): Promise<Record<string, never>> => {
+          try {
+            await this.ctx.midTurnContextBudgetCheck?.();
+          } catch (error) {
+            log.warn('mid-turn context budget check failed:', error);
+          }
+          return {};
+        }
+      : null;
+
+    const postHooks: NonNullable<Options['hooks']>['PostToolUse'] = [];
+    if (budgetGuardHook) {
+      postHooks.push({ hooks: [budgetGuardHook] });
+    }
+    postHooks.push({ hooks: [loopDetectorHooks.postToolUse] });
     if (outputLimiterEnabled) {
       postHooks.push({ hooks: [createOutputLimiterPostHook(outputLimiterSettings)] });
     }
     hooks.PostToolUse = postHooks;
 
-    hooks.PostToolUseFailure = [{ hooks: [loopDetectorHooks.postToolUseFailure] }];
+    const postFailureHooks: NonNullable<Options['hooks']>['PostToolUseFailure'] = [];
+    if (budgetGuardHook) {
+      postFailureHooks.push({ hooks: [budgetGuardHook] });
+    }
+    postFailureHooks.push({ hooks: [loopDetectorHooks.postToolUseFailure] });
+    hooks.PostToolUseFailure = postFailureHooks;
     return hooks;
   }
 

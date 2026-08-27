@@ -68,6 +68,13 @@ export interface SpawnExecutionFlowDeps {
   releaseTaskSpawn(taskId: string): void;
   cancelSpawnedSession(sessionId: string): void;
   rebindLiveExecution(execution: NodeExecution, sessionId: string): 'won' | 'superseded';
+  syncReuseLiveWorkspace?(
+    task: SpaceTask,
+    space: Space,
+    execution: NodeExecution,
+    sessionId: string
+  ): void | Promise<void>;
+  revertLiveExecutionRebind?(execution: NodeExecution, sessionId: string): void;
   raiseSpawnRejection(
     freshTask: SpaceTask,
     execution: NodeExecution,
@@ -102,6 +109,7 @@ interface SpawnExecutionFlowState extends SpawnExecutionFlowInput {
   indexedSession: IndexedSessionInspection;
   spawnedSessionId: string;
   workspacePath: string;
+  spawnTask: SpaceTask;
 }
 
 export function isSpawnFlowWaitConcurrent(result: unknown): result is {
@@ -128,13 +136,14 @@ export function isSpawnFlowReusedSession(result: unknown): result is {
 interface SpawnAttemptBox {
   sessionId: string | null;
   workspacePath: string | null;
+  task: SpaceTask | null;
 }
 
 export function runSpawnExecutionFlow(
   deps: SpawnExecutionFlowDeps,
   input: SpawnExecutionFlowInput
 ): Promise<StagedRunOutcome> {
-  const attempt: SpawnAttemptBox = { sessionId: null, workspacePath: null };
+  const attempt: SpawnAttemptBox = { sessionId: null, workspacePath: null, task: null };
   const executionId = input.execution.id;
   const flow = stagedRun<SpawnExecutionFlowState>(
     'spawn-execution',
@@ -183,13 +192,31 @@ export function runSpawnExecutionFlow(
       s.effect({
         name: 'rebind-live-session',
         when: 'reuseLive',
-        reads: ['execution'],
+        reads: ['execution', 'freshTask', 'space'],
         writes: [],
-        run: (view) =>
-          deps.rebindLiveExecution(
-            view.execution,
-            (view.reuseLive as { sessionId: string }).sessionId
-          ),
+        run: async (view) => {
+          const sessionId = (view.reuseLive as { sessionId: string }).sessionId;
+          if (view.freshTask.workflowRunId !== view.execution.workflowRunId) {
+            throw new Error(
+              `Task ${view.freshTask.id} is no longer attached to workflow run ${view.execution.workflowRunId}; refusing to reuse its live session`
+            );
+          }
+          const rebind = deps.rebindLiveExecution(view.execution, sessionId);
+          if (rebind === 'won') {
+            try {
+              await deps.syncReuseLiveWorkspace?.(
+                view.freshTask,
+                view.space,
+                view.execution,
+                sessionId
+              );
+            } catch (err) {
+              deps.revertLiveExecutionRebind?.(view.execution, sessionId);
+              throw err;
+            }
+          }
+          return rebind;
+        },
       }),
       s.halt({
         name: 'return-live-session',
@@ -228,6 +255,7 @@ export function runSpawnExecutionFlow(
         when: 'proceedFresh',
         reads: [
           'task',
+          'freshTask',
           'space',
           'workflow',
           'workflowRun',
@@ -238,12 +266,20 @@ export function runSpawnExecutionFlow(
         writes: ['isSpawning'],
         run: async (view) => {
           deps.reserveExecution(view.execution.id);
-          const sessionId = deps.resolveSpawnSessionId(view.space, view.task, view.execution);
-          const workspacePath = await deps.resolveWorkspacePath(view.task, view.space);
+          const spawnTask = view.freshTask ?? view.task;
+          if (spawnTask.workflowRunId !== view.workflowRun.id) {
+            deps.releaseExecution(view.execution.id);
+            throw new Error(
+              `Task ${spawnTask.id} was reassigned to workflow run ${spawnTask.workflowRunId} during spawn`
+            );
+          }
+          const sessionId = deps.resolveSpawnSessionId(view.space, spawnTask, view.execution);
+          const workspacePath = await deps.resolveWorkspacePath(spawnTask, view.space);
           const slotResolution = view.slotResolution!;
+          attempt.task = spawnTask;
           attempt.workspacePath = workspacePath;
           attempt.sessionId = await deps.createSpawnedSession({
-            task: view.task,
+            task: spawnTask,
             space: view.space,
             workflow: view.workflow,
             workflowRun: view.workflowRun,
@@ -265,12 +301,20 @@ export function runSpawnExecutionFlow(
       s.resnapshot({
         name: 'read-spawn-attempt',
         when: 'proceedFresh',
-        provides: ['spawnedSessionId', 'workspacePath'],
+        provides: ['spawnedSessionId', 'workspacePath', 'spawnTask'],
         run: () => {
-          if (attempt.sessionId === null || attempt.workspacePath === null) {
+          if (
+            attempt.sessionId === null ||
+            attempt.workspacePath === null ||
+            attempt.task === null
+          ) {
             throw new Error(`Spawn attempt for execution ${executionId} has no spawned session`);
           }
-          return { spawnedSessionId: attempt.sessionId, workspacePath: attempt.workspacePath };
+          return {
+            spawnedSessionId: attempt.sessionId,
+            workspacePath: attempt.workspacePath,
+            spawnTask: attempt.task,
+          };
         },
       }),
       s.effect({
@@ -304,11 +348,19 @@ export function runSpawnExecutionFlow(
       s.effect({
         name: 'attach-node-agent',
         when: 'proceedFresh',
-        reads: ['task', 'space', 'workflowRun', 'execution', 'spawnedSessionId', 'workspacePath'],
+        reads: [
+          'task',
+          'spawnTask',
+          'space',
+          'workflowRun',
+          'execution',
+          'spawnedSessionId',
+          'workspacePath',
+        ],
         writes: [],
         run: async (view) => {
           await deps.attachNodeAgent({
-            task: view.task,
+            task: view.spawnTask,
             space: view.space,
             workflowRun: view.workflowRun,
             execution: view.execution,
@@ -316,7 +368,7 @@ export function runSpawnExecutionFlow(
             workspacePath: view.workspacePath,
           });
           deps.registerSpawnCompletionCallback(
-            view.task.id,
+            view.spawnTask.id,
             view.execution.workflowNodeId,
             view.spawnedSessionId
           );
@@ -327,6 +379,7 @@ export function runSpawnExecutionFlow(
         when: 'proceedFresh',
         reads: [
           'task',
+          'spawnTask',
           'space',
           'workflow',
           'workflowRun',
@@ -341,7 +394,7 @@ export function runSpawnExecutionFlow(
           if (!view.kickoff) return;
           const slotResolution = view.slotResolution!;
           const message = await deps.buildKickoffMessage({
-            task: view.task,
+            task: view.spawnTask,
             space: view.space,
             workflow: view.workflow,
             workflowRun: view.workflowRun,

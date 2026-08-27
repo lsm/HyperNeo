@@ -1,7 +1,7 @@
-import { describe, it, expect, mock, spyOn } from 'bun:test';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import type { Query, SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
 import { ContextFetcher } from '../../../../src/lib/agent/context-fetcher';
+import { setModelsCache } from '../../../../src/lib/model-service';
 
 type SdkResponse = SDKControlGetContextUsageResponse;
 
@@ -186,6 +186,141 @@ describe('ContextFetcher.toContextInfo', () => {
       percent: 4.4,
     });
     expect(info.autoCompactThreshold).toBe(238963);
+  });
+
+  it('derives the threshold from the armed window for percent-configured endpoints, not raw capacity', () => {
+    const response = baseResponse({
+      totalTokens: 90000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 45,
+      model: 'ce-model',
+      autoCompactThreshold: 167000,
+      isAutoCompactEnabled: true,
+      categories: [
+        { name: 'Messages', tokens: 90000, color: 'blue' },
+        { name: 'Reserved for Autocompact', tokens: 33000, color: 'gray' },
+        { name: 'Free space', tokens: 77000, color: 'gray-dim' },
+      ],
+    });
+
+    const atFifty = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 50,
+    });
+    expect(atFifty.totalCapacity).toBe(200000);
+    expect(atFifty.autoCompactThreshold).toBe(100000);
+    expect(atFifty.breakdown['Free space']).toEqual({ tokens: 10000, percent: 5 });
+
+    const atNinety = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 90,
+    });
+    expect(atNinety.autoCompactThreshold).toBe(180000);
+    expect(atNinety.breakdown['Free space']).toEqual({ tokens: 90000, percent: 45 });
+  });
+
+  it('treats a non-positive SDK auto-compact threshold as unknown and arms the backstop', () => {
+    for (const autoCompactThreshold of [0, Number.NaN]) {
+      const response = baseResponse({
+        totalTokens: 90000,
+        maxTokens: 200000,
+        rawMaxTokens: 200000,
+        percentage: 45,
+        model: 'ce-model',
+        autoCompactThreshold,
+        isAutoCompactEnabled: true,
+        categories: [{ name: 'Messages', tokens: 90000, color: 'blue' }],
+      });
+
+      const info = ContextFetcher.toContextInfo(response, {
+        id: 'ce-model',
+        contextWindow: 200000,
+        provider: 'custom-endpoint:test',
+      });
+
+      expect(info.daemonBackstopActive).toBe(true);
+      expect(info.autoCompactThreshold).toBe(180000);
+    }
+  });
+
+  it('keeps the daemon backstop inactive when autoCompactPercent is 100', () => {
+    const response = baseResponse({
+      totalTokens: 90000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 45,
+      model: 'ce-model',
+      autoCompactThreshold: 0,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 90000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 100,
+    });
+
+    expect(info.daemonBackstopActive).toBe(false);
+    expect(info.autoCompactThreshold).toBeFalsy();
+  });
+
+  it('preserves an earlier known SDK threshold above the default percent', () => {
+    const response = baseResponse({
+      totalTokens: 90000,
+      maxTokens: 200000,
+      rawMaxTokens: 200000,
+      percentage: 45,
+      model: 'ce-model',
+      autoCompactThreshold: 180000,
+      isAutoCompactEnabled: true,
+      categories: [{ name: 'Messages', tokens: 90000, color: 'blue' }],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 95,
+    });
+
+    expect(info.daemonBackstopActive).toBe(false);
+    expect(info.autoCompactThreshold).toBe(180000);
+    expect(info.sdkAutoCompactThreshold).toBe(180000);
+  });
+
+  it('recalculates free space against the armed window when metadata capacity differs from SDK capacity', () => {
+    const response = baseResponse({
+      totalTokens: 90000,
+      maxTokens: 160000,
+      rawMaxTokens: 160000,
+      percentage: 45,
+      model: 'ce-model',
+      autoCompactThreshold: 127000,
+      isAutoCompactEnabled: true,
+      categories: [
+        { name: 'Messages', tokens: 90000, color: 'blue' },
+        { name: 'Reserved for Autocompact', tokens: 33000, color: 'gray' },
+        { name: 'Free space', tokens: 37000, color: 'gray-dim' },
+      ],
+    });
+
+    const info = ContextFetcher.toContextInfo(response, {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 50,
+    });
+
+    expect(info.totalCapacity).toBe(200000);
+    expect(info.autoCompactThreshold).toBe(100000);
+    expect(info.breakdown['Free space']).toEqual({ tokens: 10000, percent: 5 });
   });
 
   it('uses Codex model metadata when SDK reports the Anthropic bridge alias', () => {
@@ -596,7 +731,8 @@ describe('ContextFetcher.toContextInfo', () => {
     expect(info.totalCapacity).toBe(262144);
     expect(info.totalUsed).toBe(90584);
     expect(info.breakdown['Reserved for Autocompact']).toBeUndefined();
-    expect(info.autoCompactThreshold).toBe(212144);
+    expect(info.autoCompactThreshold).toBe(235929);
+    expect(info.daemonBackstopActive).toBe(true);
 
     const nonFreeCategories = Object.entries(info.breakdown).filter(
       ([name]) => !name.toLowerCase().includes('free space')
@@ -831,6 +967,10 @@ describe('ContextFetcher.toContextInfo', () => {
 });
 
 describe('ContextFetcher.fetch', () => {
+  afterEach(() => {
+    setModelsCache(new Map());
+  });
+
   it('returns null when query is null', async () => {
     const fetcher = new ContextFetcher('test-session');
     const result = await fetcher.fetch(null);
@@ -888,6 +1028,191 @@ describe('ContextFetcher.fetch', () => {
     const info = await fetcher.fetch(query);
 
     expect(info).toBeNull();
+  });
+
+  it('keeps the selected model metadata when the SDK reports a generic alias for a non-native provider', async () => {
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'default',
+              name: 'Default',
+              provider: 'custom-endpoint:test',
+              contextWindow: 200000,
+              autoCompactPercent: 90,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const getContextUsage = mock(async () =>
+      baseResponse({
+        totalTokens: 90000,
+        maxTokens: 200000,
+        percentage: 45,
+        model: 'default',
+        autoCompactThreshold: 167000,
+        isAutoCompactEnabled: true,
+        categories: [
+          { name: 'Messages', tokens: 90000, color: 'blue' },
+          { name: 'Reserved for Autocompact', tokens: 33000, color: 'gray' },
+          { name: 'Free space', tokens: 77000, color: 'gray-dim' },
+        ],
+      })
+    );
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('test-session');
+    const info = await fetcher.fetch(query, {
+      id: 'selected-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+      autoCompactPercent: 50,
+    });
+
+    expect(info?.autoCompactThreshold).toBe(100000);
+    expect(info?.breakdown['Free space']).toEqual({ tokens: 10000, percent: 5 });
+  });
+
+  it('returns null when the SDK usage call never resolves', async () => {
+    const getContextUsage = mock(() => new Promise(() => {}));
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('test-session');
+    const startedAt = Date.now();
+    const info = await fetcher.fetch(query);
+
+    expect(info).toBeNull();
+    expect(Date.now() - startedAt).toBeLessThan(15000);
+  }, 20000);
+
+  it('de-duplicates concurrent usage requests while one is pending', async () => {
+    let resolveUsage: (value: ReturnType<typeof baseResponse>) => void = () => {};
+    const getContextUsage = mock(
+      () =>
+        new Promise((resolve) => {
+          resolveUsage = resolve;
+        })
+    );
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('dedupe-session');
+    const first = fetcher.fetch(query);
+    const second = await fetcher.fetch(query);
+
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(second).toBeNull();
+
+    resolveUsage(baseResponse({ totalTokens: 1000, maxTokens: 200000, percentage: 0.5 }));
+    const info = await first;
+    expect(info?.totalUsed).toBe(1000);
+  });
+
+  it('issues a fresh usage request after a pending one goes stale', async () => {
+    const getContextUsage = mock(() => new Promise(() => {}));
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('stale-session');
+    fetcher.overrideUsageRequestStaleMsForTest(20);
+    void fetcher.fetch(query);
+
+    const deduped = await fetcher.fetch(query);
+    expect(deduped).toBeNull();
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const recovered = await fetcher.fetch(query);
+    expect(getContextUsage).toHaveBeenCalledTimes(2);
+    expect(recovered).toBeNull();
+  }, 20000);
+
+  it('supersedes a timed-out usage request instead of retaining it as in-flight', async () => {
+    let calls = 0;
+    const getContextUsage = mock(() => {
+      calls += 1;
+      if (calls === 1) return new Promise<SdkResponse>(() => {});
+      return Promise.resolve(baseResponse({ totalTokens: 4200, percentage: 2.1 }));
+    });
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('timeout-supersede-session');
+    const first = await fetcher.fetch(query);
+    expect(first).toBeNull();
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+
+    const second = await fetcher.fetch(query);
+    expect(getContextUsage).toHaveBeenCalledTimes(2);
+    expect(second?.totalUsed).toBe(4200);
+  }, 20000);
+
+  it('returns null when the SDK usage call throws synchronously', async () => {
+    const getContextUsage = mock(() => {
+      throw new Error('control channel closed');
+    });
+    const query = { getContextUsage } as unknown as Query;
+
+    const fetcher = new ContextFetcher('sync-throw-session');
+    const info = await fetcher.fetch(query);
+
+    expect(info).toBeNull();
+  });
+
+  it('keeps the daemon backstop off at percent 100 and treats a zero SDK threshold as unknown', () => {
+    const response = baseResponse({
+      totalTokens: 150000,
+      maxTokens: 200000,
+      percentage: 75,
+      autoCompactThreshold: 100000,
+      isAutoCompactEnabled: true,
+    });
+    const metadata = {
+      id: 'ce-model',
+      contextWindow: 200000,
+      provider: 'custom-endpoint:test',
+    };
+
+    const atHundred = ContextFetcher.toContextInfo(
+      { ...response, autoCompactThreshold: 150000 },
+      { ...metadata, autoCompactPercent: 100 }
+    );
+    expect(atHundred.autoCompactThreshold).toBe(150000);
+    expect(atHundred.daemonBackstopActive).toBe(false);
+
+    const atHundredSdkDisabled = ContextFetcher.toContextInfo(
+      { ...response, autoCompactThreshold: 150000, isAutoCompactEnabled: false },
+      { ...metadata, autoCompactPercent: 100 }
+    );
+    expect(atHundredSdkDisabled.autoCompactThreshold).toBe(150000);
+    expect(atHundredSdkDisabled.daemonBackstopActive).toBe(false);
+
+    const zeroSdk = ContextFetcher.toContextInfo(
+      { ...response, autoCompactThreshold: 0 },
+      { ...metadata, autoCompactPercent: 80 }
+    );
+    expect(zeroSdk.autoCompactThreshold).toBe(160000);
+    expect(zeroSdk.daemonBackstopActive).toBe(true);
+
+    const zeroRawWithReserve = ContextFetcher.toContextInfo(
+      baseResponse({
+        totalTokens: 150000,
+        maxTokens: 200000,
+        percentage: 75,
+        autoCompactThreshold: 0,
+        isAutoCompactEnabled: true,
+        categories: [
+          { name: 'Messages', tokens: 117000, color: 'blue' },
+          { name: 'Reserved for Autocompact', tokens: 33000, color: 'gray' },
+          { name: 'Free space', tokens: 50000, color: 'gray-dim' },
+        ],
+      }),
+      { ...metadata, autoCompactPercent: 80 }
+    );
+    expect(zeroRawWithReserve.autoCompactThreshold).toBe(160000);
+    expect(zeroRawWithReserve.daemonBackstopActive).toBe(true);
   });
 
   describe('capacity mismatch warning', () => {

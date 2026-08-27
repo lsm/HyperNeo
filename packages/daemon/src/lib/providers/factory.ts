@@ -14,6 +14,7 @@ import {
 } from './custom-endpoint-provider.js';
 import type { CustomEndpointConfig } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
+import { bumpProviderCatalogEpoch } from './catalog-epoch.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -154,6 +155,7 @@ export async function syncCustomEndpointProviders(
     if (!wanted.has(provider.id)) toRemove.push(provider.id);
   }
   for (const id of toRemove) {
+    bumpProviderCatalogEpoch(id);
     const provider = registry.get(id);
     if (provider?.shutdown) {
       try {
@@ -173,6 +175,7 @@ export async function syncCustomEndpointProviders(
       continue;
     }
     if (existing) {
+      bumpProviderCatalogEpoch(providerId);
       if (existing.shutdown) {
         try {
           await existing.shutdown();

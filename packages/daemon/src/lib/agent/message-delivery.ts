@@ -4,7 +4,6 @@ import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor.ts
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
 import { planDeliveryRoleArbitration } from './delivery-turn-routing.ts';
-import { selectStrandedDeliveries } from './turn-outcome-classification.ts';
 
 export async function drainDeliveryWaitersOnTerminalSDKMessage(
   stateManager: { setIdle(): Promise<void> },
@@ -198,38 +197,6 @@ export async function deliverBatchAndMarkQueued(args: {
   });
 }
 
-export interface StrandedDeliveryDb {
-  getUserMessageIdsByStatus(sessionId: string, status: 'enqueued'): Array<{ uuid?: string }>;
-}
-
-export async function reconcileStrandedDeliveries(args: {
-  sessionId: string;
-  db: StrandedDeliveryDb;
-  jobQueue: JobQueueRepository;
-  stateManager?: {
-    setQueuedIfIdle(messageId: string): Promise<boolean>;
-  };
-  isInFlight?: (uuid: string) => boolean;
-}): Promise<number> {
-  if (!isMessageDeliveryV2Enabled()) return 0;
-  return withSessionLock(args.sessionId, async () => {
-    const stranded = selectStrandedDeliveries(
-      args.db.getUserMessageIdsByStatus(args.sessionId, 'enqueued'),
-      args.jobQueue.activeDeliveryMessageUuids(args.sessionId),
-      args.isInFlight
-    );
-    for (const uuid of stranded) {
-      const role = deliverMessage(args.jobQueue, args.sessionId, uuid, { origin: 'recovery' });
-      if (role === 'turn' && args.stateManager) {
-        try {
-          await args.stateManager.setQueuedIfIdle(uuid);
-        } catch {}
-      }
-    }
-    return stranded.length;
-  });
-}
-
 export type ReclaimTerminationDecision = 'terminated' | 'redrive' | 'live';
 
 export function classifyReclaimTermination(args: {
@@ -274,6 +241,16 @@ export const MANUAL_RECOVERY_PARK_MS = 5 * 60_000;
 
 export const MAX_STEER_PARKS = 60;
 
+export const STEER_ACK_TIMEOUT_MS = 30_000;
+
+const MAX_TIMER_MS = 2_147_483_647;
+
+export function steerAckTimeoutMs(): number {
+  const parsed = Number(process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS);
+  if (Number.isFinite(parsed) && parsed > 0 && parsed <= MAX_TIMER_MS) return parsed;
+  return STEER_ACK_TIMEOUT_MS;
+}
+
 export type DriveTurnOutcome =
   | { outcome: 'completed' }
   | { outcome: 'blocked'; retryAt: number }
@@ -286,7 +263,8 @@ export type FeedSteerOutcome =
   | { outcome: 'awaiting_acceptance' }
   | { outcome: 'promote' }
   | { outcome: 'park' }
-  | { outcome: 'aborted' };
+  | { outcome: 'aborted' }
+  | { outcome: 'ack_timeout' };
 
 export interface MessageDeliveryAttemptObserver {
   reportStage(
@@ -309,7 +287,8 @@ export interface MessageDeliverySession {
     claimGuard?: () => boolean,
     batchUuids?: string[],
     signal?: AbortSignal,
-    observer?: MessageDeliveryAttemptObserver
+    observer?: MessageDeliveryAttemptObserver,
+    deliveryClaimToken?: string | null
   ): Promise<DriveTurnOutcome>;
   feedDeliverySteer(
     messageUuid: string,

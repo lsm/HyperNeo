@@ -209,7 +209,7 @@ function createMockTaskManager(tasks: SpaceTask[] = []): SpaceTaskManager {
 function createMockSpaceTaskRepo(tasks: SpaceTask[] = [mockTask]): SpaceTaskRepository {
   return {
     listByWorkflowRun: mock(() => tasks),
-    getTask: mock(() => null),
+    getTask: mock((taskId: string) => tasks.find((task) => task.id === taskId) ?? null),
   } as unknown as SpaceTaskRepository;
 }
 
@@ -764,6 +764,42 @@ describe('space-workflow-run-handlers', () => {
       await call('spaceWorkflowRun.getGateArtifacts', { runId: 'run-1' }).catch(() => {});
 
       expect(mockWorktreeManager.getTaskWorktreePath).toHaveBeenCalledWith('space-1', 'task-1');
+      expect(mockSpaceMgr.getSpace).toHaveBeenCalled();
+    });
+
+    it('rejects a taskId whose task belongs to another run before any worktree lookup', async () => {
+      const mockWorktreeManager = createMockSpaceWorktreeManager('/foreign/worktree');
+      const foreignTask = { ...mockTask, id: 'task-foreign', workflowRunId: 'run-other' };
+      const mockTaskRepo = createMockSpaceTaskRepo([mockTask, foreignTask]);
+      const mockSpaceMgr = createMockSpaceManager(mockSpace);
+
+      const mh = createMockMessageHub();
+      hub = mh.hub;
+      handlers = mh.handlers;
+
+      setupSpaceWorkflowRunHandlers(
+        hub,
+        mockSpaceMgr,
+        createMockWorkflowManager(),
+        createMockRunRepo(mockRun),
+
+        createMockRuntimeService(),
+        mock(() => createMockTaskManager()),
+        createMockInternalEventBus(),
+        mockTaskRepo,
+        mockWorktreeManager,
+        createMockArtifactRepo(),
+        createMockArtifactCacheRepo(),
+        createMockJobQueue(),
+        createMockHookStateRepo()
+      );
+
+      await call('spaceWorkflowRun.getGateArtifacts', {
+        runId: 'run-1',
+        taskId: 'task-foreign',
+      }).catch(() => {});
+
+      expect(mockWorktreeManager.getTaskWorktreePath).not.toHaveBeenCalled();
       expect(mockSpaceMgr.getSpace).toHaveBeenCalled();
     });
 

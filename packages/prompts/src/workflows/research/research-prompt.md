@@ -15,6 +15,7 @@ Steps:
 Review policy: if the active review source routes the gate to external bots — `external` or `both`, or `auto` with bots discovered on the PR — run the external review gate per the shared guidance below once the PR is open (discover the gate-set bots, trigger them, address every finding, record the gate artifact); always send the gated PR handoff to Review either way.
 
 <!-- include: workflows/coder-owned/external-gate.md -->
+
 6. Hand off to Review by calling `send_message(target="Review", message="<short summary>", data: { pr_url: "<PR url>" })`. The hook validates the PR is open and mergeable before Review activates. Always re-supply `data: { pr_url }` on every send — the hook runs on every send.
 
 If re-activated after review feedback: address each point, expand research where requested, update the documents, and push new commits. 

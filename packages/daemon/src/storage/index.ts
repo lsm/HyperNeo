@@ -191,8 +191,15 @@ export class Database {
     }
   }
 
-  createSession(session: Session): void {
-    this.sessionRepo.createSession(session);
+  createSession(
+    session: Session,
+    options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
+  ): void {
+    this.sessionRepo.createSession(session, options);
+  }
+
+  isWorkspaceRegisteredToSpace(spaceId: string, workspacePath: string): boolean {
+    return this.sessionRepo.isWorkspaceRegisteredToSpace(spaceId, workspacePath);
   }
 
   getSession(id: string): Session | null {
@@ -290,12 +297,13 @@ export class Database {
   getUserMessagesByStatus(
     sessionId: string,
     status: SendStatus,
-    limit?: number
+    limit?: number,
+    direction?: 'asc' | 'desc'
   ): {
     messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
     total: number;
   } {
-    return this.sdkMessageRepo.getUserMessagesByStatus(sessionId, status, limit);
+    return this.sdkMessageRepo.getUserMessagesByStatus(sessionId, status, limit, direction);
   }
 
   getMessageByStatusAndUuid(

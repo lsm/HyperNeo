@@ -6,10 +6,8 @@ export interface MigrationSpaceReclaimRequest {
 
 export type MigrationSpaceReclaimResult =
   | { kind: 'not-pending' }
-  | { kind: 'deferred' }
   | {
       kind: 'reclaimed';
-      vacuumed: boolean;
       freelistBefore: number;
       reclaimedMigrations: number;
     };
@@ -41,20 +39,6 @@ export function reclaimPendingMigrationSpace(
   if (requests.length === 0) return { kind: 'not-pending' };
 
   const freelistBefore = readFreelistCount(db);
-  const vacuumed = freelistBefore > 0;
-  if (vacuumed) db.exec('VACUUM main');
-
-  const freelistAfter = readFreelistCount(db);
-  if (freelistAfter !== 0) {
-    throw new Error(`Migration space reclaim left ${freelistAfter} pages on the freelist`);
-  }
-
-  const checkpoint = db.prepare('PRAGMA main.wal_checkpoint(TRUNCATE)').get() as
-    | { busy: number; log: number; checkpointed: number }
-    | undefined;
-  if (!checkpoint || checkpoint.busy !== 0 || checkpoint.checkpointed < checkpoint.log) {
-    return { kind: 'deferred' };
-  }
 
   const hasMarker = db.prepare(`SELECT 1 FROM migration_markers WHERE key = ?`);
   const recordReclaim = db.prepare(`
@@ -74,7 +58,6 @@ export function reclaimPendingMigrationSpace(
 
   return {
     kind: 'reclaimed',
-    vacuumed,
     freelistBefore,
     reclaimedMigrations: requests.length,
   };

@@ -37,22 +37,51 @@ import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, type ErrorManager } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { getSessionModelInfo } from '../model-service.ts';
+import { getProviderCatalogEpoch, getSessionModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
+import { contextBudgetThreshold } from './context-budget-decision.ts';
+import { enforceContextBudget } from './context-budget-enforcement.ts';
 import { ContextFetcher } from './context-fetcher.ts';
 import type { ContextTracker } from './context-tracker.ts';
-import { reserveBasedThreshold } from './context-tracker.js';
+import { decideFallbackModelCuration } from './fallback-model-curation.ts';
+import { type IdleOwnerScope, isSameIdleOwner } from './idle-waiter-admission-pipeline.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { signalDeliveryConsumed } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
-import { shouldUseHyperNeoCompactFallback } from './query-options-builder.js';
+import {
+  getBuiltFallbackIdentity,
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
+} from './query-options-builder.js';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
+
+const DELIVERY_GATE_WINDOW_MS = 5000;
+
+function boundedDeliveryGate(gate: Promise<void>, deadlineAt?: number): Promise<void> {
+  const windowMs =
+    deadlineAt === undefined ? DELIVERY_GATE_WINDOW_MS : Math.max(0, deadlineAt - Date.now());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bounded = new Promise<void>((resolve) => {
+    timer = setTimeout(() => resolve(), windowMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  });
+  void gate.then(
+    () => {
+      if (timer) clearTimeout(timer);
+    },
+    () => {
+      if (timer) clearTimeout(timer);
+    }
+  );
+  return Promise.race([gate, bounded]);
+}
 
 export type SuppressedResultOutcome = 'confirmed' | 'reset' | 'cancelled';
 
@@ -75,13 +104,20 @@ export interface SDKMessageHandlerContext {
 
   onCommandsChanged: (commands: string[]) => Promise<void>;
 
+  resumePendingWorkAfterCompaction?(): void;
+
+  clearPendingResumeAfterCompaction?(): void;
+
   onResultLimitError?(
     errorText: string,
     hint: LimitRetryHint,
-    userMessageUuid?: string
+    userMessageUuid?: string,
+    queryGeneration?: number
   ): Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
+
+  getQueryGeneration?(): number;
 
   resetTaskNotificationRequery?(): void;
 
@@ -117,6 +153,14 @@ export class SDKMessageHandler {
 
   private pendingContextRefresh: Promise<void> | null = null;
 
+  private trailingIdleGateRelease: (() => void) | null = null;
+
+  private trailingIdleGeneration: number | null = null;
+
+  private trailingIdleOwner: IdleOwnerScope | undefined = undefined;
+
+  private compactionEnqueuedMidTurnGeneration: number | null | undefined = undefined;
+
   private currentThinkingTokensEstimate: number | null = null;
   private lastStampedThinkingTokensEstimate: number = 0;
 
@@ -139,6 +183,11 @@ export class SDKMessageHandler {
 
     ctx.messageQueue.onMessageYielded = (messageId: string, consumedAt: number) => {
       this.handleMessageYielded(messageId, consumedAt);
+    };
+
+    ctx.messageQueue.onInternalCompactionsAborted = () => {
+      this.ctx.contextTracker.clearCompactionCooldown();
+      this.compactionEnqueuedMidTurnGeneration = undefined;
     };
 
     this.repeatedToolErrorGuardrail = new RepeatedToolErrorGuardrail({
@@ -256,6 +305,7 @@ export class SDKMessageHandler {
     this.usesSessionStateChangedTurnEnd = false;
     this.expectsSessionStateIdleAfterResult = false;
     this.lastResultWasSuccess = null;
+    this.releaseTrailingIdleDeliveryGate();
   }
 
   private cancelSuppressedResultTimer(): void {
@@ -595,20 +645,6 @@ export class SDKMessageHandler {
     }
   }
 
-  markMessageSubmissionFailed(messageId: string): void {
-    const { session, db, internalEventBus } = this.ctx;
-    const message = db.getMessageByStatusAndUuid(session.id, 'submitted', messageId);
-    if (!message) return;
-    db.updateMessageStatus([message.dbId], 'failed');
-    internalEventBus
-      .publish('messages.statusChanged', {
-        sessionId: session.id,
-        messageIds: [message.dbId],
-        status: 'failed',
-      })
-      .catch(() => {});
-  }
-
   markACPDeliveryFailed(messageId: string): void {
     const { session, db, internalEventBus } = this.ctx;
     const flipped = db.getSDKMessageRepo().markDeliveryFailedByUuid(session.id, messageId);
@@ -726,8 +762,9 @@ export class SDKMessageHandler {
     } as unknown as SDKMessage).catch(() => {});
   }
 
-  async handleMessage(message: SDKMessage): Promise<void> {
+  async handleMessage(message: SDKMessage, runnerGeneration?: number): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
+    const invocationGeneration = runnerGeneration ?? this.ctx.getQueryGeneration?.() ?? null;
 
     this.ctx.bumpDeliveryTurnActivity?.();
     this.ctx.reportFirstDeliverySDKResponse?.(message.type);
@@ -794,7 +831,29 @@ export class SDKMessageHandler {
       return;
     }
 
-    await stateManager.detectPhaseFromMessage(message);
+    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+      .parent_tool_use_id;
+    const isTopLevelResult =
+      isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
+
+    let releaseTurnEndGate: (() => void) | null = null;
+    let resultOwner: IdleOwnerScope | undefined;
+    if (isTopLevelResult && !this.isInvocationStale(invocationGeneration)) {
+      resultOwner = this.invocationIdleOwner(invocationGeneration ?? null);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(gate));
+      releaseTurnEndGate = release;
+    }
+    try {
+      await stateManager.detectPhaseFromMessage(message);
+    } catch (error) {
+      releaseTurnEndGate?.();
+      releaseTurnEndGate = null;
+      throw error;
+    }
 
     if (isSDKRateLimitEvent(message)) {
       const info = message.rate_limit_info;
@@ -811,7 +870,7 @@ export class SDKMessageHandler {
     }
 
     if (await this.acknowledgePersistedUserMessage(message)) {
-      this.maybeRefreshContextOnEvent(message);
+      this.maybeRefreshContextOnEvent(message, invocationGeneration);
       return;
     }
 
@@ -845,156 +904,189 @@ export class SDKMessageHandler {
       }
     }
 
-    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
-      .parent_tool_use_id;
-    const isTopLevelResult =
-      isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
-
-    const deferredSuccessfully = this.withDbChangeBatch(() =>
-      db.saveSDKMessage(session.id, message)
-    );
-
-    if (!deferredSuccessfully) {
-      this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
-      if (this.matchesArmedClearResult(message)) {
-        this.clearIdleSuppression();
-      }
-      return;
-    }
-
-    const observesArmedClearResult = this.matchesArmedClearResult(message);
-    const settlesArmedClearError = observesArmedClearResult && !isSDKResultSuccess(message);
-    if (observesArmedClearResult) {
-      this.cancelSuppressedResultTimer();
-    }
-
-    const processingState = stateManager.getState();
-    const activeMessageId =
-      isTopLevelResult && processingState.status === 'processing'
-        ? processingState.messageId
-        : null;
-
-    let limitEngaged = false;
-    let limitBillingTerminal = false;
-    if (isTopLevelResult) {
-      this.resetThinkingTokenTracking();
-      const limitError = this.assessResultLimitError(message);
-      if (limitError) {
-        limitBillingTerminal = limitError.hint.billingTerminal === true;
-        limitEngaged =
-          (await this.ctx.onResultLimitError?.(
-            limitError.errorText,
-            limitError.hint,
-            limitError.userMessageUuid
-          )) ?? false;
-      }
-      this.lastResultWasSuccess = limitError === null && isSDKResultSuccess(message);
-      this.lastRateLimitInfo = null;
-      this.lastSdkErrorTag = null;
-    }
-
-    if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
-      stateManager.beginTerminalIdle();
-    }
-
-    messageHub.event(
-      'state.sdkMessages.delta',
-      {
-        added: [message],
-        timestamp: Date.now(),
-        version: ++this.sdkMessageDeltaVersion,
-      },
-      { channel: `session:${session.id}` }
-    );
-
     try {
-      await this.ctx.internalEventBus.publish('sdk.message', {
-        sessionId: session.id,
-        message,
-      });
-    } catch (error) {
-      if (observesArmedClearResult) {
-        this.clearIdleSuppression();
+      let deferredSuccessfully: boolean;
+      try {
+        deferredSuccessfully = this.withDbChangeBatch(() => db.saveSDKMessage(session.id, message));
+      } catch (error) {
+        releaseTurnEndGate?.();
+        releaseTurnEndGate = null;
+        throw error;
       }
-      throw error;
-    }
 
-    if (limitEngaged) {
-      const resultUuid = (message as SDKResultMessage).uuid;
-      if (resultUuid) {
-        try {
-          db.getSDKMessageRepo()?.markResultRecoveryIntercepted(
-            session.id,
-            resultUuid,
-            limitBillingTerminal
-          );
-        } catch (error) {
-          this.logger.warn('Failed to mark intercepted limit result:', error);
+      if (!deferredSuccessfully) {
+        this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
+        releaseTurnEndGate?.();
+        releaseTurnEndGate = null;
+        if (this.matchesArmedClearResult(message)) {
+          this.clearIdleSuppression();
+        }
+        return;
+      }
+
+      const observesArmedClearResult = this.matchesArmedClearResult(message);
+      const settlesArmedClearError = observesArmedClearResult && !isSDKResultSuccess(message);
+      if (observesArmedClearResult) {
+        this.cancelSuppressedResultTimer();
+      }
+
+      const processingState = stateManager.getState();
+      const activeMessageId =
+        isTopLevelResult && processingState.status === 'processing'
+          ? processingState.messageId
+          : null;
+
+      let limitEngaged = false;
+      let limitBillingTerminal = false;
+      if (isTopLevelResult) {
+        this.resetThinkingTokenTracking();
+        const limitError = this.assessResultLimitError(message);
+        if (limitError) {
+          limitBillingTerminal = limitError.hint.billingTerminal === true;
+          limitEngaged =
+            (await this.ctx.onResultLimitError?.(
+              limitError.errorText,
+              limitError.hint,
+              limitError.userMessageUuid,
+              invocationGeneration ?? undefined
+            )) ?? false;
+        }
+        this.lastResultWasSuccess = limitError === null && isSDKResultSuccess(message);
+        this.lastRateLimitInfo = null;
+        this.lastSdkErrorTag = null;
+      }
+
+      if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
+        stateManager.beginTerminalIdle(this.invocationIdleOwner(invocationGeneration));
+      }
+
+      messageHub.event(
+        'state.sdkMessages.delta',
+        {
+          added: [message],
+          timestamp: Date.now(),
+          version: ++this.sdkMessageDeltaVersion,
+        },
+        { channel: `session:${session.id}` }
+      );
+
+      try {
+        await this.ctx.internalEventBus.publish('sdk.message', {
+          sessionId: session.id,
+          message,
+        });
+      } catch (error) {
+        releaseTurnEndGate?.();
+        releaseTurnEndGate = null;
+        if (observesArmedClearResult) {
+          this.clearIdleSuppression();
+        }
+        throw error;
+      }
+
+      if (limitEngaged) {
+        const resultUuid = (message as SDKResultMessage).uuid;
+        if (resultUuid) {
+          try {
+            db.getSDKMessageRepo()?.markResultRecoveryIntercepted(
+              session.id,
+              resultUuid,
+              limitBillingTerminal
+            );
+          } catch (error) {
+            this.logger.warn('Failed to mark intercepted limit result:', error);
+          }
+        }
+        await this.recordResultUsageMetadata(message as SDKResultMessage);
+        const compactingClear = this.clearStaleCompacting();
+        await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
+        await compactingClear;
+        releaseTurnEndGate?.();
+        releaseTurnEndGate = null;
+        return;
+      }
+
+      if (isSDKSessionStateChangedMessage(message)) {
+        if (!this.isInvocationStale(invocationGeneration)) {
+          this.usesSessionStateChangedTurnEnd = true;
+          if (message.state !== 'idle') {
+            this.expectsSessionStateIdleAfterResult = true;
+          }
         }
       }
-      await this.recordResultUsageMetadata(message as SDKResultMessage);
-      void this.refreshContextUsage('turn-end');
-      return;
-    }
 
-    if (isSDKSessionStateChangedMessage(message)) {
-      this.usesSessionStateChangedTurnEnd = true;
-      if (message.state !== 'idle') {
-        this.expectsSessionStateIdleAfterResult = true;
+      let enforcedTurnEnd = false;
+      if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
+        if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
+          const compactingClear = this.clearStaleCompacting();
+          await this.refreshContextUsage('turn-end', undefined, invocationGeneration, resultOwner);
+          enforcedTurnEnd = true;
+          await compactingClear;
+          await this.settleIdleForInvocation(invocationGeneration, undefined, resultOwner);
+        }
       }
-    }
 
-    if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
-      if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
-        await stateManager.setIdle();
+      if (isSDKUserMessage(message)) {
+        await this.handleUserMessage(message);
       }
-    }
 
-    if (isSDKUserMessage(message)) {
-      await this.handleUserMessage(message);
-    }
-
-    if (isSDKSystemMessage(message)) {
-      await this.handleSystemMessage(message);
-    }
-
-    if (isTopLevelResult && isSDKResultSuccess(message)) {
-      await this.handleResultMessage(message, activeMessageId);
-    }
-
-    if (isSDKAssistantMessage(message)) {
-      await this.handleAssistantMessage(message);
-    }
-
-    if (isSDKStatusMessage(message)) {
-      await this.handleStatusMessage(message);
-    }
-
-    if (isSDKModelRefusalFallbackMessage(message)) {
-      await this.handleModelRefusalFallbackMessage(message);
-    }
-
-    if (isSDKModelRefusalNoFallbackMessage(message)) {
-      await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
-    }
-
-    if (isSDKSessionStateChangedMessage(message)) {
-      await this.handleSessionStateChangedMessage(message);
-    }
-
-    if (isSDKCompactBoundary(message)) {
-      await this.handleCompactBoundary(message);
-    }
-
-    if (isSDKResultMessage(message)) {
-      void this.refreshContextUsage('turn-end');
-      if (settlesArmedClearError) {
-        this.clearIdleSuppression();
+      if (isSDKSystemMessage(message)) {
+        await this.handleSystemMessage(message);
       }
-      return;
-    }
 
-    this.maybeRefreshContextOnEvent(message);
+      if (isTopLevelResult && isSDKResultSuccess(message)) {
+        await this.handleResultMessage(message, activeMessageId, invocationGeneration);
+      }
+
+      if (isSDKAssistantMessage(message)) {
+        await this.handleAssistantMessage(message);
+      }
+
+      if (isSDKStatusMessage(message)) {
+        await this.handleStatusMessage(message);
+      }
+
+      if (isSDKModelRefusalFallbackMessage(message)) {
+        await this.handleModelRefusalFallbackMessage(message);
+      }
+
+      if (isSDKModelRefusalNoFallbackMessage(message)) {
+        await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
+      }
+
+      if (isSDKSessionStateChangedMessage(message)) {
+        await this.handleSessionStateChangedMessage(message, invocationGeneration);
+      }
+
+      if (isSDKCompactBoundary(message)) {
+        await this.handleCompactBoundary(message, invocationGeneration);
+      }
+
+      if (isSDKResultMessage(message)) {
+        const compactingClear = isTopLevelResult ? this.clearStaleCompacting() : null;
+        if (isTopLevelResult && !enforcedTurnEnd) {
+          if (this.expectsSessionStateIdleAfterResult) {
+            this.armTrailingIdleDeliveryGate(invocationGeneration);
+          }
+          await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
+        }
+        await compactingClear;
+        releaseTurnEndGate?.();
+        releaseTurnEndGate = null;
+      }
+
+      if (isSDKResultMessage(message)) {
+        if (settlesArmedClearError) {
+          this.clearIdleSuppression();
+        }
+        return;
+      }
+
+      this.maybeRefreshContextOnEvent(message, invocationGeneration);
+    } finally {
+      releaseTurnEndGate?.();
+      releaseTurnEndGate = null;
+    }
   }
 
   private async handleSystemMessage(message: SDKMessage): Promise<void> {
@@ -1119,14 +1211,20 @@ export class SDKMessageHandler {
 
   private async handleResultMessage(
     message: SDKMessage,
-    activeMessageId: string | null
+    activeMessageId: string | null,
+    invocationGeneration: number | null
   ): Promise<void> {
     if (!isSDKResultSuccess(message)) return;
 
     const confirmsArmedClear = this.matchesArmedClearResult(message);
 
     try {
-      await this.processResultMessage(message, activeMessageId, confirmsArmedClear);
+      await this.processResultMessage(
+        message,
+        activeMessageId,
+        confirmsArmedClear,
+        invocationGeneration
+      );
     } catch (error) {
       if (confirmsArmedClear) {
         this.clearIdleSuppression();
@@ -1138,7 +1236,8 @@ export class SDKMessageHandler {
   private async processResultMessage(
     message: SDKMessage,
     activeMessageId: string | null,
-    confirmsArmedClear: boolean
+    confirmsArmedClear: boolean,
+    invocationGeneration: number | null
   ): Promise<void> {
     if (!isSDKResultSuccess(message)) return;
 
@@ -1176,7 +1275,7 @@ export class SDKMessageHandler {
       !this.usesSessionStateChangedTurnEnd &&
       !this.expectsSessionStateIdleAfterResult
     ) {
-      await this.finishTurn(this.lastResultWasSuccess !== false);
+      await this.finishTurn(this.lastResultWasSuccess !== false, invocationGeneration);
     }
     if (confirmsArmedClear) {
       if (this.usesSessionStateChangedTurnEnd && this.expectsSessionStateIdleAfterResult) {
@@ -1236,7 +1335,42 @@ export class SDKMessageHandler {
     };
   }
 
-  private async finishTurn(allowQueueReplay = true): Promise<void> {
+  private isInvocationStale(invocationGeneration: number | null): boolean {
+    return (
+      invocationGeneration != null &&
+      this.ctx.getQueryGeneration != null &&
+      this.ctx.getQueryGeneration() !== invocationGeneration
+    );
+  }
+
+  private invocationIdleOwner(invocationGeneration: number | null): IdleOwnerScope | undefined {
+    if (invocationGeneration === null) return undefined;
+    return this.ctx.stateManager.idleOwnerForQuery(invocationGeneration);
+  }
+
+  private async settleIdleForInvocation(
+    invocationGeneration: number | null,
+    opts?: {
+      suppressDeliveryWaiters?: boolean;
+      suppressIdlePublish?: boolean;
+      suppressIdleCallback?: boolean;
+    },
+    ownerOverride?: IdleOwnerScope
+  ): Promise<void> {
+    const owner = ownerOverride ?? this.invocationIdleOwner(invocationGeneration);
+    if (owner) {
+      await this.ctx.stateManager.setIdle({ ...opts, owner });
+    } else if (opts) {
+      await this.ctx.stateManager.setIdle(opts);
+    } else {
+      await this.ctx.stateManager.setIdle();
+    }
+  }
+
+  private async finishTurn(
+    allowQueueReplay = true,
+    invocationGeneration: number | null = null
+  ): Promise<void> {
     const { session, internalEventBus, stateManager } = this.ctx;
 
     if (stateManager.getState().status === 'rate_limit_cooldown') {
@@ -1249,9 +1383,15 @@ export class SDKMessageHandler {
       return;
     }
 
-    await stateManager.setIdle();
+    await this.settleIdleForInvocation(invocationGeneration);
 
     if (allowQueueReplay && session.config.queryMode !== 'manual') {
+      if (this.isInvocationStale(invocationGeneration)) {
+        this.logger.info(
+          'Skipping deferred replay dispatch: the turn was superseded at the idle settle.'
+        );
+        return;
+      }
       try {
         await internalEventBus.publish('query.trigger', { sessionId: session.id });
       } catch (error) {
@@ -1260,39 +1400,104 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleSessionStateChangedMessage(message: SDKMessage): Promise<void> {
+  private async handleSessionStateChangedMessage(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<void> {
     if (!isSDKSessionStateChangedMessage(message)) return;
+    if (this.isInvocationStale(invocationGeneration)) {
+      this.logger.warn('Ignoring session-state event from a replaced query.');
+      const staleOwner = this.invocationIdleOwner(invocationGeneration);
+      if (staleOwner) {
+        this.ctx.stateManager.cancelTerminalIdleArm(staleOwner);
+      }
+      return;
+    }
 
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
-      this.resetThinkingTokenTracking();
-      const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
-      if (clearTurnPending) {
-        await this.ctx.stateManager.setIdle({
-          suppressDeliveryWaiters: true,
-          suppressIdlePublish: true,
-          suppressIdleCallback: true,
-        });
-      } else {
-        const allowQueueReplay = this.lastResultWasSuccess !== false;
-        await this.finishTurn(allowQueueReplay);
-        this.usesSessionStateChangedTurnEnd = false;
-        this.expectsSessionStateIdleAfterResult = false;
-        this.lastResultWasSuccess = null;
-      }
-      if (this.clearAwaitingTrailingIdle) {
-        this.clearAwaitingTrailingIdle = false;
-        this.clearMessageInFlight = false;
-        this.usesSessionStateChangedTurnEnd = false;
-        this.expectsSessionStateIdleAfterResult = false;
-        this.lastResultWasSuccess = null;
-        this.settleSuppressedResultWaiter('confirmed');
-      } else if (clearTurnPending) {
-        this.usesSessionStateChangedTurnEnd = false;
-        this.expectsSessionStateIdleAfterResult = false;
-        this.lastResultWasSuccess = null;
+      try {
+        this.resetThinkingTokenTracking();
+        const currentOwner = this.invocationIdleOwner(invocationGeneration);
+        if (
+          this.trailingIdleGeneration !== null &&
+          this.trailingIdleGeneration !== invocationGeneration
+        ) {
+          this.logger.info(
+            `Ignoring trailing idle from a superseded query (armed ${this.trailingIdleGeneration}, ` +
+              `current ${invocationGeneration}).`
+          );
+          this.releaseTrailingIdleDeliveryGate();
+          return;
+        }
+        if (
+          this.trailingIdleOwner !== undefined &&
+          currentOwner !== undefined &&
+          !isSameIdleOwner(this.trailingIdleOwner, currentOwner)
+        ) {
+          this.logger.info(
+            'Ignoring trailing idle from a superseded turn (delivery owner advanced).'
+          );
+          this.releaseTrailingIdleDeliveryGate();
+          return;
+        }
+        const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
+        if (clearTurnPending) {
+          await this.settleIdleForInvocation(invocationGeneration, {
+            suppressDeliveryWaiters: true,
+            suppressIdlePublish: true,
+            suppressIdleCallback: true,
+          });
+        } else {
+          const allowQueueReplay = this.lastResultWasSuccess !== false;
+          await this.finishTurn(allowQueueReplay, invocationGeneration);
+          if (this.isInvocationStale(invocationGeneration)) return;
+          this.usesSessionStateChangedTurnEnd = false;
+          this.expectsSessionStateIdleAfterResult = false;
+          this.lastResultWasSuccess = null;
+        }
+        if (this.clearAwaitingTrailingIdle) {
+          this.clearAwaitingTrailingIdle = false;
+          this.clearMessageInFlight = false;
+          this.usesSessionStateChangedTurnEnd = false;
+          this.expectsSessionStateIdleAfterResult = false;
+          this.lastResultWasSuccess = null;
+          this.settleSuppressedResultWaiter('confirmed');
+        } else if (clearTurnPending) {
+          this.usesSessionStateChangedTurnEnd = false;
+          this.expectsSessionStateIdleAfterResult = false;
+          this.lastResultWasSuccess = null;
+        }
+        this.releaseTrailingIdleDeliveryGate();
+      } finally {
+        this.releaseTrailingIdleDeliveryGate();
       }
     }
+  }
+
+  private armTrailingIdleDeliveryGate(invocationGeneration?: number | null): void {
+    if (this.trailingIdleGateRelease) return;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.trailingIdleGateRelease = release;
+    this.trailingIdleGeneration = invocationGeneration ?? null;
+    this.trailingIdleOwner = this.invocationIdleOwner(invocationGeneration ?? null);
+    const bounded = boundedDeliveryGate(gate);
+    this.ctx.messageQueue.setDeliveryGate(bounded);
+    void bounded.then(() => {
+      if (this.trailingIdleGateRelease === release) {
+        this.trailingIdleGateRelease = null;
+      }
+    });
+  }
+
+  private releaseTrailingIdleDeliveryGate(): void {
+    this.trailingIdleGateRelease?.();
+    this.trailingIdleGateRelease = null;
+    this.trailingIdleGeneration = null;
+    this.trailingIdleOwner = undefined;
   }
 
   private resetThinkingTokenTracking(): void {
@@ -1306,8 +1511,77 @@ export class SDKMessageHandler {
     await this.recordRefusalRewindTarget(message.refused_user_message_uuid);
     if (message.direction !== 'retry') return;
     if (message.scope === 'local') return;
-    const fallbackModel = await this.resolveConfiguredFallbackModel(message.fallback_model);
+    const providerId = session.config.provider ?? 'anthropic';
+    const builtIdentity = getBuiltFallbackIdentity(session);
+    if (
+      !builtIdentity ||
+      builtIdentity.providerId !== providerId ||
+      builtIdentity.primaryModel !== session.config.model ||
+      builtIdentity.fallbackModel !== session.config.fallbackModel ||
+      builtIdentity.scopedApiKey !== session.config.providerConfig?.apiKey ||
+      builtIdentity.scopedBaseUrl !== session.config.providerConfig?.baseUrl ||
+      builtIdentity.scopedRegion !==
+        (typeof session.config.providerConfig?.region === 'string'
+          ? session.config.providerConfig.region
+          : undefined) ||
+      (builtIdentity.providerEpoch !== undefined &&
+        builtIdentity.providerEpoch !== getProviderCatalogEpoch(providerId))
+    ) {
+      return;
+    }
+    const fallbackModelBeforeResolve = this.ctx.session.config.fallbackModel;
+    let fallbackModel: string | undefined;
+    try {
+      fallbackModel = await this.resolveConfiguredFallbackModel(message.fallback_model);
+    } catch {
+      this.logger.warn(
+        '[SDKMessageHandler] Fallback resolution failed for a stale or removed provider, ignoring retry'
+      );
+      return;
+    }
     if (!fallbackModel || session.config.model === fallbackModel) return;
+    if (
+      fallbackModelBeforeResolve !== fallbackModel ||
+      fallbackModelBeforeResolve !== builtIdentity.fallbackModel ||
+      this.ctx.session.config.fallbackModel !== fallbackModel
+    ) {
+      return;
+    }
+    const guardsIntact = () => {
+      const liveConfig = this.ctx.session.config;
+      return (
+        (liveConfig.provider ?? 'anthropic') === providerId &&
+        liveConfig.fallbackModel === fallbackModel &&
+        liveConfig.model === builtIdentity.primaryModel &&
+        liveConfig.providerConfig?.apiKey === builtIdentity.scopedApiKey &&
+        liveConfig.providerConfig?.baseUrl === builtIdentity.scopedBaseUrl &&
+        liveConfig.providerConfig?.region ===
+          (typeof builtIdentity.scopedRegion === 'string'
+            ? builtIdentity.scopedRegion
+            : undefined) &&
+        (builtIdentity.providerEpoch === undefined ||
+          builtIdentity.providerEpoch === getProviderCatalogEpoch(providerId))
+      );
+    };
+    const outcome = await decideFallbackModelCuration({
+      providerId,
+      fallbackModel,
+      cacheKey: session.id,
+      providerConfig: session.config.providerConfig ?? {},
+      sessionScopedProvider: Boolean(
+        builtIdentity.scopedApiKey || builtIdentity.scopedBaseUrl || builtIdentity.scopedRegion
+      ),
+      signalAborted: false,
+      guardsIntact,
+    });
+    if (outcome !== 'allowed') {
+      if (outcome === 'cancelled') {
+        this.logger.warn(
+          `[SDKMessageHandler] Session config changed during fallback validation, skipping persistence`
+        );
+      }
+      return;
+    }
 
     session.config = {
       ...session.config,
@@ -1325,7 +1599,7 @@ export class SDKMessageHandler {
     sdkFallbackModel: string | undefined
   ): Promise<string | undefined> {
     const configuredFallbackModel = this.ctx.session.config.fallbackModel;
-    if (!sdkFallbackModel || !configuredFallbackModel) return sdkFallbackModel;
+    if (!sdkFallbackModel || !configuredFallbackModel) return undefined;
 
     const fallbackSession = {
       ...this.ctx.session,
@@ -1337,7 +1611,7 @@ export class SDKMessageHandler {
     const contextManager = getProviderContextManager();
     await contextManager.ensureContextReady(fallbackSession);
     const fallbackSdkModel = contextManager.createContext(fallbackSession).getSdkModelId();
-    return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : sdkFallbackModel;
+    return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : undefined;
   }
 
   private async handleUserMessage(message: SDKMessage): Promise<void> {
@@ -1403,79 +1677,249 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleCompactBoundary(message: SDKMessage): Promise<void> {
-    const { stateManager } = this.ctx;
+  private async handleCompactBoundary(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<void> {
+    const { stateManager, contextTracker } = this.ctx;
 
     if (!isSDKCompactBoundary(message)) return;
+    if (this.isInvocationStale(invocationGeneration)) return;
 
+    this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+    const boundaryInfo = contextTracker.getContextInfo();
+    const boundaryCapacity =
+      boundaryInfo && boundaryInfo.totalCapacity > 0 ? boundaryInfo.totalCapacity : undefined;
+    contextTracker.markCompactionTriggered(
+      boundaryCapacity === undefined
+        ? undefined
+        : contextBudgetThreshold(boundaryCapacity, boundaryInfo?.autoCompactPercent)
+    );
     await stateManager.setCompacting(false);
+    this.ctx.resumePendingWorkAfterCompaction?.();
+    this.ctx.messageQueue.clearNonCompactionSentSinceBoundary();
 
-    void this.refreshContextUsage('compact-boundary');
+    void this.refreshContextUsage('compact-boundary', undefined, invocationGeneration);
   }
 
-  private maybeRefreshContextOnEvent(_message: SDKMessage): void {
+  private maybeRefreshContextOnEvent(
+    _message: SDKMessage,
+    invocationGeneration?: number | null
+  ): void {
     this.eventsSinceContextRefresh += 1;
     if (this.eventsSinceContextRefresh >= CONTEXT_REFRESH_EVENT_INTERVAL) {
-      void this.refreshContextUsage('event-tick');
+      void this.refreshContextUsage('event-tick', undefined, invocationGeneration);
     }
   }
 
+  private isContextRefreshStale(
+    queryObject: QueryLike,
+    model: string | undefined,
+    provider: string | undefined,
+    invocationGeneration?: number | null,
+    fenceOwner?: IdleOwnerScope
+  ): boolean {
+    const currentOwner = this.invocationIdleOwner(invocationGeneration ?? null);
+    return (
+      this.isInvocationStale(invocationGeneration ?? null) ||
+      (fenceOwner !== undefined &&
+        currentOwner !== undefined &&
+        !isSameIdleOwner(fenceOwner, currentOwner)) ||
+      this.ctx.queryObject !== queryObject ||
+      this.ctx.session.config.model !== model ||
+      this.ctx.session.config.provider !== provider
+    );
+  }
+
+  private clearStaleCompacting(): Promise<void> {
+    if (!this.ctx.stateManager.getIsCompacting()) return Promise.resolve();
+    return this.ctx.stateManager.setCompacting(false).catch((error) => {
+      this.logger.warn('Failed to clear compacting state:', error);
+    });
+  }
+
+  private isDaemonCompactionPending(): boolean {
+    const { session, messageQueue, stateManager } = this.ctx;
+    const providerId = session.config.provider;
+    if (!providerId || providerId === 'acp') return false;
+    if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return false;
+    return messageQueue.hasOutstandingInternalCompaction() || stateManager.getIsCompacting();
+  }
+
   private refreshContextUsage(
-    reason: 'event-tick' | 'turn-end' | 'compact-boundary'
+    reason: 'event-tick' | 'turn-end' | 'compact-boundary',
+    deadlineAt?: number,
+    invocationGeneration?: number | null,
+    fenceOwner?: IdleOwnerScope
   ): Promise<void> {
     this.eventsSinceContextRefresh = 0;
 
+    if (this.isInvocationStale(invocationGeneration ?? null)) return Promise.resolve();
+
+    const ownerAtRequest = fenceOwner ?? this.invocationIdleOwner(invocationGeneration ?? null);
+
     if (this.pendingContextRefresh) {
+      if (reason === 'event-tick') {
+        return this.pendingContextRefresh;
+      }
+      const chainDeadline = deadlineAt ?? Date.now() + DELIVERY_GATE_WINDOW_MS;
+      const pending = this.pendingContextRefresh;
+      this.pendingContextRefresh = pending.then(() =>
+        this.refreshContextUsage(reason, chainDeadline, invocationGeneration, ownerAtRequest)
+      );
+      this.ctx.messageQueue.setDeliveryGate(
+        boundedDeliveryGate(
+          this.pendingContextRefresh.catch(() => {}),
+          chainDeadline
+        )
+      );
       return this.pendingContextRefresh;
     }
 
     const { session, internalEventBus, contextTracker, queryObject } = this.ctx;
     if (!queryObject) return Promise.resolve();
+    const fenceModel = session.config.model;
+    const gateDeadline = deadlineAt ?? Date.now() + DELIVERY_GATE_WINDOW_MS;
+    const fenceProvider = session.config.provider;
 
     const promise = (async () => {
+      let clearedDeadCompaction = false;
+      let sampled = false;
       try {
+        const deadDeliveredCompaction =
+          reason === 'turn-end' &&
+          this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
+          !this.ctx.messageQueue.hasQueuedInternalCompaction() &&
+          !this.ctx.messageQueue.hasInFlightInternalCompaction() &&
+          !this.ctx.stateManager.getIsCompacting();
+        if (this.compactionEnqueuedMidTurnGeneration !== undefined) {
+          const deferralOwnsThisTurn =
+            this.compactionEnqueuedMidTurnGeneration === (invocationGeneration ?? null);
+          this.compactionEnqueuedMidTurnGeneration = undefined;
+          if (deferralOwnsThisTurn) {
+            clearedDeadCompaction = false;
+          } else if (deadDeliveredCompaction) {
+            this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+            contextTracker.clearCompactionCooldown();
+            this.logger.info(
+              `clearing stale compaction cooldown for session ${session.id} after a ` +
+                `delivered /compact ended without a compact boundary`
+            );
+            clearedDeadCompaction = true;
+          }
+        } else if (deadDeliveredCompaction) {
+          this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+          contextTracker.clearCompactionCooldown();
+          this.logger.info(
+            `clearing stale compaction cooldown for session ${session.id} after a ` +
+              `delivered /compact ended without a compact boundary`
+          );
+          clearedDeadCompaction = true;
+        }
         const modelInfo = await getSessionModelInfo(session);
+        if (
+          this.isContextRefreshStale(
+            queryObject,
+            fenceModel,
+            fenceProvider,
+            invocationGeneration,
+            ownerAtRequest
+          )
+        )
+          return;
         const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
           queryObject,
           modelInfo
         );
-        if (!contextInfo) return;
-        contextTracker.updateWithDetailedBreakdown(contextInfo);
-        await internalEventBus.publish('context.updated', {
-          sessionId: session.id,
-          contextInfo,
-        });
-
-        const providerId = session.config.provider;
-        if (!providerId) {
+        if (
+          this.isContextRefreshStale(
+            queryObject,
+            fenceModel,
+            fenceProvider,
+            invocationGeneration,
+            ownerAtRequest
+          )
+        )
           return;
-        }
-        const shouldUseFallback = shouldUseHyperNeoCompactFallback(providerId);
-        const actualContextWindow = modelInfo?.contextWindow;
-        if (shouldUseFallback && actualContextWindow && actualContextWindow > 0) {
-          const hyperNeoCompactThreshold = reserveBasedThreshold(actualContextWindow, providerId);
-          if (
-            contextInfo.totalUsed >= hyperNeoCompactThreshold &&
-            contextTracker.shouldCompactAt(hyperNeoCompactThreshold)
-          ) {
-            contextTracker.markCompactionTriggered();
-            this.logger.info(
-              `Triggering HyperNeo compaction fallback for session ${session.id} ` +
-                `(provider=${providerId}, ${contextInfo.totalUsed} >= ${hyperNeoCompactThreshold} ` +
-                `of ${actualContextWindow} tokens)`
+        if (!contextInfo) return;
+        sampled = true;
+        contextTracker.updateWithDetailedBreakdown(contextInfo);
+        const publishProjection = internalEventBus
+          .publish('context.updated', {
+            sessionId: session.id,
+            contextInfo,
+          })
+          .catch((error) => {
+            this.logger.warn(
+              `context.updated publication failed for session ${session.id}:`,
+              error
             );
-            void this.ctx.messageQueue.enqueue('/compact', true).catch((error) => {
-              this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
-            });
+          });
+        if (
+          !this.isContextRefreshStale(
+            queryObject,
+            fenceModel,
+            fenceProvider,
+            invocationGeneration,
+            ownerAtRequest
+          )
+        ) {
+          const outcome = enforceContextBudget({
+            sessionId: session.id,
+            providerId: session.config.provider,
+            reason,
+            contextInfo,
+            fallbackContextWindow: modelInfo?.contextWindow,
+            clearedDeadCompaction,
+            limitRecoveryPending: this.ctx.isLimitRecoveryPending?.() ?? false,
+            contextTracker,
+            messageQueue: this.ctx.messageQueue,
+            stateManager: this.ctx.stateManager,
+            logger: this.logger,
+            onCompactionAbandoned: () => {
+              this.compactionEnqueuedMidTurnGeneration = undefined;
+              this.ctx.clearPendingResumeAfterCompaction?.();
+            },
+          });
+          if (
+            outcome.compactionEnqueued &&
+            reason === 'event-tick' &&
+            this.ctx.stateManager.getState().status === 'processing'
+          ) {
+            this.compactionEnqueuedMidTurnGeneration = invocationGeneration ?? null;
           }
         }
+        await boundedDeliveryGate(
+          publishProjection.then(() => undefined),
+          gateDeadline
+        );
       } catch (error) {
         this.logger.warn(`context refresh (${reason}) failed:`, error);
       } finally {
         this.pendingContextRefresh = null;
+        if (reason === 'turn-end' && !this.isDaemonCompactionPending()) {
+          if (!sampled) {
+            this.ctx.resumePendingWorkAfterCompaction?.();
+          } else {
+            this.ctx.clearPendingResumeAfterCompaction?.();
+          }
+          this.ctx.messageQueue.pruneSentPrompts();
+        }
       }
     })();
     this.pendingContextRefresh = promise;
+    const enforcesBudget =
+      !!session.config.provider &&
+      session.config.provider !== 'acp' &&
+      !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(session.config.provider);
+    if (reason !== 'event-tick' || enforcesBudget) {
+      this.ctx.messageQueue.setDeliveryGate(
+        boundedDeliveryGate(
+          promise.catch(() => {}),
+          gateDeadline
+        )
+      );
+    }
     return promise;
   }
 }

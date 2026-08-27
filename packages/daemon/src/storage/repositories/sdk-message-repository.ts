@@ -1025,7 +1025,8 @@ export class SDKMessageRepository {
   getUserMessagesByStatus(
     sessionId: string,
     status: SendStatus,
-    limit?: number
+    limit?: number,
+    direction: 'asc' | 'desc' = 'asc'
   ): {
     messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
     total: number;
@@ -1039,9 +1040,10 @@ export class SDKMessageRepository {
             )
             .get(sessionId, status) as { count: number })
         : null;
+    const order = direction === 'desc' ? 'DESC' : 'ASC';
     let projectionSql = `SELECT rowid AS row_id FROM sdk_messages
          WHERE session_id = ? AND send_status = ? AND ${USER_STATUS_MESSAGE_SQL}
-         ORDER BY timestamp ASC, rowid ASC`;
+         ORDER BY timestamp ${order}, rowid ${order}`;
     if (limit !== undefined) projectionSql += `\n         LIMIT ?`;
     const projected =
       limit !== undefined
@@ -1076,6 +1078,45 @@ export class SDKMessageRepository {
 
     const messages = orderHydratedMessages(projected, messagesByRowId);
     return { messages, total: countRow ? countRow.count : messages.length };
+  }
+
+  listUserMessagesByUuidPrefix(
+    sessionId: string,
+    prefix: string
+  ): Array<SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }> {
+    const pageSize = 100;
+    const messages: Array<
+      SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }
+    > = [];
+    let offset = 0;
+    for (;;) {
+      const rows = this.db
+        .prepare(
+          `SELECT id, sdk_message, timestamp, COALESCE(send_status, 'consumed') AS send_status FROM sdk_messages
+	       WHERE session_id = ?
+	         AND message_type = 'user'
+	         AND sdk_uuid LIKE ? || '%'
+	       ORDER BY timestamp DESC, rowid DESC
+	       LIMIT ? OFFSET ?`
+        )
+        .all(sessionId, prefix, pageSize, offset) as Array<{
+        id: string;
+        sdk_message: string;
+        timestamp: string;
+        send_status: string;
+      }>;
+      messages.push(
+        ...rows.map(
+          (row) =>
+            ({
+              ...inflatePersistedMessage(row),
+              sendStatus: row.send_status,
+            }) as SDKUserMessage & { dbId: string; timestamp: number; sendStatus: string }
+        )
+      );
+      if (rows.length < pageSize) return messages;
+      offset += pageSize;
+    }
   }
 
   getMessageByStatusAndUuid(
@@ -1192,6 +1233,21 @@ export class SDKMessageRepository {
     withBusyRetry(() => statusTransaction());
     for (const sid of changedSessions) this.notifySessionsChanged(sid);
     for (const messageId of messageIds) this.scheduleMessageSearchIndex(messageId);
+  }
+
+  transitionMessageSendStatus(
+    messageId: string,
+    expectedStatus: SendStatus,
+    targetStatus: SendStatus
+  ): boolean {
+    const changed = withBusyRetry(
+      () =>
+        this.db
+          .prepare(`UPDATE sdk_messages SET send_status = ? WHERE id = ? AND send_status = ?`)
+          .run(targetStatus, messageId, expectedStatus).changes
+    );
+    if (changed > 0) this.scheduleMessageSearchIndex(messageId);
+    return changed > 0;
   }
 
   updateMessageTimestamp(messageId: string, timestampMs?: number): void {
@@ -1601,6 +1657,19 @@ export class SDKMessageRepository {
       }
       return ids;
     })();
+  }
+
+  getDeliveryMessageIdsByUuids(sessionId: string, uuids: string[]): string[] {
+    if (uuids.length === 0) return [];
+    const uniqueUuids = [...new Set(uuids)];
+    const placeholders = uniqueUuids.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid IN (${placeholders})`
+      )
+      .all(sessionId, ...uniqueUuids) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
   }
 
   reopenDeliveryByUuid(sessionId: string, uuid: string): string | null {

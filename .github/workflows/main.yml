@@ -97,7 +97,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -123,6 +123,9 @@ jobs:
 
       - name: Test shard-weights generator
         run: bun run test:generate-shard-weights
+
+      - name: Test daemon DB rebuild script
+        run: bun run test:rebuild-daemon-db
 
       # Folded in from the former test-cli job: ~2s of tests that used to occupy
       # a whole runner. Gated to the same events test-cli ran on (push to dev,
@@ -177,7 +180,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Setup Deno
         uses: denoland/setup-deno@v2
@@ -320,7 +323,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -407,7 +410,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -457,7 +460,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -512,7 +515,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Download daemon unit junit
         continue-on-error: true
@@ -567,7 +570,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -680,7 +683,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

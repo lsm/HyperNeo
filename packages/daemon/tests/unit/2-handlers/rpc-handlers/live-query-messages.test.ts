@@ -22,6 +22,10 @@ function makeDb(): BunDatabase {
       name TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS space_tasks (
+      id TEXT PRIMARY KEY,
+      space_id TEXT
     )
   `);
   return db;

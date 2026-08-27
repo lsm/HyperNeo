@@ -104,6 +104,7 @@ function makeMockTaskAgentManager(opts: {
     isTaskAgentAlive: () => false,
     isExecutionSpawning: () => false,
     isSessionAlive: (sessionId: string) => opts.aliveSessions?.has(sessionId) ?? false,
+    isSessionInMemory: (sessionId: string) => opts.aliveSessions?.has(sessionId) ?? false,
     spawnWorkflowNodeAgent: async () => 'unused',
     spawnWorkflowNodeAgentForExecution: async () => 'unused',
     rehydrate: async () => {},

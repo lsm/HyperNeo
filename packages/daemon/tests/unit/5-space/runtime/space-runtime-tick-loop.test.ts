@@ -187,19 +187,20 @@ function makeMockTaskAgentManager(
       sessionToTask.set(`session:${t.id}`, t.id);
       return `session:${t.id}`;
     });
+  const aliveByTaskAgent =
+    overrides.isSessionAlive ??
+    ((sessionId: string) => {
+      if (!overrides.isTaskAgentAlive) return false;
+      const taskId = sessionToTask.get(sessionId);
+      return taskId ? overrides.isTaskAgentAlive(taskId) : false;
+    });
   return {
     isSpawning: overrides.isSpawning ?? (() => false),
     isTaskAgentAlive: overrides.isTaskAgentAlive ?? (() => false),
     spawnWorkflowNodeAgent: spawnImpl,
     isExecutionSpawning: overrides.isExecutionSpawning ?? (() => false),
-    isSessionInMemory: overrides.isSessionInMemory ?? (() => false),
-    isSessionAlive:
-      overrides.isSessionAlive ??
-      ((sessionId: string) => {
-        if (!overrides.isTaskAgentAlive) return false;
-        const taskId = sessionToTask.get(sessionId);
-        return taskId ? overrides.isTaskAgentAlive(taskId) : false;
-      }),
+    isSessionAlive: aliveByTaskAgent,
+    isSessionInMemory: overrides.isSessionInMemory ?? aliveByTaskAgent,
     spawnWorkflowNodeAgentForExecution: spawnExecutionImpl,
     rehydrate: overrides.rehydrate ?? (async () => {}),
     cancelBySessionId: overrides.cancelBySessionId ?? (() => {}),
@@ -716,6 +717,52 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(
         nodeExecutionRepo.listByWorkflowRun(run.id).filter((e) => e.status === 'in_progress')
       ).toHaveLength(2);
+    });
+
+    test('does not nag a DB-fallback-alive ghost session and resets it for spawn retry (#3109)', async () => {
+      const nags: Array<{ sessionId: string; message: string }> = [];
+      const spawned: string[] = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: () => true,
+        isSessionInMemory: () => false,
+        getAgentSessionById: () => null,
+        injectRuntimeRecoveryMessage: async (sessionId, message) => {
+          nags.push({ sessionId, message });
+          return `runtime-nag:${sessionId}`;
+        },
+        spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, execution) => {
+          const exec = execution as { id: string; agentName: string };
+          spawned.push(exec.id);
+          const sessionId = `session:${exec.agentName}:respawn`;
+          nodeExecutionRepo.update(exec.id, {
+            status: 'in_progress',
+            agentSessionId: sessionId,
+            startedAt: Date.now(),
+            completedAt: null,
+          });
+          return sessionId;
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Build', agentId: AGENT_CODER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:ghost-db',
+        startedAt: Date.now() - 20 * 60_000,
+      });
+      saveAssistantMessage('session:ghost-db', { minutesAgo: 20, toolUse: true });
+
+      await rt.executeTick();
+
+      expect(nags).toHaveLength(0);
+      expect(spawned).toEqual([execution.id]);
+      const updated = nodeExecutionRepo.getById(execution.id)!;
+      expect(updated.agentSessionId).toBe(`session:${execution.agentName}:respawn`);
+      expect(updated.status).toBe('in_progress');
     });
 
     test('restarts only the nagged stale agent when no progress follows', async () => {
@@ -2661,6 +2708,44 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(taskRepo.getTask(tasks[0].id)!.status).toBe('stopped');
       const executions = nodeExecutionRepo.listByWorkflowRun(tasks[0].workflowRunId!);
       expect(executions.every((exec) => exec.status === 'pending')).toBe(true);
+    });
+
+    test('persistent worktree creation failure fails closed with bounded retry then blocked task', async () => {
+      const WORKTREE_ERROR =
+        'Task worktree creation failed for workflow task; refusing to spawn a node agent in the shared space workspace: git worktree add failed';
+      let spawnAttempts = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async () => {
+          spawnAttempts++;
+          throw new Error(WORKTREE_ERROR);
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const runId = tasks[0].workflowRunId!;
+
+      await rt.executeTick();
+      await rt.executeTick();
+      let execution = nodeExecutionRepo.listByWorkflowRun(runId)[0];
+      expect(execution.status).toBe('pending');
+      expect(execution.agentSessionId).toBeNull();
+
+      await rt.executeTick();
+      execution = nodeExecutionRepo.listByWorkflowRun(runId)[0];
+      expect(execution.status).toBe('blocked');
+      expect(execution.result).toContain('worktree');
+      expect(execution.result).toContain('3 times');
+
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(task.status).toBe('blocked');
+      expect(task.result).toContain('worktree');
+      expect(task.blockReason).toBe('agent_crashed');
+
+      expect(spawnAttempts).toBe(3);
     });
   });
 

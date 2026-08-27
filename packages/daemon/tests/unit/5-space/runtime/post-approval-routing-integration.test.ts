@@ -322,6 +322,23 @@ describe('PR 3/5 integration — dispatchPostApproval → spawn → mark_complet
     expect(h.spawned[0].kickoffMessage).not.toContain('{{pr_url}}');
   });
 
+  test('merge templates keep receiving the Space checkout even with a task workspacePath (WS10)', async () => {
+    const coding = h.workflowManager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === CODING_WORKFLOW.name)!;
+
+    const TASK_WORKSPACE = '/task/template-override';
+    const { taskId } = seedRunAndTask(h, coding.id, 'Template workspace');
+    h.taskRepo.updateTask(taskId, { workspacePath: TASK_WORKSPACE });
+
+    const result = await h.runtime.dispatchPostApproval(taskId, 'agent');
+    expect(result.mode).toBe('spawn');
+    expect(h.spawned).toHaveLength(1);
+    expect(h.spawned[0].kickoffMessage).toContain(`'/tmp/par-int'`);
+    expect(h.spawned[0].kickoffMessage).not.toContain(TASK_WORKSPACE);
+    expect(h.spawned[0].kickoffMessage).not.toContain('{{workspace_path_sh}}');
+  });
+
   test('approved Coding task WITHOUT pr_url artifact still spawns; kickoff preserves literal {{pr_url}} placeholder', async () => {
     const coding = h.workflowManager
       .listWorkflows(SPACE_ID)

@@ -1,3 +1,5 @@
+import { AUTO_COMPACT_PERCENT_DEFAULT } from '../models.js';
+
 export type CustomEndpointType = 'openai-chat' | 'anthropic-messages' | 'ollama-native';
 
 export const DEFAULT_CUSTOM_ENDPOINT_TYPE: CustomEndpointType = 'openai-chat';
@@ -9,6 +11,7 @@ export interface CustomEndpointModelCapabilities {
   thinking: boolean;
   caching: boolean;
   maxContextTokens: number;
+  autoCompactPercent?: number;
   streamUsage: boolean;
   chatTemplateKwargs?: Record<string, unknown>;
 }
@@ -38,6 +41,7 @@ export const DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES: CustomEndpointModelCapabiliti
   thinking: false,
   caching: false,
   maxContextTokens: 128000,
+  autoCompactPercent: AUTO_COMPACT_PERCENT_DEFAULT,
   streamUsage: false,
 };
 

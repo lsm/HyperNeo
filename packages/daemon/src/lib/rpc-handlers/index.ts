@@ -395,7 +395,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   setupAppMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db);
 
-  setupSpaceMcpHandlers(deps.messageHub, deps.internalEventBus, deps.db, deps.spaceManager);
+  setupSpaceMcpHandlers(
+    deps.messageHub,
+    deps.internalEventBus,
+    deps.db,
+    deps.spaceManager,
+    deps.mcpImportService
+  );
   setupAgentMemoryHandlers(deps.messageHub, { memoryRepo: deps.db.agentMemory });
   setupExternalEventExtensionHandlers(deps);
 
@@ -476,6 +482,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     eventHub: {
       publish: (event, data) => deps.internalEventBus.publish(event as never, data as never),
     },
+    resolveWorkspacePath: (spaceId, rawPath) =>
+      deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath),
     onGoalResumed: (goalId, spaceId) => {
       for (const scope of deps.db.evolution.listScopes({ spaceId, spaceGoalId: goalId })) {
         try {
@@ -539,7 +547,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       evolutionScopeService,
       (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
       (taskId, fromStatus) =>
-        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true })
+        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
+      (rawPath) => deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
     );
   };
 
@@ -1187,7 +1196,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       evolutionScopeService,
       (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
       (taskId, fromStatus) =>
-        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true })
+        spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),
+      (rawPath) => deps.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
     );
   };
   const hookStateRepo = new WorkflowHookStateRepository(deps.db.getDatabase());

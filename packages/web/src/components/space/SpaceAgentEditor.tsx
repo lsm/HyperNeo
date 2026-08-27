@@ -111,6 +111,9 @@ export function SpaceAgentEditor({
   const [model, setModel] = useState(agent?.model ?? promotionDraft?.model ?? '');
   const [provider, setProvider] = useState(agent?.provider ?? promotionDraft?.provider ?? '');
   const [modelPool, setModelPool] = useState<WorkerAgentModelPoolEntry[]>(agent?.modelPool ?? []);
+  const [modelMode, setModelMode] = useState<'single' | 'pool'>(
+    (agent?.modelPool?.length ?? 0) > 0 ? 'pool' : 'single'
+  );
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
     agent?.thinkingLevel
       ? normalizeThinkingLevel(agent.thinkingLevel)
@@ -237,10 +240,12 @@ export function SpaceAgentEditor({
 
     try {
       const trimmedDescription = description.trim();
-      const trimmedModel = model.trim();
+      const effectiveModel = modelMode === 'single' ? model.trim() : '';
       const cleanedModelPool = modelPool
         .map((entry) => ({ ...entry, model: entry.model.trim() }))
         .filter((entry) => entry.model.length > 0);
+      const activeModelPool =
+        modelMode === 'pool' && cleanedModelPool.length > 0 ? cleanedModelPool : null;
       const providerChanged = provider !== (agent?.provider ?? '');
       const selectedTemplate = builtInTemplates.find((item) => item.name === selectedTemplateName);
       const selectedTemplateStillMatches =
@@ -262,11 +267,11 @@ export function SpaceAgentEditor({
       const baseParams = {
         name: name.trim(),
         description: trimmedDescription || (isEdit ? null : undefined),
-        ...(trimmedModel ? { model: trimmedModel, provider: provider || undefined } : {}),
-        ...(isEdit && !trimmedModel && (agent?.model || agent?.provider)
+        ...(effectiveModel ? { model: effectiveModel, provider: provider || undefined } : {}),
+        ...(isEdit && !effectiveModel && (agent?.model || agent?.provider)
           ? { model: null, provider: null }
           : {}),
-        ...(isEdit && trimmedModel && providerChanged && !provider ? { provider: null } : {}),
+        ...(isEdit && effectiveModel && providerChanged && !provider ? { provider: null } : {}),
         customPrompt: customPrompt || null,
         ...(toolsOverridden
           ? { tools }
@@ -288,13 +293,7 @@ export function SpaceAgentEditor({
           : templateFieldsChanged
             ? { templateName: null, templateHash: null }
             : {}),
-        modelPool: isEdit
-          ? cleanedModelPool.length > 0
-            ? cleanedModelPool
-            : null
-          : cleanedModelPool.length > 0
-            ? cleanedModelPool
-            : undefined,
+        modelPool: activeModelPool,
       };
 
       if (isEdit && agent) {
@@ -308,8 +307,8 @@ export function SpaceAgentEditor({
           description: trimmedDescription || undefined,
           customPrompt: customPrompt || null,
           tools: toolsOverridden ? tools : [],
-          modelPool: cleanedModelPool.length > 0 ? cleanedModelPool : undefined,
-          ...(trimmedModel ? { model: trimmedModel, provider: provider || undefined } : {}),
+          modelPool: activeModelPool ?? undefined,
+          ...(effectiveModel ? { model: effectiveModel, provider: provider || undefined } : {}),
           ...(clearSettingSources ||
           JSON.stringify(settingSources) !== JSON.stringify(inheritedSettingSources)
             ? { settingSources: clearSettingSources ? null : settingSources }
@@ -449,144 +448,174 @@ export function SpaceAgentEditor({
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1.5">
             Model
-            <span class="text-gray-400 text-xs ml-2">(optional override)</span>
+            <span class="text-gray-400 text-xs ml-2">(optional)</span>
           </label>
-          <WorkflowModelSelect
-            value={model || undefined}
-            provider={provider || undefined}
-            onChange={(value, selection?: WorkflowModelSelection) => {
-              setModel(value ?? '');
-              setProvider(selection?.provider ?? '');
-              if (errors['model']) setErrors((prev) => ({ ...prev, model: '' }));
-            }}
-            testId="space-agent-model-select"
-            className={`w-full bg-dark-800 border rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500 font-mono text-sm ${
-              errors['model'] ? 'border-red-700' : 'border-dark-600'
-            }`}
-          />
-          {errors['model'] && <p class="mt-1 text-xs text-red-400">{errors['model']}</p>}
-        </div>
-
-        <div data-testid="agent-model-pool">
-          <div class="flex items-center justify-between mb-1.5">
-            <label class="block text-sm font-medium text-gray-300">
-              Model Pool
-              <span class="text-gray-400 text-xs ml-2">(weighted, per-workspace cap)</span>
-            </label>
+          <div class="flex gap-1.5 mb-2">
             <button
               type="button"
-              data-testid="pool-add-model-button"
-              onClick={() =>
-                setModelPool((prev) => [...prev, { model: '', maxConcurrent: 1, weight: 100 }])
-              }
-              class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              data-testid="agent-model-mode-single"
+              onClick={() => setModelMode('single')}
+              class={`text-xs px-2.5 py-1 rounded border transition-colors ${
+                modelMode === 'single'
+                  ? 'border-blue-600 bg-blue-900/20 text-blue-300'
+                  : 'border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
+              }`}
             >
-              + Add model
+              Single model
+            </button>
+            <button
+              type="button"
+              data-testid="agent-model-mode-pool"
+              onClick={() => {
+                setModelMode('pool');
+                if (modelPool.length === 0) {
+                  setModelPool([{ model: '', maxConcurrent: 1, weight: 100 }]);
+                }
+              }}
+              class={`text-xs px-2.5 py-1 rounded border transition-colors ${
+                modelMode === 'pool'
+                  ? 'border-blue-600 bg-blue-900/20 text-blue-300'
+                  : 'border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
+              }`}
+            >
+              Model pool
             </button>
           </div>
-          <p class="text-xs text-gray-500 leading-snug mb-2">
-            Max is the per-model concurrency cap for this agent in the workspace (1 or more). Weight
-            is 1–100 and controls this model&rsquo;s share of the remaining capacity (higher =
-            preferred). Type numbers directly; remove an entry to drop it from the pool.
-          </p>
-          {modelPool.length === 0 ? (
-            <p class="text-xs text-gray-500 leading-snug">
-              No pool — this agent always uses the model above. Add models to spread this agent's
-              workflow runs across a per-model concurrency cap, weighted by remaining capacity.
-            </p>
+          {modelMode === 'single' ? (
+            <>
+              <WorkflowModelSelect
+                value={model || undefined}
+                provider={provider || undefined}
+                onChange={(value, selection?: WorkflowModelSelection) => {
+                  setModel(value ?? '');
+                  setProvider(selection?.provider ?? '');
+                  if (errors['model']) setErrors((prev) => ({ ...prev, model: '' }));
+                }}
+                testId="space-agent-model-select"
+                className={`w-full bg-dark-800 border rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500 font-mono text-sm ${
+                  errors['model'] ? 'border-red-700' : 'border-dark-600'
+                }`}
+              />
+              {errors['model'] && <p class="mt-1 text-xs text-red-400">{errors['model']}</p>}
+              <p class="mt-1.5 text-xs text-gray-500 leading-snug">
+                Leave empty to use the space default model.
+              </p>
+            </>
           ) : (
-            <div class="space-y-2">
-              {modelPool.map((entry, index) => (
-                <div
-                  key={index}
-                  class="flex items-center gap-2 rounded-lg border border-dark-600 bg-dark-800 px-3 py-2"
-                  data-testid="pool-entry"
+            <div data-testid="agent-model-pool">
+              <div class="flex items-center justify-end mb-2">
+                <button
+                  type="button"
+                  data-testid="pool-add-model-button"
+                  onClick={() =>
+                    setModelPool((prev) => [...prev, { model: '', maxConcurrent: 1, weight: 100 }])
+                  }
+                  class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
                 >
-                  <WorkflowModelSelect
-                    value={entry.model || undefined}
-                    provider={entry.provider || undefined}
-                    onChange={(value, selection?: WorkflowModelSelection) =>
-                      setModelPool((prev) =>
-                        prev.map((candidate, i) =>
-                          i === index
-                            ? {
-                                ...candidate,
-                                model: value ?? '',
-                                provider: selection?.provider ?? undefined,
-                              }
-                            : candidate
-                        )
-                      )
-                    }
-                    testId="pool-entry-model-select"
-                    className="flex-1 min-w-0 bg-dark-900 border border-dark-600 rounded px-2.5 py-1.5 text-gray-100 focus:outline-none focus:border-blue-500 font-mono text-sm"
-                  />
-                  <label class="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
-                    Max
-                    <input
-                      type="number"
-                      min={1}
-                      data-testid="pool-entry-max-input"
-                      value={entry.maxConcurrent}
-                      onInput={(e) => {
-                        const val = Number((e.target as HTMLInputElement).value);
-                        if (Number.isFinite(val) && val >= 1) {
+                  + Add model
+                </button>
+              </div>
+              {modelPool.length === 0 ? (
+                <p class="text-xs text-gray-500 leading-snug">
+                  No pool models — this agent uses the space default until one is added.
+                </p>
+              ) : (
+                <div class="space-y-2">
+                  {modelPool.map((entry, index) => (
+                    <div
+                      key={index}
+                      class="flex items-center gap-2 rounded-lg border border-dark-600 bg-dark-800 px-3 py-2"
+                      data-testid="pool-entry"
+                    >
+                      <WorkflowModelSelect
+                        value={entry.model || undefined}
+                        provider={entry.provider || undefined}
+                        onChange={(value, selection?: WorkflowModelSelection) =>
                           setModelPool((prev) =>
                             prev.map((candidate, i) =>
                               i === index
-                                ? { ...candidate, maxConcurrent: Math.floor(val) }
+                                ? {
+                                    ...candidate,
+                                    model: value ?? '',
+                                    provider: selection?.provider ?? undefined,
+                                  }
                                 : candidate
                             )
-                          );
+                          )
                         }
-                      }}
-                      class="w-16 appearance-none bg-dark-900 border border-dark-600 rounded px-2 py-1 text-gray-100 font-mono text-sm focus:outline-none focus:border-blue-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                    />
-                  </label>
-                  <label class="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
-                    Wt
-                    <input
-                      type="number"
-                      min={1}
-                      max={100}
-                      data-testid="pool-entry-weight-input"
-                      value={entry.weight}
-                      onInput={(e) => {
-                        const val = Number((e.target as HTMLInputElement).value);
-                        if (Number.isFinite(val) && val >= 1 && val <= 100) {
-                          setModelPool((prev) =>
-                            prev.map((candidate, i) =>
-                              i === index ? { ...candidate, weight: val } : candidate
-                            )
-                          );
-                        }
-                      }}
-                      class="w-16 appearance-none bg-dark-900 border border-dark-600 rounded px-2 py-1 text-gray-100 font-mono text-sm focus:outline-none focus:border-blue-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    data-testid="pool-entry-remove-button"
-                    onClick={() => setModelPool((prev) => prev.filter((_, i) => i !== index))}
-                    class="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0"
-                    title="Remove pool entry"
-                  >
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width={2}
-                        d="M6 18L18 6M6 6l12 12"
+                        testId="pool-entry-model-select"
+                        className="flex-1 min-w-0 bg-dark-900 border border-dark-600 rounded px-2.5 py-1.5 text-gray-100 focus:outline-none focus:border-blue-500 font-mono text-sm"
                       />
-                    </svg>
-                  </button>
+                      <label class="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
+                        Max
+                        <input
+                          type="number"
+                          min={1}
+                          data-testid="pool-entry-max-input"
+                          value={entry.maxConcurrent}
+                          onInput={(e) => {
+                            const val = Number((e.target as HTMLInputElement).value);
+                            if (Number.isFinite(val) && val >= 1) {
+                              setModelPool((prev) =>
+                                prev.map((candidate, i) =>
+                                  i === index
+                                    ? { ...candidate, maxConcurrent: Math.floor(val) }
+                                    : candidate
+                                )
+                              );
+                            }
+                          }}
+                          class="w-16 appearance-none bg-dark-900 border border-dark-600 rounded px-2 py-1 text-gray-100 font-mono text-sm focus:outline-none focus:border-blue-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                        />
+                      </label>
+                      <label class="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
+                        Wt
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          data-testid="pool-entry-weight-input"
+                          value={entry.weight}
+                          onInput={(e) => {
+                            const val = Number((e.target as HTMLInputElement).value);
+                            if (Number.isFinite(val) && val >= 1 && val <= 100) {
+                              setModelPool((prev) =>
+                                prev.map((candidate, i) =>
+                                  i === index ? { ...candidate, weight: val } : candidate
+                                )
+                              );
+                            }
+                          }}
+                          class="w-16 appearance-none bg-dark-900 border border-dark-600 rounded px-2 py-1 text-gray-100 font-mono text-sm focus:outline-none focus:border-blue-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        data-testid="pool-entry-remove-button"
+                        onClick={() => setModelPool((prev) => prev.filter((_, i) => i !== index))}
+                        class="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0"
+                        title="Remove pool entry"
+                      >
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width={2}
+                            d="M6 18L18 6M6 6l12 12"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                  <p class="text-xs text-gray-500 leading-snug">
+                    Max is the per-model concurrency cap for this agent in the workspace (1 or
+                    more). Weight is 1–100 and controls this model&rsquo;s share of the remaining
+                    capacity (higher = preferred). Each spawn picks by remaining capacity × weight;
+                    when every model is at its cap the spawn waits. A model pinned on a workflow
+                    slot or task override bypasses the pool.
+                  </p>
                 </div>
-              ))}
-              <p class="text-xs text-gray-500 leading-snug">
-                Each spawn picks a model by remaining capacity × weight across this workspace. When
-                every model is at its cap the spawn waits. A Model override above (or on a workflow
-                slot) bypasses the pool.
-              </p>
+              )}
             </div>
           )}
         </div>

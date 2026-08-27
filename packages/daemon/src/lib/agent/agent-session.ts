@@ -142,6 +142,10 @@ import {
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
 import { ContextTracker } from './context-tracker.ts';
+import {
+  runDeliveryTurnAdmission,
+  type DeliveryTurnAdmissionDeps,
+} from './delivery-turn-admission-pipeline.ts';
 import { classifyAcknowledgedSteer, resolveSteerAdmission } from './delivery-turn-routing.ts';
 import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog.ts';
 import {
@@ -168,6 +172,7 @@ import {
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   signalDeliveryConsumed,
+  steerAckTimeoutMs,
   throwIfDeliveryAborted,
   waitForDeliveryAbort,
   withSessionLock,
@@ -184,12 +189,12 @@ import { MessageQueue } from './message-queue.ts';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
 import {
-  type EnsureQueryStartedResult,
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
+import { QueryAttemptRegistry } from './query-attempt-token.ts';
 import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
 import {
   type OriginalEnvVars,
@@ -197,6 +202,7 @@ import {
   type QueryRunnerContext,
   type TrackedAgentProcess,
 } from './query-runner.ts';
+import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
@@ -242,6 +248,7 @@ export class AgentSession
   readonly modelSwitchHandler: ModelSwitchHandler;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
   readonly optionsBuilder: QueryOptionsBuilder;
+  readonly attemptTokens = new QueryAttemptRegistry();
 
   private queryRunner: QueryRunner | AcpQueryRunner;
   readonly interruptHandler: InterruptHandler;
@@ -326,6 +333,7 @@ export class AgentSession
 
   private _isCleaningUp = false;
   private pendingResumeSessionAt: string | undefined;
+  private pendingResumeAfterCompaction = false;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
@@ -343,6 +351,13 @@ export class AgentSession
   onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
   slotResetsContext?: () => boolean;
+
+  renderPendingDigest?: (
+    sessionId: string,
+    taskId?: string
+  ) => Promise<
+    import('../space/runtime/render-pending-digest-pipeline.ts').RenderPendingDigestOutcome | null
+  >;
 
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository.ts').McpEnablementRepository {
     return this.db.mcpEnablement;
@@ -469,9 +484,10 @@ export class AgentSession
           return false;
         }
       },
-      switchAndRetry: (lastUserMessage, entry, episodeGeneration) =>
-        this.switchAndRetryForFallback(lastUserMessage, entry, episodeGeneration),
+      switchAndRetry: (lastUserMessage, entry, episodeGeneration, queryGeneration) =>
+        this.switchAndRetryForFallback(lastUserMessage, entry, episodeGeneration, queryGeneration),
       resolveModelId: async (provider, model) => this.resolveModelIdOrDefault(provider, model),
+      getQueryGeneration: () => this.getQueryGeneration(),
       notifyPause: (payload) => {
         this.internalEventBus.publish('session.rate_limit_pause', {
           sessionId: this.session.id,
@@ -492,11 +508,20 @@ export class AgentSession
         }).classifyWithTimeout(rawText),
     });
     this.rateLimitWatchdog.setRetryCallback(
-      async (lastUserMessage, switchTo, episodeGeneration) => {
+      async (lastUserMessage, switchTo, episodeGeneration, queryGeneration) => {
         if (switchTo) {
-          return await this.switchAndRetryForFallback(lastUserMessage, switchTo, episodeGeneration);
+          return await this.switchAndRetryForFallback(
+            lastUserMessage,
+            switchTo,
+            episodeGeneration,
+            queryGeneration
+          );
         }
-        return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
+        return await this.executeRateLimitAutoRetry(
+          lastUserMessage,
+          episodeGeneration,
+          queryGeneration
+        );
       }
     );
 
@@ -729,6 +754,9 @@ export class AgentSession
     const wantsAcp = this.session.config.provider === 'acp';
     const hasAcpRunner = this.queryRunner instanceof AcpQueryRunner;
     if (wantsAcp !== hasAcpRunner) {
+      (
+        this.queryRunner as unknown as { invalidateAttemptTokens?: () => void }
+      ).invalidateAttemptTokens?.();
       this.queryRunner = wantsAcp ? new AcpQueryRunner(this) : new QueryRunner(this);
     }
     await this.queryRunner.start();
@@ -772,14 +800,14 @@ export class AgentSession
     messageId: string,
     messageContent: string | MessageContent[],
     episodeGeneration?: number,
-    options?: { prepend?: boolean }
-  ): Promise<void> {
+    options?: { prepend?: boolean; queryGeneration?: number }
+  ): Promise<'started' | 'aborted'> {
     if (episodeGeneration === undefined) {
       this.rateLimitWatchdog.cancel();
     } else {
       this.rateLimitWatchdog.clearPendingCooldown();
     }
-    await this.lifecycleManager.startQueryAndEnqueue(
+    return await this.lifecycleManager.startQueryAndEnqueue(
       messageId,
       messageContent,
       episodeGeneration,
@@ -825,6 +853,7 @@ export class AgentSession
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     this.rateLimitWatchdog.cancel();
+    this.clearPendingResumeAfterCompaction();
     this.messageHandler.cancelSuppressedResultWait();
     const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
     if (
@@ -962,13 +991,16 @@ export class AgentSession
   private async switchAndRetryForFallback(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry,
-    episodeGeneration: number
+    episodeGeneration: number,
+    queryGeneration?: number
   ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Fallback switch skipped: no last user message available.');
       await this.stateManager.setIdle();
       return false;
     }
+    const querySuperseded = (): boolean =>
+      queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration;
     try {
       if (this.queryPromise) {
         try {
@@ -976,7 +1008,7 @@ export class AgentSession
         } catch {}
       }
 
-      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after teardown (episode superseded).');
         return false;
       }
@@ -989,7 +1021,7 @@ export class AgentSession
       }
 
       const result = await this.handleModelSwitch(entry.model, entry.provider);
-      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after model switch (episode superseded).');
         return false;
       }
@@ -1001,7 +1033,11 @@ export class AgentSession
         return false;
       }
 
-      return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
+      return await this.executeRateLimitAutoRetry(
+        lastUserMessage,
+        episodeGeneration,
+        queryGeneration
+      );
     } catch (err) {
       this.logger.error('Fallback switch-and-retry failed:', err);
       await this.stateManager.setIdle();
@@ -1019,7 +1055,8 @@ export class AgentSession
 
   private async executeRateLimitAutoRetry(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    episodeGeneration?: number
+    episodeGeneration?: number,
+    queryGeneration?: number
   ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Rate limit auto-retry skipped: no last user message available.');
@@ -1043,17 +1080,31 @@ export class AgentSession
         this.stateManager.releaseIdleWaiters(episodeGeneration);
         return false;
       }
+      if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) {
+        this.logger.info(
+          'Rate limit auto-retry aborted before re-enqueue (the originating query was superseded).'
+        );
+        return false;
+      }
 
-      await this.startQueryAndEnqueue(
+      const retryOutcome = await this.startQueryAndEnqueue(
         lastUserMessage.uuid,
         lastUserMessage.content,
         episodeGeneration,
-        { prepend: true }
+        { prepend: true, queryGeneration }
       );
+      if (retryOutcome === 'aborted') {
+        this.logger.info(
+          'Rate limit auto-retry aborted during re-enqueue (the originating query was superseded).'
+        );
+        return false;
+      }
       return true;
     } catch (error) {
       this.logger.error('Rate limit auto-retry failed:', error);
-      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      if (queryGeneration === undefined || this.getQueryGeneration() === queryGeneration) {
+        await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      }
       return false;
     }
   }
@@ -1431,8 +1482,33 @@ export class AgentSession
     return value;
   }
 
+  resumePendingWorkAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    if (this.messageQueue.hasOutstandingNonCompactionMessages()) return;
+    void this.messageQueue
+      .enqueue(
+        'Context was compacted to stay within the configured window. Continue the task you were working on.',
+        false,
+        { durable: true }
+      )
+      .catch((error) => {
+        this.logger.warn(`post-compaction resume enqueue failed for ${this.session.id}:`, error);
+      });
+  }
+
+  clearPendingResumeAfterCompaction(): void {
+    if (!this.pendingResumeAfterCompaction) return;
+    this.pendingResumeAfterCompaction = false;
+    this.logger.info(
+      `dropping pending post-compaction resume for session ${this.session.id} ` +
+        `(no daemon compaction was enqueued)`
+    );
+  }
+
   incrementQueryGeneration(): number {
     const next = ++this._queryGeneration;
+    this.stateManager.noteQueryOwnerGeneration(next);
     this.taskNotificationRequeryAwaitingSdkIdle = false;
     this.taskNotificationRequeryBusyInterruptGeneration = null;
     if (this.deliveryResponseObserver?.pendingStart) {
@@ -1450,10 +1526,15 @@ export class AgentSession
     return this._isCleaningUp;
   }
 
-  async onSDKMessage(message: import('@hyperneo/shared/sdk').SDKMessage): Promise<void> {
-    const queryGeneration = this.getQueryGeneration();
+  async onSDKMessage(
+    message: import('@hyperneo/shared/sdk').SDKMessage,
+    _queuedMessages?: Array<import('@hyperneo/shared/sdk').SDKMessage>,
+    runnerGeneration?: number
+  ): Promise<void> {
+    const queryGeneration = runnerGeneration ?? this.getQueryGeneration();
     if (
       this.session.config.provider !== 'acp' &&
+      queryGeneration === this.getQueryGeneration() &&
       isSDKSessionStateChangedMessage(message) &&
       message.state !== 'idle'
     ) {
@@ -1465,7 +1546,7 @@ export class AgentSession
     }
     try {
       try {
-        await this.messageHandler.handleMessage(message);
+        await this.messageHandler.handleMessage(message, queryGeneration);
       } catch (error) {
         if (this.getQueryGeneration() === queryGeneration) {
           this.observeTaskNotificationResult(message);
@@ -1956,20 +2037,28 @@ export class AgentSession
   async onRateLimitExhausted(
     errorMessage: string,
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    hint?: LimitRetryHint
+    hint?: LimitRetryHint,
+    queryGeneration?: number
   ): Promise<boolean> {
-    return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage, hint);
+    return this.rateLimitWatchdog.scheduleRetry(
+      errorMessage,
+      lastUserMessage,
+      hint,
+      queryGeneration
+    );
   }
 
   async onResultLimitError(
     errorText: string,
     hint: LimitRetryHint,
-    userMessageUuid?: string
+    userMessageUuid?: string,
+    queryGeneration?: number
   ): Promise<boolean> {
     return this.onRateLimitExhausted(
       errorText,
       this.queryRunner.resolveRetryUserMessage(userMessageUuid),
-      hint
+      hint,
+      queryGeneration
     );
   }
 
@@ -1993,7 +2082,8 @@ export class AgentSession
     claimGuard?: () => boolean,
     batchUuids?: string[],
     signal?: AbortSignal,
-    observer?: MessageDeliveryAttemptObserver
+    observer?: MessageDeliveryAttemptObserver,
+    deliveryClaimToken?: string | null
   ): Promise<DriveTurnOutcome> {
     const turnStartedAt = Date.now();
     this.logger.debug(
@@ -2018,163 +2108,23 @@ export class AgentSession
     };
     const started = await withSessionLock(
       this.session.id,
-      async () => {
-        if (!this.messageDeliveryValid(messageUuid, alreadyConsumed)) {
-          return { kind: 'aborted' as const };
-        }
-        if (claimGuard && !claimGuard()) {
-          return { kind: 'aborted' as const };
-        }
-        if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
-          return { kind: 'turn_terminated' as const };
-        }
-        const armedObserver = observer
-          ? { generation: this.getQueryGeneration(), observer, pendingStart: true }
-          : null;
-        if (armedObserver) this.deliveryResponseObserver = armedObserver;
-        const disarmObserver = (): void => {
-          if (armedObserver && this.deliveryResponseObserver === armedObserver) {
-            this.deliveryResponseObserver = null;
+      () =>
+        runDeliveryTurnAdmission(
+          this.buildDeliveryTurnAdmissionDeps(
+            recordTurnEndMarker,
+            claimGuard,
+            deliveryClaimToken ?? undefined
+          ),
+          {
+            messageUuid,
+            content,
+            alreadyConsumed,
+            batchUuids,
+            signal,
+            attemptObserver: observer,
+            claimToken: deliveryClaimToken ?? undefined,
           }
-        };
-        const pendingContentBeforeStart = alreadyConsumed
-          ? null
-          : (this.messageQueue.getPendingOrInFlightContent?.(messageUuid) ?? null);
-        const ensureStartedAt = Date.now();
-        let queryStartResult: EnsureQueryStartedResult;
-        try {
-          queryStartResult = await this.lifecycleManager.ensureQueryStarted(signal);
-        } catch (error) {
-          disarmObserver();
-          throw error;
-        }
-        this.logger.debug(
-          `delivery-turn: ensureQueryStarted → ${queryStartResult} ` +
-            `(${Date.now() - ensureStartedAt}ms, uuid=${messageUuid})`
-        );
-        if (queryStartResult === 'blocked') {
-          disarmObserver();
-          return { kind: 'blocked' as const };
-        }
-        const queryPromise = this.queryPromise;
-        if (!queryPromise) {
-          disarmObserver();
-          throw new Error('message_delivery: query did not start; cannot drive turn');
-        }
-        if (armedObserver) armedObserver.pendingStart = false;
-        const generation = armedObserver?.generation ?? this.getQueryGeneration();
-        observer?.reportStage('query_ready', { generation });
-        if (alreadyConsumed && this.reclaimTurnAlreadySucceeded(messageUuid)) {
-          disarmObserver();
-          return { kind: 'turn_terminated' as const };
-        }
-        const turnEnd = this.stateManager.waitForIdleTransition(
-          this.rateLimitWatchdog.getGeneration(),
-          recordTurnEndMarker
-        );
-        let acknowledgment: Promise<void> | null = null;
-        let freshFeed = false;
-        let admittedBatchUuids: string[] | undefined;
-        let feedContent: string | MessageContent[] = content;
-        if (!alreadyConsumed) {
-          if (claimGuard && !claimGuard()) {
-            turnEnd.cancel();
-            disarmObserver();
-            return { kind: 'aborted' as const };
-          }
-          const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
-          void existing?.acknowledgment.catch(() => {});
-          freshFeed = existing === null;
-          if (freshFeed) {
-            const loaded = this.db
-              .getSDKMessageRepo()
-              .getDeliveryContent(this.session.id, messageUuid);
-            if (
-              this.db.getSession(this.session.id)?.status === 'archived' ||
-              loaded?.sendStatus !== 'enqueued'
-            ) {
-              turnEnd.cancel();
-              disarmObserver();
-              return { kind: 'aborted' as const };
-            }
-            feedContent = loaded.content;
-          }
-          if (batchUuids && batchUuids.length > 1) {
-            const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, feedContent, batchUuids);
-            feedContent = rebuilt.content;
-            admittedBatchUuids = rebuilt.admittedUuids;
-            if (freshFeed && !admittedBatchUuids?.includes(messageUuid)) {
-              turnEnd.cancel();
-              disarmObserver();
-              return { kind: 'aborted' as const };
-            }
-            if (admittedBatchUuids && admittedBatchUuids.length !== batchUuids.length) {
-              let narrowed = false;
-              try {
-                narrowed =
-                  this.db
-                    .getJobQueueRepo()
-                    ?.narrowActiveDeliveryBatchUuids(
-                      this.session.id,
-                      messageUuid,
-                      admittedBatchUuids
-                    ) ?? false;
-              } catch (error) {
-                turnEnd.cancel();
-                disarmObserver();
-                throw new MessageDeliveryRecoverableTurnError(
-                  `batch narrowing failed: ${error instanceof Error ? error.message : String(error)}`
-                );
-              }
-              if (!narrowed) {
-                turnEnd.cancel();
-                disarmObserver();
-                return { kind: 'aborted' as const };
-              }
-            }
-          }
-          if (freshFeed && pendingContentBeforeStart !== null) {
-            if (!this.deliveryContentMatches(pendingContentBeforeStart, feedContent)) {
-              turnEnd.cancel();
-              disarmObserver();
-              return { kind: 'aborted' as const };
-            }
-            turnEnd.cancel();
-            disarmObserver();
-            throw new MessageDeliveryRecoverableTurnError(
-              'Pending queue entry disappeared before delivery admission'
-            );
-          }
-          if (existing && !this.deliveryContentMatches(existing.content, feedContent)) {
-            if (!this.messageQueue.hasYielded(messageUuid)) {
-              this.messageQueue.remove(messageUuid);
-            }
-            turnEnd.cancel();
-            disarmObserver();
-            return { kind: 'aborted' as const };
-          }
-          const memberUuids = (admittedBatchUuids ?? []).filter((uuid) => uuid !== messageUuid);
-          if (memberUuids.length > 0) {
-            this.markDeliveryBatchSubmitted(memberUuids);
-          }
-          acknowledgment =
-            existing?.acknowledgment ??
-            this.messageQueue.admitWithId(messageUuid, feedContent, false, {
-              durable: true,
-            });
-        }
-        return {
-          kind: 'driving' as const,
-          queryPromise,
-          turnEnd,
-          acknowledgment,
-          freshFeed,
-          admittedBatchUuids,
-          generation,
-          clearEpoch: this.messageQueue.getClearEpoch?.() ?? 0,
-          responseObserver: armedObserver,
-        };
-      },
+        ),
       signal
     );
     if (started.kind === 'blocked') {
@@ -2397,6 +2347,139 @@ export class AgentSession
     return { outcome: 'completed' };
   }
 
+  private buildDeliveryTurnAdmissionDeps(
+    recordTurnEndMarker: () => void,
+    claimGuard: (() => boolean) | undefined,
+    claimToken: string | undefined
+  ): DeliveryTurnAdmissionDeps {
+    const jobQueue = this.db.getJobQueueRepo?.();
+    return {
+      logDebug: (message: string): void => {
+        this.logger.debug(message);
+      },
+      sessionArchived: (): boolean => this.db.getSession(this.session.id)?.status === 'archived',
+      loadDeliveryRow: (messageUuid) =>
+        this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid),
+      deliveryValid: (messageUuid, alreadyConsumed) =>
+        this.messageDeliveryValid(messageUuid, alreadyConsumed),
+      hasClaimGuard: (): boolean => claimGuard !== undefined,
+      claimCurrent: (): boolean => claimGuard?.() ?? true,
+      reclaimCheck: (messageUuid) => this.reclaimDeliveryTurnState(messageUuid),
+      recordTurnEndUnguarded: (messageUuid) => this.recordDeliveryTurnEnd(messageUuid),
+      generation: () => this.getQueryGeneration(),
+      cleaningUp: () => this.isCleaningUp(),
+      armResponseObserver: (attemptObserver) => {
+        const armed = {
+          generation: this.getQueryGeneration(),
+          observer: attemptObserver,
+          pendingStart: true,
+        };
+        this.deliveryResponseObserver = armed;
+        return armed;
+      },
+      disarmResponseObserver: (armed) => {
+        if (this.deliveryResponseObserver === armed) this.deliveryResponseObserver = null;
+      },
+      startQuery: (signal) => this.lifecycleManager.ensureQueryStarted(signal),
+      currentQueryPromise: () => this.queryPromise,
+      pendingContentSnapshot: (messageUuid) =>
+        this.messageQueue.getPendingOrInFlightContent?.(messageUuid) ?? null,
+      waitForTurnEnd: () =>
+        this.stateManager.waitForIdleTransition(
+          this.rateLimitWatchdog.getGeneration(),
+          recordTurnEndMarker
+        ),
+      existingQueueEntry: (messageUuid) => this.messageQueue.waitForPendingOrInFlight(messageUuid),
+      removeQueueEntry: (messageUuid) => this.messageQueue.remove(messageUuid),
+      queueEntryYielded: (messageUuid) => this.messageQueue.hasYielded(messageUuid),
+      queueClearEpoch: () => this.messageQueue.getClearEpoch?.() ?? 0,
+      rebuildBatch: (kickoffUuid, kickoffContent, batchUuids) =>
+        this.rebuildBatchDeliveryContent(kickoffUuid, kickoffContent, batchUuids),
+      contentMatches: (queued, expected) => this.deliveryContentMatches(queued, expected),
+      reserveAdmission: jobQueue
+        ? (messageUuid) => {
+            if (!claimToken) return null;
+            return jobQueue.reserveDeliveryAdmission({
+              sessionId: this.session.id,
+              kickoffUuid: messageUuid,
+              claimToken,
+              messageUuid,
+            });
+          }
+        : () => null,
+      narrowBatchFenced: jobQueue
+        ? (kickoffUuid, expectedBatchUuids, batchUuids) => {
+            if (!claimToken) return null;
+            return jobQueue.updateDeliveryBatchUuidsFenced({
+              sessionId: this.session.id,
+              kickoffUuid,
+              claimToken,
+              expectedBatchUuids,
+              batchUuids,
+            });
+          }
+        : () => null,
+      narrowBatchLegacy: jobQueue
+        ? (kickoffUuid, admitted) =>
+            jobQueue.narrowActiveDeliveryBatchUuids(this.session.id, kickoffUuid, admitted)
+        : () => false,
+      submitMembersFenced: jobQueue
+        ? (kickoffUuid, uuids) => {
+            if (!claimToken) return [];
+            return jobQueue.transitionDeliverySendStatusFenced({
+              sessionId: this.session.id,
+              kickoffUuid,
+              claimToken,
+              uuids,
+              fromStatus: 'enqueued',
+              toStatus: 'submitted',
+            });
+          }
+        : () => [],
+      submitMembersLegacy: (uuids) => this.markDeliveryBatchSubmitted(uuids),
+      restoreBatchFenced: jobQueue
+        ? (kickoffUuid, writtenBatchUuids, priorBatchUuids, priorDroppedBatchUuids) => {
+            if (!claimToken) return false;
+            return jobQueue.updateDeliveryBatchUuidsFenced({
+              sessionId: this.session.id,
+              kickoffUuid,
+              claimToken,
+              expectedBatchUuids: writtenBatchUuids,
+              batchUuids: priorBatchUuids,
+              droppedBatchUuids: priorDroppedBatchUuids,
+            }).applied;
+          }
+        : () => false,
+      unsubmitMembersFenced: jobQueue
+        ? (kickoffUuid, uuids) => {
+            if (!claimToken) return [];
+            return jobQueue.transitionDeliverySendStatusFenced({
+              sessionId: this.session.id,
+              kickoffUuid,
+              claimToken,
+              uuids,
+              fromStatus: 'submitted',
+              toStatus: 'enqueued',
+            });
+          }
+        : () => [],
+      resolveMessageIds: (uuids) =>
+        this.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(this.session.id, uuids),
+      publishSubmitted: (messageDbIds) => {
+        if (messageDbIds.length === 0) return;
+        void this.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId: this.session.id,
+            messageIds: messageDbIds,
+            status: 'submitted',
+          })
+          .catch(() => {});
+      },
+      admitToQueue: (messageUuid, feedContent) =>
+        this.messageQueue.admitWithId(messageUuid, feedContent, false, { durable: true }),
+    };
+  }
+
   private armDeliveryTurnStall(signal?: AbortSignal, claimGuard?: () => boolean): Promise<void> {
     this.clearDeliveryTurnStall();
     this.deliveryTurnStalled = false;
@@ -2598,11 +2681,17 @@ export class AgentSession
     const steerQueryEnded: Promise<'query_ended'> = this.queryPromise
       ? this.queryPromise.catch(() => {}).then(() => 'query_ended' as const)
       : Promise.resolve('query_ended');
-    let steerWinner: 'acknowledged' | 'query_ended' = 'query_ended';
+    const ackTimeoutMs = steerAckTimeoutMs();
+    let ackTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const steerAckTimeout = new Promise<'ack_timeout'>((resolve) => {
+      ackTimeoutId = setTimeout(() => resolve('ack_timeout' as const), ackTimeoutMs);
+    });
+    let steerWinner: 'acknowledged' | 'query_ended' | 'ack_timeout' = 'query_ended';
     try {
       steerWinner = await Promise.race([
         action.acknowledgment.then(() => 'acknowledged' as const),
         steerQueryEnded,
+        steerAckTimeout,
         aborted.promise,
       ]);
     } catch (error) {
@@ -2615,11 +2704,34 @@ export class AgentSession
       }
     } finally {
       aborted.cancel();
+      if (ackTimeoutId !== undefined) clearTimeout(ackTimeoutId);
     }
     if (steerWinner === 'query_ended') {
       this.messageQueue.requeueYielded(messageUuid);
       this.reopenDeliveryForRetry(messageUuid);
       throw new Error('Steer target query ended before the SDK consumed the steer');
+    }
+    if (steerWinner === 'ack_timeout') {
+      if (this.messageQueue.hasYielded(messageUuid)) {
+        this.logger.warn(
+          `delivery-steer: acknowledgment wait timed out after ${ackTimeoutMs}ms with the ` +
+            `steer already yielded to the SDK (uuid=${messageUuid}, ` +
+            `session=${this.session.id}); settling it as acknowledged like the queue's own ` +
+            `durable yield timeout instead of requeueing content the live query may still execute`
+        );
+        this.messageQueue.acknowledgeYielded(messageUuid);
+      } else {
+        this.logger.warn(
+          `delivery-steer: the SDK did not acknowledge the steer within ${ackTimeoutMs}ms ` +
+            `(uuid=${messageUuid}, session=${this.session.id}); releasing the worker slot, ` +
+            `dropping the unconsumed queue admission, and requeueing the steer`
+        );
+        if (!this.messageQueue.remove(messageUuid)) {
+          this.messageQueue.acknowledgeYielded(messageUuid);
+        }
+        this.reopenDeliveryForRetry(messageUuid);
+        return { outcome: 'ack_timeout' };
+      }
     }
     if (claimGuard && !claimGuard()) {
       return { outcome: 'aborted' };
@@ -2729,9 +2841,12 @@ export class AgentSession
     return sendStatus === 'enqueued' || sendStatus === 'submitted' || sendStatus === 'consumed';
   }
 
-  private reclaimTurnAlreadySucceeded(messageUuid: string): boolean {
+  private reclaimDeliveryTurnState(messageUuid: string): {
+    terminated: boolean;
+    clearedTurnEndMarker: boolean;
+  } {
     const repo = this.db.getSDKMessageRepo();
-    if (!repo) return false;
+    if (!repo) return { terminated: false, clearedTurnEndMarker: false };
     const decision = classifyReclaimTermination({
       successResult: repo.hasTerminalResultAfter(this.session.id, messageUuid),
       markerExists: repo.hasDeliveryTurnEnd(this.session.id, messageUuid),
@@ -2739,8 +2854,9 @@ export class AgentSession
     });
     if (decision === 'redrive') {
       repo.clearDeliveryTurnEnd(this.session.id, messageUuid);
+      return { terminated: false, clearedTurnEndMarker: true };
     }
-    return decision === 'terminated';
+    return { terminated: decision === 'terminated', clearedTurnEndMarker: false };
   }
 
   recordDeliveryTurnEnd(messageUuid: string): void {
@@ -2879,10 +2995,11 @@ export class AgentSession
     const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {
       const activeNow = jobQueue.activeDeliveryMessageUuids(this.session.id);
-      for (const msg of this.db.getUserMessageIdsByStatus(this.session.id, 'submitted')) {
-        const uuid = msg.uuid;
-        if (typeof uuid !== 'string' || uuid.length === 0) continue;
-        if (activeNow.has(uuid)) continue;
+      const staleSubmitted = selectStaleSubmittedDeliveries(
+        this.db.getUserMessageIdsByStatus(this.session.id, 'submitted'),
+        activeNow
+      );
+      for (const uuid of staleSubmitted) {
         const dbId = sdkRepo.markDeliveryFailedByUuid(this.session.id, uuid);
         if (dbId) {
           settled++;

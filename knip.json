@@ -40,6 +40,8 @@
     "packages/daemon/src/lib/agent/reference-resolver.ts",
     "packages/daemon/src/lib/id-resolution.ts",
     "packages/daemon/src/lib/acp/acp-transport.ts",
+    "packages/daemon/src/lib/space/managers/space-workspace-manager.ts",
+    "packages/daemon/src/lib/space/workspaces/workspace-validation-pipeline.ts",
     "packages/daemon/src/lib/acp/acp-client.ts",
     "packages/daemon/src/lib/acp/acp-message-translator.ts",
     "packages/daemon/src/lib/acp/acp-query-adapter.ts",
@@ -48,9 +50,12 @@
   ],
   "ignoreIssues": {
     "packages/daemon/src/lib/agent/ack-selection.ts": ["exports"],
+    "packages/daemon/src/lib/agent/context-budget-decision.ts": ["exports"],
     "packages/daemon/src/lib/agent/delivery-turn-routing.ts": ["exports"],
     "packages/daemon/src/lib/agent/loop-detector-hook.ts": ["exports"],
+    "packages/daemon/src/lib/agent/message-queue-timeout-policy.ts": ["exports"],
     "packages/daemon/src/lib/agent/query-retry-routing.ts": ["exports"],
+    "packages/daemon/src/lib/agent/reconciler-sweep.ts": ["exports"],
     "packages/daemon/src/lib/agent/turn-end-pipeline.ts": ["exports"],
     "packages/daemon/src/lib/agent/usage-accounting.ts": ["exports"],
     "packages/daemon/src/lib/db-query/scope-config.ts": ["exports"],
@@ -69,11 +74,14 @@
     "packages/daemon/src/lib/space/managers/node-execution-manager.ts": ["exports"],
     "packages/daemon/src/lib/space/messaging-adapter.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/gate-evaluator.ts": ["exports"],
+    "packages/daemon/src/lib/space/runtime/render-pending-digest-pipeline.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/post-approval-router.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/built-in-validator-registry.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/retry-utils.ts": ["exports"],
     "packages/daemon/src/lib/space/workflows/template-hash.ts": ["exports"],
     "packages/daemon/src/storage/repositories/goal-repository.ts": ["exports"],
+    "packages/daemon/src/lib/space/workspaces/workspace-validation-pipeline.ts": ["exports"],
+    "packages/daemon/src/storage/repositories/space-workspace-repository.ts": ["exports"],
     "packages/daemon/src/storage/repositories/agent-memory-transformers.ts": ["exports"]
   },
   "ignoreDependencies": [
@@ -83,6 +91,7 @@
     "@vitest/coverage-v8",
     "use-sync-external-store",
     "lucide-preact",
-    "typescript7"
+    "typescript7",
+    "tsx"
   ]
 }

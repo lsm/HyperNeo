@@ -1210,6 +1210,68 @@ describe('SpaceTaskRepository', () => {
     });
   });
 
+  describe('workspacePath field', () => {
+    it('creates a task with a workspace path', () => {
+      const task = repo.createTask({
+        spaceId,
+        title: 'Pinned task',
+        description: '',
+        workspacePath: '/workspaces/custom',
+      });
+      expect(task.workspacePath).toBe('/workspaces/custom');
+      expect(repo.getTask(task.id)!.workspacePath).toBe('/workspaces/custom');
+    });
+
+    it('defaults workspacePath to null (space primary)', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      expect(task.workspacePath).toBeNull();
+    });
+
+    it('sets workspacePath on an existing task', () => {
+      const task = repo.createTask({ spaceId, title: 'T', description: '' });
+      const updated = repo.updateTask(task.id, { workspacePath: '/workspaces/other' });
+      expect(updated!.workspacePath).toBe('/workspaces/other');
+    });
+
+    it('clears workspacePath back to null', () => {
+      const task = repo.createTask({
+        spaceId,
+        title: 'T',
+        description: '',
+        workspacePath: '/workspaces/custom',
+      });
+      const updated = repo.updateTask(task.id, { workspacePath: null });
+      expect(updated!.workspacePath).toBeNull();
+    });
+
+    it('counts non-archived tasks by workspace path', () => {
+      const path = '/workspaces/custom';
+      repo.createTask({
+        spaceId,
+        title: 'Open',
+        description: '',
+        workspacePath: path,
+        status: 'open',
+      });
+      repo.createTask({
+        spaceId,
+        title: 'Done',
+        description: '',
+        workspacePath: path,
+        status: 'done',
+      });
+      const archived = repo.createTask({
+        spaceId,
+        title: 'Archived',
+        description: '',
+        workspacePath: path,
+        status: 'archived',
+      });
+      repo.updateTask(archived.id, { archivedAt: Date.now() });
+      expect(repo.countNonArchivedByWorkspacePath(spaceId, path)).toBe(2);
+    });
+  });
+
   describe('taskNumber (numeric task IDs)', () => {
     it('auto-assigns taskNumber starting at 1', () => {
       const task = repo.createTask({ spaceId, title: 'First', description: '' });

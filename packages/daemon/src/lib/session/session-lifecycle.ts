@@ -249,7 +249,21 @@ export class SessionLifecycle {
           : undefined,
     };
 
-    this.db.createSession(session);
+    try {
+      this.db.createSession(session, {
+        enforceWorkspaceOwnership: true,
+        ownershipPath: baseWorkspacePath ?? undefined,
+      });
+    } catch (error) {
+      if (
+        worktreeMetadata &&
+        error instanceof Error &&
+        error.message.includes('is not registered to space')
+      ) {
+        await this.discardWorktree(worktreeMetadata);
+      }
+      throw error;
+    }
 
     const agentSession = this.createAgentSession(session);
     this.sessionCache.set(sessionId, agentSession);
@@ -286,6 +300,17 @@ export class SessionLifecycle {
         error
       );
       return undefined;
+    }
+  }
+
+  private async discardWorktree(worktree: WorktreeMetadata): Promise<void> {
+    try {
+      await this.worktreeManager.removeWorktree(worktree, true);
+    } catch (removeError) {
+      this.logger.error(
+        '[SessionLifecycle] Failed to remove orphan worktree after admission failure:',
+        removeError
+      );
     }
   }
 
@@ -401,6 +426,13 @@ export class SessionLifecycle {
       throw new Error('Workspace path cannot be empty');
     }
 
+    const spaceId = session.context?.spaceId;
+    if (spaceId && !this.db.isWorkspaceRegisteredToSpace(spaceId, normalizedPath)) {
+      throw new Error(
+        `Workspace ${normalizedPath} is not registered to space ${spaceId}; setWorkspace blocked`
+      );
+    }
+
     let worktreeMetadata: WorktreeMetadata | undefined;
     let currentBranch: string | undefined;
 
@@ -428,6 +460,15 @@ export class SessionLifecycle {
     }
 
     const latestSession = agentSession.getSessionData();
+
+    if (spaceId && !this.db.isWorkspaceRegisteredToSpace(spaceId, normalizedPath)) {
+      if (worktreeMetadata) {
+        await this.discardWorktree(worktreeMetadata);
+      }
+      throw new Error(
+        `Workspace ${normalizedPath} is no longer registered to space ${spaceId}; setWorkspace blocked`
+      );
+    }
 
     const updatedSession: Session = {
       ...latestSession,
@@ -909,11 +950,26 @@ export class SessionLifecycle {
       modelId = sessionModel;
     } else {
       const config = await providerService.getTitleGenerationConfig(provider);
+      if (!config) {
+        this.logger.warn(
+          `[SessionLifecycle] Provider ${provider} has no visible models, using fallback title`
+        );
+        return {
+          title: messageText.substring(0, 50).trim() || 'New Session',
+          isFallback: true,
+        };
+      }
       modelId = config.modelId;
     }
 
     try {
       const title = await this.generateTitleWithSdk(provider, modelId, messageText);
+      if (!title) {
+        return {
+          title: messageText.substring(0, 50).trim() || 'New Session',
+          isFallback: true,
+        };
+      }
       return { title, isFallback: false };
     } catch (error) {
       this.logger.error('[SessionLifecycle] SDK title generation failed:', error);
@@ -928,7 +984,7 @@ export class SessionLifecycle {
     provider: string,
     modelId: string,
     messageText: string
-  ): Promise<string> {
+  ): Promise<string | null> {
     const query =
       this.config.titleGenerationQueryForTesting ??
       (await import('@anthropic-ai/claude-agent-sdk')).query;
@@ -936,8 +992,14 @@ export class SessionLifecycle {
       this.config.titleGenerationProviderServiceForTesting ?? getProviderService();
 
     const titleModels = await providerService.getTitleGenerationModels(provider, modelId);
+    if (!titleModels) {
+      this.logger.warn(
+        `[SessionLifecycle] Provider ${provider} has no visible models, skipping title generation`
+      );
+      return null;
+    }
 
-    const originalEnv = await providerService.applyEnvVarsToProcessForProvider(
+    let originalEnv = await providerService.applyEnvVarsToProcessForProvider(
       provider,
       titleModels.providerModelId
     );
@@ -953,6 +1015,9 @@ export class SessionLifecycle {
       const cliPath = resolveSDKCliPath();
 
       const mergedEnv = buildSdkQueryEnv(providerEnvVars);
+
+      providerService.restoreEnvVars(originalEnv);
+      originalEnv = {};
 
       const agentQuery = query({
         prompt,

@@ -25,12 +25,50 @@ export class SessionRepository {
     }
   }
 
-  createSession(session: Session): void {
+  private workspaceTablesExist(): boolean {
+    return this.tableExists('space_workspaces') && this.tableExists('spaces');
+  }
+
+  private guardSpaceWorkspaceOwnership(spaceId: string, workspacePath: string): void {
+    const owner = this.db
+      .prepare(
+        `SELECT space_id AS spaceId FROM (
+          SELECT space_id FROM space_workspaces WHERE space_id = ? AND path = ?
+          UNION ALL
+          SELECT id AS space_id FROM spaces WHERE id = ? AND workspace_path = ?
+        ) LIMIT 1`
+      )
+      .get(spaceId, workspacePath, spaceId, workspacePath) as { spaceId: string } | undefined;
+    if (!owner) {
+      throw new Error(
+        `Workspace ${workspacePath} is not registered to space ${spaceId}; session creation blocked`
+      );
+    }
+  }
+
+  isWorkspaceRegisteredToSpace(spaceId: string, workspacePath: string): boolean {
+    if (!this.workspaceTablesExist()) return true;
+    const owner = this.db
+      .prepare(
+        `SELECT 1 FROM (
+          SELECT space_id FROM space_workspaces WHERE space_id = ? AND path = ?
+          UNION ALL
+          SELECT id AS space_id FROM spaces WHERE id = ? AND workspace_path = ?
+        ) LIMIT 1`
+      )
+      .get(spaceId, workspacePath, spaceId, workspacePath) as { '1': number } | undefined;
+    return !!owner;
+  }
+
+  createSession(
+    session: Session,
+    options?: { enforceWorkspaceOwnership?: boolean; ownershipPath?: string }
+  ): void {
     const stmt = this.db.prepare(
       `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, acp_session_id, sdk_origin_path, available_commands, processing_state, archived_at, type, session_context)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
-    stmt.run(
+    const values = [
       session.id,
       session.title,
       session.workspacePath,
@@ -55,8 +93,25 @@ export class SessionRepository {
       session.processingState ?? null,
       session.archivedAt ?? null,
       session.type ?? 'worker',
-      session.context ? JSON.stringify(session.context) : null
-    );
+      session.context ? JSON.stringify(session.context) : null,
+    ];
+
+    const spaceId = session.context?.spaceId;
+    const ownershipPath = options?.ownershipPath;
+    if (
+      options?.enforceWorkspaceOwnership &&
+      spaceId &&
+      ownershipPath &&
+      this.workspaceTablesExist()
+    ) {
+      const tx = this.db.transaction(() => {
+        this.guardSpaceWorkspaceOwnership(spaceId, ownershipPath);
+        stmt.run(...values);
+      });
+      tx();
+    } else {
+      stmt.run(...values);
+    }
   }
 
   getSession(id: string): Session | null {
@@ -488,5 +543,17 @@ export class SessionRepository {
     }
 
     return result;
+  }
+
+  countActiveSessionsByWorkspacePath(spaceId: string, workspacePath: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM sessions
+          WHERE space_id = ?
+            AND (workspace_path = ? OR main_repo_path = ?)
+            AND status NOT IN ('archived', 'ended')`
+      )
+      .get(spaceId, workspacePath, workspacePath) as { c: number } | undefined;
+    return row?.c ?? 0;
   }
 }

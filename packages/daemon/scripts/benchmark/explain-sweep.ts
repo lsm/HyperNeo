@@ -105,7 +105,7 @@ const queries: Array<{ name: string; sql: string; params: unknown[] }> = [
   {
     name: 'spaceTaskMessages.byTask.compact',
     sql: getSql('spaceTaskMessages.byTask.compact'),
-    params: [taskId],
+    params: [taskId, 20],
   },
   { name: 'taskMilestones.byTask', sql: getSql('taskMilestones.byTask'), params: [taskId] },
   { name: 'spaceTaskActivity.byTask', sql: getSql('spaceTaskActivity.byTask'), params: [taskId] },

@@ -611,6 +611,59 @@ describe('markDeliveryDelivered', () => {
   });
 });
 
+describe('markDeliveriesDeliveredAtomic', () => {
+  test('applies all changed marks and emits one hook per changed delivery', () => {
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-1', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    store.registerExpectedDelivery('evt-a', 'dk-2', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    const hookCalls: Array<{ eventId: string; deliveryKey: string }> = [];
+    store.setDeliveryTerminalHook((event) => {
+      hookCalls.push({ eventId: event.eventId, deliveryKey: event.deliveryKey });
+    });
+    store.markDeliveriesDeliveredAtomic([
+      { eventId: 'evt-a', deliveryKey: 'dk-1' },
+      { eventId: 'evt-a', deliveryKey: 'dk-2' },
+      { eventId: 'evt-a', deliveryKey: 'dk-none' },
+    ]);
+    expect(store.getDelivery('evt-a', 'dk-1')!.state).toBe('delivered');
+    expect(store.getDelivery('evt-a', 'dk-2')!.state).toBe('delivered');
+    expect(hookCalls).toEqual([
+      { eventId: 'evt-a', deliveryKey: 'dk-1' },
+      { eventId: 'evt-a', deliveryKey: 'dk-2' },
+    ]);
+  });
+
+  test('re-running completed marks changes nothing and emits nothing', () => {
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-1', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    store.markDeliveriesDeliveredAtomic([{ eventId: 'evt-a', deliveryKey: 'dk-1' }]);
+    const before = store.getDelivery('evt-a', 'dk-1')!;
+    const hookCalls: Array<{ eventId: string; deliveryKey: string }> = [];
+    store.setDeliveryTerminalHook((event) => {
+      hookCalls.push({ eventId: event.eventId, deliveryKey: event.deliveryKey });
+    });
+    store.markDeliveriesDeliveredAtomic([{ eventId: 'evt-a', deliveryKey: 'dk-1' }]);
+    const after = store.getDelivery('evt-a', 'dk-1')!;
+    expect(after.deliveredAt).toBe(before.deliveredAt);
+    expect(hookCalls).toEqual([]);
+  });
+});
+
 describe('markDeliveryFailed', () => {
   test('terminal failure advances pending → failed', () => {
     store.store(EVENT_A);
@@ -1048,6 +1101,21 @@ describe('reactive invalidation', () => {
     s.markDeliveryDelivered('evt-a', 'dk-1');
     expect(calls).toContain('space_external_event_deliveries');
     expect(calls).toContain('space_external_events');
+  });
+
+  test('markDeliveriesDeliveredAtomic() notifies each table once regardless of mark count', () => {
+    const { reactiveDb, calls } = makeReactiveSpy();
+    const s = new ExternalEventStore(db, reactiveDb);
+    s.store(EVENT_A);
+    s.registerExpectedDelivery('evt-a', 'dk-1', deliveryTarget());
+    s.registerExpectedDelivery('evt-a', 'dk-2', deliveryTarget());
+    calls.length = 0;
+    s.markDeliveriesDeliveredAtomic([
+      { eventId: 'evt-a', deliveryKey: 'dk-1' },
+      { eventId: 'evt-a', deliveryKey: 'dk-2' },
+    ]);
+    expect(calls.filter((table) => table === 'space_external_event_deliveries')).toHaveLength(1);
+    expect(calls.filter((table) => table === 'space_external_events')).toHaveLength(1);
   });
 
   test('no reactiveDb → writes still succeed without throwing', () => {

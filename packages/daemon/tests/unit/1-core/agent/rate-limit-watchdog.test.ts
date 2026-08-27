@@ -427,6 +427,162 @@ describe('RateLimitWatchdog', () => {
     });
   });
 
+  describe('post-await write fencing for superseded episodes', () => {
+    it('does not write triedKeys when the episode is superseded during current-model resolution', async () => {
+      let resolveModel!: () => void;
+      const { deps } = createMockDeps({ chain: [] });
+      deps.resolveModelId = (_p: string, _model: string) =>
+        new Promise<string>((r) => {
+          resolveModel = () => r('claude-sonnet-4-5');
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+      await flush();
+      watchdog.cancel();
+      resolveModel();
+      const result = await pending;
+      await flush();
+      expect(result).toBe(true);
+      expect(watchdog.getState().triedEntries).toEqual([]);
+      expect(watchdog.getState().fallbackChain).toBeNull();
+      expect(watchdog.getState().retryCount).toBe(0);
+    });
+
+    it('does not write the fallback chain when the episode is superseded during chain resolution', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let resolveChain!: () => void;
+      const { deps } = createMockDeps({ chain: [A] });
+      deps.resolveChain = () =>
+        new Promise<FallbackModelEntry[]>((r) => {
+          resolveChain = () => r([A]);
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+      await flush();
+      watchdog.cancel();
+      resolveChain();
+      const result = await pending;
+      await flush();
+      expect(result).toBe(true);
+      expect(watchdog.getState().fallbackChain).toBeNull();
+      expect(watchdog.isPending()).toBe(false);
+    });
+
+    it('does not charge retryCount when the episode is superseded during the availability scan', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let releaseAvailability!: () => void;
+      const { deps } = createMockDeps({ chain: [A], available: () => false });
+      deps.isEntryAvailable = () =>
+        new Promise<boolean>((resolve) => {
+          releaseAvailability = () => resolve(false);
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+      await flush();
+      watchdog.cancel();
+      releaseAvailability();
+      const result = await pending;
+      await flush();
+      expect(result).toBe(true);
+      expect(watchdog.getState().retryCount).toBe(0);
+    });
+
+    it("a superseded cooldown retry's finalizer does not clear the successor's in-flight flag", async () => {
+      const resolvers: Array<(ok: boolean) => void> = [];
+      const retryCallback = mock(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolvers.push(resolve);
+          })
+      );
+      const { deps } = createMockDeps({ chain: [] });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      watchdog.setRetryCallback(retryCallback);
+
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+      expect(watchdog.retryNow()).toBe(true);
+      await flush();
+      expect(resolvers.length).toBe(1);
+
+      watchdog.cancel();
+      await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'y' });
+      expect(watchdog.retryNow()).toBe(true);
+      await flush();
+      expect(resolvers.length).toBe(2);
+      expect(watchdog.isRecoveryPending()).toBe(true);
+
+      resolvers[0]?.(true);
+      await flush();
+      await flush();
+      expect(watchdog.isRecoveryPending()).toBe(true);
+
+      resolvers[1]?.(true);
+      await flush();
+      await flush();
+      expect(watchdog.isRecoveryPending()).toBe(false);
+    });
+
+    it("a superseded fallback switch's finalizer does not clear the successor's pending switch", async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      const resolvers: Array<(ok: boolean) => void> = [];
+      const switchAndRetry = mock(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolvers.push(resolve);
+          })
+      );
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      deps.switchAndRetry = switchAndRetry as unknown as typeof deps.switchAndRetry;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+      await flush();
+      expect(resolvers.length).toBe(1);
+
+      watchdog.cancel();
+      await watchdog.scheduleRetry('429', { uuid: 'm2', content: 'y' });
+      await flush();
+      expect(resolvers.length).toBe(2);
+      expect(watchdog.getState().fallbackPending).toBe(true);
+      expect(watchdog.isRecoveryPending()).toBe(true);
+
+      resolvers[0]?.(true);
+      await flush();
+      await flush();
+      expect(watchdog.getState().fallbackPending).toBe(true);
+      expect(watchdog.isRecoveryPending()).toBe(true);
+
+      resolvers[1]?.(true);
+      await flush();
+      await flush();
+      expect(watchdog.getState().fallbackPending).toBe(false);
+      expect(watchdog.isRecoveryPending()).toBe(false);
+    });
+
+    it('clears the in-flight flag when a cancelled retry settles without a successor', async () => {
+      const { deps } = createMockDeps({ chain: [] });
+      let releaseRetry: (() => void) | undefined;
+      const retryGate = new Promise<void>((resolve) => {
+        releaseRetry = resolve;
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      watchdog.setRetryCallback(async () => {
+        await retryGate;
+        return true;
+      });
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'x' });
+      expect(watchdog.retryNow()).toBe(true);
+      watchdog.cancel();
+      releaseRetry?.();
+      await flush();
+      await flush();
+      expect(watchdog.isRecoveryPending()).toBe(false);
+    });
+  });
+
   describe('LLM refinement of unparseable limits', () => {
     it('re-arms the cooldown at the LLM-provided reset when the ladder was armed', async () => {
       const resetAt = Date.now() + 2 * 60 * 60 * 1000;
@@ -454,6 +610,43 @@ describe('RateLimitWatchdog', () => {
         kind: 'usage_limit',
         resetAt: resetAt + RESET_BUFFER_MS,
       });
+      watchdog.cancel();
+    });
+
+    it('aborts the refined cooldown when the query generation moved during classification (B5e)', async () => {
+      const resetAt = Date.now() + 2 * 60 * 60 * 1000;
+      let resolveClassification!: (value: {
+        resetAtMs: number | null;
+        kind: 'usage_limit' | null;
+        notALimit: boolean;
+      }) => void;
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.classifyUnknownLimit = () =>
+        new Promise((resolve) => {
+          resolveClassification = () =>
+            resolve({ resetAtMs: resetAt, kind: 'usage_limit', notALimit: false });
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+
+      await watchdog.scheduleRetry(
+        'firewall throttled, no timestamps in body',
+        {
+          uuid: 'm1',
+          content: 'x',
+        },
+        undefined,
+        3
+      );
+      queryGeneration = 9;
+      resolveClassification({ resetAtMs: resetAt, kind: 'usage_limit', notALimit: false });
+      await flush();
+      await flush();
+
+      expect(notifyPause).toHaveBeenCalledTimes(1);
+      const staleCalls = (stateManager.setRateLimitCooldown as ReturnType<typeof mock>).mock.calls;
+      expect(staleCalls).toHaveLength(1);
       watchdog.cancel();
     });
 
@@ -1040,6 +1233,31 @@ describe('RateLimitWatchdog', () => {
       expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
       expect(watchdog.isPending()).toBe(false);
     });
+
+    it('aborts the fallback switch if the query generation moved during resolution (B5e)', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let resolveChain!: () => void;
+      const { deps, switchAndRetry } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+      });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.resolveChain = () =>
+        new Promise<FallbackModelEntry[]>((r) => {
+          resolveChain = () => r([A]);
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      queryGeneration = 9;
+      resolveChain();
+      const result = await pending;
+      await flush();
+      expect(result).toBe(true);
+      expect(switchAndRetry).not.toHaveBeenCalled();
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+    });
   });
 
   describe('episode tracking across repeated 429', () => {
@@ -1198,6 +1416,26 @@ describe('RateLimitWatchdog', () => {
       watchdog.cancel();
     });
 
+    it('retryNow reports not-fired and retires the pause when the cooldown-owning query was superseded (B5e)', async () => {
+      const { deps, notifyPause, notifyResume } = createMockDeps({ chain: [] });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      const retryCallback = mock(async () => true);
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps, { maxAutoRetries: 3 });
+      watchdog.setRetryCallback(retryCallback);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      expect(watchdog.isPending()).toBe(true);
+      expect(notifyPause).toHaveBeenCalledTimes(1);
+
+      queryGeneration = 9;
+      expect(watchdog.retryNow()).toBe(false);
+      await flush();
+
+      expect(retryCallback).not.toHaveBeenCalled();
+      expect(notifyResume).toHaveBeenCalledTimes(1);
+      expect(watchdog.isPending()).toBe(false);
+    });
+
     it('keeps the task paused (no resume) when startup retries are exhausted', async () => {
       const { deps, notifyResume } = createMockDeps({ chain: [] });
       const retryCallback = mock(async () => false);
@@ -1316,6 +1554,79 @@ describe('RateLimitWatchdog', () => {
       expect(watchdog.isPending()).toBe(false);
     });
 
+    it('does not publish pause or arm a timer if the query generation moved during the cooldown state write (B5e)', async () => {
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      let writeCount = 0;
+      let resolveStateWrite!: () => void;
+      Object.assign(stateManager, {
+        setRateLimitCooldown: () =>
+          new Promise<void>((resolve) => {
+            writeCount += 1;
+            if (writeCount === 1) {
+              resolveStateWrite = () => resolve();
+            } else {
+              resolve();
+            }
+          }),
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      queryGeneration = 9;
+      resolveStateWrite();
+      await pending;
+      await flush();
+      expect(notifyPause).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+      watchdog.cancel();
+    });
+
+    it('aborts the cooldown schedule if the query generation moved during resolution (B5e)', async () => {
+      let resolveChain!: () => void;
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.resolveChain = () =>
+        new Promise<FallbackModelEntry[]>((r) => {
+          resolveChain = () => r([]);
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      queryGeneration = 9;
+      resolveChain();
+      const result = await pending;
+      await flush();
+      expect(result).toBe(true);
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(notifyPause).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+    });
+
+    it('aborts before writing episode state when the query moved during model resolution (B5e)', async () => {
+      let resolveCanonical!: () => void;
+      const { deps } = createMockDeps({ chain: [] });
+      let queryGeneration = 3;
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.resolveModelId = () =>
+        new Promise<string>((r) => {
+          resolveCanonical = () => r('claude-sonnet');
+        });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const pending = watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      queryGeneration = 9;
+      resolveCanonical();
+      const result = await pending;
+      await flush();
+      expect(result).toBe(true);
+      expect(watchdog.getState().triedEntries).toEqual([]);
+      expect(watchdog.getState().retryCount).toBe(0);
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+    });
+
     it('cancel() clears the stale last user message (no re-entry re-arm)', async () => {
       const { deps } = createMockDeps({ chain: [] });
       const watchdog = new RateLimitWatchdog('s', stateManager, deps);
@@ -1340,6 +1651,90 @@ describe('RateLimitWatchdog', () => {
       await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' });
       await flush();
       expect(receivedGen).toBe(0);
+    });
+
+    it('threads the captured query generation into switchAndRetry (B5e)', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let receivedQueryGen: number | undefined;
+      let queryGeneration = 3;
+      const { deps } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.switchAndRetry = mock(async (_msg, _entry, _gen: number, qGen?: number) => {
+        receivedQueryGen = qGen;
+        return true;
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      expect(receivedQueryGen).toBe(3);
+    });
+
+    it('skips the re-entry deferred cooldown when the query moved after a rejected switch (B5e)', async () => {
+      const A: FallbackModelEntry = { provider: 'glm', model: 'glm-a' };
+      let switchCalls = 0;
+      let queryGeneration = 3;
+      const { deps, notifyPause } = createMockDeps({
+        current: { provider: 'anthropic', model: 'sonnet' },
+        chain: [A],
+      });
+      deps.getQueryGeneration = () => queryGeneration;
+      deps.switchAndRetry = mock(async () => {
+        switchCalls += 1;
+        if (switchCalls === 1) {
+          queryGeneration = 9;
+          throw new Error('switch rejected');
+        }
+        return false;
+      });
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      await flush();
+      await flush();
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(notifyPause).not.toHaveBeenCalled();
+      watchdog.cancel();
+    });
+
+    it('rejects an already-stale recovery at entry before touching the episode (B5e)', async () => {
+      let queryGeneration = 3;
+      const { deps, notifyPause } = createMockDeps({ chain: [] });
+      deps.getQueryGeneration = () => queryGeneration;
+      queryGeneration = 9;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const result = await watchdog.scheduleRetry(
+        '429 rate limit',
+        { uuid: 'm1', content: 'hi' },
+        undefined,
+        3
+      );
+      expect(result).toBe(true);
+      expect(watchdog.getState().lastUserMessage).toBeNull();
+      expect(watchdog.getState().retryCount).toBe(0);
+      expect(stateManager.setRateLimitCooldown).not.toHaveBeenCalled();
+      expect(notifyPause).not.toHaveBeenCalled();
+      expect(watchdog.isPending()).toBe(false);
+    });
+
+    it('aborts a fired cooldown retry when the query generation moved after arming (B5e)', async () => {
+      let queryGeneration = 3;
+      const { deps, notifyResume } = createMockDeps({ chain: [] });
+      deps.getQueryGeneration = () => queryGeneration;
+      const watchdog = new RateLimitWatchdog('s', stateManager, deps);
+      const retryCallback = mock(async (): Promise<boolean> => true);
+      watchdog.setRetryCallback(retryCallback);
+      await watchdog.scheduleRetry('429', { uuid: 'm1', content: 'hi' }, undefined, 3);
+      queryGeneration = 9;
+
+      await (
+        watchdog as unknown as { fireCooldownRetry: (m: string) => Promise<void> }
+      ).fireCooldownRetry('429');
+
+      expect(retryCallback).not.toHaveBeenCalled();
+      expect(notifyResume).toHaveBeenCalledTimes(1);
+      watchdog.cancel();
     });
 
     it('threads the captured episode generation into the retry callback', async () => {

@@ -63,6 +63,7 @@ describe('scope-config', () => {
         'space_agent_inactivity_config',
         'space_agent_inactivity_claims',
         'space_worktrees',
+        'space_workspaces',
         'workflow_hook_state',
         'workflow_hook_result_artifacts',
         'channel_cycles',
@@ -85,7 +86,7 @@ describe('scope-config', () => {
         'session_groups',
         'session_group_members',
       ]);
-      expect(names).toHaveLength(32);
+      expect(names).toHaveLength(33);
     });
 
     it('all table configs have a description', () => {

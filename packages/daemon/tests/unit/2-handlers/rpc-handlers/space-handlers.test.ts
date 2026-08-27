@@ -1,7 +1,17 @@
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
-import type { Space, SpaceCreateResult, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
+import type {
+  Space,
+  SpaceCreateResult,
+  SpaceTask,
+  SpaceWorkspace,
+  SpaceWorkflowRun,
+} from '@hyperneo/shared';
 import { setupSpaceHandlers } from '../../../../src/lib/rpc-handlers/space-handlers';
+import {
+  WorkspaceRegistrationError,
+  WorkspaceRemovalBlockedError,
+} from '../../../../src/lib/space/managers/space-workspace-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -59,6 +69,16 @@ const mockRun: SpaceWorkflowRun = {
   updatedAt: NOW,
 };
 
+const mockWorkspace: SpaceWorkspace = {
+  id: 'ws-1',
+  spaceId: 'space-1',
+  path: '/tmp/test-workspace',
+  label: 'test-workspace',
+  isPrimary: true,
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -108,7 +128,23 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
     deleteSpace: mock(async () => true),
     addSession: mock(async () => space!),
     removeSession: mock(async () => space!),
+    registerWorkspace: mock(async () => mockWorkspace),
+    removeWorkspace: mock(() => true),
+    listWorkspaces: mock(() => [mockWorkspace]),
+    updateWorkspaceLabel: mock(() => true),
   } as unknown as SpaceManager;
+}
+
+function registrationError(
+  reason: 'path_claimed_by_another_space' | 'not_a_git_repository_root',
+  message: string
+): WorkspaceRegistrationError {
+  return new WorkspaceRegistrationError(message, reason, {
+    accepted: false,
+    reason,
+    message,
+    canonicalPath: null,
+  });
 }
 
 function createMockTaskRepo(tasks: SpaceTask[] = [mockTask]): SpaceTaskRepository {
@@ -309,6 +345,60 @@ describe('space-handlers', () => {
 
       const [params] = (spaceManager.createSpace as ReturnType<typeof mock>).mock.calls[0];
       expect(params.autonomyLevel).toBeUndefined();
+    });
+
+    it('passes additionalWorkspaces through to SpaceManager.createSpace', async () => {
+      await call('space.create', {
+        workspacePath: '/tmp/x',
+        name: 'X',
+        additionalWorkspaces: [{ path: '/tmp/repo-a', label: 'Alpha' }, { path: '/tmp/repo-b' }],
+      });
+
+      const [params] = (spaceManager.createSpace as ReturnType<typeof mock>).mock.calls[0];
+      expect(params.additionalWorkspaces).toEqual([
+        { path: '/tmp/repo-a', label: 'Alpha' },
+        { path: '/tmp/repo-b' },
+      ]);
+    });
+
+    it('throws when an additional workspace has no path', async () => {
+      await expect(
+        call('space.create', {
+          workspacePath: '/tmp/x',
+          name: 'X',
+          additionalWorkspaces: [{ label: 'Alpha' }],
+        })
+      ).rejects.toThrow('additionalWorkspaces[0].path is required');
+    });
+
+    it('throws when an additional workspace path is not a string, before createSpace runs', async () => {
+      await expect(
+        call('space.create', {
+          workspacePath: '/tmp/x',
+          name: 'X',
+          additionalWorkspaces: [{ path: 123 }],
+        })
+      ).rejects.toThrow('additionalWorkspaces[0].path is required');
+      expect(spaceManager.createSpace).not.toHaveBeenCalled();
+    });
+
+    it('propagates registration errors and publishes nothing when a secondary is invalid', async () => {
+      (spaceManager.createSpace as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw registrationError(
+          'not_a_git_repository_root',
+          'Workspace path is not a git repository root: /tmp/plain-dir'
+        );
+      });
+
+      await expect(
+        call('space.create', {
+          workspacePath: '/tmp/x',
+          name: 'X',
+          additionalWorkspaces: [{ path: '/tmp/plain-dir' }],
+        })
+      ).rejects.toThrow('not a git repository root');
+      expect(internalEventBus.publish).not.toHaveBeenCalled();
+      expect(spaceManager.addSession).not.toHaveBeenCalled();
     });
 
     it('creates space:chat:${spaceId} session when sessionManager is provided', async () => {
@@ -825,6 +915,170 @@ describe('space-handlers', () => {
 
     it('throws when id is missing', async () => {
       await expect(call('space.resume', {})).rejects.toThrow('id is required');
+    });
+  });
+
+  describe('space.workspace.list', () => {
+    beforeEach(() => setup());
+
+    it('returns the workspaces of the space', async () => {
+      const result = await call('space.workspace.list', { spaceId: 'space-1' });
+
+      expect(result).toEqual([mockWorkspace]);
+      expect(spaceManager.listWorkspaces).toHaveBeenCalledWith('space-1');
+    });
+
+    it('propagates unknown-space errors from the manager', async () => {
+      (spaceManager.listWorkspaces as ReturnType<typeof mock>).mockImplementation(() => {
+        throw new Error('Space not found: ghost');
+      });
+
+      await expect(call('space.workspace.list', { spaceId: 'ghost' })).rejects.toThrow(
+        'Space not found: ghost'
+      );
+    });
+  });
+
+  describe('space.workspace.add', () => {
+    beforeEach(() => setup());
+
+    it('registers the workspace and returns the record', async () => {
+      const result = await call('space.workspace.add', {
+        spaceId: 'space-1',
+        path: '/tmp/other-repo',
+        label: 'other-repo',
+      });
+
+      expect(result).toEqual(mockWorkspace);
+      expect(spaceManager.registerWorkspace).toHaveBeenCalledWith(
+        'space-1',
+        '/tmp/other-repo',
+        'other-repo'
+      );
+    });
+
+    it('forwards an undefined label when none is provided', async () => {
+      await call('space.workspace.add', { spaceId: 'space-1', path: '/tmp/other-repo' });
+
+      expect(spaceManager.registerWorkspace).toHaveBeenCalledWith(
+        'space-1',
+        '/tmp/other-repo',
+        undefined
+      );
+    });
+
+    it('rejects paths already claimed by another space', async () => {
+      (spaceManager.registerWorkspace as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw registrationError(
+          'path_claimed_by_another_space',
+          'Workspace path is already claimed by space space-2: /tmp/other-repo'
+        );
+      });
+
+      await expect(
+        call('space.workspace.add', { spaceId: 'space-1', path: '/tmp/other-repo' })
+      ).rejects.toThrow('already claimed by space space-2');
+    });
+
+    it('rejects paths that are not git repository roots', async () => {
+      (spaceManager.registerWorkspace as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw registrationError(
+          'not_a_git_repository_root',
+          'Workspace path is not a git repository root: /tmp/plain-dir'
+        );
+      });
+
+      await expect(
+        call('space.workspace.add', { spaceId: 'space-1', path: '/tmp/plain-dir' })
+      ).rejects.toThrow('not a git repository root');
+    });
+  });
+
+  describe('space.workspace.remove', () => {
+    beforeEach(() => setup());
+
+    it('removes the workspace and returns success', async () => {
+      const result = await call('space.workspace.remove', {
+        spaceId: 'space-1',
+        workspaceId: 'ws-1',
+      });
+
+      expect(result).toEqual({ success: true });
+      expect(spaceManager.removeWorkspace).toHaveBeenCalledWith('space-1', 'ws-1');
+    });
+
+    it('throws when the manager reports the workspace missing', async () => {
+      (spaceManager.removeWorkspace as ReturnType<typeof mock>).mockImplementation(() => false);
+
+      await expect(
+        call('space.workspace.remove', { spaceId: 'space-1', workspaceId: 'ws-ghost' })
+      ).rejects.toThrow('Workspace not found: ws-ghost');
+    });
+
+    it('rejects removal of the primary workspace', async () => {
+      (spaceManager.removeWorkspace as ReturnType<typeof mock>).mockImplementation(() => {
+        throw new WorkspaceRemovalBlockedError(
+          'Cannot remove the primary workspace of space space-1',
+          'primary'
+        );
+      });
+
+      await expect(
+        call('space.workspace.remove', { spaceId: 'space-1', workspaceId: 'ws-1' })
+      ).rejects.toThrow('Cannot remove the primary workspace');
+    });
+
+    it('rejects removal while active sessions reference the workspace', async () => {
+      (spaceManager.removeWorkspace as ReturnType<typeof mock>).mockImplementation(() => {
+        throw new WorkspaceRemovalBlockedError(
+          'Cannot remove workspace ws-2 while 2 active sessions reference it',
+          'active_sessions'
+        );
+      });
+
+      await expect(
+        call('space.workspace.remove', { spaceId: 'space-1', workspaceId: 'ws-2' })
+      ).rejects.toThrow('2 active sessions reference it');
+    });
+  });
+
+  describe('space.workspace.updateLabel', () => {
+    beforeEach(() => setup());
+
+    it('updates the label and returns success', async () => {
+      const result = await call('space.workspace.updateLabel', {
+        spaceId: 'space-1',
+        workspaceId: 'ws-1',
+        label: 'renamed',
+      });
+
+      expect(result).toEqual({ success: true });
+      expect(spaceManager.updateWorkspaceLabel).toHaveBeenCalledWith('space-1', 'ws-1', 'renamed');
+    });
+
+    it('throws when the manager reports the workspace missing', async () => {
+      (spaceManager.updateWorkspaceLabel as ReturnType<typeof mock>).mockImplementation(
+        () => false
+      );
+
+      await expect(
+        call('space.workspace.updateLabel', {
+          spaceId: 'space-1',
+          workspaceId: 'ws-ghost',
+          label: 'renamed',
+        })
+      ).rejects.toThrow('Workspace not found: ws-ghost');
+    });
+
+    it('throws when label is not a string', async () => {
+      await expect(
+        call('space.workspace.updateLabel', {
+          spaceId: 'space-1',
+          workspaceId: 'ws-1',
+          label: 42,
+        })
+      ).rejects.toThrow('label must be a string');
+      expect(spaceManager.updateWorkspaceLabel).not.toHaveBeenCalled();
     });
   });
 });

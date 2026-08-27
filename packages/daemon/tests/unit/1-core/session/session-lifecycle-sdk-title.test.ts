@@ -132,7 +132,11 @@ import type { WorktreeManager } from '../../../../src/lib/worktree-manager';
 import type { Database } from '../../../../src/storage/database';
 
 type TitleSdkInvoker = {
-  generateTitleWithSdk(provider: string, modelId: string, messageText: string): Promise<string>;
+  generateTitleWithSdk(
+    provider: string,
+    modelId: string,
+    messageText: string
+  ): Promise<string | null>;
 };
 
 function runTitleSdk(
@@ -140,7 +144,7 @@ function runTitleSdk(
   provider = 'anthropic',
   modelId = 'claude-sonnet-4-20250514',
   messageText = 'Create a login form'
-): Promise<string> {
+): Promise<string | null> {
   return (lifecycle as unknown as TitleSdkInvoker).generateTitleWithSdk(
     provider,
     modelId,
@@ -174,7 +178,7 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
           provider: string,
           modelId: string,
           messageText: string
-        ) => Promise<string>;
+        ) => Promise<string | null>;
       }
     ).generateTitleWithSdk(provider, modelId, messageText);
 
@@ -406,13 +410,44 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
     await generateTitleWithSdkForTest('glm', 'glm-5.1');
 
     expect(lastTitleQueryOptions?.model).toBe('default');
-    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
-    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');
-    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5-turbo');
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    expect(lastTitleProcessEnv?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
     const env = lastTitleQueryOptions?.env as Record<string, string | undefined>;
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5-turbo');
+  });
+
+  it('restores the applied provider env before invoking the SDK query', async () => {
+    const events: string[] = [];
+    mockTitleProviderService.applyEnvVarsToProcessForProvider = mock(async () => {
+      events.push('apply');
+      process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = 'glm-5-turbo';
+      return { ANTHROPIC_DEFAULT_HAIKU_MODEL: undefined };
+    });
+    mockTitleProviderService.restoreEnvVars = mock((original) => {
+      events.push(`restore:${Object.keys(original).length}`);
+      for (const [key, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+    config.titleGenerationQueryForTesting = (params) => {
+      const opts = params.options ?? {};
+      if ('thinking' in opts) {
+        lastTitleQueryOptions = opts;
+        events.push(`query:${process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? 'restored'}`);
+      }
+      return makeQueryMock(mockSdkMessages);
+    };
+
+    const title = await generateTitleWithSdkForTest('glm', 'glm-5.1');
+
+    expect(title).toBe('My Generated Title');
+    expect(events).toEqual(['apply', 'restore:1', 'query:restored', 'restore:0']);
+    const env = lastTitleQueryOptions?.env as Record<string, string | undefined>;
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
   });
 
   it('should extract title from text blocks', async () => {
@@ -491,6 +526,26 @@ describe('SessionLifecycle - generateTitleWithSdk (thinking disabled)', () => {
 
     expect(result.isFallback).toBe(true);
     expect(result.title).toBe('Create a login form');
+  });
+
+  it('should fall back to message text when the provider has no visible models', async () => {
+    mockTitleProviderService.getTitleGenerationModels = mock(async () => null);
+    lifecycle = new SessionLifecycleCtor(
+      mockDb,
+      mockWorktreeManager,
+      mockSessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      config,
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+
+    const result = await lifecycle.generateTitleAndRenameBranch('test-id', 'Create a login form');
+
+    expect(result.isFallback).toBe(true);
+    expect(result.title).toBe('Create a login form');
+    expect(lastTitleQueryOptions).toBeUndefined();
   });
 
   it('should skip auto-title generation when a user has manually renamed the session', async () => {

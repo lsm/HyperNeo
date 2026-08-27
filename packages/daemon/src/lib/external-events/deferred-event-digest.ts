@@ -42,7 +42,7 @@ export interface ExternalEventEssenceEntry {
   receivedAt?: number;
 }
 
-export type DeferredExternalEventEntry =
+type DeferredExternalEventEntry =
   | { kind: 'event'; essence: ExternalEventEssenceEntry }
   | { kind: 'fold'; events: ExternalEventEssenceEntry[]; droppedCount?: number };
 
@@ -248,7 +248,7 @@ function rowText(row: SDKUserMessage): string {
     .join('\n');
 }
 
-export function isSystemInjectedRow(row: SDKUserMessage): boolean {
+function isSystemInjectedRow(row: SDKUserMessage): boolean {
   const inputKind = (row as SDKUserMessage & { inputKind?: unknown }).inputKind;
   if (inputKind === 'system') return true;
   return inputKind === undefined && row.isSynthetic === true;
@@ -259,12 +259,12 @@ export function parseDeferredDeliveryRow(row: SDKUserMessage): DeferredExternalE
   return parseDeferredExternalEventText(rowText(row));
 }
 
-export function isDigestTierEntry(entry: DeferredExternalEventEntry): boolean {
+function isDigestTierEntry(entry: DeferredExternalEventEntry): boolean {
   if (entry.kind === 'fold') return true;
   return classifyExternalEventTier(entry.essence.topic) === 'digest';
 }
 
-export interface DeferredExternalEventPartition {
+interface DeferredExternalEventPartition {
   digestRows: DeferredDeliveryRow[];
   digestEvents: ExternalEventEssenceEntry[];
   droppedCount: number;
@@ -304,7 +304,7 @@ export function partitionDeferredExternalEventRows(
 
 export const DEFERRED_EXTERNAL_EVENT_ROW_CAP = 100;
 
-export const DEFERRED_EVENT_ENVELOPE_MAX_EVENTS = 200;
+const DEFERRED_EVENT_ENVELOPE_MAX_EVENTS = 200;
 
 const DIGEST_SNIPPET_MAX_CHARS = 160;
 
@@ -455,17 +455,22 @@ interface DigestRenderOptions {
   renderAllReviewBodies?: boolean;
 }
 
-function renderDigestGroup(
-  group: DigestGroup,
-  includeDate: boolean,
-  options: DigestRenderOptions = {}
+export interface RenderEventBlockOptions extends DigestRenderOptions {
+  count?: number;
+  events?: ExternalEventEssenceEntry[];
+  includeDate?: boolean;
+}
+
+export function renderEventBlock(
+  entry: ExternalEventEssenceEntry,
+  options: RenderEventBlockOptions = {}
 ): string {
   const snippetMaxChars = options.snippetMaxChars ?? DIGEST_SNIPPET_MAX_CHARS;
-  const events = group.events;
-  const latest = events[events.length - 1];
-  if (!latest) return '';
-  const count = events.length;
-  switch (group.kind) {
+  const includeDate = options.includeDate ?? false;
+  const events = options.events ?? [entry];
+  const latest = entry;
+  const count = options.count ?? events.length;
+  switch (digestGroupKind(entry)) {
     case 'check': {
       const cancelled = events.filter((entry) => cancelledConclusion(entry.conclusion)).length;
       const mostlyCancelled =
@@ -567,6 +572,17 @@ function renderDigestGroup(
       return `- ${parts.join(' — ')}${digestDetailSuffix(latest)}`;
     }
   }
+}
+
+function renderDigestGroup(
+  group: DigestGroup,
+  includeDate: boolean,
+  options: DigestRenderOptions = {}
+): string {
+  const events = group.events;
+  const latest = events[events.length - 1];
+  if (!latest) return '';
+  return renderEventBlock(latest, { ...options, includeDate, count: events.length, events });
 }
 
 function digestHeader(
@@ -707,7 +723,7 @@ async function saveFoldRowIdempotently(
   return { dbId: await ops.saveRow(withUuid, sendStatus), message: withUuid };
 }
 
-export interface DeferredEventDigestFlushResult {
+interface DeferredEventDigestFlushResult {
   digestRow: DeferredDeliveryRow | null;
   remainder: DeferredDeliveryRow[];
   foldedCount: number;
@@ -743,7 +759,7 @@ export async function foldDeferredExternalEventsAtFlush(args: {
   };
 }
 
-export interface DeferredEventOverflowFold {
+interface DeferredEventOverflowFold {
   overflowRows: DeferredDeliveryRow[];
   events: ExternalEventEssenceEntry[];
   droppedCount: number;

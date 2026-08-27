@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { ContextTracker, reserveBasedThreshold } from '../../../../src/lib/agent/context-tracker';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { ContextInfo } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
+import { ContextTracker, reserveBasedThreshold } from '../../../../src/lib/agent/context-tracker';
 
 describe('ContextTracker', () => {
   let tracker: ContextTracker;
@@ -238,6 +238,59 @@ describe('ContextTracker', () => {
       expect(tracker.shouldCompactAt(0)).toBe(false);
       expect(tracker.shouldCompactAt(-1)).toBe(false);
       expect(tracker.shouldCompactAt(Number.NaN)).toBe(false);
+    });
+  });
+
+  describe('compaction cooldown scope', () => {
+    it('a triggered mark suppresses re-arming for every threshold within the cooldown', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'kimi-for-coding',
+        totalUsed: 250_000,
+        totalCapacity: 262_144,
+        percentUsed: 95,
+        breakdown: {},
+      });
+      tracker.markCompactionTriggered();
+      expect(tracker.shouldCompactAt(217_144, 60_000)).toBe(false);
+      expect(tracker.shouldCompactAt(150_000, 60_000)).toBe(false);
+    });
+
+    it('every threshold re-arms once the cooldown elapses', () => {
+      tracker.updateWithDetailedBreakdown({
+        model: 'kimi-for-coding',
+        totalUsed: 250_000,
+        totalCapacity: 262_144,
+        percentUsed: 95,
+        breakdown: {},
+      });
+      tracker.markCompactionTriggered();
+      expect(tracker.shouldCompactAt(217_144, 0)).toBe(true);
+      expect(tracker.shouldCompactAt(150_000, 0)).toBe(true);
+    });
+  });
+
+  describe('budget-keyed compaction cooldown', () => {
+    it('suppresses re-arming for the same budget within the cooldown', () => {
+      tracker.markCompactionTriggered(115_200);
+      expect(tracker.isCoolingDown(115_200, 60_000)).toBe(true);
+    });
+
+    it('allows re-arming immediately when the active budget changed', () => {
+      tracker.markCompactionTriggered(900_000);
+      expect(tracker.isCoolingDown(115_200, 60_000)).toBe(false);
+    });
+
+    it('a boundary mark without a budget key suppresses every budget', () => {
+      tracker.markCompactionTriggered();
+      expect(tracker.isCoolingDown(115_200, 60_000)).toBe(true);
+      expect(tracker.isCoolingDown(900_000, 60_000)).toBe(true);
+    });
+
+    it('clearing the cooldown re-arms the backstop immediately', () => {
+      tracker.markCompactionTriggered(115_200);
+      tracker.clearCompactionCooldown();
+      expect(tracker.isCoolingDown(115_200, 60_000)).toBe(false);
+      expect(tracker.isCoolingDown(undefined, 60_000)).toBe(false);
     });
   });
 

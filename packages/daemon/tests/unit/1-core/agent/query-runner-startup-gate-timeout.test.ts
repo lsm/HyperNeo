@@ -49,9 +49,32 @@ import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
+import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
 
 function sdkMessage(): SDKMessage {
   return { type: 'system', subtype: 'init', session_id: 'sdk-session' } as unknown as SDKMessage;
+}
+
+function statusBlipMessage(): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'status',
+    status: 'connected',
+    session_id: 'sdk-session',
+  } as unknown as SDKMessage;
+}
+
+function apiRetryMessage(): SDKMessage {
+  return {
+    type: 'system',
+    subtype: 'api_retry',
+    attempt: 1,
+    max_retries: 10,
+    retry_delay_ms: 1000,
+    error_status: 529,
+    error: 'overloaded_error',
+    session_id: 'sdk-session',
+  } as unknown as SDKMessage;
 }
 
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
@@ -199,6 +222,7 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
       incrementQueryGeneration: () => ++queryGeneration,
       getQueryGeneration: () => queryGeneration,
       isCleaningUp: () => false,
+      attemptTokens: new QueryAttemptRegistry(),
 
       onSDKMessage: async () => {},
       onSlashCommandsFetched: async () => {},
@@ -230,6 +254,13 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
       }
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
+  }
+
+  async function assertNoStartupAbort(spawnCount: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(events.filter((event) => event.startsWith('close'))).toEqual([]);
+    expect(events.filter((event) => event.startsWith('spawn')).length).toBe(spawnCount);
+    expect(handleErrorSpy.mock.calls.length).toBe(0);
   }
 
   let spawnCounter: number;
@@ -389,5 +420,76 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
       queued: 0,
       maxConcurrent: 1,
     });
+  });
+
+  it('disarms the startup watchdog when the first message indicates the query engaged (system init)', async () => {
+    const { runner } = createRunner('s1');
+    runner.start();
+
+    await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 1);
+    spawnNexts[0][0].resolve({ value: sdkMessage(), done: false });
+
+    await waitFor(() => events.filter((event) => event === 'free:s1').length === 1);
+    await assertNoStartupAbort(1);
+    expect(events.filter((event) => event === 'free:s1').length).toBe(1);
+  });
+
+  it('keeps the startup watchdog armed when the first message is a system status blip', async () => {
+    const { runner, ctx } = createRunner('s1');
+    runner.start();
+
+    await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 1);
+    spawnNexts[0][0].resolve({ value: statusBlipMessage(), done: false });
+
+    await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 2);
+    expect(ctx.firstMessageReceived).toBe(false);
+
+    await assertShortTimeoutActive();
+    await waitFor(() => events.includes('spawn1'));
+    await ctx.queryPromise;
+    await waitFor(() => handleErrorSpy.mock.calls.length > 0);
+
+    expect(handleErrorSpy.mock.calls[0][2]).toBe('timeout');
+    expect(getSdkStartupGate().getStats()).toEqual({
+      active: 0,
+      queued: 0,
+      maxConcurrent: 1,
+    });
+  });
+
+  it('keeps the startup watchdog armed when the first message is an api_retry blip', async () => {
+    const { runner, ctx } = createRunner('s1');
+    runner.start();
+
+    await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 1);
+    spawnNexts[0][0].resolve({ value: apiRetryMessage(), done: false });
+
+    await assertShortTimeoutActive();
+    await waitFor(() => events.includes('spawn1'));
+    await ctx.queryPromise;
+    await waitFor(() => handleErrorSpy.mock.calls.length > 0);
+
+    expect(handleErrorSpy.mock.calls[0][2]).toBe('timeout');
+    expect(getSdkStartupGate().getStats()).toEqual({
+      active: 0,
+      queued: 0,
+      maxConcurrent: 1,
+    });
+  });
+
+  it('disarms at the first meaningful message when status blips arrive first', async () => {
+    const { runner, ctx } = createRunner('s1');
+    runner.start();
+
+    await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 1);
+    spawnNexts[0][0].resolve({ value: statusBlipMessage(), done: false });
+    await waitFor(() => (spawnNexts[0]?.length ?? 0) >= 2);
+    expect(ctx.firstMessageReceived).toBe(false);
+    spawnNexts[0][1].resolve({ value: sdkMessage(), done: false });
+
+    await waitFor(() => events.filter((event) => event === 'free:s1').length === 1);
+    await waitFor(() => ctx.firstMessageReceived === true);
+    await assertNoStartupAbort(1);
+    expect(events.filter((event) => event === 'free:s1').length).toBe(1);
   });
 });

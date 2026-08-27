@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseLock } from '../../../../src/storage/database-lock';
@@ -122,6 +122,84 @@ describe('DatabaseLock', () => {
   describe('stale lock detection', () => {
     it('should take over a stale lock from a dead process', () => {
       writeFileSync(lockPath, '2147483647', 'utf-8');
+
+      const lock = new DatabaseLock(dbPath);
+      expect(() => lock.acquire()).not.toThrow();
+
+      const content = readFileSync(lockPath, 'utf-8');
+      expect(parseInt(content, 10)).toBe(process.pid);
+
+      lock.release();
+    });
+
+    it('should take over a lock file with non-numeric content', () => {
+      writeFileSync(lockPath, 'not-a-pid', 'utf-8');
+
+      const lock = new DatabaseLock(dbPath);
+      expect(() => lock.acquire()).not.toThrow();
+
+      const content = readFileSync(lockPath, 'utf-8');
+      expect(parseInt(content, 10)).toBe(process.pid);
+
+      lock.release();
+    });
+
+    it('should retry when the lock file is empty and leave it untouched', () => {
+      writeFileSync(lockPath, '', 'utf-8');
+
+      const lock = new DatabaseLock(dbPath);
+      let threw = false;
+      try {
+        lock.acquire();
+        lock.release();
+      } catch (err) {
+        threw = true;
+        expect(String(err)).toContain('after repeated attempts');
+      }
+      expect(threw).toBe(true);
+      expect(existsSync(lockPath)).toBe(true);
+      expect(readFileSync(lockPath, 'utf-8')).toBe('');
+    });
+
+    it('should derive the lock from a dangling symlink target', () => {
+      const realDir = join(testDir, 'real');
+      mkdirSync(realDir, { recursive: true });
+      const linkPath = join(testDir, 'link.db');
+      symlinkSync(join(realDir, 'daemon.db'), linkPath);
+
+      const lock = new DatabaseLock(linkPath);
+      lock.acquire();
+
+      expect(existsSync(join(realDir, 'daemon.db.lock'))).toBe(true);
+      expect(existsSync(`${linkPath}.lock`)).toBe(false);
+      expect(parseInt(readFileSync(join(realDir, 'daemon.db.lock'), 'utf-8'), 10)).toBe(
+        process.pid
+      );
+
+      lock.release();
+      expect(existsSync(join(realDir, 'daemon.db.lock'))).toBe(false);
+    });
+
+    it('should refuse while a takeover marker is present and leave it untouched', () => {
+      writeFileSync(lockPath, '999999999', 'utf-8');
+      writeFileSync(`${lockPath}.takeover`, String(process.ppid ?? 1), 'utf-8');
+
+      const lock = new DatabaseLock(dbPath);
+      let threw = false;
+      try {
+        lock.acquire();
+        lock.release();
+      } catch (err) {
+        threw = true;
+        expect(String(err)).toContain('after repeated attempts');
+        expect(String(err)).toContain('.takeover');
+      }
+      expect(threw).toBe(true);
+      expect(existsSync(`${lockPath}.takeover`)).toBe(true);
+    });
+
+    it('should take over a lock naming its own pid', () => {
+      writeFileSync(lockPath, String(process.pid), 'utf-8');
 
       const lock = new DatabaseLock(dbPath);
       expect(() => lock.acquire()).not.toThrow();

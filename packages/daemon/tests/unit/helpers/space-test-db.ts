@@ -304,6 +304,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			archived_at INTEGER,
 			restrictions TEXT,
 			spawn_reservation_token TEXT,
+			workspace_path TEXT,
 			created_at INTEGER NOT NULL,
 			started_at INTEGER,
 			completed_at INTEGER,
@@ -363,6 +364,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,
+			workspace_path TEXT,
 			revision INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
@@ -390,6 +392,24 @@ export function createSpaceTables(db: BunDatabase): void {
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_space_worktrees_space_id ON space_worktrees(space_id)`);
+
+  db.exec(`
+			CREATE TABLE IF NOT EXISTS space_workspaces (
+				id TEXT PRIMARY KEY,
+				space_id TEXT NOT NULL,
+				path TEXT NOT NULL,
+				label TEXT NOT NULL DEFAULT '',
+				is_primary INTEGER NOT NULL DEFAULT 0 CHECK(is_primary IN (0, 1)),
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				UNIQUE(space_id, path),
+				FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+			)
+		`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_workspaces_space_id ON space_workspaces(space_id)`);
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_space_workspaces_primary ON space_workspaces(space_id) WHERE is_primary = 1`
+  );
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_agent_memory (
@@ -809,6 +829,8 @@ export function createSpaceTables(db: BunDatabase): void {
 			summary TEXT NOT NULL,
 			external_url TEXT,
 			payload_json TEXT NOT NULL,
+			urgency TEXT,
+			render TEXT,
 			state TEXT NOT NULL DEFAULT 'published'
 				CHECK(state IN ('published', 'delivered', 'failed', 'ignored')),
 			created_at INTEGER NOT NULL,

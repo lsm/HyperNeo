@@ -441,7 +441,7 @@ function buildPlanDefinitions(): PlanDefinition[] {
     namedQuery('sessionGroupMessages.byGroup', ['group-hot']),
     namedQuery('spaceTaskActivity.byTask', [HOT_TASK]),
     namedQuery('spaceTaskMessages.byTask', [HOT_TASK]),
-    namedQuery('spaceTaskMessages.byTask.compact', [HOT_TASK]),
+    namedQuery('spaceTaskMessages.byTask.compact', [HOT_TASK, 20]),
     namedQuery('spaceTaskActiveTurn.byTask', [HOT_TASK]),
     namedQuery('actorMessages.byTask', [HOT_TASK]),
     namedQuery('actorMessages.byWorkflowRun', ['run-hot', 100, 0]),

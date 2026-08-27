@@ -56,7 +56,11 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
   messageHub.onRequest('spaceGoal.create', async (data) => {
     const params = data as Parameters<SpaceGoalService['createGoal']>[0];
     await requireSpace(params.spaceId);
-    return { goal: goalService.createGoal(params, { source: 'rpc' }) };
+    const workspacePath = await goalService.resolveGoalWorkspacePath(
+      params.spaceId,
+      params.workspacePath
+    );
+    return { goal: goalService.createGoal({ ...params, workspacePath }, { source: 'rpc' }) };
   });
 
   messageHub.onRequest('spaceGoal.list', async (data) => {
@@ -98,6 +102,10 @@ export function setupSpaceGoalHandlers(messageHub: MessageHub, deps: SpaceGoalHa
       autoTriggerNext: params.autoTriggerNext,
       checkInCronExpression: params.checkInCronExpression,
       checkInTimezone: params.checkInTimezone,
+      workspacePath: await goalService.resolveGoalWorkspacePath(
+        params.spaceId,
+        params.workspacePath
+      ),
     };
     return { goal: goalService.updateGoal(params.goalId, updates, { source: 'rpc' }) };
   });

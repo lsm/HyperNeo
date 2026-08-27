@@ -245,6 +245,7 @@ export interface SpaceCreateResult extends Space {
 export interface CreateSpaceParams {
   workspacePath: string;
   name: string;
+  additionalWorkspaces?: { path: string; label?: string }[];
   description?: string;
   backgroundContext?: string;
   instructions?: string;
@@ -269,6 +270,33 @@ export interface UpdateSpaceParams {
   config?: SpaceConfig;
   taskAgentConfig?: TaskAgentConfig | null;
   settingSources?: SettingSource[] | null;
+}
+
+export interface SpaceWorkspace {
+  id: string;
+  spaceId: string;
+  path: string;
+  label: string;
+  isPrimary: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SpaceWorkspaceAddParams {
+  spaceId: string;
+  path: string;
+  label?: string;
+}
+
+export interface SpaceWorkspaceRemoveParams {
+  spaceId: string;
+  workspaceId: string;
+}
+
+export interface SpaceWorkspaceUpdateLabelParams {
+  spaceId: string;
+  workspaceId: string;
+  label: string;
 }
 
 export type SpaceTaskStatus =
@@ -338,6 +366,7 @@ export type SpaceGoalEventSnapshot = Partial<{
   lastCheckInAt: number | null;
   nextCheckInAt: number | null;
   completedAt: number | null;
+  workspacePath?: string | null;
   checkInCronExpression?: string | null;
   checkInTimezone?: string | null;
 }>;
@@ -409,6 +438,7 @@ export interface SpaceGoal {
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
+  workspacePath?: string | null;
   revision: number;
 }
 
@@ -427,6 +457,7 @@ export interface CreateSpaceGoalParams {
   autoTriggerNext?: boolean;
   checkInCronExpression?: string | null;
   checkInTimezone?: string;
+  workspacePath?: string | null;
   triggerImmediately?: boolean;
   primaryOwnerAgentId?: string | null;
 }
@@ -446,6 +477,7 @@ export interface UpdateSpaceGoalParams {
   autoTriggerNext?: boolean;
   checkInCronExpression?: string | null;
   checkInTimezone?: string;
+  workspacePath?: string | null;
   pendingNextRun?: boolean;
   activeTaskId?: string | null;
   lastTaskId?: string | null;
@@ -520,6 +552,7 @@ export interface SpaceTask {
   createdByTaskScheduleId?: string | null;
   goalId?: string | null;
   evolutionScopeId?: string | null;
+  workspacePath?: string | null;
   workflowModelOverrides?: Record<string, string>;
   activeSession?: 'worker' | 'leader' | null;
   taskAgentSessionId?: string | null;
@@ -640,6 +673,7 @@ export interface CreateSpaceTaskParams {
   createdBySession?: string | null;
   taskAgentSessionId?: string | null;
   createdByTaskScheduleId?: string | null;
+  workspacePath?: string | null;
 }
 
 export interface InternalCreateSpaceTaskParams extends CreateSpaceTaskParams {
@@ -658,6 +692,7 @@ export interface UpdateSpaceTaskParams {
   workflowRunId?: string | null;
   preferredWorkflowId?: string | null;
   createdByTaskId?: string | null;
+  workspacePath?: string | null;
   activeSession?: 'worker' | 'leader' | null;
   taskAgentSessionId?: string | null;
   startedAt?: number | null;

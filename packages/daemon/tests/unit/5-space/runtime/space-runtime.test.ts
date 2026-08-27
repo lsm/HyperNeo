@@ -200,6 +200,7 @@ describe('SpaceRuntime', () => {
       const tam = {
         isExecutionSpawning: () => false,
         isSessionAlive: () => true,
+        isSessionInMemory: () => true,
         getAgentSessionById: () => ({ getProcessingState: () => ({ status: 'processing' }) }),
         injectRuntimeRecoveryMessage: async (sessionId: string) => `runtime-nag:${sessionId}`,
         restartStuckSubSession: async (sessionId: string) => {
@@ -482,6 +483,7 @@ describe('SpaceRuntime', () => {
       const preparedSessions: string[] = [];
       const liveTaskAgentManager = {
         isSessionAlive: (sessionId: string) => sessionId === 'live-session',
+        isSessionInMemory: (sessionId: string) => sessionId === 'live-session',
         prepareSubSessionForWorkflowResume: async (sessionId: string) => {
           preparedSessions.push(sessionId);
           return true;
@@ -550,6 +552,7 @@ describe('SpaceRuntime', () => {
       function makeStubTam() {
         return {
           isSessionAlive: (_sid: string) => false,
+          isSessionInMemory: (_sid: string) => false,
           isExecutionSpawning: (_eid: string) => false,
           spawnWorkflowNodeAgentForExecution: async () => {
             throw new Error('spawn failed');
@@ -1309,6 +1312,7 @@ describe('SpaceRuntime', () => {
         spawn?: (executionId: string) => Promise<string>;
         spawningExecutionIds?: Set<string>;
         liveSessions?: Set<string>;
+        dbFallbackAliveSessions?: Set<string>;
         resume?: (runId: string, agentName: string) => Promise<void>;
         flush?: (runId: string, agentName: string, sessionId: string) => Promise<void>;
       } = {}
@@ -1318,7 +1322,10 @@ describe('SpaceRuntime', () => {
       return {
         isExecutionSpawning: (executionId: string) =>
           overrides.spawningExecutionIds?.has(executionId) ?? false,
-        isSessionAlive: (sessionId: string) => liveSessions.has(sessionId),
+        isSessionAlive: (sessionId: string) =>
+          liveSessions.has(sessionId) ||
+          (overrides.dbFallbackAliveSessions?.has(sessionId) ?? false),
+        isSessionInMemory: (sessionId: string) => liveSessions.has(sessionId),
         tryResumeNodeAgentSession: async (runId: string, agentName: string) => {
           await overrides.resume?.(runId, agentName);
         },
@@ -1671,6 +1678,30 @@ describe('SpaceRuntime', () => {
       expect(updated.agentSessionId).toBe(`session:${execution.id}`);
       expect(updated.result).toBeNull();
       expect(updated.completedAt).toBeNull();
+    });
+
+    test('a DB-fallback-alive ghost session is not flushed into and is respawned (#3109)', async () => {
+      const { run, pendingRepo } = await setupQueuedHandoff();
+      const targetExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((execution) => execution.agentName === 'Coder')!;
+      nodeExecutionRepo.update(targetExec.id, {
+        status: 'pending',
+        agentSessionId: 'session:ghost-db-fallback',
+        startedAt: null,
+        completedAt: null,
+      });
+      const tam = makeRepairTam({
+        dbFallbackAliveSessions: new Set(['session:ghost-db-fallback']),
+      });
+      await buildRepairRuntime(tam, pendingRepo).executeTick();
+
+      expect(tam._spawnedExecutionIds).toEqual([targetExec.id]);
+      const respawned = nodeExecutionRepo.getById(targetExec.id)!;
+      expect(respawned.agentSessionId).toBe(`session:${targetExec.id}`);
+      const delivered = pendingRepo.listAllForRun(run.id)[0];
+      expect(delivered.status).toBe('delivered');
+      expect(delivered.deliveredSessionId).toBe(`session:${targetExec.id}`);
     });
 
     test('resolved handoffs do not bind to a different live slot on the same node', async () => {
@@ -2846,6 +2877,9 @@ describe('SpaceRuntime', () => {
             ? sessionId.slice('session:'.length).split(':')[0]
             : sessionId;
           return (overrides.isTaskAgentAlive ?? (() => false))(taskId);
+        },
+        isSessionInMemory(sessionId: string): boolean {
+          return this.isSessionAlive(sessionId);
         },
         spawnWorkflowNodeAgentForExecution: async (
           task: unknown,

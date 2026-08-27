@@ -1577,6 +1577,126 @@ owner decides.
 UI pilot 6 PRs (the pilot-12 record): #2714, #2716, #2718, #2724, #2756,
 #2788, plus this closing PR (drift report + dead-code sweep + this note).
 
+## Family record — tiered external-event delivery (2026-08-25)
+
+Not a pilot: a feature family on the message-delivery seam, recorded here
+because every chain closes with a sweep and an ADR note. Four feature PRs —
+#2853 the ingest vocabulary (task #1396: merge-conflict, split check
+conclusions, review-verdict events), #2852 the tier registry and digest
+compressor (task #1397), #2885 the direct-steer tier and admission pipeline
+(task #1398), #2950 the admission re-composition (placement checks
+#1412/#1413) — plus this closing sweep (#1411). What shipped, by module;
+where logic sits is described, not prescribed:
+
+- `external-events/event-tiers.ts` — a plain module: the topic-suffix tier
+  registry (`classifyExternalEventTier`) and the direct-class classifier
+  (`classifyExternalEventDirectSteer`: APPROVED/CHANGES_REQUESTED review
+  verdicts, bot-authored review comments, genuine check failures, merge
+  conflicts).
+- `external-events/deferred-event-digest.ts` — the digest transform as a pure
+  module (no timers, no DB access; its callers own persistence and status
+  publishes): parse deferred rows into event essences, partition, and fold
+  digest-tier rows into one summary message with retrieval handles; a
+  100-row per-session cap folds overflow into an early envelope; fold UUIDs
+  derive from the sorted source row ids so an interrupted fold converges on
+  re-run.
+- `runtime/external-event-steer-admission-pipeline.ts` — steer admission for
+  direct-class events reaching a BUSY session, composed as one direct
+  superpipe pipeline (delivery-v2 → system-provenance → session-state →
+  enrich → partition → buffer-capacity → finalize stages, `!admissionSettled`
+  halts between them) with a decision-table pin suite. It landed in #2885 as
+  a `decisionRun` composition; #2950 (the #1412/#1413 placement checks)
+  re-composed it directly and folded the flush-time classification in, so
+  the decision now carries the steer/passenger partition, classes, and event
+  class. Admission replaced the per-class steer cooldown of #2885's earlier
+  revisions (owner directive 2026-08-24: the classifier is the only
+  admission gate); the buffer bound (200 events) is a steer-size guard, not
+  a rate cap, and this sweep verified no cooldown machinery survives.
+- `runtime/task-agent-manager.ts` — the shell around the above: the
+  per-(session, event-class) burst buffer with debounce/burst-window timers
+  (20s/60s) that renders a burst through the digest builder into ONE steer
+  delivery job, row-id resolution, store hydration, and re-deferral of
+  digest-tier passengers riding a steered fold. The defer-vs-steer decision
+  and the steer/passenger classification come from the admission pipeline;
+  since #2950 the manager no longer calls the classifier at flush.
+- `agent/query-mode-handler.ts` — every turn-end flush folds deferred
+  external events before delivering, so the digest applies from all flush
+  entry points (turn end, post-settlement retry, idle-inject replay).
+
+The old deferred-backlog replay is gone as an external-event behavior:
+deferred external events once replayed one-by-one via
+`handleQueryTrigger({ deliverIndividually: true })` (67-message incident of
+2026-08-23, task #1288); the fold now runs inside that flush ahead of
+delivery. `deliverIndividually` itself survives at the one idle-inject call
+site as delivery shaping — per-message jobs so the backlog replay cannot
+race the incoming message's delivery waiter (#2656) — and now delivers at
+most the digest row plus non-external rows.
+
+Boundary caveats, recorded factually:
+
+1. The tier registry currently pins only digest values (five suffixes, digest
+   default), so every system-injected external-event row folds; no topic
+   maps to the 'direct' tier value. Directness is decided by the admission
+   classifier, not by tier membership.
+2. Burst coalescing is imperative state in the manager shell (buffer maps,
+   timers, hydration), not a pipeline; #2950 folded the classification into
+   the admission pipeline, and the coalescing state itself remains in the
+   shell.
+3. Steers render through the digest builder with a 2,000-character per-body
+   snippet bound and an eventId retrieval handle per line; rows are consumed
+   only after the steer job is durably enqueued
+   (`docs/features/message-delivery-v2.md`).
+
+The closing sweep (#1411) removed the family's unused export surface: the
+digest and tier re-export blocks in `external-events/index.ts` (22 names,
+added in #2852; every consumer imports the module files directly) and
+twelve `export` keywords on tier/digest symbols referenced nowhere outside
+their modules — three further admission-side un-exports identified by the
+sweep were subsumed by #2950's rewrite of that file. knip (files,
+dependencies, exports), oxlint, and `tsc --noEmit` are clean, verified in
+this sweep. No behavior change.
+
+## Pilot 13 — agent-layer chain A: v2 delivery-turn machinery (2026-08-25)
+
+Chain A closed the agent-layer survey (`docs/agent-layer-superpipe-pilot-proposal.md`
+§5/§8.4): the v2 delivery-turn machinery in `packages/daemon/src/lib/agent/` —
+the steer ladder, the delivery job handler's outcome→action mapping, role
+arbitration at `deliverMessage` and the outbox, the stranded-delivery sweep,
+and the queue timeout policy as extracted cores (`delivery-turn-routing.ts`,
+`handler-outcome-routing.ts`, `reconciler-sweep.ts`,
+`message-queue-timeout-policy.ts`), plus the `driveDeliveryTurn` admission
+cascade. Landed as pins A1a–d (#2926, #2915, #2917, #2916), cores A2a–d
+(#2924, #2922, #2956, #2955), apply A3a–c (#2934, #2933, #2962), primitives
+A4a (#2965), and admission A4b (#2977).
+
+**The staged-run outcome: direct composition.** The admission cascade was the
+proposal's flagship `stagedRun` candidate; it landed after the 2026-08-25 ADR
+revision (#2947) as ONE direct superpipe pipeline,
+`delivery-turn-admission-pipeline.ts` (`runDeliveryTurnAdmission`) — named for
+the business operation, mixing gate stages with effect stages, halting via
+`!hasOutcome`, with reverse compensations (fenced batch-narrow restore,
+member unsubmit, observer disarm, turn-end cancel) in its error stage. The
+combinator was not needed: `stagedRun`'s disciplines carried over as plain
+stage structure — full lifecycle/claim/query-identity resnapshot immediately
+after the awaited startup stage and again before admission, guarded writes
+through A4a's claim-fenced batch-update and UUID/claim-keyed admission-reservation
+primitives (`FencedDeliveryBatchWriteResult`, `DeliveryAdmissionReservation`),
+compensation per persistent effect. The session lock and the turn-end race/rearm
+loop stay in the shell (`agent-session.ts` interprets the outcome union); the
+no-claim-token legacy arms (`narrowBatchLegacy`/`submitMembersLegacy`) remain
+for callers without a durable claim.
+
+Closing sweep (this PR): removed the survey's two named production-dead
+leftovers — the module-level `reconcileStrandedDeliveries` in
+`message-delivery.ts` (production reconcile is `AgentSession`'s method over
+`selectStrandedDeliveries`; the standalone copy survived only through its own
+test block, now removed) and the dead `markMessageSubmissionFailed` on
+`SDKMessageHandler`. No other dead inline copies remained: each apply PR had
+replaced its cascade as it landed.
+
+Pilot 13 PRs: #2926, #2915, #2917, #2916, #2924, #2922, #2956, #2955, #2934,
+#2933, #2962, #2965, #2977, plus this closing sweep.
+
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
@@ -1634,6 +1754,20 @@ UI pilot 6 PRs (the pilot-12 record): #2714, #2716, #2718, #2724, #2756,
   earn-the-layer held); the `reduceRun` executor shape is at 4 real uses with
   three store consumers scouted — see "Pilot 12" above and the closing drift
   report for the unification path.
+- **Done (family, 2026-08-25):** tiered external-event delivery — ingest
+  vocabulary (#2853), the tier registry and digest compressor as pure
+  modules (#2852), the direct-steer admission with the manager-side burst
+  shell (#2885, re-composed as a direct superpipe pipeline by #2950) — see
+  "Family record — tiered external-event delivery" above for the module
+  map, the replay-path retirement, and the closing dead-export sweep
+  (#1411).
+- **Done (pilot 13, agent-layer chain A):** the v2 delivery-turn machinery —
+  steer ladder, handler outcome routing, role arbitration, reconciler sweep,
+  and queue timeout policy as extracted cores; the `driveDeliveryTurn`
+  admission cascade as one direct superpipe pipeline over A4a's claim-fenced
+  batch-update and admission-reservation primitives — see "Pilot 13" above
+  for the staged-run outcome (direct composition, combinator not needed) and
+  the closing dead-code sweep.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -1775,5 +1909,13 @@ UI pilot 6 PRs (the pilot-12 record): #2714, #2716, #2718, #2724, #2756,
   table, store-variant assessment, unification proposals U1–U6):
   `docs/reports/ui-pilot-6-live-query-lifecycle-drift.md`. UI pilot 6 PRs:
   #2714, #2716, #2718, #2724, #2756, #2788, plus the closing PR.
+- Pilot 13 (agent-layer chain A) files:
+  `packages/daemon/src/lib/agent/{delivery-turn-routing,
+  handler-outcome-routing,reconciler-sweep,message-queue-timeout-policy,
+  delivery-turn-admission-pipeline}.ts`; interpreter in `agent-session.ts`
+  (`driveDeliveryTurn`); survey and chain plan in
+  `docs/agent-layer-superpipe-pilot-proposal.md`. Pilot 13 PRs: #2926,
+  #2915, #2917, #2916, #2924, #2922, #2956, #2955, #2934, #2933, #2962,
+  #2965, #2977, plus this closing sweep.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.

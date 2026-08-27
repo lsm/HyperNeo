@@ -5,6 +5,7 @@ import {
   syncCustomEndpointProviders,
 } from '../../../../src/lib/providers/factory';
 import { CustomEndpointProvider } from '../../../../src/lib/providers/custom-endpoint-provider';
+import { getProviderCatalogEpoch } from '../../../../src/lib/model-service';
 import type { CustomEndpointConfig } from '@hyperneo/shared';
 
 const baseConfig: CustomEndpointConfig = {
@@ -96,5 +97,34 @@ describe('syncCustomEndpointProviders - diff skip', () => {
     expect(getProviderRegistry().get('custom:lmstudio')).toBeDefined();
     await syncCustomEndpointProviders([]);
     expect(getProviderRegistry().get('custom:lmstudio')).toBeUndefined();
+  });
+});
+
+describe('syncCustomEndpointProviders - catalog revision invalidation', () => {
+  beforeEach(() => {
+    resetProviderFactory();
+    resetProviderRegistry();
+  });
+  afterEach(() => {
+    resetProviderFactory();
+    resetProviderRegistry();
+  });
+
+  it('advances the provider catalog revision when an endpoint is edited', async () => {
+    await syncCustomEndpointProviders([baseConfig]);
+    const before = getProviderCatalogEpoch('custom:lmstudio');
+
+    await syncCustomEndpointProviders([{ ...baseConfig, baseUrl: 'http://localhost:9999/v1' }]);
+
+    expect(getProviderCatalogEpoch('custom:lmstudio')).toBeGreaterThan(before);
+  });
+
+  it('advances the provider catalog revision when an endpoint is removed', async () => {
+    await syncCustomEndpointProviders([baseConfig]);
+    const before = getProviderCatalogEpoch('custom:lmstudio');
+
+    await syncCustomEndpointProviders([]);
+
+    expect(getProviderCatalogEpoch('custom:lmstudio')).toBeGreaterThan(before);
   });
 });

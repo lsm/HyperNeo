@@ -19,6 +19,7 @@ import type { Logger } from '../../../../src/lib/logger';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
 import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
 import type { AcpClient, AcpClientOptions } from '../../../../src/lib/acp/acp-client';
 import { getAcpCommandIdentityDigest } from '../../../../src/lib/acp/acp-command';
 import {
@@ -37,6 +38,7 @@ import {
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+import { providerEnvCoordinator } from '../../../../src/lib/providers/provider-env-enrollment';
 
 function createMockClient() {
   return {
@@ -246,7 +248,6 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     messageHandler: {
       markMessageSubmitted: mock(() => true),
       markMessageAccepted: mock(() => {}),
-      markMessageSubmissionFailed: mock(() => {}),
       markACPDeliveryFailed: mock(() => {}),
     } as never,
     queryObject: null,
@@ -262,6 +263,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     incrementQueryGeneration: () => ++queryGeneration,
     getQueryGeneration: () => queryGeneration,
     isCleaningUp: () => false,
+    attemptTokens: new QueryAttemptRegistry(),
     onSDKMessage,
     onSlashCommandsFetched: mock(async () => {}),
     onModelsFetched: mock(async () => {}),
@@ -2132,4 +2134,51 @@ describe('AcpQueryRunner', () => {
     expect(onSDKMessage.mock.calls.length).toBeLessThanOrEqual(10);
     expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
   }, 1000);
+
+  test('acquires the provider-env lease with acp.query owner before ambient reads and spawn', async () => {
+    process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-acp-token';
+    const { runner, ctx, constructorOptions } = createRunnerFixture();
+    let buildRanUnderLease: boolean | undefined;
+    ctx.optionsBuilder.build = mock(async () => {
+      buildRanUnderLease = providerEnvCoordinator.isLeaseHeld();
+      return { cwd: '/tmp/acp-session', mcpServers: {} };
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(buildRanUnderLease).toBe(true);
+    expect(constructorOptions[0].env?.ANTHROPIC_AUTH_TOKEN).toBe('sk-ant-oat-acp-token');
+    expect(ctx.originalEnvVars).toEqual({});
+  });
+
+  test('aborts the ACP startup if the query generation is bumped while awaiting build', async () => {
+    process.env.ANTHROPIC_AUTH_TOKEN = 'sk-ant-oat-acp-token';
+    const { runner, ctx, constructorOptions } = createRunnerFixture();
+    let releaseBuild: (() => void) | undefined;
+    const buildGate = new Promise<void>((resolve) => {
+      releaseBuild = resolve;
+    });
+    let buildStartedResolve: (() => void) | undefined;
+    const buildStartedPromise = new Promise<void>((resolve) => {
+      buildStartedResolve = resolve;
+    });
+
+    ctx.optionsBuilder.build = mock(async () => {
+      buildStartedResolve?.();
+      await buildGate;
+      return { cwd: '/tmp/acp-session', mcpServers: {} };
+    });
+
+    await runner.start();
+    const stalePromise = ctx.queryPromise;
+    await buildStartedPromise;
+    ctx.incrementQueryGeneration();
+    releaseBuild?.();
+    await stalePromise;
+
+    expect(constructorOptions).toHaveLength(0);
+    expect(ctx.originalEnvVars).toEqual({});
+    expect(ctx.queryPromise).toBe(stalePromise);
+  });
 });

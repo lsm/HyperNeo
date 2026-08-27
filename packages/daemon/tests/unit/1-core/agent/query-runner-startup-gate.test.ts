@@ -42,6 +42,7 @@ import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
+import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
 import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
 import type { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
@@ -227,6 +228,7 @@ describe('QueryRunner startup gate', () => {
       incrementQueryGeneration: () => ++queryGeneration,
       getQueryGeneration: () => queryGeneration,
       isCleaningUp: () => false,
+      attemptTokens: new QueryAttemptRegistry(),
 
       onSDKMessage: async () => {},
       onSlashCommandsFetched: async () => {},
@@ -397,7 +399,7 @@ describe('QueryRunner startup gate', () => {
 
   it('registers the AskUserQuestion hook and applies the deferred mode after spawn (runQuery wiring)', async () => {
     const setPermissionMode = mock(async () => {});
-    const setAskUserQuestionHook = mock(() => {});
+    const buildOverrides: Array<{ askUserQuestionHook?: unknown }> = [];
     const preToolUseHook = mock(async () => ({}));
     const createPreToolUseHook = mock(() => preToolUseHook);
     queryFactory = () => {
@@ -409,10 +411,13 @@ describe('QueryRunner startup gate', () => {
 
     const { runner, ctx } = createRunner('auq-wiring', {
       optionsBuilder: {
-        build: async () => ({ model: 'claude-sonnet-4-20250514' }),
+        build: async (overrides?: { askUserQuestionHook?: unknown }) => {
+          buildOverrides.push(overrides ?? {});
+          return { model: 'claude-sonnet-4-20250514' };
+        },
         addSessionStateOptions: (options: unknown) => options,
         setCanUseTool: () => {},
-        setAskUserQuestionHook,
+        setAskUserQuestionHook: () => {},
         getDeferredPermissionMode: () => 'bypassPermissions',
         getEffectiveMcpServers: () => ({}),
       } as unknown as QueryOptionsBuilder,
@@ -424,11 +429,27 @@ describe('QueryRunner startup gate', () => {
 
     runner.start();
     await waitFor(() => spawned.length === 1);
-    await waitFor(() => setAskUserQuestionHook.mock.calls.length > 0);
+    await waitFor(() => buildOverrides.some((overrides) => overrides.askUserQuestionHook));
     await waitFor(() => setPermissionMode.mock.calls.length > 0);
     await settle();
 
-    expect(setAskUserQuestionHook).toHaveBeenCalledWith(preToolUseHook);
+    const installedHook = buildOverrides.find((overrides) => overrides.askUserQuestionHook)
+      ?.askUserQuestionHook as unknown as (
+      input: unknown,
+      toolUseId: string | undefined,
+      options: { signal: AbortSignal }
+    ) => Promise<unknown>;
+    await installedHook(
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'AskUserQuestion',
+        tool_use_id: 'tu-wiring',
+        tool_input: { questions: [] },
+      },
+      'tu-wiring',
+      { signal: new AbortController().signal }
+    );
+    expect(preToolUseHook).toHaveBeenCalled();
     expect(setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
 
     await completeQuery(spawned[0], waitFor);

@@ -36,6 +36,10 @@ export async function selectWorkflowWithLlmDefault(
   let modelId: string;
   try {
     const cfg = await providerService.getTitleGenerationConfig(provider);
+    if (!cfg) {
+      log.warn('Default provider has no visible models for workflow selection');
+      return null;
+    }
     modelId = cfg.modelId;
   } catch (err) {
     log.warn('Failed to resolve title-generation model for workflow selection:', err);
@@ -56,6 +60,8 @@ export async function selectWorkflowWithLlmDefault(
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const providerEnvVars = await providerService.getEnvVarsForModel(modelId, provider);
     const mergedEnv = mergeProviderEnvVars(providerEnvVars as Record<string, string | undefined>);
+    providerService.restoreEnvVars(originalEnv);
+    originalEnv = {};
     const cliPath = resolveSDKCliPath();
 
     const agentQuery = query({
