@@ -116,7 +116,7 @@ const EXPECTED_ENTRIES: ReadonlyArray<readonly [string, string, string]> = [
   ['get_session_messages', 'sessions', 'read'],
   ['send_session_message', 'sessions', 'mutate'],
   ['update_session_state', 'sessions', 'mutate'],
-  ['interrupt_session', 'sessions', 'mutate'],
+  ['interrupt_session', 'sessions', 'destructive'],
   ['list_workflows', 'workflows', 'read'],
   ['get_workflow_run', 'workflows', 'read'],
   ['change_plan', 'workflows', 'destructive'],
@@ -160,7 +160,7 @@ describe('createSpaceRegistryEntries — composition', () => {
       const registry = createActionRegistry(createSpaceRegistryEntries(ctx.config));
       expect(registry.entries).toHaveLength(EXPECTED_ENTRIES.length);
       expect(registry.get('list_workflows')?.family).toBe('workflows');
-      expect(registry.get('interrupt_session')?.safetyClass).toBe('mutate');
+      expect(registry.get('interrupt_session')?.safetyClass).toBe('destructive');
     } finally {
       ctx.db.close();
     }

@@ -78,7 +78,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     defineAction({
       name: 'interrupt_session',
       family: 'sessions',
-      safetyClass: 'mutate',
+      safetyClass: 'destructive',
       description:
         'Force-interrupt a running or stuck session and reset it to idle; returns whether the interrupt was delivered.',
       paramsDoc: 'session_id, reason?',
