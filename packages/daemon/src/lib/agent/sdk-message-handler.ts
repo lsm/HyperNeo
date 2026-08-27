@@ -1348,7 +1348,13 @@ export class SDKMessageHandler {
       release = resolve;
     });
     this.trailingIdleGateRelease = release;
-    this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(gate));
+    const bounded = boundedDeliveryGate(gate);
+    this.ctx.messageQueue.setDeliveryGate(bounded);
+    void bounded.then(() => {
+      if (this.trailingIdleGateRelease === release) {
+        this.trailingIdleGateRelease = null;
+      }
+    });
   }
 
   private releaseTrailingIdleDeliveryGate(): void {

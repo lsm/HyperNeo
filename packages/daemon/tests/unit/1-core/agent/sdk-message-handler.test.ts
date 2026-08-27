@@ -4435,11 +4435,11 @@ describe('SDKMessageHandler', () => {
       });
 
       it('holds the delivery gate closed through the terminal idle transition', async () => {
-        let releaseIdle!: () => void;
+        const releaseIdle: Array<() => void> = [];
         setIdleSpy.mockImplementation(
           () =>
             new Promise<void>((resolve) => {
-              releaseIdle = resolve;
+              releaseIdle.push(resolve);
             })
         );
         const { h } = budgetCase({ totalUsed: 50_000 });
@@ -4457,7 +4457,7 @@ describe('SDKMessageHandler', () => {
         expect(opened).toBe(false);
         expect(setIdleSpy).toHaveBeenCalled();
 
-        releaseIdle();
+        for (const release of releaseIdle) release();
         await handled;
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(opened).toBe(true);

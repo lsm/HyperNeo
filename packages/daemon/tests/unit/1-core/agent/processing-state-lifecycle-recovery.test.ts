@@ -1,15 +1,15 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
-import type { PendingUserQuestion, Session, MessageHub } from '@hyperneo/shared';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { MessageHub, PendingUserQuestion, Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { Database } from '../../../../src/storage/database';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
+import { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
+import { SDKMessageHandler } from '../../../../src/lib/agent/sdk-message-handler';
+import type { ErrorManager } from '../../../../src/lib/error-manager';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import type { Database } from '../../../../src/storage/database';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 const sessionId = 'recovery-session';
 
@@ -82,6 +82,7 @@ describe('chat/thread lifecycle recovery — stale waiting_for_input', () => {
       enqueue: mock(async () => 'ctx-id'),
       enqueueWithId: mock(async () => {}),
       clear: mock(() => {}),
+      setDeliveryGate: mock(() => {}),
     } as unknown as MessageQueue;
     const errorManager = { handleError: mock(async () => {}) } as unknown as ErrorManager;
     const lifecycleManager = { stop: mock(async () => {}) } as unknown as QueryLifecycleManager;
