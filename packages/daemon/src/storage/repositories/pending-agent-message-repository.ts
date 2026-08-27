@@ -60,6 +60,7 @@ export interface PendingMessageRetentionOptions {
   retentionMs?: number;
   maxPerTarget?: number;
   includeExpiresAt?: boolean;
+  excludeIds?: string[];
 }
 
 export class PendingAgentMessageRepository {
@@ -242,6 +243,45 @@ export class PendingAgentMessageRepository {
     this.notify();
   }
 
+  recordDeliveryAttempt(id: string, error: string | null): PendingAgentMessageRecord | null {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `UPDATE pending_agent_messages
+				 SET attempts = attempts + 1,
+				     last_attempt_at = ?,
+				     last_error = ?
+				 WHERE id = ? AND status IN ('pending', 'failed')`
+      )
+      .run(now, error, id);
+    this.notify();
+    return this.getById(id);
+  }
+
+  recordDeliveryError(id: string, error: string | null): void {
+    this.db
+      .prepare(
+        `UPDATE pending_agent_messages
+				 SET last_error = ?, last_attempt_at = ?
+				 WHERE id = ?`
+      )
+      .run(error, Date.now(), id);
+    this.notify();
+  }
+
+  deferExpiration(ids: string[], ttlMs = DEFAULT_PENDING_MESSAGE_TTL_MS): void {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => '?').join(',');
+    this.db
+      .prepare(
+        `UPDATE pending_agent_messages
+				 SET expires_at = MAX(expires_at, ?)
+				 WHERE id IN (${placeholders}) AND status = 'pending'`
+      )
+      .run(Date.now() + ttlMs, ...ids);
+    this.notify();
+  }
+
   rescopeTarget(id: string, targetAgentName: string, workflowNodeId: string): void {
     const tx = this.db.transaction(() => {
       const row = this.getById(id);
@@ -306,21 +346,25 @@ export class PendingAgentMessageRepository {
     return this.getById(id);
   }
 
-  expireStale(runId: string | null = null): number {
+  expireStale(runId: string | null = null, excludeIds: string[] = []): number {
     const now = Date.now();
+    const excludePredicate =
+      excludeIds.length > 0 ? ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})` : '';
     const stmt =
       runId === null
         ? this.db.prepare(
             `UPDATE pending_agent_messages
 						 SET status = 'expired'
-						 WHERE status = 'pending' AND expires_at <= ?`
+						 WHERE status = 'pending' AND expires_at <= ?${excludePredicate}`
           )
         : this.db.prepare(
             `UPDATE pending_agent_messages
 						 SET status = 'expired'
-						 WHERE status = 'pending' AND expires_at <= ? AND workflow_run_id = ?`
+						 WHERE status = 'pending' AND expires_at <= ?${excludePredicate}
+						   AND workflow_run_id = ?`
           );
-    const result = runId === null ? stmt.run(now) : stmt.run(now, runId);
+    const result =
+      runId === null ? stmt.run(now, ...excludeIds) : stmt.run(now, ...excludeIds, runId);
     if (result.changes > 0) this.notify();
     return result.changes;
   }
@@ -331,6 +375,9 @@ export class PendingAgentMessageRepository {
     const retentionMs = options.retentionMs ?? DEFAULT_PENDING_MESSAGE_RETENTION_MS;
     const maxPerTarget = options.maxPerTarget ?? DEFAULT_PENDING_MESSAGE_MAX_PER_TARGET;
     const includeExpiresAt = options.includeExpiresAt ?? true;
+    const excludeIds = options.excludeIds ?? [];
+    const excludePredicate =
+      excludeIds.length > 0 ? ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})` : '';
 
     let changes = 0;
     const expireBefore = now - retentionMs;
@@ -342,18 +389,21 @@ export class PendingAgentMessageRepository {
         ? this.db.prepare(
             `UPDATE pending_agent_messages
 							 SET status = 'expired'
-							 WHERE status = 'pending' AND ${ttlPredicate}`
+							 WHERE status = 'pending' AND ${ttlPredicate}${excludePredicate}`
           )
         : this.db.prepare(
             `UPDATE pending_agent_messages
 							 SET status = 'expired'
 							 WHERE status = 'pending'
-							   AND ${ttlPredicate}
+							   AND ${ttlPredicate}${excludePredicate}
 							   AND workflow_run_id = ?`
           );
     const ttlParams = includeExpiresAt ? [expireBefore, now] : [expireBefore];
-    changes += (runId === null ? ttlStmt.run(...ttlParams) : ttlStmt.run(...ttlParams, runId))
-      .changes;
+    changes += (
+      runId === null
+        ? ttlStmt.run(...ttlParams, ...excludeIds)
+        : ttlStmt.run(...ttlParams, ...excludeIds, runId)
+    ).changes;
 
     if (maxPerTarget < 1) {
       const capStmt =
@@ -361,15 +411,15 @@ export class PendingAgentMessageRepository {
           ? this.db.prepare(
               `UPDATE pending_agent_messages
 								 SET status = 'expired'
-								 WHERE status = 'pending'`
+								 WHERE status = 'pending'${excludePredicate}`
             )
           : this.db.prepare(
               `UPDATE pending_agent_messages
 								 SET status = 'expired'
-								 WHERE status = 'pending' AND workflow_run_id = ?`
+								 WHERE status = 'pending'${excludePredicate} AND workflow_run_id = ?`
             );
-      changes += (runId === null ? capStmt.run() : capStmt.run(runId)).changes;
-      return changes;
+      changes += (runId === null ? capStmt.run(...excludeIds) : capStmt.run(...excludeIds, runId))
+        .changes;
     }
 
     const capStmt =
@@ -385,7 +435,7 @@ export class PendingAgentMessageRepository {
 							              ORDER BY created_at DESC, rowid DESC
 							            ) AS queue_rank
 							     FROM pending_agent_messages
-							     WHERE status = 'pending'
+							     WHERE status = 'pending'${excludePredicate}
 							   )
 							   WHERE queue_rank > ?
 							 )`
@@ -401,13 +451,16 @@ export class PendingAgentMessageRepository {
 							              ORDER BY created_at DESC, rowid DESC
 							            ) AS queue_rank
 							     FROM pending_agent_messages
-							     WHERE status = 'pending' AND workflow_run_id = ?
+							     WHERE status = 'pending'${excludePredicate} AND workflow_run_id = ?
 							   )
 							   WHERE queue_rank > ?
 							 )`
           );
-    changes += (runId === null ? capStmt.run(maxPerTarget) : capStmt.run(runId, maxPerTarget))
-      .changes;
+    changes += (
+      runId === null
+        ? capStmt.run(...excludeIds, maxPerTarget)
+        : capStmt.run(...excludeIds, runId, maxPerTarget)
+    ).changes;
     if (changes > 0) this.notify();
     return changes;
   }

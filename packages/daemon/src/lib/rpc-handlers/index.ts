@@ -83,12 +83,13 @@ import { SpaceWorkflowRepository } from '../../storage/repositories/space-workfl
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import {
-  awaitDeliveryConsumption,
-  deliverAndMarkQueued,
-  deliveryConsumptionTimeoutMs,
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
 } from '../agent/message-delivery.ts';
+import {
+  deliverSpaceAgentMessage,
+  type SpaceAgentInjectionOutcome,
+} from '../space/runtime/space-agent-message-delivery.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
@@ -996,8 +997,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceId: string,
     message: string,
     replyToSessionId?: string | null,
-    explicitMessageId?: string
-  ): Promise<void> => {
+    explicitMessageId?: string,
+    injectorOptions?: {
+      onConsumed?: (settledSessionId: string) => void;
+      lateSettlement?: import('../space/runtime/space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
+      onLateFailure?: () => void;
+      disposeSignal?: AbortSignal;
+    }
+  ): Promise<SpaceAgentInjectionOutcome> => {
     let sessionId = replyToSessionId || `space:chat:${spaceId}`;
     let session = await sessionManagerRef.getSessionAsync(sessionId);
     if (!session && replyToSessionId) {
@@ -1020,89 +1027,48 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       },
     };
     if (isMessageDeliveryV2Enabled()) {
-      const sdkMessageRepo = deps.reactiveDb.db.getSDKMessageRepo();
-      const existing = sdkMessageRepo.getDeliveryContent(sessionId, messageId);
-      const fresh = !existing;
-      if (!existing) {
-        const dbId = deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-        await deps.internalEventBus
-          .publish('messages.statusChanged', {
-            sessionId,
-            messageIds: [dbId],
-            status: 'enqueued',
-          })
-          .catch(() => {});
-      } else if (existing.sendStatus === 'consumed') {
-        return;
-      } else if (existing.sendStatus === 'failed') {
-        const reopenedDbId = sdkMessageRepo.reopenDeliveryByUuid(sessionId, messageId);
-        if (reopenedDbId) {
-          await deps.internalEventBus
-            .publish('messages.statusChanged', {
-              sessionId,
-              messageIds: [reopenedDbId],
-              status: 'enqueued',
-            })
-            .catch(() => {});
+      return await deliverSpaceAgentMessage(
+        {
+          sdkMessageRepo: deps.reactiveDb.db.getSDKMessageRepo(),
+          saveUserMessage: (sid, msg, status) =>
+            deps.reactiveDb.db.saveUserMessage(sid, msg, status),
+          publishStatusChanged: async (sid, dbId, status) => {
+            await deps.internalEventBus
+              .publish('messages.statusChanged', {
+                sessionId: sid,
+                messageIds: [dbId],
+                status,
+              })
+              .catch(() => {});
+          },
+          jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
+          stateManager: session.stateManager,
+          onConsumed: injectorOptions?.onConsumed,
+          lateSettlement: injectorOptions?.lateSettlement,
+          onLateFailure: injectorOptions?.onLateFailure,
+          disposeSignal: injectorOptions?.disposeSignal,
+        },
+        {
+          sessionId,
+          messageId,
+          sdkUserMessage,
+          provider: session.getSessionData?.().config?.provider,
         }
-      }
-      await awaitDeliveryConsumption({
-        sessionId,
-        messageUuid: messageId,
-        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
-        deliver: () =>
-          withSessionResetCoordination(sessionId, async () =>
-            deliverAndMarkQueued({
-              jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
-              stateManager: session.stateManager,
-              sessionId,
-              messageUuid: messageId,
-              origin: 'space_agent',
-              onEnqueueFailure: () => {
-                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
-                if (failedDbId) {
-                  void deps.internalEventBus
-                    .publish('messages.statusChanged', {
-                      sessionId,
-                      messageIds: [failedDbId],
-                      status: 'failed',
-                    })
-                    .catch(() => {});
-                }
-              },
-            })
-          ),
-        ...(fresh
-          ? {
-              terminalizeOnTimeout: () => {
-                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
-                if (failedDbId) {
-                  void deps.internalEventBus
-                    .publish('messages.statusChanged', {
-                      sessionId,
-                      messageIds: [failedDbId],
-                      status: 'failed',
-                    })
-                    .catch(() => {});
-                }
-              },
-            }
-          : {}),
-      });
-    } else {
-      await withSessionResetCoordination(sessionId, async () => {
-        await session.ensureQueryStarted();
-        const dbId = deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-        await deps.internalEventBus
-          .publish('messages.statusChanged', {
-            sessionId,
-            messageIds: [dbId],
-            status: 'enqueued',
-          })
-          .catch(() => {});
-        await session.messageQueue.enqueueWithId(messageId, message);
-      });
+      );
     }
+    await withSessionResetCoordination(sessionId, async () => {
+      await session.ensureQueryStarted();
+      const dbId = deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await deps.internalEventBus
+        .publish('messages.statusChanged', {
+          sessionId,
+          messageIds: [dbId],
+          status: 'enqueued',
+        })
+        .catch(() => {});
+      await session.messageQueue.enqueueWithId(messageId, message);
+    });
+    return { state: 'delivered', messageId, sessionId };
   };
 
   const taskAgentManager = new TaskAgentManager({

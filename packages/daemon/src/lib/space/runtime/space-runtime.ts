@@ -5552,7 +5552,10 @@ export class SpaceRuntime {
     if (executions.length === 0) return 'skipped';
 
     const pendingMessageRepo = this.config.pendingMessageRepo;
-    pendingMessageRepo?.enforceRetention({ runId: run.id });
+    pendingMessageRepo?.enforceRetention({
+      runId: run.id,
+      excludeIds: this.config.taskAgentManager?.activeSpaceDeliveryIdsForRun?.(run.id) ?? [],
+    });
     const hasQueuedNodeHandoff =
       pendingMessageRepo
         ?.listPendingForRun(run.id)
@@ -7234,7 +7237,7 @@ export class SpaceRuntime {
     const tam = this.config.taskAgentManager;
     if (!repo || !tam) return false;
 
-    repo.expireStale(runId);
+    repo.expireStale(runId, tam.activeSpaceDeliveryIdsForRun?.(runId) ?? []);
     const pending = repo.listPendingForRun(runId).filter((row) => row.targetKind === 'node_agent');
     const isTerminalTask =
       canonicalTask.status === 'done' ||

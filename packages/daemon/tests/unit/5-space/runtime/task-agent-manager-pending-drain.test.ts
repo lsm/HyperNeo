@@ -54,6 +54,16 @@ function spyPendingRepo(repo: PendingAgentMessageRepository): SpyRepo {
       listCalls.push([targetName, workflowNodeId ?? null]);
       return repo.listPendingForTarget(runId, targetName, workflowNodeId);
     },
+    getById: (id: string) => repo.getById(id),
+    deferExpiration: (ids: string[], ttlMs?: number) => {
+      calls.push(`defer:${ids.join(',')}`);
+      repo.deferExpiration(ids, ttlMs);
+    },
+    listByRunAndStatus: (runId: string, status: string) => repo.listByRunAndStatus(runId, status),
+    recordDeliveryAttempt: (id: string, error: string | null) =>
+      repo.recordDeliveryAttempt(id, error),
+    recordDeliveryError: (id: string, error: string | null) => repo.recordDeliveryError(id, error),
+    markFailed: (id: string, error: string) => repo.markFailed(id, error),
     markDelivered: (id: string, sessionId: string) => {
       calls.push(`delivered:${id}`);
       repo.markDelivered(id, sessionId);
@@ -352,7 +362,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.spyRepo.retentionArgs).toEqual([[{ runId: h.runId }]]);
+    expect(h.spyRepo.retentionArgs).toEqual([[{ runId: h.runId, excludeIds: [] }]]);
     expect(h.spyRepo.expireArgs).toEqual([[h.runId]]);
     expect(h.spyRepo.calls.slice(0, 2)).toEqual(['enforceRetention', 'expireStale']);
     expect(h.spyRepo.calls[2]).toMatch(/^list:/);
@@ -600,7 +610,7 @@ function makeSpaceAgentHarness(
       message: string,
       replyTo: string | null,
       rowId: string
-    ) => Promise<string>;
+    ) => Promise<{ state: 'delivered' | 'queued' | 'failed'; messageId: string; error?: string }>;
     registry?: { get: (taskId: string) => string | null };
   } = {}
 ): SpaceAgentHarness {
@@ -629,7 +639,10 @@ function makeSpaceAgentHarness(
   const publish = mock(async (_event: string, _payload: unknown) => {});
   const injector = mock(
     options.injectorImpl ??
-      (async (_spaceId: string, _message: string, _replyTo: string | null, rowId: string) => rowId)
+      (async (_spaceId: string, _message: string, _replyTo: string | null, rowId: string) => ({
+        state: 'delivered',
+        messageId: rowId,
+      }))
   );
 
   const config: Record<string, unknown> = {
@@ -679,6 +692,118 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     expect(h.spyRepo.calls).toEqual([]);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+  });
+
+  it('defers pending-row expiry while an SDK delivery is still active', async () => {
+    const h = makeSpaceAgentHarness({
+      injectorImpl: async (_spaceId, _message, _replyTo, rowId) => ({
+        state: 'queued',
+        messageId: rowId,
+        sessionId: `space:chat:stub`,
+      }),
+    });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'still in flight' });
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: 'enqueued' } : null,
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.spyRepo.calls).toContain(`defer:${row.id}`);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+  });
+
+  it('settles reply-routed rows against their reply session and falls back to the chat session', async () => {
+    const registry = {
+      get: mock((taskId: string | null) => (taskId === 'task-gone' ? 'gone-session' : null)),
+    };
+    const h = makeSpaceAgentHarness({ registry });
+    dbByTest.push(h.db);
+    const footerRow = h.enqueue({
+      message: formatAgentMessage({
+        fromLevel: 'node-agent',
+        fromAgentName: 'reviewer',
+        toLevel: 'space-agent',
+        body: 'consumed at footer session',
+        taskId: 'task-a',
+        replyToSessionId: 'footer-session',
+      }),
+      taskId: 'task-a',
+    });
+    const fallbackRow = h.enqueue({ message: 'plain', taskId: 'task-gone' });
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (sessionId: string, uuid: string) => {
+          if (uuid === footerRow.id && sessionId === 'footer-session') {
+            return { content: 'x', sendStatus: 'consumed' };
+          }
+          if (uuid === fallbackRow.id && sessionId === `space:chat:${h.spaceId}`) {
+            return { content: 'x', sendStatus: 'consumed' };
+          }
+          return null;
+        },
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.injector).not.toHaveBeenCalled();
+    expect(h.spyRepo.repo.getById(footerRow.id)?.deliveredSessionId).toBe('footer-session');
+    expect(h.spyRepo.repo.getById(fallbackRow.id)?.deliveredSessionId).toBe(
+      `space:chat:${h.spaceId}`
+    );
+    expect(h.spyRepo.calls).toContain(`delivered:${footerRow.id}`);
+    expect(h.spyRepo.calls).toContain(`delivered:${fallbackRow.id}`);
+  });
+
+  it('settles space_agent rows already consumed before this drain pass', async () => {
+    const h = makeSpaceAgentHarness();
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'consumed while the daemon was down' });
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: 'consumed' } : null,
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.injector).not.toHaveBeenCalled();
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+    expect(h.spyRepo.repo.getById(row.id)?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
+    const deliveredAt = h.spyRepo.calls.indexOf(`delivered:${row.id}`);
+    const expiredAt = h.spyRepo.calls.indexOf('expireStale');
+    expect(deliveredAt).toBeGreaterThanOrEqual(0);
+    expect(expiredAt).toBeGreaterThan(deliveredAt);
+  });
+
+  it('keeps a queued space-agent row pending and settles it from delayed consumption', async () => {
+    let settleQueuedRow: (() => void) | null = null;
+    const h = makeSpaceAgentHarness({
+      injectorImpl: async (_spaceId, _message, _replyTo, rowId, options) => {
+        settleQueuedRow = options?.onConsumed ?? null;
+        return { state: 'queued', messageId: rowId };
+      },
+    });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'queued while coordinator idle' });
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+    expect(h.spyRepo.calls).not.toContain(`delivered:${row.id}`);
+    expect(settleQueuedRow).not.toBeNull();
+
+    settleQueuedRow?.();
+
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+    expect(h.spyRepo.repo.getById(row.id)?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
+    expect(h.spyRepo.calls).toContain(`delivered:${row.id}`);
   });
 
   it('drains only space_agent rows targeted at the space agent', async () => {
@@ -758,7 +883,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
       'registry-session',
       null,
     ]);
-    expect(registry.get.mock.calls.map((call: unknown[]) => call[0])).toEqual(['task-9']);
+    expect(registry.get.mock.calls.map((call: unknown[]) => call[0])).toEqual(['task-9', 'task-9']);
   });
 
   it('formats plain rows for the space-agent level and passes enveloped rows through', async () => {
@@ -794,7 +919,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     const h = makeSpaceAgentHarness({
       injectorImpl: async (_spaceId, message, _replyTo, rowId) => {
         if (message.includes('fails first')) throw new Error('injector down');
-        return rowId;
+        return { state: 'delivered', messageId: rowId };
       },
     });
     dbByTest.push(h.db);
@@ -808,6 +933,19 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(failed?.attempts).toBe(1);
     expect(failed?.lastError).toBe('injector down');
     expect(h.spyRepo.repo.getById(laterRow.id)?.status).toBe('delivered');
+  });
+
+  it('terminalizes rows whose attempt budget is already spent', async () => {
+    const h = makeSpaceAgentHarness();
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'budget spent' });
+    for (let i = 0; i < 5; i++) h.spyRepo.repo.markAttemptFailed(row.id, 'historical failure');
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.injector).not.toHaveBeenCalled();
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('failed');
+    expect(h.spyRepo.repo.getById(row.id)?.lastError).toBe('historical failure');
   });
 });
 

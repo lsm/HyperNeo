@@ -352,6 +352,89 @@ export function deliveryConsumptionTimeoutMs(provider?: string): number | undefi
   return provider === 'acp' ? ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS : undefined;
 }
 
+export function deliveryConsumptionTimeoutOrDefault(timeoutMs?: number): number {
+  return timeoutMs ?? (Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000);
+}
+
+export async function awaitDeliveryConsumptionTolerant(args: {
+  sessionId: string;
+  messageUuid: string;
+  deliver: () => Promise<void>;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  getSendStatus?: () => string | null | undefined;
+}): Promise<{ consumed: boolean }> {
+  const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
+  let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
+  let statusPoll: ReturnType<typeof setInterval> | undefined;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<{ consumed: boolean }>((resolve) => {
+    if (!args.signal) return;
+    if (args.signal.aborted) {
+      resolve({ consumed: false });
+      return;
+    }
+    onAbort = () => resolve({ consumed: false });
+    args.signal.addEventListener('abort', onAbort, { once: true });
+  });
+  const terminal = new Promise<{ consumed: boolean }>((resolve) => {
+    if (!args.getSendStatus) return;
+    const check = () => {
+      try {
+        const status = args.getSendStatus!();
+        if (status === 'consumed') {
+          signalDeliveryConsumed(args.sessionId, args.messageUuid);
+          if (statusPoll) clearInterval(statusPoll);
+          resolve({ consumed: true });
+        } else if (status === 'failed') {
+          if (statusPoll) clearInterval(statusPoll);
+          resolve({ consumed: false });
+        }
+      } catch {
+        if (statusPoll) clearInterval(statusPoll);
+        resolve({ consumed: false });
+      }
+    };
+    statusPoll = setInterval(check, MESSAGE_DELIVERY_PARK_MS);
+    check();
+  });
+  try {
+    if (!args.signal?.aborted) {
+      const deliverPromise = args.deliver().catch((err: unknown) => {
+        if (args.signal?.aborted) return;
+        throw err;
+      });
+      await Promise.race([
+        deliverPromise,
+        aborted.then(() => {
+          throw new DOMException('Aborted', 'AbortError');
+        }),
+      ]).catch((err: unknown) => {
+        if (args.signal?.aborted) return;
+        throw err;
+      });
+    }
+    if (args.signal?.aborted) return { consumed: false };
+    const won = await Promise.race([
+      consumed.promise.then(() => ({ consumed: true }) as const),
+      new Promise<{ consumed: boolean }>((resolve) => {
+        consumptionTimeout = setTimeout(
+          () => resolve({ consumed: false }),
+          deliveryConsumptionTimeoutOrDefault(args.timeoutMs)
+        );
+      }),
+      aborted,
+      terminal,
+    ]);
+    return won;
+  } finally {
+    if (consumptionTimeout) clearTimeout(consumptionTimeout);
+    if (statusPoll) clearInterval(statusPoll);
+    if (onAbort && args.signal) args.signal.removeEventListener('abort', onAbort);
+    consumed.cancel();
+  }
+}
+
 export async function awaitDeliveryConsumption(args: {
   sessionId: string;
   messageUuid: string;
@@ -363,8 +446,7 @@ export async function awaitDeliveryConsumption(args: {
   let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await args.deliver();
-    const consumptionTimeoutMs =
-      args.timeoutMs ?? (Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000);
+    const consumptionTimeoutMs = deliveryConsumptionTimeoutOrDefault(args.timeoutMs);
     await Promise.race([
       consumed.promise,
       new Promise<void>((_, reject) => {
@@ -389,8 +471,10 @@ export const sessionResetCoordinationLocks = new Map<string, Promise<unknown>>()
 
 export async function withSessionResetCoordination<T>(
   sessionId: string,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  signal?: AbortSignal
 ): Promise<T> {
+  throwIfDeliveryAborted(signal);
   const prev = sessionResetCoordinationLocks.get(sessionId) ?? Promise.resolve();
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
@@ -398,14 +482,23 @@ export async function withSessionResetCoordination<T>(
   });
   const tail = prev.then(() => held);
   sessionResetCoordinationLocks.set(sessionId, tail);
-  await prev;
+  const aborted = waitForDeliveryAbort(signal);
+  let acquired = false;
   try {
+    await Promise.race([prev, aborted.promise]);
+    throwIfDeliveryAborted(signal);
+    acquired = true;
     return await fn();
   } finally {
-    release();
-    if (sessionResetCoordinationLocks.get(sessionId) === tail) {
-      sessionResetCoordinationLocks.delete(sessionId);
-    }
+    aborted.cancel();
+    const releaseLock = () => {
+      release();
+      if (sessionResetCoordinationLocks.get(sessionId) === tail) {
+        sessionResetCoordinationLocks.delete(sessionId);
+      }
+    };
+    if (acquired) releaseLock();
+    else void prev.finally(releaseLock);
   }
 }
 
@@ -470,22 +563,27 @@ export async function deliverAndMarkQueued(args: {
   messageUuid: string;
   origin: MessageDeliveryOrigin;
   onEnqueueFailure?: () => void;
+  signal?: AbortSignal;
 }): Promise<void> {
-  await withSessionLock(args.sessionId, async () => {
-    let role: MessageDeliveryRole;
-    try {
-      role = deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
-        origin: args.origin,
-        parentToolUseId: null,
-      });
-    } catch (err) {
-      args.onEnqueueFailure?.();
-      throw err;
-    }
-    if (role === 'turn' && args.stateManager) {
+  await withSessionLock(
+    args.sessionId,
+    async () => {
+      let role: MessageDeliveryRole;
       try {
-        await args.stateManager.setQueuedIfIdle(args.messageUuid);
-      } catch {}
-    }
-  });
+        role = deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
+          origin: args.origin,
+          parentToolUseId: null,
+        });
+      } catch (err) {
+        args.onEnqueueFailure?.();
+        throw err;
+      }
+      if (role === 'turn' && args.stateManager) {
+        try {
+          await args.stateManager.setQueuedIfIdle(args.messageUuid);
+        } catch {}
+      }
+    },
+    args.signal
+  );
 }

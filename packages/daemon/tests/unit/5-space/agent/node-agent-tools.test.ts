@@ -463,6 +463,11 @@ describe('node-agent-tools: send_message', () => {
       taskNumber: 42,
       spaceAgentInjector: async (spaceId, message) => {
         spaceMessages.push({ spaceId, message });
+        return {
+          state: 'delivered',
+          messageId: `msg-${spaceMessages.length}`,
+          sessionId: `space:chat:${spaceId}`,
+        };
       },
     });
     const config = makeConfig(ctx, { agentMessageRouter });
