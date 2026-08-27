@@ -650,6 +650,43 @@ describe('InterruptHandler', () => {
       expect(busPublishAsyncSpy).not.toHaveBeenCalled();
     });
 
+    it('skips the delayed replay when a replacement query advanced the generation', async () => {
+      let signalProcessExit!: () => void;
+      const processExitedPromise = new Promise<void>((resolve) => {
+        signalProcessExit = resolve;
+      });
+      let queryGeneration = 7;
+      handler = createHandler({
+        processExitedPromise,
+        getQueryGeneration: () => queryGeneration,
+      });
+
+      await handler.handleInterrupt();
+      queryGeneration = 8;
+      signalProcessExit();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(busPublishAsyncSpy).not.toHaveBeenCalled();
+    });
+
+    it('still replays after the process exits when the generation is unchanged', async () => {
+      let signalProcessExit!: () => void;
+      const processExitedPromise = new Promise<void>((resolve) => {
+        signalProcessExit = resolve;
+      });
+      handler = createHandler({
+        processExitedPromise,
+        getQueryGeneration: () => 7,
+      });
+
+      await handler.handleInterrupt();
+      getStateSpy.mockReturnValue({ status: 'idle' });
+      signalProcessExit();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(busPublishAsyncSpy).toHaveBeenCalledWith('query.trigger', {
+        sessionId: 'test-session-id',
+      });
+    });
+
     it('should delay query.trigger until the subprocess exits even when the query settled in time', async () => {
       let signalProcessExit!: () => void;
       const processExitedPromise = new Promise<void>((resolve) => {

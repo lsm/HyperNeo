@@ -926,6 +926,8 @@ export class AcpQueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
+        this._lastConsumedUserMessage = null;
+
         if (
           !this.ctx.isCleaningUp() &&
           !recoveryState.rateLimitCooldownScheduled &&
@@ -937,6 +939,7 @@ export class AcpQueryRunner {
             if (
               turnCompletedNormally &&
               !this.ctx.isCleaningUp() &&
+              this.ctx.getQueryGeneration() === queryGeneration &&
               stateManager.getState().status === 'idle' &&
               session.config.queryMode !== 'manual'
             ) {
@@ -945,8 +948,9 @@ export class AcpQueryRunner {
           });
         }
 
-        this._lastConsumedUserMessage = null;
-        this.ctx.queryPromise = null;
+        if (this.ctx.getQueryGeneration() === queryGeneration) {
+          this.ctx.queryPromise = null;
+        }
       }
     }
   }

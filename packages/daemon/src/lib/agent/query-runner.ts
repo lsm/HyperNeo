@@ -1191,14 +1191,14 @@ export class QueryRunner {
 
         if (route.action === 'api_validation') {
           if (!finalizer.skipBeginTerminalIdle) {
-            stateManager.beginTerminalIdle();
+            stateManager.beginTerminalIdle(stateManager.idleOwnerForQuery(queryGeneration));
           }
           await this.displayErrorAsAssistantMessage(route.text, {
             markAsError: true,
           });
         } else if (route.action === 'terminal') {
           if (!finalizer.skipBeginTerminalIdle) {
-            stateManager.beginTerminalIdle();
+            stateManager.beginTerminalIdle(stateManager.idleOwnerForQuery(queryGeneration));
           }
           if (!finalizer.skipErrorManager) {
             await errorManager.handleError(
@@ -1220,7 +1220,7 @@ export class QueryRunner {
         }
 
         if (!finalizer.skipCatchIdle) {
-          await stateManager.setIdle();
+          await stateManager.setIdle({ owner: stateManager.idleOwnerForQuery(queryGeneration) });
         }
       }
     } finally {
@@ -1229,6 +1229,10 @@ export class QueryRunner {
       releaseStartupPermit('attempt_finished');
 
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
+
+      if (isStaleQuery) {
+        stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
+      }
 
       if (!isStaleQuery) {
         const timer = this.ctx.startupTimeoutTimer;
@@ -1265,6 +1269,9 @@ export class QueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
+        this._lastConsumedUserMessage = null;
+        this._turnConsumedUserMessages = [];
+
         if (
           this.ctx.getQueryGeneration() === queryGeneration &&
           this.ctx.queryAbortController === runAbortController &&
@@ -1274,18 +1281,22 @@ export class QueryRunner {
           stateManager.getState().status !== 'rate_limit_cooldown' &&
           !(isAbortError && stateManager.getState().status === 'interrupted')
         ) {
-          await stateManager.setIdle();
+          await stateManager.setIdle({ owner: stateManager.idleOwnerForQuery(queryGeneration) });
+        }
+
+        if (this.ctx.getQueryGeneration() !== queryGeneration) {
+          stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
         }
 
         if (this.ctx.queryAbortController === runAbortController) {
           this.ctx.queryAbortController = null;
         }
 
-        this._lastConsumedUserMessage = null;
-        this._turnConsumedUserMessages = [];
         this._consumedUserMessages.delete(queryGeneration);
 
-        this.ctx.queryPromise = null;
+        if (this.ctx.getQueryGeneration() === queryGeneration) {
+          this.ctx.queryPromise = null;
+        }
       }
     }
   }
@@ -1464,7 +1475,10 @@ export class QueryRunner {
     };
 
     const idleSuppressWaiters = async (): Promise<void> => {
-      await stateManager.setIdle({ suppressDeliveryWaiters: true });
+      await stateManager.setIdle({
+        suppressDeliveryWaiters: true,
+        owner: stateManager.idleOwnerForQuery(queryGeneration),
+      });
     };
 
     const terminateProcesses = (state: RetryTeardownState): RetryTeardownState => {

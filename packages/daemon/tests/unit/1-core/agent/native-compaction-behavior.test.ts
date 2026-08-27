@@ -312,6 +312,11 @@ function driveCompactionRefresh(opts: {
   const stateManager = {
     detectPhaseFromMessage: mock(async () => {}),
     beginTerminalIdle: mock(() => {}),
+    idleOwnerForQuery: mock((generation: number) => ({
+      queryGeneration: generation,
+      turnToken: 0,
+    })),
+    cancelTerminalIdleArm: mock(() => {}),
     setIdle: mock(async () => {}),
     setCompacting: mock(async (value: boolean) => {
       compacting = value;
