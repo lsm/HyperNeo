@@ -49,7 +49,7 @@ export interface ImmediateEventDeliveryDeps {
   setQueuedIfIdle(sessionId: string, messageUuid: string): Promise<boolean>;
   messages: Pick<
     SDKMessageRepository,
-    'getDeliveryContent' | 'saveUserMessage' | 'reopenDeliveryByUuid'
+    'getDeliveryContent' | 'saveUserMessage' | 'reopenDeliveryByUuid' | 'markDeliveryFailedByUuid'
   >;
   jobQueue: Pick<JobQueueRepository, 'getActiveDeliveryRole' | 'enqueue'>;
   eventStore: Pick<
@@ -185,12 +185,15 @@ export function buildHandoff(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeli
 export async function persistAndEnqueue(
   ctx: ImmediateEventDeliveryCtx
 ): Promise<ImmediateEventDeliveryCtx> {
+  let rowOpenedThisAttempt = false;
   try {
     const existing = ctx.deps.messages.getDeliveryContent(ctx.sessionId!, ctx.messageUuid!);
     if (!existing) {
       ctx.deps.messages.saveUserMessage(ctx.sessionId!, ctx.message!, 'enqueued', 'system');
+      rowOpenedThisAttempt = true;
     } else if (existing.sendStatus === 'failed') {
       ctx.deps.messages.reopenDeliveryByUuid(ctx.sessionId!, ctx.messageUuid!);
+      rowOpenedThisAttempt = true;
     }
     const deliveryRole = deliverMessage(
       ctx.deps.jobQueue as JobQueueRepository,
@@ -206,6 +209,11 @@ export async function persistAndEnqueue(
     }
     return { ...ctx, deliveryRole };
   } catch (error) {
+    if (rowOpenedThisAttempt) {
+      try {
+        ctx.deps.messages.markDeliveryFailedByUuid(ctx.sessionId!, ctx.messageUuid!);
+      } catch {}
+    }
     return settled(ctx, { action: 'error', stage: 'persistAndEnqueue', error });
   }
 }

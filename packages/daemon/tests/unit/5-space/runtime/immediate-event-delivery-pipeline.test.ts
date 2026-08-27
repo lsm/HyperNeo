@@ -72,6 +72,7 @@ function execution(): NodeExecution {
 interface Recording {
   saved: Array<{ sessionId: string; uuid: string; sendStatus: string; origin: string }>;
   reopened: string[];
+  rolledBack: string[];
   jobs: Array<{ sessionId: string; messageUuid: string; role: string; origin: string }>;
   queuedIfIdle: string[];
   delivered: Array<[string, string]>;
@@ -88,6 +89,7 @@ function makeDeps(overrides: Partial<ImmediateEventDeliveryDeps> = {}): {
   const rec: Recording = {
     saved: [],
     reopened: [],
+    rolledBack: [],
     jobs: [],
     queuedIfIdle: [],
     delivered: [],
@@ -127,6 +129,11 @@ function makeDeps(overrides: Partial<ImmediateEventDeliveryDeps> = {}): {
         rowStatus.set(uuid, 'enqueued');
         rec.reopened.push(uuid);
         return `db-reopened-${rec.reopened.length}`;
+      },
+      markDeliveryFailedByUuid: (_sessionId, uuid) => {
+        rowStatus.set(uuid, 'failed');
+        rec.rolledBack.push(uuid);
+        return `db-failed-${rec.rolledBack.length}`;
       },
     },
     jobQueue: {
@@ -343,8 +350,101 @@ describe('deliver-immediate-event pipeline', () => {
     expect(outcome.action).toBe('error');
     if (outcome.action !== 'error') return;
     expect(outcome.stage).toBe('persistAndEnqueue');
+    expect(rec.rolledBack).toEqual([]);
     expect(rec.delivered).toEqual([]);
     expect(rec.failed).toEqual([]);
+  });
+
+  it('rolls the freshly saved row back to failed when the job-queue insert throws', async () => {
+    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
+    const base = makeDeps();
+    const { outcome, rec, rowStatus } = await deliver({
+      jobQueue: {
+        ...base.deps.jobQueue,
+        enqueue: () => {
+          throw new Error('job queue insert failed');
+        },
+      },
+    });
+    expect(outcome.action).toBe('error');
+    if (outcome.action !== 'error') return;
+    expect(outcome.stage).toBe('persistAndEnqueue');
+    expect(rec.saved.length).toBe(1);
+    expect(rec.rolledBack).toEqual([uuid]);
+    expect(rowStatus.get(uuid)).toBe('failed');
+    expect(rec.delivered).toEqual([]);
+    expect(rec.failed).toEqual([]);
+  });
+
+  it('rolls a reopened row back to failed when the job-queue insert throws after reopening', async () => {
+    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
+    const base = makeDeps();
+    base.rowStatus.set(uuid, 'failed');
+    const outcome = await deliverImmediateEvent(
+      {
+        ...base.deps,
+        jobQueue: {
+          ...base.deps.jobQueue,
+          enqueue: () => {
+            throw new Error('job queue insert failed');
+          },
+        },
+      },
+      input()
+    );
+    expect(outcome.action).toBe('error');
+    expect(base.rec.reopened).toEqual([uuid]);
+    expect(base.rec.rolledBack).toEqual([uuid]);
+    expect(base.rowStatus.get(uuid)).toBe('failed');
+  });
+
+  it('leaves a pre-existing live row untouched when the job-queue insert throws', async () => {
+    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
+    const base = makeDeps();
+    base.rowStatus.set(uuid, 'enqueued');
+    const outcome = await deliverImmediateEvent(
+      {
+        ...base.deps,
+        jobQueue: {
+          ...base.deps.jobQueue,
+          enqueue: () => {
+            throw new Error('job queue insert failed');
+          },
+        },
+      },
+      input()
+    );
+    expect(outcome.action).toBe('error');
+    expect(base.rec.saved).toEqual([]);
+    expect(base.rec.reopened).toEqual([]);
+    expect(base.rec.rolledBack).toEqual([]);
+    expect(base.rowStatus.get(uuid)).toBe('enqueued');
+  });
+
+  it('still reports the original enqueue error when the rollback itself throws', async () => {
+    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
+    const rollbackAttempts: string[] = [];
+    const base = makeDeps();
+    const { outcome } = await deliver({
+      jobQueue: {
+        ...base.deps.jobQueue,
+        enqueue: () => {
+          throw new Error('job queue insert failed');
+        },
+      },
+      messages: {
+        ...base.deps.messages,
+        markDeliveryFailedByUuid: (_sessionId, attempted) => {
+          rollbackAttempts.push(attempted);
+          throw new Error('rollback failed');
+        },
+      },
+    });
+    expect(outcome.action).toBe('error');
+    if (outcome.action !== 'error') return;
+    expect(outcome.stage).toBe('persistAndEnqueue');
+    expect((outcome.error as Error).message).toBe('job queue insert failed');
+    expect(rollbackAttempts).toEqual([uuid]);
   });
 
   it('reports a ledger-marking error after the mailbox accepted the row and job', async () => {
