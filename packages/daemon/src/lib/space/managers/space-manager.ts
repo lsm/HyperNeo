@@ -345,6 +345,10 @@ export class SpaceManager {
     return this.workspaceManager.updateWorkspaceLabel(spaceId, workspaceId, label);
   }
 
+  async resolveWorkspaceSelection(spaceId: string, selection: string): Promise<string> {
+    return this.workspaceManager.resolveWorkspaceSelection(spaceId, selection);
+  }
+
   async getSpace(id: string): Promise<Space | null> {
     return this.spaceRepo.getSpace(id);
   }

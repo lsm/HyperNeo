@@ -422,7 +422,7 @@ export interface SpaceAgentToolsConfig {
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   runtime: SpaceRuntime;
   workflowManager: SpaceWorkflowManager;
-  spaceManager?: Pick<SpaceManager, 'getSpace'>;
+  spaceManager?: Pick<SpaceManager, 'getSpace' | 'resolveWorkspaceSelection'>;
   taskRepo: SpaceTaskRepository;
   nodeExecutionRepo: NodeExecutionRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
@@ -1980,7 +1980,26 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       workflow_handle?: string;
       depends_on?: string[];
       draft?: boolean;
+      workspace?: string;
     }): Promise<ToolResult> {
+      let workspacePath: string | undefined;
+      if (args.workspace !== undefined) {
+        if (!config.spaceManager) {
+          return jsonResult({
+            success: false,
+            error: 'Workspace selection is not available for this space',
+          });
+        }
+        try {
+          workspacePath = await config.spaceManager.resolveWorkspaceSelection(
+            spaceId,
+            args.workspace
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ success: false, error: message });
+        }
+      }
       const workflowIdArg = args.workflow_id ?? null;
       const idWorkflow = workflowIdArg ? workflowManager.getWorkflow(workflowIdArg) : null;
       const workflowIdUsable =
@@ -2012,6 +2031,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           preferredWorkflowId,
           dependsOn: args.depends_on,
           status: args.draft ? 'draft' : undefined,
+          workspacePath,
           createdBy: myAgentName ?? null,
           createdBySession: mySessionId ?? null,
         });
@@ -2024,6 +2044,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             workflow_handle: args.workflow_handle,
             depends_on: args.depends_on,
             draft: args.draft,
+            workspace: args.workspace,
           },
           task.id
         );
@@ -4283,6 +4304,12 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
           .optional()
           .describe(
             'When true, create the task in draft status. Draft tasks are never auto-started by the runtime, even with a workflow and priority assigned. Must be explicitly published before orchestration picks it up.'
+          ),
+        workspace: z
+          .string()
+          .optional()
+          .describe(
+            'Optional workspace for this task, given as the label or absolute path of a workspace registered in this space. Omit to use the space primary workspace. Unknown labels or paths are rejected with the list of registered workspaces.'
           ),
       },
       (args) => handlers.create_standalone_task(args)

@@ -413,6 +413,101 @@ const runUpdateWorkspaceLabel = (
   .pipe(updateLabelWrite, 'ctx', 'ctx')
   .end('ctx') as (input: UpdateLabelCtx) => UpdateLabelCtx;
 
+interface ResolveSelectionCtx {
+  spaces: WorkspaceRegistryReader;
+  workspaces: WorkspaceStore;
+  io: WorkspaceValidationIo;
+  spaceId: string;
+  selection: string;
+  rows?: SpaceWorkspaceRecord[];
+  resolvedPath?: string;
+  error?: Error;
+}
+
+function selectionRequireNonEmpty(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
+  if (ctx.selection.trim() !== '') return ctx;
+  return { ...ctx, error: new Error('Workspace selection must not be empty') };
+}
+
+function selectionLoadRows(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
+  if (!ctx.spaces.getSpace(ctx.spaceId)) {
+    return { ...ctx, error: new Error(`Space not found: ${ctx.spaceId}`) };
+  }
+  return { ...ctx, rows: ctx.workspaces.listBySpace(ctx.spaceId) };
+}
+
+function selectionMatchLabel(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
+  if (ctx.selection.startsWith('/')) return ctx;
+  const exact = ctx.rows!.filter((row) => row.label === ctx.selection);
+  const matches =
+    exact.length > 0 ? exact : ctx.rows!.filter((row) => row.label === ctx.selection.trim());
+  if (matches.length === 1) return { ...ctx, resolvedPath: matches[0].path };
+  if (matches.length > 1) {
+    const label = matches[0].label;
+    const paths = matches.map((row) => row.path).join(', ');
+    return {
+      ...ctx,
+      error: new Error(
+        `Ambiguous workspace label "${label}" for space ${ctx.spaceId}: it matches ${matches.length} registered workspaces (${paths}). Use the workspace path instead.`
+      ),
+    };
+  }
+  return ctx;
+}
+
+function selectionWorkspaceChoices(ctx: ResolveSelectionCtx): string {
+  const entries = ctx.rows!.map((row) => (row.label ? `"${row.label}" (${row.path})` : row.path));
+  const primary = ctx.spaces.getSpace(ctx.spaceId)?.workspacePath;
+  if (primary && !ctx.rows!.some((row) => row.path === primary)) {
+    entries.push(`${primary} (primary)`);
+  }
+  return entries.length > 0 ? entries.join(', ') : '(none)';
+}
+
+function selectionUnknownError(ctx: ResolveSelectionCtx, cause: string): Error {
+  return new Error(
+    `Unknown workspace "${ctx.selection}" for space ${ctx.spaceId}: ${cause}. Registered workspaces: ${selectionWorkspaceChoices(ctx)}`
+  );
+}
+
+async function selectionResolveAsPath(ctx: ResolveSelectionCtx): Promise<ResolveSelectionCtx> {
+  if (!ctx.selection.startsWith('/')) {
+    return {
+      ...ctx,
+      error: selectionUnknownError(
+        ctx,
+        'not a registered workspace label and not an absolute path'
+      ),
+    };
+  }
+  const result = await runResolveRegisteredWorkspace({
+    spaces: ctx.spaces,
+    workspaces: ctx.workspaces,
+    io: ctx.io,
+    spaceId: ctx.spaceId,
+    rawPath: ctx.selection,
+  });
+  if (!result.error) return { ...ctx, resolvedPath: result.registeredPath };
+  return { ...ctx, error: selectionUnknownError(ctx, result.error.message) };
+}
+
+const runResolveWorkspaceSelection = (
+  superpipe({
+    hasError: (ctx: ResolveSelectionCtx) => ctx.error !== undefined,
+    hasResolvedPath: (ctx: ResolveSelectionCtx) => ctx.resolvedPath !== undefined,
+  })('workspace-selection-resolution') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(selectionRequireNonEmpty, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(selectionLoadRows, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(selectionMatchLabel, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe('!hasResolvedPath', 'ctx')
+  .pipe(selectionResolveAsPath, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: ResolveSelectionCtx) => Promise<ResolveSelectionCtx>;
+
 export class SpaceWorkspaceManager {
   constructor(private readonly deps: SpaceWorkspaceManagerDeps) {}
 
@@ -483,5 +578,20 @@ export class SpaceWorkspaceManager {
       updated: false,
     });
     return result.updated;
+  }
+
+  async resolveWorkspaceSelection(spaceId: string, selection: string): Promise<string> {
+    const result = await runResolveWorkspaceSelection({
+      spaces: this.deps.spaces,
+      workspaces: this.deps.workspaces,
+      io: this.deps.io ?? nodeWorkspaceValidationIo,
+      spaceId,
+      selection,
+    });
+    if (result.error) throw result.error;
+    if (!result.resolvedPath) {
+      throw new Error(`Unknown workspace: ${selection}`);
+    }
+    return result.resolvedPath;
   }
 }

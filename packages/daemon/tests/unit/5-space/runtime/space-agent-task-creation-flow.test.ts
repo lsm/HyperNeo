@@ -1,9 +1,12 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
@@ -66,6 +69,7 @@ interface TestCtx {
   workflowRunRepo: SpaceWorkflowRunRepository;
   taskRepo: SpaceTaskRepository;
   taskManager: SpaceTaskManager;
+  spaceManager: SpaceManager;
   agentManager: SpaceAgentManager;
   runtime: SpaceRuntime;
   nodeExecutionRepo: NodeExecutionRepository;
@@ -102,7 +106,15 @@ function makeCtx(): TestCtx {
     nodeExecutionRepo,
   });
 
-  const taskManager = new SpaceTaskManager(db, spaceId);
+  const taskManager = new SpaceTaskManager(
+    db,
+    spaceId,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    (rawPath: string) => spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
+  );
 
   return {
     db,
@@ -112,6 +124,7 @@ function makeCtx(): TestCtx {
     workflowRunRepo,
     taskRepo,
     taskManager,
+    spaceManager,
     agentManager,
     runtime,
     nodeExecutionRepo,
@@ -126,6 +139,7 @@ function makeHandlers(ctx: TestCtx) {
     taskRepo: ctx.taskRepo,
     workflowRunRepo: ctx.workflowRunRepo,
     taskManager: ctx.taskManager,
+    spaceManager: ctx.spaceManager,
     spaceAgentManager: ctx.agentManager,
     nodeExecutionRepo: ctx.nodeExecutionRepo,
   });
@@ -348,5 +362,78 @@ describe('Agent-to-task creation flow — task appears in list_tasks', () => {
     expect(compactTask.priority).toBe('high');
     expect(compactTask.createdAt).toBeDefined();
     expect(compactTask.description).toBeUndefined();
+  });
+});
+
+describe('Agent-to-task creation flow — workspace selection', () => {
+  let ctx: TestCtx;
+  let workspaceRepo: SpaceWorkspaceRepository;
+  const tempDirs: string[] = [];
+
+  beforeEach(() => {
+    ctx = makeCtx();
+    workspaceRepo = new SpaceWorkspaceRepository(ctx.db);
+  });
+  afterEach(() => {
+    ctx.db.close();
+    for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function seedWorkspace(label: string): string {
+    const dir = mkdtempSync(`${tmpdir()}/hyperneo-ws-selection-`);
+    tempDirs.push(dir);
+    const canonicalPath = realpathSync(dir);
+    workspaceRepo.createUnclaimed({ spaceId: ctx.spaceId, path: canonicalPath, label });
+    return canonicalPath;
+  }
+
+  test('create_standalone_task resolves the workspace parameter by label', async () => {
+    const canonicalPath = seedWorkspace('docs');
+    const result = await makeHandlers(ctx).create_standalone_task({
+      title: 'Docs task',
+      description: 'Runs in the docs workspace',
+      workspace: 'docs',
+    });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.workspacePath).toBe(canonicalPath);
+    expect(ctx.taskRepo.getTask(parsed.task.id)?.workspacePath).toBe(canonicalPath);
+  });
+
+  test('create_standalone_task resolves the workspace parameter by path', async () => {
+    const canonicalPath = seedWorkspace('web');
+    const result = await makeHandlers(ctx).create_standalone_task({
+      title: 'Web task',
+      description: 'Runs in the web workspace',
+      workspace: canonicalPath,
+    });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.workspacePath).toBe(canonicalPath);
+  });
+
+  test('create_standalone_task rejects an unknown workspace with the registered list', async () => {
+    seedWorkspace('docs');
+    const result = await makeHandlers(ctx).create_standalone_task({
+      title: 'Mistaken task',
+      description: 'References a workspace that is not registered',
+      workspace: 'nope',
+    });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Unknown workspace "nope"');
+    expect(parsed.error).toContain('"docs" (');
+    expect(ctx.taskRepo.listBySpace(ctx.spaceId)).toHaveLength(0);
+  });
+
+  test('omitting the workspace parameter keeps the task on the primary workspace', async () => {
+    seedWorkspace('docs');
+    const result = await makeHandlers(ctx).create_standalone_task({
+      title: 'Primary task',
+      description: 'No workspace given',
+    });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(true);
+    expect(parsed.task.workspacePath ?? null).toBeNull();
   });
 });
