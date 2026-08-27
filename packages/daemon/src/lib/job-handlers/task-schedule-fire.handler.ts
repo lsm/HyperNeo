@@ -40,7 +40,7 @@ export interface TaskScheduleFireHandlerDeps {
   spaceRepo: SpaceRepository;
   taskRepo: SpaceTaskRepository;
   goalService?: SpaceGoalService;
-  goalRepo?: SpaceGoalRepository;
+  goalRepo: SpaceGoalRepository;
   goalAutomationService?: Pick<GoalAutomationService, 'onSelfNag'>;
   eventHub?: {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -195,7 +195,7 @@ export async function handleTaskScheduleFire(
         }
       }
 
-      const goal = schedule.goalId ? (goalRepo?.getById(schedule.goalId) ?? null) : null;
+      const goal = schedule.goalId ? goalRepo.getById(schedule.goalId) : null;
       const task = taskRepo.createTask({
         spaceId: schedule.spaceId,
         title: schedule.title,

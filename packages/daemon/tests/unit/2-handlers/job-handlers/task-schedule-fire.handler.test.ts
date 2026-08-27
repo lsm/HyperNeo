@@ -103,7 +103,7 @@ describe('handleTaskScheduleFire', () => {
   });
 
   function makeDeps(eventHub?: { publish: (event: string, data: unknown) => Promise<unknown> }) {
-    return { db: db as never, scheduleRepo, jobQueue, spaceRepo, taskRepo, eventHub };
+    return { db: db as never, scheduleRepo, jobQueue, spaceRepo, taskRepo, goalRepo, eventHub };
   }
 
   function makeAutomationDeps(eventHub?: {
@@ -306,10 +306,10 @@ describe('handleTaskScheduleFire', () => {
     const scheduleId = createCronSchedule(goal.id);
     scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
 
-    const result = await handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), {
-      ...makeGoalDeps(),
-      goalRepo,
-    });
+    const result = await handleTaskScheduleFire(
+      makeJob({ payload: { scheduleId } }),
+      makeGoalDeps()
+    );
 
     expect(result.skipped).toBe(false);
     expect(taskRepo.getTask(result.taskId ?? '')?.workspacePath).toBe('/secondary');
@@ -320,10 +320,10 @@ describe('handleTaskScheduleFire', () => {
     const scheduleId = createCronSchedule(goal.id);
     scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
 
-    const result = await handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), {
-      ...makeGoalDeps(),
-      goalRepo,
-    });
+    const result = await handleTaskScheduleFire(
+      makeJob({ payload: { scheduleId } }),
+      makeGoalDeps()
+    );
 
     expect(result.skipped).toBe(false);
     expect(taskRepo.getTask(result.taskId ?? '')?.workspacePath).toBeNull();
@@ -554,6 +554,7 @@ describe('handleTaskScheduleFire', () => {
         jobQueue: brokenJobQueue,
         spaceRepo,
         taskRepo,
+        goalRepo,
       })
     ).rejects.toThrow('synthetic enqueue failure');
 
