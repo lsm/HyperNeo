@@ -130,12 +130,7 @@ export class OAuthRefreshScheduler {
             await onPreRecovery(provider.id);
           } catch {}
         }
-        const retries = (this.retryCounts.get(retryKey) ?? 0) + 1;
-        this.retryCounts.set(retryKey, retries);
-        if (retries >= this.maxRetries) {
-          this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
-          await this.onProviderChanged?.(provider.id, 'exhausted');
-        }
+        await this.recordFailedRefresh(provider.id, retryKey);
         return;
       }
       this.retryCounts.delete(retryKey);
@@ -144,18 +139,25 @@ export class OAuthRefreshScheduler {
       if (onPreRecovery) {
         try {
           await onPreRecovery(provider.id);
-        } catch {}
+        } catch {
+          await this.recordFailedRefresh(provider.id, retryKey);
+          return;
+        }
       }
       await this.recoverDormant(provider.id);
       await this.onProviderChanged?.(provider.id, 'refreshed');
       return;
     }
 
+    await this.recordFailedRefresh(provider.id, retryKey);
+  }
+
+  private async recordFailedRefresh(providerId: string, retryKey: string): Promise<void> {
     const retries = (this.retryCounts.get(retryKey) ?? 0) + 1;
     this.retryCounts.set(retryKey, retries);
     if (retries >= this.maxRetries) {
-      this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
-      await this.onProviderChanged?.(provider.id, 'exhausted');
+      this.credentialManager.markProviderHealth(providerId, 'unhealthy');
+      await this.onProviderChanged?.(providerId, 'exhausted');
     }
   }
 

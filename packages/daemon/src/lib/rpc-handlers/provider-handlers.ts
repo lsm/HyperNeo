@@ -707,7 +707,12 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
         if (data.params.providerId === 'acp') {
           validateAcpConfigCommand(data.params.configJson);
         }
-        const record = providerRepo.createProvider(data.params);
+        const params = { ...data.params };
+        const strippedConfig = stripPersistedDiscovery(params.configJson);
+        if (strippedConfig !== params.configJson) {
+          params.configJson = strippedConfig;
+        }
+        const record = providerRepo.createProvider(params);
 
         try {
           if (record.kind !== 'custom_endpoint') {

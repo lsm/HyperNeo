@@ -1547,6 +1547,32 @@ describe('Provider RPC handlers', () => {
       expect(creds.storeApiKey).toHaveBeenCalledWith('openrouter', 'sk-or-test');
     });
 
+    it('strips client-supplied persisted discovery before creating the row', async () => {
+      const handlers = setup();
+      const result = (await handlers.get('providers.create')!(
+        {
+          params: {
+            providerId: 'openrouter',
+            displayName: 'OpenRouter',
+            kind: 'built_in',
+            authType: 'api_key',
+            configJson: JSON.stringify({
+              models: [{ id: 'kept-model' }],
+              discoveredModels: { models: [{ id: 'stale-from-previous-account' }] },
+            }),
+          },
+          credentials: { apiKey: 'sk-or-test' },
+        },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      const stored = JSON.parse(result.provider.configJson ?? '{}') as Record<string, unknown>;
+      expect(stored.models).toEqual([{ id: 'kept-model' }]);
+      expect(stored).not.toHaveProperty('discoveredModels');
+      expect(repo.getProvider(result.provider.id)?.configJson).toBe(result.provider.configJson);
+    });
+
     it('does not store custom_endpoint credentials in the credential store', async () => {
       const handlers = setup();
       const result = (await handlers.get('providers.create')!(

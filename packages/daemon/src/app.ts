@@ -517,6 +517,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           }
         } catch (error) {
           logError(`[Daemon] Pre-recovery discovery strip failed for ${providerId}:`, error);
+          throw error;
         }
       },
       onProviderChanged: async (providerId, outcome) => {
