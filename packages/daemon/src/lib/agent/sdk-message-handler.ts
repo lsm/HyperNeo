@@ -1017,16 +1017,16 @@ export class SDKMessageHandler {
     }
 
     if (isSDKCompactBoundary(message)) {
-      await this.handleCompactBoundary(message);
+      await this.handleCompactBoundary(message, invocationGeneration);
     }
 
     if (isSDKResultMessage(message)) {
       const compactingClear = isTopLevelResult ? this.clearStaleCompacting() : null;
       if (isTopLevelResult && !enforcedTurnEnd) {
-        await this.refreshContextUsage('turn-end');
         if (this.expectsSessionStateIdleAfterResult) {
           this.armTrailingIdleDeliveryGate();
         }
+        await this.refreshContextUsage('turn-end');
       }
       await compactingClear;
     }
@@ -1597,10 +1597,14 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleCompactBoundary(message: SDKMessage): Promise<void> {
+  private async handleCompactBoundary(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<void> {
     const { stateManager, contextTracker } = this.ctx;
 
     if (!isSDKCompactBoundary(message)) return;
+    if (this.isInvocationStale(invocationGeneration)) return;
 
     this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
     const boundaryInfo = contextTracker.getContextInfo();

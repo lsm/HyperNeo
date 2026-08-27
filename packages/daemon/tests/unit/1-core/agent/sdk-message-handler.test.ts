@@ -3620,6 +3620,22 @@ describe('SDKMessageHandler', () => {
       expect(markCompactionTriggeredSpy).toHaveBeenCalledWith(235_929);
     });
 
+    it('ignores compact boundaries from a replaced query generation', async () => {
+      (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message, 3);
+
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+      expect(setCompactingSpy).not.toHaveBeenCalled();
+    });
+
     it('acknowledges the compact boundary before the compacting-state publication settles', async () => {
       let releaseSetCompacting!: () => void;
       setCompactingSpy.mockImplementation(
@@ -4611,7 +4627,7 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        const trailingSegment = setDeliveryGateSpy.mock.calls.at(-1)?.[0] as Promise<void>;
+        const trailingSegment = setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>;
         let opened = false;
         void trailingSegment.then(() => {
           opened = true;
