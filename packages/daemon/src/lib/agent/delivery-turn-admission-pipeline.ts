@@ -5,6 +5,7 @@ import type {
   FencedDeliveryBatchWriteResult,
 } from '../../storage/repositories/job-queue-repository.ts';
 import type { SendStatus } from '../../storage/repositories/sdk-message-repository.ts';
+import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
 import { MessageDeliveryRecoverableTurnError } from './message-delivery.ts';
 import type { MessageDeliveryAttemptObserver } from './message-delivery.ts';
 
@@ -17,6 +18,7 @@ export interface ArmedDeliveryResponseObserver {
 export interface DeliveryTurnEndHandle {
   promise: Promise<void>;
   cancel: () => void;
+  idleOwner: IdleOwnerScope;
 }
 
 interface ExistingQueueEntry {
@@ -38,6 +40,7 @@ export type DeliveryTurnAdmissionOutcome =
       generation: number;
       clearEpoch: number;
       responseObserver: ArmedDeliveryResponseObserver | null;
+      idleOwner: IdleOwnerScope;
     };
 
 export interface DeliveryTurnAdmissionDeps {
@@ -111,6 +114,7 @@ interface DeliveryTurnAdmissionCtx extends DeliveryTurnAdmissionInput {
   generationAtAnchor?: number;
   turnEndMarkerCleared?: boolean;
   turnEnd?: DeliveryTurnEndHandle;
+  idleOwner?: IdleOwnerScope;
   existing?: ExistingQueueEntry | null;
   freshFeed?: boolean;
   feedContent?: string | MessageContent[];
@@ -253,7 +257,9 @@ function reclaimTurnStateAfterStartup(ctx: DeliveryTurnAdmissionCtx): DeliveryTu
 
 function installTurnEndWaiter(ctx: DeliveryTurnAdmissionCtx): DeliveryTurnAdmissionCtx {
   if (ctx.outcome) return ctx;
-  ctx.turnEnd = ctx.deps.waitForTurnEnd();
+  const turnEnd = ctx.deps.waitForTurnEnd();
+  ctx.turnEnd = turnEnd;
+  ctx.idleOwner = turnEnd.idleOwner;
   return ctx;
 }
 
@@ -399,7 +405,8 @@ function assembleDrivingOutcome(ctx: DeliveryTurnAdmissionCtx): DeliveryTurnAdmi
   const queryPromiseAnchor = ctx.queryPromiseAnchor;
   const turnEnd = ctx.turnEnd;
   const generationAtAnchor = ctx.generationAtAnchor;
-  if (!queryPromiseAnchor || !turnEnd || generationAtAnchor === undefined) {
+  const idleOwner = ctx.idleOwner;
+  if (!queryPromiseAnchor || !turnEnd || generationAtAnchor === undefined || !idleOwner) {
     throw new Error('message_delivery: admission anchors missing; cannot drive turn');
   }
   if (ctx.claimToken && ctx.submittedMemberUuids && ctx.submittedMemberUuids.length > 0) {
@@ -417,6 +424,7 @@ function assembleDrivingOutcome(ctx: DeliveryTurnAdmissionCtx): DeliveryTurnAdmi
       generation: generationAtAnchor,
       clearEpoch: ctx.deps.queueClearEpoch(),
       responseObserver: ctx.armedObserver ?? null,
+      idleOwner,
     },
   };
 }
@@ -445,7 +453,6 @@ const runDeliveryTurnAdmissionPipeline = (
   .pipe('!hasOutcome', 'ctx')
   .pipe(reclaimTurnStateAfterStartup, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
-  .pipe(installTurnEndWaiter, 'ctx', 'ctx')
   .pipe(resolveExistingOrFreshEntry, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(rebuildBatchContent, 'ctx', 'ctx')
@@ -458,6 +465,8 @@ const runDeliveryTurnAdmissionPipeline = (
   .pipe('!hasOutcome', 'ctx')
   .pipe(markBatchMembersSubmitted, 'ctx', 'ctx')
   .pipe(admitKickoffUnderLiveClaim, 'ctx', 'ctx')
+  .pipe('!hasOutcome', 'ctx')
+  .pipe(installTurnEndWaiter, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(assembleDrivingOutcome, 'ctx', 'ctx')
   .error(compensateFailedAdmission, ['error', 'ctx'])

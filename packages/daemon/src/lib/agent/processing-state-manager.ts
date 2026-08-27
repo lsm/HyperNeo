@@ -14,7 +14,7 @@ export class ProcessingStateManager {
   private streamingStartedAt: number | null = null;
   private isCompacting = false;
   private logger: Logger;
-  private onIdleCallback?: () => Promise<void>;
+  private onIdleCallback?: (owner?: IdleOwnerScope) => Promise<void>;
   private idleWaiters: Map<
     number,
     {
@@ -41,7 +41,7 @@ export class ProcessingStateManager {
     this.logger = new Logger(`ProcessingStateManager ${sessionId}`);
   }
 
-  setOnIdleCallback(callback: () => Promise<void>): void {
+  setOnIdleCallback(callback: (owner?: IdleOwnerScope) => Promise<void>): void {
     this.onIdleCallback = callback;
   }
 
@@ -49,15 +49,21 @@ export class ProcessingStateManager {
     this.queryOwnerGeneration = queryGeneration;
   }
 
+  admitDeliveryTurn(): IdleOwnerScope {
+    this.turnOwnerToken += 1;
+    return this.getCurrentIdleOwner();
+  }
+
   idleOwnerForQuery(queryGeneration: number): IdleOwnerScope {
     return { queryGeneration, turnToken: this.turnOwnerToken };
   }
 
-  private getCurrentIdleOwner(): IdleOwnerScope {
+  getCurrentIdleOwner(): IdleOwnerScope {
     return { queryGeneration: this.queryOwnerGeneration, turnToken: this.turnOwnerToken };
   }
 
-  private isIdleOwnerCurrent(owner: IdleOwnerScope): boolean {
+  isIdleOwnerCurrent(owner?: IdleOwnerScope): boolean {
+    if (!owner) return true;
     const current = this.getCurrentIdleOwner();
     return (
       current.queryGeneration === owner.queryGeneration && current.turnToken === owner.turnToken
@@ -237,7 +243,7 @@ export class ProcessingStateManager {
       ) {
         this.idleCallbackInFlight = true;
         try {
-          await this.onIdleCallback();
+          await this.onIdleCallback(transitionOwner);
         } catch (error) {
           this.logger.error('Error in onIdle callback:', error);
         } finally {
@@ -275,7 +281,6 @@ export class ProcessingStateManager {
   }
 
   async setProcessing(messageId: string, phase: StreamingPhase = 'initializing'): Promise<void> {
-    this.turnOwnerToken += 1;
     this.streamingPhase = phase;
     if (phase === 'streaming' && !this.streamingStartedAt) {
       this.streamingStartedAt = Date.now();
