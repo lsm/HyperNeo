@@ -1,7 +1,7 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, join, normalize } from 'node:path';
 import { getDataDir } from './data-dir.ts';
 import { hashString32 } from './runtime-hash.ts';
-import { basename, join, normalize } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 export function encodeRepoPath(repoPath: string): string {
   const normalizedPath = repoPath.replace(/\\/g, '/');
@@ -39,7 +39,7 @@ export function getWorktreeBaseDir(
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(sentinelFile, normalizedGitRoot);
   } else if (existsSync(sentinelFile)) {
-    const storedPath = readFileSync(sentinelFile, 'utf-8').trim();
+    const storedPath = readFileSync(sentinelFile, 'utf-8');
     if (storedPath !== normalizedGitRoot) {
       const msg = `Short key collision detected for "${shortKey}": expected "${storedPath}", got "${normalizedGitRoot}". Falling back to full encoding.`;
       onCollision?.(msg);
