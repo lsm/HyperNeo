@@ -412,11 +412,18 @@ export class ExternalEventStore {
     } finally {
       this.deferredEventNotifications = null;
     }
-    if (deferredEventNotifications.length > 0) {
-      this.notify(['space_external_events']);
-    }
-    for (const mark of changed) {
-      this.emitDeliveryDelivered(mark.eventId, mark.deliveryKey);
+    if (changed.length > 0 || deferredEventNotifications.length > 0) {
+      this.notify();
+      for (const mark of changed) {
+        if (this.deliveryTerminalHook) {
+          this.deliveryTerminalHook({
+            eventId: mark.eventId,
+            deliveryKey: mark.deliveryKey,
+            outcome: 'delivered',
+            reason: null,
+          });
+        }
+      }
     }
   }
 
