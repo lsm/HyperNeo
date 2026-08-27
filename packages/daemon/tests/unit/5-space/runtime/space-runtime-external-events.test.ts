@@ -7062,7 +7062,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-fanout');
     });
 
-    test('flag on: obsolete digests are superseded when the pull skips with no pending events', async () => {
+    test('flag on: a delivered-but-unflushed digest survives a no-pending pull', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -7106,7 +7106,7 @@ describe('SpaceRuntime external event subscriptions', () => {
         parent_tool_use_id: null,
         isSynthetic: true,
         inputKind: 'system',
-        message: { role: 'user', content: [{ type: 'text', text: 'stale settled digest' }] },
+        message: { role: 'user', content: [{ type: 'text', text: 'delivered unflushed digest' }] },
         externalEventIds: [event.id],
       } as unknown as SDKUserMessage;
       messages.saveUserMessage('session-skip-supersede', orphan, 'deferred', 'system');
@@ -7123,7 +7123,7 @@ describe('SpaceRuntime external event subscriptions', () => {
            AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
         )
         .get() as { n: number };
-      expect(rows.n).toBe(0);
+      expect(rows.n).toBe(1);
     });
 
     test('flag on: an admission-rejected pull drops the deferred digest rows', async () => {

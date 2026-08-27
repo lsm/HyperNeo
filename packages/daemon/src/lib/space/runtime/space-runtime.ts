@@ -2090,7 +2090,7 @@ export class SpaceRuntime {
       if (outcome.action === 'delivered') {
         this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid, outcome.eventIds);
       } else {
-        this.dropDeferredDigestRows(sessionId);
+        this.dropUncoveredDeferredDigestRows(sessionId, store);
         if (
           (outcome.action === 'failed' || outcome.action === 'held') &&
           this.isTargetSessionLive(sessionId)
@@ -2100,6 +2100,7 @@ export class SpaceRuntime {
       }
       return outcome;
     } catch (error) {
+      this.dropUncoveredDeferredDigestRows(sessionId, store);
       if (this.isTargetSessionLive(sessionId)) {
         this.scheduleTurnEndDigestRetry(sessionId, taskId);
       }
@@ -2107,14 +2108,38 @@ export class SpaceRuntime {
     }
   }
 
-  private dropDeferredDigestRows(sessionId: string): void {
+  private dropUncoveredDeferredDigestRows(sessionId: string, store: ExternalEventStore): void {
     try {
       const messages = this.getSdkMessageRepo();
+      const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+      const targetNodeId = execution?.workflowNodeId;
+      const targetAgentName = execution?.agentName;
       const rows = messages
         .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
         .filter((row) => row.sendStatus === 'deferred');
       for (const row of rows) {
-        messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+        const membership = (row as { externalEventIds?: unknown }).externalEventIds;
+        if (!Array.isArray(membership) || membership.length === 0) continue;
+        const eventIds = membership.filter(
+          (eventId): eventId is string => typeof eventId === 'string'
+        );
+        if (eventIds.length === 0) continue;
+        const hasDeliveredMember =
+          targetNodeId !== undefined &&
+          targetAgentName !== undefined &&
+          eventIds.some((eventId) =>
+            store
+              .listDeliveries(eventId)
+              .some(
+                (delivery) =>
+                  delivery.nodeId === targetNodeId &&
+                  delivery.agentName === targetAgentName &&
+                  delivery.state === 'delivered'
+              )
+          );
+        if (!hasDeliveredMember) {
+          messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+        }
       }
     } catch (error) {
       log.warn(
