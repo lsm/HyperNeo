@@ -590,7 +590,11 @@ function TaskItem({
   const showsActivity =
     task.status === 'in_progress' &&
     (!task.workflowRunId || spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId));
-  const workspaceLabel = getTaskWorkspaceLabel(task, spaceStore.workspaces?.value ?? []);
+  const workspaceLabel = getTaskWorkspaceLabel(
+    task,
+    spaceStore.workspaces?.value ?? [],
+    spaceStore.space?.value?.workspacePath
+  );
 
   const activate = () => onClick?.(task.id);
 

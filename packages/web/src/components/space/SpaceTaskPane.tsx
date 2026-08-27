@@ -597,7 +597,11 @@ export function SpaceTaskPane({
       ? ({ kind: 'hook_pending', runId: _runId } as const)
       : resolvedBanner;
   const showHeaderStatusBadge = activeBanner === null;
-  const workspaceLabel = getTaskWorkspaceLabel(task, spaceStore.workspaces?.value ?? []);
+  const workspaceLabel = getTaskWorkspaceLabel(
+    task,
+    spaceStore.workspaces?.value ?? [],
+    spaceStore.space?.value?.workspacePath
+  );
   const visibleTarget = visibleTargetName
     ? composerTargets.find(
         (target) =>
