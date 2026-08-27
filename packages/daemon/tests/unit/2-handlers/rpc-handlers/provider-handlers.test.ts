@@ -1028,7 +1028,7 @@ describe('Provider RPC handlers', () => {
     });
 
     it('rejects the refresh when curated entries alone exceed the persistence budget', async () => {
-      const pad = 'x'.repeat(65_390);
+      const pad = 'x'.repeat(65_260);
       const created = repo.createProvider({
         providerId: 'remote',
         displayName: 'Remote',
