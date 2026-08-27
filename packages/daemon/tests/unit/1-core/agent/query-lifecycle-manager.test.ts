@@ -28,6 +28,7 @@ describe('QueryLifecycleManager', () => {
   let publishSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let setQueuedSpy: ReturnType<typeof mock>;
+  let clearQueuedIfOwnedBySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
   let releaseIdleWaitersSpy: ReturnType<typeof mock>;
   let resetCircuitBreakerSpy: ReturnType<typeof mock>;
@@ -78,6 +79,7 @@ describe('QueryLifecycleManager', () => {
     publishSpy = mock(async () => {});
     setIdleSpy = mock(async () => {});
     setQueuedSpy = mock(async () => {});
+    clearQueuedIfOwnedBySpy = mock(async () => true);
     getStateSpy = mock(() => ({ status: 'idle' }));
     releaseIdleWaitersSpy = mock(() => {});
     resetCircuitBreakerSpy = mock(() => {});
@@ -116,6 +118,7 @@ describe('QueryLifecycleManager', () => {
       stateManager: {
         setIdle: setIdleSpy,
         setQueued: setQueuedSpy,
+        clearQueuedIfOwnedBy: clearQueuedIfOwnedBySpy,
         getState: getStateSpy,
         releaseIdleWaiters: releaseIdleWaitersSpy,
       } as unknown as ProcessingStateManager,
@@ -1205,7 +1208,7 @@ describe('QueryLifecycleManager', () => {
       expect(callOrder).toEqual(['start', 'enqueue']);
     });
 
-    test('does not admit a prepend re-enqueue superseded during query startup (B5e)', async () => {
+    test('admits a prepend re-enqueue whose own startup started the successor query (B5e)', async () => {
       let queryGeneration = 1;
       const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-retry');
       mockContext = createMockContext({
@@ -1223,9 +1226,35 @@ describe('QueryLifecycleManager', () => {
           prepend: true,
           queryGeneration: 1,
         })
+      ).resolves.toBe('started');
+
+      expect(enqueueSpy).toHaveBeenCalledWith('msg-retry', 'Hello', false, { prepend: true });
+      expect(clearQueuedIfOwnedBySpy).not.toHaveBeenCalled();
+    });
+
+    test('aborts a prepend re-enqueue superseded while another query stayed live (B5e)', async () => {
+      let queryGeneration = 1;
+      const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-retry');
+      messageQueue.start();
+      mockContext = createMockContext({
+        getQueryGeneration: () => queryGeneration,
+        queryPromise: Promise.resolve(),
+        isRateLimitEpisodeSuperseded: () => {
+          queryGeneration = 2;
+          return false;
+        },
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await expect(
+        manager.startQueryAndEnqueue('msg-retry', 'Hello', 7, {
+          prepend: true,
+          queryGeneration: 1,
+        })
       ).resolves.toBe('aborted');
 
       expect(enqueueSpy).not.toHaveBeenCalled();
+      expect(clearQueuedIfOwnedBySpy).toHaveBeenCalledWith('msg-retry');
     });
 
     test('aborts a prepend re-enqueue when the originating query was superseded (B5e)', async () => {
@@ -1242,6 +1271,27 @@ describe('QueryLifecycleManager', () => {
 
       expect(enqueueSpy).not.toHaveBeenCalled();
       expect(startStreamingCalled).toBe(false);
+      expect(clearQueuedIfOwnedBySpy).toHaveBeenCalledWith('msg-retry');
+    });
+
+    test('clears the queued state when a prepend retry aborts on episode supersession (B5e)', async () => {
+      const enqueueSpy = spyOn(messageQueue, 'enqueueWithId').mockResolvedValue('msg-retry');
+      mockContext = createMockContext({
+        getQueryGeneration: () => 1,
+        isRateLimitEpisodeSuperseded: () => true,
+      });
+      manager = new QueryLifecycleManager(mockContext);
+
+      await expect(
+        manager.startQueryAndEnqueue('msg-retry', 'Hello', 7, {
+          prepend: true,
+          queryGeneration: 1,
+        })
+      ).resolves.toBe('aborted');
+
+      expect(enqueueSpy).not.toHaveBeenCalled();
+      expect(setQueuedSpy).toHaveBeenCalledWith('msg-retry');
+      expect(clearQueuedIfOwnedBySpy).toHaveBeenCalledWith('msg-retry');
     });
 
     test('emits message.sent event', async () => {

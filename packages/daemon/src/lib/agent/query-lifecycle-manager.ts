@@ -548,6 +548,7 @@ export class QueryLifecycleManager {
           `startQueryAndEnqueue: aborted prepend re-enqueue of ${messageId} ` +
             `(the originating query was superseded).`
         );
+        await stateManager.clearQueuedIfOwnedBy(messageId);
         return 'aborted';
       }
     }
@@ -561,6 +562,9 @@ export class QueryLifecycleManager {
         `startQueryAndEnqueue: aborting retry of ${messageId} ` +
           `(rate-limit episode superseded during query startup).`
       );
+      if (options?.prepend) {
+        await stateManager.clearQueuedIfOwnedBy(messageId);
+      }
       return 'aborted';
     }
     if (queryStartResult === 'blocked') {
@@ -582,11 +586,12 @@ export class QueryLifecycleManager {
     }
 
     if (options?.prepend) {
-      if (querySuperseded()) {
+      if (querySuperseded() && queryStartResult !== 'started') {
         this.logger.info(
           `startQueryAndEnqueue: aborted prepend re-enqueue of ${messageId} ` +
             `(the originating query was superseded during query startup).`
         );
+        await stateManager.clearQueuedIfOwnedBy(messageId);
         return 'aborted';
       }
       void messageQueue
