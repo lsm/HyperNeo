@@ -91,6 +91,11 @@ describe('getTaskWorkspaceLabel', () => {
     expect(getTaskWorkspaceLabel(task, [], '/spaces/s1/primary')).toBe('docs');
   });
 
+  it('splits Windows-style paths for the basename fallback', () => {
+    const task = makeTask({ workspacePath: 'C:\\projects\\docs' });
+    expect(getTaskWorkspaceLabel(task, [], 'C:\\projects\\primary')).toBe('docs');
+  });
+
   it('prefers the workspace label over the basename for a non-primary path', () => {
     const task = makeTask({ workspacePath: '/spaces/s1/docs' });
     const workspaces: SpaceWorkspace[] = [

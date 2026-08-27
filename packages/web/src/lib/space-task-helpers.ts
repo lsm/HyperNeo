@@ -27,5 +27,5 @@ export function getTaskWorkspaceLabel(
   const match = workspaces.find((w) => w.path === task.workspacePath);
   if (match?.label) return match.label;
 
-  return task.workspacePath.split('/').filter(Boolean).at(-1) ?? task.workspacePath;
+  return task.workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ?? task.workspacePath;
 }
