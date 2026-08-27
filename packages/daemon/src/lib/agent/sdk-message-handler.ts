@@ -826,6 +826,20 @@ export class SDKMessageHandler {
       return;
     }
 
+    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
+      .parent_tool_use_id;
+    const isTopLevelResult =
+      isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
+
+    let releaseTurnEndGate: (() => void) | null = null;
+    if (isTopLevelResult && !this.isInvocationStale(invocationGeneration)) {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(gate));
+      releaseTurnEndGate = release;
+    }
     await stateManager.detectPhaseFromMessage(message);
 
     if (isSDKRateLimitEvent(message)) {
@@ -877,20 +891,6 @@ export class SDKMessageHandler {
       }
     }
 
-    const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
-      .parent_tool_use_id;
-    const isTopLevelResult =
-      isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
-
-    let releaseTurnEndGate: (() => void) | null = null;
-    if (isTopLevelResult && !this.isInvocationStale(invocationGeneration)) {
-      let release!: () => void;
-      const gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(gate));
-      releaseTurnEndGate = release;
-    }
     try {
       let deferredSuccessfully: boolean;
       try {
@@ -1401,58 +1401,62 @@ export class SDKMessageHandler {
 
     this.usesSessionStateChangedTurnEnd = true;
     if (message.state === 'idle') {
-      this.resetThinkingTokenTracking();
-      const currentOwner = this.invocationIdleOwner(invocationGeneration);
-      if (
-        this.trailingIdleGeneration !== null &&
-        this.trailingIdleGeneration !== invocationGeneration
-      ) {
-        this.logger.info(
-          `Ignoring trailing idle from a superseded query (armed ${this.trailingIdleGeneration}, ` +
-            `current ${invocationGeneration}).`
-        );
+      try {
+        this.resetThinkingTokenTracking();
+        const currentOwner = this.invocationIdleOwner(invocationGeneration);
+        if (
+          this.trailingIdleGeneration !== null &&
+          this.trailingIdleGeneration !== invocationGeneration
+        ) {
+          this.logger.info(
+            `Ignoring trailing idle from a superseded query (armed ${this.trailingIdleGeneration}, ` +
+              `current ${invocationGeneration}).`
+          );
+          this.releaseTrailingIdleDeliveryGate();
+          return;
+        }
+        if (
+          this.trailingIdleOwner !== undefined &&
+          currentOwner !== undefined &&
+          !isSameIdleOwner(this.trailingIdleOwner, currentOwner)
+        ) {
+          this.logger.info(
+            'Ignoring trailing idle from a superseded turn (delivery owner advanced).'
+          );
+          this.releaseTrailingIdleDeliveryGate();
+          return;
+        }
+        const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
+        if (clearTurnPending) {
+          await this.settleIdleForInvocation(invocationGeneration, {
+            suppressDeliveryWaiters: true,
+            suppressIdlePublish: true,
+            suppressIdleCallback: true,
+          });
+        } else {
+          const allowQueueReplay = this.lastResultWasSuccess !== false;
+          await this.finishTurn(allowQueueReplay, invocationGeneration);
+          if (this.isInvocationStale(invocationGeneration)) return;
+          this.usesSessionStateChangedTurnEnd = false;
+          this.expectsSessionStateIdleAfterResult = false;
+          this.lastResultWasSuccess = null;
+        }
+        if (this.clearAwaitingTrailingIdle) {
+          this.clearAwaitingTrailingIdle = false;
+          this.clearMessageInFlight = false;
+          this.usesSessionStateChangedTurnEnd = false;
+          this.expectsSessionStateIdleAfterResult = false;
+          this.lastResultWasSuccess = null;
+          this.settleSuppressedResultWaiter('confirmed');
+        } else if (clearTurnPending) {
+          this.usesSessionStateChangedTurnEnd = false;
+          this.expectsSessionStateIdleAfterResult = false;
+          this.lastResultWasSuccess = null;
+        }
         this.releaseTrailingIdleDeliveryGate();
-        return;
-      }
-      if (
-        this.trailingIdleOwner !== undefined &&
-        currentOwner !== undefined &&
-        !isSameIdleOwner(this.trailingIdleOwner, currentOwner)
-      ) {
-        this.logger.info(
-          'Ignoring trailing idle from a superseded turn (delivery owner advanced).'
-        );
+      } finally {
         this.releaseTrailingIdleDeliveryGate();
-        return;
       }
-      const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
-      if (clearTurnPending) {
-        await this.settleIdleForInvocation(invocationGeneration, {
-          suppressDeliveryWaiters: true,
-          suppressIdlePublish: true,
-          suppressIdleCallback: true,
-        });
-      } else {
-        const allowQueueReplay = this.lastResultWasSuccess !== false;
-        await this.finishTurn(allowQueueReplay, invocationGeneration);
-        if (this.isInvocationStale(invocationGeneration)) return;
-        this.usesSessionStateChangedTurnEnd = false;
-        this.expectsSessionStateIdleAfterResult = false;
-        this.lastResultWasSuccess = null;
-      }
-      if (this.clearAwaitingTrailingIdle) {
-        this.clearAwaitingTrailingIdle = false;
-        this.clearMessageInFlight = false;
-        this.usesSessionStateChangedTurnEnd = false;
-        this.expectsSessionStateIdleAfterResult = false;
-        this.lastResultWasSuccess = null;
-        this.settleSuppressedResultWaiter('confirmed');
-      } else if (clearTurnPending) {
-        this.usesSessionStateChangedTurnEnd = false;
-        this.expectsSessionStateIdleAfterResult = false;
-        this.lastResultWasSuccess = null;
-      }
-      this.releaseTrailingIdleDeliveryGate();
     }
   }
 
@@ -1696,10 +1700,15 @@ export class SDKMessageHandler {
     queryObject: QueryLike,
     model: string | undefined,
     provider: string | undefined,
-    invocationGeneration?: number | null
+    invocationGeneration?: number | null,
+    fenceOwner?: IdleOwnerScope
   ): boolean {
+    const currentOwner = this.invocationIdleOwner(invocationGeneration ?? null);
     return (
       this.isInvocationStale(invocationGeneration ?? null) ||
+      (fenceOwner !== undefined &&
+        currentOwner !== undefined &&
+        !isSameIdleOwner(fenceOwner, currentOwner)) ||
       this.ctx.queryObject !== queryObject ||
       this.ctx.session.config.model !== model ||
       this.ctx.session.config.provider !== provider
@@ -1753,6 +1762,7 @@ export class SDKMessageHandler {
     const fenceModel = session.config.model;
     const gateDeadline = deadlineAt ?? Date.now() + DELIVERY_GATE_WINDOW_MS;
     const fenceProvider = session.config.provider;
+    const fenceOwner = this.invocationIdleOwner(invocationGeneration ?? null);
 
     const promise = (async () => {
       let clearedDeadCompaction = false;
@@ -1789,7 +1799,13 @@ export class SDKMessageHandler {
         }
         const modelInfo = await getSessionModelInfo(session);
         if (
-          this.isContextRefreshStale(queryObject, fenceModel, fenceProvider, invocationGeneration)
+          this.isContextRefreshStale(
+            queryObject,
+            fenceModel,
+            fenceProvider,
+            invocationGeneration,
+            fenceOwner
+          )
         )
           return;
         const contextInfo: ContextInfo | null = await this.contextFetcher.fetch(
@@ -1797,7 +1813,13 @@ export class SDKMessageHandler {
           modelInfo
         );
         if (
-          this.isContextRefreshStale(queryObject, fenceModel, fenceProvider, invocationGeneration)
+          this.isContextRefreshStale(
+            queryObject,
+            fenceModel,
+            fenceProvider,
+            invocationGeneration,
+            fenceOwner
+          )
         )
           return;
         if (!contextInfo) return;
@@ -1814,7 +1836,13 @@ export class SDKMessageHandler {
             );
           });
         if (
-          !this.isContextRefreshStale(queryObject, fenceModel, fenceProvider, invocationGeneration)
+          !this.isContextRefreshStale(
+            queryObject,
+            fenceModel,
+            fenceProvider,
+            invocationGeneration,
+            fenceOwner
+          )
         ) {
           const outcome = enforceContextBudget({
             sessionId: session.id,
