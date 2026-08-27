@@ -329,7 +329,7 @@ function deterministicDigestUuid(eventIds: string[]): string {
 }
 
 export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
-  const eventIds = (ctx.essences ?? []).map((essence) => essence.eventId);
+  const eventIds = [...(ctx.essences ?? []).map((essence) => essence.eventId)].sort();
   const digestUuid = deterministicDigestUuid(eventIds);
   const digestMessage = {
     ...buildSyntheticExternalEventMessage(ctx.sessionId, ctx.digestText ?? '', digestUuid),
