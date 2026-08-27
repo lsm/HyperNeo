@@ -30,8 +30,8 @@ vi.mock('../../ui/Modal', () => ({
 }));
 
 vi.mock('../../ui/Button', () => ({
-  Button: ({ children, onClick }) => (
-    <button type="button" onClick={onClick}>
+  Button: ({ children, onClick, ...rest }) => (
+    <button type="button" onClick={onClick} {...rest}>
       {children}
     </button>
   ),
@@ -39,7 +39,7 @@ vi.mock('../../ui/Button', () => ({
 
 import { useSpaceWorkspaceChoice } from '../SpaceWorkspacePicker';
 import { connectionState } from '../../../lib/state';
-import type { SpaceWorkspace } from '@hyperneo/shared';
+import type { GitBranchesResponse, SpaceWorkspace } from '@hyperneo/shared';
 
 function makeWorkspace(overrides: Partial<SpaceWorkspace> = {}): SpaceWorkspace {
   return {
@@ -75,7 +75,9 @@ function Probe({
     <div>
       <button
         data-testid="probe-create"
-        onClick={() => chooseWorkspace((workspacePath) => mockCreate(workspacePath))}
+        onClick={() =>
+          chooseWorkspace((workspacePath, worktreeMode) => mockCreate(workspacePath, worktreeMode))
+        }
       >
         create
       </button>
@@ -90,6 +92,34 @@ function stubRegistry(handler: (params: { spaceId?: string }) => SpaceWorkspace[
     if (method === 'space.workspace.list') return Promise.resolve(handler(params));
     return Promise.resolve({});
   });
+}
+
+function gitInfo(isGitRepo: boolean): GitBranchesResponse {
+  return {
+    isGitRepo,
+    gitRoot: isGitRepo ? '/projects/docs/.git' : null,
+    currentBranch: isGitRepo ? 'main' : null,
+    defaultBranch: isGitRepo ? 'main' : null,
+    branches: isGitRepo ? ['main'] : [],
+    isDirty: false,
+  };
+}
+
+function layerGitBranches(respond: () => Promise<GitBranchesResponse>) {
+  const base = mockRequest.getMockImplementation();
+  mockRequest.mockImplementation((method: string, params: { spaceId?: string }) => {
+    if (method === 'git.branches') return respond();
+    return base ? base(method, params) : Promise.resolve({});
+  });
+}
+
+async function openPicker() {
+  const utils = render(<Probe spaceId="space-1" fallbackPath="/projects/main" />);
+  fireEvent.click(utils.getByTestId('probe-create'));
+  await waitFor(() => {
+    expect(utils.getByTestId('space-workspace-options')).toBeTruthy();
+  });
+  return utils;
 }
 
 const initialConnectionState = connectionState.value;
@@ -129,7 +159,7 @@ describe('SpaceWorkspacePicker', () => {
 
     fireEvent.click(getByText('Docs'));
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/docs');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs', undefined);
     });
     expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
   });
@@ -158,7 +188,7 @@ describe('SpaceWorkspacePicker', () => {
     });
     fireEvent.click(getByText('Docs'));
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/docs');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs', undefined);
     });
   });
 
@@ -183,7 +213,7 @@ describe('SpaceWorkspacePicker', () => {
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledTimes(1);
     });
-    expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+    expect(mockCreate).toHaveBeenCalledWith('/projects/main', undefined);
   });
 
   it('cancels a pending choice when unmounted before the registry settles', async () => {
@@ -211,7 +241,7 @@ describe('SpaceWorkspacePicker', () => {
     const { getByTestId } = render(<Probe spaceId="space-1" fallbackPath="/projects/main" />);
     fireEvent.click(getByTestId('probe-create'));
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/main', undefined);
     });
     expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
     mockCreate.mockClear();
@@ -236,7 +266,7 @@ describe('SpaceWorkspacePicker', () => {
 
     connectionState.value = 'disconnected';
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/main', undefined);
     });
   });
 
@@ -286,7 +316,7 @@ describe('SpaceWorkspacePicker', () => {
     fireEvent.click(getByTestId('probe-create'));
     expect(mockCreate).not.toHaveBeenCalledWith(undefined);
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/other');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/other', undefined);
     });
     expect(mockCreate).not.toHaveBeenCalledWith('/projects/docs');
     expect(mockCreate).not.toHaveBeenCalledWith('/projects/main');
@@ -300,7 +330,7 @@ describe('SpaceWorkspacePicker', () => {
     );
     fireEvent.click(getByTestId('probe-create'));
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/main', undefined);
     });
     mockCreate.mockClear();
 
@@ -317,7 +347,7 @@ describe('SpaceWorkspacePicker', () => {
     });
     fireEvent.click(getByText('Docs'));
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/docs');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs', undefined);
     });
   });
 
@@ -329,7 +359,7 @@ describe('SpaceWorkspacePicker', () => {
     );
     fireEvent.click(getByTestId('probe-create'));
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/main', undefined);
     });
     mockCreate.mockClear();
 
@@ -354,7 +384,7 @@ describe('SpaceWorkspacePicker', () => {
     });
     fireEvent.click(getByText('Docs'));
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/docs');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs', undefined);
     });
   });
 
@@ -363,7 +393,7 @@ describe('SpaceWorkspacePicker', () => {
     const { getByTestId } = render(<Probe spaceId="space-1" fallbackPath="/projects/main" />);
     fireEvent.click(getByTestId('probe-create'));
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/main', undefined);
     });
     expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
   });
@@ -374,8 +404,64 @@ describe('SpaceWorkspacePicker', () => {
     const { getByTestId } = render(<Probe spaceId="space-1" fallbackPath="/projects/main" />);
     fireEvent.click(getByTestId('probe-create'));
     await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith('/projects/main');
+      expect(mockCreate).toHaveBeenCalledWith('/projects/main', undefined);
     });
     expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
+  });
+
+  it('flows the selected mode into createSession for git workspaces and resets it on reopen', async () => {
+    stubRegistry(() => [makeWorkspace(), SECONDARY]);
+    layerGitBranches(() => Promise.resolve(gitInfo(true)));
+
+    const { getByTestId, getByText } = await openPicker();
+    fireEvent.click(getByTestId('space-workspace-mode-direct'));
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs', 'direct');
+    });
+    expect(mockRequest).toHaveBeenCalledWith('git.branches', { path: '/projects/docs' });
+
+    fireEvent.click(getByTestId('probe-create'));
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs', 'worktree');
+    });
+  });
+
+  it('flows the default worktree mode into createSession for git workspaces', async () => {
+    stubRegistry(() => [makeWorkspace(), SECONDARY]);
+    layerGitBranches(() => Promise.resolve(gitInfo(true)));
+    const { getByText } = await openPicker();
+
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs', 'worktree');
+    });
+  });
+
+  it('omits the mode for workspaces that are not git repositories', async () => {
+    stubRegistry(() => [makeWorkspace(), SECONDARY]);
+    layerGitBranches(() => Promise.resolve(gitInfo(false)));
+    const { getByTestId, getByText } = await openPicker();
+
+    fireEvent.click(getByTestId('space-workspace-mode-direct'));
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs', undefined);
+    });
+  });
+
+  it('omits the mode when the git probe fails', async () => {
+    stubRegistry(() => [makeWorkspace(), SECONDARY]);
+    layerGitBranches(() => Promise.reject(new Error('git probe failed')));
+    const { getByText } = await openPicker();
+
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('/projects/docs', undefined);
+    });
   });
 });

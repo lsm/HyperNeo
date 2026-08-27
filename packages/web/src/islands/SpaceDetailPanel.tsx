@@ -489,10 +489,10 @@ export function SpaceDetailPanel({
 
   const handleCreateSession = (e: Event) => {
     e.stopPropagation();
-    workspaceChoice.chooseWorkspace((workspacePath) => {
+    workspaceChoice.chooseWorkspace((workspacePath, worktreeMode) => {
       void (async () => {
         try {
-          const response = await createSession({ spaceId, workspacePath });
+          const response = await createSession({ spaceId, workspacePath, worktreeMode });
           navigateToSpaceSession(routeSpaceId, response.sessionId);
           onNavigate?.();
         } catch {}
