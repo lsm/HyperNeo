@@ -77,6 +77,7 @@ Rules for every slice:
 - Reach a human checkpoint within ~90 minutes; a PR idle ~2 hours is stalled — report and re-plan or block.
 - Each slice carries a merge contract (what it may touch, prod and test line budgets). Exceeding it means stop and report (`blocked` in Space work); budgets are contracts.
 - Reuse existing pipelines and gates; never rebuild routing a sibling owns.
+- Every PR description carries `Closes #<issue>` for its mapped issue, and the post-approval procedure verifies the issue actually closed after the squash-merge — close it manually with a comment referencing the squash commit if auto-close did not fire. A post-merge base mismatch caused by linear `dev` advancement (merge parent ≠ gated base) is informational, not a blocker: the gate binds to the PR head — record it in the merge audit and proceed.
 
 ## Architecture
 
