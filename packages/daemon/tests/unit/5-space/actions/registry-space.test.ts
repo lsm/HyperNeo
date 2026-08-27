@@ -185,24 +185,54 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('state writes and archive_task carry static level 4; send_session_message gates conditionally in its handler', () => {
+  test('destructive entries and human_only approval carry clearance; plain reads and writes gate in their handlers', () => {
     const ctx = makeCtx();
     try {
       const byName = new Map(
         createSpaceRegistryEntries(ctx.config).map((entry) => [entry.name, entry])
       );
-      for (const name of ['update_session_state', 'interrupt_session', 'archive_task']) {
+      for (const name of [
+        'update_session_state',
+        'interrupt_session',
+        'archive_task',
+        'change_plan',
+      ]) {
         expect(byName.get(name)?.autonomyRequirement).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
+      expect(byName.get('approve_pending_completion')?.autonomyRequirement).toBe(5);
       expect(byName.get('send_session_message')?.autonomyRequirement).toBeUndefined();
       for (const [name] of EXPECTED_ENTRIES) {
         if (
-          ['update_session_state', 'interrupt_session', 'archive_task', 'approve_task'].includes(
-            name
-          )
+          [
+            'update_session_state',
+            'interrupt_session',
+            'archive_task',
+            'change_plan',
+            'update_task',
+            'approve_task',
+            'approve_pending_completion',
+          ].includes(name)
         )
           continue;
         expect(byName.get(name)?.autonomyRequirement).toBeUndefined();
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('update_task requires archive clearance only for the archived transition', async () => {
+    const ctx = makeCtx();
+    try {
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const resolve = entries.find((entry) => entry.name === 'update_task')?.autonomyRequirement;
+      expect(typeof resolve).toBe('function');
+      if (typeof resolve === 'function') {
+        expect(await resolve({ task_id: 'task-1', status: 'archived' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+        expect(await resolve({ task_id: 'task-1', status: 'blocked' })).toBe(1);
+        expect(await resolve({ task_id: 'task-1', title: 'Edited' })).toBe(1);
       }
     } finally {
       ctx.db.close();

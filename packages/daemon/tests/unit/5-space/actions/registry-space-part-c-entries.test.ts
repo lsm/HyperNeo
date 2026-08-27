@@ -20,6 +20,7 @@ import {
 } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { DEFAULT_INACTIVITY_THRESHOLD_MS } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
@@ -236,15 +237,19 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('carries no static autonomy requirements — the typed path gates none of part C', () => {
+  test('gates only the destructive schedule deletion — the typed path gates none of part C', () => {
     const ctx = withExternalEventStore({ inactivityRunNow: async () => {} });
     try {
       const partC = createSpaceRegistryEntries(ctx.config).filter((entry) =>
         PART_C_FAMILIES.has(entry.family)
       );
       for (const entry of partC) {
+        if (entry.name === 'delete_scheduled_task') continue;
         expect(entry.autonomyRequirement).toBeUndefined();
       }
+      expect(
+        partC.find((entry) => entry.name === 'delete_scheduled_task')?.autonomyRequirement
+      ).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
     } finally {
       ctx.db.close();
     }

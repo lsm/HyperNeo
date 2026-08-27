@@ -47,7 +47,9 @@ import { type ActionDefinition, defineAction } from './registry.ts';
 
 const DEFAULT_COMPLETION_AUTONOMY_LEVEL = 5;
 
-const ARCHIVE_TASK_AUTONOMY_LEVEL = SESSION_WRITE_AUTONOMY_LEVEL;
+const DESTRUCTIVE_ACTION_AUTONOMY_LEVEL = SESSION_WRITE_AUTONOMY_LEVEL;
+
+const HUMAN_ONLY_AUTONOMY_LEVEL = 5;
 
 export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): ActionDefinition[] {
   const handlers = createSpaceAgentToolHandlers({ ...config, auditLogRepo: undefined });
@@ -58,6 +60,9 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     const workflow = run?.workflowId ? config.workflowManager.getWorkflowForRun(run) : null;
     return workflow?.completionAutonomyLevel ?? DEFAULT_COMPLETION_AUTONOMY_LEVEL;
   };
+
+  const updateTaskAutonomy = async (params: z.infer<typeof UpdateTaskSchema>) =>
+    params.status === 'archived' ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL : 1;
 
   const sessionEntries: ActionDefinition[] = [
     defineAction({
@@ -155,6 +160,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Update an active run description, or switch it to another workflow (cancels the run and starts a new one); returns the affected run(s).',
       paramsDoc: 'run_id, plus description? and/or workflow_id?/workflow_handle?',
       paramsSchema: ChangePlanSchema,
+      autonomyRequirement: DESTRUCTIVE_ACTION_AUTONOMY_LEVEL,
       handler: (args) => handlers.change_plan(args),
     }),
     defineAction({
@@ -249,6 +255,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
           'Permanently delete a schedule and cancel its pending fire job; returns success, or a retry hint when modified concurrently.',
         paramsDoc: 'schedule_id',
         paramsSchema: DeleteScheduledTaskSchema,
+        autonomyRequirement: DESTRUCTIVE_ACTION_AUTONOMY_LEVEL,
         handler: (args) => handlers.delete_scheduled_task(args),
       })
     );
@@ -394,6 +401,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         "Edit a task's title, description, priority, dependencies, or status; status follows the UI transition table; returns the updated task.",
       paramsDoc: 'task_id, plus any of title?, description?, priority?, depends_on?, status?',
       paramsSchema: UpdateTaskSchema,
+      autonomyRequirement: updateTaskAutonomy,
       handler: (args) => handlers.update_task(args),
     }),
     defineAction({
@@ -444,7 +452,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Archive a task — the true terminal state; archived tasks are excluded from queries and cannot be reactivated.',
       paramsDoc: 'task_id',
       paramsSchema: ArchiveTaskSchema,
-      autonomyRequirement: ARCHIVE_TASK_AUTONOMY_LEVEL,
+      autonomyRequirement: DESTRUCTIVE_ACTION_AUTONOMY_LEVEL,
       handler: (args) => handlers.archive_task(args),
     }),
     defineAction({
@@ -487,6 +495,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Approve or reject a task paused at the submit_for_approval checkpoint; coordinator and task-agent sessions only; returns the updated task.',
       paramsDoc: 'task_id, approved (true approves, false rejects to in_progress), reason?',
       paramsSchema: ApprovePendingCompletionSchema,
+      autonomyRequirement: HUMAN_ONLY_AUTONOMY_LEVEL,
       handler: (args) => handlers.approve_pending_completion(args),
     }),
   ];
