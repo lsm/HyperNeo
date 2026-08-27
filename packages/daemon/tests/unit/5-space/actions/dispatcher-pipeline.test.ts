@@ -657,6 +657,20 @@ describe('runDispatchAction', () => {
     expect(telemetry[0].family).toBe('node');
   });
 
+  test('dispatches human_only actions when the declared autonomy requirement is met', async () => {
+    const outcome = await runDispatchAction(
+      baseDeps(),
+      baseInput({
+        actionName: 'approve_task',
+        params: { taskId: 'review-gated' },
+        role: 'workflow_worker',
+        spaceLevel: 5,
+      })
+    );
+    assertDispatched(outcome);
+    expect(JSON.parse(extractText(outcome.result))).toEqual({ approved: 'review-gated' });
+  });
+
   test('emits failed telemetry when the handler throws', async () => {
     const telemetry: DispatchTelemetryEvent[] = [];
     const outcome = await runDispatchAction(
