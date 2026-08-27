@@ -17,6 +17,8 @@ import {
   deliverMessage,
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
+  STEER_ACK_TIMEOUT_MS,
+  steerAckTimeoutMs,
   waitForDeliveryConsumption,
   withSessionLock,
   withSessionResetCoordination,
@@ -6619,7 +6621,7 @@ describe('AgentSession', () => {
       }
     });
 
-    it('releases the worker slot and requeues when a hung query never acknowledges a yielded steer', async () => {
+    it('settles a yielded steer as acknowledged when a hung query never confirms it', async () => {
       const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
       process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '25';
       const db = await createTestDb();
@@ -6664,8 +6666,8 @@ describe('AgentSession', () => {
         await generator.next();
         expect(queue.hasYielded(steerUuid)).toBe(true);
         const outcome = await steerPromise;
-        expect(outcome).toEqual({ outcome: 'ack_timeout' });
-        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
+        expect(outcome).toEqual({ outcome: 'consumed' });
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('consumed');
         expect(queue.hasYielded(steerUuid)).toBe(false);
         expect(queue.size()).toBe(0);
       } finally {
@@ -6724,6 +6726,34 @@ describe('AgentSession', () => {
         else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
         db.close();
       }
+    });
+  });
+
+  describe('steerAckTimeoutMs — override validation', () => {
+    const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+
+    afterEach(() => {
+      if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+      else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
+    });
+
+    it('falls back to the default when the override is unset or unparseable', () => {
+      delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
+      expect(steerAckTimeoutMs()).toBe(STEER_ACK_TIMEOUT_MS);
+      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = 'not-a-number';
+      expect(steerAckTimeoutMs()).toBe(STEER_ACK_TIMEOUT_MS);
+    });
+
+    it('falls back to the default when the override is outside the supported timer range', () => {
+      for (const invalid of ['0', '-1', 'Infinity', '9999999999999']) {
+        process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = invalid;
+        expect(steerAckTimeoutMs()).toBe(STEER_ACK_TIMEOUT_MS);
+      }
+    });
+
+    it('accepts a positive finite override within the supported timer range', () => {
+      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '250';
+      expect(steerAckTimeoutMs()).toBe(250);
     });
   });
 

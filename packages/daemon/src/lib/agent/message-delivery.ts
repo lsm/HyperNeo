@@ -243,8 +243,12 @@ export const MAX_STEER_PARKS = 60;
 
 export const STEER_ACK_TIMEOUT_MS = 30_000;
 
+const MAX_TIMER_MS = 2_147_483_647;
+
 export function steerAckTimeoutMs(): number {
-  return Number(process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS) || STEER_ACK_TIMEOUT_MS;
+  const parsed = Number(process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS);
+  if (Number.isFinite(parsed) && parsed > 0 && parsed <= MAX_TIMER_MS) return parsed;
+  return STEER_ACK_TIMEOUT_MS;
 }
 
 export type DriveTurnOutcome =
