@@ -64,7 +64,6 @@ function spyPendingRepo(repo: PendingAgentMessageRepository): SpyRepo {
       repo.recordDeliveryAttempt(id, error),
     recordDeliveryError: (id: string, error: string | null) => repo.recordDeliveryError(id, error),
     markFailed: (id: string, error: string) => repo.markFailed(id, error),
-    clearLateDeadLetter: (id: string) => repo.clearLateDeadLetter(id),
     markDelivered: (id: string, sessionId: string) => {
       calls.push(`delivered:${id}`);
       repo.markDelivered(id, sessionId);
