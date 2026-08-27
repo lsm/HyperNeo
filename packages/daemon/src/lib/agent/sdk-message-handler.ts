@@ -40,17 +40,15 @@ import { Logger } from '../logger.ts';
 import { getProviderCatalogEpoch, getSessionModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
-import {
-  contextBudgetThreshold,
-  decideContextBudgetCompaction,
-} from './context-budget-decision.ts';
+import { contextBudgetThreshold } from './context-budget-decision.ts';
+import { enforceContextBudget } from './context-budget-enforcement.ts';
 import { ContextFetcher } from './context-fetcher.ts';
 import type { ContextTracker } from './context-tracker.ts';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
+import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
 import { assessLimitError, type LimitRetryHint } from './limit-error-classifier.ts';
 import { signalDeliveryConsumed } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
-import type { IdleOwnerScope } from './idle-waiter-admission-pipeline.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { QueryLifecycleManager } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
@@ -951,9 +949,7 @@ export class SDKMessageHandler {
         }
       }
       await this.recordResultUsageMetadata(message as SDKResultMessage);
-      const compactingClear = this.ctx.stateManager.getIsCompacting()
-        ? this.ctx.stateManager.setCompacting(false)
-        : null;
+      const compactingClear = this.clearStaleCompacting();
       await this.refreshContextUsage('turn-end');
       await compactingClear;
       return;
@@ -976,9 +972,7 @@ export class SDKMessageHandler {
           releaseTurnEndGate = resolve;
         });
         this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(turnEndGate));
-        const compactingClear = this.ctx.stateManager.getIsCompacting()
-          ? this.ctx.stateManager.setCompacting(false)
-          : null;
+        const compactingClear = this.clearStaleCompacting();
         try {
           await this.refreshContextUsage('turn-end');
           enforcedTurnEnd = true;
@@ -1027,10 +1021,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKResultMessage(message)) {
-      const compactingClear =
-        isTopLevelResult && this.ctx.stateManager.getIsCompacting()
-          ? this.ctx.stateManager.setCompacting(false)
-          : null;
+      const compactingClear = isTopLevelResult ? this.clearStaleCompacting() : null;
       if (isTopLevelResult && !enforcedTurnEnd) {
         await this.refreshContextUsage('turn-end');
         if (this.expectsSessionStateIdleAfterResult) {
@@ -1645,6 +1636,13 @@ export class SDKMessageHandler {
     );
   }
 
+  private clearStaleCompacting(): Promise<void> {
+    if (!this.ctx.stateManager.getIsCompacting()) return Promise.resolve();
+    return this.ctx.stateManager.setCompacting(false).catch((error) => {
+      this.logger.warn('Failed to clear compacting state:', error);
+    });
+  }
+
   private isDaemonCompactionPending(): boolean {
     const { session, messageQueue, stateManager } = this.ctx;
     const providerId = session.config.provider;
@@ -1723,64 +1721,28 @@ export class SDKMessageHandler {
               error
             );
           });
-        const enforceContextBudget = async (): Promise<void> => {
-          if (this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) return;
-
-          const providerId = session.config.provider;
-          if (
-            !providerId ||
-            providerId === 'acp' ||
-            NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)
-          ) {
-            return;
-          }
-          if (
-            this.ctx.stateManager.getState().status === 'rate_limit_cooldown' ||
-            (this.ctx.isLimitRecoveryPending?.() ?? false)
-          ) {
-            return;
-          }
-          if (clearedDeadCompaction) {
-            return;
-          }
-          const effectiveWindow =
-            contextInfo.totalCapacity > 0 ? contextInfo.totalCapacity : modelInfo?.contextWindow;
-          const effectivePercent = contextInfo.autoCompactPercent;
-          const budgetKey = contextBudgetThreshold(effectiveWindow ?? 0, effectivePercent);
-          if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
-            return;
-          }
-          const decision = decideContextBudgetCompaction({
-            totalUsed: contextInfo.totalUsed,
-            configuredWindow: effectiveWindow,
-            autoCompactPercent: effectivePercent,
-            sdkAutoCompactEnabled: contextInfo.isAutoCompactEnabled,
-            sdkAutoCompactThreshold: contextInfo.sdkAutoCompactThreshold,
-            cooldownActive: contextTracker.isCoolingDown(budgetKey),
-            compactingActive: this.ctx.stateManager.getIsCompacting(),
+        if (!this.isContextRefreshStale(queryObject, fenceModel, fenceProvider)) {
+          const outcome = enforceContextBudget({
+            sessionId: session.id,
+            providerId: session.config.provider,
+            reason,
+            contextInfo,
+            fallbackContextWindow: modelInfo?.contextWindow,
+            clearedDeadCompaction,
+            limitRecoveryPending: this.ctx.isLimitRecoveryPending?.() ?? false,
+            contextTracker,
+            messageQueue: this.ctx.messageQueue,
+            stateManager: this.ctx.stateManager,
+            logger: this.logger,
           });
-          if (decision.action === 'compact') {
-            contextTracker.markCompactionTriggered(budgetKey);
-            this.logger.info(
-              `Daemon context-budget compaction for session ${session.id} ` +
-                `(provider=${providerId}, reason=${decision.reason}, ` +
-                `${contextInfo.totalUsed} >= ${budgetKey} of ${effectiveWindow ?? 0} tokens)`
-            );
-            if (reason === 'event-tick') {
-              this.compactionEnqueuedMidTurn = true;
-            }
-            void this.ctx.messageQueue
-              .enqueue('/compact', true, { durable: true, prepend: true })
-              .catch((error) => {
-                if (this.ctx.messageQueue.hasOutstandingInternalCompaction()) {
-                  return;
-                }
-                this.logger.warn(`compaction enqueue failed for session ${session.id}:`, error);
-                contextTracker.clearCompactionCooldown();
-              });
+          if (
+            outcome.compactionEnqueued &&
+            reason === 'event-tick' &&
+            this.ctx.stateManager.getState().status === 'processing'
+          ) {
+            this.compactionEnqueuedMidTurn = true;
           }
-        };
-        await enforceContextBudget();
+        }
         await boundedDeliveryGate(
           publishProjection.then(() => undefined),
           gateDeadline

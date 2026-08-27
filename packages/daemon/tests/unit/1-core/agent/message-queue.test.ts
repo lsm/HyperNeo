@@ -1041,7 +1041,7 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
-    it('stop settles queued and in-flight internal compactions', async () => {
+    it('stop interrupts queued and in-flight internal compactions', async () => {
       const q = new MessageQueue();
       q.start();
 
@@ -1051,8 +1051,8 @@ describe('MessageQueue', () => {
       await generator.next();
 
       q.stop();
-      await first;
-      await second;
+      await expect(first).rejects.toThrow('Interrupted by user');
+      await expect(second).rejects.toThrow('Interrupted by user');
       expect(q.hasQueuedInternalCompaction()).toBe(false);
       expect(q.hasInFlightInternalCompaction()).toBe(false);
       expect(q.hasOutstandingInternalCompaction()).toBe(false);

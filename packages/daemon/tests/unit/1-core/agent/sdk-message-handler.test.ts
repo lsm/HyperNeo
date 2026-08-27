@@ -4497,6 +4497,7 @@ describe('SDKMessageHandler', () => {
 
       it('does not treat the ordinary turn result as a dead compaction after a mid-turn enqueue', async () => {
         hasQueuedMessagesSpy.mockImplementation(() => true);
+        getStateSpy.mockImplementation(() => ({ status: 'processing', phase: 'streaming' }));
         const { h } = budgetCase();
 
         for (let i = 0; i < 5; i++) {
@@ -4556,6 +4557,42 @@ describe('SDKMessageHandler', () => {
 
         resolvePublish?.();
         await handled;
+      });
+
+      it('does not defer dead-compaction cleanup for an event-tick compaction enqueued while idle', async () => {
+        hasQueuedMessagesSpy.mockImplementation(() => true);
+        const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
+          ({
+            type: 'system',
+            subtype: 'session_state_changed',
+            state,
+            uuid: `state-${state}`,
+            session_id: 'sdk-session-123',
+          }) as unknown as SDKMessage;
+        const { h } = budgetCase();
+
+        for (let i = 0; i < 4; i++) {
+          await h.handleMessage({
+            type: 'assistant',
+            uuid: `tick-${i}`,
+            message: { role: 'assistant', content: [] },
+          } as unknown as SDKMessage);
+        }
+        await h.handleMessage(sessionState('idle'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(enqueueMessageSpy).toHaveBeenCalledWith('/compact', true, {
+          durable: true,
+          prepend: true,
+        });
+
+        hasQueuedMessagesSpy.mockImplementation(() => false);
+        hasOutstandingInternalCompactionSpy.mockImplementation(() => true);
+        hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+
+        await h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+        expect(clearCompactionCooldownSpy).toHaveBeenCalledTimes(1);
       });
 
       it('holds the delivery gate until the trailing session_state_changed idle lands', async () => {

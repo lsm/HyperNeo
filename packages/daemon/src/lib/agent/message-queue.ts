@@ -104,28 +104,35 @@ export class MessageQueue {
     if (this.internalCompactionsAwaitingBoundary > 0) {
       this.internalCompactionsAwaitingBoundary -= 1;
     }
-    this.cancelInternalCompactionEntries();
+    this.cancelInternalCompactionEntries(false);
     this.recentSentPrompts.clear();
     this.wakeWaiters();
   }
 
-  private cancelInternalCompactionEntries(): void {
+  private cancelInternalCompactionEntries(interrupted: boolean): void {
+    const settle = (message: QueuedMessage) => {
+      if (interrupted) {
+        message.reject(new Error('Interrupted by user'));
+      } else {
+        message.resolve(message.id);
+      }
+    };
     this.queue = this.queue.filter((message) => {
       if (!this.isInternalCompaction(message)) return true;
-      message.resolve(message.id);
+      settle(message);
       return false;
     });
     this.claimed = new Set(
       [...this.claimed].filter((message) => {
         if (!this.isInternalCompaction(message)) return true;
-        message.resolve(message.id);
+        settle(message);
         return false;
       })
     );
     this.yielded = new Set(
       [...this.yielded].filter((message) => {
         if (!this.isInternalCompaction(message)) return true;
-        message.resolve(message.id);
+        settle(message);
         return false;
       })
     );
@@ -444,7 +451,7 @@ export class MessageQueue {
     this.running = false;
     this.internalCompactionsAwaitingBoundary = 0;
     this.nonCompactionSentSinceBoundary = false;
-    this.cancelInternalCompactionEntries();
+    this.cancelInternalCompactionEntries(true);
     this.deliveryGate = null;
     this.wakeWaiters();
   }
