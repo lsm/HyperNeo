@@ -1,21 +1,34 @@
 import {
   ChangePlanSchema,
+  CreateScheduledTaskSchema,
+  DeleteScheduledTaskSchema,
+  GetExternalEventSchema,
+  GetScheduledTaskSchema,
   GetSessionDetailSchema,
   GetSessionMessagesSchema,
   GetWorkflowDetailSchema,
   GetWorkflowRunSchema,
+  InactivityConfigGetSchema,
+  InactivityConfigSetEnabledSchema,
+  InactivityConfigSetSchema,
+  InactivityRunNowSchema,
   InterruptSessionSchema,
+  ListScheduledTasksSchema,
   ListSessionsSchema,
   ListWorkflowsSchema,
+  PauseScheduledTaskSchema,
+  ResumeScheduledTaskSchema,
   SendSessionMessageSchema,
   SuggestWorkflowSchema,
   UpdateSessionStateSchema,
 } from '../tools/space-agent-tool-schemas.ts';
 import {
   createSpaceAgentToolHandlers,
+  DEFAULT_INACTIVITY_THRESHOLD_MS,
   type SpaceAgentToolsConfig,
 } from '../tools/space-agent-tools.ts';
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../tools/tool-admission-gates.ts';
+import { jsonResult } from '../tools/tool-result.ts';
 import { type ActionDefinition, defineAction } from './registry.ts';
 
 export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): ActionDefinition[] {
@@ -141,7 +154,183 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     }),
   ];
 
-  const entries = config.db ? [...sessionEntries, ...workflowEntries] : [...workflowEntries];
+  const partCEntries: ActionDefinition[] = [];
+
+  function requireInactivityAgentId(): string {
+    if (!config.myAgentId) {
+      throw new Error('No agent identity available for inactivity config');
+    }
+    return config.myAgentId;
+  }
+
+  if (config.scheduleService) {
+    partCEntries.push(
+      defineAction({
+        name: 'create_scheduled_task',
+        family: 'scheduled',
+        safetyClass: 'mutate',
+        description:
+          'Create a recurring (cron) or one-shot (at) schedule that spawns a real Space task each time it fires; returns the created schedule.',
+        paramsDoc:
+          'title, description, trigger_type (cron|at), cron_expression? (required for cron), run_at? ms (required for at), priority?, workflow_id?, labels?, timezone?',
+        paramsSchema: CreateScheduledTaskSchema,
+        handler: (args) => handlers.create_scheduled_task(args),
+      }),
+      defineAction({
+        name: 'list_scheduled_tasks',
+        family: 'scheduled',
+        safetyClass: 'read',
+        description:
+          'List every task schedule in this space; returns schedules with trigger, next run time, and status.',
+        paramsDoc: 'status? (active|paused|completed)',
+        paramsSchema: ListScheduledTasksSchema,
+        handler: (args) => handlers.list_scheduled_tasks(args),
+      }),
+      defineAction({
+        name: 'get_scheduled_task',
+        family: 'scheduled',
+        safetyClass: 'read',
+        description:
+          'Inspect one schedule including its last spawned task and next run time; returns the schedule record.',
+        paramsDoc: 'schedule_id',
+        paramsSchema: GetScheduledTaskSchema,
+        handler: (args) => handlers.get_scheduled_task(args),
+      }),
+      defineAction({
+        name: 'pause_scheduled_task',
+        family: 'scheduled',
+        safetyClass: 'mutate',
+        description:
+          'Pause a schedule so it stops creating tasks until resumed; returns the paused schedule.',
+        paramsDoc: 'schedule_id',
+        paramsSchema: PauseScheduledTaskSchema,
+        handler: (args) => handlers.pause_scheduled_task(args),
+      }),
+      defineAction({
+        name: 'resume_scheduled_task',
+        family: 'scheduled',
+        safetyClass: 'mutate',
+        description:
+          'Resume a paused schedule, recomputing the next run time and re-enqueueing the job; returns the resumed schedule.',
+        paramsDoc: 'schedule_id',
+        paramsSchema: ResumeScheduledTaskSchema,
+        handler: (args) => handlers.resume_scheduled_task(args),
+      }),
+      defineAction({
+        name: 'delete_scheduled_task',
+        family: 'scheduled',
+        safetyClass: 'destructive',
+        description:
+          'Permanently delete a schedule and cancel its pending fire job; returns success, or a retry hint when modified concurrently.',
+        paramsDoc: 'schedule_id',
+        paramsSchema: DeleteScheduledTaskSchema,
+        handler: (args) => handlers.delete_scheduled_task(args),
+      })
+    );
+  }
+
+  if (config.externalEventStore) {
+    partCEntries.push(
+      defineAction({
+        name: 'get_external_event',
+        family: 'external_events',
+        safetyClass: 'read',
+        description:
+          'Fetch the full raw record for one external event by id — the on-demand deep-dive counterpart to the lean event summary injected as a message; returns the event and its delivery state, or not-found for unknown ids.',
+        paramsDoc: 'eventId',
+        paramsSchema: GetExternalEventSchema,
+        handler: (args) => handlers.get_external_event(args),
+      })
+    );
+  }
+
+  if (config.inactivityConfigRepo) {
+    partCEntries.push(
+      defineAction({
+        name: 'inactivity_config_get',
+        family: 'inactivity',
+        safetyClass: 'read',
+        description:
+          "Read this agent's inactivity watchdog configuration (enabled, idle threshold, nag prompt) and degraded flag.",
+        paramsDoc: 'none',
+        paramsSchema: InactivityConfigGetSchema,
+        handler: async () => {
+          const agentId = requireInactivityAgentId();
+          const cfg = config.inactivityConfigRepo?.getByAgent(config.spaceId, agentId);
+          const claim = config.inactivityClaimRepo?.getByAgent(config.spaceId, agentId);
+          return jsonResult({ config: cfg ?? null, degraded: claim?.degraded ?? false });
+        },
+      }),
+      defineAction({
+        name: 'inactivity_config_set_enabled',
+        family: 'inactivity',
+        safetyClass: 'mutate',
+        description:
+          "Enable, pause, or resume this agent's inactivity watchdog. Pausing keeps the threshold and prompt but stops new nags until resumed.",
+        paramsDoc: 'enabled (true to enable or resume, false to pause)',
+        paramsSchema: InactivityConfigSetEnabledSchema,
+        handler: async (args) => {
+          const agentId = requireInactivityAgentId();
+          const cfg = config.inactivityConfigRepo?.setEnabled(
+            config.spaceId,
+            agentId,
+            args.enabled
+          );
+          if (args.enabled) {
+            config.inactivityClaimRepo?.clearDegraded(config.spaceId, agentId);
+            if (cfg && cfg.thresholdMs === null) {
+              config.inactivityConfigRepo?.upsert({
+                spaceId: config.spaceId,
+                agentId,
+                thresholdMs: DEFAULT_INACTIVITY_THRESHOLD_MS,
+              });
+            }
+          }
+          return jsonResult({ ok: true, enabled: cfg?.enabled ?? args.enabled });
+        },
+      }),
+      defineAction({
+        name: 'inactivity_config_set',
+        family: 'inactivity',
+        safetyClass: 'mutate',
+        description:
+          "Adjust this agent's inactivity watchdog threshold (ms of idleness before a nag) or nag prompt. Changing either bumps the config revision so a pending nag revalidates against the new settings.",
+        paramsDoc: 'threshold_ms? (positive int), prompt? (empty string clears)',
+        paramsSchema: InactivityConfigSetSchema,
+        handler: async (args) => {
+          const agentId = requireInactivityAgentId();
+          config.inactivityConfigRepo?.upsert({
+            spaceId: config.spaceId,
+            agentId,
+            thresholdMs: args.threshold_ms,
+            prompt: args.prompt,
+          });
+          return jsonResult({ ok: true });
+        },
+      })
+    );
+    if (config.inactivityRunNow) {
+      partCEntries.push(
+        defineAction({
+          name: 'inactivity_run_now',
+          family: 'inactivity',
+          safetyClass: 'mutate',
+          description:
+            "Run this agent's inactivity watchdog scan immediately, through the same admission gates as the periodic scan.",
+          paramsDoc: 'none',
+          paramsSchema: InactivityRunNowSchema,
+          handler: async () => {
+            const agentId = requireInactivityAgentId();
+            await config.inactivityRunNow?.(config.spaceId, agentId);
+            return jsonResult({ ok: true });
+          },
+        })
+      );
+    }
+  }
+
+  const baseEntries = config.db ? [...sessionEntries, ...workflowEntries] : [...workflowEntries];
+  const entries = [...baseEntries, ...partCEntries];
   return config.taskAgentManager
     ? entries
     : entries.filter((entry) => entry.name !== 'send_message_to_task');
