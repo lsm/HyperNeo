@@ -296,4 +296,199 @@ describe('SpaceCreateDialog', () => {
       );
     });
   });
+
+  it('adds and removes additional workspace rows', () => {
+    const { getByText, getAllByPlaceholderText, getAllByLabelText, queryByPlaceholderText } =
+      render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
+    expect(queryByPlaceholderText('/Users/you/projects/other-repo')).toBeNull();
+
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.click(getByText('+ Add workspace'));
+    expect(getAllByPlaceholderText('/Users/you/projects/other-repo')).toHaveLength(2);
+    expect(getAllByPlaceholderText('Label (optional)')).toHaveLength(2);
+
+    fireEvent.input(getAllByPlaceholderText('/Users/you/projects/other-repo')[0], {
+      target: { value: '/projects/second' },
+    });
+    fireEvent.click(getAllByLabelText('Remove additional workspace 1')[0]);
+
+    expect(getAllByPlaceholderText('/Users/you/projects/other-repo')).toHaveLength(1);
+    expect(
+      (getAllByPlaceholderText('/Users/you/projects/other-repo')[0] as HTMLInputElement).value
+    ).toBe('');
+  });
+
+  it('submits additionalWorkspaces with path and optional label', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue(SPACE_MOCK);
+
+    const { getByText, getByPlaceholderText, getAllByPlaceholderText, getByRole } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.input(getAllByPlaceholderText('/Users/you/projects/other-repo')[0], {
+      target: { value: '/projects/shared-lib' },
+    });
+    fireEvent.input(getAllByPlaceholderText('Label (optional)')[0], {
+      target: { value: 'Shared lib' },
+    });
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.input(getAllByPlaceholderText('/Users/you/projects/other-repo')[1], {
+      target: { value: '/projects/tools' },
+    });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.create', {
+        workspacePath: '/projects/my-app',
+        name: 'my-app',
+        description: undefined,
+        additionalWorkspaces: [
+          { path: '/projects/shared-lib', label: 'Shared lib' },
+          { path: '/projects/tools' },
+        ],
+      });
+    });
+  });
+
+  it('omits additionalWorkspaces when all extra rows are blank', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue(SPACE_MOCK);
+
+    const { getByText, getByPlaceholderText, getByRole } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+    fireEvent.click(getByText('+ Add workspace'));
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.create', {
+        workspacePath: '/projects/my-app',
+        name: 'my-app',
+        description: undefined,
+      });
+    });
+  });
+
+  it('surfaces the atomic create error when a secondary workspace is invalid', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockRejectedValue(
+      new Error('Workspace path does not exist: /projects/nonexistent-lib')
+    );
+
+    const { getByText, getByPlaceholderText, getAllByPlaceholderText, getByRole, findByText } =
+      render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.input(getAllByPlaceholderText('/Users/you/projects/other-repo')[0], {
+      target: { value: '/projects/nonexistent-lib' },
+    });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    expect(
+      await findByText('Workspace path does not exist: /projects/nonexistent-lib')
+    ).toBeTruthy();
+    expect(mockNavigateToSpace).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('populates an additional workspace path from the folder picker', async () => {
+    vi.mocked(hasNativeFolderPicker).mockReturnValue(true);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue({ path: '/projects/picked-extra' });
+
+    const { getByText, getAllByText, getAllByPlaceholderText } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.click(getAllByText('Browse')[1]);
+
+    await waitFor(() => {
+      expect(
+        (getAllByPlaceholderText('/Users/you/projects/other-repo')[0] as HTMLInputElement).value
+      ).toBe('/projects/picked-extra');
+    });
+  });
+
+  it('applies a pending folder pick to its own row after earlier rows are removed', async () => {
+    vi.mocked(hasNativeFolderPicker).mockReturnValue(true);
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    let resolvePick: (value: { path: string | null }) => void = () => {};
+    mockRequest.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePick = resolve;
+        })
+    );
+
+    const { getByText, getAllByText, getAllByLabelText, getAllByPlaceholderText } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.click(getAllByText('Browse')[2]);
+    fireEvent.click(getAllByLabelText('Remove additional workspace 1')[0]);
+
+    resolvePick({ path: '/projects/picked-second' });
+
+    await waitFor(() => {
+      expect(
+        (getAllByPlaceholderText('/Users/you/projects/other-repo')[0] as HTMLInputElement).value
+      ).toBe('/projects/picked-second');
+    });
+  });
+
+  it('rejects a row with a label but no path', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue(SPACE_MOCK);
+
+    const { getByText, getByPlaceholderText, getAllByPlaceholderText, getByRole, findByText } =
+      render(<SpaceCreateDialog isOpen={true} onClose={onClose} />);
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+    fireEvent.click(getByText('+ Add workspace'));
+    fireEvent.input(getAllByPlaceholderText('Label (optional)')[0], {
+      target: { value: 'Orphan label' },
+    });
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    expect(await findByText('Additional workspace 1: path is required')).toBeTruthy();
+    expect(mockRequest).not.toHaveBeenCalled();
+  });
+
+  it('caps additional rows at the daemon workspace limit', () => {
+    const { getByText, getAllByPlaceholderText } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    for (let i = 0; i < 8; i++) {
+      fireEvent.click(getByText('+ Add workspace'));
+    }
+
+    expect(getAllByPlaceholderText('/Users/you/projects/other-repo')).toHaveLength(7);
+    expect((getByText('+ Add workspace') as HTMLButtonElement).disabled).toBe(true);
+  });
 });
