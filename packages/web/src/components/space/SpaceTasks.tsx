@@ -609,7 +609,13 @@ function TaskItem({
         }`}
         role={isClickable ? 'button' : undefined}
         tabIndex={isClickable ? 0 : undefined}
-        aria-label={isClickable ? `Open task #${task.taskNumber}: ${task.title}` : undefined}
+        aria-label={
+          isClickable
+            ? `Open task #${task.taskNumber}: ${task.title}${
+                workspaceLabel ? ` · ${workspaceLabel}` : ''
+              }`
+            : undefined
+        }
         onClick={isClickable ? activate : undefined}
         onKeyDown={
           isClickable
@@ -632,10 +638,10 @@ function TaskItem({
             {showsActivity && <ActivitySpinner tone="info" />}
             {workspaceLabel && (
               <span
-                class="inline-flex items-center rounded border border-dark-600 bg-dark-700 px-1.5 py-0.5 text-xs font-medium text-gray-400"
+                class="inline-flex h-6 max-w-[8.5rem] items-center rounded border border-dark-600 bg-dark-700 px-1.5 py-0.5 text-xs font-medium leading-none text-gray-400 whitespace-nowrap"
                 data-testid="task-workspace-badge"
               >
-                {workspaceLabel}
+                <span class="truncate">{workspaceLabel}</span>
               </span>
             )}
             {task.updatedAt > 0 && (
@@ -1008,6 +1014,7 @@ function TaskGroupList({
               t.blockReason ?? '',
               t.pendingCheckpointType ?? '',
               (t.dependsOn ?? []).join(','),
+              t.workspacePath ?? '',
             ].join(':')
           )
           .sort()

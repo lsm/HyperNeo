@@ -715,6 +715,33 @@ describe('SpaceTasks', () => {
       });
     });
 
+    it('refetches when a task workspace binding changes', async () => {
+      const now = Date.now();
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', { taskNumber: 1, updatedAt: now - 1000 }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      const { findByText, rerender } = render(<SpaceTasks spaceId="space-1" />);
+      expect(await findByText('Task t1')).toBeTruthy();
+      await waitFor(() => {
+        expect(mockFetchTaskGroup).toHaveBeenCalled();
+      });
+      const callsAfterMount = mockFetchTaskGroup.mock.calls.length;
+
+      mockTasks.value = [
+        makeTask('t1', 'in_progress', {
+          taskNumber: 1,
+          updatedAt: now - 1000,
+          workspacePath: '/spaces/s1/docs',
+        }),
+        makeTask('t2', 'in_progress', { taskNumber: 2, updatedAt: now - 2000 }),
+      ];
+      rerender(<SpaceTasks spaceId="space-1" />);
+      await waitFor(() => {
+        expect(mockFetchTaskGroup.mock.calls.length).toBeGreaterThan(callsAfterMount);
+      });
+    });
+
     it('refetches when the active spaceId changes', async () => {
       mockCurrentSpaceIdSignal.value = 'space-1';
       mockTasks.value = [

@@ -626,14 +626,7 @@ class SpaceStore {
 
     this.subscribeSpaceSessions(hub, spaceId);
 
-    this.listWorkspaces()
-      .then((workspaces) => {
-        if (this.spaceId.value !== spaceId) return;
-        this.workspaces.value = workspaces;
-      })
-      .catch((err) => {
-        logger.error('Failed to load workspaces:', err);
-      });
+    this.subscribeSpaceWorkspaces(hub, spaceId);
 
     const unsubSpaceArchived = hub.onEvent<{
       sessionId: string;
@@ -1715,6 +1708,61 @@ class SpaceStore {
       })
       .catch((err) => {
         logger.warn('Space sessions LiveQuery subscribe failed:', err);
+      });
+  }
+
+  private subscribeSpaceWorkspaces(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
+    spaceId: string
+  ): void {
+    const subscriptionId = `spaceWorkspaces-bySpace-${spaceId}`;
+
+    const unsubSnapshot = hub.onEvent<LiveQuerySnapshotEvent>('liveQuery.snapshot', (event) => {
+      if (event.subscriptionId !== subscriptionId) return;
+      if (this.spaceId.value !== spaceId) return;
+      this.workspaces.value = (event.rows as SpaceWorkspace[]) ?? [];
+    });
+    this.cleanupFunctions.push(unsubSnapshot);
+
+    const unsubDelta = hub.onEvent<LiveQueryDeltaEvent>('liveQuery.delta', (event) => {
+      if (event.subscriptionId !== subscriptionId) return;
+      if (this.spaceId.value !== spaceId) return;
+      const current = this.workspaces.value;
+      const next = new Map(current.map((w) => [w.id, w]));
+      for (const row of (event.removed ?? []) as SpaceWorkspace[]) next.delete(row.id);
+      for (const row of (event.updated ?? []) as SpaceWorkspace[]) next.set(row.id, row);
+      for (const row of (event.added ?? []) as SpaceWorkspace[]) next.set(row.id, row);
+      this.workspaces.value = [...next.values()];
+    });
+    this.cleanupFunctions.push(unsubDelta);
+
+    const unsubReconnect = hub.onConnection((state) => {
+      if (state !== 'connected') return;
+      if (this.spaceId.value !== spaceId) return;
+      hub
+        .request('liveQuery.subscribe', {
+          queryName: 'spaceWorkspaces.bySpace',
+          params: [spaceId],
+          subscriptionId,
+        })
+        .catch((err) => {
+          logger.warn('Workspace LiveQuery re-subscribe failed:', err);
+        });
+    });
+    this.cleanupFunctions.push(unsubReconnect);
+
+    this.cleanupFunctions.push(() => {
+      hub.request('liveQuery.unsubscribe', { subscriptionId }).catch(() => {});
+    });
+
+    hub
+      .request('liveQuery.subscribe', {
+        queryName: 'spaceWorkspaces.bySpace',
+        params: [spaceId],
+        subscriptionId,
+      })
+      .catch((err) => {
+        logger.warn('Workspace LiveQuery subscribe failed:', err);
       });
   }
 
