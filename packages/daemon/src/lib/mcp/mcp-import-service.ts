@@ -63,8 +63,13 @@ interface RefreshMcpImportsCtx {
   result?: RefreshAllResult;
 }
 
-function inferSourceType(entry: McpJsonEntry): 'stdio' | 'sse' | 'http' {
-  if (entry.type) return entry.type;
+function inferSourceType(entry: McpJsonEntry | null | undefined): 'stdio' | 'sse' | 'http' | null {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return null;
+  }
+  if (entry.type === 'stdio' || entry.type === 'sse' || entry.type === 'http') {
+    return entry.type;
+  }
   if (entry.url && !entry.command) return 'http';
   return 'stdio';
 }
@@ -202,58 +207,64 @@ export class McpImportService {
   }
 
   refreshAll(sources?: readonly (string | McpImportSource)[]): RefreshAllResult {
-    const mcpSources: McpImportSource[] =
-      sources?.map((source) => (typeof source === 'string' ? { path: source } : source)) ??
-      this.collectMcpImportSources();
+    let mcpSources: McpImportSource[];
+    if (sources === undefined) {
+      try {
+        mcpSources = this.collectMcpImportSources();
+      } catch (err) {
+        this.log.warn(
+          `[mcp-import] workspace registry collection failed, aborting refresh: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return { results: [], orphanPruned: 0 };
+      }
+    } else {
+      mcpSources = sources.map((source) =>
+        typeof source === 'string' ? { path: source } : source
+      );
+    }
 
-    return runRefreshMcpImports({
+    const ctx = runRefreshMcpImports({
       db: this.db,
       sources: mcpSources,
       homeDirOverride: this.homeDirOverride,
       log: this.log,
       service: this,
     });
+    return ctx.result ?? { results: [], orphanPruned: 0 };
   }
 
   private collectMcpImportSources(): McpImportSource[] {
     const rawDb = this.db.getDatabase?.();
     if (!rawDb) return [];
 
-    try {
-      const spaceRepo = new SpaceRepository(rawDb);
-      const workspaceRepo = new SpaceWorkspaceRepository(rawDb);
-      const seen = new Set<string>();
-      const out: McpImportSource[] = [];
+    const spaceRepo = new SpaceRepository(rawDb);
+    const workspaceRepo = new SpaceWorkspaceRepository(rawDb);
+    const seen = new Set<string>();
+    const out: McpImportSource[] = [];
 
-      for (const space of spaceRepo.listSpaces(false)) {
-        for (const ws of workspaceRepo.listBySpace(space.id)) {
-          if (!ws.path) continue;
-          try {
-            const abs = resolve(ws.path);
-            if (seen.has(abs)) continue;
-            seen.add(abs);
-            const label = ws.label?.trim() || basename(abs);
-            out.push({ path: abs, label });
-          } catch {}
-        }
-
-        if (space.workspacePath) {
-          try {
-            const abs = resolve(space.workspacePath);
-            if (seen.has(abs)) continue;
-            seen.add(abs);
-            out.push({ path: abs, label: basename(abs) });
-          } catch {}
-        }
+    for (const space of spaceRepo.listSpaces(false)) {
+      for (const ws of workspaceRepo.listBySpace(space.id)) {
+        if (!ws.path) continue;
+        try {
+          const abs = resolve(ws.path);
+          if (seen.has(abs)) continue;
+          seen.add(abs);
+          const label = ws.label?.trim() || basename(abs);
+          out.push({ path: abs, label });
+        } catch {}
       }
 
-      return out;
-    } catch (err) {
-      this.log.warn(
-        `[mcp-import] failed to collect workspace sources: ${err instanceof Error ? err.message : String(err)}`
-      );
-      return [];
+      if (space.workspacePath) {
+        try {
+          const abs = resolve(space.workspacePath);
+          if (seen.has(abs)) continue;
+          seen.add(abs);
+          out.push({ path: abs, label: basename(abs) });
+        } catch {}
+      }
     }
+
+    return out;
   }
 
   extractEntries(parsed: unknown): Record<string, McpJsonEntry> | null {
@@ -270,10 +281,14 @@ export class McpImportService {
 
   buildCreateRequest(
     name: string,
-    entry: McpJsonEntry,
+    entry: McpJsonEntry | null | undefined,
     sourcePath: string
   ): CreateAppMcpServerRequest | null {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return null;
+    }
     const sourceType = inferSourceType(entry);
+    if (sourceType === null) return null;
 
     if (sourceType === 'stdio') {
       if (!entry.command || typeof entry.command !== 'string') return null;
@@ -400,17 +415,27 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
       continue;
     }
 
+    const existingRows = ctx.db.appMcpServers.listBySourcePath(target.path);
+    const existingNames = new Set(existingRows.map((row) => row.name));
+    const targetReserved = new Set(ctx.reserved ?? new Set<string>());
+    for (const name of existingNames) targetReserved.delete(name);
+
     const entries: Record<string, McpJsonEntry> = {};
-    for (const [serverName, entry] of Object.entries(entriesByServerName).sort(([a], [b]) =>
+    for (const [serverName, rawEntry] of Object.entries(entriesByServerName).sort(([a], [b]) =>
       a.localeCompare(b)
     )) {
+      if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
+        ctx.log.warn(`[mcp-import] ${target.path}: skipping "${serverName}" — invalid entry`);
+        continue;
+      }
       const resolvedName = resolveWorkspaceMcpServerName({
         label: target.label,
         serverName,
-        reserved: ctx.reserved ?? new Set<string>(),
+        reserved: targetReserved,
       });
+      targetReserved.add(resolvedName);
       ctx.reserved?.add(resolvedName);
-      entries[resolvedName] = entry;
+      entries[resolvedName] = rawEntry;
     }
 
     declarations.push({ target, status: 'ok', entries });
@@ -521,4 +546,4 @@ const runRefreshMcpImports = (superpipe({})('refresh-mcp-imports') as PipelineAP
   .pipe(extractMcpSources, 'ctx', 'ctx')
   .pipe(persistMcpSources, 'ctx', 'ctx')
   .pipe(pruneMcpOrphans, 'ctx', 'ctx')
-  .end('result') as (ctx: RefreshMcpImportsCtx) => RefreshAllResult;
+  .end('ctx') as (ctx: RefreshMcpImportsCtx) => RefreshMcpImportsCtx;

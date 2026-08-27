@@ -441,11 +441,13 @@ describe('McpImportService', () => {
 
     test('namespaces colliding server names from two registered workspaces with labels', () => {
       const wsA = mkdtempSync(join(tmpRoot, 'ws-ns-a-'));
-      writeMcpJson(join(wsA, '.mcp.json'), {
+      const fileA = join(wsA, '.mcp.json');
+      writeMcpJson(fileA, {
         mcpServers: { fetch: { command: 'a' } },
       });
       const wsB = mkdtempSync(join(tmpRoot, 'ws-ns-b-'));
-      writeMcpJson(join(wsB, '.mcp.json'), {
+      const fileB = join(wsB, '.mcp.json');
+      writeMcpJson(fileB, {
         mcpServers: { fetch: { command: 'b' } },
       });
 
@@ -454,7 +456,9 @@ describe('McpImportService', () => {
         { path: wsB, label: 'repo-b' },
       ]);
 
-      expect(results.every((r) => r.status === 'ok')).toBe(true);
+      const byStatus = Object.fromEntries(results.map((r) => [r.sourcePath, r.status]));
+      expect(byStatus[fileA]).toBe('ok');
+      expect(byStatus[fileB]).toBe('ok');
       expect(repo.getByName('repo-a:fetch')).not.toBeNull();
       expect(repo.getByName('repo-b:fetch')).not.toBeNull();
     });
@@ -539,6 +543,7 @@ describe('McpImportService', () => {
 
     test('prunes imported rows whose source path left the space workspace registry', () => {
       const spaceRepo = new SpaceRepository(bunDb);
+      const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
 
       const ws = mkdtempSync(join(tmpRoot, 'reg-gone-'));
       const file = join(ws, '.mcp.json');
@@ -548,6 +553,12 @@ describe('McpImportService', () => {
         workspacePath: ws,
         name: 'Gone',
         slug: 'gone',
+      });
+      workspaceRepo.create({
+        spaceId: space.id,
+        path: ws,
+        label: 'gone',
+        isPrimary: true,
       });
 
       service.refreshAll();
