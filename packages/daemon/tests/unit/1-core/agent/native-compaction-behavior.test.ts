@@ -259,6 +259,7 @@ function driveCompactionRefresh(opts: {
   contextWindow: number;
   totalUsed: number;
   sdkMaxTokens?: number;
+  compactingActive?: boolean;
 }): CompactionRefreshHarness {
   const session: Session = {
     id: 'compact-session',
@@ -307,12 +308,15 @@ function driveCompactionRefresh(opts: {
     subscribe: mock(() => () => {}),
   } as unknown as InternalEventBus<DaemonInternalEventMap>;
 
+  let compacting = opts.compactingActive ?? false;
   const stateManager = {
     detectPhaseFromMessage: mock(async () => {}),
     beginTerminalIdle: mock(() => {}),
     setIdle: mock(async () => {}),
-    setCompacting: mock(async () => {}),
-    getIsCompacting: mock(() => false),
+    setCompacting: mock(async (value: boolean) => {
+      compacting = value;
+    }),
+    getIsCompacting: mock(() => compacting),
     getState: mock(() => ({ phase: 'idle' })),
   } as unknown as ProcessingStateManager;
 
@@ -712,6 +716,86 @@ describe('N4: literal /compact never enters the transcript or provider request',
 
     expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
+    expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
+    expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
+  });
+
+  it('an active SDK compaction suppresses the backstop during mid-turn event refreshes', async () => {
+    const TEST_PROVIDER = 'test-compacting-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'compacting-model',
+              name: 'Compacting Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'compacting-model',
+      contextWindow: 200_000,
+      totalUsed: 185_000,
+      sdkMaxTokens: 200_000,
+      compactingActive: true,
+    });
+    for (let i = 0; i < 5; i++) {
+      await harness.handler.handleMessage({
+        type: 'assistant',
+        uuid: `tick-${i}`,
+        message: { role: 'assistant', content: [] },
+      } as unknown as SDKMessage);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.getContextUsageSpy).toHaveBeenCalled();
+    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
+  });
+
+  it('a result clears stale compacting state before deciding, so an over-budget session still enqueues', async () => {
+    const TEST_PROVIDER = 'test-stale-compacting-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'stale-compacting-model',
+              name: 'Stale Compacting Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'stale-compacting-model',
+      contextWindow: 200_000,
+      totalUsed: 185_000,
+      sdkMaxTokens: 200_000,
+      compactingActive: true,
+    });
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
     expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
       durable: true,

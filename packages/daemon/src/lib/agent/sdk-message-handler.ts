@@ -104,6 +104,10 @@ export interface SDKMessageHandlerContext {
 
   onCommandsChanged: (commands: string[]) => Promise<void>;
 
+  resumePendingWorkAfterCompaction?(): void;
+
+  clearPendingResumeAfterCompaction?(): void;
+
   onResultLimitError?(
     errorText: string,
     hint: LimitRetryHint,
@@ -1690,6 +1694,7 @@ export class SDKMessageHandler {
         : contextBudgetThreshold(boundaryCapacity, boundaryInfo?.autoCompactPercent)
     );
     await stateManager.setCompacting(false);
+    this.ctx.resumePendingWorkAfterCompaction?.();
     this.ctx.messageQueue.clearNonCompactionSentSinceBoundary();
 
     void this.refreshContextUsage('compact-boundary', undefined, invocationGeneration);
@@ -1777,6 +1782,7 @@ export class SDKMessageHandler {
 
     const promise = (async () => {
       let clearedDeadCompaction = false;
+      let sampled = false;
       try {
         const deadDeliveredCompaction =
           reason === 'turn-end' &&
@@ -1834,6 +1840,7 @@ export class SDKMessageHandler {
         )
           return;
         if (!contextInfo) return;
+        sampled = true;
         contextTracker.updateWithDetailedBreakdown(contextInfo);
         const publishProjection = internalEventBus
           .publish('context.updated', {
@@ -1869,6 +1876,7 @@ export class SDKMessageHandler {
             logger: this.logger,
             onCompactionAbandoned: () => {
               this.compactionEnqueuedMidTurnGeneration = undefined;
+              this.ctx.clearPendingResumeAfterCompaction?.();
             },
           });
           if (
@@ -1888,6 +1896,11 @@ export class SDKMessageHandler {
       } finally {
         this.pendingContextRefresh = null;
         if (reason === 'turn-end' && !this.isDaemonCompactionPending()) {
+          if (!sampled) {
+            this.ctx.resumePendingWorkAfterCompaction?.();
+          } else {
+            this.ctx.clearPendingResumeAfterCompaction?.();
+          }
           this.ctx.messageQueue.pruneSentPrompts();
         }
       }
