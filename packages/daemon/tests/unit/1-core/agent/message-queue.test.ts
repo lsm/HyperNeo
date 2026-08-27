@@ -1785,9 +1785,10 @@ describe('MessageQueue', () => {
 
       const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
       const restartMock = mock(async () => {});
+      const cancelCalls = mock(async (uuid: string) => uuid === 'uuid-b');
       const opts = makeInterruptOpts(q, {
         interrupt: async () => ({ still_queued: ['uuid-a', 'uuid-b'] }),
-        cancelAsyncMessage: async (uuid: string) => uuid === 'uuid-b',
+        cancelAsyncMessage: cancelCalls,
         restart: restartMock,
       });
 
@@ -1795,6 +1796,7 @@ describe('MessageQueue', () => {
 
       expect(enqueueSpy).toHaveBeenCalledWith('uuid-a', 'prompt-a', false, { durable: true });
       expect(enqueueSpy).toHaveBeenCalledWith('uuid-b', 'prompt-b', false, { durable: true });
+      expect(cancelCalls).toHaveBeenCalledTimes(1);
       expect(restartMock).toHaveBeenCalledTimes(1);
       q.stop();
     });
@@ -1803,11 +1805,13 @@ describe('MessageQueue', () => {
       const q = new MessageQueue();
       q.start();
       const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const requeuedCallback = mock(() => {});
       const opts = makeInterruptOpts(q, {
         interrupt: async () => ({ still_queued: ['uuid-evicted'] }),
         cancelAsyncMessage: async () => true,
         getDurableMessageContent: (uuid: string) =>
           uuid === 'uuid-evicted' ? 'db-recovered-content' : undefined,
+        onSurvivorRequeued: requeuedCallback,
       });
 
       await q.runMidTurnBudgetInterrupt(opts);
@@ -1815,6 +1819,63 @@ describe('MessageQueue', () => {
       expect(enqueueSpy).toHaveBeenCalledWith('uuid-evicted', 'db-recovered-content', false, {
         durable: true,
       });
+      expect(requeuedCallback).toHaveBeenCalledWith('uuid-evicted');
+      q.stop();
+    });
+
+    it('gates delivery for the whole interrupt window', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const interruptGate = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const opts = makeInterruptOpts(q, {
+        interrupt: () => interruptGate,
+      });
+      void q.enqueue('prompt-during-interrupt', false, {}).catch(() => {});
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      const generator = q.messageGenerator(testSessionId);
+      const first = generator.next();
+      const yieldedEarly = await Promise.race([
+        first.then(() => true),
+        new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), 100);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        }),
+      ]);
+      expect(yieldedEarly).toBe(false);
+
+      releaseInterrupt({ still_queued: [] });
+      await run;
+      expect(first).resolves.toBeDefined();
+      q.stop();
+    });
+
+    it('requeues survivors before restarting when cancellation is unavailable', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-no-cancel', 'prompt-no-cancel', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const restartMock = mock(async () => {});
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-no-cancel'] }),
+        cancelAsyncMessage: undefined,
+        restart: restartMock,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-no-cancel', 'prompt-no-cancel', false, {
+        durable: true,
+      });
+      expect(restartMock).toHaveBeenCalledTimes(1);
       q.stop();
     });
 

@@ -346,6 +346,7 @@ export class AgentSession
   private pendingResumeAfterCompaction = false;
   private midTurnBudgetCheckInFlight = false;
   private lastMidTurnUsageRefreshAt = 0;
+  private lastMidTurnUsageRefreshKey = '';
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
@@ -1541,6 +1542,7 @@ export class AgentSession
     if (!queryObject?.interrupt) return;
     const info = await this.refreshMidTurnContextInfo(queryObject);
     if (!info || info.totalUsed <= 0) return;
+    if (this.stateManager.getState().status !== 'processing') return;
     const configuredWindow = info.totalCapacity > 0 ? info.totalCapacity : undefined;
     const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, info.autoCompactPercent);
     const decision = decideContextBudgetCompaction({
@@ -1574,6 +1576,9 @@ export class AgentSession
       },
       getDurableMessageContent: (uuid) =>
         this.db.getSDKMessageRepo().getUserMessageContentByUuid(this.session.id, uuid) ?? undefined,
+      onSurvivorRequeued: (uuid) => {
+        this.db.getSDKMessageRepo().markDeliveryRetryableByUuid(this.session.id, uuid);
+      },
     });
   }
 
@@ -1581,10 +1586,16 @@ export class AgentSession
     const fenceModel = this.session.config.model;
     const fenceProvider = this.session.config.provider;
     const stale = this.contextTracker.getContextInfo();
-    if (stale && Date.now() - this.lastMidTurnUsageRefreshAt < MID_TURN_USAGE_REFRESH_INTERVAL_MS) {
+    const refreshKey = `${fenceModel}|${fenceProvider}`;
+    if (
+      stale &&
+      refreshKey === this.lastMidTurnUsageRefreshKey &&
+      Date.now() - this.lastMidTurnUsageRefreshAt < MID_TURN_USAGE_REFRESH_INTERVAL_MS
+    ) {
       return stale;
     }
     this.lastMidTurnUsageRefreshAt = Date.now();
+    this.lastMidTurnUsageRefreshKey = refreshKey;
     try {
       const modelInfo = await getSessionModelInfo(this.session);
       if (

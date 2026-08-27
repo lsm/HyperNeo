@@ -51,6 +51,7 @@ export interface MidTurnBudgetInterruptOptions {
   onResumeArm: () => void;
   onResumeClear: () => void;
   getDurableMessageContent?: (uuid: string) => string | MessageContent[] | undefined;
+  onSurvivorRequeued?: (uuid: string) => void;
 }
 
 export class MessageQueue {
@@ -647,6 +648,12 @@ export class MessageQueue {
         `(provider=${opts.providerId}, budget=${opts.budgetKey} tokens)`
     );
 
+    let resolveEarlyDeliveryGate: (() => void) | undefined;
+    const earlyDeliveryGate = new Promise<void>((resolve) => {
+      resolveEarlyDeliveryGate = resolve;
+    });
+    this.setDeliveryGate(earlyDeliveryGate);
+
     const interruptPromise = Promise.resolve().then(() => opts.interrupt());
     let receipt: { still_queued: string[] } | undefined;
     let timedOut = false;
@@ -687,22 +694,17 @@ export class MessageQueue {
       }
     }
 
-    if (timedOut || !resumeArmed) {
-      await this.processInterruptSurvivorReceipt(opts, receipt);
-    } else {
-      let resolveDeliveryGate: (() => void) | undefined;
-      const deliveryGate = new Promise<void>((resolve) => {
-        resolveDeliveryGate = resolve;
-      });
-      this.setDeliveryGate(deliveryGate);
-      try {
+    try {
+      if (timedOut || !resumeArmed) {
+        await this.processInterruptSurvivorReceipt(opts, receipt);
+      } else {
         const restarted = await this.processInterruptSurvivorReceipt(opts, receipt);
         if (!restarted) {
           this.enqueueMidTurnCompaction(opts, 'mid-turn');
         }
-      } finally {
-        resolveDeliveryGate?.();
       }
+    } finally {
+      resolveEarlyDeliveryGate?.();
     }
 
     void interruptPromise.then(
@@ -735,13 +737,19 @@ export class MessageQueue {
     const survivors = receipt?.still_queued ?? [];
     if (survivors.length === 0) return false;
     if (typeof opts.cancelAsyncMessage !== 'function') {
+      for (const uuid of survivors) {
+        this.requeueInterruptSurvivor(opts, uuid);
+      }
       await this.finishSurvivorTeardownWithRestart(opts);
       return true;
     }
     let needsRestart = false;
-    for (const uuid of survivors) {
+    for (let index = 0; index < survivors.length; index++) {
+      const uuid = survivors[index];
+      let cancelFailed = false;
+      let cancelled = false;
       try {
-        const cancelled = await Promise.race([
+        cancelled = await Promise.race([
           Promise.resolve(opts.cancelAsyncMessage(uuid)),
           new Promise<boolean>((resolve) => {
             const timer = setTimeout(() => resolve(false), MID_TURN_INTERRUPT_TIMEOUT_MS);
@@ -750,49 +758,60 @@ export class MessageQueue {
             }
           }),
         ]);
-        if (!cancelled) {
-          needsRestart = true;
+      } catch (error) {
+        cancelFailed = true;
+        opts.logger.warn(
+          `cancel_async_message failed for ${uuid} on session ${opts.sessionId}:`,
+          error
+        );
+      }
+      if (!cancelled) {
+        needsRestart = true;
+        if (!cancelFailed) {
           opts.logger.warn(
             `cancel_async_message did not confirm cancellation of ${uuid} for ` +
               `session ${opts.sessionId}; restarting the query so the survivor cannot ` +
               `run ahead of the pending compaction`
           );
         }
-      } catch (error) {
-        needsRestart = true;
-        opts.logger.warn(
-          `cancel_async_message failed for ${uuid} on session ${opts.sessionId}:`,
-          error
-        );
+        for (let remaining = index; remaining < survivors.length; remaining++) {
+          this.requeueInterruptSurvivor(opts, survivors[remaining]);
+        }
+        break;
       }
-      if (this.revokeDeliveredCompaction(uuid)) {
-        opts.logger.info(
-          `cancelled still-queued internal compaction ${uuid} for session ` +
-            `${opts.sessionId}; a replacement compaction is enqueued after survivor ` +
-            `processing`
-        );
-        continue;
-      }
-      const content = this.getSentPromptContent(uuid) ?? opts.getDurableMessageContent?.(uuid);
-      if (content !== undefined) {
-        this.forgetSentPrompt(uuid);
-        void this.enqueueWithId(uuid, content, false, { durable: true }).catch((error) => {
-          opts.logger.warn(
-            `requeue of cancelled survivor ${uuid} failed for session ${opts.sessionId}:`,
-            error
-          );
-        });
-        opts.logger.info(
-          `requeued cancelled survivor ${uuid} for session ${opts.sessionId} ` +
-            `to run after the pending compaction`
-        );
-      }
+      this.requeueInterruptSurvivor(opts, uuid);
     }
     if (needsRestart) {
       await this.finishSurvivorTeardownWithRestart(opts);
       return true;
     }
     return false;
+  }
+
+  private requeueInterruptSurvivor(opts: MidTurnBudgetInterruptOptions, uuid: string): void {
+    if (this.revokeDeliveredCompaction(uuid)) {
+      opts.logger.info(
+        `cancelled still-queued internal compaction ${uuid} for session ` +
+          `${opts.sessionId}; a replacement compaction is enqueued after survivor ` +
+          `processing`
+      );
+      return;
+    }
+    const content = this.getSentPromptContent(uuid) ?? opts.getDurableMessageContent?.(uuid);
+    if (content !== undefined) {
+      this.forgetSentPrompt(uuid);
+      void this.enqueueWithId(uuid, content, false, { durable: true }).catch((error) => {
+        opts.logger.warn(
+          `requeue of cancelled survivor ${uuid} failed for session ${opts.sessionId}:`,
+          error
+        );
+      });
+      opts.onSurvivorRequeued?.(uuid);
+      opts.logger.info(
+        `requeued cancelled survivor ${uuid} for session ${opts.sessionId} ` +
+          `to run after the pending compaction`
+      );
+    }
   }
 
   private async finishSurvivorTeardownWithRestart(

@@ -51,6 +51,7 @@ function createAgentSession(): AgentSession {
     getConsumedUserMessagesAfterLatestInit: mock(() => []),
     getSDKMessageRepo: mock(() => ({
       getUserMessageContentByUuid: mock(() => null),
+      markDeliveryRetryableByUuid: mock(() => null),
     })),
   } as unknown as Database;
 
@@ -62,6 +63,7 @@ function createAgentSession(): AgentSession {
     mock(async () => 'test-api-key')
   );
   session.messageQueue.start();
+  void session.stateManager.setProcessing('mid-turn-fixture');
   return session;
 }
 
@@ -369,12 +371,17 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     const session = createAgentSession();
     const harness = makeQuery();
     session.queryObject = harness.query;
+    const retryMock = mock(() => null);
     (
       session.db as unknown as {
-        getSDKMessageRepo: () => { getUserMessageContentByUuid: () => string | null };
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: () => string | null;
+          markDeliveryRetryableByUuid: typeof retryMock;
+        };
       }
     ).getSDKMessageRepo = () => ({
       getUserMessageContentByUuid: () => 'db-recovered',
+      markDeliveryRetryableByUuid: retryMock,
     });
     const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
     harness.setInterruptResult(async () => ({ still_queued: ['uuid-lru-evicted'] }));
@@ -384,6 +391,40 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     expect(enqueueSpy).toHaveBeenCalledWith('uuid-lru-evicted', 'db-recovered', false, {
       durable: true,
     });
+    expect(retryMock).toHaveBeenCalledWith(expect.any(String), 'uuid-lru-evicted');
+  });
+
+  it('refreshes usage when the model changes inside the sampling window', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.usageMock.mockImplementation(async () => ({
+      ...makeUsageResponse(),
+      totalTokens: 10_000,
+      percentage: 5,
+    }));
+
+    await session.midTurnContextBudgetCheck();
+    session.session.config.model = 'other-model';
+    await session.midTurnContextBudgetCheck();
+
+    expect(harness.usageMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('aborts the interrupt when the turn stops during the usage refresh', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.usageMock.mockImplementation(async () => {
+      await session.stateManager.setInterrupted();
+      return makeUsageResponse();
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(harness.interruptMock).toHaveBeenCalledTimes(0);
+    expect(enqueueSpy).toHaveBeenCalledTimes(0);
   });
 
   it('enqueues compaction when the interrupt resolves without a receipt', async () => {
