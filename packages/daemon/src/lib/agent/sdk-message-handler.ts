@@ -888,9 +888,14 @@ export class SDKMessageHandler {
       releaseTurnEndGate = release;
     }
 
-    const deferredSuccessfully = this.withDbChangeBatch(() =>
-      db.saveSDKMessage(session.id, message)
-    );
+    let deferredSuccessfully: boolean;
+    try {
+      deferredSuccessfully = this.withDbChangeBatch(() => db.saveSDKMessage(session.id, message));
+    } catch (error) {
+      releaseTurnEndGate?.();
+      releaseTurnEndGate = null;
+      throw error;
+    }
 
     if (!deferredSuccessfully) {
       this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
@@ -996,15 +1001,10 @@ export class SDKMessageHandler {
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
         const compactingClear = this.clearStaleCompacting();
-        try {
-          await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
-          enforcedTurnEnd = true;
-          await compactingClear;
-          await this.settleIdleForInvocation(invocationGeneration);
-        } finally {
-          releaseTurnEndGate?.();
-          releaseTurnEndGate = null;
-        }
+        await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
+        enforcedTurnEnd = true;
+        await compactingClear;
+        await this.settleIdleForInvocation(invocationGeneration);
       }
     }
 

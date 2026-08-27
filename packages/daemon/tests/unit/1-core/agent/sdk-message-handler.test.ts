@@ -491,6 +491,37 @@ describe('SDKMessageHandler', () => {
       expect(publishSpy).not.toHaveBeenCalled();
     });
 
+    it('releases the turn-end gate when saving a top-level result throws', async () => {
+      saveSDKMessageSpy.mockImplementation(() => {
+        throw new Error('db down');
+      });
+      mockContext.queryObject = null;
+
+      const message: SDKMessage = {
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        parent_tool_use_id: null,
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0.001,
+        modelUsage: {},
+      } as unknown as SDKMessage;
+
+      await expect(handler.handleMessage(message)).rejects.toThrow('db down');
+
+      let opened = false;
+      void (setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>).then(() => {
+        opened = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(opened).toBe(true);
+    });
+
     it('releases the turn-end gate when a top-level result fails to save', async () => {
       saveSDKMessageSpy.mockReturnValue(false);
       mockContext.queryObject = null;
@@ -4526,6 +4557,39 @@ describe('SDKMessageHandler', () => {
 
         resolvePublish();
         await handled;
+      });
+
+      it('keeps the turn-end gate closed until result handling completes', async () => {
+        const releaseIdle: Array<() => void> = [];
+        setIdleSpy.mockImplementation(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseIdle.push(resolve);
+            })
+        );
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const turnEndSegment = setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>;
+        let opened = false;
+        void turnEndSegment.then(() => {
+          opened = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(opened).toBe(false);
+
+        releaseIdle[0]();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(false);
+
+        for (const release of releaseIdle.slice(1)) release();
+        await handled;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(opened).toBe(true);
       });
 
       it('holds the delivery gate closed through the terminal idle transition', async () => {
