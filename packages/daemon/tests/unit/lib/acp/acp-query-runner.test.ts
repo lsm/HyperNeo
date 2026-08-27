@@ -793,7 +793,7 @@ describe('AcpQueryRunner', () => {
     expect(publishAsync).not.toHaveBeenCalledWith('query.trigger', { sessionId: 'session-1' });
   });
 
-  test('keeps replacement-owned turn fields when a successor starts during the finalizer idle', async () => {
+  test('hands off cleanly when a successor starts during the finalizer idle', async () => {
     const { runner, ctx } = createRunnerFixture();
     (ctx.stateManager as unknown as { setIdle: () => Promise<void> }).setIdle = mock(async () => {
       ctx.incrementQueryGeneration();
@@ -806,7 +806,7 @@ describe('AcpQueryRunner', () => {
     expect(
       (runner as unknown as { _lastConsumedUserMessage: { uuid: string } | null })
         ._lastConsumedUserMessage
-    ).toEqual(expect.objectContaining({ uuid: 'user-message-1' }));
+    ).toBeNull();
   });
 
   test('aborts ACP submission when remove/defer already revoked the row (#3744696846)', async () => {

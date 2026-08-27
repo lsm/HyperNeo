@@ -3055,7 +3055,7 @@ describe('QueryRunner', () => {
       });
     });
 
-    it('keeps replacement-owned turn fields when a successor starts during the finalizer idle', async () => {
+    it('hands off cleanly when a successor starts during the finalizer idle', async () => {
       setIdleSpy.mockImplementation(async () => {
         if (setIdleSpy.mock.calls.length >= 2) {
           queryGeneration += 1;
@@ -3067,7 +3067,7 @@ describe('QueryRunner', () => {
           seeded as unknown as {
             _lastConsumedUserMessage: { uuid: string; content: string } | null;
           }
-        )._lastConsumedUserMessage = { uuid: 'successor-msg', content: 'successor prompt' };
+        )._lastConsumedUserMessage = { uuid: 'predecessor-msg', content: 'predecessor prompt' };
       });
 
       expect(outcome).toBe('resolved');
@@ -3075,9 +3075,11 @@ describe('QueryRunner', () => {
       const runnerPrivate = runner as unknown as {
         _lastConsumedUserMessage: { uuid: string } | null;
       };
-      expect(runnerPrivate._lastConsumedUserMessage).toEqual({
-        uuid: 'successor-msg',
-        content: 'successor prompt',
+      expect(runnerPrivate._lastConsumedUserMessage).toBeNull();
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledTimes(1);
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
       });
     });
   });

@@ -1269,6 +1269,9 @@ export class QueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
+        this._lastConsumedUserMessage = null;
+        this._turnConsumedUserMessages = [];
+
         if (
           this.ctx.getQueryGeneration() === queryGeneration &&
           this.ctx.queryAbortController === runAbortController &&
@@ -1281,6 +1284,10 @@ export class QueryRunner {
           await stateManager.setIdle({ owner: stateManager.idleOwnerForQuery(queryGeneration) });
         }
 
+        if (this.ctx.getQueryGeneration() !== queryGeneration) {
+          stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
+        }
+
         if (this.ctx.queryAbortController === runAbortController) {
           this.ctx.queryAbortController = null;
         }
@@ -1288,9 +1295,6 @@ export class QueryRunner {
         this._consumedUserMessages.delete(queryGeneration);
 
         if (this.ctx.getQueryGeneration() === queryGeneration) {
-          this._lastConsumedUserMessage = null;
-          this._turnConsumedUserMessages = [];
-
           this.ctx.queryPromise = null;
         }
       }

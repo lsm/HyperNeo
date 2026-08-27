@@ -926,6 +926,8 @@ export class AcpQueryRunner {
           this.ctx.originalEnvVars = {};
         }
 
+        this._lastConsumedUserMessage = null;
+
         if (
           !this.ctx.isCleaningUp() &&
           !recoveryState.rateLimitCooldownScheduled &&
@@ -947,7 +949,6 @@ export class AcpQueryRunner {
         }
 
         if (this.ctx.getQueryGeneration() === queryGeneration) {
-          this._lastConsumedUserMessage = null;
           this.ctx.queryPromise = null;
         }
       }
