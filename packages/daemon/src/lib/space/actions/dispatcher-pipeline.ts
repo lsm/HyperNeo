@@ -1,11 +1,11 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
-import { jsonResult, type ToolResult } from '../tools/tool-result.ts';
 import {
   decideAutonomyAdmission,
   resolveEffectiveAutonomyLevel,
 } from '../tools/tool-admission-gates.ts';
+import { jsonResult, type ToolResult } from '../tools/tool-result.ts';
 import type { ActionRegistry, RegisteredAction } from './registry.ts';
 import { isMutatingSafetyClass } from './safety.ts';
 
@@ -23,8 +23,8 @@ export type DispatchActionOutcome =
 
 export type DispatchTelemetryEvent = {
   actionName: string;
-  family: string;
-  safetyClass: string;
+  family?: string;
+  safetyClass?: string;
   role: SpaceMcpSessionRole;
   spaceId: string;
   taskId?: string;
@@ -184,20 +184,6 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       });
     } catch {}
   }
-  if (ctx.deps.emitTelemetry) {
-    const telemetryEntry: DispatchTelemetryEvent = {
-      actionName: action.name,
-      family: action.family,
-      safetyClass: action.safetyClass,
-      role: ctx.role,
-      spaceId: ctx.spaceId,
-      taskId: ctx.taskId,
-      workflowRunId: ctx.workflowRunId,
-      outcome: 'dispatched',
-      timestamp: Date.now(),
-    };
-    await Promise.resolve(ctx.deps.emitTelemetry(telemetryEntry)).catch(() => {});
-  }
   return ctx;
 }
 
@@ -213,6 +199,14 @@ export async function executeAction(ctx: DispatchActionCtx): Promise<DispatchAct
   }
 }
 
+function isToolResult(value: unknown): value is ToolResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Array.isArray((value as { content?: unknown }).content)
+  );
+}
+
 export function formatResult(ctx: DispatchActionCtx): DispatchActionCtx {
   if (ctx.outcome) return ctx;
   if (ctx.rawResult === undefined) {
@@ -220,8 +214,43 @@ export function formatResult(ctx: DispatchActionCtx): DispatchActionCtx {
   }
   return {
     ...ctx,
-    outcome: { action: 'dispatched', result: jsonResult(ctx.rawResult) },
+    outcome: {
+      action: 'dispatched',
+      result: isToolResult(ctx.rawResult) ? ctx.rawResult : jsonResult(ctx.rawResult),
+    },
   };
+}
+
+export function buildDispatchTelemetryEvent(
+  input: DispatchActionInput,
+  ctx: DispatchActionCtx | undefined,
+  outcome: DispatchActionOutcome
+): DispatchTelemetryEvent {
+  return {
+    actionName: ctx?.action?.name ?? input.actionName,
+    family: ctx?.action?.family,
+    safetyClass: ctx?.action?.safetyClass,
+    role: input.role,
+    spaceId: input.spaceId,
+    taskId: input.taskId,
+    workflowRunId: input.workflowRunId,
+    outcome: outcome.action,
+    reason: outcome.action === 'denied' ? outcome.reason : undefined,
+    timestamp: Date.now(),
+  };
+}
+
+export async function emitDispatchTelemetry(
+  deps: DispatchActionDeps,
+  input: DispatchActionInput,
+  ctx: DispatchActionCtx | undefined,
+  outcome: DispatchActionOutcome
+): Promise<void> {
+  if (!deps.emitTelemetry) return;
+  const event = buildDispatchTelemetryEvent(input, ctx, outcome);
+  try {
+    await deps.emitTelemetry(event);
+  } catch {}
 }
 
 const run = (
@@ -253,9 +282,13 @@ export async function runDispatchAction(
 ): Promise<DispatchActionOutcome> {
   try {
     const ctx = await run({ ...input, deps });
-    return ctx.outcome ?? failedOutcome('Missing dispatch outcome');
+    const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
+    await emitDispatchTelemetry(deps, input, ctx, outcome);
+    return outcome;
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    return failedOutcome(error);
+    const outcome = failedOutcome(error);
+    await emitDispatchTelemetry(deps, input, undefined, outcome);
+    return outcome;
   }
 }

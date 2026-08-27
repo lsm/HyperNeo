@@ -1,23 +1,25 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
-import type { CreateMcpAuditLogParams } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import {
   applyAutonomyGate,
   applyRateAndAudit,
   applyRoleAdmission,
   applySafetyClass,
-  executeAction,
-  formatResult,
-  resolveAction,
-  runDispatchAction,
+  buildDispatchTelemetryEvent,
   type DispatchActionCtx,
   type DispatchActionDeps,
   type DispatchActionInput,
   type DispatchActionOutcome,
   type DispatchTelemetryEvent,
+  emitDispatchTelemetry,
+  executeAction,
+  formatResult,
+  resolveAction,
+  runDispatchAction,
 } from '../../../../src/lib/space/actions/dispatcher-pipeline.ts';
 import { createActionRegistry, defineAction } from '../../../../src/lib/space/actions/registry.ts';
+import type { CreateMcpAuditLogParams } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 
 const SPACE_ID = 'space-1';
 const TASK_ID = 'task-1';
@@ -372,7 +374,7 @@ describe('applyRateAndAudit', () => {
     expect(auditEntries.length).toBe(0);
   });
 
-  test('emits telemetry at the dispatch choke point', async () => {
+  test('does not emit telemetry (emission moved to the post-outcome step)', async () => {
     const telemetry: DispatchTelemetryEvent[] = [];
     const ctx = applyRoleAdmission(
       applySafetyClass(
@@ -380,30 +382,13 @@ describe('applyRateAndAudit', () => {
       )
     );
     await applyRateAndAudit(
-      withDeps(
-        {
-          ...ctx,
-          spaceLevel: 5,
-          taskId: TASK_ID,
-          workflowRunId: WORKFLOW_RUN_ID,
+      withDeps(ctx, {
+        emitTelemetry: (event) => {
+          telemetry.push(event);
         },
-        {
-          emitTelemetry: (event) => {
-            telemetry.push(event);
-          },
-        }
-      )
+      })
     );
-    expect(telemetry.length).toBe(1);
-    expect(telemetry[0].actionName).toBe('update_task');
-    expect(telemetry[0].family).toBe('space');
-    expect(telemetry[0].safetyClass).toBe('mutate');
-    expect(telemetry[0].role).toBe('coordinator');
-    expect(telemetry[0].spaceId).toBe(SPACE_ID);
-    expect(telemetry[0].taskId).toBe(TASK_ID);
-    expect(telemetry[0].workflowRunId).toBe(WORKFLOW_RUN_ID);
-    expect(telemetry[0].outcome).toBe('dispatched');
-    expect(typeof telemetry[0].timestamp).toBe('number');
+    expect(telemetry.length).toBe(0);
   });
 });
 
@@ -444,6 +429,17 @@ describe('formatResult', () => {
     expect(JSON.parse(extractText(next.outcome.result))).toEqual({ ok: true });
   });
 
+  test('passes an existing ToolResult through without re-wrapping', () => {
+    const result = { content: [{ type: 'text' as const, text: '{"wrapped":true}' }] };
+    const ctx: DispatchActionCtx = {
+      ...buildCtx({ actionName: 'update_task' }),
+      rawResult: result,
+    };
+    const next = formatResult(ctx);
+    assertDispatched(next.outcome!);
+    expect(next.outcome.result).toBe(result);
+  });
+
   test('preserves an existing denied outcome', () => {
     const denied = resolveAction(buildCtx({ actionName: 'missing_action' }));
     const next = formatResult(denied);
@@ -455,6 +451,107 @@ describe('formatResult', () => {
     const next = formatResult(ctx);
     assertFailed(next.outcome!);
     expect(next.outcome.error).toContain('Missing action result');
+  });
+});
+
+describe('buildDispatchTelemetryEvent', () => {
+  test('carries action metadata for a dispatched outcome', () => {
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx({ actionName: 'update_task', params: { taskId: 't-1' }, taskId: TASK_ID })
+        )
+      )
+    );
+    const event = buildDispatchTelemetryEvent(
+      baseInput({ actionName: 'update_task', taskId: TASK_ID }),
+      ctx,
+      { action: 'dispatched', result: { content: [] } }
+    );
+    expect(event.actionName).toBe('update_task');
+    expect(event.family).toBe('space');
+    expect(event.safetyClass).toBe('mutate');
+    expect(event.role).toBe('coordinator');
+    expect(event.spaceId).toBe(SPACE_ID);
+    expect(event.taskId).toBe(TASK_ID);
+    expect(event.outcome).toBe('dispatched');
+    expect(event.reason).toBeUndefined();
+    expect(typeof event.timestamp).toBe('number');
+  });
+
+  test('carries the deny reason for a denied outcome', () => {
+    const denied = resolveAction(buildCtx({ actionName: 'missing_action' }));
+    const event = buildDispatchTelemetryEvent(
+      baseInput({ actionName: 'missing_action' }),
+      denied,
+      denied.outcome!
+    );
+    expect(event.outcome).toBe('denied');
+    expect(event.reason).toBe('unknown_action');
+    expect(event.family).toBeUndefined();
+    expect(event.safetyClass).toBeUndefined();
+  });
+
+  test('carries no reason for a failed outcome', () => {
+    const event = buildDispatchTelemetryEvent(baseInput(), undefined, {
+      action: 'failed',
+      error: 'level lookup failed',
+    });
+    expect(event.outcome).toBe('failed');
+    expect(event.reason).toBeUndefined();
+    expect(event.family).toBeUndefined();
+    expect(event.actionName).toBe('list_tasks');
+  });
+});
+
+describe('emitDispatchTelemetry', () => {
+  test('emits the built event through the sink', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
+    await emitDispatchTelemetry(
+      baseDeps({
+        emitTelemetry: (event) => {
+          telemetry.push(event);
+        },
+      }),
+      baseInput({ actionName: 'list_tasks' }),
+      undefined,
+      { action: 'failed', error: 'boom' }
+    );
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].outcome).toBe('failed');
+  });
+
+  test('swallows synchronous sink throws', async () => {
+    await emitDispatchTelemetry(
+      baseDeps({
+        emitTelemetry: () => {
+          throw new Error('sync sink failure');
+        },
+      }),
+      baseInput(),
+      undefined,
+      { action: 'failed', error: 'boom' }
+    );
+  });
+
+  test('swallows asynchronous sink rejections', async () => {
+    await emitDispatchTelemetry(
+      baseDeps({
+        emitTelemetry: async () => {
+          throw new Error('async sink failure');
+        },
+      }),
+      baseInput(),
+      undefined,
+      { action: 'failed', error: 'boom' }
+    );
+  });
+
+  test('is a no-op without a sink', async () => {
+    await emitDispatchTelemetry(baseDeps(), baseInput(), undefined, {
+      action: 'failed',
+      error: 'boom',
+    });
   });
 });
 
@@ -478,6 +575,7 @@ describe('runDispatchAction', () => {
     expect(JSON.parse(extractText(outcome.result))).toEqual({ tasks: [] });
     expect(auditEntries.length).toBe(0);
     expect(telemetry.length).toBe(1);
+    expect(telemetry[0].outcome).toBe('dispatched');
   });
 
   test('dispatches a mutating action with audit and telemetry', async () => {
@@ -502,15 +600,42 @@ describe('runDispatchAction', () => {
     expect(JSON.parse(extractText(outcome.result))).toEqual({ updated: 't-1' });
     expect(auditEntries.length).toBe(1);
     expect(telemetry.length).toBe(1);
+    expect(telemetry[0].outcome).toBe('dispatched');
   });
 
   test('denies actions at the role gate', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
     const outcome = await runDispatchAction(
-      baseDeps(),
+      baseDeps({
+        emitTelemetry: (event) => {
+          telemetry.push(event);
+        },
+      }),
       baseInput({ actionName: 'send_message', role: 'coordinator' })
     );
     assertDenied(outcome);
     expect(outcome.reason).toBe('role_denied');
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].outcome).toBe('denied');
+    expect(telemetry[0].reason).toBe('role_denied');
+    expect(telemetry[0].family).toBe('node');
+  });
+
+  test('emits failed telemetry when the handler throws', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
+    const outcome = await runDispatchAction(
+      baseDeps({
+        emitTelemetry: (event) => {
+          telemetry.push(event);
+        },
+      }),
+      baseInput({ actionName: 'broken_action' })
+    );
+    assertFailed(outcome);
+    expect(outcome.error).toContain('handler failure');
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].outcome).toBe('failed');
+    expect(telemetry[0].actionName).toBe('broken_action');
   });
 
   test('denies actions at the autonomy gate with byte-identical messages', async () => {
@@ -535,9 +660,13 @@ describe('runDispatchAction', () => {
   });
 
   test('returns failed outcome for unexpected errors', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
     const deps = baseDeps({
       getSpaceAutonomyLevel: async () => {
         throw new Error('level lookup failed');
+      },
+      emitTelemetry: (event) => {
+        telemetry.push(event);
       },
     });
     const outcome = await runDispatchAction(
@@ -546,5 +675,9 @@ describe('runDispatchAction', () => {
     );
     assertFailed(outcome);
     expect(outcome.error).toContain('level lookup failed');
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].outcome).toBe('failed');
+    expect(telemetry[0].actionName).toBe('update_task');
+    expect(telemetry[0].family).toBeUndefined();
   });
 });
