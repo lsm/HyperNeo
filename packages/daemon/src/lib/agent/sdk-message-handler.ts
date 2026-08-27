@@ -1733,11 +1733,14 @@ export class SDKMessageHandler {
   private refreshContextUsage(
     reason: 'event-tick' | 'turn-end' | 'compact-boundary',
     deadlineAt?: number,
-    invocationGeneration?: number | null
+    invocationGeneration?: number | null,
+    fenceOwner?: IdleOwnerScope
   ): Promise<void> {
     this.eventsSinceContextRefresh = 0;
 
     if (this.isInvocationStale(invocationGeneration ?? null)) return Promise.resolve();
+
+    const ownerAtRequest = fenceOwner ?? this.invocationIdleOwner(invocationGeneration ?? null);
 
     if (this.pendingContextRefresh) {
       if (reason === 'event-tick') {
@@ -1746,7 +1749,7 @@ export class SDKMessageHandler {
       const chainDeadline = deadlineAt ?? Date.now() + DELIVERY_GATE_WINDOW_MS;
       const pending = this.pendingContextRefresh;
       this.pendingContextRefresh = pending.then(() =>
-        this.refreshContextUsage(reason, chainDeadline, invocationGeneration)
+        this.refreshContextUsage(reason, chainDeadline, invocationGeneration, ownerAtRequest)
       );
       this.ctx.messageQueue.setDeliveryGate(
         boundedDeliveryGate(
@@ -1762,7 +1765,6 @@ export class SDKMessageHandler {
     const fenceModel = session.config.model;
     const gateDeadline = deadlineAt ?? Date.now() + DELIVERY_GATE_WINDOW_MS;
     const fenceProvider = session.config.provider;
-    const fenceOwner = this.invocationIdleOwner(invocationGeneration ?? null);
 
     const promise = (async () => {
       let clearedDeadCompaction = false;
@@ -1804,7 +1806,7 @@ export class SDKMessageHandler {
             fenceModel,
             fenceProvider,
             invocationGeneration,
-            fenceOwner
+            ownerAtRequest
           )
         )
           return;
@@ -1818,7 +1820,7 @@ export class SDKMessageHandler {
             fenceModel,
             fenceProvider,
             invocationGeneration,
-            fenceOwner
+            ownerAtRequest
           )
         )
           return;
@@ -1841,7 +1843,7 @@ export class SDKMessageHandler {
             fenceModel,
             fenceProvider,
             invocationGeneration,
-            fenceOwner
+            ownerAtRequest
           )
         ) {
           const outcome = enforceContextBudget({
