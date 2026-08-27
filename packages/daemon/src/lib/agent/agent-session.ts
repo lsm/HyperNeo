@@ -1572,6 +1572,8 @@ export class AgentSession
       onResumeClear: () => {
         this.pendingResumeAfterCompaction = false;
       },
+      getDurableMessageContent: (uuid) =>
+        this.db.getSDKMessageRepo().getUserMessageContentByUuid(this.session.id, uuid) ?? undefined,
     });
   }
 

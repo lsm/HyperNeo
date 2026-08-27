@@ -49,6 +49,9 @@ function createAgentSession(): AgentSession {
     updateMessage: mock(() => {}),
     getSDKMessageCount: mock(() => 0),
     getConsumedUserMessagesAfterLatestInit: mock(() => []),
+    getSDKMessageRepo: mock(() => ({
+      getUserMessageContentByUuid: mock(() => null),
+    })),
   } as unknown as Database;
 
   const session = new AgentSession(
@@ -360,6 +363,27 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       expect(harness.usageMock).toHaveBeenCalledTimes(0);
       expect(harness.interruptMock).toHaveBeenCalledTimes(0);
     }
+  });
+
+  it('recovers an evicted survivor from the durable message store', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => { getUserMessageContentByUuid: () => string | null };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: () => 'db-recovered',
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-lru-evicted'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy).toHaveBeenCalledWith('uuid-lru-evicted', 'db-recovered', false, {
+      durable: true,
+    });
   });
 
   it('enqueues compaction when the interrupt resolves without a receipt', async () => {

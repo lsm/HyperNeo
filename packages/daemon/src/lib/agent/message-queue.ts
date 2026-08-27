@@ -50,6 +50,7 @@ export interface MidTurnBudgetInterruptOptions {
   };
   onResumeArm: () => void;
   onResumeClear: () => void;
+  getDurableMessageContent?: (uuid: string) => string | MessageContent[] | undefined;
 }
 
 export class MessageQueue {
@@ -772,7 +773,7 @@ export class MessageQueue {
         );
         continue;
       }
-      const content = this.getSentPromptContent(uuid);
+      const content = this.getSentPromptContent(uuid) ?? opts.getDurableMessageContent?.(uuid);
       if (content !== undefined) {
         this.forgetSentPrompt(uuid);
         void this.enqueueWithId(uuid, content, false, { durable: true }).catch((error) => {

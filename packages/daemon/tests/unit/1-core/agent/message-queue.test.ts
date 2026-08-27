@@ -1799,6 +1799,25 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('requeues a survivor whose content was evicted from the sent-prompt LRU', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts(q, {
+        interrupt: async () => ({ still_queued: ['uuid-evicted'] }),
+        cancelAsyncMessage: async () => true,
+        getDurableMessageContent: (uuid: string) =>
+          uuid === 'uuid-evicted' ? 'db-recovered-content' : undefined,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-evicted', 'db-recovered-content', false, {
+        durable: true,
+      });
+      q.stop();
+    });
+
     it('holds delivery behind a gate while survivors are cancelled and requeued', async () => {
       const q = new MessageQueue();
       q.start();
