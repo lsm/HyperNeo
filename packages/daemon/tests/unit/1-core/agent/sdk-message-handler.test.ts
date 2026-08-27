@@ -4593,7 +4593,10 @@ describe('SDKMessageHandler', () => {
       });
 
       it('ignores a trailing idle from a superseded query generation', async () => {
-        (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+        let current = 5;
+        (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(
+          () => current
+        );
         const sessionState = (state: 'busy' | 'idle'): SDKMessage =>
           ({
             type: 'system',
@@ -4608,6 +4611,7 @@ describe('SDKMessageHandler', () => {
         await h.handleMessage(turnEndResult(), 5);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
+        current = 7;
         await h.handleMessage(sessionState('idle'), 7);
         await new Promise((resolve) => setTimeout(resolve, 0));
 
