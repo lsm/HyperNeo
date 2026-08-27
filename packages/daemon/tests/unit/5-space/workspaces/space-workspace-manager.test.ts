@@ -481,6 +481,23 @@ describe('resolveWorkspaceSelection', () => {
     const resolved = await manager.resolveWorkspaceSelection(SPACE_A, '/spaced ');
     expect(resolved).toBe('/spaced ');
   });
+
+  test('resolves an absolute selection as a path even when a label collides with it', async () => {
+    const workspaces = new FakeWorkspaces([
+      row(SPACE_A, '/one', 'w1', false, '/two'),
+      row(SPACE_A, '/two', 'w2'),
+    ]);
+    const { manager } = newManager({ workspaces });
+    const resolved = await manager.resolveWorkspaceSelection(SPACE_A, '/two');
+    expect(resolved).toBe('/two');
+  });
+
+  test('matches a label with significant whitespace exactly', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/sec', 'w2', false, ' docs ')]);
+    const { manager } = newManager({ workspaces });
+    const resolved = await manager.resolveWorkspaceSelection(SPACE_A, ' docs ');
+    expect(resolved).toBe('/sec');
+  });
 });
 
 describe('listWorkspaces', () => {

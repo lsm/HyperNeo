@@ -413,10 +413,13 @@ function selectionLoadRows(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
 }
 
 function selectionMatchLabel(ctx: ResolveSelectionCtx): ResolveSelectionCtx {
-  const label = ctx.selection.trim();
-  const matches = ctx.rows!.filter((row) => row.label === label);
+  if (ctx.selection.startsWith('/')) return ctx;
+  const exact = ctx.rows!.filter((row) => row.label === ctx.selection);
+  const matches =
+    exact.length > 0 ? exact : ctx.rows!.filter((row) => row.label === ctx.selection.trim());
   if (matches.length === 1) return { ...ctx, resolvedPath: matches[0].path };
   if (matches.length > 1) {
+    const label = matches[0].label;
     const paths = matches.map((row) => row.path).join(', ');
     return {
       ...ctx,
