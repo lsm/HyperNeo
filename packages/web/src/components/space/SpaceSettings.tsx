@@ -329,7 +329,8 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
           placeholder="/absolute/path/to/repo"
           onInput={(e) => setNewPath((e.target as HTMLInputElement).value)}
           onKeyDown={addOnEnter}
-          class={`min-w-0 flex-1 font-mono text-xs ${inputClass}`}
+          disabled={adding}
+          class={`min-w-0 flex-1 font-mono text-xs disabled:opacity-50 ${inputClass}`}
         />
         <input
           type="text"
@@ -338,14 +339,16 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
           placeholder="Label (optional)"
           onInput={(e) => setNewLabel((e.target as HTMLInputElement).value)}
           onKeyDown={addOnEnter}
-          class={`w-36 ${inputClass}`}
+          disabled={adding}
+          class={`w-36 disabled:opacity-50 ${inputClass}`}
         />
         {nativeFolderPickerAvailable && (
           <button
             type="button"
             data-testid="workspace-add-browse"
             onClick={handleBrowse}
-            class="rounded-lg border border-white/10 px-3 py-2 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-gray-100"
+            disabled={adding}
+            class="rounded-lg border border-white/10 px-3 py-2 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:opacity-50"
           >
             Browse
           </button>

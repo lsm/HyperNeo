@@ -283,7 +283,7 @@ describe('SpaceSettings', () => {
 
       const { getByTestId, findByTestId } = render(<SpaceSettings space={makeSpace()} />);
       await findByTestId('workspace-add-form');
-      const pathInput = getByTestId('workspace-add-path');
+      const pathInput = getByTestId('workspace-add-path') as HTMLInputElement;
       fireEvent.input(pathInput, { target: { value: '/projects/docs' } });
       fireEvent.keyDown(pathInput, { key: 'Enter' });
       fireEvent.keyDown(pathInput, { key: 'Enter' });
@@ -292,6 +292,8 @@ describe('SpaceSettings', () => {
         ([method]) => method === 'space.workspace.add'
       );
       expect(addCalls).toHaveLength(1);
+      expect((getByTestId('workspace-add-path') as HTMLInputElement).disabled).toBe(true);
+      expect((getByTestId('workspace-add-label') as HTMLInputElement).disabled).toBe(true);
       resolveAdd!();
     });
 
