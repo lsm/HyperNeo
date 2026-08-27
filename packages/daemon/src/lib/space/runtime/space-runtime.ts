@@ -1879,12 +1879,8 @@ export class SpaceRuntime {
       if (outcome.action === 'skip' && outcome.reason === 'claim_conflict') {
         this.queueHealthMetrics.recordClaimConflict();
       }
-      if (
-        (outcome.action === 'deferred' || outcome.action === 'error') &&
-        target.sessionId &&
-        this.isTargetSessionLive(target.sessionId)
-      ) {
-        this.scheduleTurnEndDigestRetry(target.sessionId, target.taskId, true);
+      if (outcome.action === 'deferred' || outcome.action === 'error') {
+        this.scheduleImmediateDigestRecovery(target);
       }
       if (outcome.action === 'error') {
         log.warn(
@@ -1897,17 +1893,26 @@ export class SpaceRuntime {
         `SpaceRuntime: failed to process immediate-tier event ${payload.eventId} for ` +
           `${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
       );
-      if (target.sessionId && this.isTargetSessionLive(target.sessionId)) {
-        this.scheduleTurnEndDigestRetry(target.sessionId, target.taskId, true);
-      }
+      this.scheduleImmediateDigestRecovery(target);
     } finally {
       this.immediateDispatchesInFlight.delete(deliveryKey);
     }
   }
 
+  private scheduleImmediateDigestRecovery(target: WorkflowSubscriptionTarget): void {
+    const current = resolveCurrentQueueableOrActiveExecution(
+      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+      target
+    );
+    const liveSessionId = current?.agentSessionId;
+    if (liveSessionId && this.isTargetSessionLive(liveSessionId)) {
+      this.scheduleTurnEndDigestRetry(liveSessionId, target.taskId, true);
+    }
+  }
+
   private scheduleTurnEndDigestRetry(sessionId: string, taskId?: string, resetCount = false): void {
-    if (this.turnEndDigestRetryTimers.has(sessionId)) return;
     if (resetCount) this.turnEndDigestRetryCounts.delete(sessionId);
+    if (this.turnEndDigestRetryTimers.has(sessionId)) return;
     const attempts = (this.turnEndDigestRetryCounts.get(sessionId) ?? 0) + 1;
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
       this.turnEndDigestRetryCounts.delete(sessionId);
@@ -1943,7 +1948,10 @@ export class SpaceRuntime {
 
   private handoffDigestDelivery(sessionId: string, messageUuid: string, dbId: string): void {
     try {
-      this.getSdkMessageRepo().updateMessageStatus([dbId], 'enqueued');
+      const repo = this.getSdkMessageRepo();
+      const current = repo.getDeliveryContent(sessionId, messageUuid);
+      if (!current || current.sendStatus !== 'deferred') return;
+      repo.updateMessageStatus([dbId], 'enqueued');
       const role = deliverMessage(this.getJobQueueRepo(), sessionId, messageUuid, {
         origin: 'space_inject',
       });
@@ -1954,7 +1962,11 @@ export class SpaceRuntime {
       }
     } catch (error) {
       try {
-        this.getSdkMessageRepo().updateMessageStatus([dbId], 'deferred');
+        const repo = this.getSdkMessageRepo();
+        const current = repo.getDeliveryContent(sessionId, messageUuid);
+        if (current && current.sendStatus === 'enqueued') {
+          repo.updateMessageStatus([dbId], 'deferred');
+        }
       } catch {
         void error;
       }
@@ -2090,7 +2102,14 @@ export class SpaceRuntime {
       if (outcome.action === 'delivered') {
         this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid, outcome.eventIds);
       } else {
-        this.dropUncoveredDeferredDigestRows(sessionId, store);
+        try {
+          this.dropUncoveredDeferredDigestRows(sessionId, store);
+        } catch (cleanupError) {
+          if (this.isTargetSessionLive(sessionId)) {
+            this.scheduleTurnEndDigestRetry(sessionId, taskId);
+          }
+          return { action: 'failed', stage: 'digestCleanup', error: cleanupError };
+        }
         if (
           (outcome.action === 'failed' || outcome.action === 'held') &&
           this.isTargetSessionLive(sessionId)
@@ -2100,7 +2119,11 @@ export class SpaceRuntime {
       }
       return outcome;
     } catch (error) {
-      this.dropUncoveredDeferredDigestRows(sessionId, store);
+      try {
+        this.dropUncoveredDeferredDigestRows(sessionId, store);
+      } catch {
+        void error;
+      }
       if (this.isTargetSessionLive(sessionId)) {
         this.scheduleTurnEndDigestRetry(sessionId, taskId);
       }
@@ -2109,43 +2132,39 @@ export class SpaceRuntime {
   }
 
   private dropUncoveredDeferredDigestRows(sessionId: string, store: ExternalEventStore): void {
-    try {
-      const messages = this.getSdkMessageRepo();
-      const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
-      const targetNodeId = execution?.workflowNodeId;
-      const targetAgentName = execution?.agentName;
-      const rows = messages
-        .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
-        .filter((row) => row.sendStatus === 'deferred');
-      for (const row of rows) {
-        const membership = (row as { externalEventIds?: unknown }).externalEventIds;
-        if (!Array.isArray(membership) || membership.length === 0) continue;
-        const eventIds = membership.filter(
-          (eventId): eventId is string => typeof eventId === 'string'
-        );
-        if (eventIds.length === 0) continue;
-        const hasDeliveredMember =
-          targetNodeId !== undefined &&
-          targetAgentName !== undefined &&
-          eventIds.some((eventId) =>
-            store
-              .listDeliveries(eventId)
-              .some(
-                (delivery) =>
-                  delivery.nodeId === targetNodeId &&
-                  delivery.agentName === targetAgentName &&
-                  delivery.state === 'delivered'
-              )
-          );
-        if (!hasDeliveredMember) {
-          messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
-        }
-      }
-    } catch (error) {
-      log.warn(
-        `SpaceRuntime: digest row drop for session ${sessionId} failed: ` +
-          `${formatCommandError(error)}`
+    const messages = this.getSdkMessageRepo();
+    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+    const targetWorkflowRunId = execution?.workflowRunId;
+    const targetNodeId = execution?.workflowNodeId;
+    const targetAgentName = execution?.agentName;
+    const rows = messages
+      .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
+      .filter((row) => row.sendStatus === 'deferred');
+    for (const row of rows) {
+      const membership = (row as { externalEventIds?: unknown }).externalEventIds;
+      if (!Array.isArray(membership) || membership.length === 0) continue;
+      const eventIds = membership.filter(
+        (eventId): eventId is string => typeof eventId === 'string'
       );
+      if (eventIds.length === 0) continue;
+      const hasDeliveredMember =
+        targetWorkflowRunId !== undefined &&
+        targetNodeId !== undefined &&
+        targetAgentName !== undefined &&
+        eventIds.some((eventId) =>
+          store
+            .listDeliveries(eventId)
+            .some(
+              (delivery) =>
+                delivery.workflowRunId === targetWorkflowRunId &&
+                delivery.nodeId === targetNodeId &&
+                delivery.agentName === targetAgentName &&
+                delivery.state === 'delivered'
+            )
+        );
+      if (!hasDeliveredMember) {
+        messages.deletePendingUserMessage(sessionId, row.dbId, 'deferred');
+      }
     }
   }
 
@@ -2159,6 +2178,7 @@ export class SpaceRuntime {
       const messages = this.getSdkMessageRepo();
       const deliveredEventIdSet = new Set(deliveredEventIds);
       const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+      const targetWorkflowRunId = execution?.workflowRunId;
       const targetNodeId = execution?.workflowNodeId;
       const targetAgentName = execution?.agentName;
       const rows = messages
@@ -2177,11 +2197,12 @@ export class SpaceRuntime {
         if (eventIds.length === 0) continue;
         const isObsolete = eventIds.every((eventId) => {
           if (deliveredEventIdSet.has(eventId)) return true;
-          if (targetNodeId && targetAgentName) {
+          if (targetWorkflowRunId && targetNodeId && targetAgentName) {
             const terminalForTarget = store
               .listDeliveries(eventId)
               .some(
                 (delivery) =>
+                  delivery.workflowRunId === targetWorkflowRunId &&
                   delivery.nodeId === targetNodeId &&
                   delivery.agentName === targetAgentName &&
                   (delivery.state === 'delivered' || delivery.state === 'failed')
