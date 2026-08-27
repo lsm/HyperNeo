@@ -191,12 +191,7 @@ describe('createSpaceRegistryEntries — composition', () => {
       const byName = new Map(
         createSpaceRegistryEntries(ctx.config).map((entry) => [entry.name, entry])
       );
-      for (const name of [
-        'update_session_state',
-        'interrupt_session',
-        'archive_task',
-        'change_plan',
-      ]) {
+      for (const name of ['update_session_state', 'interrupt_session', 'archive_task']) {
         expect(byName.get(name)?.autonomyRequirement).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
       expect(byName.get('approve_pending_completion')?.autonomyRequirement).toBe(5);
@@ -252,6 +247,27 @@ describe('createSpaceRegistryEntries — composition', () => {
         );
         expect(await resolve({ task_id: 'task-1' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', cancel_workflow_run: false })).toBe(1);
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('change_plan requires workflow-switch clearance only when switching workflows', async () => {
+    const ctx = makeCtx();
+    try {
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const resolve = entries.find((entry) => entry.name === 'change_plan')?.autonomyRequirement;
+      expect(typeof resolve).toBe('function');
+      if (typeof resolve === 'function') {
+        expect(await resolve({ run_id: 'run-1', workflow_id: 'wf-1' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+        expect(await resolve({ run_id: 'run-1', workflow_handle: 'coding' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+        expect(await resolve({ run_id: 'run-1', description: 'Update' })).toBe(1);
+        expect(await resolve({ run_id: 'run-1' })).toBe(1);
       }
     } finally {
       ctx.db.close();

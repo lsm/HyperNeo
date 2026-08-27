@@ -75,18 +75,10 @@ const SPACE_ADMISSION_FAMILIES = [
   'inactivity',
 ] as const;
 
-const WORKER_SPACE_ADMISSION_FAMILIES = [
-  'space',
-  'sessions',
-  'workflows',
-  'scheduled',
-  'inactivity',
-] as const;
-
 const ROLE_ACTION_FAMILY_ALLOWLIST: Record<SpaceMcpSessionRole, readonly string[]> = {
   coordinator: SPACE_ADMISSION_FAMILIES,
   ad_hoc_member: SPACE_ADMISSION_FAMILIES,
-  workflow_worker: ['node', ...WORKER_SPACE_ADMISSION_FAMILIES],
+  workflow_worker: ['node', 'space'],
   long_term_agent: SPACE_ADMISSION_FAMILIES,
   legacy_task_agent: [],
   outside_space: [],
@@ -325,7 +317,13 @@ export async function runDispatchAction(
   try {
     const ctx = await run({ ...input, deps });
     const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
-    await emitDispatchTelemetry(deps, input, ctx.action, outcome, Date.now() - startedAt);
+    await emitDispatchTelemetry(
+      deps,
+      { ...input, taskId: ctx.taskId ?? input.taskId },
+      ctx.action,
+      outcome,
+      Date.now() - startedAt
+    );
     return outcome;
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);

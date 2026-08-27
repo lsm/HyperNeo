@@ -67,6 +67,11 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
   const cancelTaskAutonomy = async (params: z.infer<typeof CancelTaskSchema>) =>
     params.cancel_workflow_run === true ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL : 1;
 
+  const changePlanAutonomy = async (params: z.infer<typeof ChangePlanSchema>) =>
+    params.workflow_id !== undefined || params.workflow_handle !== undefined
+      ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL
+      : 1;
+
   const sessionEntries: ActionDefinition[] = [
     defineAction({
       name: 'list_sessions',
@@ -163,7 +168,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Update an active run description, or switch it to another workflow (cancels the run and starts a new one); returns the affected run(s).',
       paramsDoc: 'run_id, plus description? and/or workflow_id?/workflow_handle?',
       paramsSchema: ChangePlanSchema,
-      autonomyRequirement: DESTRUCTIVE_ACTION_AUTONOMY_LEVEL,
+      autonomyRequirement: changePlanAutonomy,
       handler: (args) => handlers.change_plan(args),
     }),
     defineAction({
@@ -453,7 +458,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       family: 'tasks',
       safetyClass: 'destructive',
       description:
-        'Archive a task — the true terminal state; archived tasks are excluded from queries and cannot be reactivated.',
+        'Archive a task — the true terminal state; archived tasks are excluded from default task listings and cannot be reactivated.',
       paramsDoc: 'task_id',
       paramsSchema: ArchiveTaskSchema,
       autonomyRequirement: DESTRUCTIVE_ACTION_AUTONOMY_LEVEL,

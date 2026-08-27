@@ -231,7 +231,7 @@ describe('applyRoleAdmission', () => {
     expect(applyRoleAdmission(node).outcome).toBeUndefined();
   });
 
-  test('admits the registry-space families for space roles; workers get node plus non-colliding space families', () => {
+  test('admits the registry-space families for the space roles', () => {
     const families = [
       'sessions',
       'workflows',
@@ -263,6 +263,30 @@ describe('applyRoleAdmission', () => {
         expect(ctx.outcome).toBeUndefined();
       }
     }
+  });
+
+  test('keeps coordinator-wide registry families out of worker admission', () => {
+    const families = [
+      'sessions',
+      'workflows',
+      'tasks',
+      'scheduled',
+      'external_events',
+      'inactivity',
+    ] as const;
+    const registry = createActionRegistry(
+      families.map((family) =>
+        defineAction({
+          name: `probe_${family}`,
+          family,
+          safetyClass: 'read',
+          description: 'Registry family probe',
+          paramsDoc: '{}',
+          paramsSchema: z.object({}),
+          handler: async () => ({}),
+        })
+      )
+    );
     for (const family of families) {
       const ctx = applyRoleAdmission(
         applySafetyClass(
@@ -271,12 +295,8 @@ describe('applyRoleAdmission', () => {
           )
         )
       );
-      if (family === 'tasks' || family === 'external_events') {
-        assertDenied(ctx.outcome!);
-        expect(ctx.outcome.reason).toBe('role_denied');
-      } else {
-        expect(ctx.outcome).toBeUndefined();
-      }
+      assertDenied(ctx.outcome!);
+      expect(ctx.outcome.reason).toBe('role_denied');
     }
   });
 
@@ -703,6 +723,33 @@ describe('runDispatchAction', () => {
     expect(auditEntries.length).toBe(1);
     expect(telemetry.length).toBe(1);
     expect(telemetry[0].outcome).toBe('dispatched');
+  });
+
+  test('emits telemetry with the resolved target task id', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
+    const archiveTask = defineAction({
+      name: 'archive_task',
+      family: 'tasks',
+      safetyClass: 'destructive',
+      description: 'Archive task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      autonomyRequirement: 4,
+      handler: async () => ({}),
+    });
+    const deps = baseDeps({
+      registry: createActionRegistry([archiveTask]),
+      emitTelemetry: (event) => {
+        telemetry.push(event);
+      },
+    });
+    const outcome = await runDispatchAction(deps, {
+      ...baseInput({ actionName: 'archive_task', params: { task_id: 'task-42' } }),
+      spaceLevel: 5,
+    });
+    assertDispatched(outcome);
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].taskId).toBe('task-42');
   });
 
   test('denies actions at the role gate', async () => {
