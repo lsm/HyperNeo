@@ -48,7 +48,13 @@ type DeliveryTranscriptEvent =
   | { op: 'db:recordTurnEnd'; sessionId: string; uuid: string }
   | { op: 'db:clearTurnEnd'; sessionId: string; uuid: string }
   | { op: 'job:requeue'; jobId: string; runAt: number; claimToken: string | null }
-  | { op: 'job:requeueParked'; jobId: string; runAt: number; claimToken: string | null }
+  | {
+      op: 'job:requeueParked';
+      jobId: string;
+      runAt: number;
+      claimToken: string | null;
+      reason?: string;
+    }
   | { op: 'job:requeueAs'; jobId: string; role: string; runAt: number; claimToken: string | null }
   | { op: 'job:isClaimCurrent'; jobId: string; result: boolean; claimToken: string | null }
   | { op: 'job:getParkCount'; jobId: string; result: number }
@@ -239,19 +245,27 @@ function instrumentDeliveryTranscript(
   jobRepo.requeueParked = (
     jobId: string,
     runAt: number,
-    claimToken?: string | null
+    claimToken?: string | null,
+    opts?: Parameters<JobQueueRepository['requeueParked']>[3]
   ): ReturnType<JobQueueRepository['requeueParked']> => {
-    transcript.push({ op: 'job:requeueParked', jobId, runAt, claimToken: claimToken ?? null });
-    return jobOriginals.requeueParked(jobId, runAt, claimToken);
+    transcript.push({
+      op: 'job:requeueParked',
+      jobId,
+      runAt,
+      claimToken: claimToken ?? null,
+      reason: opts?.reason,
+    });
+    return jobOriginals.requeueParked(jobId, runAt, claimToken, opts);
   };
   jobRepo.requeueAs = (
     jobId: string,
     role: string,
     runAt: number,
-    claimToken?: string | null
+    claimToken?: string | null,
+    opts?: Parameters<JobQueueRepository['requeueAs']>[4]
   ): ReturnType<JobQueueRepository['requeueAs']> => {
     transcript.push({ op: 'job:requeueAs', jobId, role, runAt, claimToken: claimToken ?? null });
-    return jobOriginals.requeueAs(jobId, role, runAt, claimToken);
+    return jobOriginals.requeueAs(jobId, role, runAt, claimToken, opts);
   };
   jobRepo.isClaimCurrent = (jobId: string, claimToken: string | null): boolean => {
     const result = jobOriginals.isClaimCurrent(jobId, claimToken);
@@ -962,8 +976,12 @@ describe('delivery transcript parity harness (A1a)', () => {
           getMessageContent: () => ({ content: handlerContent, sendStatus: 'enqueued' }),
         });
 
+        const before = Date.now();
         const result = await handler(job);
-        expect(result).toEqual({ parked: 'sdk_resume_choice', retryAt: 12345 });
+        const after = Date.now();
+        expect(result.parked).toBe('sdk_resume_choice');
+        expect(result.retryAt as number).toBeGreaterThanOrEqual(before + MESSAGE_DELIVERY_PARK_MS);
+        expect(result.retryAt as number).toBeLessThanOrEqual(after + MESSAGE_DELIVERY_PARK_MS);
         expect(jobRepo.getJob(job.id)?.status).toBe('pending');
         expect(sessionMock.settleSkippedDelivery).not.toHaveBeenCalled();
         expect(driveArgs[0]).toBe(handlerUuid);
@@ -977,7 +995,14 @@ describe('delivery transcript parity harness (A1a)', () => {
           { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
           { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
           { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
-          { op: 'job:requeue', jobId: job.id, runAt: 12345, claimToken: job.claimToken },
+          { op: 'job:getParkCount', jobId: job.id, result: 0 },
+          {
+            op: 'job:requeueParked',
+            jobId: job.id,
+            runAt: expect.any(Number),
+            claimToken: job.claimToken,
+            reason: 'sdk_resume_choice',
+          },
         ]);
       } finally {
         db.close();

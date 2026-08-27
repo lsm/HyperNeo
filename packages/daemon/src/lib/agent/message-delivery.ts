@@ -241,6 +241,8 @@ export const MANUAL_RECOVERY_PARK_MS = 5 * 60_000;
 
 export const MAX_STEER_PARKS = 60;
 
+export const RESUME_CHOICE_PARK_BUDGET = 20;
+
 export type DriveTurnOutcome =
   | { outcome: 'completed' }
   | { outcome: 'blocked'; retryAt: number }

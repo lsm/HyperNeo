@@ -838,6 +838,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         markDeliveryFailed: (sessionId: string, messageUuid: string) =>
           reactiveDb?.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, messageUuid) ??
           null,
+        isResumeChoiceResolved: (sessionId: string) =>
+          !(
+            reactiveDb?.db
+              .getSDKMessageRepo()
+              .hasUnresolvedHyperNeoAction(sessionId, 'sdk_resume_choice') ?? true
+          ),
         publishStatusChanged: (sessionId: string, messageIds: string[]) =>
           internalEventBus.publish('messages.statusChanged', {
             sessionId,

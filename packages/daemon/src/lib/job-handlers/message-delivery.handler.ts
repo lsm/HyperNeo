@@ -24,6 +24,7 @@ export interface MessageDeliveryHandlerDeps {
   isSessionArchived?(sessionId: string): boolean;
   markDeliveryFailed?(sessionId: string, messageUuid: string): string | null;
   publishStatusChanged?(sessionId: string, messageIds: string[]): Promise<unknown>;
+  isResumeChoiceResolved?(sessionId: string): boolean;
   metrics?: DeliveryMetrics;
 }
 
@@ -78,7 +79,9 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         );
       }
       const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
+      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken, {
+        reason: 'acp_awaiting_acceptance',
+      });
       return { parked: 'acp_awaiting_acceptance', retryAt };
     }
     if (sendStatus === 'deferred' || sendStatus === 'failed' || sendStatus === 'submitted') {
@@ -118,9 +121,25 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         job.claimToken
       );
       const result = await turn;
-      const route = routeDriveTurnOutcome(result);
+      const route = routeDriveTurnOutcome(result, {
+        parkCount: result.outcome === 'blocked' ? deps.jobQueue.getParkCount(job.id) : 0,
+        now: Date.now(),
+        resumeChoiceResolved:
+          result.outcome === 'blocked'
+            ? deps.isResumeChoiceResolved?.(payload.sessionId)
+            : undefined,
+      });
       if ('deadLetter' in route) {
         throw new DeadLetterImmediatelyError(route.deadLetter);
+      }
+      if (
+        result.outcome === 'blocked' &&
+        route.mutation === 'requeue' &&
+        (route.result as { parked?: string }).parked === 'sdk_resume_choice'
+      ) {
+        log.info(
+          `message_delivery: resume choice already resolved for ${payload.messageUuid}; retrying immediately`
+        );
       }
       if (route.reclaimSkip) {
         metrics.recordReclaimSkip(route.reclaimSkip);
@@ -130,6 +149,21 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       }
       if (route.mutation === 'requeue' && route.retryAt !== undefined) {
         deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
+      } else if (route.mutation === 'requeueParked' && route.retryAt !== undefined) {
+        deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken, {
+          reason: (route.result as { parked?: string }).parked,
+        });
+        if (
+          (route.result as { parked?: string }).parked === 'sdk_resume_choice' &&
+          deps.isResumeChoiceResolved?.(payload.sessionId) === true
+        ) {
+          deps.jobQueue.rescheduleSessionDeliveries(job.queue, payload.sessionId, Date.now(), {
+            parkReason: 'sdk_resume_choice',
+          });
+          log.info(
+            `message_delivery: resume choice resolved while parking ${payload.messageUuid}; waking immediately`
+          );
+        }
       }
       return route.result;
     }
@@ -148,9 +182,13 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       reportStage ? { reportStage } : undefined
     );
     const needsParkBudget = result.outcome === 'park' || result.outcome === 'awaiting_acceptance';
+    const waitingForInput =
+      result.outcome === 'park' ? (session.isWaitingForInput?.() ?? false) : false;
     const route = routeFeedSteerOutcome(result, {
       parkCount: needsParkBudget ? deps.jobQueue.getParkCount(job.id) : 0,
-      waitingForInput: result.outcome === 'park' ? (session.isWaitingForInput?.() ?? false) : false,
+      waitingForInput,
+      resumeChoicePending:
+        waitingForInput && deps.isResumeChoiceResolved?.(payload.sessionId) === false,
       now: Date.now(),
     });
     if ('deadLetter' in route) {
@@ -162,14 +200,17 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     if (route.mutation === 'requeue' && route.retryAt !== undefined) {
       deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
     } else if (route.mutation === 'requeueParked' && route.retryAt !== undefined) {
-      deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken);
+      deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken, {
+        reason: (route.result as { parked?: string }).parked,
+      });
     } else if (route.mutation === 'requeueAs') {
       try {
         deps.jobQueue.requeueAs(
           job.id,
           route.requeueRole ?? 'turn',
           route.retryAt ?? Date.now(),
-          job.claimToken
+          job.claimToken,
+          { resetParkCount: route.requeueRole === 'turn' }
         );
         return route.result;
       } catch (err) {
