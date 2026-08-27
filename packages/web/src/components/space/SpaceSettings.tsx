@@ -92,6 +92,8 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
   const [newLabel, setNewLabel] = useState('');
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<{ id: string; label: string } | null>(null);
+  const [savingLabelId, setSavingLabelId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
   const connected = connectionState.value === 'connected';
 
@@ -176,33 +178,41 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
   }
 
   async function handleSaveLabel() {
-    if (!editing) return;
+    if (!editing || savingLabelId) return;
+    const { id, label } = editing;
     const hub = requireHub();
     if (!hub) return;
     try {
+      setSavingLabelId(id);
       setActionError(null);
       await hub.request('space.workspace.updateLabel', {
         spaceId,
-        workspaceId: editing.id,
-        label: editing.label.trim(),
+        workspaceId: id,
+        label: label.trim(),
       });
-      setEditing(null);
+      setEditing((current) => (current?.id === id ? null : current));
       reload();
     } catch (err) {
       setActionError(rpcErrorMessage(err));
+    } finally {
+      setSavingLabelId(null);
     }
   }
 
   async function handleRemove(workspace: SpaceWorkspace) {
+    if (removingId) return;
     if (!confirm(`Remove workspace "${workspaceTitle(workspace)}" (${workspace.path})?`)) return;
     const hub = requireHub();
     if (!hub) return;
     try {
+      setRemovingId(workspace.id);
       setActionError(null);
       await hub.request('space.workspace.remove', { spaceId, workspaceId: workspace.id });
       reload();
     } catch (err) {
       setActionError(rpcErrorMessage(err));
+    } finally {
+      setRemovingId(null);
     }
   }
 
@@ -258,13 +268,15 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
                           setEditing(null);
                         }
                       }}
-                      class="w-40 rounded border border-white/10 bg-dark-850 px-2 py-1 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                      disabled={savingLabelId !== null}
+                      class="w-40 rounded border border-white/10 bg-dark-850 px-2 py-1 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
                     />
                     <button
                       type="button"
                       data-testid="workspace-label-save"
                       onClick={handleSaveLabel}
-                      class="text-xs text-blue-400 hover:text-blue-300"
+                      disabled={savingLabelId !== null}
+                      class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50"
                     >
                       Save
                     </button>
@@ -272,7 +284,8 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
                       type="button"
                       data-testid="workspace-label-cancel"
                       onClick={() => setEditing(null)}
-                      class="text-xs text-gray-400 hover:text-gray-200"
+                      disabled={savingLabelId !== null}
+                      class="text-xs text-gray-400 hover:text-gray-200 disabled:opacity-50"
                     >
                       Cancel
                     </button>
@@ -310,8 +323,9 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
                   <button
                     type="button"
                     data-testid="workspace-remove"
+                    disabled={removingId === workspace.id}
                     onClick={() => handleRemove(workspace)}
-                    class="text-xs text-red-400 hover:text-red-300"
+                    class="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
                   >
                     Remove
                   </button>

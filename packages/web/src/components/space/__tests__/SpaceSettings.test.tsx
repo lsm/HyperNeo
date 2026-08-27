@@ -443,6 +443,28 @@ describe('SpaceSettings', () => {
       );
     });
 
+    it('disables remove while a removal is pending', async () => {
+      mockConfirm.mockReturnValue(true);
+      stubHubRequests();
+      let resolveRemove: () => void;
+      const removePromise = new Promise<{}>((res) => {
+        resolveRemove = () => res({});
+      });
+      mockRequest.mockImplementation((method: string) =>
+        method === 'space.workspace.list'
+          ? Promise.resolve([makeWorkspace()])
+          : method === 'space.workspace.remove'
+            ? removePromise
+            : Promise.resolve({})
+      );
+
+      const { findByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      const removeBtn = (await findByTestId('workspace-remove')) as HTMLButtonElement;
+      fireEvent.click(removeBtn);
+      expect(removeBtn.disabled).toBe(true);
+      resolveRemove!();
+    });
+
     it('edits a workspace label inline via space.workspace.updateLabel', async () => {
       stubHubRequests();
       let list = [makeWorkspace()];
@@ -509,6 +531,30 @@ describe('SpaceSettings', () => {
       expect((await findByTestId('workspaces-action-error')).textContent).toBe(
         'Workspace not found: ws-1'
       );
+    });
+
+    it('disables label editing controls while a save is pending', async () => {
+      stubHubRequests();
+      let resolveSave: () => void;
+      const savePromise = new Promise<{}>((res) => {
+        resolveSave = () => res({});
+      });
+      mockRequest.mockImplementation((method: string) =>
+        method === 'space.workspace.list'
+          ? Promise.resolve([makeWorkspace()])
+          : method === 'space.workspace.updateLabel'
+            ? savePromise
+            : Promise.resolve({})
+      );
+
+      const { findByTestId, getByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      fireEvent.click(await findByTestId('workspace-edit-label'));
+      fireEvent.click(getByTestId('workspace-label-save'));
+
+      expect((getByTestId('workspace-label-input') as HTMLInputElement).disabled).toBe(true);
+      expect((getByTestId('workspace-label-save') as HTMLButtonElement).disabled).toBe(true);
+      expect((getByTestId('workspace-label-cancel') as HTMLButtonElement).disabled).toBe(true);
+      resolveSave!();
     });
   });
 
