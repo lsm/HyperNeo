@@ -75,10 +75,18 @@ const SPACE_ADMISSION_FAMILIES = [
   'inactivity',
 ] as const;
 
+const WORKER_SPACE_ADMISSION_FAMILIES = [
+  'space',
+  'sessions',
+  'workflows',
+  'scheduled',
+  'inactivity',
+] as const;
+
 const ROLE_ACTION_FAMILY_ALLOWLIST: Record<SpaceMcpSessionRole, readonly string[]> = {
   coordinator: SPACE_ADMISSION_FAMILIES,
   ad_hoc_member: SPACE_ADMISSION_FAMILIES,
-  workflow_worker: ['node', ...SPACE_ADMISSION_FAMILIES],
+  workflow_worker: ['node', ...WORKER_SPACE_ADMISSION_FAMILIES],
   long_term_agent: SPACE_ADMISSION_FAMILIES,
   legacy_task_agent: [],
   outside_space: [],
@@ -111,7 +119,18 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
       ),
     };
   }
-  return { ...ctx, action, parsedParams: parsed.data };
+  const targetTaskId =
+    typeof parsed.data === 'object' &&
+    parsed.data !== null &&
+    typeof (parsed.data as Record<string, unknown>).task_id === 'string'
+      ? ((parsed.data as Record<string, unknown>).task_id as string)
+      : undefined;
+  return {
+    ...ctx,
+    action,
+    parsedParams: parsed.data,
+    taskId: ctx.taskId ?? targetTaskId,
+  };
 }
 
 export function applySafetyClass(ctx: DispatchActionCtx): DispatchActionCtx {

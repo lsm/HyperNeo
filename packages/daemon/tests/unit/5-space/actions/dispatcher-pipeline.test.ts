@@ -214,11 +214,17 @@ describe('applyRoleAdmission', () => {
     expect(applyRoleAdmission(node).outcome).toBeUndefined();
   });
 
-  test('admits the registry-space families wherever space is admitted', () => {
+  test('admits the registry-space families for space roles; workers get node plus non-colliding space families', () => {
+    const families = [
+      'sessions',
+      'workflows',
+      'tasks',
+      'scheduled',
+      'external_events',
+      'inactivity',
+    ] as const;
     const registry = createActionRegistry(
-      (
-        ['sessions', 'workflows', 'tasks', 'scheduled', 'external_events', 'inactivity'] as const
-      ).map((family) =>
+      families.map((family) =>
         defineAction({
           name: `probe_${family}`,
           family,
@@ -230,16 +236,8 @@ describe('applyRoleAdmission', () => {
         })
       )
     );
-    const roles = ['coordinator', 'ad_hoc_member', 'workflow_worker', 'long_term_agent'] as const;
-    for (const role of roles) {
-      for (const family of [
-        'sessions',
-        'workflows',
-        'tasks',
-        'scheduled',
-        'external_events',
-        'inactivity',
-      ] as const) {
+    for (const role of ['coordinator', 'ad_hoc_member', 'long_term_agent'] as const) {
+      for (const family of families) {
         const ctx = applyRoleAdmission(
           applySafetyClass(
             resolveAction(buildCtx({ actionName: `probe_${family}`, role }, { registry }))
@@ -248,6 +246,38 @@ describe('applyRoleAdmission', () => {
         expect(ctx.outcome).toBeUndefined();
       }
     }
+    for (const family of families) {
+      const ctx = applyRoleAdmission(
+        applySafetyClass(
+          resolveAction(
+            buildCtx({ actionName: `probe_${family}`, role: 'workflow_worker' }, { registry })
+          )
+        )
+      );
+      if (family === 'tasks' || family === 'external_events') {
+        assertDenied(ctx.outcome!);
+        expect(ctx.outcome.reason).toBe('role_denied');
+      } else {
+        expect(ctx.outcome).toBeUndefined();
+      }
+    }
+  });
+
+  test('attributes the parsed target task to dispatcher audits and telemetry', () => {
+    const archiveTask = defineAction({
+      name: 'archive_task',
+      family: 'tasks',
+      safetyClass: 'destructive',
+      description: 'Archive task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const registry = createActionRegistry([archiveTask]);
+    const ctx = resolveAction(
+      buildCtx({ actionName: 'archive_task', params: { task_id: 'task-42' } }, { registry })
+    );
+    expect(ctx.taskId).toBe('task-42');
   });
 
   test('denies outside_space all actions', () => {
