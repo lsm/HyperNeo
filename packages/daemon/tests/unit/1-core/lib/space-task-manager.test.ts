@@ -1641,5 +1641,15 @@ describe('SpaceTaskManager', () => {
         'Workspace path is not registered to space: /unregistered'
       );
     });
+
+    it('leaves workspacePath unchanged when omitted on update', async () => {
+      const task = await manager.createTask({
+        title: 'T',
+        description: '',
+        workspacePath: '/secondary',
+      });
+      const updated = await manager.updateTask(task.id, { title: 'New title' });
+      expect(updated.workspacePath).toBe('/secondary');
+    });
   });
 });

@@ -101,10 +101,10 @@ export class SpaceTaskManager {
   private async resolveWorkspacePathParam<T extends { workspacePath?: string | null }>(
     params: T
   ): Promise<T> {
-    if (params.workspacePath === undefined || params.workspacePath === null) {
-      return { ...params, workspacePath: null } as T;
+    if (params.workspacePath === undefined) {
+      return params;
     }
-    if (params.workspacePath.length === 0) {
+    if (params.workspacePath === null || params.workspacePath.length === 0) {
       return { ...params, workspacePath: null } as T;
     }
     if (!this.resolveWorkspacePath) {
