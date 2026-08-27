@@ -1207,7 +1207,8 @@ export class SpaceRuntimeService {
           this.config.goalService?.handleTaskTerminal(taskId, {
             fromStatus,
             deferPostCommitEffects: true,
-          })
+          }),
+        (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(space.id, rawPath)
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1780,7 +1781,8 @@ export class SpaceRuntimeService {
           this.config.goalService?.handleTaskTerminal(taskId, {
             fromStatus,
             deferPostCommitEffects: true,
-          })
+          }),
+        (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(space.id, rawPath)
       ),
       spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
@@ -1957,7 +1959,8 @@ export class SpaceRuntimeService {
           this.config.goalService?.handleTaskTerminal(taskId, {
             fromStatus,
             deferPostCommitEffects: true,
-          })
+          }),
+        (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(space.id, rawPath)
       ),
       spaceAgentManager,
       sessionManager: this.config.sessionManager,

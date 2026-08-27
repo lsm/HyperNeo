@@ -8488,7 +8488,8 @@ export class SpaceRuntime {
           this.config.goalService?.handleTaskTerminal(taskId, {
             fromStatus,
             deferPostCommitEffects: true,
-          })
+          }),
+        (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
       );
       this.taskManagers.set(spaceId, manager);
     }

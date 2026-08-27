@@ -274,6 +274,58 @@ const runListWorkspaces = (
   .pipe(listWorkspaceRows, 'ctx', 'ctx')
   .end('ctx') as (input: ListWorkspacesCtx) => ListWorkspacesCtx;
 
+interface ResolveWorkspaceCtx {
+  spaces: WorkspaceRegistryReader;
+  workspaces: WorkspaceStore;
+  io: WorkspaceValidationIo;
+  spaceId: string;
+  rawPath: string;
+  snapshot?: WorkspaceRegistrySnapshot;
+  canonicalPath?: string;
+  registeredPath?: string;
+  error?: Error;
+}
+
+function resolveLoadSpace(ctx: ResolveWorkspaceCtx): ResolveWorkspaceCtx {
+  if (ctx.spaces.getSpace(ctx.spaceId)) return ctx;
+  return { ...ctx, error: new Error(`Space not found: ${ctx.spaceId}`) };
+}
+
+async function resolveCanonicalizePath(ctx: ResolveWorkspaceCtx): Promise<ResolveWorkspaceCtx> {
+  try {
+    return { ...ctx, canonicalPath: await ctx.io.realpath(ctx.rawPath) };
+  } catch {
+    return { ...ctx, error: new Error(`Workspace path does not exist: ${ctx.rawPath}`) };
+  }
+}
+
+function resolveBuildSnapshot(ctx: ResolveWorkspaceCtx): ResolveWorkspaceCtx {
+  return { ...ctx, snapshot: buildRegistrySnapshot(ctx.spaces, ctx.workspaces, ctx.spaceId) };
+}
+
+function resolveMatchRegisteredPath(ctx: ResolveWorkspaceCtx): ResolveWorkspaceCtx {
+  const claim = ctx.snapshot!.claims.find(
+    (c) => c.spaceId === ctx.spaceId && c.path === ctx.canonicalPath
+  );
+  if (claim) return { ...ctx, registeredPath: claim.path };
+  return { ...ctx, error: new Error(`Workspace path is not registered to space: ${ctx.rawPath}`) };
+}
+
+const runResolveRegisteredWorkspace = (
+  superpipe({
+    hasError: (ctx: ResolveWorkspaceCtx) => ctx.error !== undefined,
+  })('workspace-resolve-registered') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(resolveLoadSpace, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(resolveCanonicalizePath, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(resolveBuildSnapshot, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(resolveMatchRegisteredPath, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: ResolveWorkspaceCtx) => Promise<ResolveWorkspaceCtx>;
+
 export class SpaceWorkspaceManager {
   constructor(private readonly deps: SpaceWorkspaceManagerDeps) {}
 
@@ -319,21 +371,17 @@ export class SpaceWorkspaceManager {
   }
 
   async resolveRegisteredWorkspacePath(spaceId: string, rawPath: string): Promise<string> {
-    if (!this.deps.spaces.getSpace(spaceId)) {
-      throw new Error(`Space not found: ${spaceId}`);
+    const result = await runResolveRegisteredWorkspace({
+      spaces: this.deps.spaces,
+      workspaces: this.deps.workspaces,
+      io: this.deps.io ?? nodeWorkspaceValidationIo,
+      spaceId,
+      rawPath,
+    });
+    if (result.error) throw result.error;
+    if (!result.registeredPath) {
+      throw new Error(`Workspace path is not registered to space: ${rawPath}`);
     }
-
-    const io = this.deps.io ?? nodeWorkspaceValidationIo;
-    let canonicalPath: string;
-    try {
-      canonicalPath = await io.realpath(rawPath);
-    } catch {
-      throw new Error(`Workspace path does not exist: ${rawPath}`);
-    }
-
-    const snapshot = buildRegistrySnapshot(this.deps.spaces, this.deps.workspaces, spaceId);
-    const claim = snapshot.claims.find((c) => c.spaceId === spaceId && c.path === canonicalPath);
-    if (claim) return claim.path;
-    throw new Error(`Workspace path is not registered to space: ${rawPath}`);
+    return result.registeredPath;
   }
 }

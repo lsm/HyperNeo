@@ -108,7 +108,7 @@ export class SpaceTaskManager {
       return { ...params, workspacePath: null } as T;
     }
     if (!this.resolveWorkspacePath) {
-      return params;
+      throw new Error('Workspace path validation is not available');
     }
     const resolved = await this.resolveWorkspacePath(params.workspacePath);
     return { ...params, workspacePath: resolved } as T;
