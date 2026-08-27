@@ -2117,6 +2117,45 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('keeps gate exclusivity when a later non-exclusive gate composes in', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const interruptGate = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const opts = makeInterruptOpts(q, {
+        interrupt: () => interruptGate,
+      });
+      void q
+        .enqueueWithId(
+          'uuid-tool-result-2',
+          [{ type: 'tool_result' as const, tool_use_id: 'tu-2', content: 'tool output' }],
+          false,
+          {}
+        )
+        .catch(() => {});
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      q.setDeliveryGate(new Promise<void>(() => {}));
+      const generator = q.messageGenerator(testSessionId);
+      const first = generator.next();
+      const yieldedEarly = await Promise.race([
+        first.then(() => true),
+        new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), 100);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        }),
+      ]);
+      expect(yieldedEarly).toBe(false);
+
+      releaseInterrupt({ still_queued: [] });
+      await run;
+      q.stop();
+    });
+
     it('holds delivery behind a gate while survivors are cancelled and requeued', async () => {
       const q = new MessageQueue();
       q.start();

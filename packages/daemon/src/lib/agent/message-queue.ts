@@ -236,7 +236,7 @@ export class MessageQueue {
         )
       : gate;
     this.deliveryGate = composed;
-    this.deliveryGateExclusive = options?.exclusive ?? false;
+    this.deliveryGateExclusive = this.deliveryGateExclusive || (options?.exclusive ?? false);
     void composed.then(
       () => {
         if (this.deliveryGate === composed) {
