@@ -200,3 +200,282 @@ describe('decideMessageAdmission (chain B2)', () => {
     });
   });
 });
+
+describe('decideMessageAdmission decision table', () => {
+  function hiddenSystemMessage(subtype: string, uuid: string): SDKMessage {
+    return asMsg({ type: 'system', subtype, uuid });
+  }
+
+  function refusalFallbackMessage(uuid: string): SDKMessage {
+    return asMsg({
+      type: 'system',
+      subtype: 'model_refusal_fallback',
+      uuid,
+      supersedes: ['old-1'],
+      retracted_message_uuids: ['old-2'],
+    });
+  }
+
+  const cases = [
+    {
+      name: 'sdk renderable user message anchors and counts',
+      input: userMessage('u-sdk'),
+      options: { variant: 'sdk', sendStatus: null } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: true,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'u-sdk',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'sdk non-renderable user tool-result message counts but does not anchor',
+      input: toolResultUserMessage('u-tool-sdk'),
+      options: { variant: 'sdk', sendStatus: null } as const,
+      expected: {
+        isRenderable: 0,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'u-tool-sdk',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'sdk renderable assistant message counts and does not anchor',
+      input: assistantMessage('a-sdk'),
+      options: { variant: 'sdk', sendStatus: null } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'a-sdk',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'sdk subagent row carries parent tool use id and never counts',
+      input: assistantMessage('a-sub', { parent_tool_use_id: 'tu-1' }),
+      options: { variant: 'sdk', sendStatus: null } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: false,
+        parentToolUseId: 'tu-1',
+        sdkUuid: 'a-sub',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'sdk terminal result is terminal and counts',
+      input: resultMessage('r-1'),
+      options: { variant: 'sdk', sendStatus: null } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 1,
+        isConversationAnchor: false,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'r-1',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'sdk hidden system subtype is visible but does not count',
+      input: hiddenSystemMessage('task_started', 'sys-hidden'),
+      options: { variant: 'sdk', sendStatus: null } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: false,
+        parentToolUseId: null,
+        sdkUuid: 'sys-hidden',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'sdk thinking_tokens is visible but does not count',
+      input: hiddenSystemMessage('thinking_tokens', 'sys-think'),
+      options: { variant: 'sdk', sendStatus: null } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: false,
+        parentToolUseId: null,
+        sdkUuid: 'sys-think',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'sdk model_refusal_fallback carries superseded and retracted edges and counts',
+      input: refusalFallbackMessage('sys-refusal'),
+      options: { variant: 'sdk', sendStatus: null } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'sys-refusal',
+        replacementEdges: [
+          { targetUuid: 'old-1', kind: 'superseded' },
+          { targetUuid: 'old-2', kind: 'retracted' },
+        ],
+      },
+    },
+    {
+      name: 'user consumed renderable message anchors and counts',
+      input: userMessage('u-consumed'),
+      options: { variant: 'user', sendStatus: 'consumed' } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: true,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'u-consumed',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'user failed renderable message anchors and counts',
+      input: userMessage('u-failed'),
+      options: { variant: 'user', sendStatus: 'failed' } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: true,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'u-failed',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'user deferred renderable message does not anchor or count',
+      input: userMessage('u-deferred'),
+      options: { variant: 'user', sendStatus: 'deferred' } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: false,
+        parentToolUseId: null,
+        sdkUuid: 'u-deferred',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'user enqueued renderable message does not anchor or count',
+      input: userMessage('u-enqueued'),
+      options: { variant: 'user', sendStatus: 'enqueued' } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: false,
+        parentToolUseId: null,
+        sdkUuid: 'u-enqueued',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'user submitted renderable message does not anchor or count',
+      input: userMessage('u-submitted'),
+      options: { variant: 'user', sendStatus: 'submitted' } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: false,
+        parentToolUseId: null,
+        sdkUuid: 'u-submitted',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'user message with null sendStatus counts via default but does not anchor',
+      input: userMessage('u-null'),
+      options: { variant: 'user', sendStatus: null } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'u-null',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'user consumed non-renderable tool-result counts but does not anchor',
+      input: toolResultUserMessage('u-tool-consumed'),
+      options: { variant: 'user', sendStatus: 'consumed' } as const,
+      expected: {
+        isRenderable: 0,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'u-tool-consumed',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'user failed non-renderable tool-result counts but does not anchor',
+      input: toolResultUserMessage('u-tool-failed'),
+      options: { variant: 'user', sendStatus: 'failed' } as const,
+      expected: {
+        isRenderable: 0,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'u-tool-failed',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'user deferred non-renderable tool-result does not count',
+      input: toolResultUserMessage('u-tool-deferred'),
+      options: { variant: 'user', sendStatus: 'deferred' } as const,
+      expected: {
+        isRenderable: 0,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: false,
+        parentToolUseId: null,
+        sdkUuid: 'u-tool-deferred',
+        replacementEdges: [],
+      },
+    },
+    {
+      name: 'hyperneo_action message counts and does not anchor',
+      input: actionMessage('act-1'),
+      options: { variant: 'hyperneo_action', sendStatus: null } as const,
+      expected: {
+        isRenderable: 1,
+        isTerminal: 0,
+        isConversationAnchor: false,
+        countsTowardsBadge: true,
+        parentToolUseId: null,
+        sdkUuid: 'act-1',
+        replacementEdges: [],
+      },
+    },
+  ];
+
+  test.each(cases.map((c) => [c.name, c] as const))('%s', (_label, c) => {
+    const record = decideMessageAdmission(normalizeMessageAdmissionInput(c.input), c.options);
+    expect(record).toMatchObject(c.expected);
+  });
+});
