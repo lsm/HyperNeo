@@ -130,6 +130,16 @@ describe('rate admission — flag resolution', () => {
     expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: 'abc' })).toBeNull();
   });
 
+  test('rejects partially numeric flag values instead of enabling a wrong limit', () => {
+    expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: '1e3' })).toBeNull();
+    expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: '120rpm' })).toBeNull();
+    expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: '12.5' })).toBeNull();
+    expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: ' 42 ' })).toEqual({
+      maxDispatchesPerWindow: 42,
+      windowMs: RATE_ADMISSION_WINDOW_MS,
+    });
+  });
+
   test('parses a positive per-minute limit into admission options', () => {
     expect(resolveRateAdmissionOptions({ [SPACE_ACTIONS_RATE_LIMIT_ENV]: '120' })).toEqual({
       maxDispatchesPerWindow: 120,
@@ -165,6 +175,22 @@ describe('rate admission — window enforcement', () => {
   test('a null configuration is always permissive', () => {
     const admit = createRateAdmission(null);
     for (let i = 0; i < 100; i++) expect(admit()).toBe(true);
+  });
+
+  test('the production default clock is monotonic, not wall time', () => {
+    const realPerformance = globalThis.performance;
+    let monotonicMs = 1_000_000;
+    globalThis.performance = { now: () => monotonicMs } as unknown as typeof performance;
+    try {
+      const admit = createRateAdmission({ maxDispatchesPerWindow: 1, windowMs: 60_000 });
+      expect(admit()).toBe(true);
+      expect(admit()).toBe(false);
+
+      monotonicMs += 60_000;
+      expect(admit()).toBe(true);
+    } finally {
+      globalThis.performance = realPerformance;
+    }
   });
 });
 
