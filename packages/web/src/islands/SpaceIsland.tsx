@@ -211,14 +211,14 @@ export default function SpaceIsland({
   );
 
   const createSessionInWorkspace = useCallback(
-    async (workspacePath?: string) => {
+    async (workspacePath?: string, worktreeMode?: 'worktree' | 'direct') => {
       if (creatingSession) return;
       const requestId = Date.now();
       setCreatingSession(true);
       setActiveSessionRequestId(requestId);
       const originViewMode = viewMode;
       try {
-        const response = await createSession({ spaceId, workspacePath });
+        const response = await createSession({ spaceId, workspacePath, worktreeMode });
         if (stillOnThisRouteSpace() && currentSpaceViewModeSignal.value === originViewMode) {
           navigateToSpaceSession(navigationSpaceId, response.sessionId);
         }
@@ -240,7 +240,7 @@ export default function SpaceIsland({
   const handleCreateSession = (e: Event) => {
     e.stopPropagation();
     workspaceChoice.chooseWorkspace(
-      (workspacePath) => void createSessionInWorkspace(workspacePath)
+      (workspacePath, worktreeMode) => void createSessionInWorkspace(workspacePath, worktreeMode)
     );
   };
 

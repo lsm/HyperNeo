@@ -815,6 +815,62 @@ describe('SpaceIsland — memories view', () => {
   });
 });
 
+const REGISTRY_WORKSPACES = [
+  {
+    id: 'ws-1',
+    spaceId: 'space-1',
+    path: '/projects/main',
+    label: 'Main repo',
+    isPrimary: true,
+    createdAt: 0,
+    updatedAt: 0,
+  },
+  {
+    id: 'ws-2',
+    spaceId: 'space-1',
+    path: '/projects/docs',
+    label: 'Docs',
+    isPrimary: false,
+    createdAt: 0,
+    updatedAt: 0,
+  },
+];
+
+function stubWorkspaceRegistryWithGit(isGitRepo: boolean) {
+  connectMockHub.current = { request: mockHubRequest };
+  mockHubRequest.mockImplementation((method: string) => {
+    if (method === 'space.workspace.list') {
+      return Promise.resolve(REGISTRY_WORKSPACES);
+    }
+    if (method === 'git.branches') {
+      return Promise.resolve({
+        isGitRepo,
+        gitRoot: isGitRepo ? '/projects/docs/.git' : null,
+        currentBranch: isGitRepo ? 'main' : null,
+        defaultBranch: isGitRepo ? 'main' : null,
+        branches: isGitRepo ? ['main'] : [],
+        isDirty: false,
+      });
+    }
+    return Promise.resolve({});
+  });
+}
+
+async function renderSettledSessionsView() {
+  const utils = render(<SpaceIsland spaceId="space-1" viewMode="sessions" />);
+  await waitFor(
+    () => {
+      expect(utils.getByTestId('space-sessions-view')).toBeTruthy();
+    },
+    { timeout: LAZY_LOAD_TIMEOUT }
+  );
+  await waitFor(() => {
+    expect(mockHubRequest).toHaveBeenCalledWith('space.workspace.list', { spaceId: 'space-1' });
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  return utils;
+}
+
 describe('SpaceIsland — sessions view', () => {
   it('renders Create Session button in the header', async () => {
     const { getByLabelText, getByTestId } = render(
@@ -880,47 +936,9 @@ describe('SpaceIsland — sessions view', () => {
     mockCurrentSpaceViewModeSignal.value = 'sessions';
     const initialConnectionState = connectionState.value;
     connectionState.value = 'connected';
-    connectMockHub.current = { request: mockHubRequest };
-    mockHubRequest.mockImplementation((method: string) => {
-      if (method === 'space.workspace.list') {
-        return Promise.resolve([
-          {
-            id: 'ws-1',
-            spaceId: 'space-1',
-            path: '/projects/main',
-            label: 'Main repo',
-            isPrimary: true,
-            createdAt: 0,
-            updatedAt: 0,
-          },
-          {
-            id: 'ws-2',
-            spaceId: 'space-1',
-            path: '/projects/docs',
-            label: 'Docs',
-            isPrimary: false,
-            createdAt: 0,
-            updatedAt: 0,
-          },
-        ]);
-      }
-      return Promise.resolve({});
-    });
+    stubWorkspaceRegistryWithGit(false);
 
-    const { getByLabelText, getByTestId, getByText } = render(
-      <SpaceIsland spaceId="space-1" viewMode="sessions" />
-    );
-    await waitFor(
-      () => {
-        expect(getByTestId('space-sessions-view')).toBeTruthy();
-      },
-      { timeout: LAZY_LOAD_TIMEOUT }
-    );
-    await waitFor(() => {
-      expect(mockHubRequest).toHaveBeenCalledWith('space.workspace.list', { spaceId: 'space-1' });
-    });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
+    const { getByLabelText, getByTestId, getByText } = await renderSettledSessionsView();
     fireEvent.click(getByLabelText('Create session'));
     await waitFor(() => {
       expect(getByTestId('space-workspace-options')).toBeTruthy();
@@ -936,6 +954,32 @@ describe('SpaceIsland — sessions view', () => {
     });
     await waitFor(() => {
       expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'new-session-456');
+    });
+    connectionState.value = initialConnectionState;
+  });
+
+  it('flows the selected worktree mode into createSession', async () => {
+    mockCreateSession.mockResolvedValueOnce({ sessionId: 'new-session-789' });
+    mockCurrentSpaceIdSignal.value = 'space-1';
+    mockCurrentSpaceViewModeSignal.value = 'sessions';
+    const initialConnectionState = connectionState.value;
+    connectionState.value = 'connected';
+    stubWorkspaceRegistryWithGit(true);
+
+    const { getByLabelText, getByTestId, getByText } = await renderSettledSessionsView();
+    fireEvent.click(getByLabelText('Create session'));
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
+
+    fireEvent.click(getByTestId('space-workspace-mode-direct'));
+    fireEvent.click(getByText('Docs'));
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith({
+        spaceId: 'space-1',
+        workspacePath: '/projects/docs',
+        worktreeMode: 'direct',
+      });
     });
     connectionState.value = initialConnectionState;
   });

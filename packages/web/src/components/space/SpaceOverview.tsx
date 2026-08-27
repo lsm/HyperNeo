@@ -355,8 +355,8 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
   }, []);
 
   const handleNewSession = useCallback(
-    async (workspacePath?: string) => {
-      const response = await createSession({ spaceId, workspacePath });
+    async (workspacePath?: string, worktreeMode?: 'worktree' | 'direct') => {
+      const response = await createSession({ spaceId, workspacePath, worktreeMode });
       navigateToSpaceSession(routeSpaceId, response.sessionId);
     },
     [spaceId, routeSpaceId]
@@ -536,7 +536,8 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
                   type="button"
                   onClick={() =>
                     workspaceChoice.chooseWorkspace(
-                      (workspacePath) => void handleNewSession(workspacePath)
+                      (workspacePath, worktreeMode) =>
+                        void handleNewSession(workspacePath, worktreeMode)
                     )
                   }
                   class="text-xs font-medium text-indigo-300/85 underline-offset-4 transition-colors hover:text-indigo-200 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"

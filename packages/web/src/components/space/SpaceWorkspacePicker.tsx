@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { SpaceWorkspace } from '@hyperneo/shared';
+import type { GitBranchesResponse, SpaceWorkspace } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from '../../lib/connection-manager';
 import { connectionState } from '../../lib/state';
@@ -132,11 +132,25 @@ function useSpaceWorkspaceRegistry(
   return { options, settle, refresh };
 }
 
+async function resolveWorktreeMode(
+  workspacePath: string,
+  mode: 'worktree' | 'direct'
+): Promise<'worktree' | 'direct' | undefined> {
+  const hub = connectionManager.getHubIfConnected();
+  if (!hub) return undefined;
+  try {
+    const info = await hub.request<GitBranchesResponse>('git.branches', { path: workspacePath });
+    return info.isGitRepo ? mode : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 interface SpaceWorkspacePickerDialogProps {
   isOpen: boolean;
   workspaces: SpaceWorkspaceOption[];
   onClose: () => void;
-  onCreate: (workspacePath: string) => void;
+  onCreate: (workspacePath: string, mode: 'worktree' | 'direct') => void;
 }
 
 function SpaceWorkspacePickerDialog({
@@ -145,6 +159,8 @@ function SpaceWorkspacePickerDialog({
   onClose,
   onCreate,
 }: SpaceWorkspacePickerDialogProps) {
+  const [mode, setMode] = useState<'worktree' | 'direct'>('worktree');
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Create session" size="md">
       <p class="mb-3 text-sm text-gray-400">Choose a workspace for the new session.</p>
@@ -153,7 +169,7 @@ function SpaceWorkspacePickerDialog({
           <button
             key={workspace.id}
             type="button"
-            onClick={() => onCreate(workspace.path)}
+            onClick={() => onCreate(workspace.path, mode)}
             data-testid="space-workspace-option"
             class={cn(
               'flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70',
@@ -181,6 +197,29 @@ function SpaceWorkspacePickerDialog({
           </button>
         ))}
       </div>
+      <div class="mt-4 flex items-center justify-between gap-3" data-testid="space-workspace-mode">
+        <span class="text-xs text-gray-400">Session mode</span>
+        <div class="flex items-center gap-2">
+          <Button
+            variant={mode === 'worktree' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setMode('worktree')}
+            title="Run in a separate git worktree, safely isolated from your checkout"
+            data-testid="space-workspace-mode-worktree"
+          >
+            Worktree
+          </Button>
+          <Button
+            variant={mode === 'direct' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setMode('direct')}
+            title="Work directly in the folder on its current branch"
+            data-testid="space-workspace-mode-direct"
+          >
+            Direct
+          </Button>
+        </div>
+      </div>
       <div class="mt-4">
         <Button variant="secondary" onClick={onClose} fullWidth>
           Cancel
@@ -196,7 +235,7 @@ interface ChooseWorkspaceCtx {
   settle: () => Promise<void>;
   readOptions: () => SpaceWorkspaceOption[];
   openPicker: (options: SpaceWorkspaceOption[]) => void;
-  create: (workspacePath?: string) => void;
+  create: (workspacePath?: string, worktreeMode?: 'worktree' | 'direct') => void;
   options: SpaceWorkspaceOption[];
   choice: 'picker' | 'direct';
 }
@@ -247,7 +286,9 @@ export function useSpaceWorkspaceChoice(
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const [pickerOpen, setPickerOpen] = useState(false);
-  const pendingCreateRef = useRef<((workspacePath: string) => void) | null>(null);
+  const pendingCreateRef = useRef<
+    ((workspacePath: string, worktreeMode?: 'worktree' | 'direct') => void) | null
+  >(null);
   const choosingEpochRef = useRef<number | null>(null);
   const epochRef = useRef(0);
   const epochScopeRef = useRef(choiceScope);
@@ -273,7 +314,9 @@ export function useSpaceWorkspaceChoice(
     setPickerOpen(false);
   };
 
-  const chooseWorkspace = (create: (workspacePath?: string) => void) => {
+  const chooseWorkspace = (
+    create: (workspacePath?: string, worktreeMode?: 'worktree' | 'direct') => void
+  ) => {
     const inFlight = choosingEpochRef.current !== null;
     const epoch = epochRef.current;
     choosingEpochRef.current = epoch;
@@ -288,7 +331,8 @@ export function useSpaceWorkspaceChoice(
           return;
         }
         choosingEpochRef.current = null;
-        pendingCreateRef.current = (workspacePath: string) => create(workspacePath);
+        pendingCreateRef.current = (workspacePath: string, worktreeMode?: 'worktree' | 'direct') =>
+          create(workspacePath, worktreeMode);
         setPickerOpen(true);
       },
       create: (workspacePath) => {
@@ -304,18 +348,20 @@ export function useSpaceWorkspaceChoice(
     });
   };
 
-  const dialog = (
+  const dialog = pickerOpen ? (
     <SpaceWorkspacePickerDialog
       isOpen={pickerOpen}
       workspaces={options}
       onClose={closePicker}
-      onCreate={(workspacePath) => {
+      onCreate={(workspacePath, mode) => {
         const create = pendingCreateRef.current;
         closePicker();
-        create?.(workspacePath);
+        void resolveWorktreeMode(workspacePath, mode).then((worktreeMode) => {
+          create?.(workspacePath, worktreeMode);
+        });
       }}
     />
-  );
+  ) : null;
 
   return { chooseWorkspace, dialog };
 }
