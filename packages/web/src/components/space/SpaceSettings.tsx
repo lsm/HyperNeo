@@ -94,6 +94,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
   const [editing, setEditing] = useState<{ id: string; label: string } | null>(null);
   const [savingLabelId, setSavingLabelId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [browsing, setBrowsing] = useState(false);
   const [nativeFolderPickerAvailable] = useState(() => hasNativeFolderPicker());
   const connected = connectionState.value === 'connected';
 
@@ -113,6 +114,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
       .then((list) => {
         if (cancelled) return;
         setError(null);
+        setActionError(null);
         setWorkspaces(list);
       })
       .catch((err) => {
@@ -166,9 +168,11 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
   }
 
   async function handleBrowse() {
+    if (browsing) return;
     const hub = requireHub();
     if (!hub) return;
     try {
+      setBrowsing(true);
       const picked = await hub.request<{ path: string | null }>('dialog.pickFolder', undefined, {
         timeout: NATIVE_FOLDER_PICKER_TIMEOUT_MS,
       });
@@ -178,6 +182,8 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Failed to browse for folder');
+    } finally {
+      setBrowsing(false);
     }
   }
 
@@ -367,7 +373,7 @@ function SpaceWorkspacesList({ spaceId }: { spaceId: string }) {
             type="button"
             data-testid="workspace-add-browse"
             onClick={handleBrowse}
-            disabled={adding}
+            disabled={adding || browsing}
             class="rounded-lg border border-white/10 px-3 py-2 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:opacity-50"
           >
             Browse

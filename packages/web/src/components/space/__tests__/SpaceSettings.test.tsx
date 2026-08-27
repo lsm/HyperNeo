@@ -247,7 +247,7 @@ describe('SpaceSettings', () => {
         return Promise.resolve({});
       });
 
-      const { getByTestId, getByText, findByTestId, findByText } = render(
+      const { getByTestId, getByText, findByTestId, findByText, queryByTestId } = render(
         <SpaceSettings space={makeSpace()} />
       );
       await findByText('Main repo');
@@ -259,6 +259,26 @@ describe('SpaceSettings', () => {
       );
       expect(getByTestId('workspaces-list')).toBeTruthy();
       expect(getByText('Main repo')).toBeTruthy();
+
+      mockRequest.mockImplementation((method: string) => {
+        if (method === 'space.workspace.list') {
+          return Promise.resolve([
+            makeWorkspace(),
+            makeWorkspace({ id: 'ws-2', path: '/projects/docs', label: 'Docs', isPrimary: false }),
+          ]);
+        }
+        if (method === 'space.workspace.add') {
+          return Promise.resolve(
+            makeWorkspace({ id: 'ws-2', path: '/projects/docs', label: 'Docs', isPrimary: false })
+          );
+        }
+        return Promise.resolve({});
+      });
+      fireEvent.input(getByTestId('workspace-add-path'), { target: { value: '/projects/docs' } });
+      fireEvent.click(getByText('Add'));
+
+      expect(await findByText('Docs')).toBeTruthy();
+      expect(queryByTestId('workspaces-action-error')).toBeNull();
     });
 
     it('does not leak the previous space workspaces when the space changes', async () => {
@@ -428,6 +448,28 @@ describe('SpaceSettings', () => {
       const { findByTestId, queryByTestId } = render(<SpaceSettings space={makeSpace()} />);
       expect(await findByTestId('workspace-add-form')).toBeTruthy();
       expect(queryByTestId('workspace-add-browse')).toBeNull();
+    });
+
+    it('disables Browse while a folder pick is pending', async () => {
+      vi.mocked(hasNativeFolderPicker).mockReturnValue(true);
+      stubHubRequests();
+      let resolvePick: () => void;
+      const pickPromise = new Promise<{}>((res) => {
+        resolvePick = () => res({ path: null });
+      });
+      mockRequest.mockImplementation((method: string) =>
+        method === 'dialog.pickFolder'
+          ? pickPromise
+          : method === 'space.workspace.list'
+            ? Promise.resolve([makeWorkspace()])
+            : Promise.resolve({})
+      );
+
+      const { findByTestId } = render(<SpaceSettings space={makeSpace()} />);
+      const browseBtn = (await findByTestId('workspace-add-browse')) as HTMLButtonElement;
+      fireEvent.click(browseBtn);
+      expect(browseBtn.disabled).toBe(true);
+      resolvePick!();
     });
 
     it('calls space.workspace.remove after confirmation and reloads', async () => {
