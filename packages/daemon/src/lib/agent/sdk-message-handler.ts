@@ -878,6 +878,19 @@ export class SDKMessageHandler {
     const isTopLevelResult =
       isSDKResultMessage(message) && (parentToolUseId === null || parentToolUseId === undefined);
 
+    let releaseTurnEndGate: (() => void) | null = null;
+    if (isTopLevelResult) {
+      let release!: () => void;
+      this.ctx.messageQueue.setDeliveryGate(
+        boundedDeliveryGate(
+          new Promise<void>((resolve) => {
+            release = resolve;
+          })
+        )
+      );
+      releaseTurnEndGate = release;
+    }
+
     const deferredSuccessfully = this.withDbChangeBatch(() =>
       db.saveSDKMessage(session.id, message)
     );
@@ -964,6 +977,8 @@ export class SDKMessageHandler {
       const compactingClear = this.clearStaleCompacting();
       await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
       await compactingClear;
+      releaseTurnEndGate?.();
+      releaseTurnEndGate = null;
       return;
     }
 
@@ -979,11 +994,6 @@ export class SDKMessageHandler {
     let enforcedTurnEnd = false;
     if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
       if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
-        let releaseTurnEndGate!: () => void;
-        const turnEndGate = new Promise<void>((resolve) => {
-          releaseTurnEndGate = resolve;
-        });
-        this.ctx.messageQueue.setDeliveryGate(boundedDeliveryGate(turnEndGate));
         const compactingClear = this.clearStaleCompacting();
         try {
           await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
@@ -991,7 +1001,8 @@ export class SDKMessageHandler {
           await compactingClear;
           await this.settleIdleForInvocation(invocationGeneration);
         } finally {
-          releaseTurnEndGate();
+          releaseTurnEndGate?.();
+          releaseTurnEndGate = null;
         }
       }
     }
@@ -1041,6 +1052,8 @@ export class SDKMessageHandler {
         await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
       }
       await compactingClear;
+      releaseTurnEndGate?.();
+      releaseTurnEndGate = null;
     }
 
     if (isTopLevelResult && isSDKResultMessage(message)) {

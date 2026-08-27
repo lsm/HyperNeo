@@ -4479,6 +4479,29 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
+      it('arms the turn-end gate before the sdk.message publication', async () => {
+        let resolvePublish!: () => void;
+        emitSpy.mockImplementation(
+          (event: string) =>
+            new Promise<void>((resolve) => {
+              if (event === 'sdk.message') {
+                resolvePublish = resolve;
+              } else {
+                resolve();
+              }
+            })
+        );
+        const { h } = budgetCase({ totalUsed: 50_000 });
+
+        const handled = h.handleMessage(turnEndResult());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(setDeliveryGateSpy).toHaveBeenCalled();
+
+        resolvePublish();
+        await handled;
+      });
+
       it('holds the delivery gate closed through the terminal idle transition', async () => {
         let idleReleased = false;
         const releaseIdle: Array<() => void> = [];

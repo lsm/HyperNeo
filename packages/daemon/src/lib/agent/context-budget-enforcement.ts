@@ -95,6 +95,9 @@ const runEnforceContextBudget = (
     limitRecoveryOwnsTurn: (ctx: ContextBudgetEnforcementCtx) =>
       ctx.stateManager.getState().status === 'rate_limit_cooldown' || ctx.limitRecoveryPending,
     deadCompactionCleared: (ctx: ContextBudgetEnforcementCtx) => ctx.clearedDeadCompaction,
+    userQuestionOutstanding: (ctx: ContextBudgetEnforcementCtx) =>
+      ctx.stateManager.getState().status === 'waiting_for_input',
+    queueShutDown: (ctx: ContextBudgetEnforcementCtx) => !ctx.messageQueue.isRunning(),
     compactionOutstanding: (ctx: ContextBudgetEnforcementCtx) =>
       ctx.messageQueue.hasOutstandingInternalCompaction(),
     budgetRequiresNoCompaction: (ctx: ContextBudgetEnforcementCtx) =>
@@ -104,6 +107,8 @@ const runEnforceContextBudget = (
   .input(['ctx'])
   .pipe('!providerSkipsEnforcement', 'ctx')
   .pipe('!limitRecoveryOwnsTurn', 'ctx')
+  .pipe('!userQuestionOutstanding', 'ctx')
+  .pipe('!queueShutDown', 'ctx')
   .pipe('!deadCompactionCleared', 'ctx')
   .pipe(resolveBudgetThresholds, 'ctx', 'ctx')
   .pipe('!compactionOutstanding', 'ctx')

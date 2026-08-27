@@ -20,6 +20,8 @@ function enforcementHarness(overrides?: {
   limitRecoveryPending?: boolean;
   isCoolingDown?: boolean;
   compactionOutstanding?: boolean;
+  queueRunning?: boolean;
+  processingStatus?: string;
 }) {
   const contextInfo = {
     totalUsed: overrides?.totalUsed ?? 950_000,
@@ -39,10 +41,14 @@ function enforcementHarness(overrides?: {
   const messageQueue = {
     enqueue,
     hasOutstandingInternalCompaction: mock(() => overrides?.compactionOutstanding ?? false),
+    isRunning: mock(() => overrides?.queueRunning ?? true),
   } as unknown as MessageQueue;
   const stateManager = {
     getIsCompacting: mock(() => false),
-    getState: mock(() => ({ phase: 'idle' })),
+    getState: mock(() => ({
+      phase: 'idle',
+      status: overrides?.processingStatus ?? 'idle',
+    })),
   } as unknown as ProcessingStateManager;
 
   const input: ContextBudgetEnforcementInput = {
@@ -123,6 +129,8 @@ describe('enforce-context-budget pipeline', () => {
     ['acp provider', { providerId: 'acp' }],
     ['missing provider', { providerId: undefined }],
     ['limit recovery pending', { limitRecoveryPending: true }],
+    ['user question outstanding', { processingStatus: 'waiting_for_input' }],
+    ['queue shut down', { queueRunning: false }],
     ['cleared dead compaction', { clearedDeadCompaction: true }],
     ['outstanding compaction', { compactionOutstanding: true }],
     ['below threshold', { totalUsed: 50_000 }],
