@@ -350,6 +350,93 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('owner-carrier idle waiters', () => {
+    function armTracked(owner?: { queryGeneration: number; turnToken: number }, gen?: number) {
+      const flags = { ended: false, resolved: false };
+      void manager
+        .waitForIdleTransition(
+          gen,
+          () => {
+            flags.ended = true;
+          },
+          owner
+        )
+        .promise.then(() => {
+          flags.resolved = true;
+        });
+      return flags;
+    }
+
+    test('setIdle with a matching owner filter resolves the owned waiter', async () => {
+      const owner = { queryGeneration: 0, turnToken: 0 };
+      const waiter = armTracked(owner);
+
+      await manager.setIdle({ owner });
+
+      expect(waiter).toEqual({ ended: true, resolved: true });
+    });
+
+    test('setIdle with a foreign owner holds the waiter until its own idle', async () => {
+      const first = { queryGeneration: 0, turnToken: 0 };
+      const successor = { queryGeneration: 0, turnToken: 1 };
+      const waiter = armTracked(first);
+
+      await manager.setIdle({ owner: successor });
+      expect(waiter).toEqual({ ended: false, resolved: false });
+
+      await manager.setIdle({ owner: first });
+      expect(waiter).toEqual({ ended: true, resolved: true });
+    });
+
+    test('an owner-filtered idle still drains unowned waiters (legacy behavior)', async () => {
+      const legacy = armTracked();
+
+      await manager.setIdle({ owner: { queryGeneration: 5, turnToken: 5 } });
+
+      expect(legacy).toEqual({ ended: true, resolved: true });
+    });
+
+    test('beginTerminalIdle fires onEnd only for the matching owner', async () => {
+      const matching = armTracked({ queryGeneration: 0, turnToken: 0 });
+      const foreign = armTracked({ queryGeneration: 1, turnToken: 0 });
+
+      manager.beginTerminalIdle({ queryGeneration: 0, turnToken: 0 });
+      await Promise.resolve();
+
+      expect(matching.ended).toBe(true);
+      expect(matching.resolved).toBe(false);
+      expect(foreign.ended).toBe(false);
+
+      await manager.setIdle();
+
+      expect(matching.resolved).toBe(true);
+      expect(foreign.resolved).toBe(false);
+    });
+
+    test('releaseIdleWaiters ANDs the episode filter with the owner filter', async () => {
+      const matched = armTracked({ queryGeneration: 0, turnToken: 0 }, 0);
+      const wrongOwner = armTracked({ queryGeneration: 1, turnToken: 0 }, 0);
+      const wrongGen = armTracked({ queryGeneration: 0, turnToken: 0 }, 1);
+
+      manager.releaseIdleWaiters(0, { queryGeneration: 0, turnToken: 0 });
+      await Promise.resolve();
+
+      expect(matched.resolved).toBe(true);
+      expect(wrongOwner.resolved).toBe(false);
+      expect(wrongGen.resolved).toBe(false);
+    });
+
+    test('a suppressed setIdle leaves owned waiters armed', async () => {
+      const waiter = armTracked({ queryGeneration: 0, turnToken: 0 });
+
+      await manager.setIdle({ suppressDeliveryWaiters: true });
+      expect(waiter).toEqual({ ended: false, resolved: false });
+
+      await manager.setIdle();
+      expect(waiter).toEqual({ ended: true, resolved: true });
+    });
+  });
+
   describe('onIdleCallback ordering (deferred restart)', () => {
     test('fires the callback BEFORE draining delivery waiters (ownership held through the restart)', async () => {
       let waiterResolvedAtCallback = true;
