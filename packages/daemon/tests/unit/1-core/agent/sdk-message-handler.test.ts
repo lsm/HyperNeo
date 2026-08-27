@@ -4664,7 +4664,7 @@ describe('SDKMessageHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        const trailingSegment = setDeliveryGateSpy.mock.calls[0]?.[0] as Promise<void>;
+        const trailingSegment = setDeliveryGateSpy.mock.calls.at(-1)?.[0] as Promise<void>;
         let opened = false;
         void trailingSegment.then(() => {
           opened = true;
