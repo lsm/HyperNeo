@@ -420,6 +420,7 @@ function createHandler(): {
     beginTerminalIdle: mock(() => {}),
     setIdle: mock(async () => {}),
     setCompacting: mock(async () => {}),
+    getIsCompacting: mock(() => false),
     getState: mock(() => ({ phase: 'idle' })),
   } as unknown as ProcessingStateManager;
 
@@ -435,6 +436,8 @@ function createHandler(): {
     enqueue: mock(async () => 'context-id'),
     enqueueWithId: mock(async () => {}),
     clear: mock(() => {}),
+    setDeliveryGate: mock(() => {}),
+    isRunning: mock(() => true),
   } as unknown as MessageQueue;
 
   const errorManager = { handleError: mock(async () => {}) } as unknown as ErrorManager;

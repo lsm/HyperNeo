@@ -275,6 +275,7 @@ export class ProcessingStateManager {
   }
 
   async setProcessing(messageId: string, phase: StreamingPhase = 'initializing'): Promise<void> {
+    this.turnOwnerToken += 1;
     this.streamingPhase = phase;
     if (phase === 'streaming' && !this.streamingStartedAt) {
       this.streamingStartedAt = Date.now();

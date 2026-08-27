@@ -113,7 +113,15 @@ export class ContextFetcher {
         }
       });
     try {
-      const response = await ContextFetcher.withUsageTimeout(request);
+      const timedUsage = await ContextFetcher.withUsageTimeout(request);
+      if (!timedUsage.ok) {
+        if (this.inFlightUsage === request) {
+          this.inFlightUsage = null;
+        }
+        this.logger.warn('query.getContextUsage() timed out; superseding the retained request');
+        return null;
+      }
+      const response = timedUsage.value;
       const resolvedMetadata = await ContextFetcher.resolveMetadataForResponse(
         response,
         modelMetadata
@@ -129,13 +137,15 @@ export class ContextFetcher {
     }
   }
 
-  private static async withUsageTimeout<T>(pending: Promise<T>): Promise<T> {
+  private static async withUsageTimeout<T>(
+    pending: Promise<T>
+  ): Promise<{ ok: true; value: T } | { ok: false }> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        pending,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('getContextUsage timed out')), 2000);
+        pending.then((value): { ok: true; value: T } => ({ ok: true, value })),
+        new Promise<{ ok: false }>((resolve) => {
+          timer = setTimeout(() => resolve({ ok: false }), 2000);
         }),
       ]);
     } finally {

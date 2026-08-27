@@ -438,6 +438,16 @@ describe('ProcessingStateManager', () => {
   });
 
   describe('query-owner idle filter (B5e)', () => {
+    test('setProcessing advances the turn owner token so consecutive turns are distinct', async () => {
+      const first = manager.idleOwnerForQuery(2).turnToken;
+      await manager.setProcessing('msg-1', 'streaming');
+      const second = manager.idleOwnerForQuery(2).turnToken;
+      await manager.setProcessing('msg-2', 'streaming');
+      const third = manager.idleOwnerForQuery(2).turnToken;
+      expect(second).toBe(first + 1);
+      expect(third).toBe(second + 1);
+    });
+
     function armOwnedWaiter(owner: { queryGeneration: number; turnToken: number }) {
       const flags = { ended: false, resolved: false };
       void manager

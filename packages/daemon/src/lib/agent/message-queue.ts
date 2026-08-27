@@ -59,6 +59,8 @@ export class MessageQueue {
 
   onMessageEnqueued?: (messageId: string, queuedAt: number) => void;
 
+  onInternalCompactionsAborted?: () => void;
+
   private wakeWaiters(): void {
     this.waiters.forEach((waiter) => waiter());
     this.waiters = [];
@@ -104,7 +106,40 @@ export class MessageQueue {
     if (this.internalCompactionsAwaitingBoundary > 0) {
       this.internalCompactionsAwaitingBoundary -= 1;
     }
+    this.cancelInternalCompactionEntries(false, false);
     this.recentSentPrompts.clear();
+    this.wakeWaiters();
+  }
+
+  private cancelInternalCompactionEntries(interrupted: boolean, includeYielded: boolean): void {
+    const settle = (message: QueuedMessage) => {
+      if (interrupted) {
+        message.reject(new Error('Interrupted by user'));
+      } else {
+        message.resolve(message.id);
+      }
+    };
+    this.queue = this.queue.filter((message) => {
+      if (!this.isInternalCompaction(message)) return true;
+      settle(message);
+      return false;
+    });
+    this.claimed = new Set(
+      [...this.claimed].filter((message) => {
+        if (!this.isInternalCompaction(message)) return true;
+        settle(message);
+        return false;
+      })
+    );
+    if (includeYielded) {
+      this.yielded = new Set(
+        [...this.yielded].filter((message) => {
+          if (!this.isInternalCompaction(message)) return true;
+          settle(message);
+          return false;
+        })
+      );
+    }
   }
 
   hasCompactionsAwaitingBoundary(): boolean {
@@ -268,6 +303,7 @@ export class MessageQueue {
 
   clear(): void {
     this.clearEpoch += 1;
+    const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     this.internalCompactionsAwaitingBoundary = 0;
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
@@ -286,6 +322,7 @@ export class MessageQueue {
       msg.reject(new Error('Interrupted by user'));
     }
     this.claimed.clear();
+    const yieldedCompactions = [...this.yielded].filter((msg) => this.isInternalCompaction(msg));
     for (const msg of this.yielded) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -293,6 +330,9 @@ export class MessageQueue {
       msg.resolve(msg.id);
     }
     this.yielded.clear();
+    if (deliveredCompactions || yieldedCompactions.length > 0) {
+      this.onInternalCompactionsAborted?.();
+    }
   }
 
   getClearEpoch(): number {
@@ -418,8 +458,15 @@ export class MessageQueue {
 
   stop(): void {
     this.running = false;
+    const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
+    this.internalCompactionsAwaitingBoundary = 0;
+    this.nonCompactionSentSinceBoundary = false;
+    this.cancelInternalCompactionEntries(true, true);
     this.deliveryGate = null;
     this.wakeWaiters();
+    if (deliveredCompactions) {
+      this.onInternalCompactionsAborted?.();
+    }
   }
 
   isRunning(): boolean {
@@ -501,6 +548,16 @@ export class MessageQueue {
     }
   }
 
+  private gatedBypassIndex(): number {
+    const toolResultIndex = this.queue.findIndex(
+      (message) =>
+        typeof message.content !== 'string' &&
+        message.content.some((block) => isToolResultContent(block))
+    );
+    if (toolResultIndex !== -1) return toolResultIndex;
+    return this.queue.findIndex((message) => this.isInternalCompaction(message));
+  }
+
   private async waitForNextMessage(): Promise<QueuedMessage | null> {
     while (this.running) {
       while (this.queue.length === 0) {
@@ -511,19 +568,23 @@ export class MessageQueue {
         if (!this.running) return null;
       }
 
-      while (this.deliveryGate) {
+      const bypassIndex =
+        this.deliveryGate || this.hasOutstandingInternalCompaction() ? this.gatedBypassIndex() : 0;
+
+      if (bypassIndex === -1) {
         await Promise.race([
-          this.deliveryGate.catch(() => {}),
+          ...(this.deliveryGate ? [this.deliveryGate.catch(() => {})] : []),
           new Promise<void>((resolve) => {
             this.waiters.push(resolve);
           }),
         ]);
         if (!this.running) return null;
+        continue;
       }
 
       if (!this.running) return null;
 
-      const message = this.queue.shift();
+      const message = this.queue.splice(bypassIndex, 1)[0];
       if (message) {
         this.claimed.add(message);
         return message;
