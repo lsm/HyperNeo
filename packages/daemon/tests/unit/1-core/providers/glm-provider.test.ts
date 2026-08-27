@@ -563,6 +563,17 @@ describe('GlmProvider', () => {
       expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
     });
 
+    it('should route every static catalog entry to its own canonical id from the base id', () => {
+      process.env.GLM_API_KEY = 'test-key';
+
+      for (const model of GlmProvider.MODELS) {
+        const baseId = model.id.replace(/(\[1m\])+$/, '');
+        const config = provider.buildSdkConfig(baseId);
+        expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe(model.id);
+        expect(config.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(String(model.contextWindow));
+      }
+    });
+
     it('should set CLAUDE_CODE_AUTO_COMPACT_WINDOW per model context window', () => {
       process.env.GLM_API_KEY = 'test-key';
 

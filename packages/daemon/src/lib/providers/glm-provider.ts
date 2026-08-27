@@ -140,8 +140,6 @@ export class GlmProvider implements Provider {
     'glm-4.6': 200_000,
   };
 
-  private static readonly ONE_M_CONTEXT_WINDOW = 1_000_000;
-
   private credentials: ProviderCredentials | null = null;
   private credentialsVersion = 0;
   private credentialSignature: string | undefined;
@@ -325,9 +323,7 @@ export class GlmProvider implements Provider {
     const routingBaseModelId = baseModelId.startsWith('glm-') ? baseModelId : 'glm-5-turbo';
     const contextWindow = GlmProvider.contextWindowForBaseId(routingBaseModelId);
     const routingModelId =
-      contextWindow >= GlmProvider.ONE_M_CONTEXT_WINDOW
-        ? `${routingBaseModelId}[1m]`
-        : routingBaseModelId;
+      GlmProvider.staticModelForBaseId(routingBaseModelId)?.id ?? routingBaseModelId;
 
     const envVars: Record<string, string> = {
       ANTHROPIC_BASE_URL: baseUrl,
