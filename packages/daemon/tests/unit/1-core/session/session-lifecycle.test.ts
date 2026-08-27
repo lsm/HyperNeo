@@ -298,7 +298,8 @@ describe('SessionLifecycle', () => {
           id: sessionId,
           title: 'New Session',
           status: 'active',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -308,7 +309,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'My Custom Title',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -320,7 +322,8 @@ describe('SessionLifecycle', () => {
           metadata: expect.objectContaining({
             titleGenerated: true,
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -332,7 +335,8 @@ describe('SessionLifecycle', () => {
           metadata: expect.objectContaining({
             titleGenerated: false,
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -344,7 +348,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: '/custom/workspace',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -354,7 +359,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: null,
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -364,7 +370,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: '/explicit/path',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -395,7 +402,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: null,
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -405,7 +413,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workspacePath: null,
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -436,8 +445,49 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'pending_worktree_choice',
-        })
+        }),
+        expect.anything()
       );
+    });
+
+    it('removes the worktree when session admission is rejected', async () => {
+      (mockWorktreeManager.detectGitSupport as ReturnType<typeof mock>).mockResolvedValue({
+        isGitRepo: true,
+        isBare: false,
+        gitRoot: '/test/repo',
+      });
+      (mockWorktreeManager.createWorktree as ReturnType<typeof mock>).mockResolvedValue({
+        isWorktree: true,
+        worktreePath: '/test/repo-worktree',
+        mainRepoPath: '/test/repo',
+        branch: 'session/abc',
+      });
+      (mockDb.createSession as ReturnType<typeof mock>).mockImplementation(() => {
+        throw new Error(
+          'Workspace /test/repo is not registered to space space-1; session creation blocked'
+        );
+      });
+
+      const worktreeLifecycle = new SessionLifecycle(
+        mockDb,
+        mockWorktreeManager,
+        mockSessionCache,
+        mockInternalEventBus,
+        mockMessageHub,
+        { ...config, disableWorktrees: false },
+        mockToolsConfigManager,
+        mockAgentSessionFactory
+      );
+
+      await expect(
+        worktreeLifecycle.create({
+          workspacePath: '/test/repo',
+          spaceId: 'space-1',
+          worktreeMode: 'worktree',
+        })
+      ).rejects.toThrow('is not registered to space');
+
+      expect(mockWorktreeManager.removeWorktree).toHaveBeenCalled();
     });
 
     it('should not use worktree choice flow for non-worker sessions', async () => {
@@ -456,7 +506,8 @@ describe('SessionLifecycle', () => {
           metadata: expect.objectContaining({
             worktreeChoice: undefined,
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -471,7 +522,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'active',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -488,7 +540,8 @@ describe('SessionLifecycle', () => {
       expect(mockDb.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'active',
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -526,7 +579,8 @@ describe('SessionLifecycle', () => {
             parentSessionId: 'parent-id',
             currentTaskId: 'task-123',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -550,7 +604,8 @@ describe('SessionLifecycle', () => {
             autoScroll: false,
             thinkingLevel: 'think32k',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -567,7 +622,8 @@ describe('SessionLifecycle', () => {
             model: 'kimi-for-coding',
             provider: 'kimi',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -585,7 +641,8 @@ describe('SessionLifecycle', () => {
             model: 'moonshot-v1-32k',
             provider: 'custom',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -602,7 +659,8 @@ describe('SessionLifecycle', () => {
             model: 'kimi-k3[1m]',
             provider: 'kimi',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -619,7 +677,8 @@ describe('SessionLifecycle', () => {
             model: 'kimi-k3[1m]',
             provider: 'kimi',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -636,7 +695,8 @@ describe('SessionLifecycle', () => {
             model: 'kimi-k3[1m]',
             provider: 'kimi',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -653,7 +713,8 @@ describe('SessionLifecycle', () => {
             model: 'k3-256k',
             provider: 'kimi',
           }),
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -684,7 +745,8 @@ describe('SessionLifecycle', () => {
               model: 'kimi-for-coding',
               provider: 'kimi',
             }),
-          })
+          }),
+          expect.anything()
         );
       });
 
@@ -709,7 +771,8 @@ describe('SessionLifecycle', () => {
               model: 'totally-custom-model-x',
               provider: 'kimi',
             }),
-          })
+          }),
+          expect.anything()
         );
       });
 
@@ -736,7 +799,8 @@ describe('SessionLifecycle', () => {
               config: expect.objectContaining({
                 model: 'sonnet',
               }),
-            })
+            }),
+            expect.anything()
           );
         });
 
@@ -1716,6 +1780,7 @@ describe('SessionLifecycle - setWorkspace', () => {
       deleteSession: mock(() => {}),
       getSession: mock(() => null),
       getGlobalSettings: mock(() => DEFAULT_GLOBAL_SETTINGS),
+      isWorkspaceRegisteredToSpace: mock(() => true),
     } as unknown as Database;
 
     mockWorktreeManager = {
@@ -1965,5 +2030,69 @@ describe('SessionLifecycle - setWorkspace', () => {
         gitBranch: 'main',
       })
     );
+  });
+
+  it('blocks setWorkspace when the spaceId is set and the workspace is unregistered', async () => {
+    (mockDb.isWorkspaceRegisteredToSpace as ReturnType<typeof mock>).mockReturnValue(false);
+
+    const agentSession = makeAgentSession({ context: { spaceId: 'space-1' } });
+    (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+    await expect(lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct')).rejects.toThrow(
+      'is not registered to space space-1'
+    );
+
+    expect(mockDb.updateSession).not.toHaveBeenCalled();
+  });
+
+  it('allows setWorkspace when the spaceId is set and the workspace is registered', async () => {
+    const agentSession = makeAgentSession({ context: { spaceId: 'space-1' } });
+    (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+    await lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct');
+
+    expect(mockDb.isWorkspaceRegisteredToSpace).toHaveBeenCalledWith('space-1', '/some/workspace');
+    expect(mockDb.updateSession).toHaveBeenCalled();
+  });
+
+  it('skips the workspace ownership check when the session has no spaceId', async () => {
+    const agentSession = makeAgentSession();
+    (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+    await lifecycle.setWorkspace(SESSION_ID, '/some/workspace', 'direct');
+
+    expect(mockDb.isWorkspaceRegisteredToSpace).not.toHaveBeenCalled();
+  });
+
+  it('re-checks registration after worktree creation and discards the worktree if it lapsed', async () => {
+    const lifecycleWithWorktrees = new SessionLifecycle(
+      mockDb,
+      mockWorktreeManager,
+      mockSessionCache,
+      mockInternalEventBus,
+      mockMessageHub,
+      { ...config, disableWorktrees: false },
+      mockToolsConfigManager,
+      mockAgentSessionFactory
+    );
+    (mockDb.isWorkspaceRegisteredToSpace as ReturnType<typeof mock>)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    (mockWorktreeManager.createWorktree as ReturnType<typeof mock>).mockResolvedValue({
+      isWorktree: true,
+      worktreePath: '/worktrees/test-session-id',
+      mainRepoPath: '/some/workspace',
+      branch: `session/${SESSION_ID}`,
+    });
+
+    const agentSession = makeAgentSession({ context: { spaceId: 'space-1' } });
+    (mockSessionCache.get as ReturnType<typeof mock>).mockReturnValue(agentSession);
+
+    await expect(
+      lifecycleWithWorktrees.setWorkspace(SESSION_ID, '/some/workspace', 'worktree')
+    ).rejects.toThrow('no longer registered to space space-1');
+
+    expect(mockWorktreeManager.removeWorktree).toHaveBeenCalled();
+    expect(mockDb.updateSession).not.toHaveBeenCalled();
   });
 });
