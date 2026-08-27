@@ -84,7 +84,6 @@ import {
   type SpaceWorkflowManager,
 } from '../managers/space-workflow-manager.ts';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
-import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { CompletionDetector } from './completion-detector.ts';
 import {
@@ -3308,8 +3307,8 @@ export class SpaceRuntime {
       space_id: spaceId,
       autonomyLevel: space?.autonomyLevel,
       autonomy_level: space?.autonomyLevel,
-      workspacePath: space ? resolveTaskWorkspace(space, approvedTask) : undefined,
-      workspace_path: space ? resolveTaskWorkspace(space, approvedTask) : undefined,
+      workspacePath: space?.workspacePath,
+      workspace_path: space?.workspacePath,
       ...(approvalAuthorityName ? { approval_authority: approvalAuthorityName } : {}),
     };
     let routeResult: PostApprovalRouteResult;
