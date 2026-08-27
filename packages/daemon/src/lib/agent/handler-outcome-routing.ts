@@ -5,15 +5,7 @@ import {
   MAX_ACP_STEER_PARKS,
   MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
-  RESUME_CHOICE_PARK_BUDGET,
 } from './message-delivery.ts';
-import {
-  RESUME_CHOICE_DEAD_LETTER_REASON,
-  resumeChoiceParkDelayMs,
-  routeBlockedTurn,
-} from './message-delivery-pipeline.ts';
-
-export { RESUME_CHOICE_DEAD_LETTER_REASON, resumeChoiceParkDelayMs };
 
 export type HandlerJobResult =
   | { outcome: 'completed'; skipped?: 'turn_terminated' }
@@ -41,34 +33,13 @@ export type HandlerOutcomeRoute =
       result: HandlerJobResult;
     };
 
-export function routeDriveTurnOutcome(
-  result: DriveTurnOutcome,
-  args: { parkCount: number; now: number; resumeChoiceResolved?: boolean }
-): HandlerOutcomeRoute {
+export function routeDriveTurnOutcome(result: DriveTurnOutcome): HandlerOutcomeRoute {
   if (result.outcome === 'blocked') {
-    const decision = routeBlockedTurn({
-      outcome: 'blocked',
-      parkCount: args.parkCount,
-      resumeChoiceResolved: args.resumeChoiceResolved === true,
-      now: args.now,
-    });
-    if (decision.action === 'dead_letter') {
-      return { deadLetter: decision.reason };
-    }
-    if (decision.action === 'requeue_now') {
-      const retryAt = args.now;
-      return {
-        mutation: 'requeue',
-        retryAt,
-        settleSkipped: false,
-        result: { parked: 'sdk_resume_choice', retryAt },
-      };
-    }
     return {
-      mutation: 'requeueParked',
-      retryAt: decision.retryAt,
+      mutation: 'requeue',
+      retryAt: result.retryAt,
       settleSkipped: false,
-      result: { parked: 'sdk_resume_choice', retryAt: decision.retryAt },
+      result: { parked: 'sdk_resume_choice', retryAt: result.retryAt },
     };
   }
   if (result.outcome === 'recovery_pending') {
@@ -95,29 +66,12 @@ export function routeDriveTurnOutcome(
 
 export function routeFeedSteerOutcome(
   result: FeedSteerOutcome,
-  args: {
-    parkCount: number;
-    waitingForInput: boolean;
-    resumeChoicePending?: boolean;
-    now: number;
-  }
+  args: { parkCount: number; waitingForInput: boolean; now: number }
 ): HandlerOutcomeRoute {
   if (result.outcome === 'aborted') {
     return { mutation: 'none', settleSkipped: true, result: { outcome: 'aborted' } };
   }
   if (result.outcome === 'park') {
-    if (args.waitingForInput && args.resumeChoicePending === true) {
-      if (args.parkCount >= RESUME_CHOICE_PARK_BUDGET) {
-        return { deadLetter: RESUME_CHOICE_DEAD_LETTER_REASON };
-      }
-      const retryAt = args.now + resumeChoiceParkDelayMs(args.parkCount);
-      return {
-        mutation: 'requeueParked',
-        retryAt,
-        settleSkipped: false,
-        result: { parked: 'sdk_resume_choice', retryAt },
-      };
-    }
     if (args.waitingForInput) {
       const retryAt = args.now + MESSAGE_DELIVERY_PARK_MS;
       return {

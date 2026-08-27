@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
   type HandlerOutcomeRoute,
-  RESUME_CHOICE_DEAD_LETTER_REASON,
   routeDriveTurnOutcome,
   routeFeedSteerOutcome,
   routeSteerPromoteFallback,
@@ -12,74 +11,27 @@ import {
   MAX_ACP_STEER_PARKS,
   MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
-  RESUME_CHOICE_PARK_BUDGET,
 } from '../../../../src/lib/agent/message-delivery';
 
 const NOW = 1_000_000;
 const PARK_AT = NOW + MESSAGE_DELIVERY_PARK_MS;
 
 describe('routeDriveTurnOutcome', () => {
-  const ROWS: Array<{
-    label: string;
-    drive: DriveTurnOutcome;
-    parkCount: number;
-    expected: HandlerOutcomeRoute;
-  }> = [
+  const ROWS: Array<{ label: string; drive: DriveTurnOutcome; expected: HandlerOutcomeRoute }> = [
     {
       label: 'completed',
       drive: { outcome: 'completed' },
-      parkCount: 0,
       expected: { mutation: 'none', settleSkipped: false, result: { outcome: 'completed' } },
     },
     {
-      label: 'blocked on first park requeues parked with the base delay',
+      label: 'blocked',
       drive: { outcome: 'blocked', retryAt: 5000 },
-      parkCount: 0,
       expected: {
-        mutation: 'requeueParked',
-        retryAt: NOW + MESSAGE_DELIVERY_PARK_MS,
+        mutation: 'requeue',
+        retryAt: 5000,
         settleSkipped: false,
-        result: { parked: 'sdk_resume_choice', retryAt: NOW + MESSAGE_DELIVERY_PARK_MS },
+        result: { parked: 'sdk_resume_choice', retryAt: 5000 },
       },
-    },
-    {
-      label: 'blocked mid-backoff steps up the delay schedule',
-      drive: { outcome: 'blocked', retryAt: 5000 },
-      parkCount: 3,
-      expected: {
-        mutation: 'requeueParked',
-        retryAt: NOW + 60_000,
-        settleSkipped: false,
-        result: { parked: 'sdk_resume_choice', retryAt: NOW + 60_000 },
-      },
-    },
-    {
-      label: 'blocked past the delay schedule caps at the max delay',
-      drive: { outcome: 'blocked', retryAt: 5000 },
-      parkCount: 10,
-      expected: {
-        mutation: 'requeueParked',
-        retryAt: NOW + 600_000,
-        settleSkipped: false,
-        result: { parked: 'sdk_resume_choice', retryAt: NOW + 600_000 },
-      },
-    },
-    {
-      label: 'blocked one under the resume-choice budget still parks',
-      drive: { outcome: 'blocked', retryAt: 5000 },
-      parkCount: RESUME_CHOICE_PARK_BUDGET - 1,
-      expected: {
-        mutation: 'requeueParked',
-        retryAt: NOW + 600_000,
-        settleSkipped: false,
-        result: { parked: 'sdk_resume_choice', retryAt: NOW + 600_000 },
-      },
-    },
-    {
-      label: 'blocked at the resume-choice budget dead-letters',
-      drive: { outcome: 'blocked', retryAt: 5000 },
-      parkCount: RESUME_CHOICE_PARK_BUDGET,
-      expected: { deadLetter: RESUME_CHOICE_DEAD_LETTER_REASON },
     },
     {
       label: 'recovery_pending',
@@ -109,13 +61,7 @@ describe('routeDriveTurnOutcome', () => {
   ];
 
   it.each(ROWS.map((row) => [row.label, row] as const))('%s', (_label, row) => {
-    expect(routeDriveTurnOutcome(row.drive, { parkCount: row.parkCount, now: NOW })).toEqual(
-      row.expected
-    );
-  });
-
-  it('resume-choice budget outlives the delay schedule so only true abandonment dead-letters', () => {
-    expect(RESUME_CHOICE_PARK_BUDGET).toBeGreaterThan(6);
+    expect(routeDriveTurnOutcome(row.drive)).toEqual(row.expected);
   });
 });
 

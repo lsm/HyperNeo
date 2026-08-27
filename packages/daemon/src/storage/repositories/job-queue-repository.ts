@@ -221,11 +221,9 @@ export class JobQueueRepository {
 
   requeue(jobId: string, runAt: number, claimToken?: string | null): Job | null {
     const stmt = this.db.prepare(
-      `UPDATE job_queue
-         SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
-             payload = json_set(payload, '$.__parkReason', NULL)
-       WHERE id = ? AND status = 'processing'
-         AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
+      `UPDATE job_queue SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL
+        WHERE id = ? AND status = 'processing'
+          AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
     const res = withBusyRetry(() => stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null));
     if (res.changes === 0) return null;
@@ -239,48 +237,25 @@ export class JobQueueRepository {
     return Number(row?.c ?? 0) || 0;
   }
 
-  requeueParked(
-    jobId: string,
-    runAt: number,
-    claimToken?: string | null,
-    opts?: { reason?: string }
-  ): Job | null {
-    const payloadSet =
-      opts?.reason !== undefined
-        ? `payload = json_set(payload, '$.__parkCount',
-               COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1, '$.__parkReason', ?)`
-        : `payload = json_set(payload, '$.__parkCount',
-               COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1, '$.__parkReason', NULL)`;
+  requeueParked(jobId: string, runAt: number, claimToken?: string | null): Job | null {
     const stmt = this.db.prepare(
       `UPDATE job_queue
          SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
-             ${payloadSet}
+             payload = json_set(payload, '$.__parkCount',
+               COALESCE(json_extract(payload, '$.__parkCount'), 0) + 1)
        WHERE id = ? AND status = 'processing'
          AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
-    const params =
-      opts?.reason !== undefined
-        ? [runAt, opts.reason, jobId, claimToken ?? null, claimToken ?? null]
-        : [runAt, jobId, claimToken ?? null, claimToken ?? null];
-    const res = withBusyRetry(() => stmt.run(...params));
+    const res = withBusyRetry(() => stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null));
     if (res.changes === 0) return null;
     return this.getJob(jobId);
   }
 
-  requeueAs(
-    jobId: string,
-    role: string,
-    runAt: number,
-    claimToken?: string | null,
-    opts?: { resetParkCount?: boolean }
-  ): Job | null {
-    const payloadSet = opts?.resetParkCount
-      ? `payload = json_set(payload, '$.role', ?, '$.__parkCount', 0),`
-      : `payload = json_set(payload, '$.role', ?),`;
+  requeueAs(jobId: string, role: string, runAt: number, claimToken?: string | null): Job | null {
     const stmt = this.db.prepare(
       `UPDATE job_queue
          SET status = 'pending',
-             ${payloadSet}
+             payload = json_set(payload, '$.role', ?),
              run_at = ?,
              started_at = NULL,
              heartbeat_at = NULL
@@ -292,37 +267,6 @@ export class JobQueueRepository {
     );
     if (res.changes === 0) return null;
     return this.getJob(jobId);
-  }
-
-  rescheduleSessionDeliveries(
-    queue: string,
-    sessionId: string,
-    runAt: number,
-    opts?: { parkReason?: string }
-  ): number {
-    if (opts?.parkReason !== undefined) {
-      const stmt = this.db.prepare(
-        `UPDATE job_queue
-            SET run_at = CASE WHEN run_at > ? THEN ? ELSE run_at END,
-                started_at = NULL,
-                heartbeat_at = NULL,
-                payload = json_set(payload, '$.__parkCount', 0)
-          WHERE queue = ? AND status = 'pending'
-            AND json_extract(payload, '$.sessionId') = ?
-            AND json_extract(payload, '$.__parkReason') = ?`
-      );
-      const res = withBusyRetry(() => stmt.run(runAt, runAt, queue, sessionId, opts.parkReason));
-      return res.changes;
-    }
-    const stmt = this.db.prepare(
-      `UPDATE job_queue
-          SET run_at = ?, started_at = NULL, heartbeat_at = NULL
-        WHERE queue = ? AND status = 'pending'
-          AND json_extract(payload, '$.sessionId') = ?
-          AND run_at > ?`
-    );
-    const res = withBusyRetry(() => stmt.run(runAt, queue, sessionId, runAt));
-    return res.changes;
   }
 
   requeueAllProcessing(queue: string, runAt: number): string[] {
