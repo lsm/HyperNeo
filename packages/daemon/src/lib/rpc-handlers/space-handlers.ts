@@ -34,7 +34,7 @@ const VALID_AUTONOMY_LEVELS: SpaceAutonomyLevel[] = [1, 2, 3, 4, 5];
 
 export interface SpaceOverviewResult {
   space: Space;
-  tasks: SpaceTask[];
+  tasks: Array<SpaceTask & { descriptionTruncated?: boolean; resultTruncated?: boolean }>;
   workflowRuns: SpaceWorkflowRun[];
   sessions: string[];
 }
@@ -94,6 +94,54 @@ function collapseToCanonicalTasks(
   }
 
   return canonical.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+const SUMMARY_TRUNCATION_LIMIT = 240;
+
+type SummarySpaceTask = SpaceTask & {
+  descriptionTruncated: boolean;
+  resultTruncated: boolean;
+};
+
+function safeSlice(value: string, limit: number): string {
+  if (value.length <= limit) {
+    return value;
+  }
+  const lastCode = value.charCodeAt(limit - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    return value.slice(0, limit - 1);
+  }
+  return value.slice(0, limit);
+}
+
+function truncateToSummary(value: string, limit?: number): { value: string; truncated: boolean };
+function truncateToSummary(
+  value: string | null,
+  limit?: number
+): { value: string | null; truncated: boolean };
+function truncateToSummary(
+  value: string | null,
+  limit = SUMMARY_TRUNCATION_LIMIT
+): { value: string | null; truncated: boolean } {
+  if (typeof value !== 'string') {
+    return { value: null, truncated: false };
+  }
+  if (value.length <= limit) {
+    return { value, truncated: false };
+  }
+  return { value: safeSlice(value, limit), truncated: true };
+}
+
+function toSummaryTask(task: SpaceTask): SummarySpaceTask {
+  const description = truncateToSummary(task.description);
+  const result = truncateToSummary(task.result);
+  return {
+    ...task,
+    description: description.value,
+    descriptionTruncated: description.truncated,
+    result: result.value,
+    resultTruncated: result.truncated,
+  };
 }
 
 type SetupSpaceHandlersOptions = {
@@ -434,7 +482,7 @@ export function setupSpaceHandlers(
   });
 
   messageHub.onRequest('space.listWithTasks', async (data) => {
-    const params = (data ?? {}) as { includeArchived?: boolean };
+    const params = (data ?? {}) as { includeArchived?: boolean; summary?: boolean };
     const spaces = await spaceManager.listSpaces(params.includeArchived ?? false);
 
     const allSessions = sessionManager?.listSessions({ includeArchived: false }) ?? [];
@@ -464,19 +512,21 @@ export function setupSpaceHandlers(
           lastActiveAt: s!.lastActiveAt ? new Date(s!.lastActiveAt).getTime() : 0,
         }));
 
+      const tasks = collapseToCanonicalTasks(
+        taskRepo.listBySpace(space.id),
+        workflowRunRepo.listBySpace(space.id)
+      ).filter((t) => t.status !== 'done' && t.status !== 'cancelled');
+
       return {
         ...space,
-        tasks: collapseToCanonicalTasks(
-          taskRepo.listBySpace(space.id),
-          workflowRunRepo.listBySpace(space.id)
-        ).filter((t) => t.status !== 'done' && t.status !== 'cancelled'),
+        tasks: params.summary ? tasks.map(toSummaryTask) : tasks,
         sessions: spaceSessions,
       };
     });
   });
 
   messageHub.onRequest('space.overview', async (data) => {
-    const params = data as { id?: string; slug?: string };
+    const params = data as { id?: string; slug?: string; summary?: boolean };
 
     if (!params.id && !params.slug) {
       throw new Error('id or slug is required');
@@ -498,7 +548,7 @@ export function setupSpaceHandlers(
 
     const result: SpaceOverviewResult = {
       space,
-      tasks,
+      tasks: params.summary ? tasks.map(toSummaryTask) : tasks,
       workflowRuns,
       sessions: space.sessionIds,
     };
