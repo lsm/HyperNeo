@@ -730,5 +730,103 @@ describe('McpImportService', () => {
       expect(repo.getByName('global')).not.toBeNull();
       expect(repo.listBySourcePath(join(tmpRoot, '.mcp.json'))).toHaveLength(1);
     });
+
+    test('preserves row identity when a workspace label changes', () => {
+      const spaceRepo = new SpaceRepository(bunDb);
+      const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
+
+      const ws = mkdtempSync(join(tmpRoot, 'ws-label-change-'));
+      const file = join(ws, '.mcp.json');
+      writeMcpJson(file, { mcpServers: { fetch: { command: 'x' } } });
+
+      const space = spaceRepo.createSpace({
+        workspacePath: ws,
+        name: 'Repo',
+        slug: 'repo',
+      });
+      const workspace = workspaceRepo.create({
+        spaceId: space.id,
+        path: ws,
+        label: 'old',
+        isPrimary: true,
+      });
+
+      service.refreshAll();
+      const legacy = repo.getByName('old:fetch');
+      expect(legacy).not.toBeNull();
+      repo.update(legacy!.id, { enabled: true });
+
+      workspaceRepo.updateLabel(space.id, workspace.id, 'new');
+      service.refreshAll();
+
+      expect(repo.getByName('new:fetch')).not.toBeNull();
+      expect(repo.getByName('new:fetch')!.id).toBe(legacy!.id);
+      expect(repo.getByName('new:fetch')!.enabled).toBe(true);
+      expect(repo.getByName('old:fetch')).toBeNull();
+    });
+
+    test('preserves exact ownership when a suffix-shaped raw name is added later', () => {
+      const spaceRepo = new SpaceRepository(bunDb);
+      const workspaceRepo = new SpaceWorkspaceRepository(bunDb);
+
+      const ws = mkdtempSync(join(tmpRoot, 'ws-suffix-owner-'));
+      const file = join(ws, '.mcp.json');
+      writeMcpJson(file, {
+        mcpServers: { 'fetch:2': { command: 'x' } },
+      });
+
+      const space = spaceRepo.createSpace({
+        workspacePath: ws,
+        name: 'Repo',
+        slug: 'repo',
+      });
+      workspaceRepo.create({
+        spaceId: space.id,
+        path: ws,
+        label: 'repo',
+        isPrimary: true,
+      });
+
+      service.refreshAll();
+      const existing = repo.getByName('repo:fetch:2');
+      expect(existing).not.toBeNull();
+
+      writeMcpJson(file, {
+        mcpServers: {
+          fetch: { command: 'y' },
+          'fetch:2': { command: 'x' },
+        },
+      });
+
+      const { results } = service.refreshAll();
+      const byPath = Object.fromEntries(results.map((r) => [r.sourcePath, r]));
+
+      expect(repo.getByName('repo:fetch')).not.toBeNull();
+      expect(repo.getByName('repo:fetch:2')).not.toBeNull();
+      expect(repo.getByName('repo:fetch:2')!.id).toBe(existing!.id);
+      expect(repo.getByName('repo:fetch:2')!.command).toBe('x');
+      expect(repo.getByName('repo:fetch')!.command).toBe('y');
+      expect(byPath[file].added).toBe(1);
+    });
+
+    test('skips re-importing a server claimed by a user-owned row', () => {
+      const ws = mkdtempSync(join(tmpRoot, 'ws-claimed-'));
+      const file = join(ws, '.mcp.json');
+      writeMcpJson(file, { mcpServers: { fetch: { command: 'x' } } });
+
+      service.refreshAll([ws]);
+      const imported = repo.getByName('fetch');
+      expect(imported).not.toBeNull();
+      repo.update(imported!.id, { source: 'user', sourcePath: undefined });
+
+      writeMcpJson(file, { mcpServers: { fetch: { command: 'y' } } });
+      service.refreshAll([ws]);
+
+      const row = repo.getByName('fetch');
+      expect(row).not.toBeNull();
+      expect(row!.source).toBe('user');
+      expect(row!.command).toBe('x');
+      expect(repo.getByName('fetch:2')).toBeNull();
+    });
   });
 });

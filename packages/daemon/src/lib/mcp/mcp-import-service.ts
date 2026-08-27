@@ -15,7 +15,7 @@ import { resolveWorkspaceMcpServerName } from './mcp-server-namespace.ts';
 
 export interface ImportResult {
   sourcePath: string;
-  status: 'ok' | 'missing' | 'malformed';
+  status: 'ok' | 'missing' | 'malformed' | 'failed';
   added: number;
   updated: number;
   removed: number;
@@ -62,6 +62,7 @@ interface RefreshMcpImportsCtx {
   service: McpImportService;
   targets?: McpImportTarget[];
   reserved?: Set<string>;
+  blocked?: Set<string>;
   declarations?: McpSourceDeclaration[];
   results?: ImportResult[];
   orphanPruned?: number;
@@ -440,13 +441,21 @@ function hasNumericSuffix(serverName: string): boolean {
   return /:[1-9]\d*$/.test(serverName);
 }
 
-function matchExistingRank(storedName: string, serverName: string, label: string): number {
+function matchExistingRank(
+  storedName: string,
+  serverName: string,
+  label: string,
+  allServerNames?: ReadonlySet<string>
+): number {
   const base = buildResolvedBaseName(label, serverName);
   if (storedName === base) return 0;
   const prefix = `${base}:`;
   if (storedName.startsWith(prefix)) {
     const suffix = storedName.slice(prefix.length);
     if (/^(?:[2-9]|[1-9]\d+)$/.test(suffix)) {
+      if (allServerNames?.has(`${serverName}:${suffix}`)) {
+        return -1;
+      }
       return parseInt(suffix, 10);
     }
   }
@@ -463,7 +472,12 @@ function matchExistingRank(storedName: string, serverName: string, label: string
       if (/^(?:[2-9]|[1-9]\d+)$/.test(last)) {
         const stripped = storedSegments.slice(0, -1);
         const tail = stripped.slice(-rawSegments.length).join(':');
-        if (tail === serverName) return 1 + parseInt(last, 10);
+        if (tail === serverName) {
+          if (allServerNames?.has(`${serverName}:${last}`)) {
+            return -1;
+          }
+          return 1 + parseInt(last, 10);
+        }
       }
     }
   }
@@ -475,13 +489,14 @@ function findBestExistingMatch(
   serverName: string,
   label: string,
   existingByName: Map<string, AppMcpServer>,
-  usedExistingNames: Set<string>
+  usedExistingNames: Set<string>,
+  allServerNames?: ReadonlySet<string>
 ): AppMcpServer | undefined {
   let best: AppMcpServer | undefined;
   let bestRank = Infinity;
   for (const [name, row] of existingByName) {
     if (usedExistingNames.has(name)) continue;
-    const rank = matchExistingRank(name, serverName, label);
+    const rank = matchExistingRank(name, serverName, label, allServerNames);
     if (rank >= 0 && rank < bestRank) {
       best = row;
       bestRank = rank;
@@ -493,25 +508,19 @@ function findBestExistingMatch(
 
 function findLegacyMatch(
   rawName: string,
-  existingByName: Map<string, AppMcpServer>
+  existingByName: Map<string, AppMcpServer>,
+  allServerNames?: ReadonlySet<string>,
+  protectedNames?: ReadonlySet<string>
 ): AppMcpServer | undefined {
-  const exact = existingByName.get(rawName);
-  if (exact) return exact;
-
   let best: AppMcpServer | undefined;
-  let bestN = Infinity;
-  const numericSuffixPattern = /^:([2-9]|[1-9]\d+)$/;
-
+  let bestRank = Infinity;
   for (const [name, row] of existingByName) {
-    if (name === rawName) continue;
-    if (!name.startsWith(`${rawName}:`)) continue;
-    const suffix = name.slice(rawName.length);
-    const match = numericSuffixPattern.exec(suffix);
-    if (!match) continue;
-    const n = parseInt(match[1], 10);
-    if (n < bestN) {
-      bestN = n;
+    if (protectedNames?.has(name)) continue;
+    const rank = matchExistingRank(name, rawName, '', allServerNames);
+    if (rank >= 0 && rank < bestRank) {
       best = row;
+      bestRank = rank;
+      if (rank === 0) break;
     }
   }
   return best;
@@ -520,7 +529,10 @@ function findLegacyMatch(
 function loadMcpExistingNames(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
   const all = ctx.db.appMcpServers.list();
   const reserved = new Set<string>(all.map((row) => row.name));
-  return { ...ctx, reserved };
+  const blocked = new Set<string>(
+    all.filter((row) => row.source !== 'imported').map((row) => row.name)
+  );
+  return { ...ctx, reserved, blocked };
 }
 
 function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
@@ -582,7 +594,23 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     const targetReserved = new Set(ctx.reserved ?? new Set<string>());
     const usedExistingNames = new Set<string>();
 
-    const sortedRaws = Object.entries(entriesByServerName).sort(([a], [b]) => {
+    const validRaws: [string, McpJsonEntry][] = [];
+    const allServerNames = new Set<string>();
+    for (const [serverName, rawEntry] of Object.entries(entriesByServerName)) {
+      if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
+        ctx.log.warn(`[mcp-import] ${target.path}: skipping "${serverName}" — invalid entry`);
+        continue;
+      }
+      validRaws.push([serverName, rawEntry]);
+      allServerNames.add(serverName);
+    }
+
+    const allBases = new Set<string>();
+    for (const [serverName] of validRaws) {
+      allBases.add(buildResolvedBaseName(target.label, serverName));
+    }
+
+    const sortedRaws = [...validRaws].sort(([a], [b]) => {
       const aHas = hasNumericSuffix(a) ? 1 : 0;
       const bHas = hasNumericSuffix(b) ? 1 : 0;
       if (aHas !== bHas) return aHas - bHas;
@@ -592,23 +620,41 @@ function extractMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     const entries: Record<string, McpJsonEntry> = Object.create(null);
     const rawNames: Record<string, string> = Object.create(null);
     for (const [serverName, rawEntry] of sortedRaws) {
-      if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
-        ctx.log.warn(`[mcp-import] ${target.path}: skipping "${serverName}" — invalid entry`);
+      const base = buildResolvedBaseName(target.label, serverName);
+      if (ctx.blocked?.has(base)) {
+        ctx.log.warn(
+          `[mcp-import] ${target.path}: skipping "${serverName}" — name is claimed by a user/builtin row`
+        );
         continue;
       }
-      const existing = findBestExistingMatch(
-        serverName,
-        target.label,
-        existingByName,
-        usedExistingNames
-      );
-      const resolvedName = existing
-        ? existing.name
-        : resolveWorkspaceMcpServerName({
+
+      let resolvedName: string;
+      const exactExisting = existingByName.get(base);
+      if (exactExisting && !usedExistingNames.has(base)) {
+        resolvedName = base;
+      } else if (!targetReserved.has(base)) {
+        resolvedName = base;
+      } else {
+        const existing = findBestExistingMatch(
+          serverName,
+          target.label,
+          existingByName,
+          usedExistingNames,
+          allServerNames
+        );
+        if (existing) {
+          resolvedName = existing.name;
+        } else {
+          const reservedForName = new Set([...targetReserved, ...allBases]);
+          reservedForName.delete(base);
+          resolvedName = resolveWorkspaceMcpServerName({
             label: target.label,
             serverName,
-            reserved: targetReserved,
+            reserved: reservedForName,
           });
+        }
+      }
+
       const req = ctx.service.buildCreateRequest(resolvedName, rawEntry, target.path);
       if (!req) {
         ctx.log.warn(
@@ -646,6 +692,10 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
     const declaredNames = new Set<string>();
 
     if (decl.status === 'ok') {
+      const allServerNames = new Set<string>(Object.values(decl.rawNames ?? {}));
+      const protectedNames = new Set<string>(Object.keys(decl.entries ?? {}));
+      let persistFailed = false;
+
       for (const [resolvedName, entry] of Object.entries(decl.entries ?? {}).sort(([a], [b]) =>
         a.localeCompare(b)
       )) {
@@ -661,7 +711,9 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
 
         let existing = existingByName.get(resolvedName);
         let legacy =
-          rawName !== resolvedName ? findLegacyMatch(rawName, existingByName) : undefined;
+          rawName !== resolvedName
+            ? findLegacyMatch(rawName, existingByName, allServerNames, protectedNames)
+            : undefined;
         if (legacy && existing && legacy.id === existing.id) {
           legacy = undefined;
         }
@@ -678,6 +730,7 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
             ctx.log.warn(
               `[mcp-import] ${decl.target.path}: failed to create "${resolvedName}": ${err instanceof Error ? err.message : String(err)}`
             );
+            persistFailed = true;
           }
           continue;
         }
@@ -711,15 +764,23 @@ function persistMcpSources(ctx: RefreshMcpImportsCtx): RefreshMcpImportsCtx {
             ctx.log.warn(
               `[mcp-import] ${decl.target.path}: failed to update "${resolvedName}": ${err instanceof Error ? err.message : String(err)}`
             );
+            persistFailed = true;
           }
         }
       }
-    }
 
-    for (const row of existingRows) {
-      if (!declaredNames.has(row.name)) {
-        if (ctx.db.appMcpServers.delete(row.id)) {
-          result.removed += 1;
+      if (persistFailed) {
+        result.status = 'failed';
+        result.error = 'one or more persistence operations failed';
+      }
+
+      if (result.status !== 'failed') {
+        for (const row of existingRows) {
+          if (!declaredNames.has(row.name)) {
+            if (ctx.db.appMcpServers.delete(row.id)) {
+              result.removed += 1;
+            }
+          }
         }
       }
     }
