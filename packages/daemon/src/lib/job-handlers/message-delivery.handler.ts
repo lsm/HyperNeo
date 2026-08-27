@@ -98,6 +98,10 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     }
     const alreadyConsumed = sendStatus === 'consumed';
 
+    if (payload.role === 'steer' && alreadyConsumed) {
+      return { outcome: 'already_consumed' };
+    }
+
     const stuckInitializingMs = session.stuckInitializingMs?.() ?? null;
     const gate = resolveStuckInitializingGate({
       stuckInitializingMs,
@@ -169,10 +173,6 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
         deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
       }
       return route.result;
-    }
-
-    if (alreadyConsumed) {
-      return { outcome: 'already_consumed' };
     }
 
     if (!claimCurrent()) return { outcome: 'stale_attempt' };

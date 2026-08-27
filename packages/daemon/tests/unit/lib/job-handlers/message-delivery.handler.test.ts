@@ -308,6 +308,20 @@ describe('createMessageDeliveryHandler', () => {
       expect(session.feedCalls).toBe(0);
     });
 
+    it('settles an already-consumed steer before the gate even when stuck', async () => {
+      const { handler, session, jobQueue, metrics, getMessageContent, job } = makeHarness(
+        {},
+        STEER_PAYLOAD
+      );
+      session.stuckMs = 200_000;
+      getMessageContent.mockImplementation(() => ({ content: 'steer', sendStatus: 'consumed' }));
+      const result = await handler(job, {});
+      expect(result).toEqual({ outcome: 'already_consumed' });
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+      expect(metrics.recordStuckInitializingRefusal).not.toHaveBeenCalled();
+      expect(session.feedCalls).toBe(0);
+    });
+
     it('admits when the session has been initializing only briefly', async () => {
       const { handler, session, jobQueue, job } = makeHarness();
       session.stuckMs = 1_000;
