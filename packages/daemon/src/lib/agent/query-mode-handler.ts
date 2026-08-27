@@ -6,6 +6,8 @@ import {
   DEFERRED_FOLD_UUID_PREFIX,
   foldDeferredExternalEventsAtFlush,
 } from '../external-events/deferred-event-digest.ts';
+import { isExternalEventDeliveryV2Enabled } from '../external-events/external-event-service.ts';
+import type { RenderPendingDigestOutcome } from '../space/runtime/render-pending-digest-pipeline.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
 import { ClearConversationCancelledError } from './agent-session.ts';
@@ -33,6 +35,10 @@ export interface QueryModeHandlerContext {
   };
   slotResetsContext?(): boolean;
   clearConversationContext?(): Promise<void>;
+  renderPendingDigest?(
+    sessionId: string,
+    taskId?: string
+  ): Promise<RenderPendingDigestOutcome | null>;
 
   ensureQueryStarted(): Promise<void>;
 }
@@ -54,6 +60,27 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, logger } = this.ctx;
 
     const runFlush = async (): Promise<number> => {
+      if (isExternalEventDeliveryV2Enabled()) {
+        try {
+          const outcome = await this.ctx.renderPendingDigest?.(session.id, session.context?.taskId);
+          if (outcome && (outcome.action === 'failed' || outcome.action === 'held')) {
+            logger.warn(
+              `turn-end digest pull for session ${session.id} did not deliver ` +
+                `(action=${outcome.action}${
+                  outcome.action === 'failed'
+                    ? `, stage=${outcome.stage}`
+                    : `, reason=${outcome.reason}`
+                }) — flushing without the digest`
+            );
+          }
+        } catch (error) {
+          logger.warn(
+            `turn-end digest pull failed for session ${session.id}: ` +
+              `${error instanceof Error ? error.message : String(error)} — flushing without the digest`
+          );
+        }
+      }
+
       const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
       const backlog = options?.excludeMessageUuid
         ? allDeferred.filter((m) => m.uuid !== options.excludeMessageUuid)

@@ -82,6 +82,7 @@ import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { ChannelRouter } from './channel-router.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
+import type { RenderPendingDigestOutcome } from './render-pending-digest-pipeline.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import {
   SpaceAgentNotificationService,
@@ -1261,6 +1262,13 @@ export class SpaceRuntimeService {
     topic: string
   ): { success: boolean; error?: string } {
     return this.runtime.registerSubscription(workflowRunId, taskId, nodeId, agentName, topic);
+  }
+
+  renderPendingDigestForSession(
+    sessionId: string,
+    taskId?: string
+  ): Promise<RenderPendingDigestOutcome | null> {
+    return this.runtime.renderPendingDigestForSession(sessionId, taskId);
   }
 
   unregisterSubscription(

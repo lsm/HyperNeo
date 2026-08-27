@@ -3162,6 +3162,8 @@ export class TaskAgentManager {
   reattachSlotContextReset(agentSession: AgentSession): void {
     const sessionId = agentSession.session.id;
     agentSession.slotResetsContext = () => this.slotResetsContextForSession(sessionId);
+    agentSession.renderPendingDigest = (targetSessionId, digestTaskId) =>
+      this.config.spaceRuntimeService.renderPendingDigestForSession(targetSessionId, digestTaskId);
   }
 
   private buildAgentNameAliasesForExecution(

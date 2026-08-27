@@ -6637,6 +6637,103 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(injected).toHaveLength(0);
     });
   });
+
+  describe('events delivery v2 turn-end digest pull', () => {
+    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
+    let previousFlag: string | undefined;
+
+    beforeEach(() => {
+      previousFlag = process.env[FLAG_ENV];
+      process.env[FLAG_ENV] = '1';
+    });
+
+    afterEach(() => {
+      if (previousFlag === undefined) {
+        delete process.env[FLAG_ENV];
+      } else {
+        process.env[FLAG_ENV] = previousFlag;
+      }
+    });
+
+    test('flag on: renders the pending queued set as one digest row and marks the ledger delivered', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const events = [
+        makeEvent({
+          id: 'evt-digest-a',
+          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+        }),
+        makeEvent({
+          id: 'evt-digest-b',
+          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+        }),
+      ];
+      for (const event of events) {
+        await eventService.publish(event);
+        expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+      }
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-digest-pull',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-digest-pull',
+        'session-digest-pull',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const outcome = await runtime.renderPendingDigestForSession('session-digest-pull', task.id);
+      expect(outcome).toMatchObject({ action: 'delivered' });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_message FROM sdk_messages WHERE session_id = 'session-digest-pull'
+           AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_message: string }>;
+      expect(rows).toHaveLength(1);
+      const saved = JSON.parse(rows[0]!.sdk_message) as {
+        uuid: string;
+        message: { content: Array<{ type: string; text: string }> };
+      };
+      expect(String(saved.uuid).startsWith('digest-')).toBe(true);
+      expect(saved.message.content[0]!.text).toContain('External events while you were working');
+      expect(saved.message.content[0]!.text).toContain('PR comment');
+
+      for (const event of events) {
+        expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+        expect(eventStore.getById(event.id)?.state).toBe('delivered');
+      }
+
+      expect(await runtime.renderPendingDigestForSession('session-digest-pull', task.id)).toEqual({
+        action: 'skip',
+        reason: 'no_pending_events',
+      });
+    });
+
+    test('flag on: a session with no node execution is not a digest target', async () => {
+      expect(await runtime.renderPendingDigestForSession('session-unknown')).toEqual({
+        action: 'skip',
+        reason: 'no_execution',
+      });
+    });
+  });
 });
 
 describe('SpaceRuntime queue-health snapshot', () => {

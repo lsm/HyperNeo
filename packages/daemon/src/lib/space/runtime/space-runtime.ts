@@ -122,6 +122,11 @@ import {
   deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
 } from './immediate-event-delivery-pipeline.ts';
+import {
+  type RenderPendingDigestDeps,
+  type RenderPendingDigestOutcome,
+  runRenderPendingDigest,
+} from './render-pending-digest-pipeline.ts';
 import { classifyLastMessageForIdleAgent } from './last-message-classifier.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import {
@@ -398,6 +403,13 @@ const NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const SILENT_STALL_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const EXTERNAL_EVENT_RETRY_DELAY_MS = 1000;
 const EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS = 5;
+const DIGEST_REPLAY_LOOKUP_STATUSES = [
+  'deferred',
+  'enqueued',
+  'submitted',
+  'consumed',
+  'failed',
+] as const;
 const EXTERNAL_EVENT_RATE_WINDOW_MS = 60_000;
 const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
   'EXTERNAL_EVENT_RATE_LIMIT_PER_MIN',
@@ -701,6 +713,7 @@ export class SpaceRuntime {
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
+  private readonly immediateDispatchesInFlight = new Set<string>();
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
@@ -1823,6 +1836,8 @@ export class SpaceRuntime {
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (!store) return;
+    if (this.immediateDispatchesInFlight.has(deliveryKey)) return;
+    this.immediateDispatchesInFlight.add(deliveryKey);
     try {
       const deps: ImmediateEventDeliveryDeps = {
         getTask: (taskId) => this.config.taskRepo.getTask(taskId),
@@ -1871,6 +1886,8 @@ export class SpaceRuntime {
         `SpaceRuntime: failed to process immediate-tier event ${payload.eventId} for ` +
           `${target.workflowRunId}/${target.nodeId}/${target.agentName}: ${formatCommandError(err)}`
       );
+    } finally {
+      this.immediateDispatchesInFlight.delete(deliveryKey);
     }
   }
 
@@ -1884,6 +1901,117 @@ export class SpaceRuntime {
     state.timestamps.push(now);
     this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
     return state.timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN;
+  }
+
+  async renderPendingDigestForSession(
+    sessionId: string,
+    taskId?: string
+  ): Promise<RenderPendingDigestOutcome | null> {
+    const store = this.config.externalEventStore;
+    if (!store) return null;
+    const messages = this.getSdkMessageRepo();
+    const deps: RenderPendingDigestDeps = {
+      getExecutionByAgentSessionId: (targetSessionId) => {
+        const execution = this.config.nodeExecutionRepo.getByAgentSessionId(targetSessionId);
+        return execution
+          ? {
+              workflowRunId: execution.workflowRunId,
+              workflowNodeId: execution.workflowNodeId,
+              agentName: execution.agentName,
+            }
+          : null;
+      },
+      listPendingDeliveries: (scope) =>
+        store
+          .listPendingDeliveries(scope.workflowRunId)
+          .filter(
+            (row) =>
+              row.nodeId === scope.nodeId &&
+              row.agentName === scope.agentName &&
+              (scope.taskId === undefined || row.taskId === scope.taskId)
+          ),
+      ownsCurrentExecution: (target, targetSessionId) => {
+        const current = resolveCurrentQueueableOrActiveExecution(
+          this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
+          target
+        );
+        return !!current && current.agentSessionId === targetSessionId;
+      },
+      isTaskAdmissible: (admissionTaskId) => {
+        const task = this.config.taskRepo.getTask(admissionTaskId);
+        return (
+          !!task &&
+          task.status !== 'stopped' &&
+          !isRateOrUsageLimited(task.status) &&
+          evaluateRequeueTaskLifecycle(task, { topic: '', source: '' }) === null
+        );
+      },
+      isTaskTerminal: (admissionTaskId) => {
+        const task = this.config.taskRepo.getTask(admissionTaskId);
+        return (
+          !!task &&
+          (task.status === 'cancelled' || task.status === 'archived' || task.status === 'done')
+        );
+      },
+      isSpacePaused: (workflowRunId) => {
+        const run = this.config.workflowRunRepo.getRun(workflowRunId);
+        return !!run && this.pausedSpaceIds.has(run.spaceId);
+      },
+      listUserMessagesByStatus: (targetSessionId, status) =>
+        messages.getUserMessagesByStatus(targetSessionId, status).messages,
+      listUserMessagesByUuidPrefix: (targetSessionId, prefix) =>
+        messages.listUserMessagesByUuidPrefix(targetSessionId, prefix),
+      getDeliveryContent: (targetSessionId, uuid) =>
+        messages.getDeliveryContent(targetSessionId, uuid),
+      isDeliveryInFlight: (deliveryKey) =>
+        this.externalEventDeliveriesInFlight.has(deliveryKey) ||
+        this.immediateDispatchesInFlight.has(deliveryKey),
+      acquireDeliveryClaims: (deliveryKeys) => {
+        for (const deliveryKey of deliveryKeys) {
+          this.externalEventDeliveriesInFlight.add(deliveryKey);
+        }
+      },
+      releaseDeliveryClaims: (deliveryKeys) => {
+        for (const deliveryKey of deliveryKeys) {
+          this.externalEventDeliveriesInFlight.delete(deliveryKey);
+        }
+      },
+      now: () => Date.now(),
+      queueTtlMs: EXTERNAL_EVENT_QUEUE_TTL_MS,
+      isTargetStillSubscribed: (target, topic) => this.isTargetStillSubscribed(target, topic),
+      failDeliveryTerminal: (target, eventId, deliveryKey, reason) => {
+        store.markDeliveryFailed(eventId, deliveryKey, { terminal: true, reason });
+        store.markEventFailedIfAllDeliveriesTerminal(eventId);
+        this.clearExternalEventRetry(deliveryKey);
+        this.clearQueuedDelivery(target, deliveryKey);
+      },
+      getEventById: (eventId) => store.getById(eventId),
+      saveDigestMessageIfAbsent: async (targetSessionId, message) => {
+        const uuid = String(message.uuid);
+        for (const status of DIGEST_REPLAY_LOOKUP_STATUSES) {
+          const existing = messages.getMessageByStatusAndUuid(targetSessionId, status, uuid);
+          if (existing) return { dbId: existing.dbId, replayed: true };
+        }
+        const dbId = messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
+        return { dbId, replayed: false };
+      },
+      reopenFailedDigest: (targetSessionId, uuid) => {
+        const failedRow = messages.getMessageByStatusAndUuid(targetSessionId, 'failed', uuid);
+        if (failedRow) messages.updateMessageStatus([failedRow.dbId], 'deferred');
+      },
+      appendDigest: async (targetSessionId, message) => {
+        const row = messages.getDeliveryContent(targetSessionId, String(message.uuid));
+        return row !== null;
+      },
+      markDeliveriesDelivered: (target, marks) => {
+        store.markDeliveriesDeliveredAtomic(marks);
+        for (const mark of marks) {
+          this.clearExternalEventRetry(mark.deliveryKey);
+          this.clearQueuedDelivery(target, mark.deliveryKey);
+        }
+      },
+    };
+    return runRenderPendingDigest(deps, { sessionId, taskId });
   }
 
   private async deliverToLiveSessionTarget(
