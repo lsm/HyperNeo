@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { generateUUID } from '@hyperneo/shared';
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 
