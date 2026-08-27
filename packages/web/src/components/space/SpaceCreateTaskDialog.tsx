@@ -1,9 +1,14 @@
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
-import type { SpaceTask, SpaceTaskPriority, TaskScheduleTriggerType } from '@hyperneo/shared';
+import type {
+  SpaceTask,
+  SpaceTaskPriority,
+  SpaceWorkspace,
+  TaskScheduleTriggerType,
+} from '@hyperneo/shared';
 
 interface SpaceCreateTaskDialogProps {
   isOpen: boolean;
@@ -95,6 +100,11 @@ function getBrowserTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
+function workspaceTitle(workspace: SpaceWorkspace): string {
+  if (workspace.label) return workspace.label;
+  return workspace.path.split('/').filter(Boolean).at(-1) ?? workspace.path;
+}
+
 function getSchedulePreview(
   triggerType: TaskScheduleTriggerType,
   cronExpression: string,
@@ -126,6 +136,29 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
   const [runAt, setRunAt] = useState<number | null>(null);
   const [timezone, setTimezone] = useState('UTC');
 
+  const [workspaces, setWorkspaces] = useState<SpaceWorkspace[] | null>(null);
+  const [workspacePath, setWorkspacePath] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    spaceStore
+      .listWorkspaces()
+      .then((list) => {
+        if (cancelled) return;
+        setWorkspaces(list);
+        setWorkspacePath(list.find((w) => w.isPrimary)?.path ?? list[0]?.path ?? null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setWorkspaces(null);
+        setWorkspacePath(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
   const handleClose = () => {
     setTitle('');
     setDescription('');
@@ -136,6 +169,8 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
     setCronExpression('');
     setRunAt(null);
     setTimezone('UTC');
+    setWorkspaces(null);
+    setWorkspacePath(null);
     onClose();
   };
 
@@ -194,6 +229,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
           title: title.trim(),
           description: description.trim(),
           priority,
+          ...(workspacePath ? { workspacePath } : {}),
         });
         toast.success(`Task "${task.title}" created`);
         onCreated?.(task);
@@ -263,6 +299,26 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
             ))}
           </select>
         </div>
+
+        {workspaces && workspaces.length > 0 && !scheduleEnabled && (
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-1.5">Workspace</label>
+            <select
+              value={workspacePath ?? undefined}
+              onChange={(e) => setWorkspacePath((e.target as HTMLSelectElement).value)}
+              data-testid="task-workspace-select"
+              class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
+								focus:outline-none focus:border-blue-500 text-sm"
+            >
+              {workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.path}>
+                  {workspaceTitle(workspace)}
+                  {workspace.isPrimary ? ' (primary)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div class="border-t border-dark-700 pt-4">
           <label class="flex items-center gap-2 cursor-pointer">
