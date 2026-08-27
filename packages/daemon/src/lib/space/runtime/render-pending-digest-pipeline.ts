@@ -37,7 +37,10 @@ export interface TurnEndExecutionRef {
   agentName: string;
 }
 
-export type TurnEndDeliveryTerminalReason = 'ttl_expired' | 'subscription_no_longer_active';
+export type TurnEndDeliveryTerminalReason =
+  | 'ttl_expired'
+  | 'subscription_no_longer_active'
+  | 'task_terminal';
 
 export interface RenderPendingDigestLedgerMark {
   eventId: string;
@@ -49,13 +52,14 @@ export interface RenderPendingDigestSavedDigest {
   replayed: boolean;
 }
 
-export type LegacyDurableScanStatus = 'deferred' | 'enqueued' | 'submitted';
+export type LegacyDurableScanStatus = 'deferred' | 'enqueued' | 'submitted' | 'consumed';
 
 export interface RenderPendingDigestDeps {
   getExecutionByAgentSessionId(sessionId: string): TurnEndExecutionRef | null;
   listPendingDeliveries(scope: RenderPendingDigestScope): ExternalEventDeliveryRecord[];
   ownsCurrentExecution(target: RenderPendingDigestTarget, sessionId: string): boolean;
   isTaskAdmissible(taskId: string): boolean;
+  isTaskTerminal(taskId: string): boolean;
   isSpacePaused(workflowRunId: string): boolean;
   listUserMessagesByStatus(sessionId: string, status: LegacyDurableScanStatus): SDKUserMessage[];
   listUserMessagesByUuidPrefix(sessionId: string, prefix: string): SDKUserMessage[];
@@ -152,7 +156,12 @@ export interface RenderPendingDigestCtx extends RenderPendingDigestInput {
 
 export const TURN_END_DIGEST_PENDING_ROW_CAP = 200;
 
-export const LEGACY_DURABLE_SCAN_STATUSES = ['deferred', 'enqueued', 'submitted'] as const;
+export const LEGACY_DURABLE_SCAN_STATUSES = [
+  'deferred',
+  'enqueued',
+  'submitted',
+  'consumed',
+] as const;
 
 function eventRecordEssence(record: ExternalEventRecord): ExternalEventEssenceEntry | null {
   const event = record.event;
@@ -188,13 +197,17 @@ export function resolveTarget(ctx: RenderPendingDigestCtx): RenderPendingDigestC
   if (scopedRows.length === 0) {
     return { ...ctx, outcome: { action: 'skip', reason: 'no_pending_events' } };
   }
+  const fallbackTaskId = ctx.taskId ?? scopedRows[0].taskId;
+  const targetScopedRows = ctx.taskId
+    ? scopedRows
+    : scopedRows.filter((row) => row.taskId === fallbackTaskId);
   const target: RenderPendingDigestTarget = {
     workflowRunId: execution.workflowRunId,
-    taskId: ctx.taskId ?? scopedRows[0].taskId,
+    taskId: fallbackTaskId,
     nodeId: execution.workflowNodeId,
     agentName: execution.agentName,
   };
-  return { ...ctx, execution, scopedRows, target };
+  return { ...ctx, execution, scopedRows: targetScopedRows, target };
 }
 
 export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
@@ -203,6 +216,11 @@ export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
     return { ...ctx, outcome: { action: 'skip', reason: 'session_not_current' } };
   }
   if (!ctx.deps.isTaskAdmissible(target.taskId)) {
+    if (ctx.deps.isTaskTerminal(target.taskId)) {
+      for (const row of ctx.scopedRows ?? []) {
+        ctx.deps.failDeliveryTerminal(target, row.eventId, row.deliveryKey, 'task_terminal');
+      }
+    }
     return { ...ctx, outcome: { action: 'skip', reason: 'task_not_admissible' } };
   }
   if (ctx.deps.isSpacePaused(target.workflowRunId)) {
@@ -350,6 +368,10 @@ export async function persistAndAppend(
     return { ...ctx, outcome: { action: 'failed', stage: 'persistDigest', error } };
   }
   const dbId = saved.dbId;
+  const rechecked = admitTurnEnd(ctx);
+  if (rechecked.outcome) {
+    return { ...ctx, digestDbId: dbId, outcome: rechecked.outcome };
+  }
   let accepted: boolean;
   try {
     accepted = await ctx.deps.appendDigest(ctx.sessionId, message);

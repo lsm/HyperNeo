@@ -58,7 +58,12 @@ interface Harness {
   acquiredClaims: string[];
   releasedClaims: string[];
   failedDeliveries: Array<{ eventId: string; deliveryKey: string; reason: string }>;
-  admissibility: { ownsCurrentExecution: boolean; taskAdmissible: boolean; spacePaused: boolean };
+  admissibility: {
+    ownsCurrentExecution: boolean;
+    taskAdmissible: boolean;
+    taskTerminal: boolean;
+    spacePaused: boolean;
+  };
   subscription: { topics: Set<string> | null };
 }
 
@@ -73,6 +78,7 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
     ['deferred', []],
     ['enqueued', []],
     ['submitted', []],
+    ['consumed', []],
   ]);
   const digestRows: SDKUserMessage[] = [];
   const deliveryContent = new Map<string, unknown>();
@@ -80,7 +86,12 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
   const acquiredClaims: string[] = [];
   const releasedClaims: string[] = [];
   const failedDeliveries: Array<{ eventId: string; deliveryKey: string; reason: string }> = [];
-  const admissibility = { ownsCurrentExecution: true, taskAdmissible: true, spacePaused: false };
+  const admissibility = {
+    ownsCurrentExecution: true,
+    taskAdmissible: true,
+    taskTerminal: false,
+    spacePaused: false,
+  };
   const subscription: { topics: Set<string> | null } = { topics: null };
   const deps: RenderPendingDigestDeps = {
     getExecutionByAgentSessionId: (sessionId) => (sessionId === SESSION_ID ? EXECUTION : null),
@@ -90,6 +101,7 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
     },
     ownsCurrentExecution: () => admissibility.ownsCurrentExecution,
     isTaskAdmissible: () => admissibility.taskAdmissible,
+    isTaskTerminal: () => admissibility.taskTerminal,
     isSpacePaused: () => admissibility.spacePaused,
     listUserMessagesByStatus: (_sessionId, status) => legacyRows.get(status) ?? [],
     listUserMessagesByUuidPrefix: () => digestRows,
@@ -306,6 +318,15 @@ describe('render-pending-digest pipeline', () => {
     expect(ctx.scopedRows?.map((row) => row.eventId)).toEqual(['ev-a']);
   });
 
+  it('resolveTarget narrows fallback rows to the fallback task when taskId is omitted', () => {
+    const h = harness();
+    seedPending(h, [['ev-a', 'check']]);
+    h.rows.push(pendingRow('ev-other', { taskId: 'task-2' }));
+    const ctx = resolveTarget(ctxOf(h, { taskId: undefined }));
+    expect(ctx.target).toEqual(TARGET);
+    expect(ctx.scopedRows?.map((row) => row.eventId)).toEqual(['ev-a']);
+  });
+
   it('admitTurnEnd halts on each admission gate with a distinct reason', () => {
     const cases = [
       { ownsCurrentExecution: false, reason: 'session_not_current' },
@@ -320,6 +341,28 @@ describe('render-pending-digest pipeline', () => {
     }
   });
 
+  it('admitTurnEnd terminally fails scoped rows for a terminal task, not a transiently stopped one', () => {
+    const h = harness();
+    seedPending(h, [
+      ['ev-a', 'check'],
+      ['ev-b', 'review'],
+    ]);
+    h.admissibility.taskAdmissible = false;
+    h.admissibility.taskTerminal = true;
+    const ctx = admitTurnEnd(ctxOf(h, { target: TARGET, scopedRows: h.rows }));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+    expect(h.failedDeliveries).toEqual([
+      { eventId: 'ev-a', deliveryKey: 'delivery-ev-a', reason: 'task_terminal' },
+      { eventId: 'ev-b', deliveryKey: 'delivery-ev-b', reason: 'task_terminal' },
+    ]);
+    const stopped = harness();
+    seedPending(stopped, [['ev-a', 'check']]);
+    stopped.admissibility.taskAdmissible = false;
+    const stoppedCtx = admitTurnEnd(ctxOf(stopped, { target: TARGET, scopedRows: stopped.rows }));
+    expect(stoppedCtx.outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+    expect(stopped.failedDeliveries).toEqual([]);
+  });
+
   it('reconcileDurable collects legacy rows, memberships, and exact replay matches', () => {
     const h = harness();
     seedPending(h, [
@@ -330,9 +373,10 @@ describe('render-pending-digest pipeline', () => {
     h.legacyRows.set('enqueued', [
       buildSyntheticExternalEventMessage(SESSION_ID, 'not json', 'legacy-noise'),
     ]);
+    h.legacyRows.set('consumed', [legacyDurableRow('ev-consumed', TOPICS.comment)]);
     h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b']));
     const ctx = reconcileDurable(ctxOf(h, { scopedRows: h.rows }));
-    expect(ctx.legacyDurableEventIds).toEqual(new Set(['ev-legacy']));
+    expect(ctx.legacyDurableEventIds).toEqual(new Set(['ev-legacy', 'ev-consumed']));
     expect(ctx.digestMembershipEventIds).toEqual(new Set(['ev-a', 'ev-b']));
     expect(ctx.replayable).toBe(true);
   });
@@ -552,6 +596,27 @@ describe('render-pending-digest pipeline', () => {
     expect(outcome.text).toContain('PR comment');
     expect(h.saved).toHaveLength(1);
     expect(h.marks).toHaveLength(3);
+    expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
+  it('end to end: execution rebound during the persist gap neither appends nor marks', async () => {
+    const h = harness({
+      saveDigestMessageIfAbsent: async (_sessionId, message) => {
+        h.admissibility.ownsCurrentExecution = false;
+        const uuid = String(message.uuid);
+        h.saved.push(message);
+        return { dbId: `db-${uuid}`, replayed: false };
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'session_not_current' });
+    expect(h.saved).toHaveLength(1);
+    expect(h.appended).toEqual([]);
+    expect(h.marks).toEqual([]);
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
   });
 
