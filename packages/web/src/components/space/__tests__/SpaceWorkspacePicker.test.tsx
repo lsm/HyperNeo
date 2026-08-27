@@ -262,6 +262,11 @@ describe('SpaceWorkspacePicker', () => {
 
     rerender(<Probe spaceId="space-1" fallbackPath="/projects/main" scope="space-1:sessions" />);
     expect(document.querySelector('[data-testid="space-workspace-options"]')).toBeNull();
+
+    fireEvent.click(getByTestId('probe-create'));
+    await waitFor(() => {
+      expect(getByTestId('space-workspace-options')).toBeTruthy();
+    });
   });
 
   it('resets the cached options and picker state when the space changes', async () => {

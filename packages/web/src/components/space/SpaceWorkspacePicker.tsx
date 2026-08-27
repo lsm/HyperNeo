@@ -18,6 +18,7 @@ interface SpaceWorkspaceRegistryState {
 interface SpaceWorkspaceRegistryGate {
   spaceId: string;
   connected: boolean;
+  started: boolean;
   done: boolean;
   promise: Promise<void>;
   resolve: () => void;
@@ -37,7 +38,7 @@ function armGate(spaceId: string, connected: boolean): SpaceWorkspaceRegistryGat
   const promise = new Promise<void>((resolve) => {
     resolveGate = resolve;
   });
-  return { spaceId, connected, done: false, promise, resolve: resolveGate };
+  return { spaceId, connected, started: false, done: false, promise, resolve: resolveGate };
 }
 
 function releaseGate(gate: SpaceWorkspaceRegistryGate): void {
@@ -72,6 +73,8 @@ function useSpaceWorkspaceRegistry(
   }
 
   const startLookup = (gate: SpaceWorkspaceRegistryGate) => {
+    if (gate.started) return;
+    gate.started = true;
     const settleGate = () => {
       releaseGate(gate);
     };
@@ -245,7 +248,7 @@ export function useSpaceWorkspaceChoice(
   optionsRef.current = options;
   const [pickerOpen, setPickerOpen] = useState(false);
   const pendingCreateRef = useRef<((workspacePath: string) => void) | null>(null);
-  const choosingRef = useRef(false);
+  const choosingEpochRef = useRef<number | null>(null);
   const epochRef = useRef(0);
   const epochScopeRef = useRef(choiceScope);
 
@@ -253,13 +256,15 @@ export function useSpaceWorkspaceChoice(
     epochScopeRef.current = choiceScope;
     epochRef.current += 1;
     pendingCreateRef.current = null;
-    choosingRef.current = false;
+    choosingEpochRef.current = null;
   }
 
   useEffect(() => {
     setPickerOpen(false);
     return () => {
-      epochRef.current += 1;
+      if (epochScopeRef.current === choiceScope) {
+        epochRef.current += 1;
+      }
     };
   }, [choiceScope]);
 
@@ -269,23 +274,29 @@ export function useSpaceWorkspaceChoice(
   };
 
   const chooseWorkspace = (create: (workspacePath?: string) => void) => {
-    const inFlight = choosingRef.current;
+    const inFlight = choosingEpochRef.current !== null;
     const epoch = epochRef.current;
-    choosingRef.current = true;
+    choosingEpochRef.current = epoch;
     void runChooseWorkspace({
       inFlight,
       refresh,
       settle,
       readOptions: () => optionsRef.current,
       openPicker: () => {
-        if (epochRef.current !== epoch) return;
-        choosingRef.current = false;
+        if (epochRef.current !== epoch) {
+          if (choosingEpochRef.current === epoch) choosingEpochRef.current = null;
+          return;
+        }
+        choosingEpochRef.current = null;
         pendingCreateRef.current = (workspacePath: string) => create(workspacePath);
         setPickerOpen(true);
       },
       create: (workspacePath) => {
-        if (epochRef.current !== epoch) return;
-        choosingRef.current = false;
+        if (epochRef.current !== epoch) {
+          if (choosingEpochRef.current === epoch) choosingEpochRef.current = null;
+          return;
+        }
+        choosingEpochRef.current = null;
         create(workspacePath);
       },
       options: [],
