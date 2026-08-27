@@ -7255,6 +7255,141 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(0);
     });
   });
+
+  describe('events delivery v2 idle/cap/safety digest pull', () => {
+    const previousEnv: Record<string, string | undefined> = {};
+
+    function setEnv(name: string, value: string): void {
+      previousEnv[name] = process.env[name];
+      process.env[name] = value;
+    }
+
+    function restoreEnv(): void {
+      for (const [name, value] of Object.entries(previousEnv)) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
+    }
+
+    beforeEach(() => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2', '1');
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS', '50');
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '100');
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_SAFETY_MS', '10000');
+      injectShouldFail = true;
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS job_queue (
+          id TEXT PRIMARY KEY,
+          queue TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+          payload TEXT NOT NULL DEFAULT '{}',
+          result TEXT,
+          error TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          run_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          started_at INTEGER,
+          heartbeat_at INTEGER,
+          completed_at INTEGER
+        )
+      `);
+    });
+
+    afterEach(() => {
+      restoreEnv();
+    });
+
+    async function startLiveSession(sessionId: string): Promise<{ run: unknown; task: SpaceTask }> {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+      tam.alive.add(sessionId);
+      return { run, task };
+    }
+
+    function wait(ms: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function digestRows(sessionId: string): Array<{ sdk_message: string; sdk_uuid: string }> {
+      return db
+        .prepare(
+          `SELECT sdk_message, sdk_uuid FROM sdk_messages
+           WHERE session_id = ? AND sdk_uuid LIKE 'digest-%' AND send_status = 'enqueued'`
+        )
+        .all(sessionId) as Array<{ sdk_message: string; sdk_uuid: string }>;
+    }
+
+    test('idle debounce flushes once', async () => {
+      const { task } = await startLiveSession('session-idle');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      await eventService.publish(makeEvent({ id: 'evt-idle-1', topic }));
+      await eventService.publish(makeEvent({ id: 'evt-idle-2', topic }));
+      await wait(150);
+
+      const rows = digestRows('session-idle');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.sdk_message).toContain(
+        'External events while you were working (2 events, PR #42):'
+      );
+      expect(eventStore.listDeliveries('evt-idle-1')[0]?.state).toBe('delivered');
+      expect(eventStore.listDeliveries('evt-idle-2')[0]?.state).toBe('delivered');
+    });
+
+    test('count cap fires despite an undelivered prior digest', async () => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '2');
+      const { task } = await startLiveSession('session-cap');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      await eventService.publish(makeEvent({ id: 'evt-cap-1', topic }));
+      await wait(150);
+
+      const first = digestRows('session-cap');
+      expect(first).toHaveLength(1);
+      expect(first[0]?.sdk_message).toContain('(1 event, PR #42):');
+
+      await eventService.publish(makeEvent({ id: 'evt-cap-2', topic }));
+      await eventService.publish(makeEvent({ id: 'evt-cap-3', topic }));
+      await wait(50);
+
+      const rows = digestRows('session-cap');
+      expect(rows).toHaveLength(2);
+      for (const eventId of ['evt-cap-1', 'evt-cap-2', 'evt-cap-3']) {
+        expect(eventStore.listDeliveries(eventId)[0]?.state).toBe('delivered');
+      }
+    });
+
+    test('safety timer unblocks a stuck session', async () => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS', '10000');
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '100');
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_SAFETY_MS', '50');
+      const { task } = await startLiveSession('session-safety');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      await eventService.publish(makeEvent({ id: 'evt-safety-1', topic }));
+      await wait(150);
+
+      const rows = digestRows('session-safety');
+      expect(rows).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-safety-1')[0]?.state).toBe('delivered');
+    });
+  });
 });
 
 describe('SpaceRuntime queue-health snapshot', () => {
