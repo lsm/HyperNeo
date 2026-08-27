@@ -58,9 +58,11 @@ export interface RateLimitWatchdogDeps {
   switchAndRetry(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry,
-    episodeGeneration: number
+    episodeGeneration: number,
+    queryGeneration?: number
   ): Promise<boolean>;
   resolveModelId?(provider: string, model: string): Promise<string>;
+  getQueryGeneration?(): number;
   notifyPause?(payload: RateLimitPausePayload): void;
   notifyResume?(): void;
   classifyUnknownLimit?(rawText: string): Promise<LlmLimitAssessment | null>;
@@ -69,7 +71,8 @@ export interface RateLimitWatchdogDeps {
 export type RateLimitRetryCallback = (
   lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
   switchTo: FallbackModelEntry | undefined,
-  episodeGeneration: number
+  episodeGeneration: number,
+  queryGeneration?: number
 ) => Promise<boolean>;
 
 export class RateLimitWatchdog {
@@ -97,7 +100,9 @@ export class RateLimitWatchdog {
   private lastHint: LimitRetryHint | null = null;
   private billingPauseSurfaced = false;
   private retryCallbackInFlight = false;
-  private retryCallbackInFlightOwner: number | null = null;
+  private retryCallbackAttemptSeq = 0;
+  private cooldownQueryGeneration: number | undefined = undefined;
+  private activePauseQueryGeneration: number | undefined = undefined;
 
   constructor(
     sessionId: string,
@@ -134,12 +139,26 @@ export class RateLimitWatchdog {
     };
   }
 
+  private querySuperseded(queryGeneration?: number): boolean {
+    return (
+      queryGeneration !== undefined &&
+      this.deps.getQueryGeneration != null &&
+      this.deps.getQueryGeneration() !== queryGeneration
+    );
+  }
+
   async scheduleRetry(
     errorMessage: string,
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    hint?: LimitRetryHint
+    hint?: LimitRetryHint,
+    queryGeneration?: number
   ): Promise<boolean> {
     const entryGeneration = this.generation;
+
+    if (this.querySuperseded(queryGeneration)) {
+      this.logger.info('Rate limit recovery aborted at entry: the query was superseded.');
+      return true;
+    }
 
     this.cancelCooldownTimer();
     this.lastErrorMessage = errorMessage;
@@ -165,23 +184,19 @@ export class RateLimitWatchdog {
 
     const { provider, model } = this.deps.getCurrentModel();
     const currentCanonical = (await this.deps.resolveModelId?.(provider, model)) ?? model;
-    if (entryGeneration !== this.generation) {
-      this.logger.info(
-        'Current-model resolution completed but episode was superseded; aborting schedule.'
-      );
+    if (entryGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
+      this.logger.info('Model resolution completed but the episode was superseded; aborting.');
       return true;
     }
     this.triedKeys.add(`${provider}/${currentCanonical}`);
 
     if (this.chain === null) {
-      const resolvedChain = await this.deps.resolveChain();
-      if (entryGeneration !== this.generation) {
-        this.logger.info(
-          'Fallback chain resolution completed but episode was superseded; aborting schedule.'
-        );
+      const chain = await this.deps.resolveChain();
+      if (entryGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
+        this.logger.info('Chain resolution completed but the episode was superseded; aborting.');
         return true;
       }
-      this.chain = resolvedChain;
+      this.chain = chain;
     }
 
     if (this.chain.length > 0) {
@@ -195,6 +210,12 @@ export class RateLimitWatchdog {
           canonicalKey.set(entry, `${entry.provider}/${canonical}`);
         })
       );
+      if (entryGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
+        this.logger.info(
+          'Availability resolution completed but the episode was superseded; aborting.'
+        );
+        return true;
+      }
       const sel = selectNextFallback(
         this.chain,
         this.triedKeys,
@@ -203,7 +224,7 @@ export class RateLimitWatchdog {
       );
 
       if (sel.next) {
-        if (entryGeneration !== this.generation) {
+        if (entryGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
           this.logger.info(
             'Fallback resolution completed but episode was superseded; aborting switch.'
           );
@@ -214,7 +235,12 @@ export class RateLimitWatchdog {
             `(skipReason for prior candidates: ${sel.skipReason}).`
         );
         this.fallbackPending = true;
-        void this.fireImmediateFallback(lastUserMessage, sel.next, entryGeneration);
+        void this.fireImmediateFallback(
+          lastUserMessage,
+          sel.next,
+          entryGeneration,
+          queryGeneration
+        );
         return true;
       }
       this.logger.info(
@@ -243,18 +269,38 @@ export class RateLimitWatchdog {
       );
       return false;
     }
-    if (entryGeneration !== this.generation) {
+    if (entryGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
       this.logger.info(
         'Cooldown resolution completed but episode was superseded; aborting schedule.'
       );
       return true;
     }
 
+    const retryCountBeforeCharge = this.retryCount;
     if (trip.charge) {
       this.retryCount++;
     }
 
-    const armed = await this.scheduleCooldown(errorMessage, trip.decision, entryGeneration);
+    const armed = await this.scheduleCooldown(
+      errorMessage,
+      trip.decision,
+      entryGeneration,
+      undefined,
+      queryGeneration
+    );
+
+    if (
+      !armed &&
+      trip.charge &&
+      this.querySuperseded(queryGeneration) &&
+      entryGeneration === this.generation &&
+      this.retryCount === retryCountBeforeCharge + 1
+    ) {
+      this.retryCount = retryCountBeforeCharge;
+      this.logger.info(
+        'Refunded the retry charge: cooldown ownership moved to a replacement query.'
+      );
+    }
 
     if (
       armed &&
@@ -262,7 +308,7 @@ export class RateLimitWatchdog {
       this.deps.classifyUnknownLimit &&
       entryGeneration === this.generation
     ) {
-      this.fireLlmRefinement(errorMessage, entryGeneration, trip.charge);
+      this.fireLlmRefinement(errorMessage, entryGeneration, trip.charge, queryGeneration);
     }
     return true;
   }
@@ -270,7 +316,8 @@ export class RateLimitWatchdog {
   private fireLlmRefinement(
     errorMessage: string,
     entryGeneration: number,
-    chargedLadder: boolean
+    chargedLadder: boolean,
+    queryGeneration?: number
   ): void {
     const classify = this.deps.classifyUnknownLimit;
     if (!classify) return;
@@ -278,6 +325,10 @@ export class RateLimitWatchdog {
     void classify(errorMessage)
       .then(async (result) => {
         if (entryGeneration !== this.generation || this.cooldownTimer !== timerAtFire) return;
+        if (this.querySuperseded(queryGeneration)) {
+          this.logger.info('LLM refinement completed but the query was superseded; aborting.');
+          return;
+        }
         if (!result) return;
         const now = Date.now();
         const resetMs = refinedResetAtMs(result, now);
@@ -306,7 +357,8 @@ export class RateLimitWatchdog {
             errorMessage,
             cooldownFromReset(resetMs, now),
             entryGeneration,
-            refund ? this.retryCount - 1 : this.retryCount
+            refund ? this.retryCount - 1 : this.retryCount,
+            queryGeneration
           );
           if (!armed) {
             rollbackHintAndKind();
@@ -315,14 +367,23 @@ export class RateLimitWatchdog {
           }
         } catch (err) {
           this.logger.warn('LLM refinement cooldown scheduling threw; reconciling state:', err);
+          if (this.querySuperseded(queryGeneration)) {
+            this.logger.info(
+              'Refinement reconciliation aborted: the originating query was superseded.'
+            );
+            return;
+          }
           rollbackHintAndKind();
           if (this.cooldownTimer === timerAtFire && this.currentRetryAt !== null) {
             await this.stateManager
-              .setRateLimitCooldown({
-                retryCount: this.retryCount,
-                maxRetries: this.config.maxAutoRetries,
-                retryAt: this.currentRetryAt,
-              })
+              .setRateLimitCooldown(
+                {
+                  retryCount: this.retryCount,
+                  maxRetries: this.config.maxAutoRetries,
+                  retryAt: this.currentRetryAt,
+                },
+                queryGeneration
+              )
               .catch(() => {});
           }
         }
@@ -334,8 +395,13 @@ export class RateLimitWatchdog {
     errorMessage: string,
     decision: CooldownDecision,
     episodeGeneration: number,
-    displayRetryCount?: number
+    displayRetryCount?: number,
+    queryGeneration?: number
   ): Promise<boolean> {
+    if (this.querySuperseded(queryGeneration)) {
+      this.logger.info('Cooldown scheduling aborted: the originating query was superseded.');
+      return false;
+    }
     const kind = this.lastHint?.kind ?? classifyLimitKind(errorMessage, decision);
     this.limitKind = kind;
 
@@ -346,12 +412,22 @@ export class RateLimitWatchdog {
     );
 
     const timerAtEntry = this.cooldownTimer;
-    await this.stateManager.setRateLimitCooldown({
-      retryCount: displayRetryCount ?? this.retryCount,
-      maxRetries: this.config.maxAutoRetries,
-      retryAt,
-    });
+    await this.stateManager.setRateLimitCooldown(
+      {
+        retryCount: displayRetryCount ?? this.retryCount,
+        maxRetries: this.config.maxAutoRetries,
+        retryAt,
+      },
+      queryGeneration
+    );
 
+    if (this.querySuperseded(queryGeneration)) {
+      this.logger.info(
+        'Cooldown state write completed but the originating query was superseded; ' +
+          'leaving cooldown ownership to the replacement query.'
+      );
+      return false;
+    }
     if (episodeGeneration !== this.generation || this.cooldownTimer !== timerAtEntry) {
       this.logger.info(
         'Cooldown state write completed but a newer action owns the cooldown; ' +
@@ -361,6 +437,7 @@ export class RateLimitWatchdog {
       return false;
     }
 
+    this.activePauseQueryGeneration = queryGeneration;
     this.notifyPause({
       kind,
       resetAt: decision.retryAtMs,
@@ -368,6 +445,7 @@ export class RateLimitWatchdog {
     });
 
     this.cancelCooldownTimer();
+    this.cooldownQueryGeneration = queryGeneration;
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
       this.currentRetryAt = null;
@@ -389,27 +467,50 @@ export class RateLimitWatchdog {
   }
 
   private async fireCooldownRetry(errorMessage: string): Promise<void> {
+    if (this.querySuperseded(this.cooldownQueryGeneration)) {
+      this.logger.info(
+        'Cooldown retry aborted at fire time: the originating query was superseded. ' +
+          'Retiring its published pause.'
+      );
+      if (
+        this.activePauseQueryGeneration === undefined ||
+        this.activePauseQueryGeneration === this.cooldownQueryGeneration
+      ) {
+        this.notifyResume();
+        this.activePauseQueryGeneration = undefined;
+      }
+      return;
+    }
     const entryGeneration = this.generation;
+    const armedQueryGeneration = this.cooldownQueryGeneration;
+    const attemptId = ++this.retryCallbackAttemptSeq;
     this.retryCallbackInFlight = true;
-    this.retryCallbackInFlightOwner = entryGeneration;
     try {
-      await this.runCooldownRetry(errorMessage, entryGeneration);
+      await this.runCooldownRetry(errorMessage, entryGeneration, armedQueryGeneration);
     } finally {
-      if (this.retryCallbackInFlightOwner === entryGeneration) {
+      if (this.retryCallbackAttemptSeq === attemptId) {
         this.retryCallbackInFlight = false;
-        this.retryCallbackInFlightOwner = null;
       }
     }
   }
 
-  private async runCooldownRetry(errorMessage: string, entryGeneration: number): Promise<void> {
+  private async runCooldownRetry(
+    errorMessage: string,
+    entryGeneration: number,
+    queryGeneration?: number
+  ): Promise<void> {
     if (!this.retryCallback) {
       if (entryGeneration === this.generation) this.notifyResume();
       return;
     }
     let started = false;
     try {
-      started = await this.retryCallback(this.lastUserMessage, undefined, entryGeneration);
+      started = await this.retryCallback(
+        this.lastUserMessage,
+        undefined,
+        entryGeneration,
+        queryGeneration
+      );
     } catch (err) {
       this.logger.error('Cooldown retry callback threw; rescheduling a startup retry:', err);
       started = false;
@@ -422,6 +523,20 @@ export class RateLimitWatchdog {
       this.startupRetries = 0;
       this.startupExhausted = false;
       this.notifyResume();
+      this.activePauseQueryGeneration = undefined;
+      return;
+    }
+    if (this.querySuperseded(queryGeneration)) {
+      this.logger.info(
+        'Cooldown retry failed but the originating query was superseded; retiring its pause.'
+      );
+      if (
+        this.activePauseQueryGeneration === undefined ||
+        this.activePauseQueryGeneration === this.cooldownQueryGeneration
+      ) {
+        this.notifyResume();
+        this.activePauseQueryGeneration = undefined;
+      }
       return;
     }
 
@@ -438,17 +553,27 @@ export class RateLimitWatchdog {
       `Cooldown retry did not start the query; startup retry ${this.startupRetries}/${MAX_STARTUP_RETRIES} in ${STARTUP_RETRY_DELAY_MS}ms.`
     );
     try {
-      await this.stateManager.setRateLimitCooldown({
-        retryCount: this.retryCount,
-        maxRetries: this.config.maxAutoRetries,
-        retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
-      });
+      await this.stateManager.setRateLimitCooldown(
+        {
+          retryCount: this.retryCount,
+          maxRetries: this.config.maxAutoRetries,
+          retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
+        },
+        queryGeneration
+      );
     } catch (err) {
       this.logger.warn('Failed to restore rate_limit_cooldown before startup retry:', err);
     }
     if (entryGeneration !== this.generation) {
       this.logger.info(
         'Startup retry aborted after state write (episode superseded); not re-arming.'
+      );
+      return;
+    }
+    if (this.querySuperseded(queryGeneration)) {
+      this.logger.info(
+        'Startup retry aborted after state write (the originating query was superseded); ' +
+          'not re-arming.'
       );
       return;
     }
@@ -470,19 +595,25 @@ export class RateLimitWatchdog {
   private async fireImmediateFallback(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry,
-    episodeGeneration: number
+    episodeGeneration: number,
+    queryGeneration?: number
   ): Promise<void> {
-    if (episodeGeneration !== this.generation) {
+    if (episodeGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
       this.logger.info('Immediate fallback aborted before start (episode superseded).');
       this.fallbackPending = false;
       return;
     }
 
     let ok = false;
+    const attemptId = ++this.retryCallbackAttemptSeq;
     this.retryCallbackInFlight = true;
-    this.retryCallbackInFlightOwner = episodeGeneration;
     try {
-      ok = await this.deps.switchAndRetry(lastUserMessage, entry, episodeGeneration);
+      ok = await this.deps.switchAndRetry(
+        lastUserMessage,
+        entry,
+        episodeGeneration,
+        queryGeneration
+      );
     } catch (err) {
       this.logger.error(
         `Fallback switch to ${entry.provider}/${entry.model} threw; advancing to next entry:`,
@@ -490,11 +621,8 @@ export class RateLimitWatchdog {
       );
       ok = false;
     } finally {
-      if (this.retryCallbackInFlightOwner === episodeGeneration) {
+      if (this.retryCallbackAttemptSeq === attemptId) {
         this.retryCallbackInFlight = false;
-        this.retryCallbackInFlightOwner = null;
-      }
-      if (episodeGeneration === this.generation) {
         this.fallbackPending = false;
       }
     }
@@ -511,8 +639,8 @@ export class RateLimitWatchdog {
     }
     const canonical =
       (await this.deps.resolveModelId?.(entry.provider, entry.model)) ?? entry.model;
-    if (episodeGeneration !== this.generation) {
-      this.logger.info('Fallback re-entry aborted after canonical resolve (episode superseded).');
+    if (episodeGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
+      this.logger.info('Fallback re-entry aborted after canonical resolve (superseded).');
       return;
     }
     this.triedKeys.add(`${entry.provider}/${canonical}`);
@@ -521,11 +649,12 @@ export class RateLimitWatchdog {
         const scheduled = await this.scheduleRetry(
           this.lastErrorMessage,
           this.lastUserMessage,
-          this.lastHint ?? undefined
+          this.lastHint ?? undefined,
+          queryGeneration
         );
         if (!scheduled) {
           if (this.lastHint?.billingTerminal) {
-            if (episodeGeneration !== this.generation) {
+            if (episodeGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
               this.logger.info(
                 'Billing surfacing aborted (episode superseded) after fallback re-entry failed.'
               );
@@ -536,18 +665,22 @@ export class RateLimitWatchdog {
                 'surfacing a manual-retry pause instead of abandoning the request.'
             );
             this.limitKind = this.lastHint.kind ?? 'usage_limit';
-            this.startupExhausted = true;
-            await this.stateManager.setRateLimitCooldown({
-              retryCount: this.retryCount,
-              maxRetries: this.config.maxAutoRetries,
-              retryAt: Date.now(),
-            });
-            if (episodeGeneration !== this.generation) {
+            await this.stateManager.setRateLimitCooldown(
+              {
+                retryCount: this.retryCount,
+                maxRetries: this.config.maxAutoRetries,
+                retryAt: Date.now(),
+              },
+              queryGeneration
+            );
+            if (episodeGeneration !== this.generation || this.querySuperseded(queryGeneration)) {
               this.logger.info(
                 'Episode superseded during billing pause state write; not publishing pause.'
               );
               return;
             }
+            this.startupExhausted = true;
+            this.activePauseQueryGeneration = queryGeneration;
             this.notifyPause({ kind: this.limitKind, reason: 'billing-terminal' });
             this.billingPauseSurfaced = true;
           } else {
@@ -557,7 +690,9 @@ export class RateLimitWatchdog {
             await this.scheduleCooldown(
               this.lastErrorMessage,
               computeCooldown(this.lastErrorMessage, this.retryCount),
-              episodeGeneration
+              episodeGeneration,
+              undefined,
+              queryGeneration
             );
           }
         }
@@ -567,7 +702,9 @@ export class RateLimitWatchdog {
           await this.scheduleCooldown(
             this.lastErrorMessage,
             computeCooldown(this.lastErrorMessage, this.retryCount),
-            episodeGeneration
+            episodeGeneration,
+            undefined,
+            queryGeneration
           );
         } catch {}
       }
@@ -607,6 +744,7 @@ export class RateLimitWatchdog {
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
       this.currentRetryAt = null;
+      this.cooldownQueryGeneration = undefined;
       this.logger.info('Cancelled pending rate limit cooldown.');
     }
   }
@@ -654,6 +792,15 @@ export class RateLimitWatchdog {
       this.startupRetries = 0;
     }
     this.billingPauseSurfaced = false;
+
+    if (this.querySuperseded(this.cooldownQueryGeneration)) {
+      this.logger.info(
+        'Immediate retry aborted before firing: the cooldown-owning query was superseded; ' +
+          'retiring its published pause.'
+      );
+      void this.fireCooldownRetry(this.lastErrorMessage);
+      return false;
+    }
 
     this.logger.info(
       `Immediate retry triggered (step ${this.retryCount}/${this.config.maxAutoRetries}).`

@@ -107,7 +107,8 @@ export interface SDKMessageHandlerContext {
   onResultLimitError?(
     errorText: string,
     hint: LimitRetryHint,
-    userMessageUuid?: string
+    userMessageUuid?: string,
+    queryGeneration?: number
   ): Promise<boolean>;
 
   isLimitRecoveryPending?(): boolean;
@@ -942,7 +943,8 @@ export class SDKMessageHandler {
             (await this.ctx.onResultLimitError?.(
               limitError.errorText,
               limitError.hint,
-              limitError.userMessageUuid
+              limitError.userMessageUuid,
+              invocationGeneration ?? undefined
             )) ?? false;
         }
         this.lastResultWasSuccess = limitError === null && isSDKResultSuccess(message);

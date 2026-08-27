@@ -568,6 +568,88 @@ describe('ProcessingStateManager', () => {
     });
   });
 
+  describe('rate-limit-episode cooldown owner filter (B5e)', () => {
+    test('a rate-limit cooldown bound to a stale generation is not persisted', async () => {
+      manager.noteQueryOwnerGeneration(2);
+      await manager.setRateLimitCooldown(
+        { retryCount: 1, maxRetries: 3, retryAt: Date.now() + 60_000 },
+        1
+      );
+      expect(manager.getState().status).toBe('idle');
+
+      await manager.setRateLimitCooldown(
+        { retryCount: 1, maxRetries: 3, retryAt: Date.now() + 60_000 },
+        2
+      );
+      expect(manager.getState().status).toBe('rate_limit_cooldown');
+    });
+
+    test('a cooldown write superseded mid-publication is rolled back to the prior state', async () => {
+      manager.noteQueryOwnerGeneration(1);
+      await manager.setProcessing('owner-msg');
+      let releasePublish!: () => void;
+      emitMock.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePublish = resolve;
+          })
+      );
+
+      const writing = manager.setRateLimitCooldown(
+        { retryCount: 1, maxRetries: 3, retryAt: Date.now() + 60_000 },
+        1
+      );
+      manager.noteQueryOwnerGeneration(2);
+      releasePublish();
+      await writing;
+
+      expect(manager.getState().status).toBe('processing');
+    });
+
+    test('a superseded cooldown write is rolled back even when its publication rejects', async () => {
+      manager.noteQueryOwnerGeneration(1);
+      await manager.setProcessing('owner-msg');
+      emitMock.mockImplementationOnce(() => Promise.reject(new Error('publish rejected')));
+
+      const writing = manager.setRateLimitCooldown(
+        { retryCount: 1, maxRetries: 3, retryAt: Date.now() + 60_000 },
+        1
+      );
+      manager.noteQueryOwnerGeneration(2);
+
+      await expect(writing).rejects.toThrow('publish rejected');
+      expect(manager.getState().status).toBe('processing');
+    });
+
+    test('a replacement cooldown sharing the stale retryAt is not rolled back', async () => {
+      manager.noteQueryOwnerGeneration(1);
+      await manager.setProcessing('owner-msg');
+      const sharedRetryAt = Date.now() + 60_000;
+      let releaseStale!: () => void;
+      emitMock.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseStale = resolve;
+          })
+      );
+
+      const staleWrite = manager.setRateLimitCooldown(
+        { retryCount: 1, maxRetries: 3, retryAt: sharedRetryAt },
+        1
+      );
+      manager.noteQueryOwnerGeneration(2);
+      await manager.setRateLimitCooldown(
+        { retryCount: 5, maxRetries: 3, retryAt: sharedRetryAt },
+        2
+      );
+      releaseStale();
+      await staleWrite;
+
+      expect(manager.getState().status).toBe('rate_limit_cooldown');
+      expect((manager.getState() as { retryCount?: number }).retryCount).toBe(5);
+    });
+  });
+
   describe('onIdleCallback ordering (deferred restart)', () => {
     test('fires the callback BEFORE draining delivery waiters (ownership held through the restart)', async () => {
       let waiterResolvedAtCallback = true;

@@ -483,9 +483,10 @@ export class AgentSession
           return false;
         }
       },
-      switchAndRetry: (lastUserMessage, entry, episodeGeneration) =>
-        this.switchAndRetryForFallback(lastUserMessage, entry, episodeGeneration),
+      switchAndRetry: (lastUserMessage, entry, episodeGeneration, queryGeneration) =>
+        this.switchAndRetryForFallback(lastUserMessage, entry, episodeGeneration, queryGeneration),
       resolveModelId: async (provider, model) => this.resolveModelIdOrDefault(provider, model),
+      getQueryGeneration: () => this.getQueryGeneration(),
       notifyPause: (payload) => {
         this.internalEventBus.publish('session.rate_limit_pause', {
           sessionId: this.session.id,
@@ -506,11 +507,20 @@ export class AgentSession
         }).classifyWithTimeout(rawText),
     });
     this.rateLimitWatchdog.setRetryCallback(
-      async (lastUserMessage, switchTo, episodeGeneration) => {
+      async (lastUserMessage, switchTo, episodeGeneration, queryGeneration) => {
         if (switchTo) {
-          return await this.switchAndRetryForFallback(lastUserMessage, switchTo, episodeGeneration);
+          return await this.switchAndRetryForFallback(
+            lastUserMessage,
+            switchTo,
+            episodeGeneration,
+            queryGeneration
+          );
         }
-        return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
+        return await this.executeRateLimitAutoRetry(
+          lastUserMessage,
+          episodeGeneration,
+          queryGeneration
+        );
       }
     );
 
@@ -789,14 +799,14 @@ export class AgentSession
     messageId: string,
     messageContent: string | MessageContent[],
     episodeGeneration?: number,
-    options?: { prepend?: boolean }
-  ): Promise<void> {
+    options?: { prepend?: boolean; queryGeneration?: number }
+  ): Promise<'started' | 'aborted'> {
     if (episodeGeneration === undefined) {
       this.rateLimitWatchdog.cancel();
     } else {
       this.rateLimitWatchdog.clearPendingCooldown();
     }
-    await this.lifecycleManager.startQueryAndEnqueue(
+    return await this.lifecycleManager.startQueryAndEnqueue(
       messageId,
       messageContent,
       episodeGeneration,
@@ -979,13 +989,16 @@ export class AgentSession
   private async switchAndRetryForFallback(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
     entry: FallbackModelEntry,
-    episodeGeneration: number
+    episodeGeneration: number,
+    queryGeneration?: number
   ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Fallback switch skipped: no last user message available.');
       await this.stateManager.setIdle();
       return false;
     }
+    const querySuperseded = (): boolean =>
+      queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration;
     try {
       if (this.queryPromise) {
         try {
@@ -993,7 +1006,7 @@ export class AgentSession
         } catch {}
       }
 
-      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after teardown (episode superseded).');
         return false;
       }
@@ -1006,7 +1019,7 @@ export class AgentSession
       }
 
       const result = await this.handleModelSwitch(entry.model, entry.provider);
-      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration)) {
+      if (this.rateLimitWatchdog.isSuperseded(episodeGeneration) || querySuperseded()) {
         this.logger.info('Fallback switch aborted after model switch (episode superseded).');
         return false;
       }
@@ -1018,7 +1031,11 @@ export class AgentSession
         return false;
       }
 
-      return await this.executeRateLimitAutoRetry(lastUserMessage, episodeGeneration);
+      return await this.executeRateLimitAutoRetry(
+        lastUserMessage,
+        episodeGeneration,
+        queryGeneration
+      );
     } catch (err) {
       this.logger.error('Fallback switch-and-retry failed:', err);
       await this.stateManager.setIdle();
@@ -1036,7 +1053,8 @@ export class AgentSession
 
   private async executeRateLimitAutoRetry(
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    episodeGeneration?: number
+    episodeGeneration?: number,
+    queryGeneration?: number
   ): Promise<boolean> {
     if (!lastUserMessage) {
       this.logger.warn('Rate limit auto-retry skipped: no last user message available.');
@@ -1060,17 +1078,31 @@ export class AgentSession
         this.stateManager.releaseIdleWaiters(episodeGeneration);
         return false;
       }
+      if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) {
+        this.logger.info(
+          'Rate limit auto-retry aborted before re-enqueue (the originating query was superseded).'
+        );
+        return false;
+      }
 
-      await this.startQueryAndEnqueue(
+      const retryOutcome = await this.startQueryAndEnqueue(
         lastUserMessage.uuid,
         lastUserMessage.content,
         episodeGeneration,
-        { prepend: true }
+        { prepend: true, queryGeneration }
       );
+      if (retryOutcome === 'aborted') {
+        this.logger.info(
+          'Rate limit auto-retry aborted during re-enqueue (the originating query was superseded).'
+        );
+        return false;
+      }
       return true;
     } catch (error) {
       this.logger.error('Rate limit auto-retry failed:', error);
-      await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      if (queryGeneration === undefined || this.getQueryGeneration() === queryGeneration) {
+        await this.stateManager.setIdle({ suppressDeliveryWaiters: true });
+      }
       return false;
     }
   }
@@ -1979,20 +2011,28 @@ export class AgentSession
   async onRateLimitExhausted(
     errorMessage: string,
     lastUserMessage: { uuid: string; content: string | MessageContent[] } | null,
-    hint?: LimitRetryHint
+    hint?: LimitRetryHint,
+    queryGeneration?: number
   ): Promise<boolean> {
-    return this.rateLimitWatchdog.scheduleRetry(errorMessage, lastUserMessage, hint);
+    return this.rateLimitWatchdog.scheduleRetry(
+      errorMessage,
+      lastUserMessage,
+      hint,
+      queryGeneration
+    );
   }
 
   async onResultLimitError(
     errorText: string,
     hint: LimitRetryHint,
-    userMessageUuid?: string
+    userMessageUuid?: string,
+    queryGeneration?: number
   ): Promise<boolean> {
     return this.onRateLimitExhausted(
       errorText,
       this.queryRunner.resolveRetryUserMessage(userMessageUuid),
-      hint
+      hint,
+      queryGeneration
     );
   }
 

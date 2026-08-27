@@ -4670,7 +4670,8 @@ describe('QueryRunner', () => {
             resetAtMs: null,
             kind: 'usage_limit',
             billingTerminal: true,
-          }
+          },
+          1
         );
       });
     });
