@@ -6636,6 +6636,35 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(states.filter((state) => state === 'pending')).toHaveLength(1);
       expect(injected).toHaveLength(0);
     });
+
+    test('flag on: a deferred immediate dispatch schedules a follow-up digest pull', async () => {
+      await attachLiveSession('session-immediate-deferred', 'processing');
+      const events = Array.from({ length: 11 }, () => immediateEvent());
+      for (const event of events) {
+        await eventService.publish(event);
+      }
+      const pendingEvents = events.filter(
+        (event) => eventStore.listDeliveries(event.id)[0]!.state === 'pending'
+      );
+      expect(pendingEvents).toHaveLength(1);
+
+      const deadline = Date.now() + 5000;
+      let pendingState = 'pending';
+      while (Date.now() < deadline) {
+        pendingState = eventStore.listDeliveries(pendingEvents[0]!.id)[0]!.state;
+        if (pendingState === 'delivered') break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(pendingState).toBe('delivered');
+
+      const digestRows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-immediate-deferred'
+           AND sdk_uuid LIKE 'digest-%'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(digestRows).toHaveLength(1);
+    }, 10_000);
   });
 
   describe('events delivery v2 turn-end digest pull', () => {

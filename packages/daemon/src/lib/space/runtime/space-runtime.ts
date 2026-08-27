@@ -714,6 +714,7 @@ export class SpaceRuntime {
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
   private readonly immediateDispatchesInFlight = new Set<string>();
+  private readonly turnEndDigestRetryTimers = new Map<string, Timer>();
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
@@ -1875,6 +1876,9 @@ export class SpaceRuntime {
       if (outcome.action === 'skip' && outcome.reason === 'claim_conflict') {
         this.queueHealthMetrics.recordClaimConflict();
       }
+      if (outcome.action === 'deferred' && target.sessionId) {
+        this.scheduleTurnEndDigestRetry(target.sessionId, target.taskId);
+      }
       if (outcome.action === 'error') {
         log.warn(
           `SpaceRuntime: immediate-tier delivery for ${payload.eventId} failed at ` +
@@ -1889,6 +1893,21 @@ export class SpaceRuntime {
     } finally {
       this.immediateDispatchesInFlight.delete(deliveryKey);
     }
+  }
+
+  private scheduleTurnEndDigestRetry(sessionId: string, taskId?: string): void {
+    if (this.turnEndDigestRetryTimers.has(sessionId)) return;
+    const timer = setTimeout(() => {
+      this.turnEndDigestRetryTimers.delete(sessionId);
+      if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+      void this.renderPendingDigestForSession(sessionId, taskId).catch((error) => {
+        log.warn(
+          `SpaceRuntime: turn-end digest retry for session ${sessionId} failed: ` +
+            `${formatCommandError(error)}`
+        );
+      });
+    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
+    this.turnEndDigestRetryTimers.set(sessionId, timer);
   }
 
   private consumeImmediateTierRateBudget(target: WorkflowSubscriptionTarget): boolean {
@@ -1910,6 +1929,7 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store) return null;
     const messages = this.getSdkMessageRepo();
+    let freshDigestDbId: string | null = null;
     const deps: RenderPendingDigestDeps = {
       getExecutionByAgentSessionId: (targetSessionId) => {
         const execution = this.config.nodeExecutionRepo.getByAgentSessionId(targetSessionId);
@@ -1993,6 +2013,7 @@ export class SpaceRuntime {
           if (existing) return { dbId: existing.dbId, replayed: true };
         }
         const dbId = messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
+        freshDigestDbId = dbId;
         return { dbId, replayed: false };
       },
       reopenFailedDigest: (targetSessionId, uuid) => {
@@ -2011,7 +2032,11 @@ export class SpaceRuntime {
         }
       },
     };
-    return runRenderPendingDigest(deps, { sessionId, taskId });
+    const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
+    if (outcome.action === 'skip' && freshDigestDbId !== null) {
+      messages.deletePendingUserMessage(sessionId, freshDigestDbId, 'deferred');
+    }
+    return outcome;
   }
 
   private async deliverToLiveSessionTarget(
@@ -4170,6 +4195,10 @@ export class SpaceRuntime {
     }
     this.externalEventRetryTimers.clear();
     this.externalEventRetryCounts.clear();
+    for (const timer of this.turnEndDigestRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.turnEndDigestRetryTimers.clear();
     for (const state of this.externalEventRateLimits.values()) {
       if (state.digestTimer) clearTimeout(state.digestTimer);
       if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
