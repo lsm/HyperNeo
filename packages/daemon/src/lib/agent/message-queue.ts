@@ -815,6 +815,11 @@ export class MessageQueue {
       if (!this.hasOutstandingInternalCompaction()) {
         opts.contextTracker.clearCompactionCooldown();
         opts.onResumeClear();
+      } else {
+        opts.logger.info(
+          `durable compaction remains queued for session ${opts.sessionId}; the pending ` +
+            `resume stays armed until its boundary on the next query`
+        );
       }
     });
     await Promise.race([
