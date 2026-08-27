@@ -1,7 +1,17 @@
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
-import type { Space, SpaceCreateResult, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
+import type {
+  Space,
+  SpaceCreateResult,
+  SpaceTask,
+  SpaceWorkspace,
+  SpaceWorkflowRun,
+} from '@hyperneo/shared';
 import { setupSpaceHandlers } from '../../../../src/lib/rpc-handlers/space-handlers';
+import {
+  WorkspaceRegistrationError,
+  WorkspaceRemovalBlockedError,
+} from '../../../../src/lib/space/managers/space-workspace-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
@@ -59,6 +69,16 @@ const mockRun: SpaceWorkflowRun = {
   updatedAt: NOW,
 };
 
+const mockWorkspace: SpaceWorkspace = {
+  id: 'ws-1',
+  spaceId: 'space-1',
+  path: '/tmp/test-workspace',
+  label: 'test-workspace',
+  isPrimary: true,
+  createdAt: NOW,
+  updatedAt: NOW,
+};
+
 function createMockMessageHub(): {
   hub: MessageHub;
   handlers: Map<string, RequestHandler>;
@@ -108,7 +128,22 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
     deleteSpace: mock(async () => true),
     addSession: mock(async () => space!),
     removeSession: mock(async () => space!),
+    registerWorkspace: mock(async () => mockWorkspace),
+    removeWorkspace: mock(() => true),
+    listWorkspaces: mock(() => [mockWorkspace]),
   } as unknown as SpaceManager;
+}
+
+function registrationError(
+  reason: 'path_claimed_by_another_space' | 'not_a_git_repository_root',
+  message: string
+): WorkspaceRegistrationError {
+  return new WorkspaceRegistrationError(message, reason, {
+    accepted: false,
+    reason,
+    message,
+    canonicalPath: null,
+  });
 }
 
 function createMockTaskRepo(tasks: SpaceTask[] = [mockTask]): SpaceTaskRepository {
@@ -825,6 +860,130 @@ describe('space-handlers', () => {
 
     it('throws when id is missing', async () => {
       await expect(call('space.resume', {})).rejects.toThrow('id is required');
+    });
+  });
+
+  describe('space.workspace.list', () => {
+    beforeEach(() => setup());
+
+    it('returns the workspaces of the space', async () => {
+      const result = await call('space.workspace.list', { spaceId: 'space-1' });
+
+      expect(result).toEqual([mockWorkspace]);
+      expect(spaceManager.listWorkspaces).toHaveBeenCalledWith('space-1');
+    });
+
+    it('propagates unknown-space errors from the manager', async () => {
+      (spaceManager.listWorkspaces as ReturnType<typeof mock>).mockImplementation(() => {
+        throw new Error('Space not found: ghost');
+      });
+
+      await expect(call('space.workspace.list', { spaceId: 'ghost' })).rejects.toThrow(
+        'Space not found: ghost'
+      );
+    });
+  });
+
+  describe('space.workspace.add', () => {
+    beforeEach(() => setup());
+
+    it('registers the workspace and returns the record', async () => {
+      const result = await call('space.workspace.add', {
+        spaceId: 'space-1',
+        path: '/tmp/other-repo',
+        label: 'other-repo',
+      });
+
+      expect(result).toEqual(mockWorkspace);
+      expect(spaceManager.registerWorkspace).toHaveBeenCalledWith(
+        'space-1',
+        '/tmp/other-repo',
+        'other-repo'
+      );
+    });
+
+    it('forwards an undefined label when none is provided', async () => {
+      await call('space.workspace.add', { spaceId: 'space-1', path: '/tmp/other-repo' });
+
+      expect(spaceManager.registerWorkspace).toHaveBeenCalledWith(
+        'space-1',
+        '/tmp/other-repo',
+        undefined
+      );
+    });
+
+    it('rejects paths already claimed by another space', async () => {
+      (spaceManager.registerWorkspace as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw registrationError(
+          'path_claimed_by_another_space',
+          'Workspace path is already claimed by space space-2: /tmp/other-repo'
+        );
+      });
+
+      await expect(
+        call('space.workspace.add', { spaceId: 'space-1', path: '/tmp/other-repo' })
+      ).rejects.toThrow('already claimed by space space-2');
+    });
+
+    it('rejects paths that are not git repository roots', async () => {
+      (spaceManager.registerWorkspace as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw registrationError(
+          'not_a_git_repository_root',
+          'Workspace path is not a git repository root: /tmp/plain-dir'
+        );
+      });
+
+      await expect(
+        call('space.workspace.add', { spaceId: 'space-1', path: '/tmp/plain-dir' })
+      ).rejects.toThrow('not a git repository root');
+    });
+  });
+
+  describe('space.workspace.remove', () => {
+    beforeEach(() => setup());
+
+    it('removes the workspace and returns success', async () => {
+      const result = await call('space.workspace.remove', {
+        spaceId: 'space-1',
+        workspaceId: 'ws-1',
+      });
+
+      expect(result).toEqual({ success: true });
+      expect(spaceManager.removeWorkspace).toHaveBeenCalledWith('space-1', 'ws-1');
+    });
+
+    it('throws when the manager reports the workspace missing', async () => {
+      (spaceManager.removeWorkspace as ReturnType<typeof mock>).mockImplementation(() => false);
+
+      await expect(
+        call('space.workspace.remove', { spaceId: 'space-1', workspaceId: 'ws-ghost' })
+      ).rejects.toThrow('Workspace not found: ws-ghost');
+    });
+
+    it('rejects removal of the primary workspace', async () => {
+      (spaceManager.removeWorkspace as ReturnType<typeof mock>).mockImplementation(() => {
+        throw new WorkspaceRemovalBlockedError(
+          'Cannot remove the primary workspace of space space-1',
+          'primary'
+        );
+      });
+
+      await expect(
+        call('space.workspace.remove', { spaceId: 'space-1', workspaceId: 'ws-1' })
+      ).rejects.toThrow('Cannot remove the primary workspace');
+    });
+
+    it('rejects removal while active sessions reference the workspace', async () => {
+      (spaceManager.removeWorkspace as ReturnType<typeof mock>).mockImplementation(() => {
+        throw new WorkspaceRemovalBlockedError(
+          'Cannot remove workspace ws-2 while 2 active sessions reference it',
+          'active_sessions'
+        );
+      });
+
+      await expect(
+        call('space.workspace.remove', { spaceId: 'space-1', workspaceId: 'ws-2' })
+      ).rejects.toThrow('2 active sessions reference it');
     });
   });
 });
