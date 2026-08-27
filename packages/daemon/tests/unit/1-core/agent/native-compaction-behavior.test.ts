@@ -338,6 +338,7 @@ function driveCompactionRefresh(opts: {
     pruneSentPrompts: mock(() => {}),
     acknowledgeCompactionsAwaitingBoundary: mock(() => {}),
     clearNonCompactionSentSinceBoundary: mock(() => {}),
+    isRunning: mock(() => true),
   } as unknown as MessageQueue;
 
   const errorManager = { handleError: mock(async () => {}) } as unknown as ErrorManager;

@@ -224,6 +224,7 @@ describe('SDKMessageHandler', () => {
       hasInFlightInternalCompaction: mock(() => false),
       hasCompactionsAwaitingBoundary: hasCompactionsAwaitingBoundarySpy,
       hasOutstandingNonCompactionMessages: mock(() => false),
+      isRunning: mock(() => true),
       pruneSentPrompts: pruneSentPromptsSpy,
       acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
