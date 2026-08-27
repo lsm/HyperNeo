@@ -5,6 +5,7 @@ import type {
   ProviderSessionConfig,
 } from '@hyperneo/shared/provider';
 import type { QueryLike } from './agent/query-like.ts';
+import type { ProviderRepository } from '../storage/repositories/provider-repository.ts';
 import { COPILOT_ANTHROPIC_MODELS } from './providers/anthropic-copilot/models.js';
 import { getCodexBridgeModelInfos, resolveCodexBridgeModelId } from './providers/codex-models.js';
 import { DeepSeekProvider } from './providers/deepseek-provider.js';
@@ -21,6 +22,7 @@ import {
   removeProviderFailure,
 } from './providers/provider-failure-store.js';
 import { getProviderRegistry } from './providers/registry.js';
+import { mergeDiscoveredModels } from './providers/shared/discovery-cache.js';
 
 const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
   default: 'sonnet',
@@ -155,6 +157,14 @@ function mergeWithFallbackModels(
   return Array.from(modelMap.values());
 }
 
+export function mergeDiscoveredWithStatic(
+  providerId: string,
+  discovered: ReadonlyArray<ModelInfo>
+): ModelInfo[] {
+  const staticModels = STATIC_MODEL_METADATA.filter((model) => model.provider === providerId);
+  return mergeDiscoveredModels(staticModels, discovered);
+}
+
 const refreshInProgress = new Map<string, Promise<void>>();
 
 const cacheGeneration = new Map<string, number>();
@@ -178,16 +188,38 @@ const refreshModes = new Map<string, boolean>();
 
 const pendingProviderSlices = new Map<string, ModelInfo[]>();
 
+const pendingSliceReleases = new Set<string>();
+
+let providerRepositoryRef: ProviderRepository | null = null;
+
+export function setProviderRepository(repo: ProviderRepository): void {
+  providerRepositoryRef = repo;
+}
+
 function pendingSliceKey(cacheKey: string, providerId: string): string {
   return `${cacheKey}:${providerId}`;
 }
 
-function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): ModelInfo[] {
+export function mergePendingProviderSlices(cacheKey: string, models: ModelInfo[]): ModelInfo[] {
   let merged = models;
+  const consumedKeys: string[] = [];
+  const providedProviders = new Set(merged.map((model) => model.provider));
   for (const [key, slice] of pendingProviderSlices) {
     if (!key.startsWith(`${cacheKey}:`)) continue;
     const providerId = key.slice(cacheKey.length + 1);
+    const isMarkedForRelease = pendingSliceReleases.has(key);
+    if (isMarkedForRelease && providedProviders.has(providerId)) {
+      consumedKeys.push(key);
+      continue;
+    }
     merged = [...merged.filter((model) => model.provider !== providerId), ...slice];
+    if (isMarkedForRelease) {
+      consumedKeys.push(key);
+    }
+  }
+  for (const key of consumedKeys) {
+    pendingSliceReleases.delete(key);
+    pendingProviderSlices.delete(key);
   }
   return merged;
 }
@@ -345,12 +377,84 @@ type ProviderModelLoadResult =
   | { status: 'unavailable'; models: ModelInfo[] }
   | { status: 'failed'; models: ModelInfo[]; error?: unknown };
 
-export function fallbackModelsFor(provider: Provider): ModelInfo[] {
+export function fallbackModelsFor(
+  provider: Provider,
+  persistedDiscovered: ReadonlyArray<{ id: string; name?: string }> = []
+): ModelInfo[] {
   const cached = provider.getCachedModels?.();
   if (cached && cached.length > 0) {
     return cached;
   }
-  return STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
+  const staticSlice = STATIC_MODEL_METADATA.filter((model) => model.provider === provider.id);
+  if (persistedDiscovered.length === 0) return staticSlice;
+  const knownIds = new Set(staticSlice.map((model) => model.id));
+  const persistedSlice: ModelInfo[] = persistedDiscovered
+    .filter((entry) => !knownIds.has(entry.id))
+    .map((entry) => ({
+      id: entry.id,
+      name: entry.name ?? entry.id,
+      alias: '',
+      family: provider.id,
+      provider: provider.id,
+      contextWindow: 128000,
+      description: `${entry.name ?? entry.id} via ${provider.id}`,
+      releaseDate: '',
+      available: true,
+    }));
+  return [...staticSlice, ...persistedSlice];
+}
+
+export function extractPersistedDiscoveredWrapper(configJson: string | undefined): {
+  models: Array<{ id: string; name?: string }>;
+  fingerprint?: string;
+} | null {
+  if (!configJson) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(configJson);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  const discovered = obj.discoveredModels;
+  if (!discovered || typeof discovered !== 'object' || Array.isArray(discovered)) return null;
+  const models = (discovered as { models?: unknown }).models;
+  if (!Array.isArray(models)) return null;
+  const entries = models.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const id = (entry as { id?: unknown }).id;
+    if (typeof id !== 'string') return [];
+    const name = (entry as { name?: unknown }).name;
+    return [{ id, ...(typeof name === 'string' ? { name } : {}) }];
+  });
+  const fingerprint = (discovered as { fingerprint?: unknown }).fingerprint;
+  return {
+    models: entries,
+    ...(typeof fingerprint === 'string' ? { fingerprint } : {}),
+  };
+}
+
+export function endpointMatchingPersistedDiscovered(
+  provider: Provider
+): Array<{ id: string; name?: string }> {
+  if (!providerRepositoryRef) return [];
+  try {
+    const record = providerRepositoryRef.getProviderByProviderId(provider.id);
+    const wrapper = extractPersistedDiscoveredWrapper(record?.configJson);
+    if (!wrapper) return [];
+    const endpointFingerprint = provider.getDiscoveryEndpointFingerprint?.(record?.baseUrl);
+    if (
+      wrapper.fingerprint !== undefined &&
+      endpointFingerprint !== undefined &&
+      wrapper.fingerprint !== endpointFingerprint
+    ) {
+      return [];
+    }
+    return wrapper.models;
+  } catch {
+    return [];
+  }
 }
 
 const PROVIDER_CATALOG_CACHE_TTL_MS = 10_000;
@@ -1054,6 +1158,10 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     for (const key of pendingProviderSlices.keys()) {
       if (key.startsWith(`${cacheKey}:`)) pendingProviderSlices.delete(key);
     }
+    const releaseKeys = [...pendingSliceReleases];
+    for (const key of releaseKeys) {
+      if (key.startsWith(`${cacheKey}:`)) pendingSliceReleases.delete(key);
+    }
     if (cacheKey === 'global') {
       cancelAllProviderRetries();
     }
@@ -1068,6 +1176,7 @@ export function clearModelsCache(cacheKey?: string, providerId?: string): void {
     refreshModes.clear();
     clearProviderModelCaches();
     pendingProviderSlices.clear();
+    pendingSliceReleases.clear();
     scopedCatalogStamps.clear();
     for (const key of inFlightKeys) {
       cacheGeneration.set(key, (cacheGeneration.get(key) ?? 0) + 1);
@@ -1218,6 +1327,15 @@ export function updateProviderModelsInCache(
       .catch(() => {});
   }
   return true;
+}
+
+export function releaseAppliedProviderSlice(providerId: string, cacheKey: string = 'global'): void {
+  pendingSliceReleases.delete(pendingSliceKey(cacheKey, providerId));
+  pendingProviderSlices.delete(pendingSliceKey(cacheKey, providerId));
+}
+
+export function schedulePendingSliceRelease(providerId: string, cacheKey: string = 'global'): void {
+  pendingSliceReleases.add(pendingSliceKey(cacheKey, providerId));
 }
 
 export function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {

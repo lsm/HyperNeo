@@ -90,6 +90,8 @@ export interface Provider {
 
   listRemoteModels?(options?: ListRemoteModelsOptions): Promise<ModelInfo[]>;
 
+  getDiscoveryEndpointFingerprint?(discoveryBaseUrl?: string): string;
+
   ownsModel(modelId: string): boolean;
 
   getModelForTier(tier: ModelTier): string | undefined;
