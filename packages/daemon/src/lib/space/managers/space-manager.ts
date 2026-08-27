@@ -5,6 +5,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
+import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import {
   SpaceWorkspaceRepository,
   type SpaceWorkspaceRecord,
@@ -252,6 +253,7 @@ const runCreateSpace = (
 export class SpaceManager {
   private spaceRepo: SpaceRepository;
   private workspaceRepo: SpaceWorkspaceRepository;
+  private taskRepo: SpaceTaskRepository;
   private workspaceManager: SpaceWorkspaceManager;
   private onSpaceResumedCallbacks: Array<(spaceId: string) => void> = [];
   private onSpacePausedCallbacks: Array<(spaceId: string) => void> = [];
@@ -260,11 +262,16 @@ export class SpaceManager {
   constructor(private db: BunDatabase) {
     this.spaceRepo = new SpaceRepository(db);
     this.workspaceRepo = new SpaceWorkspaceRepository(db);
+    this.taskRepo = new SpaceTaskRepository(db);
     this.workspaceManager = new SpaceWorkspaceManager({
       spaces: this.spaceRepo,
       workspaces: this.workspaceRepo,
       sessionReferences: new SessionRepository(db),
       transaction: <T>(fn: () => T) => db.transaction(fn, 'immediate')(),
+      taskReferences: {
+        countActiveTasksByWorkspacePath: (spaceId, workspacePath) =>
+          this.taskRepo.countNonArchivedByWorkspacePath(spaceId, workspacePath),
+      },
     });
   }
 
@@ -317,6 +324,10 @@ export class SpaceManager {
 
   listWorkspaces(spaceId: string): SpaceWorkspaceRecord[] {
     return this.workspaceManager.listWorkspaces(spaceId);
+  }
+
+  async resolveRegisteredWorkspacePath(spaceId: string, rawPath: string): Promise<string> {
+    return this.workspaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath);
   }
 
   async getSpace(id: string): Promise<Space | null> {

@@ -1243,6 +1243,33 @@ describe('SpaceTaskRepository', () => {
       const updated = repo.updateTask(task.id, { workspacePath: null });
       expect(updated!.workspacePath).toBeNull();
     });
+
+    it('counts non-archived tasks by workspace path', () => {
+      const path = '/workspaces/custom';
+      repo.createTask({
+        spaceId,
+        title: 'Open',
+        description: '',
+        workspacePath: path,
+        status: 'open',
+      });
+      repo.createTask({
+        spaceId,
+        title: 'Done',
+        description: '',
+        workspacePath: path,
+        status: 'done',
+      });
+      const archived = repo.createTask({
+        spaceId,
+        title: 'Archived',
+        description: '',
+        workspacePath: path,
+        status: 'archived',
+      });
+      repo.updateTask(archived.id, { archivedAt: Date.now() });
+      expect(repo.countNonArchivedByWorkspacePath(spaceId, path)).toBe(2);
+    });
   });
 
   describe('taskNumber (numeric task IDs)', () => {

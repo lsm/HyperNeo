@@ -4717,7 +4717,8 @@ export class TaskAgentManager {
         this.config.goalService?.handleTaskTerminal(taskId, {
           fromStatus,
           deferPostCommitEffects: true,
-        })
+        }),
+      (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(spaceId, rawPath)
     );
     const endNodeHandlers = isEndNode
       ? createEndNodeHandlers({

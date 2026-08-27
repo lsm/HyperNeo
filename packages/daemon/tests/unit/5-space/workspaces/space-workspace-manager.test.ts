@@ -7,6 +7,7 @@ import {
   WorkspaceRemovalBlockedError,
   type SpaceWorkspaceManagerDeps,
   type WorkspaceSessionReferences,
+  type WorkspaceTaskReferences,
 } from '../../../../src/lib/space/managers/space-workspace-manager.ts';
 import type { WorkspaceValidationIo } from '../../../../src/lib/space/workspaces/workspace-validation-pipeline.ts';
 
@@ -124,6 +125,10 @@ const noActiveSessions: WorkspaceSessionReferences = {
   countActiveSessionsByWorkspacePath: () => 0,
 };
 
+const noActiveTasks: WorkspaceTaskReferences = {
+  countActiveTasksByWorkspacePath: () => 0,
+};
+
 function newManager(
   options: {
     spaces?: Space[];
@@ -131,6 +136,7 @@ function newManager(
     io?: WorkspaceValidationIo;
     sessionReferences?: WorkspaceSessionReferences;
     transaction?: <T>(fn: () => T) => T;
+    taskReferences?: WorkspaceTaskReferences;
   } = {}
 ): { manager: SpaceWorkspaceManager; workspaces: FakeWorkspaces } {
   const workspaces = options.workspaces ?? new FakeWorkspaces();
@@ -138,6 +144,7 @@ function newManager(
     spaces: new FakeSpaces(options.spaces ?? [fakeSpace(SPACE_A, '/primary-a')]),
     workspaces,
     sessionReferences: options.sessionReferences ?? noActiveSessions,
+    taskReferences: options.taskReferences ?? noActiveTasks,
     io: options.io ?? fakeIo(),
     transaction: options.transaction,
   };
@@ -327,6 +334,67 @@ describe('removeWorkspace', () => {
     expect((err as WorkspaceRemovalBlockedError).reason).toBe('active_sessions');
     expect(calls).toEqual([[SPACE_A, '/sec']]);
     expect(workspaces.rows).toHaveLength(1);
+  });
+
+  test('blocks removal while active tasks reference the workspace', () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/sec', 'w2')]);
+    const calls: Array<[string, string]> = [];
+    const { manager } = newManager({
+      workspaces,
+      taskReferences: {
+        countActiveTasksByWorkspacePath: (spaceId, workspacePath) => {
+          calls.push([spaceId, workspacePath]);
+          return 3;
+        },
+      },
+    });
+    let err: unknown;
+    try {
+      manager.removeWorkspace(SPACE_A, 'w2');
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(WorkspaceRemovalBlockedError);
+    expect((err as WorkspaceRemovalBlockedError).reason).toBe('active_tasks');
+    expect(calls).toEqual([[SPACE_A, '/sec']]);
+    expect(workspaces.rows).toHaveLength(1);
+  });
+});
+
+describe('resolveRegisteredWorkspacePath', () => {
+  test('resolves the primary path from space.workspacePath when no primary row exists', async () => {
+    const { manager } = newManager();
+    const resolved = await manager.resolveRegisteredWorkspacePath(SPACE_A, '/primary-a');
+    expect(resolved).toBe('/primary-a');
+  });
+
+  test('resolves a secondary workspace path', async () => {
+    const workspaces = new FakeWorkspaces([
+      row(SPACE_A, '/primary-a', 'primary', true),
+      row(SPACE_A, '/sec', 'w2'),
+    ]);
+    const { manager } = newManager({ workspaces });
+    const resolved = await manager.resolveRegisteredWorkspacePath(SPACE_A, '/sec');
+    expect(resolved).toBe('/sec');
+  });
+
+  test('canonicalizes the raw path through io.realpath before matching', async () => {
+    const workspaces = new FakeWorkspaces([row(SPACE_A, '/canon', 'w1')]);
+    const { manager } = newManager({
+      workspaces,
+      io: fakeIo({ realpath: async () => '/canon' }),
+    });
+    const resolved = await manager.resolveRegisteredWorkspacePath(SPACE_A, '/raw');
+    expect(resolved).toBe('/canon');
+  });
+
+  test('rejects an unregistered path with a clear error', async () => {
+    const { manager } = newManager();
+    const err = await manager
+      .resolveRegisteredWorkspacePath(SPACE_A, '/unregistered')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('Workspace path is not registered to space: /unregistered');
   });
 });
 
