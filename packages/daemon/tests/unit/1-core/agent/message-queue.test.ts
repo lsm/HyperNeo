@@ -1231,6 +1231,66 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('a tool result bypasses the gate even when an ordinary prompt precedes it', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+      q.setDeliveryGate(gate);
+
+      const prompt = q.enqueue('queued prompt', false, { durable: true });
+      const toolResult = q.enqueueWithId(
+        'tool-result-1',
+        [{ type: 'tool_result', tool_use_id: 'tu-1', content: 'done' }],
+        false,
+        { durable: true }
+      );
+
+      const generator = q.messageGenerator(testSessionId);
+      const first = await generator.next();
+      expect(first.value.message.uuid).toBe('tool-result-1');
+      first.value.onSent();
+      await toolResult;
+
+      releaseGate();
+      const second = await generator.next();
+      expect(second.value.message.message.content[0].text).toBe('queued prompt');
+      second.value.onSent();
+      await prompt;
+      q.stop();
+    });
+
+    it('ordinary prompts hold behind a sent internal compaction until its boundary is acknowledged', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const compaction = q.enqueue('/compact', true, { durable: true, prepend: true });
+      const prompt = q.enqueue('after compaction', false, { durable: true });
+
+      const generator = q.messageGenerator(testSessionId);
+      const first = await generator.next();
+      expect(first.value.message.internal).toBe(true);
+      first.value.onSent();
+      await compaction;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+
+      let promptDelivered = false;
+      const secondPending = generator.next().then((entry) => {
+        promptDelivered = true;
+        return entry;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(promptDelivered).toBe(false);
+
+      q.acknowledgeCompactionsAwaitingBoundary();
+      const second = await secondPending;
+      expect(second.value.message.message.content[0].text).toBe('after compaction');
+      second.value.onSent();
+      await prompt;
+      q.stop();
+    });
+
     it('keeps waiting for new messages while a gate spans an empty queue', async () => {
       const q = new MessageQueue();
       q.start();

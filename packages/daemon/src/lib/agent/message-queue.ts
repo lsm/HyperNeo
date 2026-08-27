@@ -105,6 +105,7 @@ export class MessageQueue {
       this.internalCompactionsAwaitingBoundary -= 1;
     }
     this.recentSentPrompts.clear();
+    this.wakeWaiters();
   }
 
   hasCompactionsAwaitingBoundary(): boolean {
@@ -501,12 +502,12 @@ export class MessageQueue {
     }
   }
 
-  private frontOfQueueBypassesGate(): boolean {
-    const front = this.queue[0];
-    return (
-      !!front &&
-      typeof front.content !== 'string' &&
-      front.content.some((block) => isToolResultContent(block))
+  private gatedBypassIndex(): number {
+    return this.queue.findIndex(
+      (message) =>
+        this.isInternalCompaction(message) ||
+        (typeof message.content !== 'string' &&
+          message.content.some((block) => isToolResultContent(block)))
     );
   }
 
@@ -520,19 +521,23 @@ export class MessageQueue {
         if (!this.running) return null;
       }
 
-      while (this.deliveryGate && !this.frontOfQueueBypassesGate()) {
+      const bypassIndex =
+        this.deliveryGate || this.hasOutstandingInternalCompaction() ? this.gatedBypassIndex() : 0;
+
+      if (bypassIndex === -1) {
         await Promise.race([
-          this.deliveryGate.catch(() => {}),
+          ...(this.deliveryGate ? [this.deliveryGate.catch(() => {})] : []),
           new Promise<void>((resolve) => {
             this.waiters.push(resolve);
           }),
         ]);
         if (!this.running) return null;
+        continue;
       }
 
       if (!this.running) return null;
 
-      const message = this.queue.shift();
+      const message = this.queue.splice(bypassIndex, 1)[0];
       if (message) {
         this.claimed.add(message);
         return message;

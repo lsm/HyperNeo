@@ -658,10 +658,19 @@ describe('N4: literal /compact never enters the transcript or provider request',
         }
       }
     })();
+    const boundarySimulator = (async () => {
+      while (yielded.length < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        if (queue.hasCompactionsAwaitingBoundary()) {
+          queue.acknowledgeCompactionsAwaitingBoundary();
+        }
+      }
+    })();
 
     await queue.enqueue('/compact', true);
     await queue.enqueue('fix the bug', false);
     await consumer;
+    await boundarySimulator;
 
     expect(yielded).toHaveLength(2);
     expect(yielded[0].internal).toBe(true);
