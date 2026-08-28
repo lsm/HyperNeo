@@ -946,22 +946,12 @@ export class QueryRunner {
         try {
           await this.handleSDKMessage(message as SDKMessage, queryGeneration);
         } catch (error) {
-          logger.error('Error handling SDK message:', error);
-          logger.error('Message type:', (message as SDKMessage).type);
-
-          if (!this.ctx.isCleaningUp()) {
-            const processingState = stateManager.getState();
-            await drainDeliveryWaitersOnTerminalSDKMessage(stateManager, message as SDKMessage);
-
-            await errorManager.handleError(
-              session.id,
-              error as Error,
-              ErrorCategory.MESSAGE,
-              'Error processing SDK message. The session has been reset.',
-              processingState,
-              { messageType: (message as SDKMessage).type }
-            );
-          }
+          await this.handleStreamMessageError(
+            message as SDKMessage,
+            error,
+            queryGeneration,
+            attemptToken
+          );
         }
       }
 
@@ -1188,39 +1178,75 @@ export class QueryRunner {
         }
 
         const { route, finalizer } = decision;
+        const owner = stateManager.idleOwnerForQuery(queryGeneration);
+        let terminalIdleArmed = false;
 
         if (route.action === 'api_validation') {
           if (!finalizer.skipBeginTerminalIdle) {
-            stateManager.beginTerminalIdle(stateManager.idleOwnerForQuery(queryGeneration));
+            if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
+              return;
+            }
+            stateManager.beginTerminalIdle(owner);
+            terminalIdleArmed = true;
           }
-          await this.displayErrorAsAssistantMessage(route.text, {
-            markAsError: true,
-          });
+          try {
+            await this.displayErrorAsAssistantMessage(route.text, {
+              markAsError: true,
+            });
+          } catch (error) {
+            if (terminalIdleArmed) {
+              stateManager.cancelTerminalIdleArm(owner);
+            }
+            throw error;
+          }
         } else if (route.action === 'terminal') {
           if (!finalizer.skipBeginTerminalIdle) {
-            stateManager.beginTerminalIdle(stateManager.idleOwnerForQuery(queryGeneration));
+            if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
+              return;
+            }
+            stateManager.beginTerminalIdle(owner);
+            terminalIdleArmed = true;
           }
           if (!finalizer.skipErrorManager) {
-            await errorManager.handleError(
-              session.id,
-              error as Error,
-              route.category,
-              this.terminalUserMessageFor(route.messageHint, maxProviderRetries),
-              processingState,
-              {
-                errorMessage,
-                queueSize: messageQueue.size(),
-                providerId: providerId ?? 'anthropic',
-                workspacePath: session.workspacePath ?? undefined,
-                isRootWorkspace: !session.worktree,
-                startupTimeoutMs: STARTUP_TIMEOUT_MS,
+            const publishGuard = () =>
+              !this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === queryGeneration;
+            try {
+              await errorManager.handleError(
+                session.id,
+                error as Error,
+                route.category,
+                this.terminalUserMessageFor(route.messageHint, maxProviderRetries),
+                processingState,
+                {
+                  errorMessage,
+                  queueSize: messageQueue.size(),
+                  providerId: providerId ?? 'anthropic',
+                  workspacePath: session.workspacePath ?? undefined,
+                  isRootWorkspace: !session.worktree,
+                  startupTimeoutMs: STARTUP_TIMEOUT_MS,
+                },
+                publishGuard
+              );
+            } catch (error) {
+              if (terminalIdleArmed) {
+                stateManager.cancelTerminalIdleArm(owner);
               }
-            );
+              throw error;
+            }
           }
         }
 
         if (!finalizer.skipCatchIdle) {
-          await stateManager.setIdle({ owner: stateManager.idleOwnerForQuery(queryGeneration) });
+          if (this.ctx.getQueryGeneration() !== queryGeneration) {
+            return;
+          }
+          if (this.ctx.isCleaningUp()) {
+            if (terminalIdleArmed) {
+              stateManager.cancelTerminalIdleArm(owner);
+            }
+            return;
+          }
+          await stateManager.setIdle({ owner });
         }
       }
     } finally {
@@ -1769,6 +1795,40 @@ export class QueryRunner {
   async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
     await this.ctx.onSDKMessage(message, undefined, queryGeneration);
     await this.ctx.onMarkApiSuccess(message, queryGeneration);
+  }
+
+  async handleStreamMessageError(
+    message: SDKMessage,
+    error: unknown,
+    queryGeneration: number,
+    attemptToken: QueryAttemptToken
+  ): Promise<void> {
+    const { session, stateManager, errorManager, logger } = this.ctx;
+
+    logger.error('Error handling SDK message:', error);
+    logger.error('Message type:', message.type);
+
+    const attemptOwnsRun = () =>
+      !this.ctx.isCleaningUp() &&
+      this.ctx.getQueryGeneration() === queryGeneration &&
+      attemptToken.isLive();
+
+    if (attemptOwnsRun()) {
+      const processingState = stateManager.getState();
+      await drainDeliveryWaitersOnTerminalSDKMessage(stateManager, message);
+      await errorManager.handleError(
+        session.id,
+        error as Error,
+        ErrorCategory.MESSAGE,
+        'Error processing SDK message. The session has been reset.',
+        processingState,
+        { messageType: message.type },
+        attemptOwnsRun
+      );
+      return;
+    }
+
+    stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
   }
 
   async *createAbortableQuery(

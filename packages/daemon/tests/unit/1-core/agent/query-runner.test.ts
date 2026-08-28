@@ -1381,6 +1381,88 @@ describe('QueryRunner', () => {
     });
   });
 
+  describe('handleStreamMessageError', () => {
+    const topLevelResult = {
+      type: 'result',
+      uuid: 'result-uuid',
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage;
+
+    function allocateLiveToken(ctx: QueryRunnerContext) {
+      return ctx.attemptTokens.allocate();
+    }
+
+    it('drains delivery waiters and publishes through the ownership guard for the owning attempt', async () => {
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const token = allocateLiveToken(ctx);
+      ctx.incrementQueryGeneration();
+
+      await runner.handleStreamMessageError(topLevelResult, new Error('handler boom'), 1, token);
+
+      expect(setIdleSpy).toHaveBeenCalledWith();
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      const guard = handleErrorSpy.mock.calls[0][6] as () => boolean;
+      expect(guard()).toBe(true);
+      expect(cancelTerminalIdleArmSpy).not.toHaveBeenCalled();
+    });
+
+    it('skips the drain, suppresses publication, and cancels the armed fence when superseded', async () => {
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const token = allocateLiveToken(ctx);
+      ctx.incrementQueryGeneration();
+      ctx.incrementQueryGeneration();
+
+      await runner.handleStreamMessageError(topLevelResult, new Error('handler boom'), 1, token);
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+    });
+
+    it('treats a same-generation replacement attempt as stale via the attempt token', async () => {
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      ctx.incrementQueryGeneration();
+      const staleToken = allocateLiveToken(ctx);
+      ctx.attemptTokens.allocate();
+
+      await runner.handleStreamMessageError(
+        topLevelResult,
+        new Error('handler boom'),
+        1,
+        staleToken
+      );
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+    });
+
+    it('cancels the armed fence instead of draining when cleanup is active', async () => {
+      const ctx = createContext({ isCleaningUp: () => true });
+      runner = new QueryRunner(ctx);
+      const token = allocateLiveToken(ctx);
+      ctx.incrementQueryGeneration();
+
+      await runner.handleStreamMessageError(topLevelResult, new Error('handler boom'), 1, token);
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+    });
+  });
+
   describe('createAbortableQuery', () => {
     it('should yield messages from query iterator', async () => {
       runner = createRunner();
@@ -1683,7 +1765,8 @@ describe('QueryRunner', () => {
         expect.any(String),
         expect.stringContaining('HYPERNEO_SDK_STARTUP_TIMEOUT_MS'),
         expect.anything(),
-        expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
+        expect.objectContaining({ isRootWorkspace: expect.any(Boolean) }),
+        expect.any(Function)
       );
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('attempt(s)');
@@ -1716,7 +1799,8 @@ describe('QueryRunner', () => {
         expect.any(String),
         expect.stringContaining('session could not be resumed'),
         expect.anything(),
-        expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
+        expect.objectContaining({ isRootWorkspace: expect.any(Boolean) }),
+        expect.any(Function)
       );
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
@@ -2220,7 +2304,8 @@ describe('QueryRunner', () => {
           ErrorCategory.TIMEOUT,
           expect.anything(),
           expect.anything(),
-          expect.anything()
+          expect.anything(),
+          expect.any(Function)
         );
       }
     }
@@ -2949,7 +3034,8 @@ describe('QueryRunner', () => {
         ErrorCategory.RATE_LIMIT,
         undefined,
         expect.anything(),
-        expect.anything()
+        expect.anything(),
+        expect.any(Function)
       );
     });
 
@@ -2964,7 +3050,8 @@ describe('QueryRunner', () => {
         ErrorCategory.RATE_LIMIT,
         undefined,
         expect.anything(),
-        expect.anything()
+        expect.anything(),
+        expect.any(Function)
       );
       expect(setIdleSpy.mock.calls.length).toBeGreaterThan(0);
     });
@@ -2985,7 +3072,8 @@ describe('QueryRunner', () => {
         ErrorCategory.SYSTEM,
         undefined,
         expect.anything(),
-        expect.anything()
+        expect.anything(),
+        expect.any(Function)
       );
       expect(setIdleSpy.mock.calls.length).toBeGreaterThan(0);
     });
@@ -3125,6 +3213,25 @@ describe('QueryRunner', () => {
       });
     });
 
+    it('cancels the terminal fence when cleanup begins during error publication', async () => {
+      let cleaningUp = false;
+      handleErrorSpy.mockImplementation(async () => {
+        cleaningUp = true;
+      });
+
+      const { outcome } = await runTerminalFailure('terminal query failure', {
+        isCleaningUp: () => cleaningUp,
+      });
+
+      expect(outcome).toBe('resolved');
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+      expect(setIdleSpy).not.toHaveBeenCalled();
+    });
+
     it('hands off cleanly when a successor starts during the finalizer idle', async () => {
       setIdleSpy.mockImplementation(async () => {
         if (setIdleSpy.mock.calls.length >= 2) {
@@ -3151,6 +3258,37 @@ describe('QueryRunner', () => {
         queryGeneration: 1,
         turnToken: 0,
       });
+    });
+
+    it('cancels the terminal fence when error publication rejects', async () => {
+      handleErrorSpy.mockImplementation(async () => {
+        throw new Error('publish failed');
+      });
+
+      const { outcome } = await runTerminalFailure('terminal query failure');
+
+      expect(String(outcome)).toContain('publish failed');
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+    });
+
+    it('passes a publishGuard tied to current query generation and cleanup state', async () => {
+      const { ctx } = await runTerminalFailure('terminal query failure');
+
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      const guard = handleErrorSpy.mock.calls[0][6] as () => boolean;
+      expect(typeof guard).toBe('function');
+      expect(guard()).toBe(true);
+
+      queryGeneration += 1;
+      expect(guard()).toBe(false);
+      queryGeneration -= 1;
+
+      ctx.isCleaningUp = () => true;
+      expect(guard()).toBe(false);
     });
   });
 
@@ -3855,7 +3993,8 @@ describe('QueryRunner', () => {
         ErrorCategory.CONNECTION,
         expect.any(String),
         expect.anything(),
-        expect.any(Object)
+        expect.any(Object),
+        expect.any(Function)
       );
     });
 
@@ -4178,7 +4317,8 @@ describe('QueryRunner', () => {
         expect.any(String),
         expect.stringContaining('temporarily unavailable'),
         expect.anything(),
-        expect.any(Object)
+        expect.any(Object),
+        expect.any(Function)
       );
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).toContain('retried');
