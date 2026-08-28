@@ -550,7 +550,7 @@ describe('OAuthRefreshScheduler', () => {
     await expect(scheduler.tick()).resolves.toBeUndefined();
 
     expect(events).toEqual(['invalidated']);
-    expect(manager.stored).toHaveLength(1);
+    expect(manager.stored).toHaveLength(0);
     expect(manager.health.has('oauth-provider')).toBe(false);
   });
 
@@ -658,16 +658,16 @@ describe('OAuthRefreshScheduler', () => {
 
     expect(invalidationAttempts).toBe(1);
     expect(events).toEqual([]);
-    expect(manager.stored).toHaveLength(1);
+    expect(manager.stored).toHaveLength(0);
     expect(manager.health.has('oauth-provider')).toBe(false);
-    const rotated = manager.stored[0].credentials as { expiresAt: number };
-    expect(rotated.expiresAt).toBeGreaterThan(10_000);
 
     await scheduler.tick();
 
     expect(invalidationAttempts).toBe(2);
     expect(events).toEqual(['recovered:oauth-provider', 'changed:oauth-provider:refreshed']);
     expect(manager.stored).toHaveLength(1);
+    const rotated = manager.stored[0].credentials as { expiresAt: number };
+    expect(rotated.expiresAt).toBeGreaterThan(10_000);
     expect(manager.health.get('oauth-provider')).toBe('healthy');
   });
 
@@ -710,7 +710,7 @@ describe('OAuthRefreshScheduler', () => {
     expect(manager.health.get('oauth-provider')).toBe('unhealthy');
   });
 
-  it('keeps retrying the durable strip across ticks when persistence keeps failing', async () => {
+  it('keeps retrying the durable strip across ticks until both strip and persistence land', async () => {
     const registry = new ProviderRegistry();
     registry.register(createProvider(true));
     const manager = new FakeCredentialManager();
@@ -720,8 +720,11 @@ describe('OAuthRefreshScheduler', () => {
       refreshToken: 'refresh-token',
       expiresAt: 1_000,
     });
-    manager.storeOAuthTokens = async () => {
-      throw new Error('credential store failed');
+    const originalStore = manager.storeOAuthTokens.bind(manager);
+    let storeFails = true;
+    manager.storeOAuthTokens = async (providerId: string, credentials: unknown) => {
+      if (storeFails) throw new Error('credential store failed');
+      await originalStore(providerId, credentials);
     };
     const events: string[] = [];
     let invalidationAttempts = 0;
@@ -747,13 +750,9 @@ describe('OAuthRefreshScheduler', () => {
     expect(invalidationAttempts).toBe(1);
     expect(events).toEqual(['changed:oauth-provider:exhausted']);
     expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+    expect(manager.stored).toHaveLength(0);
 
-    manager.credentials.set('oauth-provider', {
-      type: 'oauth',
-      accessToken: 'old-token',
-      refreshToken: 'refresh-token',
-      expiresAt: 1_000,
-    });
+    storeFails = false;
     await scheduler.tick();
 
     expect(invalidationAttempts).toBe(2);
@@ -762,6 +761,7 @@ describe('OAuthRefreshScheduler', () => {
       'recovered:oauth-provider',
       'changed:oauth-provider:refreshed',
     ]);
+    expect(manager.stored).toHaveLength(1);
     expect(manager.health.get('oauth-provider')).toBe('healthy');
   });
 
@@ -819,8 +819,11 @@ describe('OAuthRefreshScheduler', () => {
       refreshToken: 'refresh-token',
       expiresAt: 1_000,
     });
-    manager.storeOAuthTokens = async () => {
-      throw new Error('credential store failed');
+    const originalStore = manager.storeOAuthTokens.bind(manager);
+    let storeFails = true;
+    manager.storeOAuthTokens = async (providerId: string, credentials: unknown) => {
+      if (storeFails) throw new Error('credential store failed');
+      await originalStore(providerId, credentials);
     };
     let invalidationAttempts = 0;
     const scheduler = new OAuthRefreshScheduler(manager as never, {
@@ -838,11 +841,14 @@ describe('OAuthRefreshScheduler', () => {
     await scheduler.tick();
     expect(refreshCalls).toBe(1);
     expect(invalidationAttempts).toBe(1);
+    expect(manager.stored).toHaveLength(0);
 
+    storeFails = false;
     await scheduler.tick();
 
     expect(invalidationAttempts).toBe(2);
     expect(refreshCalls).toBe(1);
+    expect(manager.stored).toHaveLength(1);
     expect(manager.health.get('oauth-provider')).toBe('healthy');
   });
 
@@ -927,13 +933,14 @@ describe('OAuthRefreshScheduler', () => {
       await originalStore(providerId, credentials);
     };
     let invalidationAttempts = 0;
+    let stripFails = true;
     const scheduler = new OAuthRefreshScheduler(manager as never, {
       registry,
       now: () => 0,
       refreshWindowMs: 10_000,
       onPreRecoveryInvalidate: async () => {
         invalidationAttempts += 1;
-        throw new Error('durable strip failed');
+        if (stripFails) throw new Error('durable strip failed');
       },
     });
 
@@ -942,6 +949,7 @@ describe('OAuthRefreshScheduler', () => {
     expect(invalidationAttempts).toBe(1);
 
     storeFails = false;
+    stripFails = false;
     await scheduler.tick();
 
     expect(invalidationAttempts).toBe(2);
@@ -950,7 +958,7 @@ describe('OAuthRefreshScheduler', () => {
     expect(persisted.accessToken).toBe('new-token');
   });
 
-  it('marks the provider unhealthy after a stored rotation when invalidation fails with a recorded failure', async () => {
+  it('marks the provider unhealthy when a recorded-failure rotation is not persisted because the strip failed', async () => {
     const registry = new ProviderRegistry();
     registry.register(createProvider(true));
     const manager = new FakeCredentialManager();
@@ -975,7 +983,7 @@ describe('OAuthRefreshScheduler', () => {
     try {
       await scheduler.tick();
 
-      expect(manager.stored).toHaveLength(1);
+      expect(manager.stored).toHaveLength(0);
       expect(manager.health.get('oauth-provider')).toBe('unhealthy');
     } finally {
       clearProviderFailureRecords();
@@ -1164,6 +1172,48 @@ describe('OAuthRefreshScheduler', () => {
 
     expect(manager.stored).toHaveLength(1);
     expect(manager.health.get('oauth-provider')).toBe('healthy');
+  });
+
+  it('emits exhaustion only once when stale-key rotation failures exceed the cap', async () => {
+    const registry = new ProviderRegistry();
+    const provider = createProvider(true);
+    const baseRefresh = provider.refreshToken!;
+    let rotateSucceeds = true;
+    provider.refreshToken = async () => {
+      if (!rotateSucceeds) return false;
+      return await baseRefresh();
+    };
+    registry.register(provider);
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    manager.storeOAuthTokens = async () => {
+      throw new Error('credential store failed');
+    };
+    const exhausted: string[] = [];
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      maxRetries: 2,
+      onProviderChanged: (providerId, outcome) => {
+        if (outcome === 'exhausted') exhausted.push(providerId);
+      },
+    });
+
+    await scheduler.tick();
+    rotateSucceeds = false;
+    await scheduler.tick();
+    await scheduler.tick();
+    await scheduler.tick();
+    await scheduler.tick();
+
+    expect(exhausted).toEqual(['oauth-provider']);
+    expect(manager.health.get('oauth-provider')).toBe('unhealthy');
   });
 
   it('stop drains a default discovery refresh still in flight', async () => {
