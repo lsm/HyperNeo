@@ -905,6 +905,44 @@ describe('applyRateAndAudit', () => {
     expect(next.workflowRunId).toBeUndefined();
   });
 
+  test('preserves an explicit parsed run target over session-task run derivation', async () => {
+    let resolverCalls = 0;
+    const changePlan = defineAction({
+      name: 'change_plan',
+      family: 'workflows',
+      safetyClass: 'destructive',
+      description: 'Change plan',
+      paramsDoc: '{ run_id: string }',
+      paramsSchema: z.object({ run_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'change_plan',
+              params: { run_id: 'run-b' },
+              taskId: 'session-task-a',
+            },
+            { registry: createActionRegistry([changePlan]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        resolveRunId: (taskId) => {
+          resolverCalls += 1;
+          return `run-of-${taskId}`;
+        },
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(resolverCalls).toBe(0);
+    expect(next.workflowRunId).toBe('run-b');
+  });
+
   test('skips audit for read actions', async () => {
     const auditEntries: CreateMcpAuditLogParams[] = [];
     const ctx = applyRoleAdmission(

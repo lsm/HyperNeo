@@ -234,10 +234,16 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
     }
   }
   let workflowRunId = ctx.workflowRunId;
-  if (ctx.deps.resolveRunId && taskId !== undefined) {
-    try {
-      workflowRunId = (await ctx.deps.resolveRunId(taskId)) ?? undefined;
-    } catch {}
+  if (ctx.deps.resolveRunId && taskId !== undefined && ctx.parsedParams) {
+    const params = ctx.parsedParams as Record<string, unknown>;
+    const targetsTask =
+      (typeof params.task_id === 'string' && params.task_id.length > 0) ||
+      typeof params.task_number === 'number';
+    if (targetsTask) {
+      try {
+        workflowRunId = (await ctx.deps.resolveRunId(taskId)) ?? undefined;
+      } catch {}
+    }
   }
   if (ctx.isMutating && ctx.deps.auditLogRepo) {
     try {
