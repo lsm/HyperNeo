@@ -1706,32 +1706,47 @@ a pure table over error class/subtype, attempt × cap, provider family,
 lifecycle, and supersede/cleanup flags — recovery state is not a classifier
 dimension; it configures finalizer behavior in the arm-mapping stage)
 composed synchronously as `decideQueryRetry`, a `decisionRun` over the
-classifier and arm-mapping gates, interpreted branch-per-route in
-`query-runner.ts`'s catch; the four-copy teardown liturgy collapsed into
-`runRetryTeardown` (B4); and the B5 series fenced the stale-continuation
-windows the pins had mapped — the per-attempt token (`query-attempt-token.ts`,
-B5a), owned-fence cancellation (B5b), the owner-scoped idle with its
-three-owner waiter filter (query, rate-limit episode, turn/delivery) in
-`processing-state-manager.ts` (B5E, re-sliced from one over-budget PR into
-five), post-await watchdog-write fencing on #2779's gates (B5d),
-generation-fenced dispatch/catch/queue-seam/permission paths across both
-runners (B5f–B5l), and the notice-publication fallback (B5j). B5h was
-cancelled — B5g's attempt-token binding (ACP retries preserve
-`queryGeneration`) closed the same interleaving.
+classifier and arm-mapping gates, consumed in `query-runner.ts`'s catch —
+though not branch-per-route: the startup-timeout, message-not-found, and
+noop routes switch on the route action, while the transient and provider
+arms still run their own imperative predicates (`isTransientConnectionError`,
+`isRetryableProviderError`, attempt/cap, status), a duplicated classifier
+that can drift from `classifyQueryRetryRoute`. The four-copy teardown liturgy
+collapsed into `runRetryTeardown` (B4); and the B5 series fenced the
+stale-continuation windows the pins had mapped — the per-attempt token
+(`query-attempt-token.ts`, B5a), owned-fence cancellation (B5b), the
+owner-scoped idle with its three-owner waiter filter (query, rate-limit
+episode, turn/delivery) in `processing-state-manager.ts` (B5E, re-sliced
+from one over-budget PR into five), post-await watchdog-write fencing on
+#2779's gates (B5d), generation-fenced dispatch/catch/queue-seam/permission
+paths across both runners (B5f–B5l), and the notice-publication fallback
+(B5j).
 
-**The composition boundary.** Two effectful pipelines landed inside the
+**The composition boundary.** One effectful pipeline landed inside the
 chain: B4's teardown dedup is the named `query-retry-teardown` superpipe
 (`endAsync`) running the awaited teardown effects — idle transition, notice
-publication, process-exit wait, environment restoration, retry recursion —
-and B5E's waiter admission composes `idle-waiter-admission-pipeline.ts`
-(`runIdleWaiterAdmission`, invoked by `ProcessingStateManager` for the
-three-owner filter). The remaining B5 fencing stayed in-place ownership
-revalidation (resnapshot and owner checks at await boundaries,
-generation/attempt-guarded writes): those seams sit on the query error path
-and per-message/permission callbacks, where the ADR's hot-path exclusion
-applies and restructuring into stages would have moved code without removing
-a window. B3c added the finalizer's post-await guards as plain
-identity/lifecycle checks in the shell.
+publication, process-exit wait, environment restoration, retry recursion.
+B5E's waiter admission is a pure pipeline,
+`idle-waiter-admission-pipeline.ts` (`runIdleWaiterAdmission`, `.end`, owner
+comparisons only) invoked by `ProcessingStateManager` for the three-owner
+filter. The remaining B5
+fencing stayed in-place ownership revalidation (resnapshot and owner checks
+at await boundaries, generation/attempt-guarded writes) because those slices
+were scoped as minimal guard adoptions at named windows, not restructurings
+— no ADR exclusion was invoked (0004 excludes only tight per-token/per-event
+loops) — and composing those seams is the successor plan's assignment.
+
+**Residuals this chain leaves open.** B5h (ACP retry-arm revalidation) was
+cancelled as a task, but its window is not closed: `handleRunError`'s retry
+path awaits `setIdle` and then performs shared writes — re-enqueue of
+`_lastConsumedUserMessage`, `queryObject` close, process-exit reset, the
+`runQuery` recursion — without rechecking generation, attempt, cleanup, or
+interruption. B3c's finalizer guards gate the idle transition with fresh
+generation checks, but the shared writes after the awaited provider import
+(`restoreEnvVars`, `ctx.originalEnvVars` clear, `_lastConsumedUserMessage` /
+`_turnConsumedUserMessages` clears) still run on the pre-await staleness
+snapshot. Together with the duplicated transient/provider predicates above,
+these are the successor plan's query-attempt composition to close.
 
 Closing sweep (this PR): the measured removal pass found the chain already
 clean — each apply slice had replaced the cascade it landed on (B5l even
@@ -1822,13 +1837,14 @@ Pilot 14 PRs: #2900, #2902, #2905, #2903, #2914, #2925, #2930, #2941, #2945,
   for the staged-run outcome (direct composition, combinator not needed) and
   the closing dead-code sweep.
 - **Done (pilot 14, agent-layer chain B):** the query-retry classifier and
-  route arms as `decideQueryRetry` (`decisionRun`) interpreted in the
+  route arms as `decideQueryRetry` (`decisionRun`) consumed in the
   `query-runner.ts` catch, the teardown liturgy deduped into the effectful
   `query-retry-teardown` superpipe, and the B5 ownership-fencing series
   (attempt token, owned fences, three-owner idle-admission pipeline,
   post-await watchdog/dispatch/catch/queue/permission revalidation) — see
-  "Pilot 14" above for the composition boundary (which fencing became
-  pipelines and which stayed in-place guards) and the closing sweep that
+  "Pilot 14" above for the composition boundary, the residuals the chain
+  leaves open (unfenced ACP retry arm, finalizer post-import writes,
+  duplicated transient/provider predicates), and the closing sweep that
   deleted the chain's one vestigial knip ignore line.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
