@@ -54,22 +54,37 @@ export interface DispatchActionDeps {
   getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
   emitTelemetry?: (event: DispatchTelemetryEvent) => void | Promise<void>;
   isWithinRateBudget?: () => boolean | Promise<boolean>;
+  resolveTaskId?: (
+    params: Record<string, unknown>
+  ) => string | undefined | Promise<string | undefined>;
+  resolveRunId?: (taskId: string) => string | undefined | Promise<string | undefined>;
 }
 
 export interface DispatchActionCtx extends DispatchActionInput {
   deps: DispatchActionDeps;
   action?: RegisteredAction;
   parsedParams?: unknown;
+  contextualTaskId?: string;
   isMutating?: boolean;
   rawResult?: unknown;
   outcome?: DispatchActionOutcome;
 }
 
+const SPACE_ADMISSION_FAMILIES = [
+  'space',
+  'sessions',
+  'workflows',
+  'tasks',
+  'scheduled',
+  'external_events',
+  'inactivity',
+] as const;
+
 const ROLE_ACTION_FAMILY_ALLOWLIST: Record<SpaceMcpSessionRole, readonly string[]> = {
-  coordinator: ['space'],
-  ad_hoc_member: ['space'],
+  coordinator: SPACE_ADMISSION_FAMILIES,
+  ad_hoc_member: SPACE_ADMISSION_FAMILIES,
   workflow_worker: ['node', 'space'],
-  long_term_agent: ['space'],
+  long_term_agent: SPACE_ADMISSION_FAMILIES,
   legacy_task_agent: [],
   outside_space: [],
 };
@@ -101,7 +116,95 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
       ),
     };
   }
-  return { ...ctx, action, parsedParams: parsed.data };
+  const parsedParams = parsed.data as Record<string, unknown> | null;
+  const hasTaskId =
+    parsedParams !== null &&
+    typeof parsedParams.task_id === 'string' &&
+    parsedParams.task_id.length > 0;
+  const suppressTaskId =
+    action.taskIdPreference === 'task_number' &&
+    parsedParams !== null &&
+    typeof parsedParams.task_number === 'number';
+  const targetTaskId =
+    hasTaskId && !suppressTaskId && parsedParams !== null
+      ? (parsedParams.task_id as string)
+      : undefined;
+  const parsedRunId =
+    parsedParams !== null &&
+    typeof parsedParams.run_id === 'string' &&
+    parsedParams.run_id.length > 0
+      ? parsedParams.run_id
+      : undefined;
+  const parsedWorkflowRunId =
+    parsedParams !== null &&
+    typeof parsedParams.workflow_run_id === 'string' &&
+    parsedParams.workflow_run_id.length > 0
+      ? parsedParams.workflow_run_id
+      : undefined;
+  const parsedCamelRunId =
+    parsedParams !== null &&
+    typeof parsedParams.workflowRunId === 'string' &&
+    parsedParams.workflowRunId.length > 0
+      ? parsedParams.workflowRunId
+      : undefined;
+  const targetRunId = parsedRunId ?? parsedWorkflowRunId ?? parsedCamelRunId;
+  const taskTargetChanged =
+    targetTaskId !== undefined && ctx.taskId !== undefined && targetTaskId !== ctx.taskId;
+  const runTargetChanged = targetRunId !== undefined && targetRunId !== ctx.workflowRunId;
+  return {
+    ...ctx,
+    action,
+    parsedParams: parsed.data,
+    contextualTaskId: ctx.taskId,
+    taskId: targetTaskId ?? (runTargetChanged ? undefined : ctx.taskId),
+    workflowRunId: targetRunId ?? (taskTargetChanged ? undefined : ctx.workflowRunId),
+  };
+}
+
+export async function resolveTargets(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
+  if (ctx.outcome) return ctx;
+  const action = ctx.action!;
+  const params = (ctx.parsedParams ?? null) as Record<string, unknown> | null;
+  const contextualTaskId = ctx.contextualTaskId;
+  let taskId = ctx.taskId;
+  let numericLookupMissed = false;
+  if (params !== null) {
+    const hasTaskId = typeof params.task_id === 'string' && params.task_id.length > 0;
+    const prefersNumber = action.taskIdPreference === 'task_number' || !hasTaskId;
+    if (typeof params.task_number === 'number' && prefersNumber) {
+      if (ctx.deps.resolveTaskId) {
+        try {
+          taskId = await ctx.deps.resolveTaskId(params);
+          if (taskId === undefined) numericLookupMissed = true;
+        } catch {
+          taskId = undefined;
+          numericLookupMissed = true;
+        }
+      } else {
+        taskId = undefined;
+        numericLookupMissed = true;
+      }
+    }
+  }
+  const explicitRunTarget =
+    params !== null &&
+    ((typeof params.run_id === 'string' && params.run_id.length > 0) ||
+      (typeof params.workflow_run_id === 'string' && params.workflow_run_id.length > 0) ||
+      (typeof params.workflowRunId === 'string' && params.workflowRunId.length > 0));
+  const targetsTask =
+    params !== null &&
+    ((typeof params.task_id === 'string' && params.task_id.length > 0) ||
+      typeof params.task_number === 'number');
+  let workflowRunId = ctx.workflowRunId;
+  if (!explicitRunTarget && (numericLookupMissed || targetsTask)) {
+    if (taskId !== contextualTaskId) workflowRunId = undefined;
+    if (ctx.deps.resolveRunId && taskId !== undefined) {
+      try {
+        workflowRunId = (await ctx.deps.resolveRunId(taskId)) ?? undefined;
+      } catch {}
+    }
+  }
+  return { ...ctx, taskId, workflowRunId };
 }
 
 export function applySafetyClass(ctx: DispatchActionCtx): DispatchActionCtx {
@@ -131,17 +234,32 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
   if (action.autonomyRequirement === undefined) {
     return { ...ctx, spaceLevel: ctx.spaceLevel ?? 1 };
   }
-  const spaceLevel =
-    ctx.spaceLevel ??
-    (ctx.deps.getSpaceAutonomyLevel ? await ctx.deps.getSpaceAutonomyLevel(ctx.spaceId) : 1);
+  let spaceLevel = ctx.spaceLevel ?? null;
+  if (spaceLevel === null) {
+    if (!ctx.deps.getSpaceAutonomyLevel) {
+      spaceLevel = 1;
+    } else {
+      try {
+        spaceLevel = await ctx.deps.getSpaceAutonomyLevel(ctx.spaceId);
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return { ...ctx, outcome: failedOutcome(error) };
+      }
+    }
+  }
   const agentLevel = ctx.agentLevel ?? null;
   const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
-  const required =
-    action.autonomyRequirement === undefined
-      ? 1
-      : typeof action.autonomyRequirement === 'function'
-        ? await action.autonomyRequirement(ctx.parsedParams)
-        : action.autonomyRequirement;
+  let required: number;
+  if (typeof action.autonomyRequirement === 'function') {
+    try {
+      required = await action.autonomyRequirement(ctx.parsedParams);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      return { ...ctx, spaceLevel, agentLevel, outcome: failedOutcome(error) };
+    }
+  } else {
+    required = action.autonomyRequirement;
+  }
   const admission = decideAutonomyAdmission({
     toolName: action.name,
     level: effective.level,
@@ -163,8 +281,36 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
 export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
   if (ctx.outcome) return ctx;
   const action = ctx.action!;
+  if (typeof action.autonomyRequirement === 'function') {
+    let required: number;
+    try {
+      required = await action.autonomyRequirement(ctx.parsedParams);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      return { ...ctx, outcome: failedOutcome(error) };
+    }
+    const spaceLevel = ctx.spaceLevel ?? 1;
+    const agentLevel = ctx.agentLevel ?? null;
+    const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
+    const admission = decideAutonomyAdmission({
+      toolName: action.name,
+      level: effective.level,
+      required,
+      agentLevel,
+      spaceLevel,
+    });
+    if (admission.action !== 'allow') {
+      return { ...ctx, outcome: deniedOutcome('autonomy_denied', admission.message) };
+    }
+  }
   if (ctx.deps.isWithinRateBudget) {
-    const ok = await ctx.deps.isWithinRateBudget();
+    let ok: boolean;
+    try {
+      ok = await ctx.deps.isWithinRateBudget();
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      return { ...ctx, outcome: failedOutcome(error) };
+    }
     if (!ok) {
       return {
         ...ctx,
@@ -177,11 +323,15 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
   }
   if (ctx.isMutating && ctx.deps.auditLogRepo) {
     try {
+      const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
+      for (const key of action.auditRedactKeys ?? []) {
+        delete summaryParams[key];
+      }
       ctx.deps.auditLogRepo.createEntry({
         agentName: ctx.agentName ?? null,
         sessionId: ctx.sessionId ?? null,
         toolName: action.name,
-        paramsSummary: JSON.stringify(ctx.parsedParams ?? {}),
+        paramsSummary: JSON.stringify(summaryParams),
         spaceId: ctx.spaceId,
         taskId: ctx.taskId ?? null,
         workflowRunId: ctx.workflowRunId ?? null,
@@ -275,6 +425,8 @@ const run = (
   .pipe('!hasOutcome', 'ctx')
   .pipe(applySafetyClass, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
+  .pipe(resolveTargets, 'ctx', 'ctx')
+  .pipe('!hasOutcome', 'ctx')
   .pipe(applyRoleAdmission, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(applyAutonomyGate, 'ctx', 'ctx')
@@ -296,7 +448,13 @@ export async function runDispatchAction(
   try {
     const ctx = await run({ ...input, deps });
     const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
-    await emitDispatchTelemetry(deps, input, ctx.action, outcome, Date.now() - startedAt);
+    await emitDispatchTelemetry(
+      deps,
+      { ...input, taskId: ctx.taskId, workflowRunId: ctx.workflowRunId },
+      ctx.action,
+      outcome,
+      Date.now() - startedAt
+    );
     return outcome;
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
