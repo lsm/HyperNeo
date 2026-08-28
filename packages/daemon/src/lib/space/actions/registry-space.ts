@@ -107,6 +107,12 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     return 1;
   };
 
+  const archiveTaskAutonomy = async (params: z.infer<typeof ArchiveTaskSchema>) => {
+    const task = taskInSpace(params.task_id);
+    if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
+    return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+  };
+
   const changePlanAutonomy = async (params: z.infer<typeof ChangePlanSchema>) => {
     const switching =
       (params.workflow_id !== undefined && params.workflow_id.length > 0) ||
@@ -512,7 +518,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Archive a task — the true terminal state; archived tasks are excluded from default task listings and cannot be reactivated.',
       paramsDoc: 'task_id',
       paramsSchema: ArchiveTaskSchema,
-      autonomyRequirement: DESTRUCTIVE_ACTION_AUTONOMY_LEVEL,
+      autonomyRequirement: archiveTaskAutonomy,
       handler: (args) => handlers.archive_task(args),
     }),
     defineAction({

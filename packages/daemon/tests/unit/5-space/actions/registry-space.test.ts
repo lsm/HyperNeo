@@ -191,7 +191,7 @@ describe('createSpaceRegistryEntries — composition', () => {
       const byName = new Map(
         createSpaceRegistryEntries(ctx.config).map((entry) => [entry.name, entry])
       );
-      for (const name of ['update_session_state', 'interrupt_session', 'archive_task']) {
+      for (const name of ['update_session_state', 'interrupt_session']) {
         expect(byName.get(name)?.autonomyRequirement).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
       expect(byName.get('approve_pending_completion')?.autonomyRequirement).toBe(5);
@@ -394,6 +394,36 @@ describe('createSpaceRegistryEntries — composition', () => {
         expect(await resolve({ run_id: 'run-1', description: 'Update' })).toBe(1);
         expect(await resolve({ run_id: 'run-1', workflow_id: '' })).toBe(1);
         expect(await resolve({ run_id: 'run-1' })).toBe(1);
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('archive_task requires human clearance for a task_completion checkpoint', async () => {
+    const ctx = makeCtx();
+    try {
+      const checkpointTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Checkpoint task',
+        description: '',
+      });
+      ctx.taskRepo.updateTask(checkpointTask.id, {
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+      });
+      const plainTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Plain task',
+        description: '',
+      });
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const resolve = entries.find((entry) => entry.name === 'archive_task')?.autonomyRequirement;
+      expect(typeof resolve).toBe('function');
+      if (typeof resolve === 'function') {
+        expect(await resolve({ task_id: checkpointTask.id })).toBe(5);
+        expect(await resolve({ task_id: plainTask.id })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
+        expect(await resolve({ task_id: 'missing-task' })).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
     } finally {
       ctx.db.close();
