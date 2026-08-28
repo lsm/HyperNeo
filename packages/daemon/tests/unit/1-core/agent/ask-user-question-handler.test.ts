@@ -1325,7 +1325,7 @@ describe('AskUserQuestionHandler', () => {
       expect(askedEvents).toHaveLength(0);
     });
 
-    it('drops submit and cancel for a dead attempt token without mutating the successor state', async () => {
+    it('settles dead-attempt submits and cancels with deny without mutating the successor state', async () => {
       const input = {
         questions: [
           {
@@ -1341,14 +1341,6 @@ describe('AskUserQuestionHandler', () => {
           signal: new AbortController().signal,
           toolUseID: toolUseId,
         });
-      const isPending = (promise: Promise<unknown>) =>
-        Promise.race([
-          promise.then(
-            () => false,
-            () => false
-          ),
-          new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 20)),
-        ]);
 
       const submitHandler = new AskUserQuestionHandler(mockContext);
       let submitLive = true;
@@ -1360,7 +1352,9 @@ describe('AskUserQuestionHandler', () => {
       ]);
       expect(setProcessingSpy).not.toHaveBeenCalled();
       expect(currentState.status).toBe('waiting_for_input');
-      expect(await isPending(submitPromise)).toBe(true);
+      const submitResult = await submitPromise;
+      expect(submitResult.behavior).toBe('deny');
+      expect((submitResult as { message: string }).message).toContain('superseded');
 
       currentState = { status: 'idle' };
 
@@ -1372,7 +1366,9 @@ describe('AskUserQuestionHandler', () => {
       await cancelHandler.handleQuestionCancel('attempt-dead-cancel');
       expect(setProcessingSpy).not.toHaveBeenCalled();
       expect(currentState.status).toBe('waiting_for_input');
-      expect(await isPending(cancelPromise)).toBe(true);
+      const cancelResult = await cancelPromise;
+      expect(cancelResult.behavior).toBe('deny');
+      expect((cancelResult as { message: string }).message).toContain('User cancelled');
     });
 
     it("patches the history record to cancelled when a superseded question's submit is dropped", async () => {

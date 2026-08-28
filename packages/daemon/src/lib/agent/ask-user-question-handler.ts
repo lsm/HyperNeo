@@ -355,9 +355,17 @@ export class AskUserQuestionHandler {
 
     if (resolverMatches && resolver && !resolver.attemptToken.isLive()) {
       this.logger.warn(
-        `AskUserQuestion ${toolUseId}: submit for a superseded attempt; dropping the response ` +
-          `without mutating the successor's state`
+        `AskUserQuestion ${toolUseId}: submit for a superseded attempt; settling the stale ` +
+          `callback with deny so the closed query can finish without mutating the ` +
+          `successor's state`
       );
+      this.pendingResolver = null;
+      resolver.resolve({
+        behavior: 'deny',
+        message:
+          'The query attempt that asked this question was superseded; the answer could not ' +
+          'be delivered.',
+      });
       return;
     }
 
@@ -451,9 +459,15 @@ export class AskUserQuestionHandler {
     const resolver = this.pendingResolver;
     if (resolver && resolver.toolUseId === toolUseId && !resolver.attemptToken.isLive()) {
       this.logger.warn(
-        `AskUserQuestion ${toolUseId}: cancel for a superseded attempt; dropping the cancel ` +
-          `without mutating the successor's state`
+        `AskUserQuestion ${toolUseId}: cancel for a superseded attempt; settling the stale ` +
+          `callback with deny so the closed query can finish without mutating the ` +
+          `successor's state`
       );
+      this.pendingResolver = null;
+      resolver.resolve({
+        behavior: 'deny',
+        message: QUESTION_CANCEL_MESSAGE,
+      });
       return;
     }
 
