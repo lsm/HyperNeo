@@ -107,7 +107,7 @@ export class MessageQueue {
   private running: boolean = false;
   private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
   private deliveryGate: Promise<void> | null = null;
-  private resolveEarlyDeliveryGate: (() => void) | undefined;
+  private earlyDeliveryGateResolvers = new Map<MidTurnBudgetInterruptOptions, () => void>();
   private internalRestartInFlight: boolean = false;
   private internalRestartFailed: boolean = false;
   private internalRestartFailedClearEpoch: number = 0;
@@ -830,20 +830,20 @@ export class MessageQueue {
         `(provider=${opts.providerId}, budget=${opts.budgetKey} tokens)`
     );
     const earlyDeliveryGate = new Promise<void>((resolve) => {
-      this.resolveEarlyDeliveryGate = resolve;
+      this.earlyDeliveryGateResolvers.set(opts, resolve);
     });
     this.setDeliveryGate(earlyDeliveryGate);
   }
 
-  releaseEarlyDeliveryGate(): void {
+  releaseEarlyDeliveryGate(opts: MidTurnBudgetInterruptOptions): void {
+    const resolve = this.earlyDeliveryGateResolvers.get(opts);
+    if (!resolve) return;
+    this.earlyDeliveryGateResolvers.delete(opts);
     if (this.internalRestartInFlight) {
-      if (this.resolveEarlyDeliveryGate) {
-        this.earlyGateReleasePending.push(this.resolveEarlyDeliveryGate);
-      }
+      this.earlyGateReleasePending.push(resolve);
       return;
     }
-    this.resolveEarlyDeliveryGate?.();
-    this.resolveEarlyDeliveryGate = undefined;
+    resolve();
   }
 
   async awaitInterruptDeadline(
@@ -922,7 +922,7 @@ export class MessageQueue {
         decideCompaction: undefined,
       });
     } finally {
-      this.releaseEarlyDeliveryGate();
+      this.releaseEarlyDeliveryGate(opts);
     }
   }
 
@@ -993,6 +993,7 @@ export class MessageQueue {
         opts,
         queue: this,
         phase: 'late-receipt',
+        preArmed: true,
         lateReceipt: receipt,
         checkEligibility: undefined,
         refreshUsage: undefined,

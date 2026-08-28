@@ -180,7 +180,7 @@ const midTurnBudgetPipeline = (superpipe({ settled })('mid-turn-budget-interrupt
 export async function runMidTurnBudgetPipeline(
   input: MidTurnBudgetPipelineInput
 ): Promise<MidTurnBudgetCtx> {
-  if (!input.preArmed) {
+  if (!input.preArmed && input.phase !== 'late-receipt') {
     input.queue.noteBudgetCycleStarted();
   }
   return midTurnBudgetPipeline({

@@ -2368,7 +2368,7 @@ describe('MessageQueue', () => {
       });
       const runPromise = q.runMidTurnBudgetInterrupt(opts);
       await tick(30);
-      q.releaseEarlyDeliveryGate();
+      q.releaseEarlyDeliveryGate(opts);
       const delivered = q.enqueueWithId('uuid-gated', 'content', false, {});
       delivered.catch(() => {});
       const generator = q.messageGenerator(testSessionId);
@@ -2884,7 +2884,7 @@ describe('MessageQueue', () => {
 
       const first = q.runMidTurnBudgetInterrupt(firstOpts);
       await tick(30);
-      q.releaseEarlyDeliveryGate();
+      q.releaseEarlyDeliveryGate(firstOpts);
       const second = q.runMidTurnBudgetInterrupt(secondOpts);
       await tick(50);
 
@@ -3777,6 +3777,38 @@ describe('MessageQueue', () => {
       expect(second.value.message.internal).toBe(true);
       second.value.onSent();
       await compaction;
+      q.stop();
+    });
+
+    it('does not re-snapshot the budget-cycle epochs during a late receipt', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.clear();
+      const budget = q as unknown as {
+        budgetCycleClearEpoch: number;
+        budgetCycleUserInterruptEpoch: number;
+      };
+      const opts = makeInterruptOpts({
+        cancelAsyncMessage: async () => true,
+      });
+
+      q.noteBudgetCycleStarted();
+      const expectedClear = budget.budgetCycleClearEpoch;
+      const expectedUser = budget.budgetCycleUserInterruptEpoch;
+
+      q.clear();
+      q.noteUserInterrupt();
+      q.armInterruptCycle(opts);
+      q.registerLateReceipt(opts, {
+        promise: Promise.resolve({ still_queued: ['uuid-late-epoch'] }),
+        timedOut: true,
+      });
+      await tick(20);
+
+      expect(budget.budgetCycleClearEpoch).toBe(expectedClear);
+      expect(budget.budgetCycleUserInterruptEpoch).toBe(expectedUser);
+
+      q.clear();
       q.stop();
     });
   });
