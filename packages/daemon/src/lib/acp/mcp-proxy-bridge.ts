@@ -188,6 +188,17 @@ export class AcpMcpProxyBridge {
     }
     try {
       const args = await parseToolArgs(tool.inputSchema, request.arguments ?? {});
+      if (this.ownsExecution && !this.ownsExecution()) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: 'The query attempt that issued this tool call was superseded by an automatic retry or a replacement query.',
+            },
+          ],
+        };
+      }
       return await tool.handler(args);
     } catch (error) {
       return {

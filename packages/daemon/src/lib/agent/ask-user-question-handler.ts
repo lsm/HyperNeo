@@ -430,6 +430,7 @@ export class AskUserQuestionHandler {
             'The query attempt that asked this question was superseded; the answer could not ' +
             'be delivered.',
         });
+        await this.rollbackStaleWaitingState(toolUseId);
         return;
       }
       this.pendingResolver = null;
@@ -539,6 +540,7 @@ export class AskUserQuestionHandler {
           behavior: 'deny',
           message: QUESTION_CANCEL_MESSAGE,
         });
+        await this.rollbackStaleWaitingState(toolUseId);
         return;
       }
       this.pendingResolver = null;
@@ -636,10 +638,11 @@ export class AskUserQuestionHandler {
   private async rollbackStaleWaitingState(toolUseId: string): Promise<void> {
     const { stateManager } = this.ctx;
     const currentState = stateManager.getState();
-    if (
-      currentState.status === 'waiting_for_input' &&
-      currentState.pendingQuestion.toolUseId === toolUseId
-    ) {
+    const stateOwnedByQuestion =
+      (currentState.status === 'waiting_for_input' &&
+        currentState.pendingQuestion.toolUseId === toolUseId) ||
+      (currentState.status === 'processing' && currentState.messageId === toolUseId);
+    if (stateOwnedByQuestion) {
       try {
         await stateManager.setIdle({
           suppressIdleCallback: true,
