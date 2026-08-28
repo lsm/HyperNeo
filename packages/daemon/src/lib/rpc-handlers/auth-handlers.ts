@@ -328,7 +328,12 @@ export function setupAuthHandlers(
         if (credentials?.type === 'oauth') {
           await credentialManager?.storeOAuthTokens(providerId, credentials);
         }
-        await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+        await clearCacheAndNotifyProvidersChanged(
+          internalEventBus,
+          providerId,
+          providerRepo,
+          false
+        );
         return { success: true };
       } catch (error) {
         log.error(`Token refresh failed for ${providerId}:`, error);
