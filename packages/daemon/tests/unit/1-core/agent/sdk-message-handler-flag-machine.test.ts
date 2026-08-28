@@ -93,6 +93,14 @@ function sessionState(state: 'idle' | 'running' | 'requires_action'): SDKMessage
   } as unknown as SDKMessage;
 }
 
+function limitErrorResult(uuid: string): SDKMessage {
+  return successResult(uuid, {
+    is_error: true,
+    terminal_reason: 'blocking_limit',
+    result: 'Usage limit reached for this account.',
+  });
+}
+
 function thinkingTokensMessage(estimatedTokens: number): SDKMessage {
   return {
     type: 'system',
@@ -126,6 +134,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
   let emitSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let beginTerminalIdleSpy: ReturnType<typeof mock>;
+  let setDeliveryGateSpy: ReturnType<typeof mock>;
 
   const replayCount = (): number =>
     emitSpy.mock.calls.filter((call) => call[0] === 'query.trigger').length;
@@ -204,6 +213,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       markCompactionTriggered: mock(() => {}),
     } as unknown as ContextTracker;
 
+    setDeliveryGateSpy = mock(() => {});
     const mockMessageQueue = {
       enqueue: mock(async () => 'context-id'),
       enqueueWithId: mock(async () => {}),
@@ -211,7 +221,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       hasPendingOrClaimed: mock(() => false),
       hasYielded: mock(() => false),
       acknowledgeYielded: mock(() => false),
-      setDeliveryGate: mock(() => {}),
+      setDeliveryGate: setDeliveryGateSpy,
       isRunning: mock(() => true),
     } as unknown as MessageQueue;
 
@@ -1912,6 +1922,91 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         expect(readFlags(handler)).toEqual(row.expectedFlags);
       });
     }
+  });
+
+  describe('routed apply rows (C3a: turn-end routing wired at the settle seams)', () => {
+    it('an exceptional settle exit releases the armed turn-end delivery gate (B5i)', async () => {
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          throw new Error('sdk.message subscriber failed');
+        }
+      });
+
+      await expect(handler.handleMessage(successResult('fence-cancel'))).rejects.toThrow(
+        'sdk.message subscriber failed'
+      );
+
+      expect(setDeliveryGateSpy).toHaveBeenCalledTimes(1);
+      const [armedGate] = setDeliveryGateSpy.mock.calls[0];
+      const outcome = await Promise.race([
+        armedGate.then(() => 'released'),
+        new Promise((resolve) => setTimeout(() => resolve('still-gated'), 250)),
+      ]);
+      expect(outcome).toBe('released');
+    });
+
+    it('an engaged limit recovery resets thinking tokens via the pre-recovery plan but fences and idles nothing', async () => {
+      handler = new SDKMessageHandler(
+        createContext({ onResultLimitError: mock(async () => true) })
+      );
+      await handler.handleMessage(thinkingTokensMessage(120));
+      await handler.handleMessage(thinkingAssistantMessage('stamp-limit-engaged'));
+
+      await handler.handleMessage(limitErrorResult('limit-engaged'));
+
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({
+        ...resetFlags,
+        lastResultWasSuccess: false,
+        currentThinkingTokensEstimate: null,
+        lastStampedThinkingTokensEstimate: 0,
+      });
+    });
+
+    it('a declined limit recovery keeps the fence, direct idle, and replay block through the routed plan', async () => {
+      handler = new SDKMessageHandler(
+        createContext({ onResultLimitError: mock(async () => false) })
+      );
+
+      await handler.handleMessage(limitErrorResult('limit-declined'));
+
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).toHaveBeenCalledTimes(2);
+      expect(setIdleSpy.mock.calls).toEqual([[], []]);
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: false });
+    });
+
+    it('a clear armed during the sdk.message publish suppresses the early settle (routed re-decision)', async () => {
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          handler.suppressIdleForNextResult();
+        }
+      });
+
+      await handler.handleMessage(successResult('publish-race-clear'));
+
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
+    });
+
+    it('a clear armed during the idle settle survives the flag turnover', async () => {
+      await handler.handleMessage(sessionState('running'));
+      await handler.handleMessage(successResult('idle-race-result'));
+      setIdleSpy.mockImplementation(async () => {
+        handler.suppressIdleForNextResult();
+      });
+
+      await handler.handleMessage(sessionState('idle'));
+
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(replayCount()).toBe(1);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, suppressIdleOnNextResult: true });
+    });
   });
 
   describe('stale lastResultWasSuccess window (characterization)', () => {
