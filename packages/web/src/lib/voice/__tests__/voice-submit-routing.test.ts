@@ -82,6 +82,34 @@ describe('classifyVoiceSubmitError', () => {
   ])('retries response-shape failures that may be transient: %s', (message) => {
     expect(classifyVoiceSubmitError(new Error(message))).toBe('retry');
   });
+
+  it.each([
+    400, 401, 403, 404, 413, 422,
+  ])('discards deterministic client failures: failed with HTTP %i', (status) => {
+    expect(
+      classifyVoiceSubmitError(new Error(`Voice transcription failed with HTTP ${status}`))
+    ).toBe('discard');
+  });
+
+  it.each([
+    408, 429, 500, 502, 503,
+  ])('retries transient statuses: failed with HTTP %i', (status) => {
+    expect(
+      classifyVoiceSubmitError(
+        new Error(`Voice transcription failed with HTTP ${status}`),
+        'transcribe'
+      )
+    ).toBe('retry');
+  });
+
+  it('scopes session refusal to draft delivery', () => {
+    const error = new Error('Session not found: abc123');
+    expect(classifyVoiceSubmitError(error)).toBe('permanent');
+    expect(classifyVoiceSubmitError(error, 'transcribe')).toBe('retry');
+    expect(classifyVoiceSubmitError(new Error('Voice transcription failed with HTTP 401'))).toBe(
+      'discard'
+    );
+  });
 });
 
 describe('voiceRetryPolicy', () => {

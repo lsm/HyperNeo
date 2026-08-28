@@ -2,6 +2,8 @@ export type VoiceSubmitErrorClass = 'retry' | 'permanent' | 'discard';
 
 export type VoiceSubmitMode = 'stay' | 'send' | 'queue';
 
+export type VoiceSubmitOperation = 'transcribe' | 'draft-delivery';
+
 export const VOICE_SUBMIT_RETRY_DELAY_MS = 5_000;
 export const VOICE_SUBMIT_MAX_RETRY_DELAY_MS = 60_000;
 
@@ -13,13 +15,24 @@ const TRANSIENT_SUBMIT_ERROR =
 const DISCARDED_SUBMIT_ERROR =
   /requires audio\/wav input|Audio data is (required|empty)|exceeds the 10 MB|must be valid base64|Voice input is disabled|(endpoint|model) is required|must be a valid URL|must use http:\/\/ or https:\/\/|redirected too many times|invalid redirect|redirect must use|cannot follow an HTTPS-to-HTTP redirect|response exceeds the 256 KB limit|private, loopback, or link-local|only sent over HTTPS/;
 
-export function classifyVoiceSubmitError(error: unknown): VoiceSubmitErrorClass {
+export function classifyVoiceSubmitError(
+  error: unknown,
+  operation: VoiceSubmitOperation = 'draft-delivery'
+): VoiceSubmitErrorClass {
   if (error instanceof DOMException && error.name === 'AbortError') return 'retry';
   if (!(error instanceof Error)) return 'retry';
-  if (PERMANENT_SESSION_REFUSAL.test(error.message)) return 'permanent';
+  if (operation === 'draft-delivery' && PERMANENT_SESSION_REFUSAL.test(error.message)) {
+    return 'permanent';
+  }
   if (TRANSIENT_SUBMIT_ERROR.test(error.message)) return 'retry';
+  const httpStatus = error.message.match(/failed with HTTP (\d{3})/);
+  if (httpStatus && isDeterministicClientStatus(Number(httpStatus[1]))) return 'discard';
   if (DISCARDED_SUBMIT_ERROR.test(error.message)) return 'discard';
   return 'retry';
+}
+
+function isDeterministicClientStatus(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
 }
 
 export function voiceRetryPolicy(attempt: number): number {
