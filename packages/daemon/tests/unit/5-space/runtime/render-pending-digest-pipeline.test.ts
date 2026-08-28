@@ -477,7 +477,7 @@ describe('render-pending-digest pipeline', () => {
     expect(ctx.replayDigestMessage).toBeUndefined();
   });
 
-  it('claimPending skips in-flight, legacy, and immediate-tier rows, marking membership rows delivered', () => {
+  it('claimPending skips in-flight, legacy, membership, and immediate-tier rows without marking them', () => {
     const h = harness();
     for (const eventId of ['ev-inflight', 'ev-legacy', 'ev-member', 'ev-immediate', 'ev-ok']) {
       seedPending(h, [[eventId, 'comment']]);
@@ -499,7 +499,7 @@ describe('render-pending-digest pipeline', () => {
     );
     expect(ctx.pendingRows?.map((row) => row.eventId)).toEqual(['ev-ok']);
     expect(h.acquiredClaims).toEqual(['delivery-ev-ok']);
-    expect(h.marks).toEqual([{ eventId: 'ev-member', deliveryKey: 'delivery-ev-member' }]);
+    expect(h.marks).toEqual([]);
     expect(h.failedDeliveries).toEqual([]);
   });
 
@@ -961,13 +961,35 @@ describe('render-pending-digest pipeline', () => {
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
   });
 
-  it('end to end: pending rows covered by an in-flight persisted digest are reconciled as delivered, not re-delivered', async () => {
+  it('end to end: pending rows covered by an in-flight persisted digest hold for a retryable reconcile', async () => {
     const h = harness();
     seedPending(h, [
       ['ev-a', 'check'],
       ['ev-b', 'review'],
     ]);
     h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b'], 'enqueued'));
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome).toEqual({
+      action: 'skip',
+      reason: 'no_claimable_events',
+      heldDigestInFlight: true,
+    });
+    expect(h.saved).toEqual([]);
+    expect(h.appended).toEqual([]);
+    expect(h.marks).toEqual([]);
+    expect(h.failedDeliveries).toEqual([]);
+  });
+
+  it('end to end: pending rows covered by a consumed persisted digest are marked delivered', async () => {
+    const h = harness();
+    seedPending(h, [
+      ['ev-a', 'check'],
+      ['ev-b', 'review'],
+    ]);
+    h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b'], 'consumed'));
     const outcome = await runRenderPendingDigest(h.deps, {
       sessionId: SESSION_ID,
       taskId: TARGET.taskId,

@@ -2274,7 +2274,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.listDeliveries('evt-long-interrupt-1')[0]?.state).toBe('delivered');
     });
 
-    test('an event fanned out to two tasks on one session delivers both rows via one digest', async () => {
+    test('an event fanned out to two tasks on one session delivers both rows via one digest once consumed', async () => {
       const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
       const { run, task } = await startLiveSession('session-shared-event', topic);
       const secondTask = taskRepo.createTask({
@@ -2291,13 +2291,32 @@ describe('SpaceRuntime external event subscriptions', () => {
       await wait(150);
 
       const deliveries = eventStore.listDeliveries('evt-shared-1');
-      expect(deliveries.map((delivery) => delivery.taskId).sort()).toEqual(
-        [task.id, secondTask.id].sort()
-      );
-      for (const delivery of deliveries) {
-        expect(delivery.state).toBe('delivered');
-      }
+      expect(deliveries).toHaveLength(2);
+      const firstTaskDelivery = deliveries.find((delivery) => delivery.taskId === task.id)!;
+      const secondTaskDelivery = deliveries.find((delivery) => delivery.taskId === secondTask.id)!;
+      expect(firstTaskDelivery.state).toBe('delivered');
+      expect(secondTaskDelivery.state).toBe('pending');
       expect(digestRows('session-shared-event')).toHaveLength(1);
+
+      const digestUuid = digestRows('session-shared-event')[0]!.sdk_uuid;
+      const messages = new SDKMessageRepository(db);
+      const digestRow = messages
+        .listUserMessagesByUuidPrefix('session-shared-event', 'digest-')
+        .find((row) => row.uuid === digestUuid)!;
+      messages.updateMessageStatus([digestRow.dbId], 'consumed');
+      await wait(1500);
+
+      expect(secondTaskDelivery.state).toBe('pending');
+      expect(eventStore.listDeliveries('evt-shared-1').every((d) => d.state === 'delivered')).toBe(
+        true
+      );
+      const finalDigest = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-shared-event'
+           AND sdk_uuid = ?`
+        )
+        .get(digestUuid) as { n: number };
+      expect(finalDigest.n).toBe(1);
     });
 
     test('digest pull holds while an interrupt is requested but the interrupted state has not landed', async () => {
@@ -2348,6 +2367,46 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(pullsDuringInterrupt).toBeLessThanOrEqual(12);
       expect(digestRows('session-probe-cap')).toHaveLength(1);
       expect(eventStore.listDeliveries('evt-probe-cap-1')[0]?.state).toBe('delivered');
+    });
+
+    test('supersede preserves a sibling task digest awaiting its handoff retry', async () => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '1');
+      db.exec('DROP TABLE job_queue');
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startLiveSession('session-preserve-handoff', topicA);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topicB).success
+      ).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-preserve-a', topic: topicA }));
+      await wait(150);
+      const firstDigestRows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-preserve-handoff'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(firstDigestRows).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-preserve-a')[0]?.state).toBe('delivered');
+
+      await eventService.publish(makeEvent({ id: 'evt-preserve-b', topic: topicB }));
+      await wait(150);
+
+      const deferredRows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-preserve-handoff'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(deferredRows).toHaveLength(2);
+      expect(deferredRows.some((row) => row.sdk_uuid === firstDigestRows[0]!.sdk_uuid)).toBe(true);
     });
   });
 

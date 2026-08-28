@@ -1728,7 +1728,8 @@ export class SpaceRuntime {
     return (
       outcome?.action === 'failed' ||
       outcome?.action === 'held' ||
-      (outcome?.action === 'skip' && outcome.reason === 'session_interrupted')
+      (outcome?.action === 'skip' &&
+        (outcome.reason === 'session_interrupted' || outcome.heldDigestInFlight === true))
     );
   }
 
@@ -2066,6 +2067,7 @@ export class SpaceRuntime {
           (deliveredUuid === null || String(row.uuid) !== deliveredUuid)
       );
     for (const row of rows) {
+      if (this.digestHandoffRetryTimers.has(`${sessionId}:${String(row.uuid)}`)) continue;
       const membership = (row as { externalEventIds?: unknown }).externalEventIds;
       if (!Array.isArray(membership) || membership.length === 0) continue;
       const eventIds = membership.filter(

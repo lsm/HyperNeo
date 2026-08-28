@@ -115,6 +115,7 @@ export type RenderPendingDigestSkipReason =
 export interface RenderPendingDigestSkip {
   action: 'skip';
   reason: RenderPendingDigestSkipReason;
+  heldDigestInFlight?: boolean;
 }
 
 export interface RenderPendingDigestHeld {
@@ -366,6 +367,7 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   const target = ctx.target!;
   const claimed: ExternalEventDeliveryRecord[] = [];
   const consumedMarks: RenderPendingDigestLedgerMark[] = [];
+  let heldDigestInFlight = false;
   const candidateRows = (ctx.scopedRows ?? []).slice(0, TURN_END_DIGEST_SCAN_ROW_CAP);
   for (const row of candidateRows) {
     if (claimed.length >= TURN_END_DIGEST_PENDING_ROW_CAP) break;
@@ -376,7 +378,7 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
     }
     if (ctx.legacyDurableEventIds?.has(row.eventId)) continue;
     if (ctx.digestMembershipEventIds?.has(row.eventId)) {
-      consumedMarks.push({ eventId: row.eventId, deliveryKey: row.deliveryKey });
+      heldDigestInFlight = true;
       continue;
     }
     const immediate = ctx.deps.getDeliveryContent(
@@ -407,7 +409,12 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
     }
   }
   if (claimed.length === 0) {
-    return { ...ctx, outcome: { action: 'skip', reason: 'no_claimable_events' } };
+    return {
+      ...ctx,
+      outcome: heldDigestInFlight
+        ? { action: 'skip', reason: 'no_claimable_events', heldDigestInFlight: true }
+        : { action: 'skip', reason: 'no_claimable_events' },
+    };
   }
   ctx.deps.acquireDeliveryClaims(claimed.map((row) => row.deliveryKey));
   return { ...ctx, pendingRows: claimed };

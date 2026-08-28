@@ -265,6 +265,7 @@ export class AgentSession
 
   private queryRunner: QueryRunner | AcpQueryRunner;
   readonly interruptHandler: InterruptHandler;
+  private interruptRequests = 0;
   private sdkRuntimeConfig: SDKRuntimeConfig;
   private eventSubscriptionSetup: EventSubscriptionSetup;
   readonly queryModeHandler: QueryModeHandler;
@@ -871,19 +872,24 @@ export class AgentSession
     preserveDeliveryJobs?: boolean;
     skipDeferredReplay?: boolean;
   }): Promise<void> {
-    this.rateLimitWatchdog.cancel();
-    this.clearPendingResumeAfterCompaction();
-    this.messageHandler.cancelSuppressedResultWait();
-    const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
-    if (
-      yieldedContinuationId &&
-      this.stateManager.getState().status === 'idle' &&
-      (this.messageQueue.isRunning() || this.queryPromise)
-    ) {
-      await this.stateManager.setProcessing(yieldedContinuationId, 'initializing');
-    }
+    this.interruptRequests += 1;
+    try {
+      this.rateLimitWatchdog.cancel();
+      this.clearPendingResumeAfterCompaction();
+      this.messageHandler.cancelSuppressedResultWait();
+      const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
+      if (
+        yieldedContinuationId &&
+        this.stateManager.getState().status === 'idle' &&
+        (this.messageQueue.isRunning() || this.queryPromise)
+      ) {
+        await this.stateManager.setProcessing(yieldedContinuationId, 'initializing');
+      }
 
-    await this.interruptHandler.handleInterrupt(opts);
+      await this.interruptHandler.handleInterrupt(opts);
+    } finally {
+      this.interruptRequests -= 1;
+    }
   }
 
   onInterruptRequested(): void {
@@ -901,6 +907,7 @@ export class AgentSession
 
   isInterruptInProgress(): boolean {
     return (
+      this.interruptRequests > 0 ||
       this.interruptHandler.isInterruptRequested() ||
       this.interruptHandler.getInterruptPromise() !== null
     );
