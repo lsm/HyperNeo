@@ -1065,6 +1065,11 @@ describe('QueryRunner', () => {
       expect(internalEventBusSpy).toHaveBeenCalledWith('session.error', {
         sessionId: 'test-session-id',
         error: 'Unpersisted notice',
+        details: {
+          category: 'system',
+          message: 'Unpersisted notice',
+          userMessage: 'Unpersisted notice',
+        },
       });
       expect(publishSpy).not.toHaveBeenCalled();
     });

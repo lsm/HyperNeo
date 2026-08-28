@@ -920,6 +920,11 @@ describe('AcpQueryRunner', () => {
       expect(publishAsync).toHaveBeenCalledWith('session.error', {
         sessionId: 'session-1',
         error: 'Unpersisted ACP notice',
+        details: {
+          category: 'system',
+          message: 'Unpersisted ACP notice',
+          userMessage: 'Unpersisted ACP notice',
+        },
       });
       expect(messageHubEvent).not.toHaveBeenCalled();
     });
@@ -938,6 +943,11 @@ describe('AcpQueryRunner', () => {
       expect(publishAsync).toHaveBeenCalledWith('session.error', {
         sessionId: 'session-1',
         error: 'Thrown persist notice',
+        details: {
+          category: 'system',
+          message: 'Thrown persist notice',
+          userMessage: 'Thrown persist notice',
+        },
       });
     });
   });

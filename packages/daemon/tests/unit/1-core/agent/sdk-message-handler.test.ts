@@ -4173,6 +4173,7 @@ describe('SDKMessageHandler', () => {
         expect.objectContaining({
           sessionId: 'test-session-id',
           error: expect.stringContaining('Session Stopped'),
+          details: expect.objectContaining({ category: 'system' }),
         })
       );
       expect(

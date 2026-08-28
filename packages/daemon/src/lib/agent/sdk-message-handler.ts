@@ -457,6 +457,7 @@ export class SDKMessageHandler {
       internalEventBus.publishAsync('session.error', {
         sessionId: session.id,
         error: text,
+        details: { category: ErrorCategory.SYSTEM, message: text, userMessage: text },
       });
       return false;
     }
