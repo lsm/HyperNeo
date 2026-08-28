@@ -2896,6 +2896,52 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('quarantines recovered entries behind the gate until a slow restart settles', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-quarantine',
+        content: 'quarantine survivor',
+        internal: false,
+      } as never);
+      let releaseRestart: () => void = () => {};
+      const restartHang = new Promise<void>((resolve) => {
+        releaseRestart = resolve;
+      });
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-quarantine'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async (options) => {
+          q.stop();
+          await options?.beforeStart?.();
+          await restartHang;
+          q.start();
+        },
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_400);
+      q.noteUserInterrupt();
+      q.start();
+      const generator = q.messageGenerator(testSessionId);
+      const bypassing = await generator.next();
+      bypassing.value.onSent();
+      q.acknowledgeCompactionsAwaitingBoundary();
+      let got: { done: boolean; value: { message: { uuid: string } } } | null = null;
+      void generator.next().then((entry) => {
+        got = entry;
+      });
+      await tick(150);
+      expect(got).toBeNull();
+
+      releaseRestart();
+      await run;
+      await tick(50);
+
+      expect(q.hasPendingOrClaimed('uuid-quarantine')).toBe(false);
+      q.stop();
+    }, 15_000);
+
     it('retains yield stamps for outstanding messages past the retention cap', async () => {
       const q = new MessageQueue();
       q.start();

@@ -919,6 +919,7 @@ export class MessageQueue {
 
   noteBoundaryCompleted(): void {
     this.midTurnBoundarySeq += 1;
+    this.internalRestartFailed = false;
   }
 
   shouldSuppressPromptPhaseCompaction(): boolean {
@@ -1185,6 +1186,9 @@ export class MessageQueue {
           this.earlyGateReleasePending = false;
           this.releaseEarlyDeliveryGate();
         }
+        if (!abortedByStop) {
+          resolveDeliveryGate?.();
+        }
       });
     await Promise.race([
       restart,
@@ -1195,10 +1199,6 @@ export class MessageQueue {
         }
       }),
     ]);
-    if (!abortedByStop) {
-      standDownForUserStop();
-    }
-    resolveDeliveryGate?.();
   }
 
   enqueueMidTurnCompaction(opts: MidTurnBudgetInterruptOptions, reason: string): void {

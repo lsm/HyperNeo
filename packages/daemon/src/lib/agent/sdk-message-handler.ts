@@ -496,40 +496,40 @@ export class SDKMessageHandler {
   private async acknowledgePersistedUserMessage(
     message: SDKMessage,
     invocationGeneration: number | null
-  ): Promise<boolean> {
+  ): Promise<'acknowledged' | 'stale' | 'unmatched'> {
     const { session, db, messageQueue } = this.ctx;
     if (message.type !== 'user' || !message.uuid) {
-      return false;
+      return 'unmatched';
     }
     if (!messageQueue.ownsLastYield(message.uuid, invocationGeneration)) {
-      return false;
+      return 'stale';
     }
 
     const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', message.uuid);
     if (enqueuedMessage) {
       await this.consumePersistedUserMessage(enqueuedMessage, message);
-      return true;
+      return 'acknowledged';
     }
 
     const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', message.uuid);
     if (deferredMessage) {
       await this.consumePersistedUserMessage(deferredMessage, message);
-      return true;
+      return 'acknowledged';
     }
 
     const submittedMessage = db.getMessageByStatusAndUuid(session.id, 'submitted', message.uuid);
     if (submittedMessage) {
       await this.consumePersistedUserMessage(submittedMessage, message);
-      return true;
+      return 'acknowledged';
     }
 
     const consumedMessage = db.getMessageByStatusAndUuid(session.id, 'consumed', message.uuid);
     if (consumedMessage) {
       this.acknowledgedPersistedUserThisTurn = true;
-      return true;
+      return 'acknowledged';
     }
 
-    return false;
+    return 'unmatched';
   }
 
   private async consumePersistedUserMessage(
@@ -929,7 +929,18 @@ export class SDKMessageHandler {
       this.lastSdkErrorTag = message.error;
     }
 
-    if (await this.acknowledgePersistedUserMessage(message, invocationGeneration)) {
+    const persistedUserAck = await this.acknowledgePersistedUserMessage(
+      message,
+      invocationGeneration
+    );
+    if (persistedUserAck === 'stale') {
+      this.logger.info(
+        `discarding stale user echo ${message.uuid} from a superseded query for ` +
+          `${this.ctx.session.id}`
+      );
+      return;
+    }
+    if (persistedUserAck === 'acknowledged') {
       this.maybeRefreshContextOnEvent(message, invocationGeneration);
       return;
     }
