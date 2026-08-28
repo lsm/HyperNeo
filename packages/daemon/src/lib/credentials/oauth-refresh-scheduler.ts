@@ -9,7 +9,7 @@ const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_RETRIES = 3;
 
-type ProviderRefreshOutcome = 'refreshed' | 'exhausted';
+type ProviderRefreshOutcome = 'refreshed' | 'exhausted' | 'invalidated';
 
 let discoveryMutationQueue: Promise<void> = Promise.resolve();
 
@@ -69,6 +69,7 @@ interface ScheduledTokenRefreshCtx {
   outcome?:
     | 'deferred-completed'
     | 'deferred-failed'
+    | 'deferred-unresolved'
     | 'cancelled'
     | 'skipped'
     | 'rotation-failed'
@@ -91,14 +92,14 @@ async function resolveCurrentCredentials(
   return { ...ctx, credentials: await ctx.provider.getCredentials() };
 }
 
-async function providerCredentialIdentity(
+async function readProviderOwnedCredentials(
   ctx: ScheduledTokenRefreshCtx
-): Promise<ProviderCredentials | null> {
-  if (!ctx.provider.getCredentials) return ctx.credentials;
+): Promise<ProviderCredentials | null | undefined> {
+  if (!ctx.provider.getCredentials) return ctx.credentials ?? null;
   try {
-    return (await ctx.provider.getCredentials()) ?? ctx.credentials;
+    return (await ctx.provider.getCredentials()) ?? null;
   } catch {
-    return ctx.credentials;
+    return undefined;
   }
 }
 
@@ -108,7 +109,10 @@ async function resumeDeferredInvalidation(
   const { deps, provider } = ctx;
   const entry = deps.pendingInvalidations.get(provider.id);
   if (!entry) return ctx;
-  const identity = await providerCredentialIdentity(ctx);
+  const identity = await readProviderOwnedCredentials(ctx);
+  if (identity === undefined) {
+    return { ...ctx, outcome: 'deferred-unresolved' };
+  }
   if (!identity || credentialRetryKey(provider.id, identity) !== entry.credentialKey) {
     deps.pendingInvalidations.delete(provider.id);
     return ctx;
@@ -118,7 +122,10 @@ async function resumeDeferredInvalidation(
     await recordPendingInvalidationFailure(deps, provider.id, entry.credentialKey);
     return { ...ctx, outcome: 'deferred-failed' };
   }
-  const stillOwned = await providerCredentialIdentity(ctx);
+  const stillOwned = await readProviderOwnedCredentials(ctx);
+  if (stillOwned === undefined) {
+    return { ...ctx, outcome: 'deferred-unresolved' };
+  }
   if (
     !stillOwned ||
     stillOwned.type !== 'oauth' ||
@@ -127,7 +134,7 @@ async function resumeDeferredInvalidation(
     deps.pendingInvalidations.delete(provider.id);
     return { ...ctx, outcome: 'deferred-failed' };
   }
-  if (!(await persistDeferredTokens(provider, deps))) {
+  if (!(await persistDeferredTokens(provider, deps, ctx.credentials))) {
     markUnhealthyWhenFailureRecorded(deps, provider.id);
     await recordPendingInvalidationFailure(deps, provider.id, entry.credentialKey);
     return { ...ctx, outcome: 'deferred-failed' };
@@ -147,8 +154,8 @@ async function gateRefreshDue(ctx: ScheduledTokenRefreshCtx): Promise<ScheduledT
   if (expiresAt - deps.now() > deps.refreshWindowMs) return { ...ctx, outcome: 'skipped' };
   const retryKey = credentialRetryKey(provider.id, credentials);
   if ((deps.retryCounts.get(retryKey) ?? 0) >= deps.maxRetries) {
-    const owned = await providerCredentialIdentity(ctx);
-    if (!owned || credentialRetryKey(provider.id, owned) === retryKey) {
+    const owned = await readProviderOwnedCredentials(ctx);
+    if (owned === undefined || !owned || credentialRetryKey(provider.id, owned) === retryKey) {
       return { ...ctx, outcome: 'skipped' };
     }
   }
@@ -177,23 +184,13 @@ async function invalidateBeforePersist(
   ctx: ScheduledTokenRefreshCtx
 ): Promise<ScheduledTokenRefreshCtx> {
   const { deps, provider } = ctx;
-  if (!provider.getCredentials) {
-    if (!(await runPreRecoveryInvalidation(deps, provider.id))) {
-      markUnhealthyWhenFailureRecorded(deps, provider.id);
-      await recordPendingInvalidationFailure(
-        deps,
-        provider.id,
-        credentialRetryKey(provider.id, ctx.credentials!)
-      );
-      return { ...ctx, nextCredentials: ctx.credentials, outcome: 'invalidation-failed' };
-    }
-    return { ...ctx, nextCredentials: ctx.credentials };
-  }
   let captured: ProviderCredentials | null = null;
-  try {
-    captured = (await provider.getCredentials()) ?? null;
-  } catch {
-    captured = null;
+  if (provider.getCredentials) {
+    try {
+      captured = (await provider.getCredentials()) ?? null;
+    } catch {
+      captured = null;
+    }
   }
   if (!(await runPreRecoveryInvalidation(deps, provider.id))) {
     markUnhealthyWhenFailureRecorded(deps, provider.id);
@@ -202,28 +199,32 @@ async function invalidateBeforePersist(
       provider.id,
       credentialRetryKey(provider.id, captured ?? ctx.credentials!)
     );
-    return { ...ctx, nextCredentials: captured, outcome: 'invalidation-failed' };
+    return { ...ctx, outcome: 'invalidation-failed' };
   }
-  let stillOwned: ProviderCredentials | null = captured;
-  try {
-    stillOwned = (await provider.getCredentials()) ?? null;
-  } catch {
-    stillOwned = null;
-  }
-  if (!stillOwned || stillOwned.type !== 'oauth') {
-    return { ...ctx, nextCredentials: stillOwned, outcome: 'cancelled' };
-  }
-  return { ...ctx, nextCredentials: stillOwned };
+  return { ...ctx, nextCredentials: captured };
 }
 
 async function persistRotatedTokens(
   ctx: ScheduledTokenRefreshCtx
 ): Promise<ScheduledTokenRefreshCtx> {
-  const nextCredentials = ctx.nextCredentials ?? null;
+  const { deps, provider } = ctx;
+  let nextCredentials = ctx.nextCredentials ?? ctx.credentials;
+  if (provider.getCredentials) {
+    let current: ProviderCredentials | null | undefined;
+    try {
+      current = (await provider.getCredentials()) ?? null;
+    } catch {
+      current = undefined;
+    }
+    if (current === undefined || current === null || current.type !== 'oauth') {
+      return { ...ctx, nextCredentials: null, outcome: 'cancelled' };
+    }
+    nextCredentials = current;
+  }
   let persistenceFailed = false;
   try {
     if (nextCredentials) {
-      await ctx.deps.credentialManager.storeOAuthTokens(ctx.provider.id, nextCredentials);
+      await deps.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
     } else {
       persistenceFailed = true;
     }
@@ -237,7 +238,14 @@ async function failOverOnPersistenceFailure(
   ctx: ScheduledTokenRefreshCtx
 ): Promise<ScheduledTokenRefreshCtx> {
   if (!ctx.persistenceFailed) return ctx;
+  await invalidateDiscoveryOnly(ctx.deps);
   return { ...ctx, outcome: 'persistence-failed' };
+}
+
+async function invalidateDiscoveryOnly(deps: ScheduledTokenRefreshDeps): Promise<void> {
+  try {
+    await deps.refreshDiscoveredModels('invalidated');
+  } catch {}
 }
 
 async function completeRefreshedRotation(
@@ -267,14 +275,18 @@ async function runPreRecoveryInvalidation(
 
 async function persistDeferredTokens(
   provider: Provider,
-  deps: ScheduledTokenRefreshDeps
+  deps: ScheduledTokenRefreshDeps,
+  fallback: ProviderCredentials | null
 ): Promise<boolean> {
-  if (!provider.getCredentials) return false;
   let credentials: ProviderCredentials | null;
-  try {
-    credentials = await provider.getCredentials();
-  } catch {
-    return false;
+  if (!provider.getCredentials) {
+    credentials = fallback;
+  } else {
+    try {
+      credentials = (await provider.getCredentials()) ?? null;
+    } catch {
+      return false;
+    }
   }
   if (!credentials || credentials.type !== 'oauth') return false;
   try {
