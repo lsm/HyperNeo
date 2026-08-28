@@ -149,13 +149,6 @@ function planDoom(rows: unknown[]): DoomPlan {
   return { keys, ids, merged };
 }
 
-function doomSideEffects(plan: DoomPlan): void {
-  for (const id of plan.ids) {
-    mirror.delete(id);
-    tombstones.add(id);
-  }
-}
-
 async function writeTx(
   body: (store: IDBObjectStore, plan: DoomPlan) => void
 ): Promise<DoomPlan | null> {
@@ -175,12 +168,14 @@ export async function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> 
   mirror.set(entry.id, entry);
   tombstones.delete(entry.id);
   const plan = await writeTx((store, doomed) => {
-    doomSideEffects(doomed);
     for (const key of doomed.keys) store.delete(key);
     if (!doomed.ids.has(entry.id)) store.put(entry);
   });
   if (!plan) return false;
-  for (const id of plan.ids) tombstones.delete(id);
+  for (const id of plan.ids) {
+    mirror.delete(id);
+    tombstones.delete(id);
+  }
   const stored = !plan.ids.has(entry.id);
   if (stored) mirror.delete(entry.id);
   return stored;
@@ -209,10 +204,13 @@ export async function deleteVoiceRecord(id: string): Promise<void> {
 
 export async function pruneVoiceRecords(): Promise<void> {
   const plan = await writeTx((store, doomed) => {
-    doomSideEffects(doomed);
     for (const key of doomed.keys) store.delete(key);
   });
-  if (plan) for (const id of plan.ids) tombstones.delete(id);
+  if (!plan) return;
+  for (const id of plan.ids) {
+    mirror.delete(id);
+    tombstones.delete(id);
+  }
 }
 
 export function resetVoiceAudioStore(): void {

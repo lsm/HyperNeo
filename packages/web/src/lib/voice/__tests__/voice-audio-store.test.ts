@@ -10,7 +10,13 @@ import {
   resetVoiceAudioStore,
 } from '../voice-audio-store.ts';
 
-function createFactory({ abortReadWriteAfter }: { abortReadWriteAfter?: number } = {}) {
+function createFactory({
+  abortReadWriteAfter,
+  abortAfterRead,
+}: {
+  abortReadWriteAfter?: number;
+  abortAfterRead?: boolean;
+} = {}) {
   const factory = new IDBFactory();
   const txModes: string[] = [];
   let writeTxs = 0;
@@ -27,6 +33,19 @@ function createFactory({ abortReadWriteAfter }: { abortReadWriteAfter?: number }
           writeTxs += 1;
           if (abortReadWriteAfter !== undefined && writeTxs > abortReadWriteAfter) {
             queueMicrotask(() => tx.abort());
+          }
+          if (abortAfterRead) {
+            const objectStore = tx.objectStore.bind(tx);
+            tx.objectStore = (name) => {
+              const store = objectStore(name);
+              const getAll = store.getAll.bind(store);
+              store.getAll = () => {
+                const request = getAll();
+                request.addEventListener('success', () => queueMicrotask(() => tx.abort()));
+                return request;
+              };
+              return store;
+            };
           }
         }
         return tx;
@@ -131,6 +150,22 @@ describe('voice audio record store', () => {
     ]);
     resetVoiceAudioStore();
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r0', 'r1', 'r2', 'r3', 'r4']);
+  });
+
+  it('leaves no tombstones when the transaction aborts after its read', async () => {
+    const factory = createFactory({ abortAfterRead: true });
+    globalThis.indexedDB = factory;
+    for (let i = 0; i < 6; i++)
+      expect(await putVoiceRecord(makeEntry(`r${i}`, NOW + i))).toBe(false);
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual([
+      'r0',
+      'r1',
+      'r2',
+      'r3',
+      'r4',
+      'r5',
+    ]);
+    expect(await readDurableIds(factory)).toEqual([]);
   });
 
   it('deletes a record from both the mirror and durable storage', async () => {
