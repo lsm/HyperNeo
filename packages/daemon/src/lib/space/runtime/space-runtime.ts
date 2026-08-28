@@ -2903,7 +2903,6 @@ export class SpaceRuntime {
             reason
           );
         }
-      } else if (previous.status === 'stopped') {
       }
       return updated;
     }
@@ -4456,7 +4455,7 @@ export class SpaceRuntime {
         }
       }
       if (activatedOnChannel) {
-        this.recordRestartRecoveryCycleTraversal(run.id, workflow, channel, channelIndex);
+        this.recordRestartRecoveryCycleTraversal(run.id, workflow, channelIndex);
       }
     }
 
@@ -4556,7 +4555,6 @@ export class SpaceRuntime {
   private recordRestartRecoveryCycleTraversal(
     runId: string,
     workflow: SpaceWorkflow,
-    channel: WorkflowChannel,
     channelIndex: number
   ): void {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) return;
