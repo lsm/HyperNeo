@@ -57,6 +57,7 @@ export interface RenderPendingDigestDeps {
   getExecutionByAgentSessionId(sessionId: string): TurnEndExecutionRef | null;
   listPendingDeliveries(scope: RenderPendingDigestScope): ExternalEventDeliveryRecord[];
   ownsCurrentExecution(target: RenderPendingDigestTarget, sessionId: string): boolean;
+  isSessionInterruptInProgress(sessionId: string): boolean;
   isTaskAdmissible(taskId: string): boolean;
   isTaskTerminal(taskId: string): boolean;
   isSpacePaused(workflowRunId: string): boolean;
@@ -105,6 +106,7 @@ export type RenderPendingDigestSkipReason =
   | 'no_execution'
   | 'no_pending_events'
   | 'session_not_current'
+  | 'session_interrupted'
   | 'task_not_admissible'
   | 'space_paused'
   | 'no_claimable_events'
@@ -113,6 +115,7 @@ export type RenderPendingDigestSkipReason =
 export interface RenderPendingDigestSkip {
   action: 'skip';
   reason: RenderPendingDigestSkipReason;
+  heldDigestInFlight?: boolean;
 }
 
 export interface RenderPendingDigestHeld {
@@ -236,6 +239,9 @@ export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   }
   if (ctx.deps.isSpacePaused(target.workflowRunId)) {
     return { ...ctx, outcome: { action: 'skip', reason: 'space_paused' } };
+  }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_interrupted' } };
   }
   return ctx;
 }
@@ -361,6 +367,7 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   const target = ctx.target!;
   const claimed: ExternalEventDeliveryRecord[] = [];
   const consumedMarks: RenderPendingDigestLedgerMark[] = [];
+  let heldDigestInFlight = false;
   const candidateRows = (ctx.scopedRows ?? []).slice(0, TURN_END_DIGEST_SCAN_ROW_CAP);
   for (const row of candidateRows) {
     if (claimed.length >= TURN_END_DIGEST_PENDING_ROW_CAP) break;
@@ -370,7 +377,10 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
       continue;
     }
     if (ctx.legacyDurableEventIds?.has(row.eventId)) continue;
-    if (ctx.digestMembershipEventIds?.has(row.eventId)) continue;
+    if (ctx.digestMembershipEventIds?.has(row.eventId)) {
+      heldDigestInFlight = true;
+      continue;
+    }
     const immediate = ctx.deps.getDeliveryContent(
       ctx.sessionId,
       buildImmediateEventMessageUuid(row.eventId, row.deliveryKey)
@@ -399,7 +409,12 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
     }
   }
   if (claimed.length === 0) {
-    return { ...ctx, outcome: { action: 'skip', reason: 'no_claimable_events' } };
+    return {
+      ...ctx,
+      outcome: heldDigestInFlight
+        ? { action: 'skip', reason: 'no_claimable_events', heldDigestInFlight: true }
+        : { action: 'skip', reason: 'no_claimable_events' },
+    };
   }
   ctx.deps.acquireDeliveryClaims(claimed.map((row) => row.deliveryKey));
   return { ...ctx, pendingRows: claimed };
@@ -532,6 +547,9 @@ export async function persistAndAppend(
       digestDbId: dbId,
       outcome: { action: 'held', reason: 'mailbox_rejected', uuid, dbId },
     };
+  }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    return { ...ctx, digestDbId: dbId, outcome: { action: 'skip', reason: 'session_interrupted' } };
   }
   const marks = survivingRows
     .filter((row) => renderedEventIds.has(row.eventId))

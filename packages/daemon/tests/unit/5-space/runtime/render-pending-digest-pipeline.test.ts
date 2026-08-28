@@ -62,6 +62,7 @@ interface Harness {
   failedDeliveries: Array<{ eventId: string; deliveryKey: string; reason: string }>;
   admissibility: {
     ownsCurrentExecution: boolean;
+    interruptInProgress: boolean;
     taskAdmissible: boolean;
     taskTerminal: boolean;
     spacePaused: boolean;
@@ -91,6 +92,7 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
   const failedDeliveries: Array<{ eventId: string; deliveryKey: string; reason: string }> = [];
   const admissibility = {
     ownsCurrentExecution: true,
+    interruptInProgress: false,
     taskAdmissible: true,
     taskTerminal: false,
     spacePaused: false,
@@ -103,6 +105,7 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
       return rows.filter((row) => scope.taskId === undefined || row.taskId === scope.taskId);
     },
     ownsCurrentExecution: () => admissibility.ownsCurrentExecution,
+    isSessionInterruptInProgress: () => admissibility.interruptInProgress,
     isTaskAdmissible: () => admissibility.taskAdmissible,
     isTaskTerminal: () => admissibility.taskTerminal,
     isSpacePaused: () => admissibility.spacePaused,
@@ -344,6 +347,7 @@ describe('render-pending-digest pipeline', () => {
   it('admitTurnEnd halts on each admission gate with a distinct reason', () => {
     const cases = [
       { ownsCurrentExecution: false, reason: 'session_not_current' },
+      { interruptInProgress: true, reason: 'session_interrupted' },
       { taskAdmissible: false, reason: 'task_not_admissible' },
       { spacePaused: true, reason: 'space_paused' },
     ];
@@ -353,6 +357,32 @@ describe('render-pending-digest pipeline', () => {
       const ctx = admitTurnEnd(ctxOf(h, { target: TARGET }));
       expect(ctx.outcome).toEqual({ action: 'skip', reason });
     }
+  });
+
+  it('admitTurnEnd holds scoped rows without terminal-failing them during an interrupt', () => {
+    const h = harness();
+    seedPending(h, [
+      ['ev-a', 'check'],
+      ['ev-b', 'review'],
+    ]);
+    h.admissibility.interruptInProgress = true;
+    const ctx = admitTurnEnd(ctxOf(h, { target: TARGET, scopedRows: h.rows }));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.marks).toEqual([]);
+    expect(h.failedDeliveries).toEqual([]);
+  });
+
+  it('admitTurnEnd runs terminal-task cleanup even while the session is interrupted', () => {
+    const h = harness();
+    seedPending(h, [['ev-a', 'check']]);
+    h.admissibility.interruptInProgress = true;
+    h.admissibility.taskAdmissible = false;
+    h.admissibility.taskTerminal = true;
+    const ctx = admitTurnEnd(ctxOf(h, { target: TARGET, scopedRows: h.rows }));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+    expect(h.failedDeliveries).toEqual([
+      { eventId: 'ev-a', deliveryKey: 'delivery-ev-a', reason: 'task_terminal' },
+    ]);
   });
 
   it('admitTurnEnd terminally fails scoped rows for a terminal task, not a transiently stopped one', () => {
@@ -447,14 +477,14 @@ describe('render-pending-digest pipeline', () => {
     expect(ctx.replayDigestMessage).toBeUndefined();
   });
 
-  it('claimPending skips in-flight, legacy, membership, and immediate-tier rows', () => {
+  it('claimPending skips in-flight, legacy, membership, and immediate-tier rows without marking them', () => {
     const h = harness();
     for (const eventId of ['ev-inflight', 'ev-legacy', 'ev-member', 'ev-immediate', 'ev-ok']) {
       seedPending(h, [[eventId, 'comment']]);
     }
     h.inFlight.add('delivery-ev-inflight');
     h.legacyRows.set('deferred', [legacyDurableRow('ev-legacy', TOPICS.comment)]);
-    h.digestRows.push(digestMembershipRow(['ev-member']));
+    h.digestRows.push(digestMembershipRow(['ev-member'], 'enqueued'));
     h.deliveryContent.set(buildImmediateEventMessageUuid('ev-immediate', 'delivery-ev-immediate'), {
       sendStatus: 'submitted',
     });
@@ -469,6 +499,7 @@ describe('render-pending-digest pipeline', () => {
     );
     expect(ctx.pendingRows?.map((row) => row.eventId)).toEqual(['ev-ok']);
     expect(h.acquiredClaims).toEqual(['delivery-ev-ok']);
+    expect(h.marks).toEqual([]);
     expect(h.failedDeliveries).toEqual([]);
   });
 
@@ -727,6 +758,47 @@ describe('render-pending-digest pipeline', () => {
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
   });
 
+  it('end to end: an interrupt starting during the persist gap neither appends nor marks', async () => {
+    const h = harness({
+      saveDigestMessageIfAbsent: async (_sessionId, message) => {
+        h.admissibility.interruptInProgress = true;
+        const uuid = String(message.uuid);
+        h.saved.push(message);
+        return { dbId: `db-${uuid}`, replayed: false };
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.saved).toHaveLength(1);
+    expect(h.appended).toEqual([]);
+    expect(h.marks).toEqual([]);
+    expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
+  it('end to end: an interrupt starting during the append await skips before marking', async () => {
+    const h = harness({
+      appendDigest: async (_sessionId, message) => {
+        h.appended.push(message);
+        h.admissibility.interruptInProgress = true;
+        return true;
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.saved).toHaveLength(1);
+    expect(h.appended).toHaveLength(1);
+    expect(h.marks).toEqual([]);
+    expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
   it('end to end: a pending subset of a persisted digest renders fresh instead of replaying stored content', async () => {
     const h = harness();
     seedPending(h, [
@@ -889,7 +961,7 @@ describe('render-pending-digest pipeline', () => {
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
   });
 
-  it('end to end: pending rows covered by an in-flight persisted digest are held, not re-delivered', async () => {
+  it('end to end: pending rows covered by an in-flight persisted digest hold for a retryable reconcile', async () => {
     const h = harness();
     seedPending(h, [
       ['ev-a', 'check'],
@@ -900,10 +972,35 @@ describe('render-pending-digest pipeline', () => {
       sessionId: SESSION_ID,
       taskId: TARGET.taskId,
     });
-    expect(outcome).toEqual({ action: 'skip', reason: 'no_claimable_events' });
+    expect(outcome).toEqual({
+      action: 'skip',
+      reason: 'no_claimable_events',
+      heldDigestInFlight: true,
+    });
     expect(h.saved).toEqual([]);
     expect(h.appended).toEqual([]);
     expect(h.marks).toEqual([]);
+    expect(h.failedDeliveries).toEqual([]);
+  });
+
+  it('end to end: pending rows covered by a consumed persisted digest are marked delivered', async () => {
+    const h = harness();
+    seedPending(h, [
+      ['ev-a', 'check'],
+      ['ev-b', 'review'],
+    ]);
+    h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b'], 'consumed'));
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'no_claimable_events' });
+    expect(h.saved).toEqual([]);
+    expect(h.appended).toEqual([]);
+    expect(h.marks).toEqual([
+      { eventId: 'ev-a', deliveryKey: 'delivery-ev-a' },
+      { eventId: 'ev-b', deliveryKey: 'delivery-ev-b' },
+    ]);
     expect(h.failedDeliveries).toEqual([]);
   });
 

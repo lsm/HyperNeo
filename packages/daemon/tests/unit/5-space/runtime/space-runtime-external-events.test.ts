@@ -1600,6 +1600,149 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(1);
     });
 
+    test('flag on: another task inadmissible pull keeps a delivered digest owned by a sibling task', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const event = makeEvent({ id: 'evt-cross-task-drop', topic });
+      await eventService.publish(event);
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      eventStore.markDeliveryDelivered(event.id, delivery.deliveryKey);
+
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'stopped',
+        workflowRunId: run.id,
+      });
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-cross-task-drop',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-cross-task-drop',
+        'session-cross-task-drop',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const owed = {
+        type: 'user',
+        uuid: 'digest-owed-cross-task',
+        session_id: 'session-cross-task-drop',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'handoff pending digest' }] },
+        externalEventIds: [event.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-cross-task-drop', owed, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession(
+        'session-cross-task-drop',
+        secondTask.id
+      );
+      expect(outcome).toEqual({ action: 'skip', reason: 'no_pending_events' });
+      expect(eventStore.listDeliveries(event.id)[0]!.taskId).toBe(task.id);
+
+      const rows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-cross-task-drop'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .get() as { n: number };
+      expect(rows.n).toBe(1);
+    });
+
+    test('flag on: supersede obsoletes a deferred digest whose members are terminal under a sibling task', async () => {
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startRunWithSubscription(topicA);
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topicB).success
+      ).toBe(true);
+
+      const siblingEvent = makeEvent({ id: 'evt-supersede-sibling', topic: topicA });
+      const freshEvent = makeEvent({ id: 'evt-supersede-fresh', topic: topicB });
+      await eventService.publish(siblingEvent);
+      await eventService.publish(freshEvent);
+      const siblingDelivery = eventStore.listDeliveries(siblingEvent.id)[0]!;
+      eventStore.markDeliveryDelivered(siblingEvent.id, siblingDelivery.deliveryKey);
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-cross-task-supersede',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-cross-task-supersede',
+        'session-cross-task-supersede',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const stale = {
+        type: 'user',
+        uuid: 'digest-stale-sibling',
+        session_id: 'session-cross-task-supersede',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale sibling digest' }] },
+        externalEventIds: [siblingEvent.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-cross-task-supersede', stale, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession(
+        'session-cross-task-supersede',
+        secondTask.id
+      );
+      expect(outcome).toMatchObject({ action: 'delivered', eventIds: [freshEvent.id] });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-cross-task-supersede'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(rows.some((row) => row.sdk_uuid === 'digest-stale-sibling')).toBe(false);
+    });
+
     test('flag on: an admission-rejected pull drops the deferred digest rows', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
@@ -1967,10 +2110,14 @@ describe('SpaceRuntime external event subscriptions', () => {
       restoreEnv();
     });
 
-    async function startLiveSession(sessionId: string): Promise<{ run: unknown; task: SpaceTask }> {
-      const { run, task } = await startRunWithSubscription(
-        'github/lsm/neokai/pull_request/42.comment_polled'
-      );
+    async function startLiveSession(
+      sessionId: string,
+      topic = 'github/lsm/neokai/pull_request/42.comment_polled'
+    ): Promise<{
+      run: Awaited<ReturnType<typeof runtime.startWorkflowRun>>['run'];
+      task: SpaceTask;
+    }> {
+      const { run, task } = await startRunWithSubscription(topic);
       const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
       nodeExecutionRepo.update(execution.id, {
         status: 'in_progress',
@@ -2050,6 +2197,216 @@ describe('SpaceRuntime external event subscriptions', () => {
       const rows = digestRows('session-safety');
       expect(rows).toHaveLength(1);
       expect(eventStore.listDeliveries('evt-safety-1')[0]?.state).toBe('delivered');
+    });
+
+    test('two tasks sharing a session each get their pending rows rendered', async () => {
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startLiveSession('session-multi-task', topicA);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      const registered = runtime.registerSubscription(
+        run.id,
+        secondTask.id,
+        'code',
+        'coder',
+        topicB
+      );
+      expect(registered.success).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-multi-a', topic: topicA }));
+      await eventService.publish(makeEvent({ id: 'evt-multi-b', topic: topicB }));
+      await wait(150);
+
+      const deliveryA = eventStore.listDeliveries('evt-multi-a')[0];
+      const deliveryB = eventStore.listDeliveries('evt-multi-b')[0];
+      expect(deliveryA?.taskId).toBe(task.id);
+      expect(deliveryB?.taskId).toBe(secondTask.id);
+      expect(deliveryA?.state).toBe('delivered');
+      expect(deliveryB?.state).toBe('delivered');
+      expect(digestRows('session-multi-task')).toHaveLength(2);
+    });
+
+    test('digest pull during an active interrupt holds, then delivers after it clears', async () => {
+      await startLiveSession('session-interrupted');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-interrupted', 'interrupted');
+      tam.interrupting.add('session-interrupted');
+
+      await eventService.publish(makeEvent({ id: 'evt-interrupt-1', topic }));
+      await wait(150);
+
+      expect(digestRows('session-interrupted')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-interrupt-1')[0]?.state).toBe('pending');
+
+      tam.interrupting.delete('session-interrupted');
+      tam.processingStates.set('session-interrupted', 'idle');
+      await wait(1200);
+
+      const rows = digestRows('session-interrupted');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.sdk_message).toContain('(1 event, PR #42):');
+      expect(eventStore.listDeliveries('evt-interrupt-1')[0]?.state).toBe('delivered');
+    });
+
+    test('digest pull stays held through an interrupt longer than the retry budget', async () => {
+      await startLiveSession('session-long-interrupt');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-long-interrupt', 'interrupted');
+      tam.interrupting.add('session-long-interrupt');
+
+      await eventService.publish(makeEvent({ id: 'evt-long-interrupt-1', topic }));
+      await wait(6500);
+
+      expect(digestRows('session-long-interrupt')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-long-interrupt-1')[0]?.state).toBe('pending');
+
+      tam.interrupting.delete('session-long-interrupt');
+      tam.processingStates.set('session-long-interrupt', 'idle');
+      await wait(400);
+
+      const rows = digestRows('session-long-interrupt');
+      expect(rows).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-long-interrupt-1')[0]?.state).toBe('delivered');
+    });
+
+    test('an event fanned out to two tasks on one session delivers both rows via one digest once consumed', async () => {
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { run, task } = await startLiveSession('session-shared-event', topic);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topic).success
+      ).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-shared-1', topic }));
+      await wait(150);
+
+      const deliveries = eventStore.listDeliveries('evt-shared-1');
+      expect(deliveries).toHaveLength(2);
+      const firstTaskDelivery = deliveries.find((delivery) => delivery.taskId === task.id)!;
+      const secondTaskDelivery = deliveries.find((delivery) => delivery.taskId === secondTask.id)!;
+      expect(firstTaskDelivery.state).toBe('delivered');
+      expect(secondTaskDelivery.state).toBe('pending');
+      expect(digestRows('session-shared-event')).toHaveLength(1);
+
+      const digestUuid = digestRows('session-shared-event')[0]!.sdk_uuid;
+      const messages = new SDKMessageRepository(db);
+      const digestRow = messages
+        .listUserMessagesByUuidPrefix('session-shared-event', 'digest-')
+        .find((row) => row.uuid === digestUuid)!;
+      messages.updateMessageStatus([digestRow.dbId], 'consumed');
+      await wait(1500);
+
+      expect(secondTaskDelivery.state).toBe('pending');
+      expect(eventStore.listDeliveries('evt-shared-1').every((d) => d.state === 'delivered')).toBe(
+        true
+      );
+      const finalDigest = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-shared-event'
+           AND sdk_uuid = ?`
+        )
+        .get(digestUuid) as { n: number };
+      expect(finalDigest.n).toBe(1);
+    });
+
+    test('digest pull holds while an interrupt is requested but the interrupted state has not landed', async () => {
+      await startLiveSession('session-early-interrupt');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-early-interrupt', 'processing');
+      tam.interrupting.add('session-early-interrupt');
+
+      await eventService.publish(makeEvent({ id: 'evt-early-interrupt-1', topic }));
+      await wait(150);
+
+      expect(digestRows('session-early-interrupt')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-early-interrupt-1')[0]?.state).toBe('pending');
+
+      tam.interrupting.delete('session-early-interrupt');
+      tam.processingStates.set('session-early-interrupt', 'idle');
+      await wait(1200);
+
+      expect(digestRows('session-early-interrupt')).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-early-interrupt-1')[0]?.state).toBe('delivered');
+    });
+
+    test('interrupt probing stays on the idle debounce and bypasses the count cap', async () => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '1');
+      await startLiveSession('session-probe-cap');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-probe-cap', 'interrupted');
+      tam.interrupting.add('session-probe-cap');
+
+      const runtimeSpy = runtime as unknown as {
+        triggerDigestPullForSession: (sessionId: string, trigger: string) => void;
+      };
+      const originalTrigger = runtimeSpy.triggerDigestPullForSession.bind(runtime);
+      let pulls = 0;
+      runtimeSpy.triggerDigestPullForSession = (sessionId: string, trigger: string) => {
+        pulls += 1;
+        return originalTrigger(sessionId, trigger);
+      };
+
+      await eventService.publish(makeEvent({ id: 'evt-probe-cap-1', topic }));
+      await wait(400);
+      const pullsDuringInterrupt = pulls;
+
+      tam.interrupting.delete('session-probe-cap');
+      tam.processingStates.set('session-probe-cap', 'idle');
+      await wait(300);
+
+      expect(pullsDuringInterrupt).toBeLessThanOrEqual(12);
+      expect(digestRows('session-probe-cap')).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-probe-cap-1')[0]?.state).toBe('delivered');
+    });
+
+    test('supersede preserves a sibling task digest awaiting its handoff retry', async () => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '1');
+      db.exec('DROP TABLE job_queue');
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startLiveSession('session-preserve-handoff', topicA);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topicB).success
+      ).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-preserve-a', topic: topicA }));
+      await wait(150);
+      const firstDigestRows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-preserve-handoff'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(firstDigestRows).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-preserve-a')[0]?.state).toBe('delivered');
+
+      await eventService.publish(makeEvent({ id: 'evt-preserve-b', topic: topicB }));
+      await wait(150);
+
+      const deferredRows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-preserve-handoff'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(deferredRows).toHaveLength(2);
+      expect(deferredRows.some((row) => row.sdk_uuid === firstDigestRows[0]!.sdk_uuid)).toBe(true);
     });
   });
 

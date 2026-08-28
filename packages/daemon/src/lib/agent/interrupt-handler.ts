@@ -44,6 +44,7 @@ export interface InterruptHandlerContext {
 export class InterruptHandler {
   private interruptPromise: Promise<void> | null = null;
   private interruptResolve: (() => void) | null = null;
+  private interruptRequests = 0;
   private deferredReplaySuppressed = false;
 
   constructor(private ctx: InterruptHandlerContext) {}
@@ -52,178 +53,189 @@ export class InterruptHandler {
     return this.interruptPromise;
   }
 
+  isInterruptRequested(): boolean {
+    return this.interruptRequests > 0;
+  }
+
   async handleInterrupt(opts?: {
     preserveDeliveryJobs?: boolean;
     skipDeferredReplay?: boolean;
   }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
-    this.ctx.onInterruptRequested?.();
+    this.interruptRequests += 1;
+    try {
+      this.ctx.onInterruptRequested?.();
 
-    const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
-    const interruptQueryGeneration = this.ctx.getQueryGeneration?.();
+      const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
+      const interruptQueryGeneration = this.ctx.getQueryGeneration?.();
 
-    const stateAtEntry = stateManager.getState();
-    const teardownRequiredAtEntry =
-      stateAtEntry.status !== 'idle' && stateAtEntry.status !== 'interrupted';
-    if (teardownRequiredAtEntry) {
-      this.ctx.attemptTokens?.invalidateCurrent();
-    }
+      const stateAtEntry = stateManager.getState();
+      const teardownRequiredAtEntry =
+        stateAtEntry.status !== 'idle' && stateAtEntry.status !== 'interrupted';
+      if (teardownRequiredAtEntry) {
+        this.ctx.attemptTokens?.invalidateCurrent();
+      }
 
-    if (!opts?.preserveDeliveryJobs) {
-      const failedDbIds: string[] = [];
-      await withSessionLock(session.id, async () => {
-        const messageUuids =
-          this.ctx.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(session.id) ?? [];
-        const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
-        for (const messageUuid of messageUuids) {
-          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid) ?? null;
-          if (failedDbId) failedDbIds.push(failedDbId);
-        }
-        const cancelled = new Set(messageUuids);
-        const enqueued = this.ctx.db.getUserMessageIdsByStatus?.(session.id, 'enqueued') ?? [];
-        for (const msg of enqueued) {
-          const uuid = msg.uuid;
-          if (uuid && !cancelled.has(uuid)) {
-            const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, uuid) ?? null;
+      if (!opts?.preserveDeliveryJobs) {
+        const failedDbIds: string[] = [];
+        await withSessionLock(session.id, async () => {
+          const messageUuids =
+            this.ctx.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(session.id) ?? [];
+          const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
+          for (const messageUuid of messageUuids) {
+            const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid) ?? null;
             if (failedDbId) failedDbIds.push(failedDbId);
           }
-        }
-      });
-      if (failedDbIds.length > 0) {
-        await this.ctx.internalEventBus
-          .publish('messages.statusChanged', {
-            sessionId: session.id,
-            messageIds: failedDbIds,
-            status: 'failed',
-          })
-          .catch(() => {});
-      }
-      this.ctx.db.notifyChange?.('sdk_messages', { sessionId: session.id });
-      this.ctx.db.notifyChange?.('job_queue', { sessionId: session.id });
-    }
-
-    const currentState = stateManager.getState();
-
-    if (
-      !teardownRequiredAtEntry &&
-      (currentState.status === 'idle' || currentState.status === 'interrupted')
-    ) {
-      if (opts?.skipDeferredReplay) {
-        this.deferredReplaySuppressed = true;
-      }
-      return;
-    }
-    this.ctx.attemptTokens?.invalidateCurrent();
-    this.deferredReplaySuppressed = opts?.skipDeferredReplay === true;
-
-    const interruptCompletePromise = new Promise<void>((resolve) => {
-      this.interruptResolve = resolve;
-    });
-    this.interruptPromise = interruptCompletePromise;
-
-    try {
-      await stateManager.setInterrupted();
-
-      const queueSize = messageQueue.size();
-      if (queueSize > 0) {
-        messageQueue.clear();
-      }
-
-      const queryObjectSnapshot = this.ctx.queryObject;
-
-      let hasInterruptSurvivors = false;
-      if (queryObjectSnapshot && typeof queryObjectSnapshot.interrupt === 'function') {
-        try {
-          const receipt = await this.withInterruptControlDeadline(queryObjectSnapshot.interrupt());
-          if (receipt === INTERRUPT_CONTROL_TIMED_OUT) {
-            hasInterruptSurvivors = true;
-            logger.warn(
-              `SDK interrupt() did not answer within ${getInterruptControlTimeoutMs()}ms; closing immediately`
-            );
-          } else {
-            const survivors = receipt?.still_queued ?? [];
-            if (survivors.length > 0) {
-              const cancelled = await this.withInterruptControlDeadline(
-                this.cancelQueuedSurvivors(queryObjectSnapshot, survivors)
-              );
-              if (cancelled === INTERRUPT_CONTROL_TIMED_OUT) {
-                hasInterruptSurvivors = true;
-                logger.warn(
-                  `SDK cancel_async_message did not settle within ${getInterruptControlTimeoutMs()}ms; closing immediately`
-                );
-              } else if (cancelled) {
-                logger.info(
-                  `SDK interrupt: cancelled ${survivors.length} queued message(s) via cancel_async_message`
-                );
-              } else {
-                hasInterruptSurvivors = true;
-                logger.warn(
-                  `SDK interrupt left ${survivors.length} queued message(s) still running; closing immediately to stop them`
-                );
-              }
+          const cancelled = new Set(messageUuids);
+          const enqueued = this.ctx.db.getUserMessageIdsByStatus?.(session.id, 'enqueued') ?? [];
+          for (const msg of enqueued) {
+            const uuid = msg.uuid;
+            if (uuid && !cancelled.has(uuid)) {
+              const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, uuid) ?? null;
+              if (failedDbId) failedDbIds.push(failedDbId);
             }
           }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          logger.warn('SDK interrupt() failed (may be expected):', errorMessage);
-        }
-      }
-
-      if (this.ctx.queryAbortController) {
-        this.ctx.queryAbortController.abort();
-        this.ctx.queryAbortController = null;
-      }
-
-      if (this.ctx.queryPromise && !hasInterruptSurvivors) {
-        try {
-          await Promise.race([
-            this.ctx.queryPromise,
-            new Promise((resolve) => setTimeout(resolve, 200)),
-          ]);
-        } catch (error) {
-          logger.warn('Error waiting for old query:', error);
-        }
-      }
-
-      if (this.ctx.queryObject) {
-        try {
-          this.ctx.queryObject.close();
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          logger.warn('SDK close() failed (may be expected):', errorMessage);
-        }
-      }
-
-      this.ctx.queryObject = null;
-
-      messageQueue.stop();
-
-      messageHub.event('session.interrupted', {}, { channel: `session:${session.id}` });
-
-      await stateManager.setIdle();
-      if (!opts?.skipDeferredReplay) {
-        const oldQuerySettled =
-          this.ctx.queryPromise?.then(undefined, () => {}) ?? Promise.resolve();
-        void Promise.all([oldQuerySettled, processExitSnapshot]).then(() => {
-          if (this.deferredReplaySuppressed) return;
-          if (this.ctx.stateManager.getState().status !== 'idle') return;
-          if (
-            interruptQueryGeneration !== undefined &&
-            this.ctx.getQueryGeneration &&
-            this.ctx.getQueryGeneration() !== interruptQueryGeneration
-          ) {
-            return;
-          }
-          this.publishDeferredQueueTrigger();
         });
+        if (failedDbIds.length > 0) {
+          await this.ctx.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: session.id,
+              messageIds: failedDbIds,
+              status: 'failed',
+            })
+            .catch(() => {});
+        }
+        this.ctx.db.notifyChange?.('sdk_messages', { sessionId: session.id });
+        this.ctx.db.notifyChange?.('job_queue', { sessionId: session.id });
+      }
+
+      const currentState = stateManager.getState();
+
+      if (
+        !teardownRequiredAtEntry &&
+        (currentState.status === 'idle' || currentState.status === 'interrupted')
+      ) {
+        if (opts?.skipDeferredReplay) {
+          this.deferredReplaySuppressed = true;
+        }
+        return;
+      }
+      this.ctx.attemptTokens?.invalidateCurrent();
+      this.deferredReplaySuppressed = opts?.skipDeferredReplay === true;
+
+      const interruptCompletePromise = new Promise<void>((resolve) => {
+        this.interruptResolve = resolve;
+      });
+      this.interruptPromise = interruptCompletePromise;
+
+      try {
+        await stateManager.setInterrupted();
+
+        const queueSize = messageQueue.size();
+        if (queueSize > 0) {
+          messageQueue.clear();
+        }
+
+        const queryObjectSnapshot = this.ctx.queryObject;
+
+        let hasInterruptSurvivors = false;
+        if (queryObjectSnapshot && typeof queryObjectSnapshot.interrupt === 'function') {
+          try {
+            const receipt = await this.withInterruptControlDeadline(
+              queryObjectSnapshot.interrupt()
+            );
+            if (receipt === INTERRUPT_CONTROL_TIMED_OUT) {
+              hasInterruptSurvivors = true;
+              logger.warn(
+                `SDK interrupt() did not answer within ${getInterruptControlTimeoutMs()}ms; closing immediately`
+              );
+            } else {
+              const survivors = receipt?.still_queued ?? [];
+              if (survivors.length > 0) {
+                const cancelled = await this.withInterruptControlDeadline(
+                  this.cancelQueuedSurvivors(queryObjectSnapshot, survivors)
+                );
+                if (cancelled === INTERRUPT_CONTROL_TIMED_OUT) {
+                  hasInterruptSurvivors = true;
+                  logger.warn(
+                    `SDK cancel_async_message did not settle within ${getInterruptControlTimeoutMs()}ms; closing immediately`
+                  );
+                } else if (cancelled) {
+                  logger.info(
+                    `SDK interrupt: cancelled ${survivors.length} queued message(s) via cancel_async_message`
+                  );
+                } else {
+                  hasInterruptSurvivors = true;
+                  logger.warn(
+                    `SDK interrupt left ${survivors.length} queued message(s) still running; closing immediately to stop them`
+                  );
+                }
+              }
+            }
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.warn('SDK interrupt() failed (may be expected):', errorMessage);
+          }
+        }
+
+        if (this.ctx.queryAbortController) {
+          this.ctx.queryAbortController.abort();
+          this.ctx.queryAbortController = null;
+        }
+
+        if (this.ctx.queryPromise && !hasInterruptSurvivors) {
+          try {
+            await Promise.race([
+              this.ctx.queryPromise,
+              new Promise((resolve) => setTimeout(resolve, 200)),
+            ]);
+          } catch (error) {
+            logger.warn('Error waiting for old query:', error);
+          }
+        }
+
+        if (this.ctx.queryObject) {
+          try {
+            this.ctx.queryObject.close();
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.warn('SDK close() failed (may be expected):', errorMessage);
+          }
+        }
+
+        this.ctx.queryObject = null;
+
+        messageQueue.stop();
+
+        messageHub.event('session.interrupted', {}, { channel: `session:${session.id}` });
+
+        await stateManager.setIdle();
+        if (!opts?.skipDeferredReplay) {
+          const oldQuerySettled =
+            this.ctx.queryPromise?.then(undefined, () => {}) ?? Promise.resolve();
+          void Promise.all([oldQuerySettled, processExitSnapshot]).then(() => {
+            if (this.deferredReplaySuppressed) return;
+            if (this.ctx.stateManager.getState().status !== 'idle') return;
+            if (
+              interruptQueryGeneration !== undefined &&
+              this.ctx.getQueryGeneration &&
+              this.ctx.getQueryGeneration() !== interruptQueryGeneration
+            ) {
+              return;
+            }
+            this.publishDeferredQueueTrigger();
+          });
+        }
+      } finally {
+        if (this.interruptResolve) {
+          this.interruptResolve();
+          this.interruptResolve = null;
+        }
+        this.interruptPromise = null;
       }
     } finally {
-      if (this.interruptResolve) {
-        this.interruptResolve();
-        this.interruptResolve = null;
-      }
-      this.interruptPromise = null;
+      this.interruptRequests -= 1;
     }
   }
 
