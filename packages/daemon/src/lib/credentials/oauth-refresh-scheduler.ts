@@ -108,11 +108,21 @@ async function resumeDeferredInvalidation(
     await recordPendingInvalidationFailure(deps, provider.id, entry.credentialKey);
     return { ...ctx, outcome: 'deferred-failed' };
   }
+  const stillOwned = await providerCredentialIdentity(ctx);
+  if (
+    !stillOwned ||
+    stillOwned.type !== 'oauth' ||
+    credentialRetryKey(provider.id, stillOwned) !== entry.credentialKey
+  ) {
+    deps.pendingInvalidations.delete(provider.id);
+    return { ...ctx, outcome: 'deferred-failed' };
+  }
   if (!(await persistDeferredTokens(provider, deps))) {
     markUnhealthyWhenFailureRecorded(deps, provider.id);
     await recordPendingInvalidationFailure(deps, provider.id, entry.credentialKey);
     return { ...ctx, outcome: 'deferred-failed' };
   }
+  deps.pendingInvalidations.delete(provider.id);
   deps.credentialManager.markProviderHealth(provider.id, 'healthy');
   await recoverDormant(deps, provider.id);
   await emitProviderChanged(deps, provider.id, 'refreshed');
@@ -222,7 +232,6 @@ async function runPreRecoveryInvalidation(
   if (!onPreRecovery) return true;
   try {
     await onPreRecovery(providerId);
-    deps.pendingInvalidations.delete(providerId);
     return true;
   } catch {
     return false;
@@ -233,14 +242,14 @@ async function persistDeferredTokens(
   provider: Provider,
   deps: ScheduledTokenRefreshDeps
 ): Promise<boolean> {
-  if (!provider.getCredentials) return true;
+  if (!provider.getCredentials) return false;
   let credentials: ProviderCredentials | null;
   try {
     credentials = await provider.getCredentials();
   } catch {
     return false;
   }
-  if (!credentials || credentials.type !== 'oauth') return true;
+  if (!credentials || credentials.type !== 'oauth') return false;
   try {
     await deps.credentialManager.storeOAuthTokens(provider.id, credentials);
     return true;
