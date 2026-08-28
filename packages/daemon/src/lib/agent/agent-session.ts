@@ -1569,10 +1569,11 @@ export class AgentSession
           if (batchUuids && batchUuids.length > 1) {
             const rebuilt = this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids);
             const admitted = rebuilt.admittedUuids ?? [uuid];
-            if (admitted.length < batchUuids.length) {
+            const admittedWithKickoff = admitted.includes(uuid) ? admitted : [uuid, ...admitted];
+            if (admittedWithKickoff.length < batchUuids.length) {
               this.db
                 .getJobQueueRepo?.()
-                ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, admitted);
+                ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, admittedWithKickoff);
             }
             return rebuilt.content;
           }

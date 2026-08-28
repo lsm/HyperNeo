@@ -108,6 +108,8 @@ export class MessageQueue {
   private earlyGateReleasePending: boolean = false;
   private stopEpoch: number = 0;
   private userInterruptEpoch: number = 0;
+  private cycleStoodDown: boolean = false;
+  private lastYieldGenerations: Map<string, number> = new Map();
   private midTurnBoundarySeq: number = 0;
   private promptPhaseBoundarySeq: number = 0;
   private midTurnCompactionQueued: boolean = false;
@@ -404,6 +406,7 @@ export class MessageQueue {
   clear(): void {
     this.stopEpoch += 1;
     this.clearEpoch += 1;
+    this.lastYieldGenerations.clear();
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     const rejectedCompactions =
       this.queue.some((message) => this.isInternalCompaction(message)) ||
@@ -504,7 +507,9 @@ export class MessageQueue {
       if (message.yieldQueryGeneration === undefined) return true;
       return message.yieldQueryGeneration === generation;
     }
-    return true;
+    const lastYieldGeneration = this.lastYieldGenerations.get(messageId);
+    if (lastYieldGeneration === undefined) return true;
+    return lastYieldGeneration === generation;
   }
 
   acknowledgeYielded(messageId: string, fromQueryGeneration?: number): boolean {
@@ -669,6 +674,15 @@ export class MessageQueue {
       const yieldAttempt: unknown = {};
       queuedMessage.yieldAttempt = yieldAttempt;
       queuedMessage.yieldQueryGeneration = options?.queryGeneration;
+      if (options?.queryGeneration !== undefined) {
+        this.lastYieldGenerations.set(queuedMessage.id, options.queryGeneration);
+        if (this.lastYieldGenerations.size > 64) {
+          const oldest = this.lastYieldGenerations.keys().next().value;
+          if (oldest !== undefined) {
+            this.lastYieldGenerations.delete(oldest);
+          }
+        }
+      }
       yield {
         message: sdkUserMessage,
         onSent: () => {
@@ -732,6 +746,7 @@ export class MessageQueue {
 
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
     this.internalRestartFailed = false;
+    this.cycleStoodDown = false;
     this.promptPhaseBoundarySeq = this.midTurnBoundarySeq;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
@@ -804,6 +819,7 @@ export class MessageQueue {
 
   standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean {
     if (this.internalRestartInFlight) return false;
+    if (this.cycleStoodDown) return true;
     if (
       this.internalRestartFailed &&
       !this.isRunning() &&
@@ -1042,6 +1058,7 @@ export class MessageQueue {
     });
     const clearEpochBeforeRestart = this.clearEpoch;
     const userInterruptEpochBeforeRestart = this.userInterruptEpoch;
+    const stopEpochBeforeRestart = this.stopEpoch;
     let abortedByStop = false;
     let restartFailed = false;
     let stoodDownForUserStop = false;
@@ -1054,6 +1071,7 @@ export class MessageQueue {
         return;
       }
       stoodDownForUserStop = true;
+      this.cycleStoodDown = true;
       opts.logger.info(
         `user stop observed while the recovery replacement started for session ` +
           `${opts.sessionId}; standing requeued work down`
@@ -1084,6 +1102,19 @@ export class MessageQueue {
           error
         );
         if (abortedByStop) {
+          this.clear();
+          this.cycleStoodDown = true;
+          opts.onResumeClear();
+          return;
+        }
+        if (this.stopEpoch === stopEpochBeforeRestart) {
+          opts.logger.info(
+            `query restart for session ${opts.sessionId} failed before any teardown; ` +
+              `standing the cycle down instead of preserving failed-restart recovery`
+          );
+          restartFailed = true;
+          this.cycleStoodDown = true;
+          opts.contextTracker.clearCompactionCooldown();
           opts.onResumeClear();
           return;
         }

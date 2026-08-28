@@ -2389,6 +2389,7 @@ describe('MessageQueue', () => {
       });
       expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
       expect(onResumeClear).toHaveBeenCalledTimes(1);
+      expect(q.hasPendingOrClaimed('uuid-stop-abort')).toBe(false);
     });
 
     it('does not abort the recovery restart on its own teardown stops', async () => {
@@ -2740,6 +2741,71 @@ describe('MessageQueue', () => {
       await delivered;
       q.stop();
     });
+
+    it('retains the yield generation for turn-end acknowledgment after a send', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('uuid-gen-retained', 'retained survivor', false, {
+        durable: true,
+      });
+      delivered.catch(() => {});
+      const oldGenerator = q.messageGenerator(testSessionId, { queryGeneration: 4 });
+      const oldStep = await oldGenerator.next();
+      expect(oldStep.value.message.uuid).toBe('uuid-gen-retained');
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      await q.runMidTurnBudgetInterrupt(
+        makeInterruptOpts({
+          interrupt: async () => ({ still_queued: ['uuid-gen-retained'] }),
+        })
+      );
+
+      const newGenerator = q.messageGenerator(testSessionId, { queryGeneration: 5 });
+      const newStep = await newGenerator.next();
+      expect(newStep.value.message.uuid).toBe('uuid-gen-retained');
+      newStep.value.onSent();
+
+      expect(q.ownsYieldedGeneration('uuid-gen-retained', 4)).toBe(false);
+      expect(q.ownsYieldedGeneration('uuid-gen-retained', 5)).toBe(true);
+      expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-gen-retained')).toBe(false);
+      q.stop();
+    });
+
+    it('stands the cycle down when the restart fails before any teardown', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-no-teardown', 'no-teardown-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => true,
+        onResumeClear,
+        restart: async () => {
+          throw new Error('session.errorClear rejected');
+        },
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      releaseInterrupt({ still_queued: ['uuid-no-teardown'] });
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-no-teardown')).toBe(false);
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+      expect(onResumeClear).toHaveBeenCalled();
+      expect(q.isRunning()).toBe(true);
+      q.stop();
+    }, 15_000);
 
     it('stands down a late receipt after the recovery replacement was stopped', async () => {
       const q = new MessageQueue();
