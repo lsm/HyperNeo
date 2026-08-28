@@ -232,7 +232,13 @@ export class SDKMessageHandler {
           return undefined;
         }
       },
-      routeRecoveryMessage: (text) => {
+      routeRecoveryMessage: (text, observedQueryGeneration) => {
+        if (this.isInvocationStale(observedQueryGeneration ?? null)) {
+          this.logger.info(
+            'Skipping repeated tool error recovery enqueue: the observing query was superseded.'
+          );
+          return;
+        }
         void this.ctx.messageQueue.enqueue(text).catch((err) => {
           this.logger.warn('Failed to enqueue repeated tool error recovery message:', err);
         });
@@ -370,6 +376,8 @@ export class SDKMessageHandler {
       lifecycleManager,
     } = this.ctx;
 
+    const tripGeneration = this.ctx.getQueryGeneration?.() ?? null;
+
     try {
       messageQueue.clear();
       this.ctx.resetTaskNotificationRequery?.();
@@ -378,11 +386,16 @@ export class SDKMessageHandler {
         sessionId: session.id,
       });
 
+      if (this.isInvocationStale(tripGeneration)) {
+        this.logger.info('Skipping circuit breaker teardown: the tripped query was superseded.');
+        return;
+      }
+
       if (this.ctx.queryObject || this.ctx.queryPromise) {
         await lifecycleManager.stop({ catchQueryErrors: true });
       }
 
-      await stateManager.setIdle();
+      await this.settleIdleForInvocation(tripGeneration);
 
       await this.displayErrorAsAssistantMessage(
         `⚠️ **Session Stopped: Error Loop Detected**\n\n${userMessage}\n\n` +
@@ -399,12 +412,12 @@ export class SDKMessageHandler {
       );
     } catch (error) {
       this.logger.error('Error handling circuit breaker trip:', error);
-      await stateManager.setIdle();
+      await this.settleIdleForInvocation(tripGeneration);
     }
   }
 
-  private async displayErrorAsAssistantMessage(text: string): Promise<void> {
-    const { session, db, messageHub } = this.ctx;
+  private async displayErrorAsAssistantMessage(text: string): Promise<boolean> {
+    const { session, db, messageHub, internalEventBus } = this.ctx;
 
     const assistantMessage = {
       type: 'assistant' as const,
@@ -417,13 +430,20 @@ export class SDKMessageHandler {
       },
     } as unknown as SDKMessage;
 
-    db.saveSDKMessage(session.id, assistantMessage);
+    if (!db.saveSDKMessage(session.id, assistantMessage)) {
+      internalEventBus.publishAsync('session.error', {
+        sessionId: session.id,
+        error: text,
+      });
+      return false;
+    }
 
     messageHub.event(
       'state.sdkMessages.delta',
       { added: [assistantMessage], timestamp: Date.now() },
       { channel: `session:${session.id}` }
     );
+    return true;
   }
 
   private withDbChangeBatch<T>(operation: () => T): T {
@@ -1027,7 +1047,7 @@ export class SDKMessageHandler {
       }
 
       if (isSDKUserMessage(message)) {
-        await this.handleUserMessage(message);
+        await this.handleUserMessage(message, invocationGeneration);
       }
 
       if (isSDKSystemMessage(message)) {
@@ -1614,9 +1634,15 @@ export class SDKMessageHandler {
     return fallbackSdkModel === sdkFallbackModel ? configuredFallbackModel : undefined;
   }
 
-  private async handleUserMessage(message: SDKMessage): Promise<void> {
+  private async handleUserMessage(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<void> {
     await this.publishToolResultConsumedEvents(message);
-    await this.repeatedToolErrorGuardrail.observeToolResultErrors(message as unknown);
+    await this.repeatedToolErrorGuardrail.observeToolResultErrors(
+      message as unknown,
+      invocationGeneration
+    );
   }
 
   private async publishToolResultConsumedEvents(message: SDKMessage): Promise<void> {

@@ -1919,8 +1919,8 @@ export class QueryRunner {
   async displayErrorAsAssistantMessage(
     text: string,
     options?: { markAsError?: boolean }
-  ): Promise<void> {
-    const { session, db, messageHub } = this.ctx;
+  ): Promise<boolean> {
+    const { session, db, messageHub, internalEventBus } = this.ctx;
 
     const assistantMessage = {
       type: 'assistant' as const,
@@ -1934,12 +1934,19 @@ export class QueryRunner {
       },
     } as unknown as SDKMessage;
 
-    db.saveSDKMessage(session.id, assistantMessage);
+    if (!db.saveSDKMessage(session.id, assistantMessage)) {
+      internalEventBus.publishAsync('session.error', {
+        sessionId: session.id,
+        error: text,
+      });
+      return false;
+    }
 
     messageHub.event(
       'state.sdkMessages.delta',
       { added: [assistantMessage], timestamp: Date.now() },
       { channel: `session:${session.id}` }
     );
+    return true;
   }
 }

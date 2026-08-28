@@ -17,7 +17,10 @@ export interface RepeatedToolErrorGuardrailDeps {
     summary: string;
     metadata: Record<string, unknown>;
   }) => { id: string } | undefined | void;
-  routeRecoveryMessage: (text: string) => Promise<void> | void;
+  routeRecoveryMessage: (
+    text: string,
+    observedQueryGeneration?: number | null
+  ) => Promise<void> | void;
   threshold?: number;
   errorFingerprintLength?: number;
   maxTrackedToolUseIds?: number;
@@ -71,7 +74,10 @@ export class RepeatedToolErrorGuardrail {
     this.state.toolUseIdToName.set(toolUseId, toolName || 'unknown');
   }
 
-  async observeToolResultErrors(message: unknown): Promise<boolean> {
+  async observeToolResultErrors(
+    message: unknown,
+    observedQueryGeneration?: number | null
+  ): Promise<boolean> {
     const task = this.deps.getTaskForSession();
     if (!task?.evolutionScopeId) return false;
 
@@ -113,7 +119,7 @@ export class RepeatedToolErrorGuardrail {
       }
 
       triggered = true;
-      await this.intervene(error, decision.consecutiveCount, task);
+      await this.intervene(error, decision.consecutiveCount, task, observedQueryGeneration);
     }
 
     return triggered;
@@ -124,7 +130,12 @@ export class RepeatedToolErrorGuardrail {
     this.state.consecutiveCount = 0;
   }
 
-  private async intervene(error: ToolResultError, count: number, task: SpaceTask): Promise<void> {
+  private async intervene(
+    error: ToolResultError,
+    count: number,
+    task: SpaceTask,
+    observedQueryGeneration?: number | null
+  ): Promise<void> {
     this.state.lastInterventionByKey.set(
       repeatedToolErrorKey(error.toolName, error.fingerprint),
       Date.now()
@@ -146,7 +157,7 @@ export class RepeatedToolErrorGuardrail {
 
     const message = buildRecoveryMessage(error.toolName, error.errorText, count);
     try {
-      await this.deps.routeRecoveryMessage(message);
+      await this.deps.routeRecoveryMessage(message, observedQueryGeneration);
     } catch (err) {
       this.logger.warn('Failed to deliver repeated tool error recovery message:', err);
     }

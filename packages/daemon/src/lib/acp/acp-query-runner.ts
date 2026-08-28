@@ -1480,8 +1480,8 @@ export class AcpQueryRunner {
     }
   }
 
-  async displayErrorAsAssistantMessage(text: string): Promise<void> {
-    const { session, db, messageHub, logger } = this.ctx;
+  async displayErrorAsAssistantMessage(text: string): Promise<boolean> {
+    const { session, db, messageHub, internalEventBus, logger } = this.ctx;
 
     const assistantMessage = {
       type: 'assistant' as const,
@@ -1494,11 +1494,19 @@ export class AcpQueryRunner {
       },
     } as unknown as SDKMessage;
 
+    let persisted = false;
     try {
-      db.saveSDKMessage(session.id, assistantMessage);
+      persisted = db.saveSDKMessage(session.id, assistantMessage);
     } catch (error) {
       logger.warn('Failed to persist ACP assistant error message:', error);
-      return;
+    }
+
+    if (!persisted) {
+      internalEventBus.publishAsync('session.error', {
+        sessionId: session.id,
+        error: text,
+      });
+      return false;
     }
 
     messageHub.event(
@@ -1506,5 +1514,6 @@ export class AcpQueryRunner {
       { added: [assistantMessage], timestamp: Date.now() },
       { channel: `session:${session.id}` }
     );
+    return true;
   }
 }

@@ -3915,6 +3915,183 @@ describe('SDKMessageHandler', () => {
         sessionId: 'test-session-id',
       });
     });
+
+    it('should skip teardown when the tripped query is superseded during the errorClear await', async () => {
+      mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      let queryGeneration = 1;
+      mockContext.getQueryGeneration = () => queryGeneration;
+      emitSpy.mockImplementation(async (event: string) => {
+        if (event === 'session.errorClear') queryGeneration += 1;
+      });
+
+      const handlerSuperseded = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerSuperseded.handleMessage({
+          ...errorMessage,
+          uuid: `error-uuid-${i}`,
+        } as SDKMessage);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(lifecycleStopSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(
+        saveSDKMessageSpy.mock.calls.filter(([, message]) => message.type === 'assistant')
+      ).toHaveLength(0);
+    });
+
+    it('should settle idle with the tripped query owner when the trip completes', async () => {
+      mockContext.queryObject = null;
+      mockContext.queryPromise = null;
+      mockContext.getQueryGeneration = () => 3;
+
+      const handlerOwned = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerOwned.handleMessage({
+          ...errorMessage,
+          uuid: `error-uuid-${i}`,
+        } as SDKMessage);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(setIdleSpy).toHaveBeenCalledWith({
+        owner: { queryGeneration: 3, turnToken: 0 },
+      });
+    });
+
+    it('should publish a session.error fallback when the trip notice persist fails', async () => {
+      mockContext.queryObject = null;
+      mockContext.queryPromise = null;
+      saveSDKMessageSpy.mockImplementation(() => false);
+
+      const handlerPersistFailed = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerPersistFailed.handleMessage({
+          ...errorMessage,
+          uuid: `error-uuid-${i}`,
+        } as SDKMessage);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(emitSpy).toHaveBeenCalledWith(
+        'session.error',
+        expect.objectContaining({
+          sessionId: 'test-session-id',
+          error: expect.stringContaining('Session Stopped'),
+        })
+      );
+      expect(
+        publishSpy.mock.calls.filter(([event]) => event === 'state.sdkMessages.delta')
+      ).toHaveLength(0);
+    });
+  });
+
+  describe('repeated tool error recovery enqueue fencing', () => {
+    let recoveryTaskRepo: { getTaskBySessionId: () => unknown; getTask: () => null };
+
+    beforeEach(() => {
+      recoveryTaskRepo = {
+        getTaskBySessionId: () => ({ id: 'task-1', evolutionScopeId: 'scope-1' }),
+        getTask: () => null,
+      };
+      mockContext.db = {
+        ...mockDb,
+        getSpaceTaskRepo: () => recoveryTaskRepo,
+      } as unknown as Database;
+    });
+
+    async function driveRepeatedToolError(
+      handler: SDKMessageHandler,
+      invocationGeneration: number
+    ): Promise<void> {
+      await handler.handleMessage(
+        {
+          type: 'assistant',
+          uuid: 'assistant-tool-use',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: {} }],
+          },
+        } as unknown as SDKMessage,
+        invocationGeneration
+      );
+      for (let i = 0; i < 2; i++) {
+        await handler.handleMessage(
+          {
+            type: 'user',
+            uuid: `tool-error-${i}`,
+            parent_tool_use_id: null,
+            message: {
+              role: 'user',
+              content: [
+                { type: 'tool_result', tool_use_id: 'tu-1', is_error: true, content: 'boom' },
+              ],
+            },
+          } as unknown as SDKMessage,
+          invocationGeneration
+        );
+      }
+    }
+
+    it('enqueues the recovery message when the observing query is current', async () => {
+      mockContext.getQueryGeneration = () => 9;
+      const currentHandler = new SDKMessageHandler(mockContext);
+
+      await driveRepeatedToolError(currentHandler, 9);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueMessageSpy.mock.calls[0][0]).toEqual(expect.any(String));
+    });
+
+    it('skips the recovery enqueue when the observing query was superseded', async () => {
+      mockContext.getQueryGeneration = () => 9;
+      const fencedHandler = new SDKMessageHandler(mockContext);
+
+      await driveRepeatedToolError(fencedHandler, 8);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(enqueueMessageSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('context refresh via SDK getContextUsage()', () => {
