@@ -1097,6 +1097,79 @@ describe('AcpQueryRunner', () => {
       );
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
     }, 1000);
+
+    test('a stale out-of-band onSubmitted requeues the unsubmitted prompt', async () => {
+      const client = createMockClient();
+      let releasePrompt: (() => void) | undefined;
+      let capturedCallbacks: { onSubmitted?: () => void; onAccepted?: () => void } | undefined;
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        capturedCallbacks = callbacks;
+        await new Promise<void>((resolve) => {
+          releasePrompt = resolve;
+        });
+      });
+      const { runner, ctx, messageQueue, onSent } = createRunnerFixture({ client });
+
+      await runner.start();
+      for (let i = 0; i < 100 && !capturedCallbacks; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      ctx.attemptTokens.invalidateCurrent();
+
+      capturedCallbacks?.onSubmitted?.();
+
+      const handler = ctx.messageHandler as unknown as {
+        markMessageSubmitted: ReturnType<typeof mock>;
+      };
+      expect(handler.markMessageSubmitted).not.toHaveBeenCalled();
+      expect(messageQueue.requeueYielded).toHaveBeenCalledWith('user-message-1');
+      expect(onSent).not.toHaveBeenCalled();
+
+      releasePrompt?.();
+      await ctx.queryPromise;
+    }, 1000);
+
+    test('a stale attempt startup timer must not clear the replacement timer slot', async () => {
+      const client = createMockClient();
+      let releaseInitialize: (() => void) | undefined;
+      client.initialize.mockImplementation(async () => {
+        await new Promise<void>((resolve) => {
+          releaseInitialize = resolve;
+        });
+      });
+      const { ctx } = createRunnerFixture({ client, queueSize: 1 });
+      const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+      const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      try {
+        await runner.start();
+        for (let i = 0; i < 100 && !ctx.startupTimeoutTimer; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+
+        ctx.incrementQueryGeneration();
+        ctx.attemptTokens.allocate();
+        const replacementTimer = setTimeout(() => {}, 60000);
+        ctx.startupTimeoutTimer = replacementTimer;
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(ctx.startupTimeoutTimer).toBe(replacementTimer);
+
+        clearTimeout(replacementTimer);
+        ctx.startupTimeoutTimer = null;
+        releaseInitialize?.();
+        await ctx.queryPromise;
+      } finally {
+        if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      }
+    }, 1000);
   });
 
   test('preserves env-only Anthropic auth for ACP subprocesses', async () => {

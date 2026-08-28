@@ -582,11 +582,9 @@ export class AcpQueryRunner {
               this.clearStartupTimer();
               startupTimeoutReached = false;
               queryStartTime = Date.now();
-              this.ctx.startupTimeoutTimer = setTimeout(() => {
+              const startupTimer = setTimeout(() => {
                 if (!attemptOwnsRun()) {
-                  const firedTimer = this.ctx.startupTimeoutTimer;
-                  if (firedTimer) {
-                    clearTimeout(firedTimer);
+                  if (this.ctx.startupTimeoutTimer === startupTimer) {
                     this.ctx.startupTimeoutTimer = null;
                   }
                   return;
@@ -610,6 +608,7 @@ export class AcpQueryRunner {
                   client?.close();
                 }
               }, startupTimeoutMs);
+              this.ctx.startupTimeoutTimer = startupTimer;
             };
 
             const onMessageEnqueued = (messageId: string, queuedAt: number) => {
@@ -831,7 +830,10 @@ export class AcpQueryRunner {
           },
           onSubmitted: () => {
             if (submitted) return;
-            if (!attemptOwnsRun()) return;
+            if (!attemptOwnsRun()) {
+              requeueYieldedPrompt(message);
+              return;
+            }
             const persisted = this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');
             if (!persisted) {
               throw new Error('ACP prompt was revoked before submission');
