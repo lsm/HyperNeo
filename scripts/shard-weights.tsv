@@ -126,7 +126,6 @@
 591	packages/daemon/tests/unit/5-space/runtime/space-runtime-disabled-workflow.test.ts
 613	packages/daemon/tests/unit/5-space/runtime/space-runtime-dispatch-post-approval.test.ts
 2472	packages/daemon/tests/unit/5-space/runtime/space-runtime-edge-cases.test.ts
-262	packages/daemon/tests/unit/5-space/runtime/space-runtime-external-event-admission-parity.test.ts
 46371	packages/daemon/tests/unit/5-space/runtime/space-runtime-external-events.test.ts
 2010	packages/daemon/tests/unit/5-space/runtime/space-runtime-list-subscriptions.test.ts
 544	packages/daemon/tests/unit/5-space/runtime/space-runtime-llm-workflow-selection.test.ts
