@@ -1565,12 +1565,15 @@ export class SpaceRuntime {
         this.turnEndDigestRetryCounts.delete(sessionId);
         return;
       }
-      void this.renderPendingDigestForSession(sessionId, taskId)
-        .then((outcome) => {
-          if (outcome?.action === 'delivered') {
-            this.turnEndDigestRetryCounts.delete(sessionId);
-            this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
-          } else if (outcome?.action !== 'failed' && outcome?.action !== 'held') {
+      void this.renderPendingDigestScopesForSession(sessionId, taskId)
+        .then((outcomes) => {
+          const retryPending = outcomes.some(
+            (outcome) =>
+              outcome?.action === 'failed' ||
+              outcome?.action === 'held' ||
+              (outcome?.action === 'skip' && outcome.reason === 'session_interrupted')
+          );
+          if (!retryPending) {
             this.turnEndDigestRetryCounts.delete(sessionId);
           }
         })
@@ -1690,7 +1693,7 @@ export class SpaceRuntime {
       state.idleTimer = setTimeout(() => this.maybeFlushDigestOnIdle(sessionId), idleMs);
       return;
     }
-    void this.triggerDigestPullForSession(sessionId, 'idle');
+    this.triggerDigestPullForSession(sessionId, 'idle');
   }
 
   private hasUnconsumedDigestForSession(sessionId: string): boolean {
@@ -1704,29 +1707,53 @@ export class SpaceRuntime {
     return false;
   }
 
-  private async triggerDigestPullForSession(
+  private listPendingDigestTaskScopes(
+    sessionId: string,
+    fallbackTaskId?: string
+  ): Array<string | undefined> {
+    const store = this.config.externalEventStore;
+    const execution = store ? this.config.nodeExecutionRepo.getByAgentSessionId(sessionId) : null;
+    if (!store || !execution) return [fallbackTaskId];
+    const taskIds = new Set<string>();
+    for (const row of store.listPendingDeliveries(execution.workflowRunId)) {
+      if (row.nodeId === execution.workflowNodeId && row.agentName === execution.agentName) {
+        taskIds.add(row.taskId);
+      }
+    }
+    return taskIds.size > 0 ? [...taskIds] : [fallbackTaskId];
+  }
+
+  private async renderPendingDigestScopesForSession(
+    sessionId: string,
+    fallbackTaskId?: string
+  ): Promise<Array<RenderPendingDigestOutcome | null>> {
+    const outcomes: Array<RenderPendingDigestOutcome | null> = [];
+    for (const scopeTaskId of this.listPendingDigestTaskScopes(sessionId, fallbackTaskId)) {
+      const outcome = await this.renderPendingDigestForSession(sessionId, scopeTaskId);
+      outcomes.push(outcome);
+      if (outcome?.action === 'delivered') {
+        this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
+      }
+    }
+    return outcomes;
+  }
+
+  private triggerDigestPullForSession(
     sessionId: string,
     trigger: 'count_cap' | 'idle' | 'safety'
-  ): Promise<void> {
+  ): void {
     const state = this.digestPullTriggers.get(sessionId);
     if (!state) return;
     this.clearDigestPullState(sessionId);
     if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
     if (!this.isTargetSessionLive(sessionId)) return;
-    try {
-      const outcome = await this.renderPendingDigestForSession(sessionId, state.taskId);
-      if (outcome?.action === 'delivered') {
-        this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
-      } else if (outcome?.action === 'failed' || outcome?.action === 'held') {
-        this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
-      }
-    } catch (error) {
+    void this.renderPendingDigestScopesForSession(sessionId, state.taskId).catch((error) => {
       log.warn(
         `SpaceRuntime: ${trigger} digest pull for session ${sessionId} failed: ` +
           `${formatCommandError(error)}`
       );
       this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
-    }
+    });
   }
 
   private clearDigestPullState(sessionId: string): void {
@@ -1809,6 +1836,8 @@ export class SpaceRuntime {
         );
         return !!current && current.agentSessionId === targetSessionId;
       },
+      isSessionInterruptInProgress: (targetSessionId) =>
+        this.isTargetSessionInterrupted(targetSessionId),
       isTaskAdmissible: (admissionTaskId) => {
         const task = this.config.taskRepo.getTask(admissionTaskId);
         return (
@@ -1908,7 +1937,9 @@ export class SpaceRuntime {
           return { action: 'failed', stage: 'digestCleanup', error: cleanupError };
         }
         if (
-          (outcome.action === 'failed' || outcome.action === 'held') &&
+          (outcome.action === 'failed' ||
+            outcome.action === 'held' ||
+            (outcome.action === 'skip' && outcome.reason === 'session_interrupted')) &&
           this.isTargetSessionLive(sessionId)
         ) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);

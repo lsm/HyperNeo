@@ -1967,10 +1967,14 @@ describe('SpaceRuntime external event subscriptions', () => {
       restoreEnv();
     });
 
-    async function startLiveSession(sessionId: string): Promise<{ run: unknown; task: SpaceTask }> {
-      const { run, task } = await startRunWithSubscription(
-        'github/lsm/neokai/pull_request/42.comment_polled'
-      );
+    async function startLiveSession(
+      sessionId: string,
+      topic = 'github/lsm/neokai/pull_request/42.comment_polled'
+    ): Promise<{
+      run: Awaited<ReturnType<typeof runtime.startWorkflowRun>>['run'];
+      task: SpaceTask;
+    }> {
+      const { run, task } = await startRunWithSubscription(topic);
       const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
       nodeExecutionRepo.update(execution.id, {
         status: 'in_progress',
@@ -2050,6 +2054,60 @@ describe('SpaceRuntime external event subscriptions', () => {
       const rows = digestRows('session-safety');
       expect(rows).toHaveLength(1);
       expect(eventStore.listDeliveries('evt-safety-1')[0]?.state).toBe('delivered');
+    });
+
+    test('two tasks sharing a session each get their pending rows rendered', async () => {
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startLiveSession('session-multi-task', topicA);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      const registered = runtime.registerSubscription(
+        run.id,
+        secondTask.id,
+        'code',
+        'coder',
+        topicB
+      );
+      expect(registered.success).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-multi-a', topic: topicA }));
+      await eventService.publish(makeEvent({ id: 'evt-multi-b', topic: topicB }));
+      await wait(150);
+
+      const deliveryA = eventStore.listDeliveries('evt-multi-a')[0];
+      const deliveryB = eventStore.listDeliveries('evt-multi-b')[0];
+      expect(deliveryA?.taskId).toBe(task.id);
+      expect(deliveryB?.taskId).toBe(secondTask.id);
+      expect(deliveryA?.state).toBe('delivered');
+      expect(deliveryB?.state).toBe('delivered');
+      expect(digestRows('session-multi-task')).toHaveLength(2);
+    });
+
+    test('digest pull during an active interrupt holds, then delivers after it clears', async () => {
+      await startLiveSession('session-interrupted');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-interrupted', 'interrupted');
+      tam.interrupting.add('session-interrupted');
+
+      await eventService.publish(makeEvent({ id: 'evt-interrupt-1', topic }));
+      await wait(150);
+
+      expect(digestRows('session-interrupted')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-interrupt-1')[0]?.state).toBe('pending');
+
+      tam.interrupting.delete('session-interrupted');
+      tam.processingStates.set('session-interrupted', 'idle');
+      await wait(1200);
+
+      const rows = digestRows('session-interrupted');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.sdk_message).toContain('(1 event, PR #42):');
+      expect(eventStore.listDeliveries('evt-interrupt-1')[0]?.state).toBe('delivered');
     });
   });
 

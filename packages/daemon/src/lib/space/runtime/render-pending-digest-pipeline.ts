@@ -57,6 +57,7 @@ export interface RenderPendingDigestDeps {
   getExecutionByAgentSessionId(sessionId: string): TurnEndExecutionRef | null;
   listPendingDeliveries(scope: RenderPendingDigestScope): ExternalEventDeliveryRecord[];
   ownsCurrentExecution(target: RenderPendingDigestTarget, sessionId: string): boolean;
+  isSessionInterruptInProgress(sessionId: string): boolean;
   isTaskAdmissible(taskId: string): boolean;
   isTaskTerminal(taskId: string): boolean;
   isSpacePaused(workflowRunId: string): boolean;
@@ -105,6 +106,7 @@ export type RenderPendingDigestSkipReason =
   | 'no_execution'
   | 'no_pending_events'
   | 'session_not_current'
+  | 'session_interrupted'
   | 'task_not_admissible'
   | 'space_paused'
   | 'no_claimable_events'
@@ -208,6 +210,9 @@ export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   const target = ctx.target!;
   if (!ctx.deps.ownsCurrentExecution(target, ctx.sessionId)) {
     return { ...ctx, outcome: { action: 'skip', reason: 'session_not_current' } };
+  }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_interrupted' } };
   }
   if (!ctx.deps.isTaskAdmissible(target.taskId)) {
     if (ctx.deps.isTaskTerminal(target.taskId)) {
