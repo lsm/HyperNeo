@@ -172,27 +172,6 @@ const saveInputs: readonly SaveState[] = saveMessages.map((message) => ({
 }));
 
 const insertTimestamp = new Date().toISOString();
-const INSERT_ROW_COUNT = Math.max(INSERT_ITERATIONS, INSERT_WARMUP_ITERATIONS);
-const insertRows: readonly InsertRow[] = Array.from({ length: INSERT_ROW_COUNT }, (_, index) => {
-  const message = saveMessages[index % saveMessages.length];
-  const sdkUuid = `u-${index}`;
-  const sdkMessage = { ...message, uuid: sdkUuid } as unknown as SDKMessage;
-  const admission = decideMessageAdmission(normalizeMessageAdmissionInput(sdkMessage), {
-    variant: 'sdk',
-    sendStatus: null,
-  });
-  return {
-    id: `${index}-${saveSessionId}`,
-    sessionId: saveSessionId,
-    messageType: sdkMessage.type,
-    messageSubtype: (sdkMessage as { subtype?: string }).subtype ?? null,
-    sdkMessage: JSON.stringify(sdkMessage),
-    isRenderable: admission.isRenderable,
-    isTerminal: admission.isTerminal,
-    parentToolUseId: admission.parentToolUseId,
-    sdkUuid: admission.sdkUuid,
-  };
-});
 
 const decide = (ctx: RouterContext, decision: RouterDecision): RouterContext => ({
   ...ctx,
@@ -312,6 +291,30 @@ function setupInsert(): {
   };
 }
 
+function buildInsertRows(count: number): readonly InsertRow[] {
+  return Array.from({ length: count }, (_, index) => {
+    const message = saveMessages[index % saveMessages.length];
+    const id = generateUUID();
+    const sdkUuid = generateUUID();
+    const sdkMessage = { ...message, uuid: sdkUuid } as unknown as SDKMessage;
+    const admission = decideMessageAdmission(normalizeMessageAdmissionInput(sdkMessage), {
+      variant: 'sdk',
+      sendStatus: null,
+    });
+    return {
+      id,
+      sessionId: saveSessionId,
+      messageType: sdkMessage.type,
+      messageSubtype: (sdkMessage as { subtype?: string }).subtype ?? null,
+      sdkMessage: JSON.stringify(sdkMessage),
+      isRenderable: admission.isRenderable,
+      isTerminal: admission.isTerminal,
+      parentToolUseId: admission.parentToolUseId,
+      sdkUuid,
+    };
+  });
+}
+
 function verifyEquivalentDecisions(): void {
   for (const input of inputs) {
     const pipelineDecision = runDecisionPipeline(input).decision;
@@ -357,6 +360,7 @@ function collectSample(variant: Variant): Sample {
     return { cold, warm };
   }
   if (variant === 'sqlite-insert') {
+    const insertRows = buildInsertRows(Math.max(INSERT_ITERATIONS, INSERT_WARMUP_ITERATIONS));
     const { db, dbPath, reset, run } = setupInsert();
     reset();
     const cold = runIterations(insertRows.slice(0, INSERT_ITERATIONS), run, INSERT_ITERATIONS);
