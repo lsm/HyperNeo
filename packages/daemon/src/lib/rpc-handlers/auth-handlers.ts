@@ -21,7 +21,10 @@ import { getProviderRegistry } from '../providers/registry.ts';
 import { bumpProviderCatalogEpoch } from '../model-service.js';
 import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
 import { registerBuiltInProvider } from '../providers/factory.js';
-import { stripPersistedDiscovery } from '../providers/discovery-refresh-pipeline.ts';
+import {
+  credentialIdentity,
+  stripPersistedDiscovery,
+} from '../providers/discovery-refresh-pipeline.ts';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository.ts';
 import {
   applyRecordedFailureToAuthStatus,
@@ -38,12 +41,17 @@ type ClearCacheCtx = {
   stripPersisted: boolean;
   record?: ProviderRecord | null;
   stripped?: string;
+  readError?: unknown;
   stripError?: unknown;
 };
 
 function clearCacheLoadRecord(ctx: ClearCacheCtx): ClearCacheCtx {
   if (ctx.providerId && ctx.providerRepo && ctx.stripPersisted) {
-    ctx.record = ctx.providerRepo.getProviderByProviderId(ctx.providerId);
+    try {
+      ctx.record = ctx.providerRepo.getProviderByProviderId(ctx.providerId);
+    } catch (error) {
+      ctx.readError = error;
+    }
   }
   return ctx;
 }
@@ -74,6 +82,7 @@ function clearCachePublishChanged(ctx: ClearCacheCtx): ClearCacheCtx {
 }
 
 function clearCacheRethrowIfNeeded(ctx: ClearCacheCtx): ClearCacheCtx {
+  if (ctx.readError) throw ctx.readError;
   if (ctx.stripError) throw ctx.stripError;
   return ctx;
 }
@@ -212,14 +221,16 @@ export function setupAuthHandlers(
       try {
         let unsubscribe: (() => void) | undefined;
         const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
-          bumpProviderCatalogEpoch(providerId);
-          if (credentials.type === 'oauth') {
-            await credentialManager?.storeOAuthTokens(providerId, credentials);
-          }
-          unsubscribe?.();
           try {
+            bumpProviderCatalogEpoch(providerId);
+            if (credentials.type === 'oauth') {
+              await credentialManager?.storeOAuthTokens(providerId, credentials);
+            }
+            unsubscribe?.();
             await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
-          } catch {}
+          } catch (error) {
+            log.error(`Failed to persist credentials for ${providerId}:`, error);
+          }
         };
         unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
         const flowData = await provider.startOAuthFlow();
@@ -371,17 +382,21 @@ export function setupAuthHandlers(
         bumpProviderCatalogEpoch(providerId);
         const refreshed = await provider.refreshToken();
         if (!refreshed) {
+          const previousCredentials =
+            (await credentialManager?.getCredentials?.(providerId)) ?? null;
           await removeCredentialsOrKeychainError(credentialManager, providerId);
           const remaining = await provider.getCredentials?.();
           if (remaining?.type === 'oauth') {
             await credentialManager?.storeOAuthTokens(providerId, remaining);
           }
+          const identityChanged =
+            !remaining || credentialIdentity(previousCredentials) !== credentialIdentity(remaining);
           try {
             await clearCacheAndNotifyProvidersChanged(
               internalEventBus,
               providerId,
               providerRepo,
-              remaining?.type !== 'oauth'
+              identityChanged
             );
           } catch {}
           return {
