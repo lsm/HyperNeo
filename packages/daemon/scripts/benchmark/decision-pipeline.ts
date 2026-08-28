@@ -253,36 +253,42 @@ function setupInsert(): {
   db.exec('PRAGMA synchronous = NORMAL');
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA foreign_keys = ON');
+  db.exec('PRAGMA cache_size = 2000');
   createTables(db);
   db.prepare(
     'INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, visible_message_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(saveSessionId, 'benchmark', insertTimestamp, insertTimestamp, 'active', '{}', '{}', 0);
-  const insertStmt = db.prepare(
-    'INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, origin, is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index, sdk_uuid, replacement_metadata_normalized) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  );
+  const insertSql =
+    'INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, origin, is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index, sdk_uuid, replacement_metadata_normalized) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+  const rowParams = (row: InsertRow): unknown[] => [
+    row.id,
+    row.sessionId,
+    row.messageType,
+    row.messageSubtype,
+    row.sdkMessage,
+    row.timestamp,
+    null,
+    row.isRenderable,
+    row.isTerminal,
+    row.parentToolUseId,
+    null,
+    null,
+    row.sdkUuid,
+    1,
+  ];
+  const insertStmt = db.prepare(insertSql);
+  const seedStmt = db.prepare(insertSql);
   const deleteStmt = db.prepare('DELETE FROM sdk_messages');
   const resetSessionStmt = db.prepare('UPDATE sessions SET visible_message_count = 0 WHERE id = ?');
   const insert = db.transaction((row: InsertRow) => {
-    insertStmt.run(
-      row.id,
-      row.sessionId,
-      row.messageType,
-      row.messageSubtype,
-      row.sdkMessage,
-      row.timestamp,
-      null,
-      row.isRenderable,
-      row.isTerminal,
-      row.parentToolUseId,
-      null,
-      null,
-      row.sdkUuid,
-      1
-    );
+    insertStmt.run(...rowParams(row));
     return 1;
   });
+  const seedRow = (row: InsertRow): void => {
+    seedStmt.run(...rowParams(row));
+  };
   const seed = db.transaction((rows: readonly InsertRow[]) => {
-    for (const row of rows) insert(row);
+    for (const row of rows) seedRow(row);
     return rows.length;
   });
   return {
