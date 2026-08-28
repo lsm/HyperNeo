@@ -114,6 +114,7 @@ export class MessageQueue {
   private cycleRequeuedIds: string[] = [];
   private recoveryRestartChain: Promise<void> = Promise.resolve();
   private lastYieldGenerations: Map<string, { generation: number; stopEpoch: number }> = new Map();
+  private evictedYieldEpochs: Set<string> = new Set();
   private midTurnBoundarySeq: number = 0;
   private promptPhaseBoundarySeq: number = 0;
   private midTurnCompactionQueued: boolean = false;
@@ -519,7 +520,15 @@ export class MessageQueue {
   ownsLastYield(messageId: string, generation: number | null | undefined): boolean {
     if (generation === null || generation === undefined) return true;
     const lastYieldGeneration = this.lastYieldGenerations.get(messageId);
-    if (lastYieldGeneration === undefined) return true;
+    if (lastYieldGeneration === undefined) {
+      for (const evictedKey of this.evictedYieldEpochs) {
+        const [evictedGeneration, evictedStopEpoch] = evictedKey.split(':');
+        if (Number(evictedGeneration) === generation) {
+          return Number(evictedStopEpoch) === this.stopEpoch;
+        }
+      }
+      return true;
+    }
     return (
       lastYieldGeneration.generation === generation &&
       lastYieldGeneration.stopEpoch === this.stopEpoch
@@ -715,6 +724,19 @@ export class MessageQueue {
           }
           for (const retainedId of retainedIds) {
             if (this.lastYieldGenerations.size <= 256) break;
+            const evictedStamp = this.lastYieldGenerations.get(retainedId);
+            if (evictedStamp) {
+              const evictedKey = `${evictedStamp.generation}:${evictedStamp.stopEpoch}`;
+              if (!this.evictedYieldEpochs.has(evictedKey)) {
+                this.evictedYieldEpochs.add(evictedKey);
+                if (this.evictedYieldEpochs.size > 256) {
+                  const oldestEpoch = this.evictedYieldEpochs.values().next().value;
+                  if (oldestEpoch !== undefined) {
+                    this.evictedYieldEpochs.delete(oldestEpoch);
+                  }
+                }
+              }
+            }
             this.lastYieldGenerations.delete(retainedId);
           }
         }

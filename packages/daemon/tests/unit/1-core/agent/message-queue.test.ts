@@ -2422,6 +2422,32 @@ describe('MessageQueue', () => {
       expect(q.hasPendingOrClaimed('uuid-stop-abort')).toBe(false);
     });
 
+    it('removes a durably requeued survivor without mocking the enqueue', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-real-enqueue',
+        content: 'real survivor',
+        internal: false,
+      } as never);
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-real-enqueue'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async (options) => {
+          q.stop();
+          q.clear();
+          await options?.beforeStart?.();
+        },
+        onResumeClear,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(q.hasPendingOrClaimed('uuid-real-enqueue')).toBe(false);
+      expect(onResumeClear).toHaveBeenCalledTimes(1);
+    });
+
     it('does not abort the recovery restart on its own teardown stops', async () => {
       const q = new MessageQueue();
       q.start();
@@ -3248,6 +3274,29 @@ describe('MessageQueue', () => {
 
       q.stop();
       expect(q.ownsLastYield('uuid-stop-ret-3', 3)).toBe(false);
+    });
+
+    it('preserves acknowledgment fences past the hard cap', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const generator = q.messageGenerator(testSessionId, { queryGeneration: 9 });
+      const steps: Array<{ message: { uuid: string }; onSent: () => void }> = [];
+      for (let index = 0; index < 260; index += 1) {
+        const delivered = q.enqueueWithId(`uuid-hard-${index}`, `hard ${index}`, false, {});
+        delivered.catch(() => {});
+        const step = await generator.next();
+        steps.push(step.value);
+      }
+      for (let index = 60; index < 260; index += 1) {
+        steps[index].onSent();
+      }
+      q.clear();
+      const extra = q.enqueueWithId('uuid-hard-extra', 'hard extra', false, {});
+      extra.catch(() => {});
+      (await generator.next()).value.onSent();
+
+      q.stop();
+      expect(q.ownsLastYield('uuid-hard-3', 9)).toBe(false);
     });
 
     it('stands down a late receipt after the recovery replacement was stopped', async () => {
