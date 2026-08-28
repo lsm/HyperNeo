@@ -181,6 +181,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     clear: mock(() => {}),
     size: mock(() => overrides.queueSize ?? 0),
     enqueueWithId: mock(async () => {}),
+    requeueYielded: mock(() => true),
     onMessageEnqueued: undefined,
     messageGenerator: mock(generatorFactory),
   } as unknown as MessageQueue;
@@ -860,6 +861,315 @@ describe('AcpQueryRunner', () => {
     expect(handler.markMessageSubmitted).toHaveBeenCalledWith('user-message-1');
     expect(handler.markMessageAccepted).not.toHaveBeenCalled();
     expect(handler.markACPDeliveryFailed).toHaveBeenCalledWith('user-message-1');
+  });
+
+  describe('attempt-token fencing [B5g]', () => {
+    test('enqueue during a stale handshake must not install the stale attempt startup timer', async () => {
+      const client = createMockClient();
+      let releaseInitialize: (() => void) | undefined;
+      client.initialize.mockImplementation(async () => {
+        await new Promise<void>((resolve) => {
+          releaseInitialize = resolve;
+        });
+        throw new Error('closed before initialize');
+      });
+      const { ctx, messageQueue } = createRunnerFixture({ client, queueSize: 0 });
+      const previousOnMessageEnqueued = mock(() => {});
+      messageQueue.onMessageEnqueued = previousOnMessageEnqueued;
+      const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+      const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      try {
+        await runner.start();
+        for (let i = 0; i < 100 && !releaseInitialize; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        ctx.incrementQueryGeneration();
+        ctx.attemptTokens.allocate();
+
+        messageQueue.onMessageEnqueued?.('user-message-1', Date.now());
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(ctx.startupTimeoutTimer).toBeNull();
+        expect(client.cancel).not.toHaveBeenCalled();
+        expect(previousOnMessageEnqueued).toHaveBeenCalledWith(
+          'user-message-1',
+          expect.any(Number)
+        );
+
+        releaseInitialize?.();
+        await ctx.queryPromise;
+
+        expect(messageQueue.onMessageEnqueued).toBe(previousOnMessageEnqueued);
+        expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      } finally {
+        if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      }
+    }, 1000);
+
+    test('a stale attempt startup timer must not abort or close after a replacement', async () => {
+      const client = createMockClient();
+      let releaseInitialize: (() => void) | undefined;
+      client.initialize.mockImplementation(async () => {
+        await new Promise<void>((resolve) => {
+          releaseInitialize = resolve;
+        });
+      });
+      const { ctx } = createRunnerFixture({ client, queueSize: 1 });
+      const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+      const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      try {
+        await runner.start();
+        for (let i = 0; i < 100 && !ctx.startupTimeoutTimer; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        expect(ctx.startupTimeoutTimer).not.toBeNull();
+
+        ctx.incrementQueryGeneration();
+        ctx.attemptTokens.allocate();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(client.cancel).not.toHaveBeenCalled();
+        expect(client.close).not.toHaveBeenCalled();
+        expect(ctx.startupTimeoutTimer).toBeNull();
+        expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+        releaseInitialize?.();
+        await ctx.queryPromise;
+      } finally {
+        if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      }
+    }, 1000);
+
+    test('adapter exit after a replacement must not fail the re-enqueued row', async () => {
+      const client = createMockClient();
+      let releasePrompt: (() => void) | undefined;
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        await new Promise<void>((resolve) => {
+          releasePrompt = resolve;
+        });
+        yield {
+          sessionId: 'acp-session-1',
+          update: {
+            sessionUpdate: 'config_option_update',
+            configOptions: [
+              {
+                id: 'model',
+                name: 'Model',
+                type: 'select',
+                category: 'model',
+                currentValue: 'stale-model',
+                options: [],
+              },
+            ],
+          },
+        };
+      });
+      const { ctx } = createRunnerFixture({ client });
+      const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+      await runner.start();
+      for (let i = 0; i < 100 && client.sendPrompt.mock.calls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      expect(client.sendPrompt).toHaveBeenCalled();
+
+      ctx.incrementQueryGeneration();
+      ctx.attemptTokens.allocate();
+
+      releasePrompt?.();
+      await ctx.queryPromise;
+
+      const handler = ctx.messageHandler as unknown as {
+        markMessageSubmitted: ReturnType<typeof mock>;
+        markACPDeliveryFailed: ReturnType<typeof mock>;
+      };
+      expect(handler.markMessageSubmitted).toHaveBeenCalledTimes(1);
+      expect(handler.markACPDeliveryFailed).not.toHaveBeenCalled();
+      expect(ctx.session.config.model).toBe('acp-default');
+    }, 1000);
+
+    test('out-of-band adapter callbacks from a superseded attempt must not transition delivery rows', async () => {
+      const client = createMockClient();
+      let releasePrompt: (() => void) | undefined;
+      let capturedCallbacks: { onSubmitted?: () => void; onAccepted?: () => void } | undefined;
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        capturedCallbacks = callbacks;
+        await new Promise<void>((resolve) => {
+          releasePrompt = resolve;
+        });
+      });
+      const { ctx } = createRunnerFixture({ client });
+      const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+      await runner.start();
+      for (let i = 0; i < 100 && !capturedCallbacks; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      expect(capturedCallbacks).toBeDefined();
+
+      ctx.attemptTokens.invalidateCurrent();
+
+      capturedCallbacks?.onSubmitted?.();
+      capturedCallbacks?.onAccepted?.();
+
+      const handler = ctx.messageHandler as unknown as {
+        markMessageSubmitted: ReturnType<typeof mock>;
+        markMessageAccepted: ReturnType<typeof mock>;
+        markACPDeliveryFailed: ReturnType<typeof mock>;
+      };
+      expect(handler.markMessageSubmitted).toHaveBeenCalledTimes(1);
+      expect(handler.markMessageAccepted).not.toHaveBeenCalled();
+
+      releasePrompt?.();
+      await ctx.queryPromise;
+
+      expect(handler.markACPDeliveryFailed).not.toHaveBeenCalled();
+    }, 1000);
+
+    test('a stale prompt-loop break requeues the yielded prompt for the successor', async () => {
+      const { runner, ctx, messageQueue, onSent } = createRunnerFixture();
+      let releaseSetProcessing: (() => void) | undefined;
+      (ctx.stateManager as unknown as { setProcessing: ReturnType<typeof mock> }).setProcessing =
+        mock(async () => {
+          await new Promise<void>((resolve) => {
+            releaseSetProcessing = resolve;
+          });
+        });
+
+      await runner.start();
+      for (let i = 0; i < 100 && !releaseSetProcessing; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      ctx.attemptTokens.invalidateCurrent();
+
+      releaseSetProcessing?.();
+      await ctx.queryPromise;
+
+      expect(messageQueue.requeueYielded).toHaveBeenCalledWith('user-message-1');
+      expect(onSent).not.toHaveBeenCalled();
+    }, 1000);
+
+    test('a stale handshake skips persisting session results after a replacement', async () => {
+      const client = createMockClient();
+      client.canLoadSession.mockImplementation(() => true);
+      let releaseLoad: (() => void) | undefined;
+      client.loadSession.mockImplementation(async () => {
+        await new Promise<void>((resolve) => {
+          releaseLoad = resolve;
+        });
+        return { sessionId: 'acp-session-1', configOptions: [] };
+      });
+      const { runner, ctx } = createRunnerFixture({
+        client,
+        session: { acpSessionId: 'preset-acp-session' } as Partial<Session>,
+      });
+
+      await runner.start();
+      for (let i = 0; i < 100 && !releaseLoad; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      ctx.incrementQueryGeneration();
+      ctx.attemptTokens.allocate();
+
+      releaseLoad?.();
+      await ctx.queryPromise;
+
+      expect(ctx.session.acpSessionId).toBe('preset-acp-session');
+      expect(ctx.db.updateSession).not.toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: 'acp-session-1' })
+      );
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 1000);
+
+    test('a stale out-of-band onSubmitted requeues the unsubmitted prompt', async () => {
+      const client = createMockClient();
+      let releasePrompt: (() => void) | undefined;
+      let capturedCallbacks: { onSubmitted?: () => void; onAccepted?: () => void } | undefined;
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        capturedCallbacks = callbacks;
+        await new Promise<void>((resolve) => {
+          releasePrompt = resolve;
+        });
+      });
+      const { runner, ctx, messageQueue, onSent } = createRunnerFixture({ client });
+
+      await runner.start();
+      for (let i = 0; i < 100 && !capturedCallbacks; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      ctx.attemptTokens.invalidateCurrent();
+
+      capturedCallbacks?.onSubmitted?.();
+
+      const handler = ctx.messageHandler as unknown as {
+        markMessageSubmitted: ReturnType<typeof mock>;
+      };
+      expect(handler.markMessageSubmitted).not.toHaveBeenCalled();
+      expect(messageQueue.requeueYielded).toHaveBeenCalledWith('user-message-1');
+      expect(onSent).not.toHaveBeenCalled();
+
+      releasePrompt?.();
+      await ctx.queryPromise;
+    }, 1000);
+
+    test('a stale attempt startup timer must not clear the replacement timer slot', async () => {
+      const client = createMockClient();
+      let releaseInitialize: (() => void) | undefined;
+      client.initialize.mockImplementation(async () => {
+        await new Promise<void>((resolve) => {
+          releaseInitialize = resolve;
+        });
+      });
+      const { ctx } = createRunnerFixture({ client, queueSize: 1 });
+      const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+      const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      try {
+        await runner.start();
+        for (let i = 0; i < 100 && !ctx.startupTimeoutTimer; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+
+        ctx.incrementQueryGeneration();
+        ctx.attemptTokens.allocate();
+        const replacementTimer = setTimeout(() => {}, 60000);
+        ctx.startupTimeoutTimer = replacementTimer;
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        expect(ctx.startupTimeoutTimer).toBe(replacementTimer);
+
+        clearTimeout(replacementTimer);
+        ctx.startupTimeoutTimer = null;
+        releaseInitialize?.();
+        await ctx.queryPromise;
+      } finally {
+        if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      }
+    }, 1000);
   });
 
   test('preserves env-only Anthropic auth for ACP subprocesses', async () => {
