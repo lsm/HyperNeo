@@ -459,6 +459,48 @@ describe('applyRateAndAudit', () => {
     expect(JSON.parse(auditEntries[0].paramsSummary ?? '{}')).toEqual({ taskId: 't-1' });
   });
 
+  test('resolves task_number through the resolver before writing the audit entry', async () => {
+    const auditEntries: CreateMcpAuditLogParams[] = [];
+    const sendToTask = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Send message',
+      paramsDoc: '{ task_number: number, message: string }',
+      paramsSchema: z.object({ task_number: z.number(), message: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'send_message_to_task',
+              params: { task_number: 42, message: 'ping' },
+            },
+            { registry: createActionRegistry([sendToTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        auditLogRepo: {
+          createEntry: (params) => {
+            auditEntries.push(params);
+            return null as never;
+          },
+        },
+        resolveTaskId: (params) =>
+          typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBe('task-from-42');
+    expect(auditEntries.length).toBe(1);
+    expect(auditEntries[0].taskId).toBe('task-from-42');
+  });
+
   test('skips audit for read actions', async () => {
     const auditEntries: CreateMcpAuditLogParams[] = [];
     const ctx = applyRoleAdmission(

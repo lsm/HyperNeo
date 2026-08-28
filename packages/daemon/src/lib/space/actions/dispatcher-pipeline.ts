@@ -54,6 +54,9 @@ export interface DispatchActionDeps {
   getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
   emitTelemetry?: (event: DispatchTelemetryEvent) => void | Promise<void>;
   isWithinRateBudget?: () => boolean | Promise<boolean>;
+  resolveTaskId?: (
+    params: Record<string, unknown>
+  ) => string | undefined | Promise<string | undefined>;
 }
 
 export interface DispatchActionCtx extends DispatchActionInput {
@@ -196,18 +199,28 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       };
     }
   }
-  if (ctx.isMutating && ctx.deps.auditLogRepo) {
-    try {
-      ctx.deps.auditLogRepo.createEntry({
-        agentName: ctx.agentName ?? null,
-        sessionId: ctx.sessionId ?? null,
-        toolName: action.name,
-        paramsSummary: JSON.stringify(ctx.parsedParams ?? {}),
-        spaceId: ctx.spaceId,
-        taskId: ctx.taskId ?? null,
-        workflowRunId: ctx.workflowRunId ?? null,
-      });
-    } catch {}
+  if (ctx.isMutating && (ctx.deps.auditLogRepo || ctx.deps.resolveTaskId)) {
+    let taskId = ctx.taskId;
+    if (taskId === undefined && ctx.deps.resolveTaskId && ctx.parsedParams) {
+      const params = ctx.parsedParams as Record<string, unknown>;
+      if (typeof params.task_number === 'number') {
+        taskId = (await ctx.deps.resolveTaskId(params)) ?? taskId;
+      }
+    }
+    if (ctx.deps.auditLogRepo) {
+      try {
+        ctx.deps.auditLogRepo.createEntry({
+          agentName: ctx.agentName ?? null,
+          sessionId: ctx.sessionId ?? null,
+          toolName: action.name,
+          paramsSummary: JSON.stringify(ctx.parsedParams ?? {}),
+          spaceId: ctx.spaceId,
+          taskId: taskId ?? null,
+          workflowRunId: ctx.workflowRunId ?? null,
+        });
+      } catch {}
+    }
+    return { ...ctx, taskId };
   }
   return ctx;
 }

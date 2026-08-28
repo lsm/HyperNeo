@@ -217,9 +217,31 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('update_task requires archive clearance only for the archived transition', async () => {
+  test('update_task requires archive clearance for archived and workflow-run teardown for cancelled', async () => {
     const ctx = makeCtx();
     try {
+      const workflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Teardown',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const run = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Run',
+      });
+      const workflowTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Workflow task',
+        description: '',
+        workflowRunId: run.id,
+      });
+      const standaloneTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Standalone task',
+        description: '',
+      });
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'update_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
@@ -227,6 +249,10 @@ describe('createSpaceRegistryEntries — composition', () => {
         expect(await resolve({ task_id: 'task-1', status: 'archived' })).toBe(
           SESSION_WRITE_AUTONOMY_LEVEL
         );
+        expect(await resolve({ task_id: workflowTask.id, status: 'cancelled' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+        expect(await resolve({ task_id: standaloneTask.id, status: 'cancelled' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', status: 'blocked' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', title: 'Edited' })).toBe(1);
       }
