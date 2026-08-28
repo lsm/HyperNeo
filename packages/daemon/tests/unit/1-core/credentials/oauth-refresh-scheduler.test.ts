@@ -44,7 +44,7 @@ class FakeCredentialManager {
   }
 }
 
-function createProvider(refreshResult: boolean | Error): Provider {
+function createProvider(refreshResult: boolean | Error, id = 'oauth-provider'): Provider {
   let credentials = {
     type: 'oauth' as const,
     accessToken: 'new-token',
@@ -52,7 +52,7 @@ function createProvider(refreshResult: boolean | Error): Provider {
     expiresAt: Date.now() + 60_000,
   };
   return {
-    id: 'oauth-provider',
+    id,
     displayName: 'OAuth Provider',
     capabilities: {
       streaming: true,
@@ -82,6 +82,7 @@ describe('OAuthRefreshScheduler', () => {
   beforeEach(() => {
     clearModelsCache.mockClear();
     refreshModels.mockClear();
+    refreshModels.mockImplementation(async () => {});
   });
 
   it('runs an initial tick when started', async () => {
@@ -1313,6 +1314,89 @@ describe('OAuthRefreshScheduler', () => {
 
     await scheduler.tick();
     expect(events).toEqual([]);
+  });
+
+  it('cancels persistence when credentials vanish during the post-rotation strip', async () => {
+    const registry = new ProviderRegistry();
+    const provider = createProvider(true);
+    registry.register(provider);
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const events: string[] = [];
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      onPreRecoveryInvalidate: async () => {
+        manager.credentials.delete('oauth-provider');
+        provider.getCredentials = () => null;
+      },
+      recoverDormantProvider: async (providerId) => {
+        events.push(`recovered:${providerId}`);
+        return 'recovered';
+      },
+      onProviderChanged: (providerId, outcome) => {
+        events.push(`changed:${providerId}:${outcome}`);
+      },
+    });
+
+    await expect(scheduler.tick()).resolves.toBeUndefined();
+
+    expect(manager.stored).toHaveLength(0);
+    expect(events).toEqual([]);
+    expect(manager.health.has('oauth-provider')).toBe(false);
+  });
+
+  it('serializes the exhausted clear behind an in-flight successful discovery refresh', async () => {
+    const registry = new ProviderRegistry();
+    const providerA = createProvider(true, 'oauth-provider-a');
+    const providerB = createProvider(false, 'oauth-provider-b');
+    registry.register(providerA);
+    registry.register(providerB);
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider-a', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    manager.credentials.set('oauth-provider-b', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    let releaseDiscovery: (() => void) | null = null;
+    refreshModels.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDiscovery = () => resolve();
+        })
+    );
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      maxRetries: 1,
+    });
+
+    const tickPromise = scheduler.tick();
+    for (let i = 0; i < 50 && !releaseDiscovery; i++) {
+      await Promise.resolve();
+    }
+    expect(releaseDiscovery).not.toBeNull();
+
+    releaseDiscovery!();
+    await tickPromise;
+
+    expect(refreshModels).toHaveBeenCalledTimes(1);
+    expect(manager.health.get('oauth-provider-b')).toBe('unhealthy');
+    expect(manager.stored).toHaveLength(1);
   });
 
   it('stop drains a default discovery refresh still in flight', async () => {

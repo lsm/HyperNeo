@@ -11,12 +11,21 @@ const DEFAULT_MAX_RETRIES = 3;
 
 type ProviderRefreshOutcome = 'refreshed' | 'exhausted';
 
+let discoveryMutationQueue: Promise<void> = Promise.resolve();
+
 async function defaultRefreshDiscoveredModels(outcome: ProviderRefreshOutcome): Promise<void> {
-  const { clearModelsCache, refreshModels } = await import('../model-service.js');
-  clearModelsCache();
-  if (outcome === 'refreshed') {
-    await refreshModels().catch(() => {});
-  }
+  const run = discoveryMutationQueue.then(
+    async () => {
+      const { clearModelsCache, refreshModels } = await import('../model-service.js');
+      clearModelsCache();
+      if (outcome === 'refreshed') {
+        await refreshModels().catch(() => {});
+      }
+    },
+    async () => {}
+  );
+  discoveryMutationQueue = run.catch(() => {});
+  return run;
 }
 
 export interface OAuthRefreshSchedulerOptions {
@@ -60,6 +69,7 @@ interface ScheduledTokenRefreshCtx {
   outcome?:
     | 'deferred-completed'
     | 'deferred-failed'
+    | 'cancelled'
     | 'skipped'
     | 'rotation-failed'
     | 'persistence-failed'
@@ -167,12 +177,12 @@ async function invalidateBeforePersist(
   ctx: ScheduledTokenRefreshCtx
 ): Promise<ScheduledTokenRefreshCtx> {
   const { deps, provider } = ctx;
-  let nextCredentials: ProviderCredentials | null = null;
+  let captured: ProviderCredentials | null = null;
   if (provider.getCredentials) {
     try {
-      nextCredentials = (await provider.getCredentials()) ?? null;
+      captured = (await provider.getCredentials()) ?? null;
     } catch {
-      nextCredentials = null;
+      captured = null;
     }
   }
   if (!(await runPreRecoveryInvalidation(deps, provider.id))) {
@@ -180,25 +190,34 @@ async function invalidateBeforePersist(
     await recordPendingInvalidationFailure(
       deps,
       provider.id,
-      credentialRetryKey(provider.id, nextCredentials ?? ctx.credentials!)
+      credentialRetryKey(provider.id, captured ?? ctx.credentials!)
     );
-    return { ...ctx, nextCredentials, outcome: 'invalidation-failed' };
+    return { ...ctx, nextCredentials: captured, outcome: 'invalidation-failed' };
   }
-  return { ...ctx, nextCredentials };
+  let stillOwned: ProviderCredentials | null = captured;
+  if (provider.getCredentials) {
+    try {
+      stillOwned = (await provider.getCredentials()) ?? null;
+    } catch {
+      stillOwned = null;
+    }
+  }
+  if (!stillOwned || stillOwned.type !== 'oauth') {
+    return { ...ctx, nextCredentials: stillOwned, outcome: 'cancelled' };
+  }
+  return { ...ctx, nextCredentials: stillOwned };
 }
 
 async function persistRotatedTokens(
   ctx: ScheduledTokenRefreshCtx
 ): Promise<ScheduledTokenRefreshCtx> {
-  let nextCredentials = ctx.nextCredentials;
-  if (nextCredentials === null || nextCredentials === undefined) {
-    if (!ctx.provider.getCredentials) nextCredentials = ctx.credentials;
-    else nextCredentials = (await ctx.provider.getCredentials()) ?? ctx.credentials;
-  }
+  const nextCredentials = ctx.nextCredentials ?? null;
   let persistenceFailed = false;
   try {
     if (nextCredentials) {
       await ctx.deps.credentialManager.storeOAuthTokens(ctx.provider.id, nextCredentials);
+    } else {
+      persistenceFailed = true;
     }
   } catch {
     persistenceFailed = true;
