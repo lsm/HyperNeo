@@ -1847,6 +1847,55 @@ describe('runDispatchAction', () => {
     expect(telemetry[0].workflowRunId).toBeUndefined();
   });
 
+  test('retains first-pass numeric attribution without replaying resolvers when a stage throws', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
+    let taskResolutions = 0;
+    let runResolutions = 0;
+    const sendToTask = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Send message',
+      paramsDoc: '{ task_number: number, message: string }',
+      paramsSchema: z.object({ task_number: z.number(), message: z.string() }),
+      autonomyRequirement: 2,
+      handler: async () => ({}),
+    });
+    const deps = baseDeps({
+      registry: createActionRegistry([sendToTask]),
+      emitTelemetry: (event) => {
+        telemetry.push(event);
+      },
+      getSpaceAutonomyLevel: async () => {
+        throw new Error('level lookup failed');
+      },
+      resolveTaskId: () => {
+        taskResolutions += 1;
+        return 'task-from-7';
+      },
+      resolveRunId: () => {
+        runResolutions += 1;
+        return 'run-of-task';
+      },
+    });
+    const outcome = await runDispatchAction(deps, {
+      ...baseInput({
+        actionName: 'send_message_to_task',
+        params: { task_number: 7, message: 'ping' },
+        taskId: 'session-task-a',
+        workflowRunId: 'run-a',
+      }),
+    });
+    assertFailed(outcome);
+    expect(outcome.error).toContain('level lookup failed');
+    expect(taskResolutions).toBe(1);
+    expect(runResolutions).toBe(1);
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].outcome).toBe('failed');
+    expect(telemetry[0].taskId).toBe('task-from-7');
+    expect(telemetry[0].workflowRunId).toBe('run-of-task');
+  });
+
   test('denies actions at the role gate', async () => {
     const telemetry: DispatchTelemetryEvent[] = [];
     const outcome = await runDispatchAction(

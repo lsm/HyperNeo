@@ -394,12 +394,6 @@ const run = (
   })('dispatch-action') as PipelineAPI
 )
   .input(['ctx'])
-  .pipe(resolveAction, 'ctx', 'ctx')
-  .pipe('!hasOutcome', 'ctx')
-  .pipe(applySafetyClass, 'ctx', 'ctx')
-  .pipe('!hasOutcome', 'ctx')
-  .pipe(resolveTargets, 'ctx', 'ctx')
-  .pipe('!hasOutcome', 'ctx')
   .pipe(applyRoleAdmission, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(applyAutonomyGate, 'ctx', 'ctx')
@@ -418,8 +412,10 @@ export async function runDispatchAction(
   input: DispatchActionInput
 ): Promise<DispatchActionOutcome> {
   const startedAt = Date.now();
+  let prepared: DispatchActionCtx = { ...input, deps };
   try {
-    const ctx = await run({ ...input, deps });
+    prepared = await resolveTargets(applySafetyClass(resolveAction(prepared)));
+    const ctx = await run(prepared);
     const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
     await emitDispatchTelemetry(
       deps,
@@ -433,16 +429,13 @@ export async function runDispatchAction(
     const error = err instanceof Error ? err.message : String(err);
     const outcome = failedOutcome(error);
     const action = deps.registry.get(input.actionName);
-    let telemetryInput = input;
-    try {
-      const recovered = await resolveTargets(applySafetyClass(resolveAction({ ...input, deps })));
-      telemetryInput = {
-        ...input,
-        taskId: recovered.taskId,
-        workflowRunId: recovered.workflowRunId,
-      };
-    } catch {}
-    await emitDispatchTelemetry(deps, telemetryInput, action, outcome, Date.now() - startedAt);
+    await emitDispatchTelemetry(
+      deps,
+      { ...input, taskId: prepared.taskId, workflowRunId: prepared.workflowRunId },
+      action,
+      outcome,
+      Date.now() - startedAt
+    );
     return outcome;
   }
 }
