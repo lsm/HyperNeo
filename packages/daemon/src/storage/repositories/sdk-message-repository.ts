@@ -382,6 +382,83 @@ const runSaveUserMessage = (superpipe({})('save-user-message') as PipelineAPI)
   .pipe(publishUserMessage, 'ctx', 'ctx')
   .end('ctx') as (ctx: SaveUserMessageCtx) => SaveUserMessageSavedCtx;
 
+interface SaveHyperNeoActionMessageInput {
+  sessionId: string;
+  message: HyperNeoActionMessage;
+  variant: MessageAdmissionVariant;
+  sendStatus: SendStatus | null;
+}
+
+interface SaveHyperNeoActionMessageSnapshot extends SaveHyperNeoActionMessageInput {
+  id: string;
+}
+
+interface SaveHyperNeoActionMessageAdmitted extends SaveHyperNeoActionMessageSnapshot {
+  admission: MessageAdmissionRecord;
+}
+
+interface SaveHyperNeoActionMessageSaved extends SaveHyperNeoActionMessageAdmitted {
+  badgeUpdate: BadgeUpdateInstruction;
+}
+
+interface SaveHyperNeoActionMessageDeps {
+  saveHyperNeoActionMessageWithAdmission(ctx: SaveHyperNeoActionMessageAdmitted): {
+    id: string;
+    badgeUpdate: BadgeUpdateInstruction;
+  };
+  notifySessionsChanged(sessionId: string): void;
+  scheduleMessageSearchIndex(id: string): void;
+}
+
+type SaveHyperNeoActionMessageCtx = SaveHyperNeoActionMessageInput & {
+  deps: SaveHyperNeoActionMessageDeps;
+};
+type SaveHyperNeoActionMessageSnapshotCtx = SaveHyperNeoActionMessageSnapshot &
+  SaveHyperNeoActionMessageCtx;
+type SaveHyperNeoActionMessageAdmittedCtx = SaveHyperNeoActionMessageAdmitted &
+  SaveHyperNeoActionMessageCtx;
+type SaveHyperNeoActionMessageSavedCtx = SaveHyperNeoActionMessageSaved &
+  SaveHyperNeoActionMessageCtx;
+
+function snapshotHyperNeoActionMessage(
+  ctx: SaveHyperNeoActionMessageCtx
+): SaveHyperNeoActionMessageSnapshotCtx {
+  return { ...ctx, id: generateUUID() };
+}
+
+function admitHyperNeoActionMessage(
+  ctx: SaveHyperNeoActionMessageSnapshotCtx
+): SaveHyperNeoActionMessageAdmittedCtx {
+  const admission = decideMessageAdmission(normalizeMessageAdmissionInput(ctx.message), {
+    variant: ctx.variant,
+    sendStatus: ctx.sendStatus,
+  });
+  return { ...ctx, admission };
+}
+
+function saveHyperNeoActionMessageAtomic(
+  ctx: SaveHyperNeoActionMessageAdmittedCtx
+): SaveHyperNeoActionMessageSavedCtx {
+  const { id, badgeUpdate } = ctx.deps.saveHyperNeoActionMessageWithAdmission(ctx);
+  return { ...ctx, id, badgeUpdate };
+}
+
+function publishHyperNeoActionMessage(
+  ctx: SaveHyperNeoActionMessageSavedCtx
+): SaveHyperNeoActionMessageSavedCtx {
+  if (ctx.badgeUpdate.kind === 'delta') ctx.deps.notifySessionsChanged(ctx.sessionId);
+  ctx.deps.scheduleMessageSearchIndex(ctx.id);
+  return ctx;
+}
+
+const runSaveHyperNeoActionMessage = (superpipe({})('save-hyperneo-action-message') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(snapshotHyperNeoActionMessage, 'ctx', 'ctx')
+  .pipe(admitHyperNeoActionMessage, 'ctx', 'ctx')
+  .pipe(saveHyperNeoActionMessageAtomic, 'ctx', 'ctx')
+  .pipe(publishHyperNeoActionMessage, 'ctx', 'ctx')
+  .end('ctx') as (ctx: SaveHyperNeoActionMessageCtx) => SaveHyperNeoActionMessageSavedCtx;
+
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
@@ -1930,13 +2007,29 @@ export class SDKMessageRepository {
   }
 
   saveHyperNeoActionMessage(sessionId: string, message: HyperNeoActionMessage): string {
-    const id = generateUUID();
-    const timestamp = new Date(message.timestamp).toISOString();
-    const admission = decideMessageAdmission(normalizeMessageAdmissionInput(message), {
+    const deps: SaveHyperNeoActionMessageDeps = {
+      saveHyperNeoActionMessageWithAdmission: (ctx) =>
+        this.saveHyperNeoActionMessageWithAdmission(ctx),
+      notifySessionsChanged: (sessionId) => this.notifySessionsChanged(sessionId),
+      scheduleMessageSearchIndex: (id) => this.scheduleMessageSearchIndex(id),
+    };
+    const ctx = runSaveHyperNeoActionMessage({
+      sessionId,
+      message,
       variant: 'hyperneo_action',
       sendStatus: null,
+      deps,
     });
+    return ctx.id;
+  }
+
+  private saveHyperNeoActionMessageWithAdmission(ctx: SaveHyperNeoActionMessageAdmitted): {
+    id: string;
+    badgeUpdate: BadgeUpdateInstruction;
+  } {
+    const { sessionId, id, message, admission } = ctx;
     const badgeUpdate = planAdmissionBadgeUpdate(admission);
+    const timestamp = new Date(message.timestamp).toISOString();
     const taskId = this.resolveTaskIdForSession(sessionId);
     const conversationTurnIndex = this.resolveConversationTurnIndex(
       taskId,
@@ -1965,9 +2058,7 @@ export class SDKMessageRepository {
       insertStmt.run(...values, conversationTurnIndex, admission.sdkUuid);
       this.applyBadgeUpdate(sessionId, badgeUpdate);
     })();
-    if (badgeUpdate.kind === 'delta') this.notifySessionsChanged(sessionId);
-    this.scheduleMessageSearchIndex(id);
-    return id;
+    return { id, badgeUpdate };
   }
 
   hasUnresolvedHyperNeoAction(sessionId: string, action: string): boolean {
