@@ -2165,6 +2165,47 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('ignores a stale send acknowledgment from the previous generator after a requeue', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('uuid-stale-ack', 'stale ack survivor', false, {
+        durable: true,
+      });
+      delivered.catch(() => {});
+      const firstGenerator = q.messageGenerator(testSessionId);
+      const firstStep = await firstGenerator.next();
+      expect(firstStep.value.message.uuid).toBe('uuid-stale-ack');
+      const staleOnSent = firstStep.value.onSent;
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-stale-ack'] }),
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      const secondGenerator = q.messageGenerator(testSessionId);
+      const secondStep = await secondGenerator.next();
+      expect(secondStep.value.message.uuid).toBe('uuid-stale-ack');
+
+      staleOnSent();
+
+      let settled = false;
+      void delivered.then(() => {
+        settled = true;
+      });
+      await tick(10);
+      expect(settled).toBe(false);
+
+      secondStep.value.onSent();
+      await delivered;
+      expect(
+        enqueueSpy.mock.calls.some(
+          (call) => call[0] === 'uuid-stale-ack' && call[3]?.prepend === true
+        )
+      ).toBe(false);
+      q.stop();
+    });
+
     it('keeps the compaction protocol when the durable content lookup throws', async () => {
       const q = new MessageQueue();
       q.start();

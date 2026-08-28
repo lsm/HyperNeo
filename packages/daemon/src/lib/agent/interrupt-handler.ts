@@ -55,6 +55,7 @@ export class InterruptHandler {
   }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
+    messageQueue.noteUserInterrupt();
     this.ctx.onInterruptRequested?.();
 
     const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
@@ -110,7 +111,6 @@ export class InterruptHandler {
 
     try {
       await stateManager.setInterrupted();
-      messageQueue.noteUserInterrupt();
 
       const queueSize = messageQueue.size();
       if (queueSize > 0) {

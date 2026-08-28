@@ -40,6 +40,7 @@ interface QueuedMessage {
   durable?: boolean;
   onResolved?: () => void;
   onRejected?: (error: Error) => void;
+  yieldAttempt?: unknown;
 }
 
 export interface MidTurnBudgetInterruptOptions {
@@ -508,6 +509,7 @@ export class MessageQueue {
     for (const message of this.yielded) {
       if (message.id !== messageId) continue;
       this.yielded.delete(message);
+      message.yieldAttempt = undefined;
       if (message.timeoutId) {
         clearTimeout(message.timeoutId);
         message.timeoutId = undefined;
@@ -649,9 +651,12 @@ export class MessageQueue {
       if (!queuedMessage.timeoutId) {
         this.armQueueTimeout(queuedMessage);
       }
+      const yieldAttempt: unknown = {};
+      queuedMessage.yieldAttempt = yieldAttempt;
       yield {
         message: sdkUserMessage,
         onSent: () => {
+          if (queuedMessage.yieldAttempt !== yieldAttempt) return;
           if (this.yielded.delete(queuedMessage)) {
             this.noteInternalCompactionSent(queuedMessage);
             queuedMessage.resolve(queuedMessage.id);
