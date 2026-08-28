@@ -297,6 +297,8 @@ function setupInsert(): {
     reset: () => {
       deleteStmt.run();
       resetSessionStmt.run(saveSessionId);
+      db.exec('VACUUM');
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     },
     seed: (rows: readonly InsertRow[]) => seed(rows),
     run: (row: InsertRow) => insert(row),
