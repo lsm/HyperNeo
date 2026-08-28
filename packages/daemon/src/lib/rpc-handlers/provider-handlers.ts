@@ -677,6 +677,7 @@ async function revalidateBeforeCommittingSuccess(
     return ctx;
   }
   const currentRow = ctx.deps.providerRepo.getProvider(ctx.rowId);
+  ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
   if (currentRow && currentRow.configJson === ctx.persistedConfig!.configJson) {
     ctx.deps.providerRepo.updateProvider(ctx.rowId, { configJson: ctx.originalConfigJson });
   }
