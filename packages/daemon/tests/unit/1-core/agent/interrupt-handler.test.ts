@@ -179,6 +179,18 @@ describe('InterruptHandler', () => {
 
       expect(handler.isInterruptRequested()).toBe(false);
     });
+
+    it('clears the requested flag when delivery cancellation throws', async () => {
+      cancelForSessionSpy.mockImplementation(() => {
+        throw new Error('job queue unavailable');
+      });
+      handler = createHandler();
+
+      await expect(handler.handleInterrupt()).rejects.toThrow('job queue unavailable');
+
+      expect(handler.isInterruptRequested()).toBe(false);
+      expect(handler.getInterruptPromise()).toBeNull();
+    });
   });
 
   describe('handleInterrupt', () => {

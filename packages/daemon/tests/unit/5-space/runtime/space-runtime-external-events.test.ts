@@ -2176,6 +2176,36 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(digestRows('session-early-interrupt')).toHaveLength(1);
       expect(eventStore.listDeliveries('evt-early-interrupt-1')[0]?.state).toBe('delivered');
     });
+
+    test('interrupt probing stays on the idle debounce and bypasses the count cap', async () => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '1');
+      await startLiveSession('session-probe-cap');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-probe-cap', 'interrupted');
+      tam.interrupting.add('session-probe-cap');
+
+      const runtimeSpy = runtime as unknown as {
+        triggerDigestPullForSession: (sessionId: string, trigger: string) => void;
+      };
+      const originalTrigger = runtimeSpy.triggerDigestPullForSession.bind(runtime);
+      let pulls = 0;
+      runtimeSpy.triggerDigestPullForSession = (sessionId: string, trigger: string) => {
+        pulls += 1;
+        return originalTrigger(sessionId, trigger);
+      };
+
+      await eventService.publish(makeEvent({ id: 'evt-probe-cap-1', topic }));
+      await wait(400);
+      const pullsDuringInterrupt = pulls;
+
+      tam.interrupting.delete('session-probe-cap');
+      tam.processingStates.set('session-probe-cap', 'idle');
+      await wait(300);
+
+      expect(pullsDuringInterrupt).toBeLessThanOrEqual(12);
+      expect(digestRows('session-probe-cap')).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-probe-cap-1')[0]?.state).toBe('delivered');
+    });
   });
 
   describe('surviving delivery invariants after the V1 deletion', () => {

@@ -331,6 +331,7 @@ interface ExternalEventRateLimitState {
 interface DigestPullTriggerState {
   count: number;
   taskId?: string;
+  probe?: boolean;
   idleTimer: Timer | null;
   safetyTimer: Timer | null;
   countTimer: Timer | null;
@@ -1629,6 +1630,23 @@ export class SpaceRuntime {
     this.digestHandoffRetryTimers.set(key, timer);
   }
 
+  private scheduleInterruptProbeForSession(sessionId: string, taskId?: string): void {
+    if (!isExternalEventDeliveryV2Enabled() || this.isStopped || !sessionId) return;
+    if (this.digestPullTriggers.has(sessionId)) return;
+    const idleMs = parsePositiveIntegerEnv(
+      'HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS',
+      30_000
+    );
+    this.digestPullTriggers.set(sessionId, {
+      count: 0,
+      taskId,
+      probe: true,
+      idleTimer: setTimeout(() => this.maybeFlushDigestOnIdle(sessionId), idleMs),
+      safetyTimer: null,
+      countTimer: null,
+    });
+  }
+
   private scheduleDigestPullForSession(sessionId: string, taskId?: string): void {
     if (!isExternalEventDeliveryV2Enabled() || this.isStopped || !sessionId) return;
     const state = this.digestPullTriggers.get(sessionId) ?? {
@@ -1638,6 +1656,7 @@ export class SpaceRuntime {
       countTimer: null,
     };
     state.count += 1;
+    state.probe = false;
     state.taskId = state.taskId ?? taskId;
     this.digestPullTriggers.set(sessionId, state);
     if (state.idleTimer) {
@@ -1674,7 +1693,11 @@ export class SpaceRuntime {
       clearTimeout(state.idleTimer);
       state.idleTimer = null;
     }
-    if (state.count === 0 || !isExternalEventDeliveryV2Enabled() || this.isStopped) {
+    if (
+      (state.count === 0 && !state.probe) ||
+      !isExternalEventDeliveryV2Enabled() ||
+      this.isStopped
+    ) {
       this.clearDigestPullState(sessionId);
       return;
     }
@@ -1947,7 +1970,7 @@ export class SpaceRuntime {
         if (this.isDigestOutcomeRetryable(outcome) && this.isTargetSessionLive(sessionId)) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);
           if (outcome.action === 'skip' && outcome.reason === 'session_interrupted') {
-            this.scheduleDigestPullForSession(sessionId, taskId);
+            this.scheduleInterruptProbeForSession(sessionId, taskId);
           }
         }
       }
