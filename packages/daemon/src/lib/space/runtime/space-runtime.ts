@@ -1941,21 +1941,9 @@ export class SpaceRuntime {
       const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
       if (outcome.action === 'delivered') {
         try {
-          this.supersedeObsoleteDigestRows(
-            sessionId,
-            store,
-            outcome.uuid,
-            outcome.eventIds,
-            taskId
-          );
+          this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid, outcome.eventIds);
         } catch (cleanupError) {
-          this.scheduleDigestSupersedeRetry(
-            sessionId,
-            store,
-            outcome.uuid,
-            outcome.eventIds,
-            taskId
-          );
+          this.scheduleDigestSupersedeRetry(sessionId, store, outcome.uuid, outcome.eventIds);
           return { action: 'failed', stage: 'digestSupersede', error: cleanupError };
         }
       } else {
@@ -1995,8 +1983,7 @@ export class SpaceRuntime {
     sessionId: string,
     store: ExternalEventStore,
     deliveredUuid: string,
-    deliveredEventIds: string[],
-    taskId?: string
+    deliveredEventIds: string[]
   ): void {
     const key = `supersede:${sessionId}:${deliveredUuid}`;
     if (this.digestSupersedeRetryTimers.has(key)) return;
@@ -2010,21 +1997,9 @@ export class SpaceRuntime {
       this.digestSupersedeRetryTimers.delete(key);
       if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
       try {
-        this.supersedeObsoleteDigestRows(
-          sessionId,
-          store,
-          deliveredUuid,
-          deliveredEventIds,
-          taskId
-        );
+        this.supersedeObsoleteDigestRows(sessionId, store, deliveredUuid, deliveredEventIds);
       } catch (error) {
-        this.scheduleDigestSupersedeRetry(
-          sessionId,
-          store,
-          deliveredUuid,
-          deliveredEventIds,
-          taskId
-        );
+        this.scheduleDigestSupersedeRetry(sessionId, store, deliveredUuid, deliveredEventIds);
         log.warn(
           `SpaceRuntime: turn-end digest supersede retry for session ${sessionId} failed: ` +
             `${formatCommandError(error)}`
@@ -2075,8 +2050,7 @@ export class SpaceRuntime {
     sessionId: string,
     store: ExternalEventStore,
     deliveredUuid: string | null,
-    deliveredEventIds: string[],
-    taskId?: string
+    deliveredEventIds: string[]
   ): void {
     const messages = this.getSdkMessageRepo();
     const deliveredEventIdSet = new Set(deliveredEventIds);
@@ -2084,7 +2058,6 @@ export class SpaceRuntime {
     const targetWorkflowRunId = execution?.workflowRunId;
     const targetNodeId = execution?.workflowNodeId;
     const targetAgentName = execution?.agentName;
-    const targetTaskId = taskId ?? (execution as { taskId?: string } | null)?.taskId;
     const rows = messages
       .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
       .filter(
@@ -2109,7 +2082,6 @@ export class SpaceRuntime {
                 delivery.workflowRunId === targetWorkflowRunId &&
                 delivery.nodeId === targetNodeId &&
                 delivery.agentName === targetAgentName &&
-                (targetTaskId === undefined || delivery.taskId === targetTaskId) &&
                 (delivery.state === 'delivered' || delivery.state === 'failed')
             );
           if (terminalForTarget) return true;

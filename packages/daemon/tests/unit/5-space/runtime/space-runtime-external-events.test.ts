@@ -1670,6 +1670,79 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(1);
     });
 
+    test('flag on: supersede obsoletes a deferred digest whose members are terminal under a sibling task', async () => {
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startRunWithSubscription(topicA);
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topicB).success
+      ).toBe(true);
+
+      const siblingEvent = makeEvent({ id: 'evt-supersede-sibling', topic: topicA });
+      const freshEvent = makeEvent({ id: 'evt-supersede-fresh', topic: topicB });
+      await eventService.publish(siblingEvent);
+      await eventService.publish(freshEvent);
+      const siblingDelivery = eventStore.listDeliveries(siblingEvent.id)[0]!;
+      eventStore.markDeliveryDelivered(siblingEvent.id, siblingDelivery.deliveryKey);
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-cross-task-supersede',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-cross-task-supersede',
+        'session-cross-task-supersede',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const stale = {
+        type: 'user',
+        uuid: 'digest-stale-sibling',
+        session_id: 'session-cross-task-supersede',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale sibling digest' }] },
+        externalEventIds: [siblingEvent.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-cross-task-supersede', stale, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession(
+        'session-cross-task-supersede',
+        secondTask.id
+      );
+      expect(outcome).toMatchObject({ action: 'delivered', eventIds: [freshEvent.id] });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-cross-task-supersede'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(rows.some((row) => row.sdk_uuid === 'digest-stale-sibling')).toBe(false);
+    });
+
     test('flag on: an admission-rejected pull drops the deferred digest rows', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
