@@ -32,7 +32,7 @@ interface ScenarioOptions {
   env?: Record<string, string>;
   configJson?: string;
   withRow?: boolean;
-  store?: CredentialStore;
+  store?: (providers: ProviderRepository) => CredentialStore;
 }
 
 const openDatabases: SqliteDatabase[] = [];
@@ -56,7 +56,7 @@ async function runScenario(options: ScenarioOptions) {
     });
   }
   const credentialManager = options.store
-    ? new ProviderCredentialManager(options.store, db, options.env ?? {})
+    ? new ProviderCredentialManager(options.store(providers), db, options.env ?? {})
     : ProviderCredentialManager.create(db, options.env ?? {});
   if (options.stored) {
     await (options.stored.type === 'api_key'
@@ -182,7 +182,7 @@ describe('startup persisted-discovery reconciliation', () => {
     const result = await runScenario({
       providerCredentials: apiKey('sk-live'),
       configJson: DISCOVERY_CONFIG,
-      store: {
+      store: () => ({
         get: async () => storedData,
         set: async (_service, _account, data) => {
           storedData = data;
@@ -191,23 +191,43 @@ describe('startup persisted-discovery reconciliation', () => {
           storedData = null;
         },
         listServices: async () => [],
-      },
+      }),
     });
     expect(result.configJson()).toBe(STRIPPED_CONFIG);
     expect(await result.stored()).toEqual(apiKey('sk-live'));
     expect(result.healthStatus()).toBe('healthy');
   });
 
+  test('concurrent config write during the load await survives the strip', async () => {
+    const result = await runScenario({
+      providerCredentials: apiKey('sk-live'),
+      configJson: DISCOVERY_CONFIG,
+      store: (providers) => ({
+        get: async () => {
+          const row = providers.getProviderByProviderId('anthropic');
+          providers.updateProvider(row!.id, {
+            configJson: JSON.stringify({ discoveredModels: { models: [] }, curated: ['model-b'] }),
+          });
+          return null;
+        },
+        set: async () => {},
+        delete: async () => {},
+        listServices: async () => [],
+      }),
+    });
+    expect(result.configJson()).toBe(JSON.stringify({ curated: ['model-b'] }));
+  });
+
   test('keychain-unavailable store: continues without stripping or marking unhealthy', async () => {
     const result = await runScenario({
       providerCredentials: apiKey('sk-live'),
       configJson: DISCOVERY_CONFIG,
-      store: {
+      store: () => ({
         get: () => Promise.reject(new KeychainUnavailableError('locked')),
         set: () => Promise.resolve(),
         delete: () => Promise.resolve(),
         listServices: () => Promise.resolve([]),
-      },
+      }),
     });
     expect(result.configJson()).toBe(DISCOVERY_CONFIG);
     expect(result.healthStatus()).toBe('unknown');

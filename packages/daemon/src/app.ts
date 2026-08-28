@@ -171,7 +171,7 @@ function decidePersistedDiscoveryStrip(
 function stripPersistedDiscoveryFromProviderRow(
   ctx: ReconcilePersistedDiscoveryCtx
 ): ReconcilePersistedDiscoveryCtx {
-  const record = ctx.providerRecord;
+  const record = ctx.deps.db.providers.getProviderByProviderId(ctx.providerId);
   if (!record) return ctx;
   const strippedConfigJson = stripPersistedDiscovery(record.configJson);
   if (strippedConfigJson === record.configJson) return ctx;
