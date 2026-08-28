@@ -234,17 +234,32 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
   if (action.autonomyRequirement === undefined) {
     return { ...ctx, spaceLevel: ctx.spaceLevel ?? 1 };
   }
-  const spaceLevel =
-    ctx.spaceLevel ??
-    (ctx.deps.getSpaceAutonomyLevel ? await ctx.deps.getSpaceAutonomyLevel(ctx.spaceId) : 1);
+  let spaceLevel = ctx.spaceLevel ?? null;
+  if (spaceLevel === null) {
+    if (!ctx.deps.getSpaceAutonomyLevel) {
+      spaceLevel = 1;
+    } else {
+      try {
+        spaceLevel = await ctx.deps.getSpaceAutonomyLevel(ctx.spaceId);
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return { ...ctx, outcome: failedOutcome(error) };
+      }
+    }
+  }
   const agentLevel = ctx.agentLevel ?? null;
   const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
-  const required =
-    action.autonomyRequirement === undefined
-      ? 1
-      : typeof action.autonomyRequirement === 'function'
-        ? await action.autonomyRequirement(ctx.parsedParams)
-        : action.autonomyRequirement;
+  let required: number;
+  if (typeof action.autonomyRequirement === 'function') {
+    try {
+      required = await action.autonomyRequirement(ctx.parsedParams);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      return { ...ctx, spaceLevel, agentLevel, outcome: failedOutcome(error) };
+    }
+  } else {
+    required = action.autonomyRequirement;
+  }
   const admission = decideAutonomyAdmission({
     toolName: action.name,
     level: effective.level,
@@ -267,7 +282,13 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
   if (ctx.outcome) return ctx;
   const action = ctx.action!;
   if (typeof action.autonomyRequirement === 'function') {
-    const required = await action.autonomyRequirement(ctx.parsedParams);
+    let required: number;
+    try {
+      required = await action.autonomyRequirement(ctx.parsedParams);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      return { ...ctx, outcome: failedOutcome(error) };
+    }
     const spaceLevel = ctx.spaceLevel ?? 1;
     const agentLevel = ctx.agentLevel ?? null;
     const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
@@ -283,7 +304,13 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
     }
   }
   if (ctx.deps.isWithinRateBudget) {
-    const ok = await ctx.deps.isWithinRateBudget();
+    let ok: boolean;
+    try {
+      ok = await ctx.deps.isWithinRateBudget();
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      return { ...ctx, outcome: failedOutcome(error) };
+    }
     if (!ok) {
       return {
         ...ctx,
@@ -394,6 +421,12 @@ const run = (
   })('dispatch-action') as PipelineAPI
 )
   .input(['ctx'])
+  .pipe(resolveAction, 'ctx', 'ctx')
+  .pipe('!hasOutcome', 'ctx')
+  .pipe(applySafetyClass, 'ctx', 'ctx')
+  .pipe('!hasOutcome', 'ctx')
+  .pipe(resolveTargets, 'ctx', 'ctx')
+  .pipe('!hasOutcome', 'ctx')
   .pipe(applyRoleAdmission, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(applyAutonomyGate, 'ctx', 'ctx')
@@ -412,10 +445,8 @@ export async function runDispatchAction(
   input: DispatchActionInput
 ): Promise<DispatchActionOutcome> {
   const startedAt = Date.now();
-  let prepared: DispatchActionCtx = { ...input, deps };
   try {
-    prepared = await resolveTargets(applySafetyClass(resolveAction(prepared)));
-    const ctx = await run(prepared);
+    const ctx = await run({ ...input, deps });
     const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
     await emitDispatchTelemetry(
       deps,
@@ -429,13 +460,7 @@ export async function runDispatchAction(
     const error = err instanceof Error ? err.message : String(err);
     const outcome = failedOutcome(error);
     const action = deps.registry.get(input.actionName);
-    await emitDispatchTelemetry(
-      deps,
-      { ...input, taskId: prepared.taskId, workflowRunId: prepared.workflowRunId },
-      action,
-      outcome,
-      Date.now() - startedAt
-    );
+    await emitDispatchTelemetry(deps, input, action, outcome, Date.now() - startedAt);
     return outcome;
   }
 }
