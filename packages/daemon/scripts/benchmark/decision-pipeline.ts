@@ -254,7 +254,11 @@ function saveChecksum(ctx: SaveState): number {
   );
 }
 
-function setupInsert(): { db: typeof Database.prototype; run: (row: InsertRow) => number } {
+function setupInsert(): {
+  db: typeof Database.prototype;
+  reset: () => void;
+  run: (row: InsertRow) => number;
+} {
   const db = new Database(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   createTables(db);
@@ -264,6 +268,8 @@ function setupInsert(): { db: typeof Database.prototype; run: (row: InsertRow) =
   const insertStmt = db.prepare(
     'INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, origin, is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index, sdk_uuid, replacement_metadata_normalized) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
+  const deleteStmt = db.prepare('DELETE FROM sdk_messages');
+  const resetSessionStmt = db.prepare('UPDATE sessions SET visible_message_count = 0 WHERE id = ?');
   let counter = 0;
   const insert = db.transaction((row: InsertRow, id: string) => {
     insertStmt.run(
@@ -286,6 +292,11 @@ function setupInsert(): { db: typeof Database.prototype; run: (row: InsertRow) =
   });
   return {
     db,
+    reset: () => {
+      deleteStmt.run();
+      resetSessionStmt.run(saveSessionId);
+      counter = 0;
+    },
     run: (row: InsertRow) => {
       const id = `${++counter}-${row.sessionId}`;
       insert(row, id);
@@ -339,9 +350,12 @@ function collectSample(variant: Variant): Sample {
     return { cold, warm };
   }
   if (variant === 'sqlite-insert') {
-    const { db, run } = setupInsert();
+    const { db, reset, run } = setupInsert();
+    reset();
     const cold = runIterations(insertRows, run, INSERT_ITERATIONS);
+    reset();
     runIterations(insertRows, run, INSERT_WARMUP_ITERATIONS);
+    reset();
     const warm = runIterations(insertRows, run, INSERT_ITERATIONS);
     db.close();
     return { cold, warm };
