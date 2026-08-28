@@ -1090,6 +1090,39 @@ describe('Provider RPC handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.provider.authType).toBe('api_key');
+      expect(result.provider.configJson).toBe(JSON.stringify({ command: 'test-command' }));
+      const after = repo.getProvider(created.id);
+      expect(after?.configJson).toBe(JSON.stringify({ command: 'test-command' }));
+      expect(eventBus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('strips and clears cache even when the provider-row update fails after a credential write', async () => {
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({
+          command: 'test-command',
+          discoveredModels: { models: [{ id: 'old-model' }] },
+        }),
+      });
+      const originalUpdateProvider = repo.updateProvider.bind(repo);
+      repo.updateProvider = (id: string, params: unknown) => {
+        if ((params as Record<string, unknown>).authType !== undefined) {
+          throw new Error('db fail');
+        }
+        return originalUpdateProvider(id, params as Partial<CreateProviderParams>);
+      };
+
+      const handlers = setup();
+      await expect(
+        handlers.get('providers.update')!(
+          { id: created.id, params: {}, credentials: { apiKey: 'new-key' } },
+          {}
+        )
+      ).rejects.toThrow('db fail');
+
       const after = repo.getProvider(created.id);
       expect(after?.configJson).toBe(JSON.stringify({ command: 'test-command' }));
       expect(eventBus.publishAsync).toHaveBeenCalledTimes(1);
