@@ -563,7 +563,8 @@ export class SDKMessageHandler {
 
   private async acknowledgeOldestQueuedUserOnTurnEnd(
     activeMessageId: string | null,
-    resultUuid: string
+    resultUuid: string,
+    invocationGeneration: number | null
   ): Promise<void> {
     const { session, db, internalEventBus, messageHub, messageQueue } = this.ctx;
     const durableOwned =
@@ -577,10 +578,11 @@ export class SDKMessageHandler {
 
     let lastConsumedAt = 0;
     for (const enqueuedUser of consumedUsers) {
+      const messageId = enqueuedUser.uuid ?? '';
+      if (!messageQueue.ownsYieldedGeneration(messageId, invocationGeneration)) continue;
       let consumedAt = Date.now();
       if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
       lastConsumedAt = consumedAt;
-      const messageId = enqueuedUser.uuid ?? '';
       const batchUuids = messageQueue.hasYielded(messageId)
         ? db.getJobQueueRepo?.()?.getActiveDeliveryBatchUuids?.(session.id, messageId)
         : null;
@@ -592,7 +594,7 @@ export class SDKMessageHandler {
         .markDeliveriesConsumedAtTurnEnd(session.id, deliveryUuids, resultUuid);
       const consumedId = consumed.ids[0];
       if (!consumedId) continue;
-      if (messageQueue.acknowledgeYielded(messageId)) {
+      if (messageQueue.acknowledgeYielded(messageId, invocationGeneration ?? undefined)) {
         for (const uuid of consumed.uuids) {
           signalDeliveryConsumed(session.id, uuid);
         }
@@ -1312,7 +1314,11 @@ export class SDKMessageHandler {
     }
 
     if (!this.acknowledgedPersistedUserThisTurn && !this.suppressIdleOnNextResult) {
-      await this.acknowledgeOldestQueuedUserOnTurnEnd(activeMessageId, message.uuid ?? '');
+      await this.acknowledgeOldestQueuedUserOnTurnEnd(
+        activeMessageId,
+        message.uuid ?? '',
+        invocationGeneration
+      );
     }
     this.acknowledgedPersistedUserThisTurn = false;
 

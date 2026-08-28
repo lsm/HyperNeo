@@ -2502,6 +2502,104 @@ describe('MessageQueue', () => {
       q.stop();
     }, 15_000);
 
+    it('stands requeued work down when a user stop lands after beforeStart', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-post-gap'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async (options) => {
+          q.stop();
+          await options?.beforeStart?.();
+          q.noteUserInterrupt();
+          q.start();
+        },
+        onResumeClear,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(onResumeClear).toHaveBeenCalled();
+      expect(q.size()).toBe(0);
+      q.stop();
+    });
+
+    it('stands down a late receipt after the recovery restart was aborted by a user stop', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-aborted-latch', 'aborted-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      let ownsTurn = true;
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => true,
+        ownsTurn: () => ownsTurn,
+        onResumeClear,
+        restart: async (options) => {
+          q.stop();
+          ownsTurn = false;
+          q.clear();
+          await options?.beforeStart?.();
+        },
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      q.start();
+      releaseInterrupt({ still_queued: ['uuid-aborted-latch'] });
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-aborted-latch')).toBe(false);
+      expect(onResumeClear).toHaveBeenCalled();
+      q.stop();
+    }, 15_000);
+
+    it('fences uuid acknowledgments by the yielding query generation', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('uuid-gen-ack', 'gen survivor', false, {
+        durable: true,
+      });
+      delivered.catch(() => {});
+      const oldGenerator = q.messageGenerator(testSessionId, { queryGeneration: 4 });
+      const oldStep = await oldGenerator.next();
+      expect(oldStep.value.message.uuid).toBe('uuid-gen-ack');
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-gen-ack'] }),
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      const newGenerator = q.messageGenerator(testSessionId, { queryGeneration: 5 });
+      const newStep = await newGenerator.next();
+      expect(newStep.value.message.uuid).toBe('uuid-gen-ack');
+
+      expect(q.acknowledgeYielded('uuid-gen-ack', 4)).toBe(false);
+      let settled = false;
+      void delivered.then(() => {
+        settled = true;
+      });
+      await tick(10);
+      expect(settled).toBe(false);
+
+      expect(q.acknowledgeYielded('uuid-gen-ack', 5)).toBe(true);
+      await delivered;
+      q.stop();
+    });
+
     it('stands down a late receipt after the recovery replacement was stopped', async () => {
       const q = new MessageQueue();
       q.start();

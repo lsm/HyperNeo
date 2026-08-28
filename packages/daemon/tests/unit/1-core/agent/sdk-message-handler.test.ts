@@ -95,6 +95,7 @@ describe('SDKMessageHandler', () => {
   let hasPendingOrClaimedSpy: ReturnType<typeof mock>;
   let hasYieldedSpy: ReturnType<typeof mock>;
   let acknowledgeYieldedSpy: ReturnType<typeof mock>;
+  let ownsYieldedGenerationSpy: ReturnType<typeof mock>;
   let setDeliveryGateSpy: ReturnType<typeof mock>;
   let hasQueuedMessagesSpy: ReturnType<typeof mock>;
   let hasOutstandingInternalCompactionSpy: ReturnType<typeof mock>;
@@ -204,6 +205,7 @@ describe('SDKMessageHandler', () => {
     hasPendingOrClaimedSpy = mock(() => false);
     hasYieldedSpy = mock(() => false);
     acknowledgeYieldedSpy = mock(() => false);
+    ownsYieldedGenerationSpy = mock(() => true);
     setDeliveryGateSpy = mock(() => {});
     hasQueuedMessagesSpy = mock(() => false);
     hasOutstandingInternalCompactionSpy = mock(() => false);
@@ -219,6 +221,7 @@ describe('SDKMessageHandler', () => {
       hasPendingOrClaimed: hasPendingOrClaimedSpy,
       hasYielded: hasYieldedSpy,
       acknowledgeYielded: acknowledgeYieldedSpy,
+      ownsYieldedGeneration: ownsYieldedGenerationSpy,
       setDeliveryGate: setDeliveryGateSpy,
       hasQueuedMessages: hasQueuedMessagesSpy,
       hasOutstandingInternalCompaction: hasOutstandingInternalCompactionSpy,
@@ -2201,7 +2204,7 @@ describe('SDKMessageHandler', () => {
         ['yielded-user-uuid', 'batch-member-uuid'],
         'result-uuid'
       );
-      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid');
+      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid', undefined);
       expect(
         await Promise.all([
           kickoffWaiter.promise.then(() => 'consumed'),
@@ -2325,7 +2328,7 @@ describe('SDKMessageHandler', () => {
         } as unknown as SDKMessage)
       ).rejects.toThrow('search maintenance failed');
 
-      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid');
+      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid', undefined);
       await expect(kickoffWaiter.promise).resolves.toBeUndefined();
       kickoffWaiter.cancel();
     });
@@ -6645,7 +6648,7 @@ describe('SDKMessageHandler', () => {
           expected: true,
         });
         expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
-        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid);
+        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid, undefined);
       });
 
       it('acknowledges a yielded non-durable message that is also active', async () => {
@@ -6657,7 +6660,7 @@ describe('SDKMessageHandler', () => {
           expected: true,
         });
         expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
-        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid);
+        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid, undefined);
       });
 
       it('skips a durable message that is not yielded', async () => {
@@ -6702,7 +6705,7 @@ describe('SDKMessageHandler', () => {
           expected: true,
         });
         expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
-        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid);
+        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid, undefined);
       });
 
       it('skips a durable yielded active message that is pending or claimed', async () => {

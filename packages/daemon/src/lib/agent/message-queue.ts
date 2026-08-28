@@ -41,6 +41,7 @@ interface QueuedMessage {
   onResolved?: () => void;
   onRejected?: (error: Error) => void;
   yieldAttempt?: unknown;
+  yieldQueryGeneration?: number;
 }
 
 export interface MidTurnBudgetInterruptOptions {
@@ -494,7 +495,18 @@ export class MessageQueue {
     return false;
   }
 
-  acknowledgeYielded(messageId: string): boolean {
+  ownsYieldedGeneration(messageId: string, generation: number | null | undefined): boolean {
+    if (generation === null || generation === undefined) return true;
+    for (const message of this.yielded) {
+      if (message.id !== messageId) continue;
+      if (message.yieldQueryGeneration === undefined) return true;
+      return message.yieldQueryGeneration === generation;
+    }
+    return true;
+  }
+
+  acknowledgeYielded(messageId: string, fromQueryGeneration?: number): boolean {
+    if (!this.ownsYieldedGeneration(messageId, fromQueryGeneration ?? null)) return false;
     for (const message of this.yielded) {
       if (message.id !== messageId) continue;
       this.yielded.delete(message);
@@ -590,7 +602,7 @@ export class MessageQueue {
 
   async *messageGenerator(
     sessionId: string,
-    options?: { suppressPreYieldCallback?: boolean }
+    options?: { suppressPreYieldCallback?: boolean; queryGeneration?: number }
   ): AsyncGenerator<{ message: SDKUserMessage; onSent: () => void }> {
     const myGeneration = this.generation;
 
@@ -653,6 +665,7 @@ export class MessageQueue {
       }
       const yieldAttempt: unknown = {};
       queuedMessage.yieldAttempt = yieldAttempt;
+      queuedMessage.yieldQueryGeneration = options?.queryGeneration;
       yield {
         message: sdkUserMessage,
         onSent: () => {
@@ -1062,7 +1075,13 @@ export class MessageQueue {
       })
       .finally(() => {
         this.internalRestartInFlight = false;
-        this.recoveryRestartEpoch = this.stopEpoch;
+        if (
+          !abortedByStop &&
+          this.clearEpoch === clearEpochBeforeRestart &&
+          this.userInterruptEpoch === userInterruptEpochBeforeRestart
+        ) {
+          this.recoveryRestartEpoch = this.stopEpoch;
+        }
         if (this.earlyGateReleasePending) {
           this.earlyGateReleasePending = false;
           this.releaseEarlyDeliveryGate();
@@ -1077,6 +1096,22 @@ export class MessageQueue {
         }
       }),
     ]);
+    if (abortedByStop) {
+      resolveDeliveryGate?.();
+      return;
+    }
+    if (
+      this.clearEpoch > clearEpochBeforeRestart ||
+      this.userInterruptEpoch > userInterruptEpochBeforeRestart
+    ) {
+      opts.logger.info(
+        `user stop observed while the recovery replacement started for session ` +
+          `${opts.sessionId}; standing requeued work down`
+      );
+      this.clear();
+      opts.onResumeClear();
+      return;
+    }
     resolveDeliveryGate?.();
   }
 
