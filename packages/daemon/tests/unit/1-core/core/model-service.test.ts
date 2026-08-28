@@ -17,6 +17,15 @@ import {
   schedulePendingSliceRelease,
   releaseAppliedProviderSlice,
   mergePendingProviderSlices,
+  applyDiscoveredProviderModels,
+  restoreProviderModelsSlice,
+  restoreProviderPendingSlice,
+  getPendingProviderSlice,
+  getModelsCacheClearSequence,
+  getCurrentCacheLoad,
+  markModelsCacheSliceProtected,
+  markProviderRefreshSucceeded,
+  seedProviderCatalogModels,
   getProviderCatalogModels,
   bumpProviderCatalogEpoch,
   getProviderCatalogEpoch,
@@ -40,6 +49,7 @@ import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import {
   getProviderFailure,
+  recordClassifiedProviderFailure,
   resetProviderFailureStore,
   subscribeProviderFailureChanges,
   type ProviderFailureChange,
@@ -599,6 +609,196 @@ describe('Model Service', () => {
       expect(mergePendingProviderSlices('global', [providerSliceModel('alpha')])).toEqual([
         providerSliceModel('alpha'),
       ]);
+    });
+  });
+
+  describe('discovery write-path helpers', () => {
+    function writePathModel(providerId: string, id: string): ModelInfo {
+      return {
+        id,
+        name: `${id} Model`,
+        alias: id,
+        family: providerId,
+        provider: providerId,
+        contextWindow: 128000,
+        description: `${id} via ${providerId}`,
+        releaseDate: '2026-01-01',
+        available: true,
+      };
+    }
+
+    it('applyDiscoveredProviderModels overlays the live cache and reports the applied slice', () => {
+      setModelsCache(new Map([['global', [...mockModels, writePathModel('acp', 'stale-acp')]]]));
+
+      const result = applyDiscoveredProviderModels('acp', [writePathModel('acp', 'acp-applied')]);
+
+      expect(result.applied).toBe(true);
+      expect(result.models).toEqual([writePathModel('acp', 'acp-applied')]);
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual([
+        writePathModel('acp', 'acp-applied'),
+      ]);
+      expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
+    });
+
+    it('applyDiscoveredProviderModels defers to a pending slice when the cache entry is missing', () => {
+      const result = applyDiscoveredProviderModels('acp', [writePathModel('acp', 'acp-applied')]);
+
+      expect(result.applied).toBe(false);
+      expect(getModelsCache().has('global')).toBe(false);
+      expect(getPendingProviderSlice('acp')).toEqual([writePathModel('acp', 'acp-applied')]);
+      expect(getCurrentCacheLoad('global')).toBeUndefined();
+    });
+
+    it('seeds curated ids from persisted discovery and drops curated-out discovered models', () => {
+      getProviderRegistry().setCuratedModels('acp', [
+        { id: 'acp-applied' },
+        { id: 'acp-persisted' },
+      ]);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      const result = applyDiscoveredProviderModels(
+        'acp',
+        [writePathModel('acp', 'acp-applied'), writePathModel('acp', 'acp-rogue')],
+        'global',
+        [{ id: 'acp-persisted', name: 'Persisted Model' }]
+      );
+
+      expect(result.applied).toBe(true);
+      expect(result.models).toEqual([
+        expect.objectContaining({
+          id: 'acp-persisted',
+          name: 'Persisted Model',
+          provider: 'acp',
+          contextWindow: 128000,
+          preferContextWindowMetadata: true,
+          description: 'Persisted Model via acp',
+        }),
+        writePathModel('acp', 'acp-applied'),
+      ]);
+      expect(
+        getAvailableModels('global')
+          .filter((m) => m.provider === 'acp')
+          .map((m) => m.id)
+      ).toEqual(['acp-persisted', 'acp-applied']);
+    });
+
+    it('restoreProviderModelsSlice rolls the provider slice back and leaves a cleared cache cleared', () => {
+      setModelsCache(new Map([['global', [...mockModels, writePathModel('acp', 'acp-applied')]]]));
+
+      restoreProviderModelsSlice('acp', [writePathModel('acp', 'acp-previous')]);
+
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual([
+        writePathModel('acp', 'acp-previous'),
+      ]);
+      expect(models.filter((m) => m.provider === 'anthropic')).toEqual(mockModels);
+
+      clearModelsCache('global');
+      restoreProviderModelsSlice('acp', [writePathModel('acp', 'acp-previous')]);
+      expect(getModelsCache().has('global')).toBe(false);
+    });
+
+    it('a rolled-back apply is not re-applied when the in-flight refresh settles', async () => {
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'slow-splice-provider',
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return [1, 2, 3, 4].map((n) => writePathModel('slow-splice-provider', `slow-${n}`));
+        },
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]));
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      const refreshPromise = refreshModels();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(getCurrentCacheLoad('global')).toBeDefined();
+      const previousSlice = (getModelsCache().get('global') ?? []).filter(
+        (m) => m.provider === 'acp'
+      );
+      const previousOverlay = getPendingProviderSlice('acp');
+      expect(
+        applyDiscoveredProviderModels('acp', [writePathModel('acp', 'acp-applied')]).applied
+      ).toBe(true);
+
+      restoreProviderPendingSlice('acp', previousOverlay);
+      restoreProviderModelsSlice('acp', previousSlice);
+
+      await refreshPromise;
+
+      const models = getAvailableModels('global');
+      expect(models.filter((m) => m.provider === 'acp')).toEqual([]);
+      expect(models.filter((m) => m.provider === 'slow-splice-provider').length).toBe(4);
+    });
+
+    it('restoreProviderPendingSlice reinstates a captured overlay and clears its release marker', () => {
+      applyDiscoveredProviderModels('acp', [writePathModel('acp', 'acp-first')]);
+      const captured = getPendingProviderSlice('acp');
+      schedulePendingSliceRelease('acp');
+
+      restoreProviderPendingSlice('acp', captured);
+
+      expect(mergePendingProviderSlices('global', mockModels)).toEqual([
+        ...mockModels,
+        writePathModel('acp', 'acp-first'),
+      ]);
+      expect(mergePendingProviderSlices('global', mockModels, 1_000_000, new Set(['acp']))).toEqual(
+        [...mockModels, writePathModel('acp', 'acp-first')]
+      );
+
+      restoreProviderPendingSlice('acp', undefined);
+      expect(mergePendingProviderSlices('global', mockModels)).toEqual(mockModels);
+    });
+
+    it('getModelsCacheClearSequence advances on global clears only', () => {
+      const before = getModelsCacheClearSequence();
+      clearModelsCache('session-123');
+      expect(getModelsCacheClearSequence()).toBe(before);
+      clearModelsCache('global');
+      expect(getModelsCacheClearSequence()).toBe(before + 1);
+      clearModelsCache();
+      expect(getModelsCacheClearSequence()).toBe(before + 2);
+    });
+
+    it('markModelsCacheSliceProtected refreshes the entry so a stale read no longer re-triggers discovery', async () => {
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      const getModels = mock(async () => [writePathModel('fresh-provider', 'fresh-model')]);
+      getProviderRegistry().register({
+        id: 'fresh-provider',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+      setModelsCache(new Map([['global', mockModels]]), Date.now() - 5 * 60 * 60 * 1000);
+
+      markModelsCacheSliceProtected('global');
+      expect(getAvailableModels('global')).toEqual(mockModels);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(getModels.mock.calls.length).toBe(0);
+    });
+
+    it('markProviderRefreshSucceeded clears failure and retry state and advances the catalog epoch', () => {
+      const epochBefore = getProviderCatalogEpoch('glm');
+      markRefreshAttemptedFor(['glm']);
+      recordClassifiedProviderFailure('glm', { errorKind: 'credential', message: 'rejected' });
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+
+      expect(markProviderRefreshSucceeded('glm')).toBe(true);
+      expect(getProviderFailure('glm')).toBeUndefined();
+      expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
+      expect(getProviderCatalogEpoch('glm')).toBeGreaterThan(epochBefore);
+      expect(markProviderRefreshSucceeded('glm')).toBe(false);
+    });
+
+    it('seedProviderCatalogModels seeds a discovered catalog readable through peekProviderCatalogModels', () => {
+      const provider = { id: 'seed-provider' } as Provider;
+      const models = [writePathModel('seed-provider', 'seeded-model')];
+
+      seedProviderCatalogModels(provider, models);
+
+      expect(peekProviderCatalogModels('seed-provider', provider)).toEqual(models);
     });
   });
 
