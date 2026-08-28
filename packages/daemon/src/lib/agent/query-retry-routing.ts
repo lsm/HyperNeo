@@ -92,7 +92,7 @@ function isQueryInterrupted(
   );
 }
 
-function decideProviderTerminalCategory(
+export function decideProviderTerminalCategory(
   signal: QueryRetryErrorSignal,
   env: QueryRetryEnvironment
 ): ErrorCategory {
@@ -127,7 +127,7 @@ function decideProviderTerminalCategory(
   return ErrorCategory.SYSTEM;
 }
 
-function resolveTerminalMessageHint(
+export function resolveTerminalMessageHint(
   signal: QueryRetryErrorSignal,
   env: QueryRetryEnvironment
 ): string | undefined {
