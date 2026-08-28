@@ -1718,9 +1718,9 @@ stale-continuation windows the pins had mapped — the per-attempt token
 owner-scoped idle with its three-owner waiter filter (query, rate-limit
 episode, turn/delivery) in `processing-state-manager.ts` (B5E, re-sliced
 from one over-budget PR into five), post-await watchdog-write fencing on
-#2779's gates (B5d), generation-fenced dispatch/catch/queue-seam/permission
-paths across both runners (B5f–B5l), and the notice-publication fallback
-(B5j).
+#2779's gates (B5d), the dispatch/catch/queue-seam/permission fencing series
+across both runners (B5f–B5l, each closing its named window — residuals
+remain, below), and the notice-publication fallback (B5j).
 
 **The composition boundary.** One effectful pipeline landed inside the
 chain: B4's teardown dedup is the named `query-retry-teardown` superpipe
@@ -1745,7 +1745,18 @@ interruption. B3c's finalizer guards gate the idle transition with fresh
 generation checks, but the shared writes after the awaited provider import
 (`restoreEnvVars`, `ctx.originalEnvVars` clear, `_lastConsumedUserMessage` /
 `_turnConsumedUserMessages` clears) still run on the pre-await staleness
-snapshot. Together with the duplicated transient/provider predicates above,
+snapshot. The provider retry arm's teardown has the same shape: it supplies
+no `guardAfterExit`, so `restoreEnvAndBackoff` awaits process exit and the
+provider import and then restores and unconditionally clears
+`ctx.originalEnvVars` before any ownership recheck. The B5f dispatch fencing
+validates the generation at entry, but `handleMessage` still mutates shared
+state — delivery-activity/response bookkeeping, session metadata,
+retry-event publication, thinking-token state — before its first staleness
+check, and both runners' iterator bookkeeping updates before dispatch
+without revalidation. The B5k queue seam binds the wrapper to
+`queryGeneration` only: a stale iterator first pulled after a replacement
+can claim the replacement's prompt (no attempt/live check at wrapper
+entry). Together with the duplicated transient/provider predicates above,
 these are the successor plan's query-attempt composition to close.
 
 Closing sweep (this PR): the measured removal pass found the chain already
@@ -1843,9 +1854,10 @@ Pilot 14 PRs: #2900, #2902, #2905, #2903, #2914, #2925, #2930, #2941, #2945,
   (attempt token, owned fences, three-owner idle-admission pipeline,
   post-await watchdog/dispatch/catch/queue/permission revalidation) — see
   "Pilot 14" above for the composition boundary, the residuals the chain
-  leaves open (unfenced ACP retry arm, finalizer post-import writes,
-  duplicated transient/provider predicates), and the closing sweep that
-  deleted the chain's one vestigial knip ignore line.
+  leaves open (unfenced ACP retry arm, teardown/finalizer environment
+  writes, pre-check dispatch mutations, late-pull queue seam, duplicated
+  transient/provider predicates), and the closing sweep that deleted the
+  chain's one vestigial knip ignore line.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
