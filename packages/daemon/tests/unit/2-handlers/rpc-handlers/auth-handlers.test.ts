@@ -1291,11 +1291,6 @@ describe('Auth RPC Handlers', () => {
       const credentialManager = {
         removeCredentials: mock(async () => {}),
         storeOAuthTokens: mock(async () => {}),
-        getCredentials: mock(async () => ({
-          type: 'oauth' as const,
-          accessToken: 'previous-token',
-          refreshToken: 'previous-refresh',
-        })),
       };
       const bus = makeBus();
       const repo = makeRepo();
@@ -1306,13 +1301,23 @@ describe('Auth RPC Handlers', () => {
         bus as never,
         repo as never
       );
+      const previousCredentials = {
+        type: 'oauth' as const,
+        accessToken: 'previous-token',
+        refreshToken: 'previous-refresh',
+      };
+      const replacementCredentials = {
+        type: 'oauth' as const,
+        accessToken: 'replacement-token',
+        refreshToken: 'replacement-refresh',
+      };
+      let calls = 0;
       const mockProvider = createMockProvider({
         refreshToken: mock(async () => false),
-        getCredentials: mock(async () => ({
-          type: 'oauth' as const,
-          accessToken: 'replacement-token',
-          refreshToken: 'replacement-refresh',
-        })),
+        getCredentials: mock(async () => {
+          calls += 1;
+          return calls === 1 ? previousCredentials : replacementCredentials;
+        }),
       });
       registry.register(mockProvider);
 

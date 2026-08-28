@@ -424,6 +424,11 @@ export function setupAuthHandlers(
         };
       }
 
+      let preRefreshCredentials: ProviderCredentials | null = null;
+      try {
+        preRefreshCredentials = (await provider.getCredentials?.()) ?? null;
+      } catch {}
+
       try {
         bumpProviderCatalogEpoch(providerId);
         const refreshed = await provider.refreshToken();
@@ -443,9 +448,10 @@ export function setupAuthHandlers(
           } catch (error) {
             cleanupError = error;
           }
+          const baseline = preRefreshCredentials ?? previousCredentials;
           const identityChanged =
             !remaining ||
-            credentialIdentity(previousCredentials) !== credentialIdentity(remaining) ||
+            credentialIdentity(baseline) !== credentialIdentity(remaining) ||
             cleanupError !== undefined;
           try {
             await lockedClearCacheAndNotifyProvidersChanged(
