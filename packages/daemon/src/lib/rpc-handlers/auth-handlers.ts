@@ -217,7 +217,9 @@ export function setupAuthHandlers(
             await credentialManager?.storeOAuthTokens(providerId, credentials);
           }
           unsubscribe?.();
-          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+          try {
+            await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+          } catch {}
         };
         unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
         const flowData = await provider.startOAuthFlow();
@@ -315,7 +317,9 @@ export function setupAuthHandlers(
         if (!provider.logout && provider.setCredentials) {
           provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
-        await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+        try {
+          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+        } catch {}
         return { success: true };
       } catch (error) {
         try {
