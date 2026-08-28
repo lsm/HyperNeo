@@ -626,11 +626,13 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     const harness = makeQuery();
     session.queryObject = harness.query;
     const narrowSpy = mock(() => true);
+    const reopenSpy = mock(() => 'db-id-kickoff');
     (
       session.db as unknown as {
         getSDKMessageRepo: () => {
           getUserMessageContentByUuid: (sessionId: string, uuid: string) => string | null;
           markDeliveryRetryableByUuid: () => string | null;
+          reopenDeliveryByUuid: typeof reopenSpy;
           getDeliveryContent: (
             sessionId: string,
             uuid: string
@@ -641,6 +643,7 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       getUserMessageContentByUuid: (_sessionId: string, uuid: string) =>
         uuid === 'uuid-kickoff-filtered' ? 'kickoff-text' : null,
       markDeliveryRetryableByUuid: () => null,
+      reopenDeliveryByUuid: reopenSpy,
       getDeliveryContent: (_sessionId: string, uuid: string) =>
         uuid === 'uuid-kickoff-filtered'
           ? { content: 'kickoff-text', sendStatus: 'failed' }
@@ -675,6 +678,7 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     expect(narrowSpy).toHaveBeenCalledWith(session.session.id, 'uuid-kickoff-filtered', [
       'uuid-kickoff-filtered',
     ]);
+    expect(reopenSpy).toHaveBeenCalledWith(session.session.id, 'uuid-kickoff-filtered');
   });
 
   it('falls back to the recovered kickoff when the batch lookup throws', async () => {

@@ -1571,6 +1571,18 @@ export class AgentSession
             const admitted = rebuilt.admittedUuids ?? [];
             if (!admitted.includes(uuid)) {
               if (!this.narrowRecoveredDeliveryBatch(uuid, [uuid])) return undefined;
+              if (repo.getDeliveryContent(this.session.id, uuid)?.sendStatus === 'failed') {
+                const reopenedId = repo.reopenDeliveryByUuid(this.session.id, uuid);
+                if (reopenedId) {
+                  void this.internalEventBus
+                    .publish('messages.statusChanged', {
+                      sessionId: this.session.id,
+                      messageIds: [reopenedId],
+                      status: 'enqueued',
+                    })
+                    .catch(() => {});
+                }
+              }
               return kickoff;
             }
             if (admitted.length < batchUuids.length) {
