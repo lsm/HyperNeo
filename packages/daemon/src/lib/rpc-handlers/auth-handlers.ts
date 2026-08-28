@@ -221,18 +221,18 @@ export function setupAuthHandlers(
       try {
         let unsubscribe: (() => void) | undefined;
         const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
-          try {
-            bumpProviderCatalogEpoch(providerId);
-            if (credentials.type === 'oauth') {
-              await credentialManager?.storeOAuthTokens(providerId, credentials);
-            }
-            unsubscribe?.();
-            await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
-          } catch (error) {
-            log.error(`Failed to persist credentials for ${providerId}:`, error);
+          bumpProviderCatalogEpoch(providerId);
+          if (credentials.type === 'oauth') {
+            await credentialManager?.storeOAuthTokens(providerId, credentials);
           }
+          unsubscribe?.();
+          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
         };
-        unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
+        unsubscribe = provider.onCredentialsChanged?.((credentials) =>
+          persistCredentials(credentials).catch((error) => {
+            log.error(`Failed to persist credentials for ${providerId}:`, error);
+          })
+        );
         const flowData = await provider.startOAuthFlow();
         if (!provider.onCredentialsChanged) {
           const credentials = await provider.getCredentials?.();

@@ -501,6 +501,44 @@ describe('Auth RPC Handlers', () => {
       });
       expect(bus.publishAsync).toHaveBeenCalledTimes(1);
     });
+
+    it('returns error when direct OAuth credential storage fails', async () => {
+      const credentialManager = {
+        storeOAuthTokens: mock(async () => {
+          throw new Error('token store failed');
+        }),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({
+        onCredentialsChanged: undefined,
+        getCredentials: mock(() => ({
+          type: 'oauth' as const,
+          accessToken: 'new-token',
+          refreshToken: 'refresh-token',
+        })),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.login');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('token store failed');
+      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', {
+        type: 'oauth',
+        accessToken: 'new-token',
+        refreshToken: 'refresh-token',
+      });
+    });
   });
 
   describe('auth.logout', () => {
