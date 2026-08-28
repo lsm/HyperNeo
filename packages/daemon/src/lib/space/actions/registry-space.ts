@@ -1,4 +1,8 @@
-import { isRateOrUsageLimited, type SpaceTaskStatus } from '@hyperneo/shared';
+import {
+  isRateOrUsageLimited,
+  isWorkflowRecoveryTransition,
+  type SpaceTaskStatus,
+} from '@hyperneo/shared';
 import type { z } from 'zod';
 import {
   ApprovePendingCompletionSchema,
@@ -88,10 +92,17 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       return HUMAN_ONLY_AUTONOMY_LEVEL;
     }
     if (params.status === 'archived') return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
-    if (task?.workflowRunId && routeCancelsActiveWorkflowRun(task.status)) {
+    if (task?.workflowRunId && params.status !== undefined && params.status !== task.status) {
+      if (params.status === 'stopped') return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
       const toStopped = params.status === 'open' || params.status === 'cancelled';
       const toBlockedFromPaused = params.status === 'blocked' && isRateOrUsageLimited(task.status);
-      if (toStopped || toBlockedFromPaused) return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+      if (
+        (toStopped || toBlockedFromPaused) &&
+        routeCancelsActiveWorkflowRun(task.status) &&
+        !isWorkflowRecoveryTransition(task.status, params.status)
+      ) {
+        return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+      }
     }
     return 1;
   };
