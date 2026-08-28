@@ -39,6 +39,11 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { getProviderCatalogEpoch, getSessionModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
+import {
+  composeTurnEndDeliveryUuids,
+  isTurnEndAckEligible,
+  selectPersistedAckRow,
+} from './ack-selection.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
 import { contextBudgetThreshold } from './context-budget-decision.ts';
 import { enforceContextBudget } from './context-budget-enforcement.ts';
@@ -499,31 +504,34 @@ export class SDKMessageHandler {
       return false;
     }
 
-    const enqueuedMessage = db.getMessageByStatusAndUuid(session.id, 'enqueued', message.uuid);
-    if (enqueuedMessage) {
-      await this.consumePersistedUserMessage(enqueuedMessage, message);
-      return true;
+    const statusRows: Record<
+      'enqueued' | 'deferred' | 'submitted' | 'consumed',
+      PersistedUserMessage | null
+    > = {
+      enqueued: db.getMessageByStatusAndUuid(session.id, 'enqueued', message.uuid),
+      deferred: db.getMessageByStatusAndUuid(session.id, 'deferred', message.uuid),
+      submitted: db.getMessageByStatusAndUuid(session.id, 'submitted', message.uuid),
+      consumed: db.getMessageByStatusAndUuid(session.id, 'consumed', message.uuid),
+    };
+    const selection = selectPersistedAckRow({
+      enqueued: statusRows.enqueued !== null,
+      deferred: statusRows.deferred !== null,
+      submitted: statusRows.submitted !== null,
+      consumed: statusRows.consumed !== null,
+    });
+    if (selection.action === 'none') {
+      return false;
     }
-
-    const deferredMessage = db.getMessageByStatusAndUuid(session.id, 'deferred', message.uuid);
-    if (deferredMessage) {
-      await this.consumePersistedUserMessage(deferredMessage, message);
-      return true;
-    }
-
-    const submittedMessage = db.getMessageByStatusAndUuid(session.id, 'submitted', message.uuid);
-    if (submittedMessage) {
-      await this.consumePersistedUserMessage(submittedMessage, message);
-      return true;
-    }
-
-    const consumedMessage = db.getMessageByStatusAndUuid(session.id, 'consumed', message.uuid);
-    if (consumedMessage) {
+    if (selection.action === 'already_consumed') {
       this.acknowledgedPersistedUserThisTurn = true;
       return true;
     }
-
-    return false;
+    const persisted = statusRows[selection.status];
+    if (!persisted) {
+      return false;
+    }
+    await this.consumePersistedUserMessage(persisted, message);
+    return true;
   }
 
   private async consumePersistedUserMessage(
@@ -566,27 +574,32 @@ export class SDKMessageHandler {
     resultUuid: string
   ): Promise<void> {
     const { session, db, internalEventBus, messageHub, messageQueue } = this.ctx;
-    const durableOwned =
-      db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
     const { messages: enqueuedUsers } = db.getUserMessagesByStatus(session.id, 'enqueued');
-    const consumedUsers = enqueuedUsers.filter((enqueued) => {
-      const uuid = enqueued.uuid ?? '';
-      const activeYielded = uuid === activeMessageId && messageQueue.hasYielded(uuid);
-      return (!durableOwned.has(uuid) || activeYielded) && !messageQueue.hasPendingOrClaimed(uuid);
-    });
 
     let lastConsumedAt = 0;
-    for (const enqueuedUser of consumedUsers) {
+    for (const enqueuedUser of enqueuedUsers) {
+      const messageId = enqueuedUser.uuid ?? '';
+      const durableOwned =
+        db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
+      const yielded = messageQueue.hasYielded(messageId);
+      if (
+        !isTurnEndAckEligible({
+          uuid: messageId,
+          activeMessageId,
+          durableOwned: durableOwned.has(messageId),
+          yielded,
+          pendingOrClaimed: messageQueue.hasPendingOrClaimed(messageId),
+        })
+      ) {
+        continue;
+      }
       let consumedAt = Date.now();
       if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
       lastConsumedAt = consumedAt;
-      const messageId = enqueuedUser.uuid ?? '';
-      const batchUuids = messageQueue.hasYielded(messageId)
+      const batchUuids = yielded
         ? db.getJobQueueRepo?.()?.getActiveDeliveryBatchUuids?.(session.id, messageId)
         : null;
-      const deliveryUuids = batchUuids?.includes(messageId)
-        ? [messageId, ...batchUuids.filter((uuid) => uuid !== messageId)]
-        : [messageId];
+      const deliveryUuids = composeTurnEndDeliveryUuids({ messageId, yielded, batchUuids });
       const consumed = db
         .getSDKMessageRepo()
         .markDeliveriesConsumedAtTurnEnd(session.id, deliveryUuids, resultUuid);
