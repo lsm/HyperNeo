@@ -8,39 +8,45 @@ import {
   resetVoiceAudioStore,
 } from '../voice-audio-store.ts';
 
-function successRequest(result: unknown) {
-  const request = { result, error: null, onsuccess: null, onerror: null };
-  queueMicrotask(() => request.onsuccess?.());
+function makeRequest(result: unknown, error: unknown = null) {
+  const request = { result, error, onsuccess: null, onerror: null };
+  queueMicrotask(() => (error ? request.onerror?.() : request.onsuccess?.()));
   return request;
 }
 
-function errorRequest(error: unknown) {
-  const request = { result: undefined, error, onsuccess: null, onerror: null };
-  queueMicrotask(() => request.onerror?.());
-  return request;
-}
-
-function createFakeIdb({ failOpen = false, failPuts = false } = {}) {
+function createFakeIdb({ failOpen = false, failPuts = false, failCommit = false } = {}) {
   const data = new Map();
   const db = {
     objectStoreNames: { contains: (name: string) => data.has(name) },
     createObjectStore: (name: string) => {
       data.set(name, new Map());
     },
-    transaction: () => ({
-      objectStore: (name: string) => {
-        const store = data.get(name) ?? new Map();
-        return {
-          put: (value: unknown) =>
-            failPuts
-              ? errorRequest(new Error('quota'))
-              : (store.set(value.id, value), successRequest(value.id)),
-          get: (id: string) => successRequest(store.get(id)),
-          getAll: () => successRequest([...store.values()]),
-          delete: (id: string) => (store.delete(id), successRequest(undefined)),
-        };
-      },
-    }),
+    transaction: () => {
+      const tx = {
+        oncomplete: null,
+        onabort: null,
+        onerror: null,
+        objectStore: (name: string) => {
+          const store = data.get(name) ?? new Map();
+          return {
+            put: (value: unknown) =>
+              failPuts
+                ? makeRequest(undefined, new Error('quota'))
+                : (store.set(value.id, value), makeRequest(value.id)),
+            get: (id: string) => makeRequest(store.get(id)),
+            getAll: () => makeRequest([...store.values()]),
+            delete: (id: string) => (store.delete(id), makeRequest(undefined)),
+          };
+        },
+      };
+      queueMicrotask(() =>
+        queueMicrotask(() => {
+          if (failCommit) tx.onabort?.();
+          else tx.oncomplete?.();
+        })
+      );
+      return tx;
+    },
   };
   return {
     open: () => {
@@ -148,18 +154,22 @@ describe('voice audio record store', () => {
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r2']);
   });
 
-  it('reports a put as non-durable when persistence rejects but keeps the entry', async () => {
+  it('reports a put as non-durable when persistence rejects or the commit aborts', async () => {
     globalThis.indexedDB = createFakeIdb({ failPuts: true });
     expect(await putVoiceRecord(makeEntry('r1', NOW))).toBe(false);
-    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r1']);
+    globalThis.indexedDB = createFakeIdb({ failCommit: true });
+    expect(await putVoiceRecord(makeEntry('r2', NOW))).toBe(false);
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r1', 'r2']);
   });
 
-  it('skips malformed entries found in durable storage', async () => {
+  it('skips malformed and expired entries found in durable storage', async () => {
     const idb = createFakeIdb();
     globalThis.indexedDB = idb;
     await putVoiceRecord(makeEntry('ok', NOW));
     idb.seed('junk', { nope: 1 });
     idb.seed('junk2', null);
+    idb.seed('stale', makeEntry('stale', NOW - DAY_MS - 1_000));
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['ok']);
+    expect(await getVoiceRecord('stale')).toBeNull();
   });
 });

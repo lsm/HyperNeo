@@ -59,15 +59,23 @@ function runStoreOp<T>(
           resolve(null);
           return;
         }
+        let tx: IDBTransaction;
         let request: IDBRequest<T>;
         try {
-          request = op(db.transaction(STORE_NAME, mode).objectStore(STORE_NAME));
+          tx = db.transaction(STORE_NAME, mode);
+          request = op(tx.objectStore(STORE_NAME));
         } catch {
           resolve(null);
           return;
         }
-        request.onsuccess = () => resolve(request.result ?? null);
-        request.onerror = () => resolve(null);
+        let value: T | null = null;
+        request.onsuccess = () => {
+          value = request.result ?? null;
+        };
+        request.onerror = () => {};
+        tx.oncomplete = () => resolve(value);
+        tx.onabort = () => resolve(null);
+        tx.onerror = () => resolve(null);
       })
   );
 }
@@ -101,9 +109,10 @@ export async function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> 
 
 export async function getVoiceRecord(id: string): Promise<VoiceRecordEntry | null> {
   const mirrored = mirror.get(id);
-  if (mirrored) return mirrored;
+  if (mirrored && Date.now() - mirrored.createdAt < MAX_AGE_MS) return mirrored;
   const stored = await runStoreOp('readonly', (store) => store.get(id));
-  return isVoiceRecordEntry(stored) ? stored : null;
+  if (!isVoiceRecordEntry(stored)) return null;
+  return Date.now() - stored.createdAt < MAX_AGE_MS ? stored : null;
 }
 
 export async function listVoiceRecords(): Promise<VoiceRecordEntry[]> {
