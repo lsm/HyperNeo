@@ -349,7 +349,7 @@ export interface QueryRunnerContext {
     runnerGeneration?: number
   ): Promise<void>;
   onSlashCommandsFetched(): Promise<void>;
-  onModelsFetched(): Promise<void>;
+  onModelsFetched(queryGeneration?: number, attemptToken?: QueryAttemptToken): Promise<void>;
   onMarkApiSuccess(message: SDKMessage, queryGeneration?: number): Promise<void>;
 
   onMissingWorkflowMcpServers?: (session: AgentSession, missing: string[]) => Promise<void>;
@@ -915,7 +915,7 @@ export class QueryRunner {
       }, STARTUP_TIMEOUT_MS);
       this.ctx.startupTimeoutTimer = startupTimer;
 
-      this.ctx.onModelsFetched().catch((e) => {
+      this.ctx.onModelsFetched(queryGeneration, attemptToken).catch((e) => {
         logger.warn('Background fetch of models failed:', e);
       });
 

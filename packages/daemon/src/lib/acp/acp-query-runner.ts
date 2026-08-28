@@ -417,12 +417,17 @@ export class AcpQueryRunner {
     recoveryState = { rateLimitCooldownScheduled: false }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    const abortController = new AbortController();
+    this.ctx.queryAbortController = abortController;
+    const runAbortController: AbortController = abortController;
     const attemptToken =
       this.ctx.getQueryGeneration() === queryGeneration
         ? this.ctx.attemptTokens.allocate()
         : QueryAttemptRegistry.detached();
     const attemptOwnsRun = () =>
       attemptToken.isLive() && this.ctx.getQueryGeneration() === queryGeneration;
+    const ownsSessionWrite = () =>
+      attemptOwnsRun() && !runAbortController.signal.aborted && !this.ctx.isCleaningUp();
     const requeueYieldedPrompt = (yieldedMessage: SDKUserMessage) => {
       const yieldedUuid = yieldedMessage.uuid;
       if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
@@ -434,7 +439,8 @@ export class AcpQueryRunner {
         this.ctx.isCleaningUp() ||
         this.ctx.getQueryGeneration() !== queryGeneration ||
         !attemptToken.isLive() ||
-        stateManager.getState().status === 'interrupted'
+        stateManager.getState().status === 'interrupted' ||
+        runAbortController.signal.aborted
       ) {
         const error = new Error('ACP query aborted during startup');
         error.name = 'AbortError';
@@ -450,8 +456,6 @@ export class AcpQueryRunner {
     let proxyBridge: AcpMcpProxyBridge | null = null;
     let terminalManager: AcpTerminalManager | null = null;
     let turnCompletedNormally = false;
-    let runAbortController: AbortController | null = this.ctx.queryAbortController;
-    let abortController: AbortController | null = null;
     let acpMcpServers: AcpMcpServerConfig[] = [];
     let cwd: string = process.cwd();
     let instructionBlocks: AcpContentBlock[] = [];
@@ -565,9 +569,6 @@ export class AcpQueryRunner {
             cwd = workspace ?? process.cwd();
             startupTimeoutMs = getStartupTimeoutMs();
             assertActiveAcpStartup();
-            abortController = new AbortController();
-            this.ctx.queryAbortController = abortController;
-            runAbortController = abortController;
             instructionBlocks = acpInstructionBlocks(queryOptions);
             const hasInstructionBlocks = instructionBlocks.length > 0;
             const hasPriorAcpTurn = (session.metadata?.messageCount ?? 0) > 0;
@@ -730,18 +731,22 @@ export class AcpQueryRunner {
 
         try {
           const result = await acpClient.loadSession(existingAcpSessionId, cwd, acpMcpServers);
-          if (attemptOwnsRun()) {
+          if (ownsSessionWrite()) {
             this.persistAcpSessionId(result.sessionId);
             this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
           }
         } catch (loadError) {
+          if (loadError instanceof Error && loadError.name === 'AbortError') throw loadError;
           try {
             const result = await acpClient.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
-            if (attemptOwnsRun()) {
+            if (ownsSessionWrite()) {
               this.persistAcpSessionId(result.sessionId);
               this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
             }
           } catch (resumeError) {
+            if (resumeError instanceof Error && resumeError.name === 'AbortError') {
+              throw resumeError;
+            }
             const loadMessage = loadError instanceof Error ? loadError.message : String(loadError);
             const resumeMessage =
               resumeError instanceof Error ? resumeError.message : String(resumeError);
@@ -755,21 +760,23 @@ export class AcpQueryRunner {
         }
       } else {
         const result = await acpClient.createSession(cwd, acpMcpServers);
-        if (attemptOwnsRun()) {
+        if (ownsSessionWrite()) {
           this.persistAcpSessionId(result.sessionId);
           this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         }
         createdAcpSessionDuringRun = true;
       }
-      await this.applyStoredAcpModel(acpClient, attemptOwnsRun);
-      await this.applyStoredAcpThinkingLevel(acpClient, attemptOwnsRun);
+      await this.applyStoredAcpModel(acpClient, ownsSessionWrite);
+      await this.applyStoredAcpThinkingLevel(acpClient, ownsSessionWrite);
       assertActiveAcpStartup();
-      this.updateAcpModelCache(acpClient.getConfigOptions());
+      if (ownsSessionWrite()) {
+        this.updateAcpModelCache(acpClient.getConfigOptions());
+      }
       startupHandshakeActive = false;
       restoreMessageEnqueuedHandler?.();
       this.clearStartupTimer();
 
-      await this.ctx.onModelsFetched().catch((error) => {
+      await this.ctx.onModelsFetched(queryGeneration).catch((error) => {
         logger.warn('Background fetch of models failed:', error);
       });
       assertActiveAcpStartup();
@@ -806,7 +813,7 @@ export class AcpQueryRunner {
           };
         }
 
-        await this.applyStoredAcpThinkingLevel(acpClient, attemptOwnsRun);
+        await this.applyStoredAcpThinkingLevel(acpClient, ownsSessionWrite);
         if (!attemptOwnsRun()) {
           requeueYieldedPrompt(message);
           break;
@@ -826,7 +833,8 @@ export class AcpQueryRunner {
             if (attemptOwnsRun()) this.persistAcpContextUsageEstimate(used);
           },
           onConfigOptionsUpdate: (configOptions) => {
-            if (attemptOwnsRun()) this.updateAcpModelCache(configOptions);
+            if (!ownsSessionWrite()) return;
+            this.updateAcpModelCache(configOptions);
           },
           onSubmitted: () => {
             if (submitted) return;

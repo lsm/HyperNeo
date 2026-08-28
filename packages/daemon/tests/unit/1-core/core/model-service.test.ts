@@ -4881,6 +4881,35 @@ describe('Model Service', () => {
       expect(cache.get('cache-test-key')?.length).toBe(1);
     });
 
+    it('should skip the cache write when the discovery owner is superseded', async () => {
+      const mockQuery = {
+        supportedModels: mock(async () => [
+          { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet · Test' },
+        ]),
+      };
+
+      const models = await getSupportedModelsFromQuery(mockQuery as unknown, 'fenced-owner-key', {
+        isLive: () => false,
+      });
+
+      expect(models).toEqual([]);
+      expect(getModelsCache().get('fenced-owner-key')).toBeUndefined();
+    });
+
+    it('should cache models when the discovery owner is live', async () => {
+      const mockQuery = {
+        supportedModels: mock(async () => [
+          { value: 'haiku', displayName: 'Haiku', description: 'Haiku · Test' },
+        ]),
+      };
+
+      await getSupportedModelsFromQuery(mockQuery as unknown, 'live-owner-key', {
+        isLive: () => true,
+      });
+
+      expect(getModelsCache().get('live-owner-key')?.length).toBe(1);
+    });
+
     it('should handle query errors gracefully', async () => {
       const mockQuery = {
         supportedModels: mock(async () => {

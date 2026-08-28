@@ -1695,6 +1695,226 @@ describe('AcpQueryRunner', () => {
     );
   });
 
+  test('passes the query generation to onModelsFetched', async () => {
+    const { runner, ctx } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect((ctx.onModelsFetched as ReturnType<typeof mock>).mock.calls[0]).toEqual([1]);
+  });
+
+  test('aborts the load-session model cache write when the run is superseded mid-handshake', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    let releaseLoad!: () => void;
+    const loadEntered = new Promise<void>((resolve) => {
+      client.loadSession.mockImplementation(async () => {
+        resolve();
+        await new Promise<void>((resolveLoad) => {
+          releaseLoad = resolveLoad;
+        });
+        return { sessionId: 'persisted-acp-session', configOptions: [] };
+      });
+    });
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+        },
+      } as Partial<Session>,
+    });
+
+    await runner.start();
+    await loadEntered;
+    ctx.getQueryGeneration = () => 999;
+    releaseLoad();
+    await ctx.queryPromise;
+
+    expect(client.resumeSession).not.toHaveBeenCalled();
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: expect.anything() });
+    }
+  });
+
+  test('drops config-option updates from a superseded run', async () => {
+    const configOptions: AcpConfigOption[] = [
+      {
+        id: 'model',
+        name: 'Model',
+        type: 'select',
+        options: [{ name: 'Fast', value: 'acp-fast' }],
+        currentValue: 'acp-fast',
+        category: 'model',
+      },
+    ];
+    const client = createMockClient();
+    let releasePrompt!: () => void;
+    const promptEntered = new Promise<void>((resolve) => {
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        resolve();
+        await new Promise<void>((resolveStream) => {
+          releasePrompt = resolveStream;
+        });
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'config_option_update', configOptions },
+        };
+      });
+    });
+    const { runner, ctx } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptEntered;
+    ctx.getQueryGeneration = () => 999;
+    releasePrompt();
+    await ctx.queryPromise;
+
+    expect(client.updateConfigOptions).toHaveBeenCalledWith(configOptions);
+    expect(ctx.session.config.model).toBe('acp-default');
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ config: expect.anything() });
+    }
+  });
+
+  test('aborts the stored-model cache write when the run is superseded mid-apply', async () => {
+    const client = createMockClient();
+    const modelOption: AcpConfigOption = {
+      id: 'model',
+      name: 'Model',
+      type: 'select',
+      options: [{ name: 'Fast', value: 'acp-fast' }],
+      currentValue: 'acp-slow',
+      category: 'model',
+    };
+    client.getConfigOptions.mockImplementation(() => [modelOption]);
+    let releaseSet!: () => void;
+    const setEntered = new Promise<void>((resolve) => {
+      client.setConfigOption.mockImplementation(async () => {
+        resolve();
+        await new Promise<void>((resolveSet) => {
+          releaseSet = resolveSet;
+        });
+        return [{ ...modelOption, currentValue: 'acp-other' }];
+      });
+    });
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: { config: { model: 'acp-fast', provider: 'acp' } } as Partial<Session>,
+    });
+
+    await runner.start();
+    await setEntered;
+    ctx.getQueryGeneration = () => 999;
+    releaseSet();
+    await ctx.queryPromise;
+
+    expect(client.setConfigOption).toHaveBeenCalled();
+    expect(ctx.session.config.model).toBe('acp-fast');
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ config: expect.anything() });
+    }
+  });
+
+  test('aborts the load-session model cache write when the run controller is aborted mid-handshake', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    let releaseLoad!: () => void;
+    const loadEntered = new Promise<void>((resolve) => {
+      client.loadSession.mockImplementation(async () => {
+        resolve();
+        await new Promise<void>((resolveLoad) => {
+          releaseLoad = resolveLoad;
+        });
+        return { sessionId: 'persisted-acp-session', configOptions: [] };
+      });
+    });
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+        },
+      } as Partial<Session>,
+    });
+
+    await runner.start();
+    await loadEntered;
+    ctx.queryAbortController?.abort();
+    ctx.queryAbortController = null;
+    releaseLoad();
+    await ctx.queryPromise;
+
+    expect(client.resumeSession).not.toHaveBeenCalled();
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: expect.anything() });
+    }
+  });
+
+  test('aborts session establishment when interrupted before option building completes', async () => {
+    const client = createMockClient();
+    const { runner, ctx } = createRunnerFixture({ client });
+    let releaseBuild!: () => void;
+    const buildEntered = new Promise<void>((resolve) => {
+      (ctx.optionsBuilder as unknown as { build: ReturnType<typeof mock> }).build = mock(
+        async () => {
+          resolve();
+          await new Promise<void>((resolveBuild) => {
+            releaseBuild = resolveBuild;
+          });
+          return { cwd: '/tmp/acp-session', mcpServers: {} };
+        }
+      );
+    });
+
+    await runner.start();
+    await buildEntered;
+    ctx.queryAbortController?.abort();
+    ctx.queryAbortController = null;
+    releaseBuild();
+    await ctx.queryPromise;
+
+    expect(client.initialize).not.toHaveBeenCalled();
+    expect(client.sendPrompt).not.toHaveBeenCalled();
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: expect.anything() });
+    }
+  });
+
+  test('skips ACP session writes when cleanup starts mid-handshake', async () => {
+    const client = createMockClient();
+    let releaseCreate!: () => void;
+    const createEntered = new Promise<void>((resolve) => {
+      client.createSession.mockImplementation(async () => {
+        resolve();
+        await new Promise<void>((resolveCreate) => {
+          releaseCreate = resolveCreate;
+        });
+        return { sessionId: 'acp-session-1', configOptions: [] };
+      });
+    });
+    const { runner, ctx } = createRunnerFixture({ client });
+
+    await runner.start();
+    await createEntered;
+    ctx.isCleaningUp = () => true;
+    releaseCreate();
+    await ctx.queryPromise;
+
+    expect(ctx.session.acpSessionId).toBeUndefined();
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: expect.anything() });
+    }
+  });
+
   test('keeps the old ACP session id when the replacement command fails to start', async () => {
     const client = createMockClient();
     client.initialize.mockImplementation(async () => {
