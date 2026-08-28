@@ -343,4 +343,77 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(sdkCount.c).toBe(0);
     });
   });
+
+  describe('pipeline composition (persist-and-enqueue-delivery)', () => {
+    it('persists the same admission-derived columns as saveUserMessageCore', () => {
+      const viaOutbox = setup();
+      const viaWrapper = setup();
+
+      const { dbMessageId: outboxId } = persistAndEnqueueDelivery({
+        db: viaOutbox.db as never,
+        sdkMessageRepo: viaOutbox.sdkRepo,
+        jobQueue: viaOutbox.jobQueue,
+        sessionId: SESSION,
+        message: userMessage('parity'),
+        sendStatus: 'enqueued',
+        delivery: { origin: 'chat' },
+      });
+      const core = viaWrapper.sdkRepo.saveUserMessageCore(
+        SESSION,
+        userMessage('parity'),
+        'enqueued'
+      );
+
+      const projection = `SELECT message_type, message_subtype, send_status, origin, is_renderable,
+                          is_terminal, conversation_turn_index, parent_tool_use_id, task_id, sdk_uuid,
+                          replacement_metadata_normalized
+                          FROM sdk_messages WHERE id = ?`;
+      expect(viaOutbox.db.prepare(projection).get(outboxId)).toEqual(
+        viaWrapper.db.prepare(projection).get(core.id)
+      );
+      viaOutbox.db.close();
+      viaWrapper.db.close();
+    });
+
+    it('carries delivery.parentToolUseId and origin into the enqueued job payload', () => {
+      persistAndEnqueueDelivery({
+        db: db as never,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: userMessage('msg-parent'),
+        sendStatus: 'enqueued',
+        delivery: { origin: 'space_inject', parentToolUseId: 'toolu_1' },
+      });
+      const payload = jobPayload(db, SESSION, 'msg-parent');
+      expect(payload?.parentToolUseId).toBe('toolu_1');
+      expect(payload?.origin).toBe('space_inject');
+    });
+
+    it('runs post-save side effects with the committed row id and badge flag', () => {
+      const calls: Array<[string, string, boolean]> = [];
+      const spyRepo = new Proxy(sdkRepo, {
+        get(target, prop) {
+          if (prop === 'runPostSaveSideEffects') {
+            return (sessionId: string, id: string, countsTowardsBadge: boolean) => {
+              calls.push([sessionId, id, countsTowardsBadge]);
+            };
+          }
+          return Reflect.get(target, prop);
+        },
+      }) as typeof sdkRepo;
+
+      const { dbMessageId } = persistAndEnqueueDelivery({
+        db: db as never,
+        sdkMessageRepo: spyRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: userMessage('msg-spy'),
+        sendStatus: 'enqueued',
+        delivery: { origin: 'chat' },
+      });
+
+      expect(calls).toEqual([[SESSION, dbMessageId, false]]);
+    });
+  });
 });
