@@ -283,6 +283,7 @@ describe('createSpaceRegistryEntries — composition', () => {
         expect(await resolve({ task_id: checkpointTask.id, status: 'review' })).toBe(1);
         expect(await resolve({ task_id: checkpointTask.id, title: 'Edited' })).toBe(1);
         expect(await resolve({ task_id: stoppedCheckpointTask.id, status: 'in_progress' })).toBe(5);
+        expect(await resolve({ task_id: stoppedCheckpointTask.id, status: 'cancelled' })).toBe(5);
         expect(await resolve({ task_id: 'task-1', status: 'blocked' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', title: 'Edited' })).toBe(1);
       }
@@ -325,6 +326,18 @@ describe('createSpaceRegistryEntries — composition', () => {
         status: 'review',
         pendingCheckpointType: 'task_completion',
       });
+      ctx.db
+        .prepare(
+          `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+           allowed_models, session_ids, slug, status, created_at, updated_at)
+           VALUES ('other-space', '/tmp/workspace-other', 'other-space', '', '', '', '[]', '[]', 'other-space', 'active', ?, ?)`
+        )
+        .run(Date.now(), Date.now());
+      const foreignTask = ctx.taskRepo.createTask({
+        spaceId: 'other-space',
+        title: 'Foreign task',
+        description: '',
+      });
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
@@ -334,6 +347,7 @@ describe('createSpaceRegistryEntries — composition', () => {
         );
         expect(await resolve({ task_id: standaloneTask.id, cancel_workflow_run: true })).toBe(1);
         expect(await resolve({ task_id: checkpointTask.id })).toBe(5);
+        expect(await resolve({ task_id: foreignTask.id, cancel_workflow_run: true })).toBe(1);
         expect(await resolve({ task_id: workflowTask.id })).toBe(1);
         expect(await resolve({ task_id: workflowTask.id, cancel_workflow_run: false })).toBe(1);
       }

@@ -853,20 +853,56 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        auditLogRepo: {
-          createEntry: (params) => {
-            auditEntries.push(params);
-            return null as never;
+      withDeps(
+        { ...ctx, workflowRunId: 'run-a' },
+        {
+          auditLogRepo: {
+            createEntry: (params) => {
+              auditEntries.push(params);
+              return null as never;
+            },
           },
-        },
-        resolveRunId: (taskId) => (taskId === 'task-b' ? 'run-b' : undefined),
-      })
+          resolveRunId: (taskId) => (taskId === 'task-b' ? 'run-b' : undefined),
+        }
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(next.workflowRunId).toBe('run-b');
     expect(auditEntries.length).toBe(1);
     expect(auditEntries[0].workflowRunId).toBe('run-b');
+  });
+
+  test('clears a stale session run when the resolved target task is standalone', async () => {
+    const cancelTask = defineAction({
+      name: 'cancel_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Cancel task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'cancel_task',
+              params: { task_id: 'standalone-task' },
+              workflowRunId: 'run-a',
+            },
+            { registry: createActionRegistry([cancelTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        resolveRunId: () => undefined,
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(next.workflowRunId).toBeUndefined();
   });
 
   test('skips audit for read actions', async () => {

@@ -234,10 +234,9 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
     }
   }
   let workflowRunId = ctx.workflowRunId;
-  if (workflowRunId === undefined && ctx.deps.resolveRunId && taskId !== undefined) {
+  if (ctx.deps.resolveRunId && taskId !== undefined) {
     try {
-      const resolved = await ctx.deps.resolveRunId(taskId);
-      if (resolved !== undefined) workflowRunId = resolved;
+      workflowRunId = (await ctx.deps.resolveRunId(taskId)) ?? undefined;
     } catch {}
   }
   if (ctx.isMutating && ctx.deps.auditLogRepo) {

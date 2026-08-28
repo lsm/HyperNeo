@@ -65,8 +65,13 @@ const HUMAN_ONLY_AUTONOMY_LEVEL = 5;
 export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): ActionDefinition[] {
   const handlers = createSpaceAgentToolHandlers({ ...config, auditLogRepo: undefined });
 
+  const taskInSpace = (taskId: string) => {
+    const task = config.taskRepo.getTask(taskId);
+    return task && task.spaceId === config.spaceId ? task : null;
+  };
+
   const approveTaskAutonomy = async (params: z.infer<typeof ApproveTaskSchema>) => {
-    const task = config.taskRepo.getTask(params.task_id);
+    const task = taskInSpace(params.task_id);
     if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
     const run = task?.workflowRunId ? config.workflowRunRepo.getRun(task.workflowRunId) : null;
     const workflow = run?.workflowId ? config.workflowManager.getWorkflowForRun(run) : null;
@@ -74,15 +79,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
   };
 
   const updateTaskAutonomy = async (params: z.infer<typeof UpdateTaskSchema>) => {
-    if (params.status === 'archived') return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
-    const task = config.taskRepo.getTask(params.task_id);
-    if (
-      params.status === 'cancelled' &&
-      task?.workflowRunId &&
-      routeCancelsActiveWorkflowRun(task.status)
-    ) {
-      return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
-    }
+    const task = taskInSpace(params.task_id);
     if (
       params.status !== undefined &&
       params.status !== task?.status &&
@@ -90,11 +87,19 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     ) {
       return HUMAN_ONLY_AUTONOMY_LEVEL;
     }
+    if (params.status === 'archived') return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    if (
+      params.status === 'cancelled' &&
+      task?.workflowRunId &&
+      routeCancelsActiveWorkflowRun(task.status)
+    ) {
+      return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    }
     return 1;
   };
 
   const cancelTaskAutonomy = async (params: z.infer<typeof CancelTaskSchema>) => {
-    const task = config.taskRepo.getTask(params.task_id);
+    const task = taskInSpace(params.task_id);
     if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
     if (params.cancel_workflow_run === true && task?.workflowRunId) {
       return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
@@ -108,7 +113,8 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       (params.workflow_handle !== undefined && params.workflow_handle.length > 0);
     if (!switching) return 1;
     const run = config.workflowRunRepo.getRun(params.run_id);
-    const runTasks = run ? config.taskRepo.listByWorkflowRun(run.id) : [];
+    const runTasks =
+      run && run.spaceId === config.spaceId ? config.taskRepo.listByWorkflowRun(run.id) : [];
     if (runTasks.some((task) => task.pendingCheckpointType === 'task_completion')) {
       return HUMAN_ONLY_AUTONOMY_LEVEL;
     }
