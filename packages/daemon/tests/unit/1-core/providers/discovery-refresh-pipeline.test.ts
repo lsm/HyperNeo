@@ -141,6 +141,11 @@ function createMockEventBus() {
   return { bus: bus as unknown as InternalEventBus<DaemonInternalEventMap>, published };
 }
 
+function withoutFingerprint(provider: FakeProvider): Provider {
+  (provider as unknown as Record<string, unknown>).getDiscoveryEndpointFingerprint = undefined;
+  return provider;
+}
+
 function makeDeps(
   overrides: Partial<CommitSavedConfigDiscoveryRefreshDeps> = {}
 ): CommitSavedConfigDiscoveryRefreshDeps {
@@ -248,6 +253,12 @@ describe('discovery-refresh pipeline helpers', () => {
         readonly id = 'anthropic' as const;
       })();
       expect(providerIgnoresSavedEndpoint(anthropic, 'https://x')).toBe(true);
+      const copilot = withoutFingerprint(
+        new (class extends FakeProvider {
+          readonly id = 'anthropic-copilot' as const;
+        })()
+      );
+      expect(providerIgnoresSavedEndpoint(copilot, 'https://x')).toBe(true);
       expect(providerIgnoresSavedEndpoint(throwing, 'https://x')).toBe(false);
     });
   });
@@ -322,12 +333,26 @@ describe('discovery-refresh pipeline helpers', () => {
       expect(() => persistLastGoodSlice(ctx)).toThrow(/not valid JSON/);
       expect(provider.clearModelCache).toHaveBeenCalledTimes(1);
     });
+
+    it('rejects endpoint-specific persistence when no fingerprint is available', () => {
+      const provider = withoutFingerprint(new FakeProvider());
+      const { repo, store } = createMockProviderRepo(makeRecord({ configJson: '{"a":1}' }));
+      const ctx = makeCtx({
+        deps: makeDeps({ providerRepo: repo, provider }),
+        discoveryBaseUrl: 'https://saved',
+        currentRecord: store.get('row-1') ?? null,
+      });
+      expect(() => persistLastGoodSlice(ctx)).toThrow(/without an endpoint fingerprint/);
+      expect(provider.clearModelCache).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(store.get('row-1')!.configJson!)).toEqual({ a: 1 });
+    });
   });
 
   describe('applyDiscoveredSliceToLiveCache', () => {
     it('applies the normalized slice and releases the pending overlay', async () => {
       setModelsCache(new Map([['global', [makeModel('other-1', 'other')]]]));
       const applied: string[] = [];
+      const protectedKeys: string[] = [];
       const deps = makeDeps({
         applyDiscoveredProviderModels: ((providerId: string, models: ModelInfo[]) => {
           applied.push(providerId);
@@ -335,11 +360,15 @@ describe('discovery-refresh pipeline helpers', () => {
         }) as CommitSavedConfigDiscoveryRefreshDeps['applyDiscoveredProviderModels'],
         getModelsCache: () => getModelsCache(),
         getPendingProviderSlice: () => [makeModel('stale-overlay')],
+        markModelsCacheSliceProtected: (cacheKey?: string) => protectedKeys.push(cacheKey ?? ''),
       });
-      const out = await applyDiscoveredSliceToLiveCache(makeCtx({ deps }));
+      const out = await applyDiscoveredSliceToLiveCache(
+        makeCtx({ deps, discoveryBaseUrl: 'https://saved' })
+      );
       expect(applied).toEqual(['mock']);
       expect(out.appliedSlice!.map((model) => model.id)).toEqual(['mock-1', 'mock-2']);
       expect(out.previousOverlay).toEqual([makeModel('stale-overlay')]);
+      expect(protectedKeys).toEqual([]);
     });
 
     it('schedules a pending release when the cache is not initialized', async () => {
@@ -528,17 +557,29 @@ describe('discovery-refresh pipeline helpers', () => {
     it('marks success, seeds the catalog from the applied slice, and updates health', () => {
       const { repo, store } = createMockProviderRepo(makeRecord());
       const seeded: ModelInfo[][] = [];
+      const protectedKeys: string[] = [];
       const deps = makeDeps({
         providerRepo: repo,
         markProviderRefreshSucceeded: () => true,
         seedProviderCatalogModels: (_provider, models) => seeded.push(models),
+        markModelsCacheSliceProtected: (cacheKey?: string) => protectedKeys.push(cacheKey ?? ''),
       });
       const ctx = makeCtx({ deps, appliedSlice: [makeModel('applied-1')] });
       const out = markRefreshSucceededAndHealthy(ctx);
       expect(out.recoveredFailure).toBe(true);
       expect(seeded).toEqual([[makeModel('applied-1')]]);
+      expect(protectedKeys).toEqual([]);
       expect(store.get('row-1')!.healthStatus).toBe('healthy');
       expect(store.get('row-1')!.lastHealthCheckAt).toBeGreaterThan(0);
+    });
+
+    it('protects the cache on success only for endpoint-specific refreshes', () => {
+      const protectedKeys: string[] = [];
+      const deps = makeDeps({
+        markModelsCacheSliceProtected: (cacheKey?: string) => protectedKeys.push(cacheKey ?? ''),
+      });
+      markRefreshSucceededAndHealthy(makeCtx({ deps, discoveryBaseUrl: 'https://saved' }));
+      expect(protectedKeys).toEqual(['global']);
     });
 
     it('publishes providers.changed only when no failure was recovered', () => {
@@ -631,5 +672,47 @@ describe('runCommitSavedConfigDiscoveryRefresh', () => {
     expect(out.outcome).toEqual({ success: false, reason: 'superseded' });
     expect(JSON.parse(store.get('row-1')!.configJson!)).toEqual({ a: 2 });
     expect(published).toHaveLength(0);
+  });
+
+  it('never protects the cache when an endpoint-specific commit is superseded at final revalidation', async () => {
+    const original = makeRecord({ configJson: '{"orig":1}' });
+    const store = new Map([[original.id, { ...original }]]);
+    let reads = 0;
+    const repo = {
+      getProvider: (id: string) => {
+        reads += 1;
+        const row = store.get(id);
+        if (!row) return null;
+        if (reads >= 4 && row.configJson !== '{"externally-changed":1}') {
+          row.configJson = '{"externally-changed":1}';
+        }
+        return { ...row };
+      },
+      updateProvider: (id: string, params: Partial<ProviderRecord>) => {
+        const existing = store.get(id);
+        if (!existing) return null;
+        Object.assign(existing, params);
+        return { ...existing };
+      },
+    } as unknown as ProviderRepository;
+    const protectedKeys: string[] = [];
+    setModelsCache(new Map([['global', [makeModel('resident-1', 'other')]]]));
+    const provider = new FakeProvider(null);
+    const ctx = makeCtx({
+      deps: makeDeps({
+        providerRepo: repo,
+        provider,
+        getModelsCache: () => getModelsCache(),
+        markModelsCacheSliceProtected: (cacheKey?: string) => protectedKeys.push(cacheKey ?? ''),
+      }),
+      savedConfig: { configJson: '{"orig":1}' },
+      discoveryBaseUrl: 'https://saved',
+      credentialsAtStart: 'null',
+      clearsAtStart: getModelsCacheClearSequence(),
+    });
+    const out = await runCommitSavedConfigDiscoveryRefresh(ctx);
+    expect(out.outcome).toEqual({ success: false, reason: 'superseded' });
+    expect(protectedKeys).toEqual([]);
+    expect(JSON.parse(store.get('row-1')!.configJson!)).toEqual({ 'externally-changed': 1 });
   });
 });

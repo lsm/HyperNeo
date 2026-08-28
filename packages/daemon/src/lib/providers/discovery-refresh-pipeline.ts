@@ -65,6 +65,7 @@ export async function isSupersededSavedConfigRefresh(
 
 const PROVIDERS_WITH_FIXED_DISCOVERY_ENDPOINT = new Set([
   'anthropic',
+  'anthropic-copilot',
   'deepseek',
   'glm',
   'openrouter',
@@ -301,11 +302,19 @@ export function persistLastGoodSlice(
 ): CommitSavedConfigDiscoveryRefreshCtx {
   let truncated = false;
   try {
+    const endpointFingerprint = ctx.deps.provider.getDiscoveryEndpointFingerprint?.(
+      ctx.discoveryBaseUrl
+    );
+    if (ctx.discoveryBaseUrl !== undefined && endpointFingerprint === undefined) {
+      throw new Error(
+        `Provider ${ctx.providerId} cannot persist endpoint-specific discovery without an endpoint fingerprint`
+      );
+    }
     truncated = persistLastGoodDiscoveredModels(
       ctx.deps.providerRepo,
       ctx.currentRecord!,
       ctx.discovered,
-      ctx.deps.provider.getDiscoveryEndpointFingerprint?.(ctx.discoveryBaseUrl)
+      endpointFingerprint
     );
   } catch (persistError) {
     ctx.deps.provider.clearModelCache?.();
@@ -338,8 +347,6 @@ export async function applyDiscoveredSliceToLiveCache(
   if (firstApply.applied) {
     if (ctx.discoveryBaseUrl === undefined) {
       ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
-    } else {
-      ctx.deps.markModelsCacheSliceProtected('global');
     }
     return {
       ...ctx,
@@ -395,8 +402,6 @@ export async function applyDiscoveredSliceToLiveCache(
   if (retryApply.applied) {
     if (ctx.discoveryBaseUrl === undefined) {
       ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
-    } else {
-      ctx.deps.markModelsCacheSliceProtected('global');
     }
   } else if (ctx.discoveryBaseUrl === undefined) {
     ctx.deps.schedulePendingSliceRelease(ctx.providerId);
@@ -442,6 +447,9 @@ export function markRefreshSucceededAndHealthy(
   ctx: CommitSavedConfigDiscoveryRefreshCtx
 ): CommitSavedConfigDiscoveryRefreshCtx {
   const recoveredFailure = ctx.deps.markProviderRefreshSucceeded(ctx.providerId);
+  if (ctx.discoveryBaseUrl !== undefined) {
+    ctx.deps.markModelsCacheSliceProtected('global');
+  }
   ctx.deps.seedProviderCatalogModels(
     ctx.deps.provider,
     ctx.appliedSlice ?? ctx.normalizedDiscovered ?? ctx.discovered
