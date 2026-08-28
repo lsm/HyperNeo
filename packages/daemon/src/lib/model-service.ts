@@ -158,12 +158,22 @@ function mergeWithFallbackModels(
   return Array.from(modelMap.values());
 }
 
+function capacityBaseModelId(id: string): string {
+  return id.toLowerCase().replace(/(\[1m\])+$/, '');
+}
+
 export function mergeDiscoveredWithStatic(
   providerId: string,
   discovered: ReadonlyArray<ModelInfo>
 ): ModelInfo[] {
   const staticModels = STATIC_MODEL_METADATA.filter((model) => model.provider === providerId);
-  return mergeDiscoveredModels(staticModels, discovered);
+  const staticBaseIds = new Set(staticModels.map((model) => capacityBaseModelId(model.id)));
+  const discoveredOnly = discovered.filter((model) => {
+    const baseId = capacityBaseModelId(model.id);
+    if (!staticBaseIds.has(baseId)) return true;
+    return staticModels.some((model_) => model_.id === model.id);
+  });
+  return mergeDiscoveredModels(staticModels, discoveredOnly);
 }
 
 const refreshInProgress = new Map<string, Promise<void>>();
@@ -1515,10 +1525,23 @@ export function applyDiscoveredProviderModels(
     filterProviderModels(providerId, enriched),
     cacheKey
   );
-  if (applied) {
-    cacheTimestamps.set(cacheKey, Date.now());
-  }
   return applied;
+}
+
+export function markModelsCacheSliceProtected(cacheKey: string = 'global'): void {
+  cacheTimestamps.set(cacheKey, Date.now());
+}
+
+export function seedProviderCatalogModels(provider: Provider, models: ModelInfo[]): void {
+  const curatedNow = getProviderRegistry().getCuratedModels(provider.id);
+  providerCatalogCache.set(provider, {
+    models,
+    at: Date.now(),
+    curatedStamp:
+      curatedNow === undefined ? undefined : curatedNow.map((model) => model.id).join(','),
+    epoch: getProviderCatalogEpoch(),
+    discovered: true,
+  });
 }
 
 export function markProviderRefreshSucceeded(providerId: string): boolean {

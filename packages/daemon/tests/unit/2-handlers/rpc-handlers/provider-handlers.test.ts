@@ -1050,6 +1050,7 @@ describe('Provider RPC handlers', () => {
         displayName: 'Remote',
         kind: 'built_in',
         authType: 'none',
+        baseUrl: 'https://saved-endpoint.example',
       });
       const { getModels } = registerRemoteProvider({
         listRemoteModels: async () => [makeDiscoveredModel('override-endpoint-model')],
@@ -1371,21 +1372,22 @@ describe('Provider RPC handlers', () => {
       expect(ids).not.toContain('default-endpoint-model');
     });
 
-    it('invalidates the provider catalog cache when the refresh succeeds', async () => {
+    it('seeds the provider catalog from the refreshed slice instead of a stale reload', async () => {
       const created = repo.createProvider({
         providerId: 'remote',
         displayName: 'Remote',
         kind: 'built_in',
         authType: 'none',
+        baseUrl: 'https://saved-endpoint.example',
       });
       let catalogLoads = 0;
       const provider = {
         id: 'remote',
         isAvailable: async () => true,
-        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        listRemoteModels: async () => [makeDiscoveredModel('saved-endpoint-model')],
         getModels: async () => {
           catalogLoads += 1;
-          return [makeDiscoveredModel('remote-a')];
+          return [makeDiscoveredModel('default-endpoint-model')];
         },
       } as unknown as Provider;
       getProviderRegistry().register(provider);
@@ -1401,8 +1403,10 @@ describe('Provider RPC handlers', () => {
       )) as { success: boolean };
       expect(result.success).toBe(true);
 
-      await getProviderCatalogModels('remote', provider);
-      expect(catalogLoads).toBe(2);
+      const catalog = await getProviderCatalogModels('remote', provider);
+      expect(catalogLoads).toBe(1);
+      expect(catalog.map((model) => model.id)).toContain('saved-endpoint-model');
+      expect(catalog.map((model) => model.id)).not.toContain('default-endpoint-model');
     });
 
     it('seeds the canonical model instead of a duplicate alias when curation stores an alias', async () => {
@@ -1850,6 +1854,72 @@ describe('Provider RPC handlers', () => {
         JSON.stringify({ command: 'saved acp' })
       );
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('drops untagged capacity variants that duplicate a tagged static entry', async () => {
+      const created = repo.createProvider({
+        providerId: 'glm',
+        displayName: 'GLM',
+        kind: 'built_in',
+        authType: 'api_key',
+      });
+      getProviderRegistry().register({
+        id: 'glm',
+        isAvailable: async () => true,
+        listRemoteModels: async () => [
+          { ...makeDiscoveredModel('glm-5.2'), provider: 'glm' },
+          { ...makeDiscoveredModel('glm-brand-new'), provider: 'glm' },
+        ],
+        getModels: async () => [{ ...makeDiscoveredModel('glm-5.2[1m]'), provider: 'glm' }],
+      } as unknown as Provider);
+      setModelsCache(new Map([['global', [makeDiscoveredModel('existing')]]]));
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      const slice = (getModelsCache().get('global') ?? []).filter(
+        (model) => model.provider === 'glm'
+      );
+      const ids = slice.map((model) => model.id);
+      expect(ids).toContain('glm-5.2[1m]');
+      expect(ids).not.toContain('glm-5.2');
+      expect(ids).toContain('glm-brand-new');
+    });
+
+    it('keeps stale-cache background refresh running for providers without a saved endpoint override', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const { getModels } = registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('refreshed-a')],
+        getModels: async () => [makeDiscoveredModel('background-refreshed')],
+      });
+      setModelsCache(
+        new Map([['global', [makeDiscoveredModel('existing')]]]),
+        Date.now() - 5 * 60 * 60 * 1000
+      );
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+
+      const { getAvailableModels } = await import('../../../../src/lib/model-service');
+      getAvailableModels('global');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(getModels).toHaveBeenCalled();
+      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(ids).toContain('background-refreshed');
     });
 
     it('keeps the refresh when an OAuth access token rotates mid-fetch without an identity change', async () => {
