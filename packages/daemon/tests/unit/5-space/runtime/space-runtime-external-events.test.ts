@@ -1976,4 +1976,290 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.listDeliveries('evt-safety-1')[0]?.state).toBe('delivered');
     });
   });
+
+  describe('surviving delivery invariants after the V1 deletion', () => {
+    function resumeHookCount(): number {
+      return (spaceManager as unknown as { onSpaceResumedCallbacks: unknown[] })
+        .onSpaceResumedCallbacks.length;
+    }
+
+    function makeSecondRuntime(): SpaceRuntime {
+      return new SpaceRuntime({
+        db,
+        spaceManager,
+        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        artifactRepo,
+        artifactProfile,
+        internalEventBus: bus,
+        commandBus: (runtime as unknown as { config: { commandBus: unknown } }).config
+          .commandBus as never,
+        externalEventStore: eventStore,
+        taskAgentManager: tam as never,
+      });
+    }
+
+    test('rejects invalid static event interest topics at workflow creation', async () => {
+      expect(() =>
+        createWorkflow('code', {
+          eventInterests: [{ topic: 'github/**/pull_request/*.opened' }],
+        })
+      ).toThrow('Multi-segment "**" wildcard is not supported');
+    });
+
+    test('allows the first 10 event interests for an agent slot', async () => {
+      const workflow = createWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+
+      for (let index = 0; index < 10; index += 1) {
+        expect(() =>
+          runtime.registerSubscription(
+            run.id,
+            task.id,
+            'code',
+            'coder',
+            `github/owner/repo/pull_request_${index}.opened`
+          )
+        ).not.toThrow();
+      }
+    });
+
+    test('rejects the 11th event interest for an agent slot', async () => {
+      const workflow = createWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+
+      for (let index = 0; index < 10; index += 1) {
+        runtime.registerSubscription(
+          run.id,
+          task.id,
+          'code',
+          'coder',
+          `github/owner/repo/pull_request_${index}.opened`
+        );
+      }
+
+      expect(() =>
+        runtime.registerSubscription(
+          run.id,
+          task.id,
+          'code',
+          'coder',
+          'github/owner/repo/pull_request_10.opened'
+        )
+      ).toThrow('cannot register more than 10 event interests');
+    });
+
+    test('allows new event interests after an agent slot unsubscribes', async () => {
+      const workflow = createWorkflow();
+      const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0]!;
+
+      for (let index = 0; index < 10; index += 1) {
+        runtime.registerSubscription(
+          run.id,
+          task.id,
+          'code',
+          'coder',
+          `github/owner/repo/pull_request_${index}.opened`
+        );
+      }
+
+      runtime.unregisterExecution(run.id, task.id, 'code', 'coder');
+
+      expect(() =>
+        runtime.registerSubscription(
+          run.id,
+          task.id,
+          'code',
+          'coder',
+          'github/owner/repo/pull_request_10.opened'
+        )
+      ).not.toThrow();
+    });
+
+    test('retains unmatched events until the TTL', async () => {
+      const event = makeEvent({ topic: 'github/lsm/neokai/issues/7.comment_created' });
+      await eventService.publish(event);
+      await runtime.executeTick();
+
+      expect(injected).toHaveLength(0);
+      expect(eventStore.getById(event.id)?.state).toBe('published');
+    });
+
+    test('fails unmatched events that stay unclaimed past the TTL', async () => {
+      const event = makeEvent({
+        id: 'evt-unmatched-expired',
+        topic: 'github/lsm/neokai/issues/7.comment_created',
+      });
+      await eventService.publish(event);
+
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 300_001;
+      try {
+        await runtime.executeTick();
+      } finally {
+        Date.now = originalNow;
+      }
+
+      expect(eventStore.listDeliveries(event.id)).toHaveLength(0);
+      expect(eventStore.getById(event.id)?.state).toBe('failed');
+    });
+
+    test('TTL sweep fails only stale published events without deliveries, idempotently', async () => {
+      await runtime.executeTick();
+
+      const stale = makeEvent({
+        id: 'evt-ttl-sweep-stale',
+        topic: 'github/lsm/neokai/issues/99.comment_created',
+      });
+      const fresh = makeEvent({
+        id: 'evt-ttl-sweep-fresh',
+        topic: 'github/lsm/neokai/issues/100.comment_created',
+      });
+      const withDelivery = makeEvent({
+        id: 'evt-ttl-sweep-delivery',
+        topic: 'github/lsm/neokai/issues/101.comment_created',
+      });
+
+      eventStore.store(stale);
+      eventStore.store(fresh);
+      eventStore.store(withDelivery);
+      eventStore.registerExpectedDelivery(withDelivery.id, 'dk-ttl-sweep-1', {
+        workflowRunId: 'run-ttl-sweep',
+        taskId: 'task-ttl-sweep',
+        nodeId: 'code',
+        agentName: 'coder',
+      });
+
+      const now = Date.now();
+      db.prepare('UPDATE space_external_events SET created_at = ? WHERE id = ?').run(
+        now - 400_000,
+        stale.id
+      );
+      db.prepare('UPDATE space_external_events SET created_at = ? WHERE id = ?').run(
+        now - 400_000,
+        withDelivery.id
+      );
+
+      const originalNow = Date.now;
+      Date.now = () => now + 1000;
+      try {
+        await runtime.executeTick();
+      } finally {
+        Date.now = originalNow;
+      }
+
+      expect(eventStore.getById(stale.id)?.state).toBe('failed');
+      expect(eventStore.listDeliveries(stale.id)).toHaveLength(0);
+      expect(eventStore.getById(fresh.id)?.state).toBe('published');
+      expect(eventStore.getById(withDelivery.id)?.state).toBe('published');
+      expect(eventStore.listDeliveries(withDelivery.id)).toHaveLength(1);
+
+      Date.now = () => now + 2000;
+      try {
+        await runtime.executeTick();
+      } finally {
+        Date.now = originalNow;
+      }
+
+      expect(eventStore.getById(stale.id)?.state).toBe('failed');
+      expect(eventStore.getById(fresh.id)?.state).toBe('published');
+      expect(eventStore.getById(withDelivery.id)?.state).toBe('published');
+    });
+
+    test('digest admission terminalizes pending deliveries for a done task without reactivating it', async () => {
+      process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = '1';
+      try {
+        const { run, task } = await startRunWithSubscription(
+          'github/lsm/neokai/pull_request/42.comment_polled'
+        );
+        const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+        nodeExecutionRepo.update(execution.id, {
+          status: 'idle',
+          agentSessionId: null,
+          completedAt: Date.now(),
+        });
+
+        const event = makeEvent({
+          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+        });
+        await eventService.publish(event);
+        expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+        nodeExecutionRepo.update(execution.id, {
+          status: 'in_progress',
+          agentSessionId: 'session-done-task-digest',
+          completedAt: null,
+          startedAt: Date.now(),
+        });
+        db.prepare(
+          `INSERT INTO sessions
+             (id, title, created_at, last_active_at, status, config, metadata, type)
+           VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+        ).run(
+          'session-done-task-digest',
+          'session-done-task-digest',
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z'
+        );
+        tam.alive.add('session-done-task-digest');
+        tam.processingStates.set('session-done-task-digest', 'processing');
+
+        taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+
+        const outcome = await runtime.renderPendingDigestForSession(
+          'session-done-task-digest',
+          task.id
+        );
+        expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+
+        expect(taskRepo.getTask(task.id)?.status).toBe('done');
+        const delivery = eventStore.listDeliveries(event.id)[0]!;
+        expect(delivery.state).toBe('failed');
+        expect(delivery.failureReason).toBe('task_terminal');
+        expect(eventStore.getById(event.id)?.state).toBe('failed');
+
+        const rows = db
+          .prepare(
+            `SELECT sdk_message FROM sdk_messages WHERE session_id = 'session-done-task-digest'
+             AND send_status = 'deferred'`
+          )
+          .all() as Array<{ sdk_message: string }>;
+        expect(rows).toHaveLength(0);
+      } finally {
+        process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = '0';
+      }
+    });
+
+    test('unregisters the space-resume hook on stop', async () => {
+      const before = resumeHookCount();
+      const runtime2 = makeSecondRuntime();
+      runtime2.start();
+      expect(resumeHookCount()).toBe(before + 1);
+
+      await runtime2.stop();
+      expect(resumeHookCount()).toBe(before);
+    });
+
+    test('re-registers the space-resume hook on start after stop', async () => {
+      const before = resumeHookCount();
+      const runtime2 = makeSecondRuntime();
+      runtime2.start();
+      expect(resumeHookCount()).toBe(before + 1);
+
+      await runtime2.stop();
+      expect(resumeHookCount()).toBe(before);
+
+      runtime2.start();
+      expect(resumeHookCount()).toBe(before + 1);
+
+      await runtime2.stop();
+      expect(resumeHookCount()).toBe(before);
+    });
+  });
 });
