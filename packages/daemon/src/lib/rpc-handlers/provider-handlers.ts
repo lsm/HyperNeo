@@ -619,7 +619,9 @@ async function applyDiscoveredSliceToLiveCache(
   }
   const inFlight = ctx.deps.getCurrentCacheLoad();
   if (!inFlight) {
-    ctx.deps.schedulePendingSliceRelease(ctx.providerId);
+    if (ctx.discoveryBaseUrl === undefined) {
+      ctx.deps.schedulePendingSliceRelease(ctx.providerId);
+    }
     return { ...ctx, normalizedDiscovered };
   }
   await raceWithTimeout(
@@ -653,7 +655,7 @@ async function applyDiscoveredSliceToLiveCache(
     )
   ) {
     ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
-  } else {
+  } else if (ctx.discoveryBaseUrl === undefined) {
     ctx.deps.schedulePendingSliceRelease(ctx.providerId);
   }
   return { ...ctx, normalizedDiscovered };

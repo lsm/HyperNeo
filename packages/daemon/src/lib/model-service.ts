@@ -1477,14 +1477,18 @@ export function applyDiscoveredProviderModels(
         persistedDiscovered.filter((entry) => entry.id).map((entry) => [entry.id, entry])
       );
       const seeded: ModelInfo[] = [];
+      const seededIds = new Set<string>();
+      const staticProviderModels = STATIC_MODEL_METADATA.filter(
+        (model) => model.provider === providerId
+      );
       for (const id of missing) {
-        const found =
-          byId.get(id) ??
-          STATIC_MODEL_METADATA.find((model) => model.provider === providerId && model.id === id) ??
-          persistedById.get(id);
+        const canonical = findInModels(staticProviderModels, id);
+        if (canonical && (present.has(canonical.id) || seededIds.has(canonical.id))) continue;
+        const found = canonical ?? byId.get(id) ?? persistedById.get(id);
         if (found) {
           if ('family' in found) {
             seeded.push(found as ModelInfo);
+            seededIds.add(found.id);
           } else {
             const base: ModelInfo = {
               id: found.id,
@@ -1499,6 +1503,7 @@ export function applyDiscoveredProviderModels(
               available: true,
             };
             seeded.push(base);
+            seededIds.add(base.id);
           }
         }
       }
@@ -1519,7 +1524,9 @@ export function applyDiscoveredProviderModels(
 export function markProviderRefreshSucceeded(providerId: string): boolean {
   providerAppliedSeq.set(providerId, ++modelLoadSequence);
   clearProviderRetry(providerId);
-  return clearProviderFailure(providerId);
+  const recoveredFailure = clearProviderFailure(providerId);
+  bumpProviderCatalogEpoch(providerId);
+  return recoveredFailure;
 }
 
 export function releaseAppliedProviderSlice(providerId: string, cacheKey: string = 'global'): void {

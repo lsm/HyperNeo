@@ -1311,6 +1311,103 @@ describe('Provider RPC handlers', () => {
       expect(ids).toContain('stable-model');
     });
 
+    it('retains the deferred saved-endpoint slice when an ordinary initialization loads the default endpoint', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        baseUrl: 'https://saved-endpoint.example',
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('saved-endpoint-model')],
+        getModels: async () => [makeDiscoveredModel('default-endpoint-model')],
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+      expect(getModelsCache().has('global')).toBe(false);
+
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      await refreshModels();
+
+      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(ids).toContain('saved-endpoint-model');
+      expect(ids).not.toContain('default-endpoint-model');
+    });
+
+    it('invalidates the provider catalog cache when the refresh succeeds', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      let catalogLoads = 0;
+      const provider = {
+        id: 'remote',
+        isAvailable: async () => true,
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => {
+          catalogLoads += 1;
+          return [makeDiscoveredModel('remote-a')];
+        },
+      } as unknown as Provider;
+      getProviderRegistry().register(provider);
+      const handlers = setup();
+      const { getProviderCatalogModels } = await import('../../../../src/lib/model-service');
+
+      await getProviderCatalogModels('remote', provider);
+      expect(catalogLoads).toBe(1);
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+
+      await getProviderCatalogModels('remote', provider);
+      expect(catalogLoads).toBe(2);
+    });
+
+    it('seeds the canonical model instead of a duplicate alias when curation stores an alias', async () => {
+      const created = repo.createProvider({
+        providerId: 'kimi',
+        displayName: 'Kimi',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ models: [{ id: 'kimi' }] }),
+      });
+      getProviderRegistry().setCuratedModels('kimi', [{ id: 'kimi' }]);
+      getProviderRegistry().register({
+        id: 'kimi',
+        isAvailable: async () => true,
+        listRemoteModels: async () => [
+          { ...makeDiscoveredModel('kimi-for-coding'), provider: 'kimi' },
+        ],
+        getModels: async () => [{ ...makeDiscoveredModel('kimi-for-coding'), provider: 'kimi' }],
+      } as unknown as Provider);
+      setModelsCache(new Map([['global', [makeDiscoveredModel('existing')]]]));
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      const slice = (getModelsCache().get('global') ?? []).filter(
+        (model) => model.provider === 'kimi'
+      );
+      const ids = slice.map((model) => model.id);
+      expect(ids).toContain('kimi-for-coding');
+      expect(ids).not.toContain('kimi');
+    });
+
     it('strips persisted discovery when an update changes the effective configuration', async () => {
       const created = repo.createProvider({
         providerId: 'remote',
