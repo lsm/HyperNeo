@@ -3160,6 +3160,51 @@ describe('MessageQueue', () => {
       expect(order).toEqual(['first-start', 'first-end', 'second-start', 'second-end']);
     }, 15_000);
 
+    it('scopes recovered-entry removal to the restart cycle that owns them', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-own-1',
+        content: 'first survivor',
+        internal: false,
+      } as never);
+      q.noteInternalCompactionSent({
+        id: 'uuid-own-2',
+        content: 'second survivor',
+        internal: false,
+      } as never);
+      let releaseFirst: () => void = () => {};
+      const firstHang = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const firstOpts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-own-1'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async () => {
+          await firstHang;
+          throw new Error('first restart failed pre-teardown');
+        },
+      });
+      const secondOpts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-own-2'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async () => {},
+      });
+
+      const first = q.runMidTurnBudgetInterrupt(firstOpts);
+      await tick(30);
+      const second = q.runMidTurnBudgetInterrupt(secondOpts);
+      await tick(30);
+
+      releaseFirst();
+      await Promise.all([first, second]);
+      await tick(50);
+
+      expect(q.hasPendingOrClaimed('uuid-own-1')).toBe(false);
+      expect(q.hasPendingOrClaimed('uuid-own-2')).toBe(true);
+      q.stop();
+    });
+
     it('retains yield stamps for outstanding messages past the retention cap', async () => {
       const q = new MessageQueue();
       q.start();
@@ -3180,6 +3225,29 @@ describe('MessageQueue', () => {
 
       q.stop();
       expect(q.ownsLastYield('uuid-ret-3', 3)).toBe(false);
+    });
+
+    it('retains stopped yield stamps beyond the retention cap until the queue restarts', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const generator = q.messageGenerator(testSessionId, { queryGeneration: 3 });
+      const steps: Array<{ message: { uuid: string }; onSent: () => void }> = [];
+      for (let index = 0; index < 70; index += 1) {
+        const delivered = q.enqueueWithId(`uuid-stop-ret-${index}`, `stopped ${index}`, false, {});
+        delivered.catch(() => {});
+        const step = await generator.next();
+        steps.push(step.value);
+      }
+      for (let index = 10; index < 70; index += 1) {
+        steps[index].onSent();
+      }
+      q.clear();
+      const extra = q.enqueueWithId('uuid-stop-ret-extra', 'stopped extra', false, {});
+      extra.catch(() => {});
+      (await generator.next()).value.onSent();
+
+      q.stop();
+      expect(q.ownsLastYield('uuid-stop-ret-3', 3)).toBe(false);
     });
 
     it('stands down a late receipt after the recovery replacement was stopped', async () => {

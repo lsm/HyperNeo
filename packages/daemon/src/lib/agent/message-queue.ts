@@ -705,9 +705,16 @@ export class MessageQueue {
           stopEpoch: this.stopEpoch,
         });
         if (this.lastYieldGenerations.size > 64) {
-          for (const retainedId of [...this.lastYieldGenerations.keys()]) {
+          const retainedIds = [...this.lastYieldGenerations.keys()];
+          for (const retainedId of retainedIds) {
             if (this.lastYieldGenerations.size <= 64) break;
             if (this.isTrackedMessageId(retainedId)) continue;
+            const retainedStamp = this.lastYieldGenerations.get(retainedId);
+            if (retainedStamp && retainedStamp.stopEpoch !== this.stopEpoch) continue;
+            this.lastYieldGenerations.delete(retainedId);
+          }
+          for (const retainedId of retainedIds) {
+            if (this.lastYieldGenerations.size <= 256) break;
             this.lastYieldGenerations.delete(retainedId);
           }
         }
@@ -1104,7 +1111,9 @@ export class MessageQueue {
     });
     void previousChain.catch(() => {}).then(() => signalStarted());
     try {
-      await this.runSerializedSurvivorTeardownWithRestart(opts, startGate, releaseChainOnce);
+      await this.runSerializedSurvivorTeardownWithRestart(opts, startGate, releaseChainOnce, [
+        ...this.cycleRequeuedIds,
+      ]);
     } catch (error) {
       releaseChainOnce();
       throw error;
@@ -1114,7 +1123,8 @@ export class MessageQueue {
   private async runSerializedSurvivorTeardownWithRestart(
     opts: MidTurnBudgetInterruptOptions,
     startGate: Promise<void>,
-    releaseChain: () => void
+    releaseChain: () => void,
+    recoveredIds: string[]
   ): Promise<void> {
     await startGate;
     let resolveDeliveryGate: (() => void) | undefined;
@@ -1128,7 +1138,7 @@ export class MessageQueue {
     let restartFailed = false;
     let stoodDownForUserStop = false;
     const removeRecoveredEntries = () => {
-      for (const id of this.cycleRequeuedIds) {
+      for (const id of recoveredIds) {
         this.remove(id);
       }
       this.removePendingInternalCompactions();
