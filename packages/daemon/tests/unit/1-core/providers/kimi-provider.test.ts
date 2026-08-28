@@ -566,6 +566,26 @@ describe('KimiProvider', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
+    it('returns the raw remote slice without curated synthesis for discovery-only refreshes', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      installModelListFetch([{ data: [{ id: 'kimi-for-coding', object: 'model' }] }]);
+      provider = new KimiProvider();
+      provider.setCuratedModels([{ id: 'kimi-k4', name: 'Kimi K4' }]);
+
+      const discoveryOnly = await provider.listRemoteModels({ force: true, discoveryOnly: true });
+
+      expect(discoveryOnly.map((m) => m.id)).toEqual(['kimi-for-coding']);
+    });
+
+    it('reports an empty discovery-only slice when the remote endpoint returns nothing', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      installModelListFetch([{ data: [] }]);
+      provider = new KimiProvider();
+      provider.setCuratedModels([{ id: 'kimi-k4', name: 'Kimi K4' }]);
+
+      expect(await provider.listRemoteModels({ force: true, discoveryOnly: true })).toEqual([]);
+    });
+
     it('propagates forced discovery failures instead of serving the cached list', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       let calls = 0;
