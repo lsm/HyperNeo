@@ -547,6 +547,8 @@ interface CommitSavedConfigDiscoveryRefreshDeps {
   schedulePendingSliceRelease(providerId: string, cacheKey?: string): void;
   markProviderRefreshSucceeded(providerId: string): boolean;
   mergeDiscoveredWithStatic(providerId: string, discovered: ReadonlyArray<ModelInfo>): ModelInfo[];
+  markModelsCacheSliceProtected(cacheKey?: string): void;
+  seedProviderCatalogModels(provider: Provider, models: ModelInfo[]): void;
 }
 
 interface CommitSavedConfigDiscoveryRefreshCtx {
@@ -626,6 +628,9 @@ async function applyDiscoveredSliceToLiveCache(
   );
   if (applied) {
     ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+    if (ctx.discoveryBaseUrl !== undefined) {
+      ctx.deps.markModelsCacheSliceProtected('global');
+    }
     return { ...ctx, normalizedDiscovered };
   }
   const inFlight = ctx.deps.getCurrentCacheLoad();
@@ -666,6 +671,9 @@ async function applyDiscoveredSliceToLiveCache(
     )
   ) {
     ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+    if (ctx.discoveryBaseUrl !== undefined) {
+      ctx.deps.markModelsCacheSliceProtected('global');
+    }
   } else if (ctx.discoveryBaseUrl === undefined) {
     ctx.deps.schedulePendingSliceRelease(ctx.providerId);
   }
@@ -701,6 +709,7 @@ function markRefreshSucceededAndHealthy(
   ctx: CommitSavedConfigDiscoveryRefreshCtx
 ): CommitSavedConfigDiscoveryRefreshCtx {
   const recoveredFailure = ctx.deps.markProviderRefreshSucceeded(ctx.providerId);
+  ctx.deps.seedProviderCatalogModels(ctx.deps.provider, ctx.normalizedDiscovered ?? ctx.discovered);
   ctx.deps.providerRepo.updateProvider(ctx.rowId, {
     healthStatus: 'healthy',
     lastHealthCheckAt: Date.now(),
@@ -836,6 +845,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       schedulePendingSliceRelease,
       markProviderRefreshSucceeded,
       mergeDiscoveredWithStatic,
+      markModelsCacheSliceProtected,
+      seedProviderCatalogModels,
     } = await import('../model-service.js');
     const clearsAtStart = getModelsCacheClearSequence();
     const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
@@ -890,6 +901,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           schedulePendingSliceRelease,
           markProviderRefreshSucceeded,
           mergeDiscoveredWithStatic,
+          markModelsCacheSliceProtected,
+          seedProviderCatalogModels,
         },
         providerId: record.providerId,
         rowId: request.id,
