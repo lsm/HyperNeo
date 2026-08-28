@@ -222,6 +222,7 @@ export class AskUserQuestionHandler {
         `AskUserQuestion ${toolUseID}: superseded before the question could be published; ` +
           `dropping the stale question.asked event`
       );
+      this.trackResolvedQuestion(toolUseID, pendingQuestion, 'cancelled', []);
       resolvePending({
         behavior: 'deny',
         message:
@@ -614,7 +615,6 @@ export class AskUserQuestionHandler {
     ) {
       try {
         await stateManager.setIdle({
-          suppressIdlePublish: true,
           suppressIdleCallback: true,
           suppressDeliveryWaiters: true,
         });

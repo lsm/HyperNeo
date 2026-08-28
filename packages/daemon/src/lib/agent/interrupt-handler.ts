@@ -63,6 +63,11 @@ export class InterruptHandler {
     const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
     const interruptQueryGeneration = this.ctx.getQueryGeneration?.();
 
+    const stateAtEntry = stateManager.getState();
+    if (stateAtEntry.status !== 'idle' && stateAtEntry.status !== 'interrupted') {
+      this.ctx.attemptTokens?.invalidateCurrent();
+    }
+
     if (!opts?.preserveDeliveryJobs) {
       const failedDbIds: string[] = [];
       await withSessionLock(session.id, async () => {
@@ -104,7 +109,6 @@ export class InterruptHandler {
       }
       return;
     }
-    this.ctx.attemptTokens?.invalidateCurrent();
     this.deferredReplaySuppressed = opts?.skipDeferredReplay === true;
 
     const interruptCompletePromise = new Promise<void>((resolve) => {

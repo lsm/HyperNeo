@@ -655,7 +655,7 @@ export class AcpQueryRunner {
                   return {
                     onTerminalCreate: async (params: AcpTerminalCreateParams) => {
                       const normalized = normalizeAcpTerminalCreate(params);
-                      if (abortController!.signal.aborted) {
+                      if (abortController!.signal.aborted || !attemptToken.isLive()) {
                         throw new Error('ACP terminal command cancelled');
                       }
                       return manager.create(normalized);
@@ -670,8 +670,12 @@ export class AcpQueryRunner {
                       ? {
                           onFsRead: (params: AcpFsReadParams) =>
                             this.handleFsRead(params, workspace),
-                          onFsWrite: (params: AcpFsWriteParams) =>
-                            this.handleFsWrite(params, workspace, abortController!.signal),
+                          onFsWrite: (params: AcpFsWriteParams) => {
+                            if (!attemptToken.isLive()) {
+                              throw new Error('ACP file write cancelled');
+                            }
+                            return this.handleFsWrite(params, workspace, abortController!.signal);
+                          },
                         }
                       : {}),
                   };
