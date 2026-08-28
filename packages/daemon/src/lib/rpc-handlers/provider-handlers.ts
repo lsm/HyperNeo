@@ -663,8 +663,9 @@ async function applyDiscoveredSliceToLiveCache(
     ctx.persistedDiscovered
   );
   if (firstApply.applied) {
-    ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
-    if (ctx.discoveryBaseUrl !== undefined) {
+    if (ctx.discoveryBaseUrl === undefined) {
+      ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+    } else {
       ctx.deps.markModelsCacheSliceProtected('global');
     }
     return { ...ctx, normalizedDiscovered, appliedSlice: firstApply.models, previousSlice };
@@ -709,8 +710,9 @@ async function applyDiscoveredSliceToLiveCache(
     ctx.persistedDiscovered
   );
   if (retryApply.applied) {
-    ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
-    if (ctx.discoveryBaseUrl !== undefined) {
+    if (ctx.discoveryBaseUrl === undefined) {
+      ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+    } else {
       ctx.deps.markModelsCacheSliceProtected('global');
     }
   } else if (ctx.discoveryBaseUrl === undefined) {
@@ -1109,11 +1111,13 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
           const discoveryInvalidating =
             data.credentials !== undefined ||
-            hasEndpointChanged(existing.baseUrl, updates.baseUrl) ||
-            hasEndpointChanged(
-              existing.customEndpointConfigJson,
-              updates.customEndpointConfigJson
-            ) ||
+            (updates.baseUrl !== undefined &&
+              hasEndpointChanged(existing.baseUrl, updates.baseUrl)) ||
+            (updates.customEndpointConfigJson !== undefined &&
+              hasEndpointChanged(
+                existing.customEndpointConfigJson,
+                updates.customEndpointConfigJson
+              )) ||
             updates.isEnabled === false ||
             (updates.configJson !== undefined &&
               !isCurationOnlyConfigUpdate(existing.configJson, updates.configJson));

@@ -203,6 +203,8 @@ const pendingProviderSlices = new Map<string, ModelInfo[]>();
 
 const pendingSliceReleases = new Map<string, number>();
 
+const pendingSliceEpochs = new Map<string, number>();
+
 let providerRepositoryRef: ProviderRepository | null = null;
 
 export function setProviderRepository(repo: ProviderRepository | null): void {
@@ -1431,22 +1433,25 @@ export function updateProviderModelsInCache(
   cacheKey: string = 'global'
 ): boolean {
   const cachedModels = modelsCache.get(cacheKey);
+  const sliceKey = pendingSliceKey(cacheKey, providerId);
   if (!cachedModels) {
-    pendingProviderSlices.set(pendingSliceKey(cacheKey, providerId), models);
+    pendingProviderSlices.set(sliceKey, models);
     return false;
   }
 
-  pendingProviderSlices.set(pendingSliceKey(cacheKey, providerId), models);
+  pendingProviderSlices.set(sliceKey, models);
   modelsCache.set(cacheKey, [
     ...cachedModels.filter((model) => model.provider !== providerId),
     ...models,
   ]);
   const generationAtUpdate = cacheGeneration.get(cacheKey) ?? 0;
+  const epochAtUpdate = pendingSliceEpochs.get(sliceKey) ?? 0;
   const inFlight = refreshInProgress.get(cacheKey);
   if (inFlight) {
     inFlight
       .then(() => {
         if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtUpdate) return;
+        if ((pendingSliceEpochs.get(sliceKey) ?? 0) !== epochAtUpdate) return;
         const current = modelsCache.get(cacheKey);
         if (!current) return;
         modelsCache.set(cacheKey, [
@@ -1464,7 +1469,10 @@ export function restoreProviderModelsSlice(
   slice: ModelInfo[],
   cacheKey: string = 'global'
 ): void {
-  const current = modelsCache.get(cacheKey) ?? [];
+  const sliceKey = pendingSliceKey(cacheKey, providerId);
+  pendingSliceEpochs.set(sliceKey, (pendingSliceEpochs.get(sliceKey) ?? 0) + 1);
+  const current = modelsCache.get(cacheKey);
+  if (!current) return;
   modelsCache.set(cacheKey, [
     ...current.filter((model) => model.provider !== providerId),
     ...slice,

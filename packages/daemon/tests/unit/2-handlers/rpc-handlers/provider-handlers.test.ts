@@ -1086,6 +1086,95 @@ describe('Provider RPC handlers', () => {
       ).toEqual(['override-endpoint-model']);
     });
 
+    it('keeps the saved-endpoint slice overlaid when a stale-cache background refresh completes', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        baseUrl: 'https://saved-endpoint.example',
+      });
+      const { getModels } = registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('saved-endpoint-model')],
+        getModels: async () => [makeDiscoveredModel('default-endpoint-model')],
+      });
+      setModelsCache(
+        new Map([['global', [makeDiscoveredModel('existing')]]]),
+        Date.now() - 5 * 60 * 60 * 1000
+      );
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      setModelsCache(new Map(getModelsCache()), Date.now() - 5 * 60 * 60 * 1000);
+
+      const { getAvailableModels } = await import('../../../../src/lib/model-service');
+      getAvailableModels('global');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(getModels).toHaveBeenCalled();
+      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(ids).toContain('saved-endpoint-model');
+      expect(ids).not.toContain('default-endpoint-model');
+    });
+
+    it('cancels the queued cache reapply when the final recheck discards the commit', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      let credentialReads = 0;
+      let backgroundRefresh: Promise<void> | undefined;
+      getProviderRegistry().register({
+        id: 'slow-holder',
+        displayName: 'Slow Holder',
+        isAvailable: async () => true,
+        getModels: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return [{ ...makeDiscoveredModel('holder-model'), provider: 'slow-holder' }];
+        },
+      } as unknown as Provider);
+      getProviderRegistry().register({
+        id: 'remote',
+        isAvailable: async () => true,
+        getCredentials: async () => {
+          credentialReads += 1;
+          return { type: 'api_key', apiKey: credentialReads < 4 ? 'key-1' : 'key-2' };
+        },
+        listRemoteModels: async () => {
+          backgroundRefresh = refreshModels();
+          return [makeDiscoveredModel('discarded-model')];
+        },
+        getModels: async () => [makeDiscoveredModel('default-endpoint-model')],
+      } as unknown as Provider);
+      setModelsCache(new Map([['global', [makeDiscoveredModel('existing')]]]));
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; reason?: string };
+
+      expect(result).toEqual({ success: false, reason: 'superseded' });
+      expect(repo.getProvider(created.id)?.configJson).toBe(
+        JSON.stringify({ command: 'saved acp' })
+      );
+      await backgroundRefresh;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(ids).toContain('default-endpoint-model');
+      expect(ids).not.toContain('discarded-model');
+    });
+
     it('rejects the refresh when the saved config cannot fit the discovery wrapper', async () => {
       const pad = 'x'.repeat(64 * 1024 - 20);
       const created = repo.createProvider({
@@ -1600,6 +1689,50 @@ describe('Provider RPC handlers', () => {
       );
     });
 
+    it('retains persisted discovery when a saved endpoint is not changed by a curation-only update', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        baseUrl: 'https://endpoint.example',
+        configJson: JSON.stringify({ region: 'china' }),
+      });
+      registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      });
+      const handlers = setup();
+      await handlers.get('providers.refreshDiscovery')!({ id: created.id }, {});
+      const storedBefore = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(storedBefore.discoveredModels).toBeDefined();
+
+      const mergedConfig = JSON.stringify({
+        region: 'china',
+        models: [{ id: 'remote-a' }],
+        discoveredModels: storedBefore.discoveredModels,
+      });
+      const updated = (await handlers.get('providers.update')!(
+        { id: created.id, params: { configJson: mergedConfig } },
+        {}
+      )) as { provider: ProviderRecord };
+
+      const storedAfter = JSON.parse(repo.getProvider(created.id)?.configJson ?? '{}') as Record<
+        string,
+        unknown
+      >;
+      expect(storedAfter.discoveredModels).toEqual(storedBefore.discoveredModels);
+      expect(storedAfter.models).toEqual([{ id: 'remote-a' }]);
+      expect(repo.getProvider(created.id)?.baseUrl).toBe('https://endpoint.example');
+      expect(
+        (JSON.parse(updated.provider.configJson ?? '{}') as Record<string, unknown>)
+          .discoveredModels
+      ).toEqual(storedBefore.discoveredModels);
+    });
+
     it('strips persisted discovery when a built-in provider is disabled', async () => {
       const created = repo.createProvider({
         providerId: 'remote',
@@ -1896,6 +2029,7 @@ describe('Provider RPC handlers', () => {
       expect(repo.getProvider(created.id)?.configJson).toBe(
         JSON.stringify({ command: 'saved acp' })
       );
+      expect(getModelsCache().has('global')).toBe(false);
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
 
