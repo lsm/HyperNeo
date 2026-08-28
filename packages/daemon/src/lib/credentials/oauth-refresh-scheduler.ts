@@ -144,6 +144,7 @@ export class OAuthRefreshScheduler {
       }
       this.retryCounts.delete(retryKey);
       if (!(await this.runPreRecoveryInvalidation(provider.id))) {
+        this.markUnhealthyWhenFailureRecorded(provider.id);
         await this.recordPendingInvalidationFailure(provider.id);
         return;
       }
@@ -159,6 +160,8 @@ export class OAuthRefreshScheduler {
   private async retryPendingInvalidation(provider: Provider): Promise<boolean> {
     if (!this.pendingInvalidationRetries.has(provider.id)) return false;
     if (!(await this.runPreRecoveryInvalidation(provider.id))) {
+      await this.retryPendingTokenPersistence(provider);
+      this.markUnhealthyWhenFailureRecorded(provider.id);
       await this.recordPendingInvalidationFailure(provider.id);
       return true;
     }
@@ -166,6 +169,25 @@ export class OAuthRefreshScheduler {
     await this.recoverDormant(provider.id);
     await this.emitProviderChanged(provider.id, 'refreshed');
     return true;
+  }
+
+  private async retryPendingTokenPersistence(provider: Provider): Promise<void> {
+    if (!provider.getCredentials) return;
+    let credentials: ProviderCredentials | null;
+    try {
+      credentials = await provider.getCredentials();
+    } catch {
+      return;
+    }
+    if (!credentials || credentials.type !== 'oauth') return;
+    try {
+      await this.credentialManager.storeOAuthTokens(provider.id, credentials);
+    } catch {}
+  }
+
+  private markUnhealthyWhenFailureRecorded(providerId: string): void {
+    if (!getProviderFailure(providerId)) return;
+    this.credentialManager.markProviderHealth(providerId, 'unhealthy');
   }
 
   private async runPreRecoveryInvalidation(providerId: string): Promise<boolean> {
