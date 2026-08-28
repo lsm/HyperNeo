@@ -298,6 +298,18 @@ function isUnchangedSavedConfig(
   );
 }
 
+function credentialIdentity(credentials: ProviderCredentials | null | undefined): string {
+  if (!credentials) return 'null';
+  if (credentials.type === 'api_key') {
+    return JSON.stringify({ type: 'api_key', apiKey: credentials.apiKey });
+  }
+  return JSON.stringify({
+    type: 'oauth',
+    refreshToken: credentials.refreshToken ?? null,
+    ...(credentials.refreshToken === undefined ? { accessToken: credentials.accessToken } : {}),
+  });
+}
+
 async function isSupersededSavedConfigRefresh(
   provider: Provider,
   providerRepo: ProviderRepository,
@@ -307,7 +319,7 @@ async function isSupersededSavedConfigRefresh(
   credentialsAtStart: string,
   getModelsCacheClearSequence: () => number
 ): Promise<boolean> {
-  const credentialsNow = JSON.stringify((await provider.getCredentials?.()) ?? null);
+  const credentialsNow = credentialIdentity(await provider.getCredentials?.());
   return (
     credentialsNow !== credentialsAtStart ||
     getModelsCacheClearSequence() !== clearsAtStart ||
@@ -828,7 +840,7 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     const clearsAtStart = getModelsCacheClearSequence();
     const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
     const discoveryBaseUrl = record.baseUrl || undefined;
-    const credentialsAtStart = JSON.stringify((await provider.getCredentials?.()) ?? null);
+    const credentialsAtStart = credentialIdentity(await provider.getCredentials?.());
 
     const discoveryPromise = provider.listRemoteModels({
       force: true,
