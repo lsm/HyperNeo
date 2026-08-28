@@ -17,6 +17,7 @@ const ITERATIONS = 100_000;
 const WARMUP_ITERATIONS = 1_000_000;
 const INSERT_ITERATIONS = 10_000;
 const INSERT_WARMUP_ITERATIONS = 10_000;
+const INSERT_SEED_ITERATIONS = 10_000;
 const SAMPLES = 5;
 const log = (message: string): void => {
   process.stdout.write(`${message}\n`);
@@ -60,6 +61,7 @@ type InsertRow = {
   messageType: string;
   messageSubtype: string | null;
   sdkMessage: string;
+  timestamp: string;
   isRenderable: 0 | 1;
   isTerminal: 0 | 1;
   parentToolUseId: string | null;
@@ -244,6 +246,7 @@ function setupInsert(): {
   db: typeof Database.prototype;
   dbPath: string;
   reset: () => void;
+  seed: (rows: readonly InsertRow[]) => number;
   run: (row: InsertRow) => number;
 } {
   const dbPath = `${tmpdir()}/hyperneo-bench-${process.pid}-${Date.now()}.db`;
@@ -268,7 +271,7 @@ function setupInsert(): {
       row.messageType,
       row.messageSubtype,
       row.sdkMessage,
-      insertTimestamp,
+      row.timestamp,
       null,
       row.isRenderable,
       row.isTerminal,
@@ -280,6 +283,10 @@ function setupInsert(): {
     );
     return 1;
   });
+  const seed = db.transaction((rows: readonly InsertRow[]) => {
+    for (const row of rows) insert(row);
+    return rows.length;
+  });
   return {
     db,
     dbPath,
@@ -287,11 +294,12 @@ function setupInsert(): {
       deleteStmt.run();
       resetSessionStmt.run(saveSessionId);
     },
+    seed: (rows: readonly InsertRow[]) => seed(rows),
     run: (row: InsertRow) => insert(row),
   };
 }
 
-function buildInsertRows(count: number): readonly InsertRow[] {
+function buildInsertRows(count: number, timestampBase: number): readonly InsertRow[] {
   return Array.from({ length: count }, (_, index) => {
     const message = saveMessages[index % saveMessages.length];
     const id = generateUUID();
@@ -307,6 +315,7 @@ function buildInsertRows(count: number): readonly InsertRow[] {
       messageType: sdkMessage.type,
       messageSubtype: (sdkMessage as { subtype?: string }).subtype ?? null,
       sdkMessage: JSON.stringify(sdkMessage),
+      timestamp: new Date(timestampBase + index).toISOString(),
       isRenderable: admission.isRenderable,
       isTerminal: admission.isTerminal,
       parentToolUseId: admission.parentToolUseId,
@@ -360,14 +369,27 @@ function collectSample(variant: Variant): Sample {
     return { cold, warm };
   }
   if (variant === 'sqlite-insert') {
-    const insertRows = buildInsertRows(Math.max(INSERT_ITERATIONS, INSERT_WARMUP_ITERATIONS));
-    const { db, dbPath, reset, run } = setupInsert();
+    const seedTimestampBase = Date.now();
+    const seedRows = buildInsertRows(INSERT_SEED_ITERATIONS, seedTimestampBase);
+    const coldRows = buildInsertRows(INSERT_ITERATIONS, seedTimestampBase + INSERT_SEED_ITERATIONS);
+    const warmupRows = buildInsertRows(
+      INSERT_WARMUP_ITERATIONS,
+      seedTimestampBase + INSERT_SEED_ITERATIONS + INSERT_ITERATIONS
+    );
+    const warmRows = buildInsertRows(
+      INSERT_ITERATIONS,
+      seedTimestampBase + INSERT_SEED_ITERATIONS + INSERT_ITERATIONS + INSERT_WARMUP_ITERATIONS
+    );
+    const { db, dbPath, reset, seed, run } = setupInsert();
     reset();
-    const cold = runIterations(insertRows.slice(0, INSERT_ITERATIONS), run, INSERT_ITERATIONS);
+    seed(seedRows);
+    const cold = runIterations(coldRows, run, INSERT_ITERATIONS);
     reset();
-    runIterations(insertRows.slice(0, INSERT_WARMUP_ITERATIONS), run, INSERT_WARMUP_ITERATIONS);
+    seed(seedRows);
+    runIterations(warmupRows, run, INSERT_WARMUP_ITERATIONS);
     reset();
-    const warm = runIterations(insertRows.slice(0, INSERT_ITERATIONS), run, INSERT_ITERATIONS);
+    seed(seedRows);
+    const warm = runIterations(warmRows, run, INSERT_ITERATIONS);
     db.close();
     for (const suffix of ['', '-wal', '-shm']) {
       rmSync(`${dbPath}${suffix}`, { force: true });
