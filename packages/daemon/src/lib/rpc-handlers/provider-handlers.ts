@@ -272,7 +272,6 @@ async function listAcpRemoteModels(
 }
 
 const DISCOVERY_REFRESH_TIMEOUT_MS = 30_000;
-const DISCOVERY_SETTLE_GRACE_MS = 60_000;
 
 function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -406,7 +405,7 @@ function buildLastGoodDiscoveredModels(
   for (const entry of byId.values()) {
     let candidate = entry;
     let cost = JSON.stringify(entry).length + (models.length === 0 ? 0 : 1);
-    if (used + cost > budget && index < curatedCount && entry.name !== undefined) {
+    if (used + cost > budget && entry.name !== undefined) {
       const bare: CuratedModel = { id: entry.id };
       const bareCost = JSON.stringify(bare).length + (models.length === 0 ? 0 : 1);
       if (used + bareCost <= budget) {
@@ -661,6 +660,30 @@ async function applyDiscoveredSliceToLiveCache(
   return { ...ctx, normalizedDiscovered };
 }
 
+async function revalidateBeforeCommittingSuccess(
+  ctx: CommitSavedConfigDiscoveryRefreshCtx
+): Promise<CommitSavedConfigDiscoveryRefreshCtx> {
+  if (
+    !(await isSupersededSavedConfigRefresh(
+      ctx.deps.provider,
+      ctx.deps.providerRepo,
+      ctx.rowId,
+      ctx.persistedConfig!,
+      ctx.clearsAtStart,
+      ctx.credentialsAtStart,
+      ctx.deps.getModelsCacheClearSequence
+    ))
+  ) {
+    return ctx;
+  }
+  const currentRow = ctx.deps.providerRepo.getProvider(ctx.rowId);
+  if (currentRow && currentRow.configJson === ctx.persistedConfig!.configJson) {
+    ctx.deps.providerRepo.updateProvider(ctx.rowId, { configJson: ctx.originalConfigJson });
+  }
+  ctx.deps.provider.clearModelCache?.();
+  return { ...ctx, outcome: { success: false, reason: 'superseded' } };
+}
+
 function markRefreshSucceededAndHealthy(
   ctx: CommitSavedConfigDiscoveryRefreshCtx
 ): CommitSavedConfigDiscoveryRefreshCtx {
@@ -707,6 +730,8 @@ const runCommitSavedConfigDiscoveryRefresh = (
   .pipe('!hasOutcome', 'ctx')
   .pipe(persistLastGoodSlice, 'ctx', 'ctx')
   .pipe(applyDiscoveredSliceToLiveCache, 'ctx', 'ctx')
+  .pipe('!hasOutcome', 'ctx')
+  .pipe(revalidateBeforeCommittingSuccess, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
   .pipe(markRefreshSucceededAndHealthy, 'ctx', 'ctx')
   .pipe(publishProvidersChangedWhenCoherent, 'ctx', 'ctx')
@@ -806,16 +831,13 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
     const discoveryPromise = provider.listRemoteModels({
       force: true,
+      discoveryOnly: true,
       ...(discoveryBaseUrl ? { baseUrl: discoveryBaseUrl } : {}),
     });
     let discovered: ModelInfo[];
     try {
       discovered = await raceWithTimeout(discoveryPromise, DISCOVERY_REFRESH_TIMEOUT_MS);
     } catch (error) {
-      await raceWithTimeout(
-        discoveryPromise.catch(() => {}),
-        DISCOVERY_SETTLE_GRACE_MS
-      ).catch(() => {});
       provider.clearModelCache?.();
       discoveryPromise.then(() => provider.clearModelCache?.()).catch(() => {});
       throw error;

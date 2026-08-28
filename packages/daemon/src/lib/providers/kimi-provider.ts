@@ -448,6 +448,7 @@ export class KimiProvider implements Provider {
     if (cacheable) {
       this.discoveryCache.set(fingerprint, discovered);
     }
+    if (options.discoveryOnly) return discovered;
     return this.mergeCuratedModels(discovered);
   }
 

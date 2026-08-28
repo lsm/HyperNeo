@@ -208,6 +208,7 @@ export class DeepSeekProvider implements Provider {
       .filter((model) => this.ownsModel(model.id))
       .map((model) => this.toRemoteModelInfo(model));
     this.discoveryCache.set(fingerprint, discovered);
+    if (options.discoveryOnly) return discovered;
     return this.mergeCuratedModels(discovered);
   }
 
