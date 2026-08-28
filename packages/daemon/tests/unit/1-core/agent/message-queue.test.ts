@@ -1,6 +1,14 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { generateUUID } from '@hyperneo/shared';
-import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import {
+  MessageQueue,
+  type MidTurnBudgetInterruptOptions,
+} from '../../../../src/lib/agent/message-queue';
+import type { Logger } from '../../../../src/lib/logger';
+
+async function tick(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 describe('MessageQueue', () => {
   let queue: MessageQueue;
@@ -1548,6 +1556,526 @@ describe('MessageQueue', () => {
       expect(secondResult.value.message.message.content[0].text).toBe('first');
       secondResult.value.onSent();
       await Promise.all([first, urgent]);
+      q.stop();
+    });
+  });
+
+  describe('delivered-compaction revocation', () => {
+    it('revokes a delivered internal compaction by its id and clears the outstanding flag', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sent = q.enqueueWithId('compact-1', '/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      result.value.onSent();
+      await sent;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+
+      expect(q.revokeDeliveredCompaction('compact-1')).toBe(true);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+      q.stop();
+    });
+
+    it('returns false for a non-compaction or unknown id', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sent = q.enqueueWithId('prompt-1', 'hello', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      result.value.onSent();
+      await sent;
+
+      expect(q.revokeDeliveredCompaction('prompt-1')).toBe(false);
+      expect(q.revokeDeliveredCompaction('nope')).toBe(false);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      q.stop();
+    });
+
+    it('tracks delivered compaction ids so a boundary acknowledges the oldest first', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const first = q.enqueueWithId('compact-a', '/compact', true, { durable: true });
+      const second = q.enqueueWithId('compact-b', '/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const a = await generator.next();
+      a.value.onSent();
+      await first;
+      const b = await generator.next();
+      b.value.onSent();
+      await second;
+
+      expect(q.revokeDeliveredCompaction('compact-b')).toBe(true);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      expect(q.revokeDeliveredCompaction('compact-a')).toBe(false);
+      q.stop();
+    });
+
+    it('removePendingInternalCompactions cancels queued internal compactions and reports the count', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const first = q.enqueueWithId('compact-p1', '/compact', true, {
+        durable: true,
+        prepend: true,
+      });
+      const second = q.enqueueWithId('compact-p2', '/compact', true, {
+        durable: true,
+        prepend: true,
+      });
+      q.enqueueWithId('prompt-p', 'hello', false, { durable: true });
+      expect(q.hasQueuedInternalCompaction()).toBe(true);
+
+      expect(q.removePendingInternalCompactions()).toBe(2);
+      expect(q.hasQueuedInternalCompaction()).toBe(false);
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+      await first;
+      await second;
+      expect(q.removePendingInternalCompactions()).toBe(0);
+      q.remove('prompt-p');
+      q.stop();
+    });
+  });
+
+  describe('mid-turn budget interrupt', () => {
+    function makeInterruptOpts(
+      overrides: Partial<MidTurnBudgetInterruptOptions> = {}
+    ): MidTurnBudgetInterruptOptions {
+      const logger = {
+        info: mock(() => {}),
+        warn: mock(() => {}),
+      } as unknown as Logger;
+      return {
+        sessionId: testSessionId,
+        providerId: 'openrouter',
+        budgetKey: 180_000,
+        logger,
+        interrupt: async () => ({ still_queued: [] }),
+        cancelAsyncMessage: async () => true,
+        restart: async () => {},
+        contextTracker: {
+          markCompactionTriggered: mock(() => {}),
+          clearCompactionCooldown: mock(() => {}),
+        },
+        onResumeArm: mock(() => {}),
+        onResumeClear: mock(() => {}),
+        ...overrides,
+      };
+    }
+
+    it('requeues a cancelled survivor durably under its original id', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-a',
+        content: 'finish the deploy',
+        internal: false,
+      } as never);
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-a'] }),
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-a', 'finish the deploy', false, {
+        durable: true,
+        prepend: true,
+      });
+      q.stop();
+    });
+
+    it('cancels survivors despite an outstanding queued compaction and skips a duplicate one', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const queued = q.enqueueWithId('compact-queued', '/compact', true, { durable: true });
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
+      q.noteInternalCompactionSent({
+        id: 'uuid-c',
+        content: 'ship the release',
+        internal: false,
+      } as never);
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-c'] }),
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-c', 'ship the release', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+      q.stop();
+      queued.catch(() => {});
+    });
+
+    it('replaces a revoked still-queued compaction with a fresh durable prepend one', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'compact-sent',
+        content: '/compact',
+        internal: true,
+      } as never);
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['compact-sent'] }),
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy.mock.calls.some((call) => call[0] === 'compact-sent')).toBe(false);
+      const compactCall = enqueueSpy.mock.calls.find((call) => call[1] === '/compact');
+      expect(compactCall).toBeDefined();
+      expect(compactCall?.[2]).toBe(true);
+      expect(compactCall?.[3]).toEqual({ durable: true, prepend: true });
+      q.stop();
+    });
+
+    it('enqueues a durable prepend compaction when no survivors are reported', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({ interrupt: async () => undefined });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      const compactCall = enqueueSpy.mock.calls.find((call) => call[1] === '/compact');
+      expect(compactCall).toBeDefined();
+      expect(compactCall?.[2]).toBe(true);
+      expect(compactCall?.[3]).toEqual({ durable: true, prepend: true });
+      q.stop();
+    });
+
+    it('clears the pending resume and cooldown when the recovery restart fails', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const onResumeClear = mock(() => {});
+      const clearCompactionCooldown = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-r'] }),
+        cancelAsyncMessage: async () => false,
+        restart: () => Promise.reject(new Error('restart failed')),
+        onResumeClear,
+        contextTracker: {
+          markCompactionTriggered: mock(() => {}),
+          clearCompactionCooldown,
+        },
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(onResumeClear).toHaveBeenCalledTimes(1);
+      expect(clearCompactionCooldown).toHaveBeenCalledTimes(1);
+      q.stop();
+    });
+
+    it('requeues survivors that follow an unconfirmed cancellation before restarting', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sentA = q.enqueueWithId('uuid-a', 'prompt-a', false, { durable: true });
+      const sentB = q.enqueueWithId('uuid-b', 'prompt-b', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      (await generator.next()).value.onSent();
+      await Promise.all([sentA, sentB]);
+
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const restartMock = mock(async () => {});
+      const cancelCalls = mock(async (uuid: string) => uuid === 'uuid-b');
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-a', 'uuid-b'] }),
+        cancelAsyncMessage: cancelCalls,
+        restart: restartMock,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-a', 'prompt-a', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-b', 'prompt-b', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(cancelCalls).toHaveBeenCalledTimes(1);
+      expect(restartMock).toHaveBeenCalledTimes(1);
+      q.stop();
+    });
+
+    it('gates delivery for the whole interrupt window', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const interruptGate = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const opts = makeInterruptOpts({
+        interrupt: () => interruptGate,
+      });
+      void q.enqueue('prompt-during-interrupt', false, {}).catch(() => {});
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      const generator = q.messageGenerator(testSessionId);
+      const first = generator.next();
+      const yieldedEarly = await Promise.race([
+        first.then(() => true),
+        new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), 100);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        }),
+      ]);
+      expect(yieldedEarly).toBe(false);
+
+      releaseInterrupt({ still_queued: [] });
+      await run;
+      expect(first).resolves.toBeDefined();
+      q.stop();
+    });
+
+    it('requeues survivors before restarting when cancellation is unavailable', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-no-cancel', 'prompt-no-cancel', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const restartMock = mock(async () => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-no-cancel'] }),
+        cancelAsyncMessage: undefined,
+        restart: restartMock,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-no-cancel', 'prompt-no-cancel', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(restartMock).toHaveBeenCalledTimes(1);
+      q.stop();
+    });
+
+    it('reinserts survivors ahead of prompts admitted during the interrupt window', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sentA = q.enqueueWithId('uuid-a', 'prompt-a', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sentA;
+      void q.enqueue('prompt-b-arrived-late', false, { durable: true }).catch(() => {});
+      const enqueueSpy = spyOn(q, 'enqueueWithId');
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-a'] }),
+        cancelAsyncMessage: async () => true,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-a', 'prompt-a', false, {
+        durable: true,
+        prepend: true,
+      });
+      const replay = q.messageGenerator(testSessionId);
+      const first = await replay.next();
+      expect((first.value.message.message.content as Array<{ text?: string }>)[0].text).toBe(
+        '/compact'
+      );
+      first.value.onSent();
+      q.acknowledgeCompactionsAwaitingBoundary();
+      const second = await replay.next();
+      expect((second.value.message.message.content as Array<{ text?: string }>)[0].text).toBe(
+        'prompt-a'
+      );
+      second.value.onSent();
+      const third = await replay.next();
+      expect((third.value.message.message.content as Array<{ text?: string }>)[0].text).toBe(
+        'prompt-b-arrived-late'
+      );
+      third.value.onSent();
+      q.stop();
+    });
+
+    it('warns when a cancelled survivor has no recoverable content', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const warnMock = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-phantom'] }),
+        cancelAsyncMessage: async () => true,
+        logger: { info: mock(() => {}), warn: warnMock } as never,
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(warnMock).toHaveBeenCalledTimes(1);
+      expect(String((warnMock.mock.calls[0] as unknown[])[0])).toContain('no recoverable content');
+      expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-phantom')).toBe(false);
+      q.stop();
+    });
+
+    it('does not restart the replacement query when a late receipt cannot cancel', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-late-norestart', 'late-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let resolveInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        resolveInterrupt = resolve;
+      });
+      const restartMock = mock(async () => {});
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => false,
+        restart: restartMock,
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      resolveInterrupt({ still_queued: ['uuid-late-norestart'] });
+      await run;
+      await tick(50);
+
+      expect(restartMock).toHaveBeenCalledTimes(1);
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-late-norestart', 'late-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      q.stop();
+    }, 15_000);
+
+    it('keeps the compaction protocol when the retryable-state update throws', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-throw-cb', 'survivor-cb', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const warnMock = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-throw-cb'] }),
+        cancelAsyncMessage: async () => true,
+        onSurvivorRequeued: () => {
+          throw new Error('sqlite busy');
+        },
+        logger: { info: mock(() => {}), warn: warnMock } as never,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-throw-cb', 'survivor-cb', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(true);
+      q.stop();
+    });
+
+    it('stands down when the user stops the turn during the interrupt', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const onResumeClear = mock(() => {});
+      const restartMock = mock(async () => {});
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        interrupt: async () => {
+          q.stop();
+          return { still_queued: ['uuid-stopped'] };
+        },
+        restart: restartMock,
+        onResumeClear,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(onResumeClear).toHaveBeenCalledTimes(1);
+      expect(restartMock).not.toHaveBeenCalled();
+      expect(enqueueSpy).not.toHaveBeenCalled();
+    });
+
+    it('stands down when the user stops the turn during survivor cancellation', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-stop-cancel', 'survivor-stop', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const restartMock = mock(async () => {});
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-stop-cancel'] }),
+        cancelAsyncMessage: async () => {
+          q.stop();
+          return true;
+        },
+        restart: restartMock,
+        onResumeClear,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-stop-cancel')).toBe(false);
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+      expect(restartMock).not.toHaveBeenCalled();
+      expect(onResumeClear).toHaveBeenCalledTimes(1);
+    });
+
+    it('holds delivery behind a gate while survivors are cancelled and requeued', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseCancel: () => void = () => {};
+      q.noteInternalCompactionSent({
+        id: 'uuid-g',
+        content: 'gated work',
+        internal: false,
+      } as never);
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-g'] }),
+        cancelAsyncMessage: async () => {
+          await new Promise<void>((resolve) => {
+            releaseCancel = resolve;
+          });
+          return true;
+        },
+      });
+
+      let delivered = false;
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      const consumer = (async () => {
+        for await (const entry of q.messageGenerator(testSessionId)) {
+          delivered = true;
+          entry.onSent();
+          break;
+        }
+      })();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(delivered).toBe(false);
+
+      releaseCancel();
+      await run;
+      await consumer;
+      expect(delivered).toBe(true);
       q.stop();
     });
   });
