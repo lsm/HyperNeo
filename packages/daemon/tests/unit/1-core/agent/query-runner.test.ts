@@ -3131,6 +3131,25 @@ describe('QueryRunner', () => {
       });
     });
 
+    it('cancels the terminal fence when cleanup begins during error publication', async () => {
+      let cleaningUp = false;
+      handleErrorSpy.mockImplementation(async () => {
+        cleaningUp = true;
+      });
+
+      const { outcome } = await runTerminalFailure('terminal query failure', {
+        isCleaningUp: () => cleaningUp,
+      });
+
+      expect(outcome).toBe('resolved');
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+      expect(setIdleSpy).not.toHaveBeenCalled();
+    });
+
     it('hands off cleanly when a successor starts during the finalizer idle', async () => {
       setIdleSpy.mockImplementation(async () => {
         if (setIdleSpy.mock.calls.length >= 2) {

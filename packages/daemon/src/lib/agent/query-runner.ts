@@ -1251,7 +1251,13 @@ export class QueryRunner {
         }
 
         if (!finalizer.skipCatchIdle) {
-          if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
+          if (this.ctx.getQueryGeneration() !== queryGeneration) {
+            return;
+          }
+          if (this.ctx.isCleaningUp()) {
+            if (terminalIdleArmed) {
+              stateManager.cancelTerminalIdleArm(owner);
+            }
             return;
           }
           await stateManager.setIdle({ owner });

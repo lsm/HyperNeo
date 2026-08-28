@@ -119,8 +119,6 @@ export interface SDKMessageHandlerContext {
 
   getQueryGeneration?(): number;
 
-  isCleaningUp?(): boolean;
-
   resetTaskNotificationRequery?(): void;
 
   bumpDeliveryTurnActivity?(): void;

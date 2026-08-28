@@ -3878,6 +3878,44 @@ describe('SDKMessageHandler', () => {
       expect(handleErrorSpy).toHaveBeenCalled();
     });
 
+    it('pins the circuit-breaker publishGuard to the tripped generation', async () => {
+      let currentGeneration = 1;
+      mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      mockContext.getQueryGeneration = () => currentGeneration;
+
+      const handlerWithQuery = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerWithQuery.handleMessage(
+          {
+            ...errorMessage,
+            uuid: `error-uuid-${i}`,
+          } as SDKMessage,
+          1
+        );
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      const guard = handleErrorSpy.mock.calls[0][6] as () => boolean;
+      expect(guard()).toBe(true);
+
+      currentGeneration = 999;
+      expect(guard()).toBe(false);
+    });
+
     it('should clear message queue when circuit breaker trips', async () => {
       mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
       mockContext.queryPromise = Promise.resolve();
