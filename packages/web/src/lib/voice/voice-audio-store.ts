@@ -85,21 +85,6 @@ function runTx<T>(
   );
 }
 
-function isVoiceRecordEntry(value: unknown): value is VoiceRecordEntry {
-  if (!value || typeof value !== 'object') return false;
-  const entry = value as Record<string, unknown>;
-  return (
-    typeof entry.id === 'string' &&
-    typeof entry.sessionId === 'string' &&
-    typeof entry.audioBase64 === 'string' &&
-    typeof entry.mimeType === 'string' &&
-    typeof entry.peakLevel === 'number' &&
-    Number.isFinite(entry.peakLevel) &&
-    typeof entry.createdAt === 'number' &&
-    Number.isFinite(entry.createdAt)
-  );
-}
-
 function readStore<T>(read: (store: IDBObjectStore) => IDBRequest<T>): Promise<T | undefined> {
   const container = { value: undefined as T | undefined };
   return runTx('readonly', (store) => {
@@ -111,17 +96,32 @@ function readStore<T>(read: (store: IDBObjectStore) => IDBRequest<T>): Promise<T
   }).then(() => container.value);
 }
 
+function isVoiceRecordEntry(value: unknown): value is VoiceRecordEntry {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.id === 'string' &&
+    typeof entry.sessionId === 'string' &&
+    typeof entry.audioBase64 === 'string' &&
+    typeof entry.mimeType === 'string' &&
+    (entry.hitDurationLimit === undefined || typeof entry.hitDurationLimit === 'boolean') &&
+    typeof entry.peakLevel === 'number' &&
+    Number.isFinite(entry.peakLevel) &&
+    typeof entry.createdAt === 'number' &&
+    Number.isFinite(entry.createdAt)
+  );
+}
+
 interface DoomPlan {
   keys: IDBValidKey[];
   ids: Set<string>;
   merged: VoiceRecordEntry[];
 }
 
-async function planDoom(): Promise<DoomPlan> {
+function planDoom(rows: unknown[]): DoomPlan {
   const keys: IDBValidKey[] = [];
   const ids = new Set<string>();
   const valid = new Map<string, VoiceRecordEntry>();
-  const rows = (await readStore((store) => store.getAll())) ?? [];
   for (const row of rows) {
     const key = (row as { id?: IDBValidKey } | null)?.id;
     if (key === undefined || key === null) continue;
@@ -149,23 +149,41 @@ async function planDoom(): Promise<DoomPlan> {
   return { keys, ids, merged };
 }
 
-export async function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
-  mirror.set(entry.id, entry);
-  tombstones.delete(entry.id);
-  const plan = await planDoom();
-  const selfDoomed = plan.ids.has(entry.id);
+function doomSideEffects(plan: DoomPlan): void {
   for (const id of plan.ids) {
     mirror.delete(id);
     tombstones.add(id);
   }
+}
+
+async function writeTx(
+  body: (store: IDBObjectStore, plan: DoomPlan) => void
+): Promise<DoomPlan | null> {
+  let plan: DoomPlan | null = null;
   const committed = await runTx('readwrite', (store) => {
-    for (const key of plan.keys) store.delete(key);
-    return selfDoomed ? null : store.put(entry);
+    const request = store.getAll();
+    request.onsuccess = () => {
+      plan = planDoom(request.result ?? []);
+      body(store, plan);
+    };
+    return request;
   });
-  if (!committed) return false;
+  return committed ? plan : null;
+}
+
+export async function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
+  mirror.set(entry.id, entry);
+  tombstones.delete(entry.id);
+  const plan = await writeTx((store, doomed) => {
+    doomSideEffects(doomed);
+    for (const key of doomed.keys) store.delete(key);
+    if (!doomed.ids.has(entry.id)) store.put(entry);
+  });
+  if (!plan) return false;
   for (const id of plan.ids) tombstones.delete(id);
-  if (!selfDoomed) mirror.delete(entry.id);
-  return !selfDoomed;
+  const stored = !plan.ids.has(entry.id);
+  if (stored) mirror.delete(entry.id);
+  return stored;
 }
 
 export async function getVoiceRecord(id: string): Promise<VoiceRecordEntry | null> {
@@ -178,7 +196,8 @@ export async function getVoiceRecord(id: string): Promise<VoiceRecordEntry | nul
 
 export async function listVoiceRecords(): Promise<VoiceRecordEntry[]> {
   const now = Date.now();
-  return (await planDoom()).merged.filter((entry) => now - entry.createdAt < MAX_AGE_MS);
+  const rows = (await readStore((store) => store.getAll())) ?? [];
+  return planDoom(rows).merged.filter((entry) => now - entry.createdAt < MAX_AGE_MS);
 }
 
 export async function deleteVoiceRecord(id: string): Promise<void> {
@@ -189,17 +208,11 @@ export async function deleteVoiceRecord(id: string): Promise<void> {
 }
 
 export async function pruneVoiceRecords(): Promise<void> {
-  const plan = await planDoom();
-  if (plan.keys.length === 0) return;
-  for (const id of plan.ids) {
-    mirror.delete(id);
-    tombstones.add(id);
-  }
-  const swept = await runTx('readwrite', (store) => {
-    for (const key of plan.keys) store.delete(key);
-    return null;
+  const plan = await writeTx((store, doomed) => {
+    doomSideEffects(doomed);
+    for (const key of doomed.keys) store.delete(key);
   });
-  if (swept) for (const id of plan.ids) tombstones.delete(id);
+  if (plan) for (const id of plan.ids) tombstones.delete(id);
 }
 
 export function resetVoiceAudioStore(): void {

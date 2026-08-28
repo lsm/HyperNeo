@@ -12,6 +12,7 @@ import {
 
 function createFactory({ abortReadWriteAfter }: { abortReadWriteAfter?: number } = {}) {
   const factory = new IDBFactory();
+  const txModes: string[] = [];
   let writeTxs = 0;
   const open = factory.open.bind(factory);
   factory.open = (...args) => {
@@ -21,6 +22,7 @@ function createFactory({ abortReadWriteAfter }: { abortReadWriteAfter?: number }
       const transaction = db.transaction.bind(db);
       db.transaction = (...targs) => {
         const tx = transaction(...targs);
+        txModes.push(targs[1]);
         if (targs[1] === 'readwrite') {
           writeTxs += 1;
           if (abortReadWriteAfter !== undefined && writeTxs > abortReadWriteAfter) {
@@ -32,6 +34,7 @@ function createFactory({ abortReadWriteAfter }: { abortReadWriteAfter?: number }
     });
     return request;
   };
+  factory.txModes = txModes;
   return factory;
 }
 
@@ -118,7 +121,14 @@ describe('voice audio record store', () => {
   it('rolls back eviction when the replacement write aborts at commit', async () => {
     globalThis.indexedDB = createFactory({ abortReadWriteAfter: 5 });
     for (let i = 0; i < 6; i++) await putVoiceRecord(makeEntry(`r${i}`, NOW + i));
-    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r1', 'r2', 'r3', 'r4', 'r5']);
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual([
+      'r0',
+      'r1',
+      'r2',
+      'r3',
+      'r4',
+      'r5',
+    ]);
     resetVoiceAudioStore();
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r0', 'r1', 'r2', 'r3', 'r4']);
   });
@@ -172,11 +182,28 @@ describe('voice audio record store', () => {
     expect(await getVoiceRecord('r1')).toBeNull();
   });
 
+  it('reads and evicts inside a single write transaction on put', async () => {
+    const factory = createFactory();
+    globalThis.indexedDB = factory;
+    factory.txModes.length = 0;
+    await putVoiceRecord(makeEntry('r1', NOW));
+    expect(factory.txModes).toEqual(['readwrite']);
+  });
+
   it('skips malformed durable rows and sweeps them on prune', async () => {
     const factory = createFactory();
     globalThis.indexedDB = factory;
     await putVoiceRecord(makeEntry('ok', NOW));
     await putVoiceRecord({ id: 'junk', sessionId: 's1', audioBase64: 'x' });
+    await putVoiceRecord({
+      id: 'flag',
+      sessionId: 's1',
+      audioBase64: 'x',
+      mimeType: 'audio/wav',
+      peakLevel: 0.5,
+      createdAt: NOW,
+      hitDurationLimit: 'false',
+    });
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['ok']);
     await pruneVoiceRecords();
     expect(await readDurableIds(factory)).toEqual(['ok']);
