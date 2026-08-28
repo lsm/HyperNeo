@@ -101,6 +101,7 @@ describe('SDKMessageHandler', () => {
   let hasCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
   let pruneSentPromptsSpy: ReturnType<typeof mock>;
   let acknowledgeCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
+  let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
   let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
   let bumpDeliveryTurnActivitySpy: ReturnType<typeof mock>;
@@ -209,6 +210,7 @@ describe('SDKMessageHandler', () => {
     hasCompactionsAwaitingBoundarySpy = mock(() => false);
     pruneSentPromptsSpy = mock(() => {});
     acknowledgeCompactionsAwaitingBoundarySpy = mock(() => {});
+    removePendingInternalCompactionsSpy = mock(() => 0);
     clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
       enqueue: enqueueMessageSpy,
@@ -227,6 +229,7 @@ describe('SDKMessageHandler', () => {
       isRunning: mock(() => true),
       pruneSentPrompts: pruneSentPromptsSpy,
       acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
+      removePendingInternalCompactions: removePendingInternalCompactionsSpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
       forgetSentPrompt: mock(() => {}),
       getSentPromptContent: mock(() => undefined),
@@ -3709,6 +3712,23 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(resumeSpy).toHaveBeenCalledTimes(1);
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(clearNonCompactionSentSinceBoundarySpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels queued daemon compactions superseded by an SDK compact boundary', async () => {
+      mockContext.queryObject = null;
+      removePendingInternalCompactionsSpy.mockImplementation(() => 1);
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(removePendingInternalCompactionsSpy).toHaveBeenCalledTimes(1);
       expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
       expect(clearNonCompactionSentSinceBoundarySpy).toHaveBeenCalledTimes(1);
     });

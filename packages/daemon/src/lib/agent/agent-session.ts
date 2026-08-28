@@ -39,6 +39,8 @@ const SESSION_RECONCILE_INTERVAL_MS = 60_000;
 
 const CLEAR_CONFIRM_TIMEOUT_MS = 45_000;
 
+const MID_TURN_USAGE_REFRESH_INTERVAL_MS = 10_000;
+
 export class ClearConversationCancelledError extends Error {
   constructor() {
     super('clearConversationContext cancelled by query teardown');
@@ -134,14 +136,20 @@ import {
   isSDKSessionStateChangedMessage,
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
-import { resolveModelAlias } from '../model-service.ts';
+import { getSessionModelInfo, resolveModelAlias } from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
 import { getProviderService } from '../provider-service.ts';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
 } from './ask-user-question-handler.ts';
+import {
+  contextBudgetThreshold,
+  decideContextBudgetCompaction,
+} from './context-budget-decision.ts';
 import { ContextTracker } from './context-tracker.ts';
+import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
+import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
 import {
   runDeliveryTurnAdmission,
   type DeliveryTurnAdmissionDeps,
@@ -196,7 +204,11 @@ import {
 import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
 import { QueryAttemptRegistry } from './query-attempt-token.ts';
-import { QueryOptionsBuilder, type QueryOptionsBuilderContext } from './query-options-builder.ts';
+import {
+  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
+  QueryOptionsBuilder,
+  type QueryOptionsBuilderContext,
+} from './query-options-builder.ts';
 import {
   type OriginalEnvVars,
   QueryRunner,
@@ -335,6 +347,9 @@ export class AgentSession
   private _isCleaningUp = false;
   private pendingResumeSessionAt: string | undefined;
   private pendingResumeAfterCompaction = false;
+  private midTurnBudgetCheckInFlight = false;
+  private lastMidTurnUsageRefreshAt = 0;
+  private lastMidTurnUsageRefreshKey = '';
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private reconcilerProvisioned = false;
   pendingRestartReason: 'settings.local.json' | null = null;
@@ -1508,6 +1523,133 @@ export class AgentSession
       `dropping pending post-compaction resume for session ${this.session.id} ` +
         `(no daemon compaction was enqueued)`
     );
+  }
+
+  async midTurnContextBudgetCheck(): Promise<void> {
+    if (this.midTurnBudgetCheckInFlight) return;
+    this.midTurnBudgetCheckInFlight = true;
+    try {
+      await this.runMidTurnContextBudgetCheck();
+    } finally {
+      this.midTurnBudgetCheckInFlight = false;
+    }
+  }
+
+  private async runMidTurnContextBudgetCheck(): Promise<void> {
+    const queryObject = this.queryObject;
+    if (!queryObject?.interrupt) return;
+    const providerId = this.session.config.provider;
+    if (!providerId) return;
+    const cancelAsyncMessage = queryObject.cancelAsyncMessage;
+    const opts: MidTurnBudgetInterruptOptions = {
+      sessionId: this.session.id,
+      providerId,
+      budgetKey: 0,
+      logger: this.logger,
+      interrupt: () => queryObject.interrupt(),
+      cancelAsyncMessage:
+        typeof cancelAsyncMessage === 'function' ? cancelAsyncMessage.bind(queryObject) : undefined,
+      restart: (options) => this.lifecycleManager.restart(options),
+      contextTracker: this.contextTracker,
+      onResumeArm: () => {
+        this.pendingResumeAfterCompaction = true;
+      },
+      onResumeClear: () => {
+        this.pendingResumeAfterCompaction = false;
+      },
+      onSurvivorRequeued: (uuid) => this.reopenDeliveryForRetry(uuid),
+      getDurableMessageContent: (uuid) =>
+        this.db.getSDKMessageRepo().getUserMessageContentByUuid(this.session.id, uuid) ?? undefined,
+    };
+    try {
+      await runMidTurnBudgetPipeline({
+        opts,
+        queue: this.messageQueue,
+        checkEligibility: () => {
+          if (this.pendingResumeAfterCompaction) return false;
+          const status = this.stateManager.getState().status;
+          if (status === 'waiting_for_input' || status === 'rate_limit_cooldown') return false;
+          if (this.isLimitRecoveryPending()) return false;
+          if (!this.messageQueue.isRunning()) return false;
+          if (providerId === 'acp') return false;
+          if (NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return false;
+          return true;
+        },
+        refreshUsage: () => this.refreshMidTurnContextInfo(queryObject),
+        decideCompaction: (info) => {
+          if (info.totalUsed <= 0) return false;
+          if (this.stateManager.getState().status !== 'processing') return false;
+          const configuredWindow = info.totalCapacity > 0 ? info.totalCapacity : undefined;
+          const budgetKey = contextBudgetThreshold(configuredWindow ?? 0, info.autoCompactPercent);
+          opts.budgetKey = budgetKey;
+          const decision = decideContextBudgetCompaction({
+            totalUsed: info.totalUsed,
+            configuredWindow,
+            autoCompactPercent: info.autoCompactPercent,
+            sdkAutoCompactEnabled: info.isAutoCompactEnabled,
+            sdkAutoCompactThreshold: info.sdkAutoCompactThreshold,
+            cooldownActive:
+              this.contextTracker.isCoolingDown(budgetKey) &&
+              !this.messageQueue.hasOutstandingInternalCompaction(),
+            compactingActive: this.stateManager.getIsCompacting(),
+          });
+          return decision.action === 'compact';
+        },
+      });
+    } finally {
+      this.messageQueue.releaseEarlyDeliveryGate();
+    }
+  }
+
+  private async refreshMidTurnContextInfo(queryObject: QueryLike): Promise<ContextInfo | null> {
+    const fenceModel = this.session.config.model;
+    const fenceProvider = this.session.config.provider;
+    const stale = this.contextTracker.getContextInfo();
+    const refreshKey = `${fenceModel}|${fenceProvider}`;
+    if (
+      stale &&
+      refreshKey === this.lastMidTurnUsageRefreshKey &&
+      Date.now() - this.lastMidTurnUsageRefreshAt < MID_TURN_USAGE_REFRESH_INTERVAL_MS
+    ) {
+      return stale;
+    }
+    try {
+      const modelInfo = await getSessionModelInfo(this.session);
+      if (
+        this.session.config.model !== fenceModel ||
+        this.session.config.provider !== fenceProvider
+      ) {
+        return null;
+      }
+      const info = await this.messageHandler
+        .getContextFetcher()
+        .fetch(queryObject, modelInfo ?? undefined);
+      if (
+        this.queryObject !== queryObject ||
+        this.session.config.model !== fenceModel ||
+        this.session.config.provider !== fenceProvider
+      ) {
+        return null;
+      }
+      if (!info) return stale;
+      this.lastMidTurnUsageRefreshAt = Date.now();
+      this.lastMidTurnUsageRefreshKey = refreshKey;
+      this.contextTracker.updateWithDetailedBreakdown(info);
+      return info;
+    } catch (error) {
+      this.logger.warn(
+        `mid-turn context usage refresh failed for session ${this.session.id}:`,
+        error
+      );
+      if (
+        this.queryObject !== queryObject ||
+        this.session.config.model !== fenceModel ||
+        this.session.config.provider !== fenceProvider
+      ) {
+        return null;
+      }
+      return stale;
+    }
   }
 
   incrementQueryGeneration(): number {
