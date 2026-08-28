@@ -233,9 +233,14 @@ export function mergePendingProviderSlices(
   return merged;
 }
 
+export interface ModelsDiscoveryOwner {
+  isLive(): boolean;
+}
+
 export async function getSupportedModelsFromQuery(
   queryObject: QueryLike | null,
-  cacheKey: string = 'global'
+  cacheKey: string = 'global',
+  owner?: ModelsDiscoveryOwner
 ): Promise<ModelInfo[]> {
   if (modelsCache.has(cacheKey)) {
     return modelsCache.get(cacheKey)!;
@@ -246,6 +251,7 @@ export async function getSupportedModelsFromQuery(
       const { getAnthropicModelsFromQuery } = await import('./providers/anthropic-provider.js');
       const models = await getAnthropicModelsFromQuery(queryObject);
       if (models.length > 0) {
+        if (owner && !owner.isLive()) return [];
         modelsCache.set(cacheKey, models);
         cacheTimestamps.set(cacheKey, Date.now());
         return models;

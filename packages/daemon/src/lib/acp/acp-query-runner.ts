@@ -735,6 +735,7 @@ export class AcpQueryRunner {
             this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
           }
         } catch (loadError) {
+          if (loadError instanceof Error && loadError.name === 'AbortError') throw loadError;
           try {
             const result = await acpClient.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
             if (attemptOwnsRun()) {
@@ -742,6 +743,9 @@ export class AcpQueryRunner {
               this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
             }
           } catch (resumeError) {
+            if (resumeError instanceof Error && resumeError.name === 'AbortError') {
+              throw resumeError;
+            }
             const loadMessage = loadError instanceof Error ? loadError.message : String(loadError);
             const resumeMessage =
               resumeError instanceof Error ? resumeError.message : String(resumeError);
@@ -769,7 +773,7 @@ export class AcpQueryRunner {
       restoreMessageEnqueuedHandler?.();
       this.clearStartupTimer();
 
-      await this.ctx.onModelsFetched().catch((error) => {
+      await this.ctx.onModelsFetched(queryGeneration).catch((error) => {
         logger.warn('Background fetch of models failed:', error);
       });
       assertActiveAcpStartup();

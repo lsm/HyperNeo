@@ -24,6 +24,7 @@ import {
   withSessionResetCoordination,
 } from '../../../../src/lib/agent/message-delivery';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service';
 import type { Database } from '../../../../src/storage/database';
 import {
   createTestDb,
@@ -3747,6 +3748,100 @@ describe('AgentSession', () => {
       expect(markApiSuccessSpy).toHaveBeenCalled();
       expect(resetSpy).toHaveBeenCalled();
       expect(setIdleSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('onModelsFetched', () => {
+    let mockSession: Session;
+    let mockDb: Database;
+    let mockMessageHub: MessageHub;
+    let mockInternalEventBus: InternalEventBus<any>;
+    let mockGetApiKey: () => Promise<string | null>;
+    let agentSession: AgentSession;
+
+    beforeEach(() => {
+      mockSession = {
+        id: 'test-session-id',
+        title: 'Test Session',
+        workspacePath: '/test/workspace',
+        createdAt: new Date().toISOString(),
+        lastActiveAt: new Date().toISOString(),
+        status: 'active',
+        config: {
+          model: 'claude-sonnet-4-20250514',
+          maxTokens: 8192,
+          temperature: 1.0,
+        },
+        metadata: {},
+      } as Session;
+
+      mockDb = {
+        getSession: mock(() => mockSession),
+        updateSession: mock(() => {}),
+      } as unknown as Database;
+
+      mockMessageHub = {} as unknown as MessageHub;
+
+      mockInternalEventBus = {
+        publish: mock(async () => {}),
+        publishAsync: mock(() => {}),
+        subscribe: mock((_: string, __: Function, ___: object) => () => {}),
+      } as unknown as InternalEventBus<any>;
+
+      mockGetApiKey = mock(async () => 'test-api-key');
+
+      agentSession = new AgentSession(
+        mockSession,
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey
+      );
+
+      setModelsCache(new Map());
+    });
+
+    it('skips model discovery entirely when the query generation is stale', async () => {
+      const supportedModels = mock(async () => [
+        { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet · Test' },
+      ]);
+      agentSession.queryObject = {
+        supportedModels,
+      } as unknown as AgentSession['queryObject'];
+      const staleGeneration = agentSession.getQueryGeneration();
+      agentSession.incrementQueryGeneration();
+
+      await agentSession.onModelsFetched(staleGeneration);
+
+      expect(supportedModels).not.toHaveBeenCalled();
+      expect(getModelsCache().get('test-session-id')).toBeUndefined();
+    });
+
+    it('caches discovered models when the query generation is current', async () => {
+      agentSession.queryObject = {
+        supportedModels: mock(async () => [
+          { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet · Test' },
+        ]),
+      } as unknown as AgentSession['queryObject'];
+      const currentGeneration = agentSession.incrementQueryGeneration();
+
+      await agentSession.onModelsFetched(currentGeneration);
+
+      expect(getModelsCache().get('test-session-id')?.length).toBe(1);
+    });
+
+    it('drops the cache write when the generation moves during discovery', async () => {
+      agentSession.queryObject = {
+        supportedModels: mock(async () => {
+          agentSession.incrementQueryGeneration();
+          return [{ value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet · Test' }];
+        }),
+      } as unknown as AgentSession['queryObject'];
+      const generation = agentSession.getQueryGeneration();
+
+      await agentSession.onModelsFetched(generation);
+
+      expect(getModelsCache().get('test-session-id')).toBeUndefined();
     });
   });
 

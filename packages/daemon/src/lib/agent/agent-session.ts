@@ -2159,11 +2159,24 @@ export class AgentSession
     await this.slashCommandManager.updateFromCommandsChanged(commands);
   }
 
-  async onModelsFetched(): Promise<void> {
+  async onModelsFetched(queryGeneration?: number): Promise<void> {
+    if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) {
+      this.logger.info(
+        `Skipping model discovery for superseded query generation ` +
+          `${queryGeneration} (current ${this.getQueryGeneration()}) in session ${this.session.id}`
+      );
+      return;
+    }
     if (!this.queryObject) return;
     try {
       const { getSupportedModelsFromQuery } = await import('../model-service.ts');
-      await getSupportedModelsFromQuery(this.queryObject, this.session.id);
+      await getSupportedModelsFromQuery(
+        this.queryObject,
+        this.session.id,
+        queryGeneration === undefined
+          ? undefined
+          : { isLive: () => this.getQueryGeneration() === queryGeneration }
+      );
     } catch (error) {
       this.logger.warn('Failed to fetch models from SDK:', error);
     }
