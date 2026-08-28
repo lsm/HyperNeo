@@ -1059,7 +1059,9 @@ describe('QueryRunner', () => {
       runner = createRunner();
       saveSDKMessageSpy.mockImplementation(() => false);
 
-      const published = await runner.displayErrorAsAssistantMessage('Unpersisted notice');
+      const published = await runner.displayErrorAsAssistantMessage('Unpersisted notice', {
+        markAsError: true,
+      });
 
       expect(published).toBe(false);
       expect(internalEventBusSpy).toHaveBeenCalledWith('session.error', {
@@ -1071,6 +1073,19 @@ describe('QueryRunner', () => {
           userMessage: 'Unpersisted notice',
         },
       });
+      expect(publishSpy).not.toHaveBeenCalled();
+    });
+
+    it('returns false without the terminal fallback for informational retry notices', async () => {
+      runner = createRunner();
+      saveSDKMessageSpy.mockImplementation(() => false);
+
+      const published = await runner.displayErrorAsAssistantMessage('Retrying attempt 1/3…', {
+        markAsError: false,
+      });
+
+      expect(published).toBe(false);
+      expect(internalEventBusSpy).not.toHaveBeenCalled();
       expect(publishSpy).not.toHaveBeenCalled();
     });
   });

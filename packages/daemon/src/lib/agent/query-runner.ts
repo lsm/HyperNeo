@@ -1935,11 +1935,13 @@ export class QueryRunner {
     } as unknown as SDKMessage;
 
     if (!db.saveSDKMessage(session.id, assistantMessage)) {
-      internalEventBus.publishAsync('session.error', {
-        sessionId: session.id,
-        error: text,
-        details: { category: ErrorCategory.SYSTEM, message: text, userMessage: text },
-      });
+      if (options?.markAsError) {
+        internalEventBus.publishAsync('session.error', {
+          sessionId: session.id,
+          error: text,
+          details: { category: ErrorCategory.SYSTEM, message: text, userMessage: text },
+        });
+      }
       return false;
     }
 

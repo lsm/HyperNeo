@@ -431,7 +431,8 @@ export class SDKMessageHandler {
         ErrorCategory.SYSTEM,
         userMessage,
         stateManager.getState(),
-        { circuitBreakerReason: reason }
+        { circuitBreakerReason: reason },
+        () => !this.isInvocationStale(tripGeneration)
       );
     } catch (error) {
       this.logger.error('Error handling circuit breaker trip:', error);

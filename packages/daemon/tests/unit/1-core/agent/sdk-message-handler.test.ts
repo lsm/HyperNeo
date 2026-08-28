@@ -4140,6 +4140,12 @@ describe('SDKMessageHandler', () => {
       expect(setIdleSpy).toHaveBeenCalledWith({
         owner: { queryGeneration: 3, turnToken: 0 },
       });
+
+      const publishGuard = handleErrorSpy.mock.calls[0][6];
+      expect(typeof publishGuard).toBe('function');
+      expect(publishGuard()).toBe(true);
+      mockContext.getQueryGeneration = () => 4;
+      expect(publishGuard()).toBe(false);
     });
 
     it('should publish a session.error fallback when the trip notice persist fails', async () => {
