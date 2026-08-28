@@ -235,7 +235,9 @@ export class AskUserQuestionHandler {
         `AskUserQuestion ${toolUseID}: superseded before the question could be published; ` +
           `dropping the stale question.asked event`
       );
-      this.trackResolvedQuestion(toolUseID, pendingQuestion, 'cancelled', []);
+      if (!sameIdSuccessorTookOver) {
+        this.trackResolvedQuestion(toolUseID, pendingQuestion, 'cancelled', []);
+      }
       resolvePending({
         behavior: 'deny',
         message:
