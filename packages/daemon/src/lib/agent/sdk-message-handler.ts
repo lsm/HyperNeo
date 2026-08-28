@@ -70,6 +70,23 @@ const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
 
 const DELIVERY_GATE_WINDOW_MS = 5000;
 
+const TURN_END_FLAG_KEYS = [
+  'suppressIdleOnNextResult',
+  'usesSessionStateChangedTurnEnd',
+  'expectsSessionStateIdleAfterResult',
+  'lastResultWasSuccess',
+  'clearAwaitingTrailingIdle',
+  'clearMessageInFlight',
+] as const satisfies ReadonlyArray<keyof TurnEndFlags>;
+
+function assignTurnEndFlag<K extends keyof TurnEndFlags>(
+  target: TurnEndFlags,
+  key: K,
+  value: TurnEndFlags[K]
+): void {
+  target[key] = value;
+}
+
 function boundedDeliveryGate(gate: Promise<void>, deadlineAt?: number): Promise<void> {
   const windowMs =
     deadlineAt === undefined ? DELIVERY_GATE_WINDOW_MS : Math.max(0, deadlineAt - Date.now());
@@ -389,6 +406,16 @@ export class SDKMessageHandler {
     this.lastResultWasSuccess = flags.lastResultWasSuccess;
     this.clearAwaitingTrailingIdle = flags.clearAwaitingTrailingIdle;
     this.clearMessageInFlight = flags.clearMessageInFlight;
+  }
+
+  private applyTurnEndFlagTurnover(before: TurnEndFlags, after: TurnEndFlags): void {
+    const live = this.currentTurnEndFlags();
+    for (const key of TURN_END_FLAG_KEYS) {
+      if (before[key] !== after[key]) {
+        assignTurnEndFlag(live, key, after[key]);
+      }
+    }
+    this.applyTurnEndFlags(live);
   }
 
   private turnEndQueryMode(): 'immediate' | 'manual' {
@@ -1079,14 +1106,15 @@ export class SDKMessageHandler {
         this.lastSdkErrorTag = null;
       }
 
+      const resultEventInput = (): TurnEndResultEvent => ({
+        isTopLevel: isTopLevelResult,
+        isSuccess: isSDKResultSuccess(message),
+        isLimitError: resultLimitError,
+        isLimitRecoveryEngaged: isTopLevelResult ? limitEngaged : null,
+        confirmsArmedClear: observesArmedClearResult,
+      });
       const turnEndPlan = isSDKResultMessage(message)
-        ? this.routeResultTurnEnd({
-            isTopLevel: isTopLevelResult,
-            isSuccess: isSDKResultSuccess(message),
-            isLimitError: resultLimitError,
-            isLimitRecoveryEngaged: isTopLevelResult ? limitEngaged : null,
-            confirmsArmedClear: observesArmedClearResult,
-          })
+        ? this.routeResultTurnEnd(resultEventInput())
         : null;
       if (turnEndPlan) {
         this.applyTurnEndFlags(turnEndPlan.nextFlags);
@@ -1148,7 +1176,10 @@ export class SDKMessageHandler {
       }
 
       let enforcedTurnEnd = false;
-      if (turnEndPlan?.earlySetIdle) {
+      const settlePlan = isSDKResultMessage(message)
+        ? this.routeResultTurnEnd(resultEventInput())
+        : null;
+      if (settlePlan?.earlySetIdle) {
         const compactingClear = this.clearStaleCompacting();
         await this.refreshContextUsage('turn-end', undefined, invocationGeneration, resultOwner);
         enforcedTurnEnd = true;
@@ -1572,7 +1603,7 @@ export class SDKMessageHandler {
         await this.finishTurn(turnEndPlan.allowQueueReplay, invocationGeneration);
         if (this.isInvocationStale(invocationGeneration)) return;
       }
-      this.applyTurnEndFlags(turnEndPlan.afterEffectsFlags);
+      this.applyTurnEndFlagTurnover(turnEndPlan.nextFlags, turnEndPlan.afterEffectsFlags);
       if (turnEndPlan.settleSuppressedWaiter === 'confirmed') {
         this.settleSuppressedResultWaiter('confirmed');
       }

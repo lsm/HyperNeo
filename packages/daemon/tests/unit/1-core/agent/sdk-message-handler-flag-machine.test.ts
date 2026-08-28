@@ -1978,6 +1978,35 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: false });
     });
+
+    it('a clear armed during the sdk.message publish suppresses the early settle (routed re-decision)', async () => {
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') {
+          handler.suppressIdleForNextResult();
+        }
+      });
+
+      await handler.handleMessage(successResult('publish-race-clear'));
+
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(replayCount()).toBe(0);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
+    });
+
+    it('a clear armed during the idle settle survives the flag turnover', async () => {
+      await handler.handleMessage(sessionState('running'));
+      await handler.handleMessage(successResult('idle-race-result'));
+      setIdleSpy.mockImplementation(async () => {
+        handler.suppressIdleForNextResult();
+      });
+
+      await handler.handleMessage(sessionState('idle'));
+
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(replayCount()).toBe(1);
+      expect(readFlags(handler)).toEqual({ ...resetFlags, suppressIdleOnNextResult: true });
+    });
   });
 
   describe('stale lastResultWasSuccess window (characterization)', () => {
