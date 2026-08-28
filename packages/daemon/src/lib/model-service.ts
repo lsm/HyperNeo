@@ -566,30 +566,6 @@ export function endpointMatchingPersistedDiscovered(
   return ctx.decision ?? [];
 }
 
-function savedEndpointPersistedModels(providerId: string, provider: Provider): ModelInfo[] | null {
-  if (!providerRepositoryRef) return null;
-  let hasSavedEndpoint = false;
-  try {
-    hasSavedEndpoint = !!providerRepositoryRef.getProviderByProviderId(providerId)?.baseUrl;
-  } catch {
-    return null;
-  }
-  if (!hasSavedEndpoint) return null;
-  const entries = endpointMatchingPersistedDiscovered(provider);
-  if (entries.length === 0) return null;
-  return entries.map((entry) => buildPersistedModel(provider, entry));
-}
-
-function rehydratePersistedDiscoveryOverlays(): void {
-  if (!providerRepositoryRef) return;
-  for (const provider of getProviderRegistry().getAll()) {
-    const models = savedEndpointPersistedModels(provider.id, provider);
-    if (models) {
-      pendingProviderSlices.set(pendingSliceKey('global', provider.id), models);
-    }
-  }
-}
-
 const PROVIDER_CATALOG_CACHE_TTL_MS = 10_000;
 
 export { bumpProviderCatalogEpoch, getProviderCatalogEpoch } from './providers/catalog-epoch.js';
@@ -764,17 +740,6 @@ async function loadProviderCatalogModels(
       return cached.models;
     }
     const epochAtFetch = getProviderCatalogEpoch();
-    const persistedSaved = savedEndpointPersistedModels(providerId, provider);
-    if (persistedSaved) {
-      providerCatalogCache.set(provider, {
-        models: persistedSaved,
-        at: Date.now(),
-        curatedStamp,
-        epoch: epochAtFetch,
-        discovered: true,
-      });
-      return persistedSaved;
-    }
     try {
       provider.clearModelCache?.();
       let timedOut = false;
@@ -1250,7 +1215,6 @@ export async function initializeModels(): Promise<void> {
     if ((cacheGeneration.get(cacheKey) ?? 0) !== generationAtStart) {
       return;
     }
-    rehydratePersistedDiscoveryOverlays();
     try {
       const result = await loadModelsFromProviders();
       const isCurrentGeneration = (cacheGeneration.get(cacheKey) ?? 0) === generationAtStart;

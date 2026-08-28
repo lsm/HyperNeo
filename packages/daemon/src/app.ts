@@ -414,10 +414,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     if (hasAnthropicAuth) {
       void import('./lib/model-service.ts')
-        .then(({ setProviderRepository, initializeModels }) => {
-          setProviderRepository(db.providers);
-          return initializeModels();
-        })
+        .then(({ initializeModels }) => initializeModels())
         .catch((err) => {
           logError('[Daemon] Background model initialization failed (non-fatal):', err);
         });

@@ -376,27 +376,11 @@ describe('Model Service', () => {
   });
 
   describe('setProviderRepository and endpointMatchingPersistedDiscovered', () => {
-    function makeRepo(configJson?: string, baseUrl?: string) {
+    function makeRepo(configJson?: string) {
       return {
         getProviderByProviderId: (providerId: string) =>
-          providerId === 'remote'
-            ? { id: 'record-1', providerId: 'remote', configJson, baseUrl }
-            : null,
+          providerId === 'remote' ? { id: 'record-1', providerId: 'remote', configJson } : null,
       } as unknown as Parameters<typeof setProviderRepository>[0];
-    }
-
-    function savedEndpointSliceModel(id: string): ModelInfo {
-      return {
-        id,
-        name: id,
-        alias: id,
-        family: 'remote',
-        provider: 'remote',
-        contextWindow: 128000,
-        description: `${id} discovered`,
-        releaseDate: '2026-01-01',
-        available: true,
-      };
     }
 
     function providerWithFingerprint(fingerprint: string) {
@@ -501,32 +485,6 @@ describe('Model Service', () => {
           },
         } as unknown as Provider)
       ).toEqual([]);
-    });
-
-    it('serves the persisted saved-endpoint catalog without calling getModels', async () => {
-      setProviderRepository(
-        makeRepo(
-          JSON.stringify({
-            discoveredModels: {
-              fingerprint: 'fp-1',
-              models: [{ id: 'saved-endpoint-model' }],
-            },
-          }),
-          'https://saved-endpoint.example'
-        )
-      );
-      const getModels = mock(async () => [savedEndpointSliceModel('default-endpoint-model')]);
-      const provider = {
-        id: 'remote',
-        isAvailable: () => true,
-        getModels,
-        getDiscoveryEndpointFingerprint: () => 'fp-1',
-      } as unknown as Provider;
-
-      const models = await getProviderCatalogModels('remote', provider);
-
-      expect(models.map((model) => model.id)).toEqual(['saved-endpoint-model']);
-      expect(getModels).not.toHaveBeenCalled();
     });
   });
 
@@ -6703,74 +6661,6 @@ describe('Model Service', () => {
       await refreshModels();
 
       expect(getAvailableModels('global').some((m) => m.provider === 'glm')).toBe(false);
-    });
-  });
-
-  describe('persisted saved-endpoint rehydration at initialization', () => {
-    function rehydrateSliceModel(id: string): ModelInfo {
-      return {
-        id,
-        name: id,
-        alias: id,
-        family: 'remote',
-        provider: 'remote',
-        contextWindow: 128000,
-        description: `${id} discovered`,
-        releaseDate: '2026-01-01',
-        available: true,
-      };
-    }
-
-    function makeSavedEndpointRepo(configJson: string, baseUrl?: string) {
-      return {
-        getProviderByProviderId: (providerId: string) =>
-          providerId === 'remote'
-            ? { id: 'record-1', providerId: 'remote', configJson, baseUrl }
-            : null,
-      } as unknown as Parameters<typeof setProviderRepository>[0];
-    }
-
-    const wrapperConfig = JSON.stringify({
-      discoveredModels: {
-        fingerprint: 'fp-1',
-        models: [{ id: 'saved-endpoint-model' }],
-      },
-    });
-
-    afterEach(() => {
-      setProviderRepository(null);
-    });
-
-    it('rehydrates persisted saved-endpoint overlays during initialization', async () => {
-      setProviderRepository(makeSavedEndpointRepo(wrapperConfig, 'https://saved-endpoint.example'));
-      getProviderRegistry().register({
-        id: 'remote',
-        isAvailable: () => true,
-        getModels: async () => [rehydrateSliceModel('default-endpoint-model')],
-        getDiscoveryEndpointFingerprint: () => 'fp-1',
-      } as unknown as Provider);
-
-      await initializeModels();
-
-      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
-      expect(ids).toContain('saved-endpoint-model');
-      expect(ids).not.toContain('default-endpoint-model');
-    });
-
-    it('does not rehydrate overlays for providers without a saved endpoint', async () => {
-      setProviderRepository(makeSavedEndpointRepo(wrapperConfig));
-      getProviderRegistry().register({
-        id: 'remote',
-        isAvailable: () => true,
-        getModels: async () => [rehydrateSliceModel('default-endpoint-model')],
-        getDiscoveryEndpointFingerprint: () => 'fp-1',
-      } as unknown as Provider);
-
-      await initializeModels();
-
-      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
-      expect(ids).toContain('default-endpoint-model');
-      expect(ids).not.toContain('saved-endpoint-model');
     });
   });
 });
