@@ -41,6 +41,16 @@
       "addedAt": "2026-08-23",
       "expiresAt": "2026-11-21",
       "issueUrl": "https://github.com/lsm/HyperNeo/issues/2849"
+    },
+    {
+      "id": "daemon-online-session-title-job-subsequent-messages",
+      "suite": "daemon-online",
+      "path": "packages/daemon/tests/online/lifecycle/session-title-job.test.ts",
+      "namePattern": "should not enqueue title job for subsequent messages",
+      "reason": "Known intermittent 60s timeout under load: failed All-Tests-Pass 3x on PR #3221 (heads 2cceb225fb, 2474e537e9, d266eb1915) with zero diff overlap, and a sibling PR failed the identical test in the same minute; dev passed cleanly on bc9235f40f.",
+      "addedAt": "2026-08-28",
+      "expiresAt": "2026-11-26",
+      "issueUrl": "https://github.com/lsm/HyperNeo/issues/3226"
     }
   ]
 }
