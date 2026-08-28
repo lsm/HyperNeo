@@ -129,7 +129,6 @@ function planDoom(rows: unknown[]): DoomPlan {
       valid.set(key as string, row);
     } else {
       keys.push(key);
-      ids.add(key as string);
     }
   }
   for (const entry of mirror.values()) {
@@ -149,6 +148,10 @@ function planDoom(rows: unknown[]): DoomPlan {
   return { keys, ids, merged };
 }
 
+function pruneMirrorOnly(): void {
+  for (const id of planDoom([]).ids) mirror.delete(id);
+}
+
 async function writeTx(
   body: (store: IDBObjectStore, plan: DoomPlan) => void
 ): Promise<DoomPlan | null> {
@@ -161,6 +164,7 @@ async function writeTx(
     };
     return request;
   });
+  if (!committed && !(await openDatabase())) pruneMirrorOnly();
   return committed ? plan : null;
 }
 
@@ -172,9 +176,9 @@ export async function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> 
     if (!doomed.ids.has(entry.id)) store.put(entry);
   });
   if (!plan) return false;
-  for (const id of plan.ids) {
-    mirror.delete(id);
-    tombstones.delete(id);
+  for (const id of plan.ids) mirror.delete(id);
+  for (const key of plan.keys) {
+    if (typeof key === 'string') tombstones.delete(key);
   }
   const stored = !plan.ids.has(entry.id);
   if (stored) mirror.delete(entry.id);
@@ -207,9 +211,9 @@ export async function pruneVoiceRecords(): Promise<void> {
     for (const key of doomed.keys) store.delete(key);
   });
   if (!plan) return;
-  for (const id of plan.ids) {
-    mirror.delete(id);
-    tombstones.delete(id);
+  for (const id of plan.ids) mirror.delete(id);
+  for (const key of plan.keys) {
+    if (typeof key === 'string') tombstones.delete(key);
   }
 }
 

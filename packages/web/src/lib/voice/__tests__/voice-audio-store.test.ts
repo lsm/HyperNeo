@@ -209,6 +209,22 @@ describe('voice audio record store', () => {
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r2']);
   });
 
+  it('caps the in-memory mirror while durable storage is unavailable', async () => {
+    globalThis.indexedDB = createFailingOpenFactory();
+    for (let i = 0; i < 7; i++)
+      expect(await putVoiceRecord(makeEntry(`r${i}`, NOW + i))).toBe(false);
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r2', 'r3', 'r4', 'r5', 'r6']);
+  });
+
+  it('lets a valid put replace a malformed durable row with the same id', async () => {
+    const factory = createFactory();
+    globalThis.indexedDB = factory;
+    await putVoiceRecord({ id: 'x', sessionId: 's1', audioBase64: 'junk' });
+    expect(await putVoiceRecord(makeEntry('x', NOW))).toBe(true);
+    resetVoiceAudioStore();
+    expect((await getVoiceRecord('x'))?.audioBase64).toBe('wav-bytes-x');
+  });
+
   it('reports a put as non-durable when the transaction aborts but keeps the entry', async () => {
     globalThis.indexedDB = createFactory({ abortReadWriteAfter: 0 });
     expect(await putVoiceRecord(makeEntry('r1', NOW))).toBe(false);
