@@ -967,7 +967,6 @@ export class AcpQueryRunner {
       (terminalManager as AcpTerminalManager | null)?.dispose();
       await (proxyBridge as AcpMcpProxyBridge | null)?.close();
       proxyBridge = null;
-      this.ctx.attemptTokens.invalidate(attemptToken);
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
       if (isStaleQuery && client) {

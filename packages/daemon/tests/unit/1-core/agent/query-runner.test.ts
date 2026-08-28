@@ -194,7 +194,10 @@ describe('QueryRunner', () => {
       info: mock(() => {}),
     } as unknown as Logger;
 
-    buildSpy = mock(async () => ({ model: 'claude-sonnet-4-20250514' }));
+    buildSpy = mock(async (overrides?: { canUseTool?: CanUseTool }) => ({
+      model: 'claude-sonnet-4-20250514',
+      canUseTool: overrides?.canUseTool,
+    }));
     addSessionStateOptionsSpy = mock((options: unknown) => options);
     setCanUseToolSpy = mock(() => {});
     setAskUserQuestionHookSpy = mock(() => {});
@@ -574,11 +577,16 @@ describe('QueryRunner', () => {
           },
         };
         buildSpy
-          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
-          .mockResolvedValueOnce({
+          .mockImplementationOnce(async (overrides?: { canUseTool?: CanUseTool }) => ({
+            model: 'claude-sonnet-4-20250514',
+            mcpServers: {},
+            canUseTool: overrides?.canUseTool,
+          }))
+          .mockImplementationOnce(async (overrides?: { canUseTool?: CanUseTool }) => ({
             model: 'claude-sonnet-4-20250514',
             mcpServers: repairedServers,
-          });
+            canUseTool: overrides?.canUseTool,
+          }));
         stopAfterRebuiltOptions();
         const onMissingSpaceChatMcpServers = mock(async () => {
           mockSession.config.mcpServers =
@@ -595,6 +603,11 @@ describe('QueryRunner', () => {
         ]);
         expect(buildSpy).toHaveBeenCalledTimes(2);
         expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
+        const buildCalls = buildSpy.mock.calls as unknown as Array<
+          [{ askUserQuestionHook?: HookCallback; canUseTool?: CanUseTool }?]
+        >;
+        expect(buildCalls[1]?.[0]?.canUseTool).toBe(buildCalls[0]?.[0]?.canUseTool);
+        expect(buildCalls[1]?.[0]?.canUseTool).toBeDefined();
       });
     });
 

@@ -825,7 +825,10 @@ export class QueryRunner {
             );
           }
 
-          queryOptions = await optionsBuilder.build({ askUserQuestionHook: attemptHook });
+          queryOptions = await optionsBuilder.build({
+            askUserQuestionHook: attemptHook,
+            canUseTool: queryOptions.canUseTool,
+          });
           queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
           const repairedServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
           logger.info(
@@ -1435,7 +1438,10 @@ export class QueryRunner {
 
     if (this.ctx.onMissingSpaceChatMcpServers) {
       await this.ctx.onMissingSpaceChatMcpServers(session.id, missingServers);
-      const rebuilt = await this.ctx.optionsBuilder.build({ askUserQuestionHook });
+      const rebuilt = await this.ctx.optionsBuilder.build({
+        askUserQuestionHook,
+        canUseTool: queryOptions.canUseTool,
+      });
       const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
       const repairedServerNames = Object.keys(repairedOptions.mcpServers ?? {});
       const stillMissing = REQUIRED_SPACE_CHAT_MCP_SERVERS.filter(
@@ -1498,7 +1504,10 @@ export class QueryRunner {
 
     if (this.ctx.onMissingMemberSpaceMcpServers) {
       await this.ctx.onMissingMemberSpaceMcpServers(session.id, missingServers);
-      const rebuilt = await this.ctx.optionsBuilder.build({ askUserQuestionHook });
+      const rebuilt = await this.ctx.optionsBuilder.build({
+        askUserQuestionHook,
+        canUseTool: queryOptions.canUseTool,
+      });
       const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
       const stillMissing = missingMcpServers(
         repairedOptions.mcpServers as Record<string, unknown> | undefined,
