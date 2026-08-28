@@ -720,4 +720,77 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       'uuid-batch-throw',
     ]);
   });
+
+  it('declines recovery when the batch narrowing is not applied', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    const narrowSpy = mock(() => false);
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: (sessionId: string, uuid: string) => string | null;
+          markDeliveryRetryableByUuid: () => string | null;
+          getDeliveryContent: (
+            sessionId: string,
+            uuid: string
+          ) => { content: string; sendStatus: string } | null;
+        };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-narrow-fail' ? 'kickoff-text' : null,
+      markDeliveryRetryableByUuid: () => null,
+      getDeliveryContent: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-narrow-fail'
+          ? { content: 'kickoff-text', sendStatus: 'submitted' }
+          : { content: 'member-text', sendStatus: 'deferred' },
+    });
+    (
+      session.db as unknown as {
+        getJobQueueRepo: () => {
+          getActiveDeliveryBatchUuids: () => string[] | null;
+          narrowActiveDeliveryBatchUuids: () => boolean;
+        };
+      }
+    ).getJobQueueRepo = () => ({
+      getActiveDeliveryBatchUuids: () => ['uuid-narrow-fail', 'uuid-member-live'],
+      narrowActiveDeliveryBatchUuids: narrowSpy,
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-narrow-fail'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-narrow-fail')).toBe(false);
+    expect(narrowSpy).toHaveBeenCalledWith(session.session.id, 'uuid-narrow-fail', [
+      'uuid-narrow-fail',
+    ]);
+  });
+
+  it('aborts the restart when a user stop lands during the usage refresh', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.usageMock.mockImplementation(async () => {
+      session.messageQueue.noteUserInterrupt();
+      return makeUsageResponse();
+    });
+    session.messageQueue.noteInternalCompactionSent({
+      id: 'uuid-refresh-stop',
+      content: 'refresh stop survivor',
+      internal: false,
+    } as never);
+    harness.cancelMock.mockImplementation(async () => false);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-refresh-stop'] }));
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    spyOn(session.lifecycleManager, 'restart').mockImplementation(async (options) => {
+      await options?.beforeStart?.();
+    });
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+    expect(session.messageQueue.hasPendingOrClaimed('uuid-refresh-stop')).toBe(false);
+  });
 });

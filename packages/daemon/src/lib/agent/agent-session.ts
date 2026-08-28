@@ -1540,6 +1540,7 @@ export class AgentSession
     if (!queryObject?.interrupt) return;
     const providerId = this.session.config.provider;
     if (!providerId) return;
+    this.messageQueue.noteBudgetCycleStarted();
     const cancelAsyncMessage = queryObject.cancelAsyncMessage;
     const opts: MidTurnBudgetInterruptOptions = {
       sessionId: this.session.id,
@@ -1570,15 +1571,11 @@ export class AgentSession
             const rebuilt = this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids);
             const admitted = rebuilt.admittedUuids ?? [];
             if (!admitted.includes(uuid)) {
-              this.db
-                .getJobQueueRepo?.()
-                ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, [uuid]);
+              if (!this.narrowRecoveredDeliveryBatch(uuid, [uuid])) return undefined;
               return kickoff;
             }
             if (admitted.length < batchUuids.length) {
-              this.db
-                .getJobQueueRepo?.()
-                ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, admitted);
+              if (!this.narrowRecoveredDeliveryBatch(uuid, admitted)) return undefined;
             }
             return rebuilt.content;
           }
@@ -1588,17 +1585,7 @@ export class AgentSession
               `failed; falling back to the recovered kickoff content:`,
             error
           );
-          try {
-            this.db
-              .getJobQueueRepo?.()
-              ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, [uuid]);
-          } catch (narrowError) {
-            this.logger.warn(
-              `detaching the failed batch for evicted survivor ${uuid} in session ` +
-                `${this.session.id} failed:`,
-              narrowError
-            );
-          }
+          if (!this.narrowRecoveredDeliveryBatch(uuid, [uuid])) return undefined;
         }
         return kickoff;
       },
@@ -3156,6 +3143,29 @@ export class AgentSession
     expected: string | MessageContent[]
   ): boolean {
     return JSON.stringify(queued) === JSON.stringify(expected);
+  }
+
+  private narrowRecoveredDeliveryBatch(uuid: string, admitted: string[]): boolean {
+    try {
+      const narrowed =
+        this.db
+          .getJobQueueRepo?.()
+          ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, admitted) === true;
+      if (!narrowed) {
+        this.logger.warn(
+          `narrowing the delivery batch for evicted survivor ${uuid} in session ` +
+            `${this.session.id} was not applied; declining the recovery`
+        );
+      }
+      return narrowed;
+    } catch (error) {
+      this.logger.warn(
+        `narrowing the delivery batch for evicted survivor ${uuid} in session ` +
+          `${this.session.id} failed:`,
+        error
+      );
+      return false;
+    }
   }
 
   private rebuildBatchDeliveryContent(

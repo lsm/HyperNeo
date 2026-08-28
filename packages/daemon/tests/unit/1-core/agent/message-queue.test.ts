@@ -3231,6 +3231,45 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('includes late survivors restored during the restart in its cleanup scope', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-late-scope',
+        content: 'late scope survivor',
+        internal: false,
+      } as never);
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      let releaseRestart: () => void = () => {};
+      const restartHang = new Promise<void>((resolve) => {
+        releaseRestart = resolve;
+      });
+      const opts = makeInterruptOpts({
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => false,
+        restart: async (options) => {
+          q.stop();
+          await options?.beforeStart?.();
+          await restartHang;
+        },
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      releaseInterrupt({ still_queued: ['uuid-late-scope'] });
+      await tick(50);
+      q.noteUserInterrupt();
+      releaseRestart();
+      await run;
+      await tick(50);
+
+      expect(q.hasPendingOrClaimed('uuid-late-scope')).toBe(false);
+      q.stop();
+    }, 15_000);
+
     it('retains yield stamps for outstanding messages past the retention cap', async () => {
       const q = new MessageQueue();
       q.start();

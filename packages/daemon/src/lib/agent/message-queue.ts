@@ -111,7 +111,9 @@ export class MessageQueue {
   private cycleStoodDown: boolean = false;
   private cycleArmClearEpoch: number = 0;
   private cycleArmUserInterruptEpoch: number = 0;
-  private cycleRequeuedIds: string[] = [];
+  private budgetCycleClearEpoch: number = 0;
+  private budgetCycleUserInterruptEpoch: number = 0;
+  private requeuedByCycle: WeakMap<MidTurnBudgetInterruptOptions, string[]> = new WeakMap();
   private recoveryRestartChain: Promise<void> = Promise.resolve();
   private lastYieldGenerations: Map<string, { generation: number; stopEpoch: number }> = new Map();
   private evictedYieldEpochs: Set<string> = new Set();
@@ -802,12 +804,16 @@ export class MessageQueue {
     return null;
   }
 
+  noteBudgetCycleStarted(): void {
+    this.budgetCycleClearEpoch = this.clearEpoch;
+    this.budgetCycleUserInterruptEpoch = this.userInterruptEpoch;
+  }
+
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
     this.internalRestartFailed = false;
     this.cycleStoodDown = false;
-    this.cycleArmClearEpoch = this.clearEpoch;
-    this.cycleArmUserInterruptEpoch = this.userInterruptEpoch;
-    this.cycleRequeuedIds = [];
+    this.cycleArmClearEpoch = this.budgetCycleClearEpoch;
+    this.cycleArmUserInterruptEpoch = this.budgetCycleUserInterruptEpoch;
     this.promptPhaseBoundarySeq = this.midTurnBoundarySeq;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
@@ -1042,8 +1048,13 @@ export class MessageQueue {
   }
 
   requeueInterruptSurvivors(opts: MidTurnBudgetInterruptOptions, uuids: string[]): void {
+    let requeuedIds = this.requeuedByCycle.get(opts);
+    if (!requeuedIds) {
+      requeuedIds = [];
+      this.requeuedByCycle.set(opts, requeuedIds);
+    }
     for (let index = uuids.length - 1; index >= 0; index--) {
-      this.cycleRequeuedIds.push(uuids[index]);
+      requeuedIds.push(uuids[index]);
       this.requeueInterruptSurvivor(opts, uuids[index]);
     }
   }
@@ -1133,9 +1144,7 @@ export class MessageQueue {
     });
     void previousChain.catch(() => {}).then(() => signalStarted());
     try {
-      await this.runSerializedSurvivorTeardownWithRestart(opts, startGate, releaseChainOnce, [
-        ...this.cycleRequeuedIds,
-      ]);
+      await this.runSerializedSurvivorTeardownWithRestart(opts, startGate, releaseChainOnce);
     } catch (error) {
       releaseChainOnce();
       throw error;
@@ -1145,10 +1154,10 @@ export class MessageQueue {
   private async runSerializedSurvivorTeardownWithRestart(
     opts: MidTurnBudgetInterruptOptions,
     startGate: Promise<void>,
-    releaseChain: () => void,
-    recoveredIds: string[]
+    releaseChain: () => void
   ): Promise<void> {
     await startGate;
+    const recoveredIds = this.requeuedByCycle.get(opts) ?? [];
     let resolveDeliveryGate: (() => void) | undefined;
     const deliveryGate = new Promise<void>((resolve) => {
       resolveDeliveryGate = resolve;
