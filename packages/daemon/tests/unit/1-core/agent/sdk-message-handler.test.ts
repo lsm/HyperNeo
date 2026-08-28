@@ -231,6 +231,7 @@ describe('SDKMessageHandler', () => {
       acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
       removePendingInternalCompactions: removePendingInternalCompactionsSpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
+      noteBoundaryCompleted: mock(() => {}),
       forgetSentPrompt: mock(() => {}),
       getSentPromptContent: mock(() => undefined),
     } as unknown as MessageQueue;
