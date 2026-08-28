@@ -3035,6 +3035,45 @@ describe('MessageQueue', () => {
       expect(order).toEqual(['first-start', 'first-end', 'second-start', 'second-end']);
     });
 
+    it('holds the recovery restart chain past the race timeout until the restart settles', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const order: string[] = [];
+      let releaseFirst: () => void = () => {};
+      const firstHang = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const firstOpts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-chain-1'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async () => {
+          order.push('first-start');
+          await firstHang;
+          order.push('first-end');
+        },
+      });
+      const secondOpts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-chain-2'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async () => {
+          order.push('second-start');
+          order.push('second-end');
+        },
+      });
+
+      const first = q.runMidTurnBudgetInterrupt(firstOpts);
+      await tick(30);
+      const second = q.runMidTurnBudgetInterrupt(secondOpts);
+      await tick(5_400);
+
+      expect(order).toEqual(['first-start']);
+
+      releaseFirst();
+      await Promise.all([first, second]);
+      await tick(100);
+      expect(order).toEqual(['first-start', 'first-end', 'second-start', 'second-end']);
+    }, 15_000);
+
     it('retains yield stamps for outstanding messages past the retention cap', async () => {
       const q = new MessageQueue();
       q.start();

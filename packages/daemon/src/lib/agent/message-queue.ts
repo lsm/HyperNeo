@@ -1088,17 +1088,31 @@ export class MessageQueue {
     this.recoveryRestartChain = new Promise<void>((resolve) => {
       releaseChain = resolve;
     });
-    await previousChain.catch(() => {});
-    try {
-      await this.runSerializedSurvivorTeardownWithRestart(opts);
-    } finally {
+    let chainReleased = false;
+    const releaseChainOnce = () => {
+      if (chainReleased) return;
+      chainReleased = true;
       releaseChain();
+    };
+    let signalStarted: () => void = () => {};
+    const startGate = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    void previousChain.catch(() => {}).then(() => signalStarted());
+    try {
+      await this.runSerializedSurvivorTeardownWithRestart(opts, startGate, releaseChainOnce);
+    } catch (error) {
+      releaseChainOnce();
+      throw error;
     }
   }
 
   private async runSerializedSurvivorTeardownWithRestart(
-    opts: MidTurnBudgetInterruptOptions
+    opts: MidTurnBudgetInterruptOptions,
+    startGate: Promise<void>,
+    releaseChain: () => void
   ): Promise<void> {
+    await startGate;
     let resolveDeliveryGate: (() => void) | undefined;
     const deliveryGate = new Promise<void>((resolve) => {
       resolveDeliveryGate = resolve;
@@ -1208,6 +1222,7 @@ export class MessageQueue {
           resolveDeliveryGate?.();
         }
       });
+    void restart.then(() => releaseChain());
     await Promise.race([
       restart,
       new Promise<void>((resolve) => {
