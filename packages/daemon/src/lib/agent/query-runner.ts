@@ -1,7 +1,9 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import type {
+  CanUseTool,
   HookCallback,
   Options,
+  PermissionResult,
   SpawnedProcess,
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -543,23 +545,83 @@ export class QueryRunner {
   }
 
   private createAttemptBoundPreToolUseHook(attemptToken: QueryAttemptToken): HookCallback {
-    const hook = this.ctx.askUserQuestionHandler.createPreToolUseHook();
+    const hook = this.ctx.askUserQuestionHandler.createPreToolUseHook(attemptToken);
     return async (input, toolUseID, options) => {
-      if (attemptToken.isLive()) return hook(input, toolUseID, options);
+      if (!attemptToken.isLive()) {
+        const { session, logger } = this.ctx;
+        logger.warn(
+          `PreToolUse hook: denying callback from superseded query attempt ` +
+            `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
+        );
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse' as const,
+            permissionDecision: 'deny' as const,
+            permissionDecisionReason:
+              'The query attempt that issued this tool call was superseded by an automatic retry ' +
+              'or a replacement query.',
+          },
+        };
+      }
+      const result = await hook(input, toolUseID, options);
+      if (
+        !attemptToken.isLive() &&
+        typeof result === 'object' &&
+        result !== null &&
+        'hookSpecificOutput' in result &&
+        result.hookSpecificOutput &&
+        (result.hookSpecificOutput as { hookEventName?: string }).hookEventName === 'PreToolUse' &&
+        (result.hookSpecificOutput as { permissionDecision?: string }).permissionDecision ===
+          'allow'
+      ) {
+        const { session, logger } = this.ctx;
+        logger.warn(
+          `PreToolUse hook: denying result from superseded query attempt ` +
+            `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
+        );
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse' as const,
+            permissionDecision: 'deny' as const,
+            permissionDecisionReason:
+              'The query attempt that issued this tool call was superseded by an automatic retry ' +
+              'or a replacement query.',
+          },
+        };
+      }
+      return result;
+    };
+  }
+
+  private createAttemptBoundCanUseTool(attemptToken: QueryAttemptToken): CanUseTool {
+    const canUseTool = this.ctx.askUserQuestionHandler.createCanUseToolCallback(attemptToken);
+    return async (toolName, input, options) => {
+      if (!attemptToken.isLive()) {
+        const { session, logger } = this.ctx;
+        logger.warn(
+          `CanUseTool: denying callback from superseded query attempt ` +
+            `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
+        );
+        return {
+          behavior: 'deny',
+          message:
+            'The query attempt that issued this tool call was superseded by an automatic retry ' +
+            'or a replacement query.',
+        } as PermissionResult;
+      }
+      const result = await canUseTool(toolName, input, options);
+      if (result === null || attemptToken.isLive()) return result;
       const { session, logger } = this.ctx;
       logger.warn(
-        `PreToolUse hook: denying callback from superseded query attempt ` +
+        `CanUseTool: denying result from superseded query attempt ` +
           `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
       );
       return {
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse' as const,
-          permissionDecision: 'deny' as const,
-          permissionDecisionReason:
-            'The query attempt that issued this tool call was superseded by an automatic retry ' +
-            'or a replacement query.',
-        },
-      };
+        behavior: 'deny',
+        message:
+          'The query attempt that issued this tool call was superseded by an automatic retry ' +
+          'or a replacement query.',
+      } as PermissionResult;
     };
   }
 
@@ -658,8 +720,10 @@ export class QueryRunner {
         await fs.mkdir(session.workspacePath, { recursive: true });
       }
 
-      optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
-      let queryOptions = await optionsBuilder.build({ askUserQuestionHook: attemptHook });
+      let queryOptions = await optionsBuilder.build({
+        askUserQuestionHook: attemptHook,
+        canUseTool: this.createAttemptBoundCanUseTool(attemptToken),
+      });
 
       if (provider?.setSessionThinkingConfig) {
         const effectiveThinkingLevel = optionsBuilder.getEffectiveThinkingLevel();

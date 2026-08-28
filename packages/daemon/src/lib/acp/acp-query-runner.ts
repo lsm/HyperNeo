@@ -511,8 +511,6 @@ export class AcpQueryRunner {
             }
             assertActiveAcpStartup();
 
-            const canUseTool = this.ctx.askUserQuestionHandler.createCanUseToolCallback();
-            optionsBuilder.setCanUseTool(canUseTool);
             let queryOptions = await optionsBuilder.build();
             assertActiveAcpStartup();
             queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
@@ -689,7 +687,16 @@ export class AcpQueryRunner {
               onProcessSpawn: (proc) =>
                 this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
               onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
-              onPermissionRequest: allowAcpPermissionRequest,
+              onPermissionRequest: async (params: AcpPermissionRequest) => {
+                if (!attemptToken.isLive()) {
+                  logger.warn(
+                    `ACP onPermissionRequest: cancelling request from superseded query attempt ` +
+                      `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
+                  );
+                  return { outcome: { outcome: 'cancelled' } } as AcpPermissionResponseResult;
+                }
+                return allowAcpPermissionRequest(params);
+              },
               ...hostCallbacks,
             });
             assertActiveAcpStartup();
@@ -960,6 +967,7 @@ export class AcpQueryRunner {
       (terminalManager as AcpTerminalManager | null)?.dispose();
       await (proxyBridge as AcpMcpProxyBridge | null)?.close();
       proxyBridge = null;
+      this.ctx.attemptTokens.invalidate(attemptToken);
       const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
       if (isStaleQuery && client) {
@@ -1045,6 +1053,8 @@ export class AcpQueryRunner {
     if (this.ctx.getQueryGeneration() !== queryGeneration) {
       return;
     }
+
+    this.ctx.attemptTokens.invalidateCurrent();
 
     const errorMessage = String(error);
     const isAbortError = error instanceof Error && error.name === 'AbortError';

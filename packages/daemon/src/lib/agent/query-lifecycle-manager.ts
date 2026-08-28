@@ -9,6 +9,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Database } from '../../storage/database.ts';
 import type { ErrorManager } from '../error-manager.ts';
 import { ErrorCategory } from '../error-manager.ts';
+import type { QueryAttemptRegistry } from './query-attempt-token.ts';
 import { Logger } from '../logger.ts';
 import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -65,6 +66,8 @@ export interface QueryLifecycleManagerContext {
   clearModelsCache(): Promise<void>;
   isRateLimitEpisodeSuperseded?(generation: number): boolean;
   getQueryGeneration?(): number;
+
+  attemptTokens?: QueryAttemptRegistry;
 }
 
 export class QueryLifecycleManager {
@@ -187,6 +190,8 @@ export class QueryLifecycleManager {
   async stop(options?: { timeoutMs?: number; catchQueryErrors?: boolean }): Promise<void> {
     const { timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS, catchQueryErrors = false } = options ?? {};
     const { messageQueue } = this.ctx;
+
+    this.ctx.attemptTokens?.invalidateCurrent();
 
     this.ctx.messageHandler.cancelSuppressedResultWait();
 
@@ -327,6 +332,8 @@ export class QueryLifecycleManager {
       stateManager,
       messageHandler,
     } = this.ctx;
+
+    this.ctx.attemptTokens?.invalidateCurrent();
 
     this.ctx.messageHandler.cancelSuppressedResultWait();
     this.ctx.resetTaskNotificationRequery?.();

@@ -1276,13 +1276,17 @@ describe('QueryOptionsBuilder', () => {
     });
   });
 
-  describe('setCanUseTool', () => {
-    it('should set canUseTool callback', async () => {
+  describe('canUseTool build override', () => {
+    it('should carry a per-build canUseTool callback into the built options', async () => {
       const callback = mock(async () => ({ behavior: 'allow' as const }));
-      builder.setCanUseTool(callback);
 
-      const options = await builder.build();
+      const options = await builder.build({ canUseTool: callback });
       expect(options.canUseTool).toBe(callback);
+    });
+
+    it('should leave canUseTool unset when no override is passed', async () => {
+      const options = await builder.build();
+      expect(options.canUseTool).toBeUndefined();
     });
   });
 
@@ -2649,14 +2653,13 @@ describe('QueryOptionsBuilder', () => {
       expect(options.canUseTool).toBeUndefined();
     });
 
-    it('should preserve existing canUseTool when coordinatorMode is on', async () => {
+    it('should preserve a per-build canUseTool override when coordinatorMode is on', async () => {
       mockSession.config.coordinatorMode = true;
 
       const originalCallback = async () => {
         return { behavior: 'allow' as const };
       };
-      builder.setCanUseTool(originalCallback);
-      const options = await builder.build();
+      const options = await builder.build({ canUseTool: originalCallback });
 
       expect(options.canUseTool).toBe(originalCallback);
     });

@@ -5,6 +5,7 @@ import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
+import type { QueryAttemptRegistry } from './query-attempt-token.ts';
 import { withSessionLock } from './message-delivery.ts';
 
 const DEFAULT_INTERRUPT_CONTROL_TIMEOUT_MS = 2000;
@@ -36,6 +37,8 @@ export interface InterruptHandlerContext {
   getSdkCapabilities?(): ReadonlySet<string>;
 
   onInterruptRequested?(): void;
+
+  attemptTokens?: QueryAttemptRegistry;
 }
 
 export class InterruptHandler {
@@ -56,6 +59,8 @@ export class InterruptHandler {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
     this.ctx.onInterruptRequested?.();
+
+    this.ctx.attemptTokens?.invalidateCurrent();
 
     const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
     const interruptQueryGeneration = this.ctx.getQueryGeneration?.();
