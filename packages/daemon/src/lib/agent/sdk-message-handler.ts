@@ -404,6 +404,13 @@ export class SDKMessageHandler {
         await lifecycleManager.stop({ catchQueryErrors: true });
       }
 
+      if (this.isInvocationStale(tripGeneration)) {
+        this.logger.info(
+          'Skipping circuit breaker teardown notices: the tripped query was superseded during the lifecycle stop.'
+        );
+        return;
+      }
+
       await this.settleIdleForInvocation(tripGeneration);
 
       await this.displayErrorAsAssistantMessage(
@@ -827,10 +834,9 @@ export class SDKMessageHandler {
       return;
     }
 
-    const circuitBreakerTripped = await this.circuitBreaker.checkMessage(
-      message,
-      invocationGeneration ?? undefined
-    );
+    const circuitBreakerTripped = this.isInvocationStale(invocationGeneration)
+      ? false
+      : await this.circuitBreaker.checkMessage(message, invocationGeneration ?? undefined);
     if (circuitBreakerTripped) {
       return;
     }
