@@ -1356,10 +1356,11 @@ describe('AcpQueryRunner', () => {
   });
 
   test('auto-allows ACP permission requests without prompting the user', async () => {
-    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture();
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions, canUseTool } = createRunnerFixture({ client });
 
     await runner.start();
-    await ctx.queryPromise;
+    await promptStarted;
 
     const result = await constructorOptions[0].onPermissionRequest?.({
       sessionId: 'acp-session-1',
@@ -1376,6 +1377,37 @@ describe('AcpQueryRunner', () => {
 
     expect(result).toEqual({ outcome: { outcome: 'selected', optionId: 'allow-once' } });
     expect(canUseTool).not.toHaveBeenCalled();
+
+    releasePrompt();
+    await ctx.queryPromise;
+  });
+
+  test('cancels ACP permission requests from a superseded query attempt', async () => {
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx, constructorOptions } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptStarted;
+
+    ctx.attemptTokens.allocate();
+
+    const result = await constructorOptions[0].onPermissionRequest?.({
+      sessionId: 'acp-session-1',
+      toolCall: {
+        toolCallId: 'tool-1',
+        title: 'Edit file',
+        kind: 'edit',
+      },
+      options: [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+        { optionId: 'reject-once', name: 'Reject once', kind: 'reject_once' },
+      ],
+    });
+
+    expect(result).toEqual({ outcome: { outcome: 'cancelled' } });
+
+    releasePrompt();
+    await ctx.queryPromise;
   });
 
   test('rejects filesystem callbacks that escape the workspace', async () => {
@@ -2985,5 +3017,19 @@ describe('AcpQueryRunner', () => {
     expect(constructorOptions).toHaveLength(0);
     expect(ctx.originalEnvVars).toEqual({});
     expect(ctx.queryPromise).toBe(stalePromise);
+  });
+
+  test('does not install canUseTool on the options builder (fence lives on onPermissionRequest)', async () => {
+    const { client, promptStarted, releasePrompt } = createHeldPromptClient();
+    const { runner, ctx } = createRunnerFixture({ client });
+
+    await runner.start();
+    await promptStarted;
+
+    const setCanUseTool = ctx.optionsBuilder.setCanUseTool as ReturnType<typeof mock>;
+    expect(setCanUseTool).toHaveBeenCalledTimes(0);
+
+    releasePrompt();
+    await ctx.queryPromise;
   });
 });

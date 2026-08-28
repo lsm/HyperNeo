@@ -1209,6 +1209,174 @@ describe('AskUserQuestionHandler', () => {
       expect(newerResult.hookSpecificOutput.permissionDecision).toBe('allow');
     });
 
+    it('drops the question.asked event when a question is superseded while setWaitingForInput is in flight', async () => {
+      let releaseFirst: (() => void) | undefined;
+      const setWaitingForInput = mock(async (pendingQuestion: PendingUserQuestion) => {
+        currentState = { status: 'waiting_for_input', pendingQuestion };
+        if (pendingQuestion.toolUseId === 'superseded-in-flight') {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      });
+
+      const h = new AskUserQuestionHandler({
+        ...mockContext,
+        stateManager: {
+          ...mockStateManager,
+          setWaitingForInput,
+        } as unknown as ProcessingStateManager,
+      });
+
+      const input = (text: string) => ({
+        questions: [
+          {
+            question: text,
+            header: text,
+            options: [{ label: 'A', description: 'A' }],
+            multiSelect: false,
+          },
+        ],
+      });
+      const firstPromise = h.createCanUseToolCallback()('AskUserQuestion', input('Old?'), {
+        signal: new AbortController().signal,
+        toolUseID: 'superseded-in-flight',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      h.createCanUseToolCallback()('AskUserQuestion', input('New?'), {
+        signal: new AbortController().signal,
+        toolUseID: 'winner-in-flight',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      if (currentState.status === 'waiting_for_input') {
+        expect(currentState.pendingQuestion.toolUseId).toBe('winner-in-flight');
+      }
+
+      const askedEvents = (
+        emitSpy.mock.calls as [string, { pendingQuestion: PendingUserQuestion }][]
+      ).filter(([event]) => event === 'question.asked');
+      expect(askedEvents.map(([_, payload]) => payload.pendingQuestion.toolUseId)).toEqual([
+        'winner-in-flight',
+      ]);
+
+      releaseFirst?.();
+
+      const firstResult = await firstPromise;
+      expect(firstResult.behavior).toBe('deny');
+      expect((firstResult as { message: string }).message).toMatch(/Superseded/);
+      if (currentState.status === 'waiting_for_input') {
+        expect(currentState.pendingQuestion.toolUseId).toBe('winner-in-flight');
+      }
+    });
+
+    it('preserves a response that arrives while setWaitingForInput is still publishing', async () => {
+      let releaseFirst: (() => void) | undefined;
+      const setWaitingForInput = mock(async (pendingQuestion: PendingUserQuestion) => {
+        currentState = { status: 'waiting_for_input', pendingQuestion };
+        if (pendingQuestion.toolUseId === 'response-in-flight') {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      });
+      const setProcessing = mock(async (messageId: string) => {
+        currentState = { status: 'processing', messageId, phase: 'streaming' };
+      });
+
+      const h = new AskUserQuestionHandler({
+        ...mockContext,
+        stateManager: {
+          ...mockStateManager,
+          setWaitingForInput,
+          setProcessing,
+        } as unknown as ProcessingStateManager,
+      });
+
+      const input = {
+        questions: [
+          {
+            question: 'In flight?',
+            header: 'In flight?',
+            options: [{ label: 'A', description: 'A' }],
+            multiSelect: false,
+          },
+        ],
+      };
+      const resultPromise = h.createCanUseToolCallback()('AskUserQuestion', input, {
+        signal: new AbortController().signal,
+        toolUseID: 'response-in-flight',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await h.handleQuestionResponse('response-in-flight', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+
+      releaseFirst?.();
+
+      const result = await resultPromise;
+      expect(result.behavior).toBe('allow');
+
+      const askedEvents = (
+        emitSpy.mock.calls as [string, { pendingQuestion: PendingUserQuestion }][]
+      ).filter(([event]) => event === 'question.asked');
+      expect(askedEvents).toHaveLength(0);
+    });
+
+    it('settles dead-attempt submits and cancels with deny without mutating the successor state', async () => {
+      const input = {
+        questions: [
+          {
+            question: 'Still live?',
+            header: 'Still live?',
+            options: [{ label: 'A', description: 'A' }],
+            multiSelect: false,
+          },
+        ],
+      };
+      const ask = (h: AskUserQuestionHandler, token: { isLive(): boolean }, toolUseId: string) =>
+        h.createCanUseToolCallback(token)('AskUserQuestion', input, {
+          signal: new AbortController().signal,
+          toolUseID: toolUseId,
+        });
+
+      const submitHandler = new AskUserQuestionHandler(mockContext);
+      let submitLive = true;
+      const submitPromise = ask(submitHandler, { isLive: () => submitLive }, 'attempt-dead-submit');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      submitLive = false;
+      await submitHandler.handleQuestionResponse('attempt-dead-submit', [
+        { questionIndex: 0, selectedLabels: ['A'] },
+      ]);
+      expect(setProcessingSpy).not.toHaveBeenCalled();
+      expect(currentState.status).toBe('idle');
+      const submitResult = await submitPromise;
+      expect(submitResult.behavior).toBe('deny');
+      expect((submitResult as { message: string }).message).toContain('superseded');
+      await expect(
+        submitHandler.handleQuestionResponse('attempt-dead-submit', [
+          { questionIndex: 0, selectedLabels: ['A'] },
+        ])
+      ).rejects.toThrow('agent is not waiting for input');
+
+      const cancelHandler = new AskUserQuestionHandler(mockContext);
+      let cancelLive = true;
+      const cancelPromise = ask(cancelHandler, { isLive: () => cancelLive }, 'attempt-dead-cancel');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      cancelLive = false;
+      await cancelHandler.handleQuestionCancel('attempt-dead-cancel');
+      expect(setProcessingSpy).not.toHaveBeenCalled();
+      expect(currentState.status).toBe('idle');
+      const cancelResult = await cancelPromise;
+      expect(cancelResult.behavior).toBe('deny');
+      expect((cancelResult as { message: string }).message).toContain('User cancelled');
+      await expect(cancelHandler.handleQuestionCancel('attempt-dead-cancel')).rejects.toThrow(
+        'agent is not waiting for input'
+      );
+    });
+
     it("patches the history record to cancelled when a superseded question's submit is dropped", async () => {
       const hook = handler.createPreToolUseHook();
       const first = hook(hookInput('AskUserQuestion', makeInput('First?'), 'hook-8a'), 'hook-8a', {

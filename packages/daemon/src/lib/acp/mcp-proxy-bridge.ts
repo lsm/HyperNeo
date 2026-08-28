@@ -56,10 +56,13 @@ export class AcpMcpProxyBridge {
   private readonly toolsPathByServer = new Map<string, string>();
   private toolsByName = new Map<string, ProxiedTool>();
 
-  constructor(mcpServers: Record<string, McpServerConfig>) {
+  private readonly ownsExecution?: () => boolean;
+
+  constructor(mcpServers: Record<string, McpServerConfig>, ownsExecution?: () => boolean) {
     const uniqueName = randomUUID();
     this.socketPath = join(tmpdir(), `hyperneo-acp-proxy-${uniqueName}.sock`);
     this.toolsPath = join(tmpdir(), `hyperneo-acp-proxy-tools-${uniqueName}.json`);
+    this.ownsExecution = ownsExecution;
     this.tools = this.collectTools(mcpServers);
   }
 
@@ -172,8 +175,30 @@ export class AcpMcpProxyBridge {
     if (!tool) {
       throw new Error(`Unknown proxied MCP tool ${request.serverName}.${request.toolName}`);
     }
+    if (this.ownsExecution && !this.ownsExecution()) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: 'The query attempt that issued this tool call was superseded by an automatic retry or a replacement query.',
+          },
+        ],
+      };
+    }
     try {
       const args = await parseToolArgs(tool.inputSchema, request.arguments ?? {});
+      if (this.ownsExecution && !this.ownsExecution()) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: 'The query attempt that issued this tool call was superseded by an automatic retry or a replacement query.',
+            },
+          ],
+        };
+      }
       return await tool.handler(args);
     } catch (error) {
       return {

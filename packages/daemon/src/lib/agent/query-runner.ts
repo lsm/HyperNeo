@@ -1,7 +1,9 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import type {
+  CanUseTool,
   HookCallback,
   Options,
+  PermissionResult,
   SpawnedProcess,
   SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -543,23 +545,83 @@ export class QueryRunner {
   }
 
   private createAttemptBoundPreToolUseHook(attemptToken: QueryAttemptToken): HookCallback {
-    const hook = this.ctx.askUserQuestionHandler.createPreToolUseHook();
+    const hook = this.ctx.askUserQuestionHandler.createPreToolUseHook(attemptToken);
     return async (input, toolUseID, options) => {
-      if (attemptToken.isLive()) return hook(input, toolUseID, options);
+      if (!attemptToken.isLive()) {
+        const { session, logger } = this.ctx;
+        logger.warn(
+          `PreToolUse hook: denying callback from superseded query attempt ` +
+            `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
+        );
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse' as const,
+            permissionDecision: 'deny' as const,
+            permissionDecisionReason:
+              'The query attempt that issued this tool call was superseded by an automatic retry ' +
+              'or a replacement query.',
+          },
+        };
+      }
+      const result = await hook(input, toolUseID, options);
+      if (
+        !attemptToken.isLive() &&
+        typeof result === 'object' &&
+        result !== null &&
+        'hookSpecificOutput' in result &&
+        result.hookSpecificOutput &&
+        (result.hookSpecificOutput as { hookEventName?: string }).hookEventName === 'PreToolUse' &&
+        (result.hookSpecificOutput as { permissionDecision?: string }).permissionDecision ===
+          'allow'
+      ) {
+        const { session, logger } = this.ctx;
+        logger.warn(
+          `PreToolUse hook: denying result from superseded query attempt ` +
+            `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
+        );
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse' as const,
+            permissionDecision: 'deny' as const,
+            permissionDecisionReason:
+              'The query attempt that issued this tool call was superseded by an automatic retry ' +
+              'or a replacement query.',
+          },
+        };
+      }
+      return result;
+    };
+  }
+
+  private createAttemptBoundCanUseTool(attemptToken: QueryAttemptToken): CanUseTool {
+    const canUseTool = this.ctx.askUserQuestionHandler.createCanUseToolCallback(attemptToken);
+    return async (toolName, input, options) => {
+      if (!attemptToken.isLive()) {
+        const { session, logger } = this.ctx;
+        logger.warn(
+          `CanUseTool: denying callback from superseded query attempt ` +
+            `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
+        );
+        return {
+          behavior: 'deny',
+          message:
+            'The query attempt that issued this tool call was superseded by an automatic retry ' +
+            'or a replacement query.',
+        } as PermissionResult;
+      }
+      const result = await canUseTool(toolName, input, options);
+      if (result === null || attemptToken.isLive()) return result;
       const { session, logger } = this.ctx;
       logger.warn(
-        `PreToolUse hook: denying callback from superseded query attempt ` +
+        `CanUseTool: denying result from superseded query attempt ` +
           `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
       );
       return {
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse' as const,
-          permissionDecision: 'deny' as const,
-          permissionDecisionReason:
-            'The query attempt that issued this tool call was superseded by an automatic retry ' +
-            'or a replacement query.',
-        },
-      };
+        behavior: 'deny',
+        message:
+          'The query attempt that issued this tool call was superseded by an automatic retry ' +
+          'or a replacement query.',
+      } as PermissionResult;
     };
   }
 
@@ -658,8 +720,10 @@ export class QueryRunner {
         await fs.mkdir(session.workspacePath, { recursive: true });
       }
 
-      optionsBuilder.setCanUseTool(this.ctx.askUserQuestionHandler.createCanUseToolCallback());
-      let queryOptions = await optionsBuilder.build({ askUserQuestionHook: attemptHook });
+      let queryOptions = await optionsBuilder.build({
+        askUserQuestionHook: attemptHook,
+        canUseTool: this.createAttemptBoundCanUseTool(attemptToken),
+      });
 
       if (provider?.setSessionThinkingConfig) {
         const effectiveThinkingLevel = optionsBuilder.getEffectiveThinkingLevel();
@@ -761,7 +825,10 @@ export class QueryRunner {
             );
           }
 
-          queryOptions = await optionsBuilder.build({ askUserQuestionHook: attemptHook });
+          queryOptions = await optionsBuilder.build({
+            askUserQuestionHook: attemptHook,
+            canUseTool: queryOptions.canUseTool,
+          });
           queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
           const repairedServerNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
           logger.info(
@@ -846,7 +913,8 @@ export class QueryRunner {
       if (
         runAbortController.signal.aborted ||
         this.ctx.isCleaningUp() ||
-        this.ctx.getQueryGeneration() !== queryGeneration
+        this.ctx.getQueryGeneration() !== queryGeneration ||
+        !attemptToken.isLive()
       ) {
         releaseStartupPermit('aborted_while_queued');
         const gateAbort = new Error('SDK startup gate: query aborted while awaiting admission');
@@ -971,6 +1039,8 @@ export class QueryRunner {
       }
     } catch (error) {
       logger.error('Streaming query error:', error);
+
+      this.ctx.attemptTokens.invalidate(attemptToken);
 
       releaseStartupPermit('query_error');
 
@@ -1371,7 +1441,10 @@ export class QueryRunner {
 
     if (this.ctx.onMissingSpaceChatMcpServers) {
       await this.ctx.onMissingSpaceChatMcpServers(session.id, missingServers);
-      const rebuilt = await this.ctx.optionsBuilder.build({ askUserQuestionHook });
+      const rebuilt = await this.ctx.optionsBuilder.build({
+        askUserQuestionHook,
+        canUseTool: queryOptions.canUseTool,
+      });
       const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
       const repairedServerNames = Object.keys(repairedOptions.mcpServers ?? {});
       const stillMissing = REQUIRED_SPACE_CHAT_MCP_SERVERS.filter(
@@ -1434,7 +1507,10 @@ export class QueryRunner {
 
     if (this.ctx.onMissingMemberSpaceMcpServers) {
       await this.ctx.onMissingMemberSpaceMcpServers(session.id, missingServers);
-      const rebuilt = await this.ctx.optionsBuilder.build({ askUserQuestionHook });
+      const rebuilt = await this.ctx.optionsBuilder.build({
+        askUserQuestionHook,
+        canUseTool: queryOptions.canUseTool,
+      });
       const repairedOptions = this.ctx.optionsBuilder.addSessionStateOptions(rebuilt);
       const stillMissing = missingMcpServers(
         repairedOptions.mcpServers as Record<string, unknown> | undefined,

@@ -45,10 +45,13 @@ interface PendingQuestionResolver {
   promise: Promise<PermissionResult>;
   resolve: (result: PermissionResult) => void;
   reject: (error: Error) => void;
+  attemptToken: { isLive(): boolean };
 }
 
 export const QUESTION_CANCEL_MESSAGE =
   'User cancelled: The user chose not to answer this question. Please proceed accordingly or ask a different question if needed.';
+
+const ATTEMPT_TOKEN_ALWAYS_LIVE: { isLive(): boolean } = { isLive: () => true };
 
 const MAX_QUESTION_STRING_LENGTH = 2000;
 
@@ -75,7 +78,8 @@ export class AskUserQuestionHandler {
   private async interceptAskUserQuestion(
     toolUseID: string,
     input: Record<string, unknown>,
-    viaChannel: 'can_use_tool' | 'pre_tool_use_hook'
+    viaChannel: 'can_use_tool' | 'pre_tool_use_hook',
+    attemptToken: { isLive(): boolean }
   ): Promise<PermissionResult> {
     const { session, stateManager, internalEventBus } = this.ctx;
 
@@ -150,8 +154,18 @@ export class AskUserQuestionHandler {
       askedAt: Date.now(),
     };
 
-    if (this.pendingResolver?.toolUseId === toolUseID) {
+    if (
+      this.pendingResolver?.toolUseId === toolUseID &&
+      this.pendingResolver.attemptToken === attemptToken
+    ) {
       return this.pendingResolver.promise;
+    }
+
+    if (this.pendingResolver?.toolUseId === toolUseID) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseID}: same-ID re-entry from a new query attempt; ` +
+          `superseding the stale resolver from the predecessor attempt`
+      );
     }
 
     let resolvePending!: (result: PermissionResult) => void;
@@ -179,7 +193,9 @@ export class AskUserQuestionHandler {
       promise: pending,
       resolve: resolvePending,
       reject: rejectPending,
+      attemptToken,
     };
+    const installedResolver = this.pendingResolver;
 
     try {
       await stateManager.setWaitingForInput(pendingQuestion);
@@ -188,10 +204,52 @@ export class AskUserQuestionHandler {
         behavior: 'deny',
         message: 'AskUserQuestion failed to surface; the question was not answered.',
       });
-      if (this.pendingResolver?.toolUseId === toolUseID) {
+      if (this.pendingResolver === installedResolver) {
         this.pendingResolver = null;
       }
       throw err;
+    }
+
+    const stateAfterSetWaiting = stateManager.getState();
+    const inFlightResponse =
+      stateAfterSetWaiting.status === 'processing' && stateAfterSetWaiting.messageId === toolUseID;
+
+    if (inFlightResponse) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseID}: response arrived while waiting state was still publishing; ` +
+          `letting the response handler resolve the question`
+      );
+      return pending;
+    }
+
+    const stillCurrent =
+      attemptToken.isLive() &&
+      this.pendingResolver === installedResolver &&
+      stateAfterSetWaiting.status === 'waiting_for_input' &&
+      stateAfterSetWaiting.pendingQuestion.toolUseId === toolUseID;
+
+    if (!stillCurrent) {
+      const sameIdSuccessorTookOver =
+        this.pendingResolver !== null && this.pendingResolver !== installedResolver;
+      this.logger.warn(
+        `AskUserQuestion ${toolUseID}: superseded before the question could be published; ` +
+          `dropping the stale question.asked event`
+      );
+      if (!sameIdSuccessorTookOver) {
+        this.trackResolvedQuestion(toolUseID, pendingQuestion, 'cancelled', []);
+      }
+      resolvePending({
+        behavior: 'deny',
+        message:
+          'Superseded by a newer AskUserQuestion call; that question is now awaiting the user.',
+      });
+      if (this.pendingResolver === installedResolver) {
+        this.pendingResolver = null;
+      }
+      if (!sameIdSuccessorTookOver) {
+        await this.rollbackStaleWaitingState(toolUseID);
+      }
+      return pending;
     }
 
     try {
@@ -210,7 +268,8 @@ export class AskUserQuestionHandler {
     return pending;
   }
 
-  createPreToolUseHook(): HookCallback {
+  createPreToolUseHook(attemptToken?: { isLive(): boolean }): HookCallback {
+    const token = attemptToken ?? ATTEMPT_TOKEN_ALWAYS_LIVE;
     return async (input) => {
       const preInput = input as PreToolUseHookInput;
       if (preInput.hook_event_name !== 'PreToolUse' || preInput.tool_name !== 'AskUserQuestion') {
@@ -220,7 +279,8 @@ export class AskUserQuestionHandler {
       const result = await this.interceptAskUserQuestion(
         preInput.tool_use_id,
         (preInput.tool_input ?? {}) as Record<string, unknown>,
-        'pre_tool_use_hook'
+        'pre_tool_use_hook',
+        token
       );
 
       if (result.behavior === 'allow') {
@@ -242,10 +302,11 @@ export class AskUserQuestionHandler {
     };
   }
 
-  createCanUseToolCallback(): CanUseTool {
+  createCanUseToolCallback(attemptToken?: { isLive(): boolean }): CanUseTool {
+    const token = attemptToken ?? ATTEMPT_TOKEN_ALWAYS_LIVE;
     return async (
-      toolName: string,
-      input: Record<string, unknown>,
+      toolName,
+      input,
       options: {
         signal: AbortSignal;
         toolUseID: string;
@@ -266,7 +327,7 @@ export class AskUserQuestionHandler {
         return { behavior: 'allow', updatedInput: input };
       }
 
-      return this.interceptAskUserQuestion(options.toolUseID, input, 'can_use_tool');
+      return this.interceptAskUserQuestion(options.toolUseID, input, 'can_use_tool', token);
     };
   }
 
@@ -293,6 +354,24 @@ export class AskUserQuestionHandler {
 
     const resolver = this.pendingResolver;
     const resolverMatches = !!resolver && resolver.toolUseId === toolUseId;
+
+    if (resolverMatches && resolver && !resolver.attemptToken.isLive()) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseId}: submit for a superseded attempt; settling the stale ` +
+          `callback with deny so the closed query can finish without mutating the ` +
+          `successor's state`
+      );
+      this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', responses);
+      this.pendingResolver = null;
+      resolver.resolve({
+        behavior: 'deny',
+        message:
+          'The query attempt that asked this question was superseded; the answer could not ' +
+          'be delivered.',
+      });
+      await this.rollbackStaleWaitingState(toolUseId);
+      return;
+    }
 
     const answers = this.buildAnswers(
       pendingQuestion,
@@ -338,6 +417,22 @@ export class AskUserQuestionHandler {
         }
         return;
       }
+      if (!resolver.attemptToken.isLive()) {
+        this.logger.warn(
+          `AskUserQuestion ${toolUseId}: attempt superseded during the processing transition; ` +
+            `settling the stale callback with deny instead of allowing`
+        );
+        this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', responses);
+        this.pendingResolver = null;
+        resolver.resolve({
+          behavior: 'deny',
+          message:
+            'The query attempt that asked this question was superseded; the answer could not ' +
+            'be delivered.',
+        });
+        await this.rollbackStaleWaitingState(toolUseId);
+        return;
+      }
       this.pendingResolver = null;
       resolver.resolve({
         behavior: 'allow',
@@ -381,9 +476,25 @@ export class AskUserQuestionHandler {
 
     const pendingQuestion = currentState.pendingQuestion;
 
+    const resolver = this.pendingResolver;
+    if (resolver && resolver.toolUseId === toolUseId && !resolver.attemptToken.isLive()) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseId}: cancel for a superseded attempt; settling the stale ` +
+          `callback with deny so the closed query can finish without mutating the ` +
+          `successor's state`
+      );
+      this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', []);
+      this.pendingResolver = null;
+      resolver.resolve({
+        behavior: 'deny',
+        message: QUESTION_CANCEL_MESSAGE,
+      });
+      await this.rollbackStaleWaitingState(toolUseId);
+      return;
+    }
+
     this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', [], 'user_cancelled');
 
-    const resolver = this.pendingResolver;
     if (resolver && resolver.toolUseId === toolUseId) {
       try {
         await stateManager.setProcessing(toolUseId, 'streaming');
@@ -417,6 +528,19 @@ export class AskUserQuestionHandler {
             throw restoreError;
           }
         }
+        return;
+      }
+      if (!resolver.attemptToken.isLive()) {
+        this.logger.warn(
+          `AskUserQuestion ${toolUseId}: attempt superseded during the processing transition; ` +
+            `settling the stale cancel with deny`
+        );
+        this.pendingResolver = null;
+        resolver.resolve({
+          behavior: 'deny',
+          message: QUESTION_CANCEL_MESSAGE,
+        });
+        await this.rollbackStaleWaitingState(toolUseId);
         return;
       }
       this.pendingResolver = null;
@@ -509,6 +633,28 @@ export class AskUserQuestionHandler {
       }
     }
     return answers;
+  }
+
+  private async rollbackStaleWaitingState(toolUseId: string): Promise<void> {
+    const { stateManager } = this.ctx;
+    const currentState = stateManager.getState();
+    const stateOwnedByQuestion =
+      (currentState.status === 'waiting_for_input' &&
+        currentState.pendingQuestion.toolUseId === toolUseId) ||
+      (currentState.status === 'processing' && currentState.messageId === toolUseId);
+    if (stateOwnedByQuestion) {
+      try {
+        await stateManager.setIdle({
+          suppressIdleCallback: true,
+          suppressDeliveryWaiters: true,
+        });
+      } catch (idleError) {
+        this.logger.warn(
+          `AskUserQuestion ${toolUseId}: failed to roll back stale waiting state`,
+          idleError
+        );
+      }
+    }
   }
 
   private async deliverQueuedAnswer(

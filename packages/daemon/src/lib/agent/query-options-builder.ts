@@ -273,7 +273,6 @@ export function getBuiltFallbackIdentity(session: object): BuiltFallbackIdentity
 }
 
 export class QueryOptionsBuilder {
-  private canUseTool?: CanUseTool;
   private askUserQuestionHook?: HookCallback;
   private deferredPermissionMode?: PermissionMode;
   private effectiveFallbackCaptured = false;
@@ -281,10 +280,6 @@ export class QueryOptionsBuilder {
   private readonly logger = new Logger('QueryOptionsBuilder');
 
   constructor(private ctx: QueryOptionsBuilderContext) {}
-
-  setCanUseTool(callback: CanUseTool): void {
-    this.canUseTool = callback;
-  }
 
   setAskUserQuestionHook(hook: HookCallback): void {
     this.askUserQuestionHook = hook;
@@ -318,7 +313,10 @@ export class QueryOptionsBuilder {
     return Object.keys(merged).length > 0 ? merged : undefined;
   }
 
-  async build(overrides?: { askUserQuestionHook?: HookCallback }): Promise<Options> {
+  async build(overrides?: {
+    askUserQuestionHook?: HookCallback;
+    canUseTool?: CanUseTool;
+  }): Promise<Options> {
     const config = this.ctx.session.config;
 
     await this.ctx.settingsManager.prepareSDKOptions();
@@ -461,7 +459,7 @@ export class QueryOptionsBuilder {
 
       hooks,
 
-      canUseTool: this.canUseTool,
+      canUseTool: overrides?.canUseTool,
       onUserDialog: async (request, { signal }) => {
         if (request.dialogKind !== 'refusal_fallback_prompt') return { behavior: 'cancelled' };
         if (!configuredFallbackModel) {

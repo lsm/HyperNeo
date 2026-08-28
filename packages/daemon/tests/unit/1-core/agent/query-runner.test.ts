@@ -10,7 +10,7 @@ import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-class
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { Session, MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { HookCallback, Query } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, HookCallback, Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -194,7 +194,10 @@ describe('QueryRunner', () => {
       info: mock(() => {}),
     } as unknown as Logger;
 
-    buildSpy = mock(async () => ({ model: 'claude-sonnet-4-20250514' }));
+    buildSpy = mock(async (overrides?: { canUseTool?: CanUseTool }) => ({
+      model: 'claude-sonnet-4-20250514',
+      canUseTool: overrides?.canUseTool,
+    }));
     addSessionStateOptionsSpy = mock((options: unknown) => options);
     setCanUseToolSpy = mock(() => {});
     setAskUserQuestionHookSpy = mock(() => {});
@@ -574,11 +577,16 @@ describe('QueryRunner', () => {
           },
         };
         buildSpy
-          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
-          .mockResolvedValueOnce({
+          .mockImplementationOnce(async (overrides?: { canUseTool?: CanUseTool }) => ({
+            model: 'claude-sonnet-4-20250514',
+            mcpServers: {},
+            canUseTool: overrides?.canUseTool,
+          }))
+          .mockImplementationOnce(async (overrides?: { canUseTool?: CanUseTool }) => ({
             model: 'claude-sonnet-4-20250514',
             mcpServers: repairedServers,
-          });
+            canUseTool: overrides?.canUseTool,
+          }));
         stopAfterRebuiltOptions();
         const onMissingSpaceChatMcpServers = mock(async () => {
           mockSession.config.mcpServers =
@@ -595,6 +603,11 @@ describe('QueryRunner', () => {
         ]);
         expect(buildSpy).toHaveBeenCalledTimes(2);
         expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(2);
+        const buildCalls = buildSpy.mock.calls as unknown as Array<
+          [{ askUserQuestionHook?: HookCallback; canUseTool?: CanUseTool }?]
+        >;
+        expect(buildCalls[1]?.[0]?.canUseTool).toBe(buildCalls[0]?.[0]?.canUseTool);
+        expect(buildCalls[1]?.[0]?.canUseTool).toBeDefined();
       });
     });
 
@@ -5748,16 +5761,35 @@ describe('QueryRunner', () => {
   describe('attempt-token primitive + PreToolUse binding (B5a)', () => {
     let savedApiKey: string | undefined;
     let innerHookCalls: unknown[];
+    let innerCanUseToolCalls: Array<{
+      toolName: string;
+      input: Record<string, unknown>;
+      options: unknown;
+    }>;
 
     beforeEach(() => {
       savedApiKey = process.env.ANTHROPIC_API_KEY;
       process.env.ANTHROPIC_API_KEY = 'sk-test-key';
       mockSession.workspacePath = tmpdir();
       innerHookCalls = [];
+      innerCanUseToolCalls = [];
       createPreToolUseHookSpy.mockImplementation(() => async (...args: unknown[]) => {
         innerHookCalls.push(args[0]);
         return {};
       });
+      createCanUseToolCallbackSpy.mockImplementation(
+        () =>
+          async (
+            toolName: string,
+            input: Record<string, unknown>,
+            options: { signal: AbortSignal; toolUseID: string }
+          ) => {
+            innerCanUseToolCalls.push({ toolName, input, options });
+            return { behavior: 'allow' as const, updatedInput: input } as Awaited<
+              ReturnType<CanUseTool>
+            >;
+          }
+      );
     });
 
     afterEach(() => {
@@ -5811,6 +5843,22 @@ describe('QueryRunner', () => {
       const hook = buildCalls[index]?.[0]?.askUserQuestionHook;
       if (!hook) throw new Error(`attempt-bound hook ${index} was not passed to build()`);
       return hook;
+    }
+
+    async function invokeCanUseTool(callback: CanUseTool, toolUseId: string) {
+      return callback('AskUserQuestion', { question: 'Proceed?' }, {
+        signal: new AbortController().signal,
+        toolUseID: toolUseId,
+      } as unknown as Parameters<CanUseTool>[2]);
+    }
+
+    function canUseToolAt(index: number): CanUseTool {
+      const buildCalls = buildSpy.mock.calls as unknown as Array<
+        [{ askUserQuestionHook?: HookCallback; canUseTool?: CanUseTool }?]
+      >;
+      const callback = buildCalls[index]?.[0]?.canUseTool;
+      if (!callback) throw new Error(`attempt-bound canUseTool ${index} was not passed to build()`);
+      return callback;
     }
 
     it('allocates attempt tokens that supersede on the next allocation and on invalidation', () => {
@@ -5993,6 +6041,39 @@ describe('QueryRunner', () => {
       expect(lateCallback.permissionDecision).toBe('deny');
       expect(innerHookCalls).toHaveLength(0);
     });
+
+    it('installs an attempt-bound canUseTool and denies stale callbacks across retry attempts', async () => {
+      buildSpy.mockImplementation(async () => {
+        if (buildSpy.mock.calls.length === 2) {
+          const predecessor = canUseToolAt(0);
+          const successor = canUseToolAt(1);
+
+          const staleResult = await invokeCanUseTool(predecessor, 'tu-predecessor');
+          expect(staleResult?.behavior).toBe('deny');
+          expect((staleResult as { message?: string }).message).toContain('superseded');
+
+          const liveResult = await invokeCanUseTool(successor, 'tu-successor');
+          expect(liveResult?.behavior).toBe('allow');
+          expect(innerCanUseToolCalls).toHaveLength(1);
+          expect(innerCanUseToolCalls[0].options).toMatchObject({ toolUseID: 'tu-successor' });
+        }
+        throw new Error('SDK startup timeout - query aborted');
+      });
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
+      ]);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(setCanUseToolSpy).toHaveBeenCalledTimes(0);
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+    }, 15000);
   });
 });
 

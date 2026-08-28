@@ -511,8 +511,6 @@ export class AcpQueryRunner {
             }
             assertActiveAcpStartup();
 
-            const canUseTool = this.ctx.askUserQuestionHandler.createCanUseToolCallback();
-            optionsBuilder.setCanUseTool(canUseTool);
             let queryOptions = await optionsBuilder.build();
             assertActiveAcpStartup();
             queryOptions = await this.ensureRequiredMcpServersForAcp(queryOptions);
@@ -554,7 +552,8 @@ export class AcpQueryRunner {
             });
 
             proxyBridge = new AcpMcpProxyBridge(
-              (queryOptions.mcpServers ?? {}) as Record<string, McpServerConfig>
+              (queryOptions.mcpServers ?? {}) as Record<string, McpServerConfig>,
+              () => attemptToken.isLive()
             );
             if (proxyBridge.tools.length > 0) {
               await proxyBridge.start();
@@ -657,7 +656,7 @@ export class AcpQueryRunner {
                   return {
                     onTerminalCreate: async (params: AcpTerminalCreateParams) => {
                       const normalized = normalizeAcpTerminalCreate(params);
-                      if (abortController!.signal.aborted) {
+                      if (abortController!.signal.aborted || !attemptToken.isLive()) {
                         throw new Error('ACP terminal command cancelled');
                       }
                       return manager.create(normalized);
@@ -672,8 +671,12 @@ export class AcpQueryRunner {
                       ? {
                           onFsRead: (params: AcpFsReadParams) =>
                             this.handleFsRead(params, workspace),
-                          onFsWrite: (params: AcpFsWriteParams) =>
-                            this.handleFsWrite(params, workspace, abortController!.signal),
+                          onFsWrite: (params: AcpFsWriteParams) => {
+                            if (!attemptToken.isLive()) {
+                              throw new Error('ACP file write cancelled');
+                            }
+                            return this.handleFsWrite(params, workspace, abortController!.signal);
+                          },
                         }
                       : {}),
                   };
@@ -689,7 +692,16 @@ export class AcpQueryRunner {
               onProcessSpawn: (proc) =>
                 this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
               onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
-              onPermissionRequest: allowAcpPermissionRequest,
+              onPermissionRequest: async (params: AcpPermissionRequest) => {
+                if (!attemptToken.isLive()) {
+                  logger.warn(
+                    `ACP onPermissionRequest: cancelling request from superseded query attempt ` +
+                      `${attemptToken.attemptId} (session=${session.id}) — a retry or replacement owns the run`
+                  );
+                  return { outcome: { outcome: 'cancelled' } } as AcpPermissionResponseResult;
+                }
+                return allowAcpPermissionRequest(params);
+              },
               ...hostCallbacks,
             });
             assertActiveAcpStartup();
@@ -1045,6 +1057,8 @@ export class AcpQueryRunner {
     if (this.ctx.getQueryGeneration() !== queryGeneration) {
       return;
     }
+
+    this.ctx.attemptTokens.invalidateCurrent();
 
     const errorMessage = String(error);
     const isAbortError = error instanceof Error && error.name === 'AbortError';

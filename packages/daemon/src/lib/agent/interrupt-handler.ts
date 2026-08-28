@@ -5,6 +5,7 @@ import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
+import type { QueryAttemptRegistry } from './query-attempt-token.ts';
 import { withSessionLock } from './message-delivery.ts';
 
 const DEFAULT_INTERRUPT_CONTROL_TIMEOUT_MS = 2000;
@@ -36,6 +37,8 @@ export interface InterruptHandlerContext {
   getSdkCapabilities?(): ReadonlySet<string>;
 
   onInterruptRequested?(): void;
+
+  attemptTokens?: QueryAttemptRegistry;
 }
 
 export class InterruptHandler {
@@ -59,6 +62,13 @@ export class InterruptHandler {
 
     const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
     const interruptQueryGeneration = this.ctx.getQueryGeneration?.();
+
+    const stateAtEntry = stateManager.getState();
+    const teardownRequiredAtEntry =
+      stateAtEntry.status !== 'idle' && stateAtEntry.status !== 'interrupted';
+    if (teardownRequiredAtEntry) {
+      this.ctx.attemptTokens?.invalidateCurrent();
+    }
 
     if (!opts?.preserveDeliveryJobs) {
       const failedDbIds: string[] = [];
@@ -95,12 +105,16 @@ export class InterruptHandler {
 
     const currentState = stateManager.getState();
 
-    if (currentState.status === 'idle' || currentState.status === 'interrupted') {
+    if (
+      !teardownRequiredAtEntry &&
+      (currentState.status === 'idle' || currentState.status === 'interrupted')
+    ) {
       if (opts?.skipDeferredReplay) {
         this.deferredReplaySuppressed = true;
       }
       return;
     }
+    this.ctx.attemptTokens?.invalidateCurrent();
     this.deferredReplaySuppressed = opts?.skipDeferredReplay === true;
 
     const interruptCompletePromise = new Promise<void>((resolve) => {
