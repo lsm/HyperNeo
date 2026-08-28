@@ -352,14 +352,9 @@ export function setupAuthHandlers(
             log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
           }
         }
-        const refused =
-          error instanceof Error &&
-          (error as Error & { logoutRefused?: boolean }).logoutRefused === true;
-        if (!refused) {
-          try {
-            await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
-          } catch {}
-        }
+        try {
+          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+        } catch {}
         log.error(`Logout failed for ${providerId}:`, error);
         return {
           success: false,
@@ -398,13 +393,21 @@ export function setupAuthHandlers(
           try {
             previousCredentials = (await credentialManager?.getCredentials?.(providerId)) ?? null;
           } catch {}
-          await removeCredentialsOrKeychainError(credentialManager, providerId);
-          const remaining = await provider.getCredentials?.();
-          if (remaining?.type === 'oauth') {
-            await credentialManager?.storeOAuthTokens(providerId, remaining);
+          let cleanupError: unknown;
+          let remaining: ProviderCredentials | null | undefined;
+          try {
+            await removeCredentialsOrKeychainError(credentialManager, providerId);
+            remaining = await provider.getCredentials?.();
+            if (remaining?.type === 'oauth') {
+              await credentialManager?.storeOAuthTokens(providerId, remaining);
+            }
+          } catch (error) {
+            cleanupError = error;
           }
           const identityChanged =
-            !remaining || credentialIdentity(previousCredentials) !== credentialIdentity(remaining);
+            !remaining ||
+            credentialIdentity(previousCredentials) !== credentialIdentity(remaining) ||
+            cleanupError !== undefined;
           try {
             await clearCacheAndNotifyProvidersChanged(
               internalEventBus,
@@ -413,6 +416,7 @@ export function setupAuthHandlers(
               identityChanged
             );
           } catch {}
+          if (cleanupError) throw cleanupError;
           return {
             success: false,
             error: 'Token refresh failed. Please try logging out and logging in again.',

@@ -782,16 +782,22 @@ describe('Auth RPC Handlers', () => {
         removeCredentials: mock(async () => {}),
         hasEnvironmentCredentials: mock(() => false),
       };
+      const bus = makeBus();
+      const repo = makeRepo();
       setupAuthHandlers(
         messageHubData.hub,
         mockAuthManager as unknown as AuthManager,
-        credentialManager as never
+        credentialManager as never,
+        bus as never,
+        repo as never
       );
       const mockProvider = createMockProvider({
         logout: mock(async () => {
-          throw new Error(
+          const error = new Error(
             'GitHub Copilot credentials are managed by the COPILOT_GITHUB_TOKEN environment variable. Remove that source to log out.'
           );
+          (error as Error & { logoutRefused?: boolean }).logoutRefused = true;
+          throw error;
         }),
       });
       registry.register(mockProvider);
@@ -807,6 +813,11 @@ describe('Auth RPC Handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('COPILOT_GITHUB_TOKEN');
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(repo.getProviderByProviderId).toHaveBeenCalledWith('test-provider');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
     });
 
     it('surfaces keychain guidance when locked-read returns null and provider has no logout', async () => {
@@ -1368,10 +1379,14 @@ describe('Auth RPC Handlers', () => {
         }),
         storeOAuthTokens: mock(async () => {}),
       };
+      const bus = makeBus();
+      const repo = makeRepo();
       setupAuthHandlers(
         messageHubData.hub,
         mockAuthManager as unknown as AuthManager,
-        credentialManager as never
+        credentialManager as never,
+        bus as never,
+        repo as never
       );
       const mockProvider = createMockProvider({
         refreshToken: mock(async () => false),
@@ -1394,6 +1409,52 @@ describe('Auth RPC Handlers', () => {
       expect(result.error).toContain('security unlock-keychain');
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
       expect(credentialManager.storeOAuthTokens).not.toHaveBeenCalled();
+      expect(repo.getProviderByProviderId).toHaveBeenCalledWith('test-provider');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('strips persisted discovery when refresh getCredentials throws after cleanup', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+        storeOAuthTokens: mock(async () => {}),
+      };
+      const bus = makeBus();
+      const repo = makeRepo();
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never,
+        bus as never,
+        repo as never
+      );
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => {
+          throw new Error('credential store unreachable');
+        }),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('credential store unreachable');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(credentialManager.storeOAuthTokens).not.toHaveBeenCalled();
+      expect(repo.getProviderByProviderId).toHaveBeenCalledWith('test-provider');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
     });
 
     it('handles refresh token errors', async () => {
