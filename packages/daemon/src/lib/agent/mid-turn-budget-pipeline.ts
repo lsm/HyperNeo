@@ -4,6 +4,7 @@ import type { MidTurnBudgetInterruptOptions, MidTurnQueueSeam } from './message-
 
 export interface MidTurnInterruptReceipt {
   still_queued: string[];
+  cancelled?: string[];
 }
 
 export interface MidTurnInterruptDeadline {

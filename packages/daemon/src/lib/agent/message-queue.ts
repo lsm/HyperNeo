@@ -57,6 +57,7 @@ export interface MidTurnBudgetInterruptOptions {
   onResumeArm: () => void;
   onResumeClear: () => void;
   onSurvivorRequeued?: (uuid: string) => void;
+  getDurableMessageContent?: (uuid: string) => string | MessageContent[] | undefined;
 }
 
 export interface MidTurnQueueSeam {
@@ -86,6 +87,7 @@ export class MessageQueue {
   private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
   private deliveryGate: Promise<void> | null = null;
   private resolveEarlyDeliveryGate: (() => void) | undefined;
+  private internalRestartInFlight: boolean = false;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private nonCompactionSentSinceBoundary: boolean = false;
@@ -729,6 +731,7 @@ export class MessageQueue {
   }
 
   standsDownFor(_opts: MidTurnBudgetInterruptOptions): boolean {
+    if (this.internalRestartInFlight) return false;
     return !this.isRunning();
   }
 
@@ -804,11 +807,17 @@ export class MessageQueue {
     receipt: MidTurnInterruptReceipt | undefined
   ): Promise<MidTurnSurvivorsDisposition> {
     const survivors = receipt?.still_queued ?? [];
-    if (survivors.length === 0) return { toRequeue: [], needsRestart: false };
-    if (typeof opts.cancelAsyncMessage !== 'function') {
-      return { toRequeue: [...survivors], needsRestart: true };
+    const alreadyCancelled = receipt?.cancelled ?? [];
+    if (survivors.length === 0 && alreadyCancelled.length === 0) {
+      return { toRequeue: [], needsRestart: false };
     }
-    const toRequeue: string[] = [];
+    if (survivors.length === 0) {
+      return { toRequeue: [...alreadyCancelled], needsRestart: false };
+    }
+    if (typeof opts.cancelAsyncMessage !== 'function') {
+      return { toRequeue: [...alreadyCancelled, ...survivors], needsRestart: true };
+    }
+    const toRequeue: string[] = [...alreadyCancelled];
     for (let index = 0; index < survivors.length; index++) {
       const uuid = survivors[index];
       let cancelFailed = false;
@@ -861,11 +870,21 @@ export class MessageQueue {
       );
       return;
     }
-    const content = this.getSentPromptContent(uuid);
+    let content = this.getSentPromptContent(uuid);
+    if (content === undefined && opts.getDurableMessageContent) {
+      try {
+        content = opts.getDurableMessageContent(uuid);
+      } catch (error) {
+        opts.logger.warn(
+          `durable content lookup for survivor ${uuid} failed for session ` + `${opts.sessionId}:`,
+          error
+        );
+      }
+    }
     if (content === undefined) {
       opts.logger.warn(
         `cancelled survivor ${uuid} for session ${opts.sessionId} has no recoverable ` +
-          `content in the sent-prompt cache; it cannot be requeued`
+          `content in the sent-prompt cache or the durable store; it cannot be requeued`
       );
       return;
     }
@@ -902,22 +921,28 @@ export class MessageQueue {
       this.setDeliveryGate(deliveryGate);
       this.enqueueMidTurnCompaction(opts, 'mid-turn-restart');
     };
-    const restart = opts.restart({ beforeStart }).catch((error) => {
-      opts.logger.warn(
-        `query restart after unconfirmed survivor cancellation failed for ` +
-          `session ${opts.sessionId}:`,
-        error
-      );
-      if (!this.hasOutstandingInternalCompaction()) {
-        opts.contextTracker.clearCompactionCooldown();
-        opts.onResumeClear();
-      } else {
-        opts.logger.info(
-          `durable compaction remains queued for session ${opts.sessionId}; the pending ` +
-            `resume stays armed until its boundary on the next query`
+    this.internalRestartInFlight = true;
+    const restart = opts
+      .restart({ beforeStart })
+      .catch((error) => {
+        opts.logger.warn(
+          `query restart after unconfirmed survivor cancellation failed for ` +
+            `session ${opts.sessionId}:`,
+          error
         );
-      }
-    });
+        if (!this.hasOutstandingInternalCompaction()) {
+          opts.contextTracker.clearCompactionCooldown();
+          opts.onResumeClear();
+        } else {
+          opts.logger.info(
+            `durable compaction remains queued for session ${opts.sessionId}; the pending ` +
+              `resume stays armed until its boundary on the next query`
+          );
+        }
+      })
+      .finally(() => {
+        this.internalRestartInFlight = false;
+      });
     await Promise.race([
       restart,
       new Promise<void>((resolve) => {

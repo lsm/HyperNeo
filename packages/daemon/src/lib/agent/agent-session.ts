@@ -1558,6 +1558,8 @@ export class AgentSession
         this.pendingResumeAfterCompaction = false;
       },
       onSurvivorRequeued: (uuid) => this.reopenDeliveryForRetry(uuid),
+      getDurableMessageContent: (uuid) =>
+        this.db.getSDKMessageRepo().getUserMessageContentByUuid(this.session.id, uuid) ?? undefined,
     };
     try {
       await runMidTurnBudgetPipeline({

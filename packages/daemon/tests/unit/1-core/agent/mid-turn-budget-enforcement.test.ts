@@ -499,4 +499,32 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     expect(harness.interruptMock).toHaveBeenCalledTimes(0);
     expect(enqueueSpy).toHaveBeenCalledTimes(0);
   });
+
+  it('recovers an evicted survivor from the durable message store', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    const retryMock = mock(() => null);
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: () => string | null;
+          markDeliveryRetryableByUuid: typeof retryMock;
+        };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: () => 'db-recovered',
+      markDeliveryRetryableByUuid: retryMock,
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-lru-evicted'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy).toHaveBeenCalledWith('uuid-lru-evicted', 'db-recovered', false, {
+      durable: true,
+      prepend: true,
+    });
+    expect(retryMock).toHaveBeenCalledWith(expect.any(String), 'uuid-lru-evicted');
+  });
 });

@@ -2078,5 +2078,103 @@ describe('MessageQueue', () => {
       expect(delivered).toBe(true);
       q.stop();
     });
+
+    it('requeues messages the SDK already cancelled without re-cancelling them', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-sdk-cancelled',
+        content: 'already cancelled work',
+        internal: false,
+      } as never);
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const cancelMock = mock(async () => true);
+      const restartMock = mock(async () => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: [], cancelled: ['uuid-sdk-cancelled'] }),
+        cancelAsyncMessage: cancelMock,
+        restart: restartMock,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(cancelMock).not.toHaveBeenCalled();
+      expect(restartMock).not.toHaveBeenCalled();
+      expect(enqueueSpy).toHaveBeenCalledWith(
+        'uuid-sdk-cancelled',
+        'already cancelled work',
+        false,
+        {
+          durable: true,
+          prepend: true,
+        }
+      );
+      q.stop();
+    });
+
+    it('requeues a survivor whose content was evicted from the sent-prompt LRU', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const requeuedCallback = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-evicted'] }),
+        cancelAsyncMessage: async () => true,
+        getDurableMessageContent: (uuid: string) =>
+          uuid === 'uuid-evicted' ? 'db-recovered-content' : undefined,
+        onSurvivorRequeued: requeuedCallback,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-evicted', 'db-recovered-content', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(requeuedCallback).toHaveBeenCalledWith('uuid-evicted');
+      q.stop();
+    });
+
+    it('preserves a late receipt that arrives during the recovery restart', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-late-restart', 'late-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      let releaseRestart: () => void = () => {};
+      const restartHang = new Promise<void>((resolve) => {
+        releaseRestart = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: () => slowInterrupt,
+        restart: async (options) => {
+          q.stop();
+          await options?.beforeStart?.();
+          await restartHang;
+        },
+        onResumeClear,
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      releaseInterrupt({ still_queued: ['uuid-late-restart'] });
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-late-restart', 'late-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(onResumeClear).not.toHaveBeenCalled();
+    }, 15_000);
   });
 });
