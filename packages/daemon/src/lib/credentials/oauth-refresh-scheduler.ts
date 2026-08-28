@@ -177,13 +177,23 @@ async function invalidateBeforePersist(
   ctx: ScheduledTokenRefreshCtx
 ): Promise<ScheduledTokenRefreshCtx> {
   const { deps, provider } = ctx;
-  let captured: ProviderCredentials | null = null;
-  if (provider.getCredentials) {
-    try {
-      captured = (await provider.getCredentials()) ?? null;
-    } catch {
-      captured = null;
+  if (!provider.getCredentials) {
+    if (!(await runPreRecoveryInvalidation(deps, provider.id))) {
+      markUnhealthyWhenFailureRecorded(deps, provider.id);
+      await recordPendingInvalidationFailure(
+        deps,
+        provider.id,
+        credentialRetryKey(provider.id, ctx.credentials!)
+      );
+      return { ...ctx, nextCredentials: ctx.credentials, outcome: 'invalidation-failed' };
     }
+    return { ...ctx, nextCredentials: ctx.credentials };
+  }
+  let captured: ProviderCredentials | null = null;
+  try {
+    captured = (await provider.getCredentials()) ?? null;
+  } catch {
+    captured = null;
   }
   if (!(await runPreRecoveryInvalidation(deps, provider.id))) {
     markUnhealthyWhenFailureRecorded(deps, provider.id);
@@ -195,12 +205,10 @@ async function invalidateBeforePersist(
     return { ...ctx, nextCredentials: captured, outcome: 'invalidation-failed' };
   }
   let stillOwned: ProviderCredentials | null = captured;
-  if (provider.getCredentials) {
-    try {
-      stillOwned = (await provider.getCredentials()) ?? null;
-    } catch {
-      stillOwned = null;
-    }
+  try {
+    stillOwned = (await provider.getCredentials()) ?? null;
+  } catch {
+    stillOwned = null;
   }
   if (!stillOwned || stillOwned.type !== 'oauth') {
     return { ...ctx, nextCredentials: stillOwned, outcome: 'cancelled' };

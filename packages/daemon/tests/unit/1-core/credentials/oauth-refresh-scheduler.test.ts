@@ -1352,6 +1352,41 @@ describe('OAuthRefreshScheduler', () => {
     expect(manager.health.has('oauth-provider')).toBe(false);
   });
 
+  it('completes rotation for a provider without getCredentials using the stored identity', async () => {
+    const registry = new ProviderRegistry();
+    const provider = createProvider(true);
+    delete (provider as { getCredentials?: unknown }).getCredentials;
+    registry.register(provider);
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const changed: string[] = [];
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      onProviderChanged: (providerId, outcome) => {
+        changed.push(`${providerId}:${outcome}`);
+      },
+    });
+
+    await scheduler.tick();
+
+    expect(manager.stored).toHaveLength(1);
+    expect(manager.stored[0].credentials).toEqual({
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    expect(manager.health.get('oauth-provider')).toBe('healthy');
+    expect(changed).toEqual(['oauth-provider:refreshed']);
+  });
+
   it('serializes the exhausted clear behind an in-flight successful discovery refresh', async () => {
     const registry = new ProviderRegistry();
     const providerA = createProvider(true, 'oauth-provider-a');
