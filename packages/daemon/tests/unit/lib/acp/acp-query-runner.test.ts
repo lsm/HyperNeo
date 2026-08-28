@@ -1759,6 +1759,41 @@ describe('AcpQueryRunner', () => {
     }
   });
 
+  test('aborts the load-session model cache write when the run controller is aborted mid-handshake', async () => {
+    const client = createMockClient();
+    client.canLoadSession.mockImplementation(() => true);
+    let releaseLoad!: () => void;
+    const loadEntered = new Promise<void>((resolve) => {
+      client.loadSession.mockImplementation(async () => {
+        resolve();
+        await new Promise<void>((resolveLoad) => {
+          releaseLoad = resolveLoad;
+        });
+        return { sessionId: 'persisted-acp-session', configOptions: [] };
+      });
+    });
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: {
+        acpSessionId: 'persisted-acp-session',
+        metadata: {
+          acpCommandIdentity: getAcpCommandIdentityDigest('mock-acp --stdio'),
+        },
+      } as Partial<Session>,
+    });
+
+    await runner.start();
+    await loadEntered;
+    ctx.queryAbortController?.abort();
+    releaseLoad();
+    await ctx.queryPromise;
+
+    expect(client.resumeSession).not.toHaveBeenCalled();
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: expect.anything() });
+    }
+  });
+
   test('keeps the old ACP session id when the replacement command fails to start', async () => {
     const client = createMockClient();
     client.initialize.mockImplementation(async () => {

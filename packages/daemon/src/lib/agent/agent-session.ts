@@ -2160,6 +2160,12 @@ export class AgentSession
   }
 
   async onModelsFetched(queryGeneration?: number, attemptToken?: QueryAttemptToken): Promise<void> {
+    if (this.isCleaningUp()) {
+      this.logger.info(
+        `Skipping model discovery during session cleanup in session ${this.session.id}`
+      );
+      return;
+    }
     if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) {
       this.logger.info(
         `Skipping model discovery for superseded query generation ` +
@@ -2177,6 +2183,7 @@ export class AgentSession
           ? undefined
           : {
               isLive: () =>
+                !this.isCleaningUp() &&
                 (queryGeneration === undefined || this.getQueryGeneration() === queryGeneration) &&
                 (attemptToken === undefined || attemptToken.isLive()),
             }

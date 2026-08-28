@@ -3872,6 +3872,21 @@ describe('AgentSession', () => {
 
       expect(getModelsCache().get('test-session-id')?.length).toBe(1);
     });
+
+    it('drops the cache write when session cleanup starts during discovery', async () => {
+      const attemptToken = agentSession.attemptTokens.allocate();
+      agentSession.queryObject = {
+        supportedModels: mock(async () => {
+          (agentSession as unknown as Record<string, unknown>).isCleaningUp = () => true;
+          return [{ value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet · Test' }];
+        }),
+      } as unknown as AgentSession['queryObject'];
+      const generation = agentSession.getQueryGeneration();
+
+      await agentSession.onModelsFetched(generation, attemptToken);
+
+      expect(getModelsCache().get('test-session-id')).toBeUndefined();
+    });
   });
 
   describe('getSlashCommands', () => {

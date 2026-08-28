@@ -423,6 +423,8 @@ export class AcpQueryRunner {
         : QueryAttemptRegistry.detached();
     const attemptOwnsRun = () =>
       attemptToken.isLive() && this.ctx.getQueryGeneration() === queryGeneration;
+    const ownsSessionWrite = () =>
+      attemptOwnsRun() && this.ctx.queryAbortController?.signal.aborted !== true;
     const requeueYieldedPrompt = (yieldedMessage: SDKUserMessage) => {
       const yieldedUuid = yieldedMessage.uuid;
       if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
@@ -730,7 +732,7 @@ export class AcpQueryRunner {
 
         try {
           const result = await acpClient.loadSession(existingAcpSessionId, cwd, acpMcpServers);
-          if (attemptOwnsRun()) {
+          if (ownsSessionWrite()) {
             this.persistAcpSessionId(result.sessionId);
             this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
           }
@@ -738,7 +740,7 @@ export class AcpQueryRunner {
           if (loadError instanceof Error && loadError.name === 'AbortError') throw loadError;
           try {
             const result = await acpClient.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
-            if (attemptOwnsRun()) {
+            if (ownsSessionWrite()) {
               this.persistAcpSessionId(result.sessionId);
               this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
             }
@@ -759,16 +761,18 @@ export class AcpQueryRunner {
         }
       } else {
         const result = await acpClient.createSession(cwd, acpMcpServers);
-        if (attemptOwnsRun()) {
+        if (ownsSessionWrite()) {
           this.persistAcpSessionId(result.sessionId);
           this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
         }
         createdAcpSessionDuringRun = true;
       }
-      await this.applyStoredAcpModel(acpClient, attemptOwnsRun);
-      await this.applyStoredAcpThinkingLevel(acpClient, attemptOwnsRun);
+      await this.applyStoredAcpModel(acpClient, ownsSessionWrite);
+      await this.applyStoredAcpThinkingLevel(acpClient, ownsSessionWrite);
       assertActiveAcpStartup();
-      this.updateAcpModelCache(acpClient.getConfigOptions());
+      if (ownsSessionWrite()) {
+        this.updateAcpModelCache(acpClient.getConfigOptions());
+      }
       startupHandshakeActive = false;
       restoreMessageEnqueuedHandler?.();
       this.clearStartupTimer();
@@ -810,7 +814,7 @@ export class AcpQueryRunner {
           };
         }
 
-        await this.applyStoredAcpThinkingLevel(acpClient, attemptOwnsRun);
+        await this.applyStoredAcpThinkingLevel(acpClient, ownsSessionWrite);
         if (!attemptOwnsRun()) {
           requeueYieldedPrompt(message);
           break;
@@ -830,7 +834,8 @@ export class AcpQueryRunner {
             if (attemptOwnsRun()) this.persistAcpContextUsageEstimate(used);
           },
           onConfigOptionsUpdate: (configOptions) => {
-            if (attemptOwnsRun()) this.updateAcpModelCache(configOptions);
+            if (!ownsSessionWrite() || this.ctx.isCleaningUp()) return;
+            this.updateAcpModelCache(configOptions);
           },
           onSubmitted: () => {
             if (submitted) return;
