@@ -318,6 +318,70 @@ const runSaveSdkMessage = (superpipe({})('save-sdk-message') as PipelineAPI)
   .pipe(publishSdkMessage, 'ctx', 'ctx')
   .end('ctx') as (ctx: SaveSdkMessageCtx) => SaveSdkMessageAdmittedCtx;
 
+interface SaveUserMessageInput {
+  sessionId: string;
+  message: SDKMessage;
+  variant: MessageAdmissionVariant;
+  sendStatus: SendStatus;
+  origin?: MessageOrigin;
+}
+
+interface SaveUserMessageSnapshot extends SaveUserMessageInput {
+  id: string;
+}
+
+interface SaveUserMessageAdmitted extends SaveUserMessageSnapshot {
+  admission: MessageAdmissionRecord;
+}
+
+interface SaveUserMessageSaved extends SaveUserMessageAdmitted {
+  countsTowardsBadge: boolean;
+}
+
+interface SaveUserMessageDeps {
+  saveUserMessageWithAdmission(ctx: SaveUserMessageAdmitted): {
+    id: string;
+    countsTowardsBadge: boolean;
+  };
+  runPostSaveSideEffects(sessionId: string, id: string, countsTowardsBadge: boolean): void;
+}
+
+type SaveUserMessageCtx = SaveUserMessageInput & { deps: SaveUserMessageDeps };
+type SaveUserMessageSnapshotCtx = SaveUserMessageSnapshot & SaveUserMessageCtx;
+type SaveUserMessageAdmittedCtx = SaveUserMessageAdmitted & SaveUserMessageCtx;
+type SaveUserMessageSavedCtx = SaveUserMessageSaved & SaveUserMessageCtx;
+
+function snapshotUserMessage(ctx: SaveUserMessageCtx): SaveUserMessageSnapshotCtx {
+  return { ...ctx, id: generateUUID() };
+}
+
+function admitUserMessage(ctx: SaveUserMessageSnapshotCtx): SaveUserMessageAdmittedCtx {
+  const admission = decideMessageAdmission(normalizeMessageAdmissionInput(ctx.message), {
+    variant: ctx.variant,
+    sendStatus: ctx.sendStatus,
+    origin: ctx.origin,
+  });
+  return { ...ctx, admission };
+}
+
+function saveUserMessageAtomic(ctx: SaveUserMessageAdmittedCtx): SaveUserMessageSavedCtx {
+  const { id, countsTowardsBadge } = ctx.deps.saveUserMessageWithAdmission(ctx);
+  return { ...ctx, id, countsTowardsBadge };
+}
+
+function publishUserMessage(ctx: SaveUserMessageSavedCtx): SaveUserMessageSavedCtx {
+  ctx.deps.runPostSaveSideEffects(ctx.sessionId, ctx.id, ctx.countsTowardsBadge);
+  return ctx;
+}
+
+const runSaveUserMessage = (superpipe({})('save-user-message') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(snapshotUserMessage, 'ctx', 'ctx')
+  .pipe(admitUserMessage, 'ctx', 'ctx')
+  .pipe(saveUserMessageAtomic, 'ctx', 'ctx')
+  .pipe(publishUserMessage, 'ctx', 'ctx')
+  .end('ctx') as (ctx: SaveUserMessageCtx) => SaveUserMessageSavedCtx;
+
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
@@ -1037,11 +1101,37 @@ export class SDKMessageRepository {
     sendStatus: SendStatus = 'consumed',
     origin?: MessageOrigin
   ): string {
-    const core = withBusyRetry(() =>
-      this.db.transaction(() => this.saveUserMessageCore(sessionId, message, sendStatus, origin))()
+    const deps: SaveUserMessageDeps = {
+      saveUserMessageWithAdmission: (ctx) => this.saveUserMessageWithAdmission(ctx),
+      runPostSaveSideEffects: (sessionId, id, countsTowardsBadge) =>
+        this.runPostSaveSideEffects(sessionId, id, countsTowardsBadge),
+    };
+    const ctx = runSaveUserMessage({
+      sessionId,
+      message,
+      variant: 'user',
+      sendStatus,
+      origin,
+      deps,
+    });
+    return ctx.id;
+  }
+
+  private saveUserMessageWithAdmission(ctx: SaveUserMessageAdmitted): {
+    id: string;
+    countsTowardsBadge: boolean;
+  } {
+    const saveTransaction = this.db.transaction(() =>
+      this.saveUserMessageCoreWithAdmission(
+        ctx.sessionId,
+        ctx.id,
+        ctx.message,
+        ctx.sendStatus,
+        ctx.origin,
+        ctx.admission
+      )
     );
-    this.runPostSaveSideEffects(sessionId, core.id, core.countsTowardsBadge);
-    return core.id;
+    return withBusyRetry(() => saveTransaction());
   }
 
   saveUserMessageCore(
@@ -1056,6 +1146,24 @@ export class SDKMessageRepository {
       sendStatus,
       origin,
     });
+    return this.saveUserMessageCoreWithAdmission(
+      sessionId,
+      id,
+      message,
+      sendStatus,
+      origin,
+      admission
+    );
+  }
+
+  saveUserMessageCoreWithAdmission(
+    sessionId: string,
+    id: string,
+    message: SDKMessage,
+    sendStatus: SendStatus,
+    origin: MessageOrigin | undefined,
+    admission: MessageAdmissionRecord
+  ): { id: string; countsTowardsBadge: boolean } {
     const messageType = message.type;
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();

@@ -5,6 +5,11 @@ import { rmSync } from 'node:fs';
 import { Database } from '../../../../src/storage/index';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import {
+  decideMessageAdmission,
+  normalizeMessageAdmissionInput,
+  type MessageAdmissionRecord,
+} from '../../../../src/storage/repositories/sdk-message-admission';
 import type { ReactiveDatabase, TableChangeEvent } from '../../../../src/storage/reactive-database';
 import type {
   Session,
@@ -445,5 +450,66 @@ describe('saveUserMessageCore / runPostSaveSideEffects composition contract', ()
 
     expect(events.map((event) => event.tables)).toEqual([['sdk_messages'], ['sessions']]);
     expect(messageCount()).toBe(1);
+  });
+
+  test('saveUserMessageCoreWithAdmission persists the caller id and admission verbatim', () => {
+    reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
+    events.length = 0;
+
+    const message = userMessage('sent', 'u-helper');
+    const admission: MessageAdmissionRecord = {
+      ...decideMessageAdmission(normalizeMessageAdmissionInput(message), {
+        variant: 'user',
+        sendStatus: 'deferred',
+      }),
+      isRenderable: 0,
+      countsTowardsBadge: true,
+    };
+
+    const core = repo.saveUserMessageCoreWithAdmission(
+      's-comp',
+      'caller-chosen-id',
+      message,
+      'deferred',
+      undefined,
+      admission
+    );
+
+    expect(core).toEqual({ id: 'caller-chosen-id', countsTowardsBadge: true });
+    expect(events).toEqual([]);
+    expect(messageCount()).toBe(1);
+    expect(badgeOf('s-comp')).toBe(1);
+    expect(
+      bunDb
+        .prepare(`SELECT is_renderable, send_status FROM sdk_messages WHERE id = ?`)
+        .get('caller-chosen-id')
+    ).toEqual({ is_renderable: 0, send_status: 'deferred' });
+  });
+
+  test('saveUserMessageCore wrapper equals the helper seeded with the leaf admission', () => {
+    reactiveDb.db.createSession(makeSession('s-comp', 'worker', { taskId: 'task-comp' }));
+    events.length = 0;
+
+    const message = userMessage('sent', 'u-eq');
+    const viaWrapper = repo.saveUserMessageCore('s-comp', message, 'deferred');
+    const viaHelper = repo.saveUserMessageCoreWithAdmission(
+      's-comp',
+      'helper-eq-id',
+      message,
+      'deferred',
+      undefined,
+      decideMessageAdmission(normalizeMessageAdmissionInput(message), {
+        variant: 'user',
+        sendStatus: 'deferred',
+      })
+    );
+
+    expect(viaHelper.countsTowardsBadge).toBe(viaWrapper.countsTowardsBadge);
+    const projection = `SELECT message_type, message_subtype, send_status, is_renderable, is_terminal,
+                        parent_tool_use_id, sdk_uuid, replacement_metadata_normalized
+                        FROM sdk_messages WHERE id = ?`;
+    expect(bunDb.prepare(projection).get('helper-eq-id')).toEqual(
+      bunDb.prepare(projection).get(viaWrapper.id)
+    );
   });
 });
