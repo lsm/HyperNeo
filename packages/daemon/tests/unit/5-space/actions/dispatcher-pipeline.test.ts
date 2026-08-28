@@ -943,6 +943,39 @@ describe('applyRateAndAudit', () => {
     expect(next.workflowRunId).toBe('run-b');
   });
 
+  test('clears the contextual task when a completed numeric lookup misses', async () => {
+    const sendToTask = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Send message',
+      paramsDoc: '{ task_number: number, message: string }',
+      paramsSchema: z.object({ task_number: z.number(), message: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'send_message_to_task',
+              params: { task_number: 999, message: 'ping' },
+              taskId: 'session-task-a',
+            },
+            { registry: createActionRegistry([sendToTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        resolveTaskId: () => undefined,
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBeUndefined();
+  });
+
   test('skips audit for read actions', async () => {
     const auditEntries: CreateMcpAuditLogParams[] = [];
     const ctx = applyRoleAdmission(

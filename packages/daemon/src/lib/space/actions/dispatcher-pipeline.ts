@@ -228,8 +228,7 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
     const prefersNumber = action.taskIdPreference === 'task_number' || !hasTaskId;
     if (typeof params.task_number === 'number' && prefersNumber) {
       try {
-        const resolved = await ctx.deps.resolveTaskId(params);
-        if (resolved !== undefined) taskId = resolved;
+        taskId = await ctx.deps.resolveTaskId(params);
       } catch {}
     }
   }
