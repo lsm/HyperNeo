@@ -51,6 +51,25 @@ describe('ApiErrorCircuitBreaker', () => {
       expect(onTripMock).toHaveBeenCalled();
     });
 
+    it('should pass the observing query generation to the trip callback', async () => {
+      const onTripMock = mock(async () => {});
+      circuitBreaker.setOnTripCallback(onTripMock);
+
+      const message = {
+        type: 'user',
+        message: {
+          content:
+            '<local-command-stderr>Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 205616 tokens > 200000 maximum"}}</local-command-stderr>',
+        },
+      };
+
+      await circuitBreaker.checkMessage(message, 8);
+      await circuitBreaker.checkMessage(message, 8);
+      await circuitBreaker.checkMessage(message, 8);
+
+      expect(onTripMock).toHaveBeenCalledWith(expect.any(String), expect.any(Number), 8);
+    });
+
     it('should detect bare "Prompt is too long" errors (Kimi)', async () => {
       const onTripMock = mock(async () => {});
       circuitBreaker.setOnTripCallback(onTripMock);
@@ -480,7 +499,7 @@ describe('ApiErrorCircuitBreaker', () => {
         const tripped = await cb.checkMessage(connectionErrorMessage);
         expect(tripped).toBe(true);
         expect(cb.getState().tripReason).toBe('connection_error');
-        expect(onTripMock).toHaveBeenCalledWith('connection_error', 3);
+        expect(onTripMock).toHaveBeenCalledWith('connection_error', 3, undefined);
       });
 
       it('errors at exactly timeWindowMs of age are already outside the window', async () => {
@@ -604,7 +623,7 @@ describe('ApiErrorCircuitBreaker', () => {
         const tripped = await cb.checkMessage(connectionErrorMessage);
         expect(tripped).toBe(true);
         expect(cb.getState().tripReason).toBe('rapid_fire');
-        expect(onTripMock).toHaveBeenCalledWith('rapid_fire', 3);
+        expect(onTripMock).toHaveBeenCalledWith('rapid_fire', 3, undefined);
       });
 
       it('a trip clears the error memory but not the rapid-fire timestamps', async () => {

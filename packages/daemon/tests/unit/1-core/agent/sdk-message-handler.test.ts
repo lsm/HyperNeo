@@ -3954,6 +3954,44 @@ describe('SDKMessageHandler', () => {
       ).toHaveLength(0);
     });
 
+    it('should reject a trip from a superseded query before mutating shared state', async () => {
+      mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      mockContext.getQueryGeneration = () => 9;
+
+      const handlerStaleTrip = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerStaleTrip.handleMessage(
+          {
+            ...errorMessage,
+            uuid: `error-uuid-${i}`,
+          } as SDKMessage,
+          8
+        );
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(messageQueueClearSpy).not.toHaveBeenCalled();
+      expect(emitSpy.mock.calls.filter(([event]) => event === 'session.errorClear')).toHaveLength(
+        0
+      );
+      expect(lifecycleStopSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+    });
+
     it('should settle idle with the tripped query owner when the trip completes', async () => {
       mockContext.queryObject = null;
       mockContext.queryPromise = null;
@@ -4038,10 +4076,7 @@ describe('SDKMessageHandler', () => {
       } as unknown as Database;
     });
 
-    async function driveRepeatedToolError(
-      handler: SDKMessageHandler,
-      invocationGeneration: number
-    ): Promise<void> {
+    async function driveToolUseRecording(handler: SDKMessageHandler, generation: number) {
       await handler.handleMessage(
         {
           type: 'assistant',
@@ -4052,31 +4087,38 @@ describe('SDKMessageHandler', () => {
             content: [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: {} }],
           },
         } as unknown as SDKMessage,
-        invocationGeneration
+        generation
       );
-      for (let i = 0; i < 2; i++) {
-        await handler.handleMessage(
-          {
-            type: 'user',
-            uuid: `tool-error-${i}`,
-            parent_tool_use_id: null,
-            message: {
-              role: 'user',
-              content: [
-                { type: 'tool_result', tool_use_id: 'tu-1', is_error: true, content: 'boom' },
-              ],
-            },
-          } as unknown as SDKMessage,
-          invocationGeneration
-        );
-      }
+    }
+
+    async function driveToolResultError(
+      handler: SDKMessageHandler,
+      uuid: string,
+      generation: number
+    ) {
+      await handler.handleMessage(
+        {
+          type: 'user',
+          uuid,
+          parent_tool_use_id: null,
+          message: {
+            role: 'user',
+            content: [
+              { type: 'tool_result', tool_use_id: 'tu-1', is_error: true, content: 'boom' },
+            ],
+          },
+        } as unknown as SDKMessage,
+        generation
+      );
     }
 
     it('enqueues the recovery message when the observing query is current', async () => {
       mockContext.getQueryGeneration = () => 9;
       const currentHandler = new SDKMessageHandler(mockContext);
 
-      await driveRepeatedToolError(currentHandler, 9);
+      await driveToolUseRecording(currentHandler, 9);
+      await driveToolResultError(currentHandler, 'tool-error-0', 9);
+      await driveToolResultError(currentHandler, 'tool-error-1', 9);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
@@ -4087,10 +4129,39 @@ describe('SDKMessageHandler', () => {
       mockContext.getQueryGeneration = () => 9;
       const fencedHandler = new SDKMessageHandler(mockContext);
 
-      await driveRepeatedToolError(fencedHandler, 8);
+      await driveToolUseRecording(fencedHandler, 9);
+      await driveToolResultError(fencedHandler, 'tool-error-0', 8);
+      await driveToolResultError(fencedHandler, 'tool-error-1', 8);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(enqueueMessageSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not seed the guardrail streak from a superseded query tool error', async () => {
+      mockContext.getQueryGeneration = () => 9;
+      const streakHandler = new SDKMessageHandler(mockContext);
+
+      await driveToolUseRecording(streakHandler, 9);
+      await driveToolResultError(streakHandler, 'tool-error-0', 8);
+      await driveToolResultError(streakHandler, 'tool-error-1', 8);
+      await driveToolResultError(streakHandler, 'tool-error-2', 9);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(enqueueMessageSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps recovery available after a superseded threshold-crossing pair', async () => {
+      mockContext.getQueryGeneration = () => 9;
+      const cooldownHandler = new SDKMessageHandler(mockContext);
+
+      await driveToolUseRecording(cooldownHandler, 9);
+      await driveToolResultError(cooldownHandler, 'tool-error-0', 8);
+      await driveToolResultError(cooldownHandler, 'tool-error-1', 8);
+      await driveToolResultError(cooldownHandler, 'tool-error-2', 9);
+      await driveToolResultError(cooldownHandler, 'tool-error-3', 9);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -29,18 +29,24 @@ export class ApiErrorCircuitBreaker {
     lastTripTime: null,
   };
 
-  private onTrip?: (reason: string, errorCount: number) => Promise<void>;
+  private onTrip?: (
+    reason: string,
+    errorCount: number,
+    invocationGeneration?: number
+  ) => Promise<void>;
 
   constructor(sessionId: string, config: Partial<CircuitBreakerConfig> = {}) {
     this.logger = new Logger(`CircuitBreaker ${sessionId}`);
     this.config = { ...DEFAULT_CIRCUIT_BREAKER_CONFIG, ...config };
   }
 
-  setOnTripCallback(callback: (reason: string, errorCount: number) => Promise<void>): void {
+  setOnTripCallback(
+    callback: (reason: string, errorCount: number, invocationGeneration?: number) => Promise<void>
+  ): void {
     this.onTrip = callback;
   }
 
-  async checkMessage(message: unknown): Promise<boolean> {
+  async checkMessage(message: unknown, invocationGeneration?: number): Promise<boolean> {
     const msg = message as {
       type?: string;
       message?: { content?: unknown };
@@ -62,7 +68,7 @@ export class ApiErrorCircuitBreaker {
     this.messageTimestampsByAgent.set(agentContext, rapidFire.timestamps);
 
     if (rapidFire.shouldTrip) {
-      await this.trip('rapid_fire', rapidFire.timestamps.length);
+      await this.trip('rapid_fire', rapidFire.timestamps.length, invocationGeneration);
       return true;
     }
 
@@ -94,21 +100,25 @@ export class ApiErrorCircuitBreaker {
     this.recentErrors = evaluation.errors;
 
     if (evaluation.shouldTrip) {
-      await this.trip(errorPattern, evaluation.patternCount);
+      await this.trip(errorPattern, evaluation.patternCount, invocationGeneration);
       return true;
     }
 
     return false;
   }
 
-  private async trip(reason: string, errorCount: number): Promise<void> {
+  private async trip(
+    reason: string,
+    errorCount: number,
+    invocationGeneration?: number
+  ): Promise<void> {
     this.state = applyTrip(this.state, reason, Date.now());
 
     this.recentErrors = [];
 
     if (this.onTrip) {
       try {
-        await this.onTrip(reason, errorCount);
+        await this.onTrip(reason, errorCount, invocationGeneration);
       } catch (error) {
         this.logger.error('Error executing onTrip callback:', error);
       }
