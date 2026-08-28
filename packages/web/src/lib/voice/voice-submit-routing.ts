@@ -11,7 +11,7 @@ const TRANSIENT_SUBMIT_ERROR =
   /rate limit exceeded|already in progress|timeout|timed out|fetch failed|request failed|not connected|abort/i;
 
 const DISCARDED_SUBMIT_ERROR =
-  /requires audio\/wav input|Audio data is (required|empty)|exceeds the 10 MB|must be valid base64|Voice input is disabled|(endpoint|model) is required|must be a valid URL|must use http:\/\/ or https:\/\/|redirected too many times|invalid redirect|redirect must use|private, loopback, or link-local|only sent over HTTPS/;
+  /requires audio\/wav input|Audio data is (required|empty)|exceeds the 10 MB|must be valid base64|Voice input is disabled|(endpoint|model) is required|must be a valid URL|must use http:\/\/ or https:\/\/|redirected too many times|invalid redirect|redirect must use|cannot follow an HTTPS-to-HTTP redirect|response exceeds the 256 KB limit|private, loopback, or link-local|only sent over HTTPS/;
 
 export function classifyVoiceSubmitError(error: unknown): VoiceSubmitErrorClass {
   if (error instanceof DOMException && error.name === 'AbortError') return 'retry';
@@ -60,11 +60,13 @@ export function routeVoiceOutcome(input: VoiceSubmitRouteInput): VoiceSubmitOutc
   if (mounted) {
     return { kind: 'insert', transcript, autoSend: mode !== 'stay' };
   }
-  if (input.composerFull) {
-    return { kind: 'persist-for-resend', transcript, reason: PERSIST_COMPOSER_FULL };
-  }
-  if (input.deliveryRefused) {
-    return { kind: 'persist-for-resend', transcript, reason: PERSIST_SEND_FAILED };
+  if (mode !== 'stay') {
+    if (input.composerFull) {
+      return { kind: 'persist-for-resend', transcript, reason: PERSIST_COMPOSER_FULL };
+    }
+    if (input.deliveryRefused) {
+      return { kind: 'persist-for-resend', transcript, reason: PERSIST_SEND_FAILED };
+    }
   }
   return { kind: 'deliver-unmounted', transcript, mode };
 }

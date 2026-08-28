@@ -48,6 +48,8 @@ describe('classifyVoiceSubmitError', () => {
     'Voice transcription redirected too many times',
     'Voice transcription returned an invalid redirect',
     'Voice transcription redirect must use http:// or https://',
+    'Voice transcription cannot follow an HTTPS-to-HTTP redirect',
+    'Voice transcription response exceeds the 256 KB limit',
     'Voice transcription API keys are only sent over HTTPS. Use an HTTPS endpoint or remove the API key.',
     'Voice transcription endpoint targets a private, loopback, or link-local address.',
   ])('classifies payload and config refusals as discard: %s', (message) => {
@@ -72,6 +74,13 @@ describe('classifyVoiceSubmitError', () => {
     ['plain object', { message: 'nope' }],
   ])('falls back to retry for unrecognized %s', (_label, error) => {
     expect(classifyVoiceSubmitError(error)).toBe('retry');
+  });
+
+  it.each([
+    'Voice transcription produced no response',
+    'Transcription response did not include text',
+  ])('retries response-shape failures that may be transient: %s', (message) => {
+    expect(classifyVoiceSubmitError(new Error(message))).toBe('retry');
   });
 });
 
@@ -232,5 +241,18 @@ describe('routeVoiceOutcome', () => {
       transcript: 'hello',
       reason: 'Composer draft is full — voice transcript saved to the session draft',
     });
+  });
+
+  it('stay mode stages to the draft regardless of the failure flags', () => {
+    expect(
+      routeVoiceOutcome({
+        transcript: 'hello',
+        mounted: false,
+        sessionChanged: false,
+        mode: 'stay',
+        composerFull: true,
+        deliveryRefused: true,
+      })
+    ).toEqual({ kind: 'deliver-unmounted', transcript: 'hello', mode: 'stay' });
   });
 });
