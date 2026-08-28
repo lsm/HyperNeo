@@ -546,6 +546,18 @@ export class MessageQueue {
     );
   }
 
+  private recordEvictedYieldEpoch(stamp: YieldGenerationStamp): void {
+    const evictedKey = evictedYieldKey(stamp.generation, stamp.stopEpoch);
+    if (this.evictedYieldEpochs.has(evictedKey)) return;
+    this.evictedYieldEpochs.add(evictedKey);
+    if (this.evictedYieldEpochs.size > 256) {
+      const oldestEpoch = this.evictedYieldEpochs.values().next().value;
+      if (oldestEpoch !== undefined) {
+        this.evictedYieldEpochs.delete(oldestEpoch);
+      }
+    }
+  }
+
   acknowledgeYielded(messageId: string, fromQueryGeneration?: number): boolean {
     if (!this.ownsYieldedGeneration(messageId, fromQueryGeneration ?? null)) return false;
     for (const message of this.yielded) {
@@ -723,22 +735,16 @@ export class MessageQueue {
             if (this.isTrackedMessageId(retainedId)) continue;
             const retainedStamp = this.lastYieldGenerations.get(retainedId);
             if (retainedStamp && retainedStamp.stopEpoch !== this.stopEpoch) continue;
+            if (retainedStamp) {
+              this.recordEvictedYieldEpoch(retainedStamp);
+            }
             this.lastYieldGenerations.delete(retainedId);
           }
           for (const retainedId of retainedIds) {
             if (this.lastYieldGenerations.size <= 256) break;
             const evictedStamp = this.lastYieldGenerations.get(retainedId);
             if (evictedStamp) {
-              const evictedKey = evictedYieldKey(evictedStamp.generation, evictedStamp.stopEpoch);
-              if (!this.evictedYieldEpochs.has(evictedKey)) {
-                this.evictedYieldEpochs.add(evictedKey);
-                if (this.evictedYieldEpochs.size > 256) {
-                  const oldestEpoch = this.evictedYieldEpochs.values().next().value;
-                  if (oldestEpoch !== undefined) {
-                    this.evictedYieldEpochs.delete(oldestEpoch);
-                  }
-                }
-              }
+              this.recordEvictedYieldEpoch(evictedStamp);
             }
             this.lastYieldGenerations.delete(retainedId);
           }
@@ -811,6 +817,7 @@ export class MessageQueue {
   }
 
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
+    this.noteBudgetCycleStarted();
     this.internalRestartFailed = false;
     this.cycleStoodDown = false;
     this.cycleArmClearEpoch = this.budgetCycleClearEpoch;
@@ -903,7 +910,6 @@ export class MessageQueue {
   }
 
   async runMidTurnBudgetInterrupt(opts: MidTurnBudgetInterruptOptions): Promise<void> {
-    this.noteBudgetCycleStarted();
     this.armInterruptCycle(opts);
     try {
       await runMidTurnBudgetPipeline({
@@ -1228,6 +1234,7 @@ export class MessageQueue {
           );
           restartFailed = true;
           this.cycleStoodDown = true;
+          stoodDownForUserStop = true;
           removeRecoveredEntries();
           opts.contextTracker.clearCompactionCooldown();
           opts.onResumeClear();
