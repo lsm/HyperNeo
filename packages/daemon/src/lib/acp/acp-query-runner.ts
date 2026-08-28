@@ -773,6 +773,7 @@ export class AcpQueryRunner {
 
         const queuedMessage = message as SDKUserMessage & { internal?: boolean };
         if (!queuedMessage.internal) {
+          if (!attemptOwnsRun()) break;
           await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
           if (!attemptOwnsRun()) break;
           this._lastConsumedUserMessage = {
