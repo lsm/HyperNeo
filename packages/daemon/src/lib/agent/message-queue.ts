@@ -64,12 +64,16 @@ export interface MidTurnQueueSeam {
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void;
   awaitInterruptDeadline(opts: MidTurnBudgetInterruptOptions): Promise<MidTurnInterruptDeadline>;
   standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean;
+  openLateReceiptWindow(opts: MidTurnBudgetInterruptOptions): number;
   processInterruptSurvivors(
     opts: MidTurnBudgetInterruptOptions,
     receipt: MidTurnInterruptReceipt | undefined
   ): Promise<MidTurnSurvivorsDisposition>;
   requeueInterruptSurvivors(opts: MidTurnBudgetInterruptOptions, uuids: string[]): void;
   finishSurvivorTeardownWithRestart(opts: MidTurnBudgetInterruptOptions): Promise<void>;
+  shouldEnqueueLateCompaction(removedPendingCompactions: number): boolean;
+  shouldSuppressPromptPhaseCompaction(): boolean;
+  hasOutstandingInternalCompaction(): boolean;
   enqueueMidTurnCompaction(opts: MidTurnBudgetInterruptOptions, reason: string): void;
   registerLateReceipt(
     opts: MidTurnBudgetInterruptOptions,
@@ -88,6 +92,9 @@ export class MessageQueue {
   private deliveryGate: Promise<void> | null = null;
   private resolveEarlyDeliveryGate: (() => void) | undefined;
   private internalRestartInFlight: boolean = false;
+  private midTurnCycleActive: boolean = false;
+  private midTurnBoundaryCompleted: boolean = false;
+  private midTurnCompactionQueued: boolean = false;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private nonCompactionSentSinceBoundary: boolean = false;
@@ -118,6 +125,7 @@ export class MessageQueue {
 
   noteInternalCompactionSent(message: QueuedMessage): void {
     if (this.isInternalCompaction(message)) {
+      this.midTurnCompactionQueued = false;
       this.internalCompactionsAwaitingBoundary += 1;
       this.internalCompactionIdsAwaitingBoundary.add(message.id);
     } else {
@@ -181,6 +189,9 @@ export class MessageQueue {
 
   private cancelInternalCompactionEntries(interrupted: boolean, includeYielded: boolean): number {
     let cancelled = 0;
+    if (this.queue.some((message) => this.isInternalCompaction(message))) {
+      this.midTurnCompactionQueued = false;
+    }
     const settle = (message: QueuedMessage) => {
       if (interrupted) {
         message.reject(new Error('Interrupted by user'));
@@ -377,11 +388,16 @@ export class MessageQueue {
   clear(): void {
     this.clearEpoch += 1;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
+    const rejectedCompactions =
+      this.queue.some((message) => this.isInternalCompaction(message)) ||
+      [...this.claimed].some((message) => this.isInternalCompaction(message));
     this.internalCompactionsAwaitingBoundary = 0;
     this.internalCompactionIdsAwaitingBoundary.clear();
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
     this.deliveryGate = null;
+    this.midTurnCompactionQueued = false;
+    this.midTurnCycleActive = false;
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -404,7 +420,7 @@ export class MessageQueue {
       msg.resolve(msg.id);
     }
     this.yielded.clear();
-    if (deliveredCompactions || yieldedCompactions.length > 0) {
+    if (deliveredCompactions || yieldedCompactions.length > 0 || rejectedCompactions) {
       this.onInternalCompactionsAborted?.();
     }
   }
@@ -533,13 +549,19 @@ export class MessageQueue {
   stop(): void {
     this.running = false;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
+    const rejectedCompactions =
+      this.queue.some((message) => this.isInternalCompaction(message)) ||
+      [...this.claimed].some((message) => this.isInternalCompaction(message)) ||
+      [...this.yielded].some((message) => this.isInternalCompaction(message));
     this.internalCompactionsAwaitingBoundary = 0;
     this.internalCompactionIdsAwaitingBoundary.clear();
     this.nonCompactionSentSinceBoundary = false;
     this.cancelInternalCompactionEntries(true, true);
     this.deliveryGate = null;
+    this.midTurnCompactionQueued = false;
+    this.midTurnCycleActive = false;
     this.wakeWaiters();
-    if (deliveredCompactions) {
+    if (deliveredCompactions || rejectedCompactions) {
       this.onInternalCompactionsAborted?.();
     }
   }
@@ -624,6 +646,9 @@ export class MessageQueue {
   }
 
   private gatedBypassIndex(): number {
+    if (this.midTurnCompactionQueued && this.hasQueuedInternalCompaction()) {
+      return this.queue.findIndex((message) => this.isInternalCompaction(message));
+    }
     const toolResultIndex = this.queue.findIndex(
       (message) =>
         typeof message.content !== 'string' &&
@@ -669,6 +694,8 @@ export class MessageQueue {
   }
 
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
+    this.midTurnCycleActive = true;
+    this.midTurnBoundaryCompleted = false;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
     opts.logger.info(
@@ -684,6 +711,7 @@ export class MessageQueue {
   releaseEarlyDeliveryGate(): void {
     this.resolveEarlyDeliveryGate?.();
     this.resolveEarlyDeliveryGate = undefined;
+    this.midTurnCycleActive = false;
   }
 
   async awaitInterruptDeadline(
@@ -781,22 +809,43 @@ export class MessageQueue {
     );
   }
 
+  openLateReceiptWindow(_opts: MidTurnBudgetInterruptOptions): number {
+    return this.removePendingInternalCompactions();
+  }
+
+  shouldEnqueueLateCompaction(removedPendingCompactions: number): boolean {
+    return removedPendingCompactions > 0;
+  }
+
+  noteBoundaryCompleted(): void {
+    if (this.midTurnCycleActive) {
+      this.midTurnBoundaryCompleted = true;
+    }
+  }
+
+  shouldSuppressPromptPhaseCompaction(): boolean {
+    return this.midTurnBoundaryCompleted;
+  }
+
   private async processLateInterruptReceipt(
     opts: MidTurnBudgetInterruptOptions,
     receipt: MidTurnInterruptReceipt
   ): Promise<void> {
-    if (this.standsDownFor(opts)) {
-      opts.onResumeClear();
-      return;
-    }
     let resolveLateGate: (() => void) | undefined;
     const lateGate = new Promise<void>((resolve) => {
       resolveLateGate = resolve;
     });
     this.setDeliveryGate(lateGate);
     try {
-      const survivors = await this.processInterruptSurvivors(opts, receipt);
-      this.requeueInterruptSurvivors(opts, survivors.toRequeue);
+      await runMidTurnBudgetPipeline({
+        opts,
+        queue: this,
+        phase: 'late-receipt',
+        lateReceipt: receipt,
+        checkEligibility: undefined,
+        refreshUsage: undefined,
+        decideCompaction: undefined,
+      });
     } finally {
       resolveLateGate?.();
     }
@@ -931,6 +980,7 @@ export class MessageQueue {
           error
         );
         if (!this.hasOutstandingInternalCompaction()) {
+          this.enqueueMidTurnCompaction(opts, 'mid-turn-restart-failed');
           opts.contextTracker.clearCompactionCooldown();
           opts.onResumeClear();
         } else {
@@ -957,6 +1007,7 @@ export class MessageQueue {
 
   enqueueMidTurnCompaction(opts: MidTurnBudgetInterruptOptions, reason: string): void {
     if (this.hasOutstandingInternalCompaction()) return;
+    this.midTurnCompactionQueued = true;
     opts.contextTracker.markCompactionTriggered(opts.budgetKey);
     this.clearNonCompactionSentSinceBoundary();
     opts.logger.info(
