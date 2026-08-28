@@ -1129,6 +1129,33 @@ describe('runDispatchAction', () => {
     expect(telemetry[0].taskId).toBe('task-42');
   });
 
+  test('emits telemetry with the resolved workflow run id', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
+    const changePlan = defineAction({
+      name: 'change_plan',
+      family: 'workflows',
+      safetyClass: 'destructive',
+      description: 'Change plan',
+      paramsDoc: '{ run_id: string }',
+      paramsSchema: z.object({ run_id: z.string() }),
+      autonomyRequirement: 4,
+      handler: async () => ({}),
+    });
+    const deps = baseDeps({
+      registry: createActionRegistry([changePlan]),
+      emitTelemetry: (event) => {
+        telemetry.push(event);
+      },
+    });
+    const outcome = await runDispatchAction(deps, {
+      ...baseInput({ actionName: 'change_plan', params: { run_id: 'run-b' } }),
+      spaceLevel: 5,
+    });
+    assertDispatched(outcome);
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].workflowRunId).toBe('run-b');
+  });
+
   test('denies actions at the role gate', async () => {
     const telemetry: DispatchTelemetryEvent[] = [];
     const outcome = await runDispatchAction(

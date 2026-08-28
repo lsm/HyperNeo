@@ -367,7 +367,11 @@ export async function runDispatchAction(
     const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
     await emitDispatchTelemetry(
       deps,
-      { ...input, taskId: ctx.taskId ?? input.taskId },
+      {
+        ...input,
+        taskId: ctx.taskId ?? input.taskId,
+        workflowRunId: ctx.workflowRunId ?? input.workflowRunId,
+      },
       ctx.action,
       outcome,
       Date.now() - startedAt
