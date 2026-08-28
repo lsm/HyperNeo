@@ -575,6 +575,12 @@ interface CommitSavedConfigDiscoveryRefreshDeps {
     persistedDiscovered?: ReadonlyArray<{ id: string; name?: string }>
   ): { applied: boolean; models: ModelInfo[] };
   releaseAppliedProviderSlice(providerId: string, cacheKey?: string): void;
+  getPendingProviderSlice(providerId: string, cacheKey?: string): ModelInfo[] | undefined;
+  restoreProviderPendingSlice(
+    providerId: string,
+    slice: ModelInfo[] | undefined,
+    cacheKey?: string
+  ): void;
   schedulePendingSliceRelease(providerId: string, cacheKey?: string): void;
   markProviderRefreshSucceeded(providerId: string): boolean;
   mergeDiscoveredWithStatic(providerId: string, discovered: ReadonlyArray<ModelInfo>): ModelInfo[];
@@ -598,6 +604,7 @@ interface CommitSavedConfigDiscoveryRefreshCtx {
   normalizedDiscovered?: ModelInfo[];
   appliedSlice?: ModelInfo[];
   previousSlice?: ModelInfo[];
+  previousOverlay?: ModelInfo[];
   truncated?: boolean;
   recoveredFailure?: boolean;
   outcome?: SavedConfigDiscoveryRefreshOutcome;
@@ -656,6 +663,7 @@ async function applyDiscoveredSliceToLiveCache(
   const previousSlice = (ctx.deps.getModelsCache().get('global') ?? []).filter(
     (model) => model.provider === ctx.providerId
   );
+  const previousOverlay = ctx.deps.getPendingProviderSlice(ctx.providerId);
   const firstApply = ctx.deps.applyDiscoveredProviderModels(
     ctx.providerId,
     normalizedDiscovered,
@@ -668,14 +676,20 @@ async function applyDiscoveredSliceToLiveCache(
     } else {
       ctx.deps.markModelsCacheSliceProtected('global');
     }
-    return { ...ctx, normalizedDiscovered, appliedSlice: firstApply.models, previousSlice };
+    return {
+      ...ctx,
+      normalizedDiscovered,
+      appliedSlice: firstApply.models,
+      previousSlice,
+      previousOverlay,
+    };
   }
   const inFlight = ctx.deps.getCurrentCacheLoad();
   if (!inFlight) {
     if (ctx.discoveryBaseUrl === undefined) {
       ctx.deps.schedulePendingSliceRelease(ctx.providerId);
     }
-    return { ...ctx, normalizedDiscovered, previousSlice };
+    return { ...ctx, normalizedDiscovered, previousSlice, previousOverlay };
   }
   await raceWithTimeout(
     inFlight.catch(() => {}),
@@ -692,13 +706,18 @@ async function applyDiscoveredSliceToLiveCache(
   );
   const currentRow = ctx.deps.providerRepo.getProvider(ctx.rowId);
   if (supersededDuringWait) {
-    ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+    ctx.deps.restoreProviderPendingSlice(ctx.providerId, previousOverlay);
     ctx.deps.restoreProviderModelsSlice(ctx.providerId, previousSlice);
     if (currentRow && currentRow.configJson === ctx.persistedConfig!.configJson) {
       ctx.deps.providerRepo.updateProvider(ctx.rowId, { configJson: ctx.originalConfigJson });
     }
     ctx.deps.provider.clearModelCache?.();
-    return { ...ctx, normalizedDiscovered, outcome: { success: false, reason: 'superseded' } };
+    return {
+      ...ctx,
+      normalizedDiscovered,
+      previousOverlay,
+      outcome: { success: false, reason: 'superseded' },
+    };
   }
   const retryPreviousSlice = (ctx.deps.getModelsCache().get('global') ?? []).filter(
     (model) => model.provider === ctx.providerId
@@ -723,6 +742,7 @@ async function applyDiscoveredSliceToLiveCache(
     normalizedDiscovered,
     appliedSlice: retryApply.models,
     previousSlice: retryPreviousSlice,
+    previousOverlay,
   };
 }
 
@@ -743,7 +763,7 @@ async function revalidateBeforeCommittingSuccess(
     return ctx;
   }
   const currentRow = ctx.deps.providerRepo.getProvider(ctx.rowId);
-  ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+  ctx.deps.restoreProviderPendingSlice(ctx.providerId, ctx.previousOverlay);
   ctx.deps.restoreProviderModelsSlice(ctx.providerId, ctx.previousSlice ?? []);
   if (currentRow && currentRow.configJson === ctx.persistedConfig!.configJson) {
     ctx.deps.providerRepo.updateProvider(ctx.rowId, { configJson: ctx.originalConfigJson });
@@ -894,6 +914,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
       restoreProviderModelsSlice,
       applyDiscoveredProviderModels,
       releaseAppliedProviderSlice,
+      getPendingProviderSlice,
+      restoreProviderPendingSlice,
       schedulePendingSliceRelease,
       markProviderRefreshSucceeded,
       mergeDiscoveredWithStatic,
@@ -957,6 +979,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           restoreProviderModelsSlice,
           applyDiscoveredProviderModels,
           releaseAppliedProviderSlice,
+          getPendingProviderSlice,
+          restoreProviderPendingSlice,
           schedulePendingSliceRelease,
           markProviderRefreshSucceeded,
           mergeDiscoveredWithStatic,

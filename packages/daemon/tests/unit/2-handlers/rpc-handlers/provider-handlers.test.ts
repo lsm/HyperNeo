@@ -1175,6 +1175,52 @@ describe('Provider RPC handlers', () => {
       expect(ids).not.toContain('discarded-model');
     });
 
+    it('restores the prior saved-endpoint overlay when a second refresh is discarded', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        baseUrl: 'https://saved-endpoint.example',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      let credentialReads = 0;
+      let discoveryRound = 0;
+      const { refreshModels } = await import('../../../../src/lib/model-service');
+      getProviderRegistry().register({
+        id: 'remote',
+        isAvailable: async () => true,
+        getCredentials: async () => {
+          credentialReads += 1;
+          return { type: 'api_key', apiKey: credentialReads < 8 ? 'key-1' : 'key-2' };
+        },
+        listRemoteModels: async () => {
+          discoveryRound += 1;
+          return [makeDiscoveredModel(discoveryRound === 1 ? 'saved-model-1' : 'saved-model-2')];
+        },
+        getModels: async () => [makeDiscoveredModel('default-model')],
+      } as unknown as Provider);
+      setModelsCache(new Map([['global', [makeDiscoveredModel('existing')]]]));
+      const handlers = setup();
+
+      const first = (await handlers.get('providers.refreshDiscovery')({ id: created.id }, {})) as {
+        success: boolean;
+      };
+      expect(first.success).toBe(true);
+
+      const second = (await handlers.get('providers.refreshDiscovery')({ id: created.id }, {})) as {
+        success: boolean;
+        reason?: string;
+      };
+      expect(second).toEqual({ success: false, reason: 'superseded' });
+
+      await refreshModels();
+      const ids = (getModelsCache().get('global') ?? []).map((model) => model.id);
+      expect(ids).toContain('saved-model-1');
+      expect(ids).not.toContain('saved-model-2');
+      expect(ids).not.toContain('default-model');
+    });
+
     it('rejects the refresh when the saved config cannot fit the discovery wrapper', async () => {
       const pad = 'x'.repeat(64 * 1024 - 20);
       const created = repo.createProvider({
