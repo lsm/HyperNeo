@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { cpus } from 'node:os';
+import { rmSync } from 'node:fs';
+import { cpus, tmpdir } from 'node:os';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -15,7 +16,7 @@ import { planAdmissionBadgeUpdate } from '../../src/storage/repositories/sdk-mes
 const ITERATIONS = 100_000;
 const WARMUP_ITERATIONS = 1_000_000;
 const INSERT_ITERATIONS = 10_000;
-const INSERT_WARMUP_ITERATIONS = 50_000;
+const INSERT_WARMUP_ITERATIONS = 10_000;
 const SAMPLES = 5;
 const log = (message: string): void => {
   process.stdout.write(`${message}\n`);
@@ -54,6 +55,7 @@ type SaveState = {
 };
 
 type InsertRow = {
+  id: string;
   sessionId: string;
   messageType: string;
   messageSubtype: string | null;
@@ -170,16 +172,21 @@ const saveInputs: readonly SaveState[] = saveMessages.map((message) => ({
 }));
 
 const insertTimestamp = new Date().toISOString();
-const insertRows: readonly InsertRow[] = saveMessages.map((message) => {
-  const admission = decideMessageAdmission(normalizeMessageAdmissionInput(message), {
+const INSERT_ROW_COUNT = Math.max(INSERT_ITERATIONS, INSERT_WARMUP_ITERATIONS);
+const insertRows: readonly InsertRow[] = Array.from({ length: INSERT_ROW_COUNT }, (_, index) => {
+  const message = saveMessages[index % saveMessages.length];
+  const sdkUuid = `u-${index}`;
+  const sdkMessage = { ...message, uuid: sdkUuid } as unknown as SDKMessage;
+  const admission = decideMessageAdmission(normalizeMessageAdmissionInput(sdkMessage), {
     variant: 'sdk',
     sendStatus: null,
   });
   return {
+    id: `${index}-${saveSessionId}`,
     sessionId: saveSessionId,
-    messageType: message.type,
-    messageSubtype: (message as { subtype?: string }).subtype ?? null,
-    sdkMessage: JSON.stringify(message),
+    messageType: sdkMessage.type,
+    messageSubtype: (sdkMessage as { subtype?: string }).subtype ?? null,
+    sdkMessage: JSON.stringify(sdkMessage),
     isRenderable: admission.isRenderable,
     isTerminal: admission.isTerminal,
     parentToolUseId: admission.parentToolUseId,
@@ -256,10 +263,15 @@ function saveChecksum(ctx: SaveState): number {
 
 function setupInsert(): {
   db: typeof Database.prototype;
+  dbPath: string;
   reset: () => void;
   run: (row: InsertRow) => number;
 } {
-  const db = new Database(':memory:');
+  const dbPath = `${tmpdir()}/hyperneo-bench-${process.pid}-${Date.now()}.db`;
+  const db = new Database(dbPath);
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA synchronous = NORMAL');
+  db.exec('PRAGMA busy_timeout = 5000');
   db.exec('PRAGMA foreign_keys = ON');
   createTables(db);
   db.prepare(
@@ -270,10 +282,9 @@ function setupInsert(): {
   );
   const deleteStmt = db.prepare('DELETE FROM sdk_messages');
   const resetSessionStmt = db.prepare('UPDATE sessions SET visible_message_count = 0 WHERE id = ?');
-  let counter = 0;
-  const insert = db.transaction((row: InsertRow, id: string) => {
+  const insert = db.transaction((row: InsertRow) => {
     insertStmt.run(
-      id,
+      row.id,
       row.sessionId,
       row.messageType,
       row.messageSubtype,
@@ -292,16 +303,12 @@ function setupInsert(): {
   });
   return {
     db,
+    dbPath,
     reset: () => {
       deleteStmt.run();
       resetSessionStmt.run(saveSessionId);
-      counter = 0;
     },
-    run: (row: InsertRow) => {
-      const id = `${++counter}-${row.sessionId}`;
-      insert(row, id);
-      return 1;
-    },
+    run: (row: InsertRow) => insert(row),
   };
 }
 
@@ -350,14 +357,17 @@ function collectSample(variant: Variant): Sample {
     return { cold, warm };
   }
   if (variant === 'sqlite-insert') {
-    const { db, reset, run } = setupInsert();
+    const { db, dbPath, reset, run } = setupInsert();
     reset();
-    const cold = runIterations(insertRows, run, INSERT_ITERATIONS);
+    const cold = runIterations(insertRows.slice(0, INSERT_ITERATIONS), run, INSERT_ITERATIONS);
     reset();
-    runIterations(insertRows, run, INSERT_WARMUP_ITERATIONS);
+    runIterations(insertRows.slice(0, INSERT_WARMUP_ITERATIONS), run, INSERT_WARMUP_ITERATIONS);
     reset();
-    const warm = runIterations(insertRows, run, INSERT_ITERATIONS);
+    const warm = runIterations(insertRows.slice(0, INSERT_ITERATIONS), run, INSERT_ITERATIONS);
     db.close();
+    for (const suffix of ['', '-wal', '-shm']) {
+      rmSync(`${dbPath}${suffix}`, { force: true });
+    }
     return { cold, warm };
   }
   throw new Error(`Unknown variant: ${variant}`);
