@@ -31,6 +31,7 @@ import {
   classifyProviderFailure,
 } from '../providers/provider-failure-store.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { withProviderLock } from './provider-mutation-lock.ts';
 import { Logger } from '../logger.ts';
 const log = new Logger('auth-handlers');
 
@@ -110,6 +111,17 @@ export async function clearCacheAndNotifyProvidersChanged(
     providerRepo,
     stripPersisted,
   });
+}
+
+async function lockedClearCacheAndNotifyProvidersChanged(
+  internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined,
+  providerId?: string,
+  providerRepo?: ProviderRepository,
+  stripPersisted = true
+): Promise<void> {
+  await withProviderLock(() =>
+    clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo, stripPersisted)
+  );
 }
 
 async function removeCredentialsOrKeychainError(
@@ -233,7 +245,11 @@ export function setupAuthHandlers(
           unsubscribe?.();
           let stripError: unknown;
           try {
-            await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+            await lockedClearCacheAndNotifyProvidersChanged(
+              internalEventBus,
+              providerId,
+              providerRepo
+            );
           } catch (error) {
             stripError = error;
           }
@@ -311,7 +327,11 @@ export function setupAuthHandlers(
             }
           }
           try {
-            await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+            await lockedClearCacheAndNotifyProvidersChanged(
+              internalEventBus,
+              providerId,
+              providerRepo
+            );
           } catch {}
           log.error(`Logout failed for ${providerId}:`, readError);
           return {
@@ -341,7 +361,11 @@ export function setupAuthHandlers(
           provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
         try {
-          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+          await lockedClearCacheAndNotifyProvidersChanged(
+            internalEventBus,
+            providerId,
+            providerRepo
+          );
         } catch {}
         return { success: true };
       } catch (error) {
@@ -362,7 +386,7 @@ export function setupAuthHandlers(
           credentialIdentity(storedCredentials) !== credentialIdentity(remainingCredentials);
         if (identityChanged) {
           try {
-            await clearCacheAndNotifyProvidersChanged(
+            await lockedClearCacheAndNotifyProvidersChanged(
               internalEventBus,
               providerId,
               providerRepo,
@@ -424,7 +448,7 @@ export function setupAuthHandlers(
             credentialIdentity(previousCredentials) !== credentialIdentity(remaining) ||
             cleanupError !== undefined;
           try {
-            await clearCacheAndNotifyProvidersChanged(
+            await lockedClearCacheAndNotifyProvidersChanged(
               internalEventBus,
               providerId,
               providerRepo,
@@ -441,7 +465,7 @@ export function setupAuthHandlers(
         if (credentials?.type === 'oauth') {
           await credentialManager?.storeOAuthTokens(providerId, credentials);
         }
-        await clearCacheAndNotifyProvidersChanged(
+        await lockedClearCacheAndNotifyProvidersChanged(
           internalEventBus,
           providerId,
           providerRepo,

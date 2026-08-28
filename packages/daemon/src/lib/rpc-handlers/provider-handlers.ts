@@ -21,6 +21,7 @@ import { parseAcpCommand } from '../acp/acp-command.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { clearCacheAndNotifyProvidersChanged } from './auth-handlers.ts';
+import { withProviderLock } from './provider-mutation-lock.ts';
 import { Logger } from '../logger.ts';
 
 const log = new Logger('provider-handlers');
@@ -135,14 +136,6 @@ export async function resolveCredentialsForHydration(
     if (live) return live;
   }
   return credentialManager.getCredentials(providerId);
-}
-
-let mutationQueue: Promise<unknown> = Promise.resolve();
-
-function withProviderLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = mutationQueue.then(fn, fn);
-  mutationQueue = run.catch(() => {});
-  return run;
 }
 
 function rethrowKeychainError(err: unknown, action: string, providerId: string): never {
