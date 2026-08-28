@@ -10,6 +10,9 @@ export function buildLastGoodDiscoveredModels(
   discovered: ReadonlyArray<{ id: string; name?: string }>,
   budget: number
 ): LastGoodDiscoveredList {
+  if (budget < 2) {
+    throw new Error('Last-good discovery budget must be at least 2 characters');
+  }
   const byId = new Map<string, CuratedModel>();
   for (const entry of curated ?? []) {
     if (!byId.has(entry.id)) {
@@ -32,16 +35,21 @@ export function buildLastGoodDiscoveredModels(
     });
   }
   const models: CuratedModel[] = [];
+  const curatedBareCosts = Array.from(byId.values())
+    .slice(0, curatedCount)
+    .map((entry, position) => JSON.stringify({ id: entry.id }).length + (position === 0 ? 0 : 1));
+  let bareReserve = curatedBareCosts.reduce((sum, cost) => sum + cost, 0);
   let used = 2;
   let index = 0;
   let truncated = false;
   for (const entry of byId.values()) {
+    if (index < curatedCount) bareReserve -= curatedBareCosts[index];
     let candidate = entry;
     let cost = JSON.stringify(entry).length + (models.length === 0 ? 0 : 1);
-    if (used + cost > budget && entry.name !== undefined) {
+    if (used + cost + bareReserve > budget && entry.name !== undefined) {
       const bare: CuratedModel = { id: entry.id };
       const bareCost = JSON.stringify(bare).length + (models.length === 0 ? 0 : 1);
-      if (used + bareCost <= budget) {
+      if (used + bareCost + bareReserve <= budget) {
         candidate = bare;
         cost = bareCost;
       }

@@ -120,6 +120,29 @@ describe('buildLastGoodDiscoveredModels bounding and truncation', () => {
     expect(result.truncated).toBeUndefined();
   });
 
+  it('strips an earlier curated name when a later curated id needs the space', () => {
+    const curated = [{ id: 'a', name: 'n' }, { id: 'b' }];
+    const bareBoth = JSON.stringify([{ id: 'a' }, { id: 'b' }]).length;
+    expect(buildLastGoodDiscoveredModels(curated, [], bareBoth).models).toEqual([
+      { id: 'a' },
+      { id: 'b' },
+    ]);
+    const withName = JSON.stringify([{ id: 'a', name: 'n' }, { id: 'b' }]).length;
+    expect(buildLastGoodDiscoveredModels(curated, [], withName).models).toEqual([
+      { id: 'a', name: 'n' },
+      { id: 'b' },
+    ]);
+  });
+
+  it('rejects budgets too small for even the empty list', () => {
+    expect(() => buildLastGoodDiscoveredModels([], [], 1)).toThrow(
+      'Last-good discovery budget must be at least 2 characters'
+    );
+    expect(() => buildLastGoodDiscoveredModels(undefined, [{ id: 'aaa' }], 0)).toThrow(
+      'Last-good discovery budget must be at least 2 characters'
+    );
+  });
+
   it('throws when a curated entry cannot fit even without its name', () => {
     const curated = [{ id: 'cur-a' }, { id: 'cur-b', name: 'B' }];
     const onlyFirstFits = JSON.stringify([curated[0]]).length;
