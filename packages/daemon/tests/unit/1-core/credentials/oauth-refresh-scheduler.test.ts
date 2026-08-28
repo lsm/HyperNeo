@@ -875,6 +875,41 @@ describe('OAuthRefreshScheduler', () => {
     }
   });
 
+  it('marks the provider unhealthy when persistence and invalidation both fail with a recorded failure', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    manager.storeOAuthTokens = async () => {
+      throw new Error('credential store failed');
+    };
+    recordClassifiedProviderFailure('oauth-provider', {
+      errorKind: 'transient',
+      message: 'Endpoint returned HTTP 503',
+    });
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      onPreRecoveryInvalidate: async () => {
+        throw new Error('durable strip failed');
+      },
+    });
+    try {
+      await scheduler.tick();
+
+      expect(manager.stored).toHaveLength(0);
+      expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+    } finally {
+      clearProviderFailureRecords();
+    }
+  });
+
   it('retries token persistence on pending-invalidation ticks after the store heals', async () => {
     const registry = new ProviderRegistry();
     registry.register(createProvider(true));
