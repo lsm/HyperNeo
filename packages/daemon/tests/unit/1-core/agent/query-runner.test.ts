@@ -1381,6 +1381,88 @@ describe('QueryRunner', () => {
     });
   });
 
+  describe('handleStreamMessageError', () => {
+    const topLevelResult = {
+      type: 'result',
+      uuid: 'result-uuid',
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage;
+
+    function allocateLiveToken(ctx: QueryRunnerContext) {
+      return ctx.attemptTokens.allocate();
+    }
+
+    it('drains delivery waiters and publishes through the ownership guard for the owning attempt', async () => {
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const token = allocateLiveToken(ctx);
+      ctx.incrementQueryGeneration();
+
+      await runner.handleStreamMessageError(topLevelResult, new Error('handler boom'), 1, token);
+
+      expect(setIdleSpy).toHaveBeenCalledWith();
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      const guard = handleErrorSpy.mock.calls[0][6] as () => boolean;
+      expect(guard()).toBe(true);
+      expect(cancelTerminalIdleArmSpy).not.toHaveBeenCalled();
+    });
+
+    it('skips the drain, suppresses publication, and cancels the armed fence when superseded', async () => {
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      const token = allocateLiveToken(ctx);
+      ctx.incrementQueryGeneration();
+      ctx.incrementQueryGeneration();
+
+      await runner.handleStreamMessageError(topLevelResult, new Error('handler boom'), 1, token);
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+    });
+
+    it('treats a same-generation replacement attempt as stale via the attempt token', async () => {
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      ctx.incrementQueryGeneration();
+      const staleToken = allocateLiveToken(ctx);
+      ctx.attemptTokens.allocate();
+
+      await runner.handleStreamMessageError(
+        topLevelResult,
+        new Error('handler boom'),
+        1,
+        staleToken
+      );
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+    });
+
+    it('cancels the armed fence instead of draining when cleanup is active', async () => {
+      const ctx = createContext({ isCleaningUp: () => true });
+      runner = new QueryRunner(ctx);
+      const token = allocateLiveToken(ctx);
+      ctx.incrementQueryGeneration();
+
+      await runner.handleStreamMessageError(topLevelResult, new Error('handler boom'), 1, token);
+
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+    });
+  });
+
   describe('createAbortableQuery', () => {
     it('should yield messages from query iterator', async () => {
       runner = createRunner();

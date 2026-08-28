@@ -946,26 +946,12 @@ export class QueryRunner {
         try {
           await this.handleSDKMessage(message as SDKMessage, queryGeneration);
         } catch (error) {
-          logger.error('Error handling SDK message:', error);
-          logger.error('Message type:', (message as SDKMessage).type);
-
-          if (!this.ctx.isCleaningUp()) {
-            const processingState = stateManager.getState();
-            await drainDeliveryWaitersOnTerminalSDKMessage(stateManager, message as SDKMessage);
-
-            const publishGuard = () =>
-              !this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === queryGeneration;
-
-            await errorManager.handleError(
-              session.id,
-              error as Error,
-              ErrorCategory.MESSAGE,
-              'Error processing SDK message. The session has been reset.',
-              processingState,
-              { messageType: (message as SDKMessage).type },
-              publishGuard
-            );
-          }
+          await this.handleStreamMessageError(
+            message as SDKMessage,
+            error,
+            queryGeneration,
+            attemptToken
+          );
         }
       }
 
@@ -1809,6 +1795,40 @@ export class QueryRunner {
   async handleSDKMessage(message: SDKMessage, queryGeneration?: number): Promise<void> {
     await this.ctx.onSDKMessage(message, undefined, queryGeneration);
     await this.ctx.onMarkApiSuccess(message, queryGeneration);
+  }
+
+  async handleStreamMessageError(
+    message: SDKMessage,
+    error: unknown,
+    queryGeneration: number,
+    attemptToken: QueryAttemptToken
+  ): Promise<void> {
+    const { session, stateManager, errorManager, logger } = this.ctx;
+
+    logger.error('Error handling SDK message:', error);
+    logger.error('Message type:', message.type);
+
+    const attemptOwnsRun = () =>
+      !this.ctx.isCleaningUp() &&
+      this.ctx.getQueryGeneration() === queryGeneration &&
+      attemptToken.isLive();
+
+    if (attemptOwnsRun()) {
+      const processingState = stateManager.getState();
+      await drainDeliveryWaitersOnTerminalSDKMessage(stateManager, message);
+      await errorManager.handleError(
+        session.id,
+        error as Error,
+        ErrorCategory.MESSAGE,
+        'Error processing SDK message. The session has been reset.',
+        processingState,
+        { messageType: message.type },
+        attemptOwnsRun
+      );
+      return;
+    }
+
+    stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
   }
 
   async *createAbortableQuery(

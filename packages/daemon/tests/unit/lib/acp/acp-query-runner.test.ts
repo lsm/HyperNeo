@@ -2108,6 +2108,44 @@ describe('AcpQueryRunner', () => {
     );
   });
 
+  test('cancels the invocation fence instead of draining when a replacement supersedes the dispatch', async () => {
+    const { runner, ctx } = createRunnerFixture({
+      onSDKMessage: async () => {
+        ctx.incrementQueryGeneration();
+        throw new Error('db write failed');
+      },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    expect(ctx.stateManager.setIdle).not.toHaveBeenCalledWith();
+    expect(ctx.stateManager.cancelTerminalIdleArm).toHaveBeenCalledWith({
+      queryGeneration: 1,
+      turnToken: 0,
+    });
+  });
+
+  test('cancels the invocation fence instead of draining when cleanup is active during dispatch', async () => {
+    const { runner, ctx } = createRunnerFixture({
+      onSDKMessage: async () => {
+        ctx.isCleaningUp = () => true;
+        throw new Error('db write failed');
+      },
+    });
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    expect(ctx.stateManager.setIdle).not.toHaveBeenCalledWith();
+    expect(ctx.stateManager.cancelTerminalIdleArm).toHaveBeenCalledWith({
+      queryGeneration: 1,
+      turnToken: 0,
+    });
+  });
+
   test('proxies ACP Space turns when required in-process MCP servers are present', async () => {
     const { runner, ctx } = createRunnerFixture({
       session: {

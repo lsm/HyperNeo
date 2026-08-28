@@ -885,15 +885,14 @@ export class AcpQueryRunner {
               logger.error('Error handling ACP SDK message:', error);
               logger.error('Message type:', (acpMessage as SDKMessage).type);
 
-              if (!this.ctx.isCleaningUp()) {
+              if (attemptOwnsRun() && !this.ctx.isCleaningUp()) {
                 const processingState = stateManager.getState();
                 await drainDeliveryWaitersOnTerminalSDKMessage(
                   stateManager,
                   acpMessage as SDKMessage
                 );
 
-                const publishGuard = () =>
-                  !this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === queryGeneration;
+                const publishGuard = () => attemptOwnsRun() && !this.ctx.isCleaningUp();
 
                 await errorManager.handleError(
                   session.id,
@@ -904,6 +903,8 @@ export class AcpQueryRunner {
                   { messageType: (acpMessage as SDKMessage).type, providerId: 'acp' },
                   publishGuard
                 );
+              } else {
+                stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
               }
             }
           }
