@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import type { MessageDeliveryRole } from '../../../../src/lib/agent/message-delivery';
 import {
+  applyEnqueueGate,
+  applyReuseGate,
   planDeliveryRoleArbitration,
   type DeliveryRoleArbitration,
 } from '../../../../src/lib/agent/delivery-turn-routing';
@@ -58,6 +60,58 @@ describe('planDeliveryRoleArbitration', () => {
         if (result.action === 'enqueue') {
           expect(result.uniqueConstraintFallback).not.toBe('explicit_role_rejected');
         }
+      }
+    }
+  });
+});
+
+describe('applyReuseGate', () => {
+  it('fires only with an active role and reuses it over every requested role', () => {
+    for (const existingActiveRole of ACTIVE_ROLES) {
+      for (const requestedRole of REQUESTED_ROLES) {
+        expect(applyReuseGate({ existingActiveRole, requestedRole })).toEqual({
+          action: 'reuse',
+          role: existingActiveRole,
+        });
+      }
+    }
+  });
+
+  it('does not fire without an active role', () => {
+    for (const requestedRole of REQUESTED_ROLES) {
+      expect(applyReuseGate({ existingActiveRole: null, requestedRole })).toBeNull();
+    }
+  });
+});
+
+describe('applyEnqueueGate', () => {
+  it('matches the hand-rolled enqueue decision for every requested role', () => {
+    for (const requestedRole of REQUESTED_ROLES) {
+      expect(applyEnqueueGate({ requestedRole })).toEqual(
+        planDeliveryRoleArbitration({ existingActiveRole: null, requestedRole })
+      );
+    }
+  });
+
+  it('never exposes explicit_role_rejected in the uniqueConstraintFallback', () => {
+    for (const requestedRole of REQUESTED_ROLES) {
+      const result = applyEnqueueGate({ requestedRole });
+      expect(result.action).toBe('enqueue');
+      if (result.action === 'enqueue') {
+        expect(result.uniqueConstraintFallback).not.toBe('explicit_role_rejected');
+      }
+    }
+  });
+});
+
+describe('arbitration gate cascade', () => {
+  it('applyReuseGate ?? applyEnqueueGate equals planDeliveryRoleArbitration everywhere', () => {
+    for (const existingActiveRole of [...ACTIVE_ROLES, null]) {
+      for (const requestedRole of REQUESTED_ROLES) {
+        expect(
+          applyReuseGate({ existingActiveRole, requestedRole }) ??
+            applyEnqueueGate({ requestedRole })
+        ).toEqual(planDeliveryRoleArbitration({ existingActiveRole, requestedRole }));
       }
     }
   });

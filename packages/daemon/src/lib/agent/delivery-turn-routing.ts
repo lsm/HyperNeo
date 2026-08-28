@@ -83,3 +83,40 @@ export function planDeliveryRoleArbitration(args: {
         : null,
   };
 }
+
+export function applyReuseGate(args: {
+  existingActiveRole: MessageDeliveryRole | null;
+  requestedRole?: MessageDeliveryRole;
+}): DeliveryRoleArbitration | null {
+  if (args.existingActiveRole === null) return null;
+  return {
+    action: 'reuse',
+    role: resolveDeliveryRole({
+      existingActiveRole: args.existingActiveRole,
+      requestedRole: args.requestedRole,
+      uniqueConstraintHit: false,
+    }),
+  };
+}
+
+export function applyEnqueueGate(args: {
+  requestedRole?: MessageDeliveryRole;
+}): DeliveryRoleArbitration {
+  const constrained = resolveDeliveryRole({
+    existingActiveRole: null,
+    requestedRole: args.requestedRole,
+    uniqueConstraintHit: true,
+  });
+  return {
+    action: 'enqueue',
+    role: resolveDeliveryRole({
+      existingActiveRole: null,
+      requestedRole: args.requestedRole,
+      uniqueConstraintHit: false,
+    }),
+    uniqueConstraintFallback:
+      args.requestedRole === undefined && constrained !== 'explicit_role_rejected'
+        ? constrained
+        : null,
+  };
+}
