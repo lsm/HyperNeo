@@ -6746,5 +6746,93 @@ describe('SDKMessageHandler', () => {
         expect(markConsumedSpy).not.toHaveBeenCalled();
       });
     });
+
+    describe('turn-end fallback-ack per-row revalidation (C3b)', () => {
+      function makeEnqueuedRow(tag: string) {
+        return {
+          dbId: `db-${tag}`,
+          uuid: `${tag}-uuid`,
+          type: 'user',
+          timestamp: 1700000000000,
+          message: { role: 'user', content: [{ type: 'text', text: tag }] },
+        };
+      }
+
+      const rowA = makeEnqueuedRow('revalidate-a');
+      const rowB = makeEnqueuedRow('revalidate-b');
+
+      function makeResultMessage(): SDKMessage {
+        return {
+          type: 'result',
+          subtype: 'success',
+          uuid: 'result-uuid',
+          usage: { input_tokens: 1, output_tokens: 1 },
+          total_cost_usd: 0,
+          modelUsage: {},
+        } as unknown as SDKMessage;
+      }
+
+      function setupTwoEnqueuedRows() {
+        getUserMessagesByStatusSpy.mockImplementation((sessionId: string, status: string) => {
+          if (sessionId === 'test-session-id' && status === 'enqueued') {
+            return { messages: [rowA, rowB], total: 2 };
+          }
+          return { messages: [], total: 0 };
+        });
+        getStateSpy.mockReturnValue({
+          status: 'processing',
+          messageId: 'other-uuid',
+          phase: 'streaming',
+        });
+        const markConsumed = mock((_sessionId: string, uuids: string[]) => ({
+          ids: uuids.map((uuid) => (uuid === rowA.uuid ? rowA.dbId : rowB.dbId)),
+          uuids,
+        }));
+        mockDb.getSDKMessageRepo = mock(() => ({
+          markDeliveriesConsumedAtTurnEnd: markConsumed,
+        })) as never;
+        return markConsumed;
+      }
+
+      function flipRowBOnRowAPublication(mutate: () => void) {
+        emitSpy.mockImplementation(async (topic: string, payload: { messageIds?: string[] }) => {
+          if (topic === 'messages.statusChanged' && payload?.messageIds?.includes(rowA.dbId)) {
+            mutate();
+          }
+        });
+      }
+
+      it('consumes both rows when no state changes mid-loop', async () => {
+        const markConsumed = setupTwoEnqueuedRows();
+        await handler.handleMessage(makeResultMessage());
+        expect(markConsumed).toHaveBeenCalledTimes(2);
+        expect(markConsumed).toHaveBeenCalledWith('test-session-id', [rowA.uuid], 'result-uuid');
+        expect(markConsumed).toHaveBeenCalledWith('test-session-id', [rowB.uuid], 'result-uuid');
+      });
+
+      it('skips a row that becomes pending-or-claimed while an earlier row awaits publication', async () => {
+        const markConsumed = setupTwoEnqueuedRows();
+        flipRowBOnRowAPublication(() => {
+          hasPendingOrClaimedSpy.mockImplementation((id: string) => id === rowB.uuid);
+        });
+        await handler.handleMessage(makeResultMessage());
+        expect(markConsumed).toHaveBeenCalledTimes(1);
+        expect(markConsumed).toHaveBeenCalledWith('test-session-id', [rowA.uuid], 'result-uuid');
+      });
+
+      it('skips a row that acquires durable ownership while an earlier row awaits publication', async () => {
+        const markConsumed = setupTwoEnqueuedRows();
+        let durableOwned = new Set<string>();
+        mockDb.getJobQueueRepo = mock(() => ({
+          activeDeliveryMessageUuids: () => durableOwned,
+        })) as never;
+        flipRowBOnRowAPublication(() => {
+          durableOwned = new Set([rowB.uuid]);
+        });
+        await handler.handleMessage(makeResultMessage());
+        expect(markConsumed).toHaveBeenCalledTimes(1);
+        expect(markConsumed).toHaveBeenCalledWith('test-session-id', [rowA.uuid], 'result-uuid');
+      });
+    });
   });
 });
