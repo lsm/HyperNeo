@@ -141,12 +141,14 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
       ? parsedParams.workflow_run_id
       : undefined;
   const targetRunId = parsedRunId ?? parsedWorkflowRunId;
+  const taskTargetChanged =
+    targetTaskId !== undefined && ctx.taskId !== undefined && targetTaskId !== ctx.taskId;
   return {
     ...ctx,
     action,
     parsedParams: parsed.data,
     taskId: targetTaskId ?? ctx.taskId,
-    workflowRunId: targetRunId ?? ctx.workflowRunId,
+    workflowRunId: targetRunId ?? (taskTargetChanged ? undefined : ctx.workflowRunId),
   };
 }
 
@@ -221,27 +223,55 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       };
     }
   }
+  const params = (ctx.parsedParams ?? null) as Record<string, unknown> | null;
   let taskId = ctx.taskId;
-  if (ctx.deps.resolveTaskId && ctx.parsedParams) {
-    const params = ctx.parsedParams as Record<string, unknown>;
+  let numericLookupMissed = false;
+  if (ctx.deps.resolveTaskId && params !== null) {
     const hasTaskId = typeof params.task_id === 'string' && params.task_id.length > 0;
     const prefersNumber = action.taskIdPreference === 'task_number' || !hasTaskId;
     if (typeof params.task_number === 'number' && prefersNumber) {
       try {
         taskId = await ctx.deps.resolveTaskId(params);
+        if (taskId === undefined) numericLookupMissed = true;
       } catch {}
     }
   }
+  const explicitRunTarget =
+    params !== null &&
+    ((typeof params.run_id === 'string' && params.run_id.length > 0) ||
+      (typeof params.workflow_run_id === 'string' && params.workflow_run_id.length > 0));
   let workflowRunId = ctx.workflowRunId;
-  if (ctx.deps.resolveRunId && taskId !== undefined && ctx.parsedParams) {
-    const params = ctx.parsedParams as Record<string, unknown>;
+  if (numericLookupMissed) {
+    if (!explicitRunTarget) workflowRunId = undefined;
+  } else if (ctx.deps.resolveRunId && params !== null) {
     const targetsTask =
       (typeof params.task_id === 'string' && params.task_id.length > 0) ||
       typeof params.task_number === 'number';
-    if (targetsTask) {
+    if (targetsTask && taskId !== undefined && !explicitRunTarget) {
       try {
         workflowRunId = (await ctx.deps.resolveRunId(taskId)) ?? undefined;
       } catch {}
+    }
+  }
+  if (typeof action.autonomyRequirement === 'function') {
+    const required = await action.autonomyRequirement(ctx.parsedParams);
+    const spaceLevel = ctx.spaceLevel ?? 1;
+    const agentLevel = ctx.agentLevel ?? null;
+    const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
+    const admission = decideAutonomyAdmission({
+      toolName: action.name,
+      level: effective.level,
+      required,
+      agentLevel,
+      spaceLevel,
+    });
+    if (admission.action !== 'allow') {
+      return {
+        ...ctx,
+        taskId,
+        workflowRunId,
+        outcome: deniedOutcome('autonomy_denied', admission.message),
+      };
     }
   }
   if (ctx.isMutating && ctx.deps.auditLogRepo) {
@@ -267,21 +297,6 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
 export async function executeAction(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
   if (ctx.outcome) return ctx;
   const action = ctx.action!;
-  if (typeof action.autonomyRequirement === 'function') {
-    const required = await action.autonomyRequirement(ctx.parsedParams);
-    const spaceLevel = ctx.spaceLevel ?? 1;
-    const agentLevel = ctx.agentLevel ?? null;
-    const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
-    if (effective.level < required) {
-      return {
-        ...ctx,
-        outcome: deniedOutcome(
-          'autonomy_denied',
-          `Action ${action.name} requires autonomy level ${required}; effective level is ${effective.level}.`
-        ),
-      };
-    }
-  }
   try {
     const rawResult = await action.handler(ctx.parsedParams);
     return { ...ctx, rawResult };

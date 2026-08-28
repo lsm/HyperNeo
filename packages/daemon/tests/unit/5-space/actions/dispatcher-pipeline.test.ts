@@ -943,6 +943,134 @@ describe('applyRateAndAudit', () => {
     expect(next.workflowRunId).toBe('run-b');
   });
 
+  test('keeps an explicit parsed run target when the params also target a task', async () => {
+    let resolverCalls = 0;
+    const moveTask = defineAction({
+      name: 'move_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Move task',
+      paramsDoc: '{ task_id: string, run_id: string }',
+      paramsSchema: z.object({ task_id: z.string(), run_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'move_task',
+              params: { task_id: 'task-b', run_id: 'run-explicit' },
+              taskId: 'session-task-a',
+              workflowRunId: 'run-a',
+            },
+            { registry: createActionRegistry([moveTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        resolveRunId: (taskId) => {
+          resolverCalls += 1;
+          return `run-of-${taskId}`;
+        },
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(resolverCalls).toBe(0);
+    expect(next.taskId).toBe('task-b');
+    expect(next.workflowRunId).toBe('run-explicit');
+  });
+
+  test('clears the contextual run when a completed numeric lookup misses', async () => {
+    const auditEntries: CreateMcpAuditLogParams[] = [];
+    const sendToTask = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Send message',
+      paramsDoc: '{ task_number: number, message: string }',
+      paramsSchema: z.object({ task_number: z.number(), message: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'send_message_to_task',
+              params: { task_number: 999, message: 'ping' },
+              taskId: 'session-task-a',
+              workflowRunId: 'run-a',
+            },
+            { registry: createActionRegistry([sendToTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        resolveTaskId: () => undefined,
+        auditLogRepo: {
+          createEntry: (params) => {
+            auditEntries.push(params);
+            return null as never;
+          },
+        },
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBeUndefined();
+    expect(next.workflowRunId).toBeUndefined();
+    expect(auditEntries[0].taskId).toBeNull();
+    expect(auditEntries[0].workflowRunId).toBeNull();
+  });
+
+  test('re-denies with standard diagnostics and no audit entry when a state-dependent requirement rises', async () => {
+    let required = 1;
+    const stateful = defineAction({
+      name: 'update_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Update task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      autonomyRequirement: async () => required,
+      handler: async () => ({}),
+    });
+    const auditEntries: CreateMcpAuditLogParams[] = [];
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            { actionName: 'update_task', params: { task_id: 't-1' } },
+            { registry: createActionRegistry([stateful]) }
+          )
+        )
+      )
+    );
+    const autonomied = await applyAutonomyGate({ ...ctx, spaceLevel: 1 });
+    expect(autonomied.outcome).toBeUndefined();
+    required = 5;
+    const next = await applyRateAndAudit(
+      withDeps(autonomied, {
+        auditLogRepo: {
+          createEntry: (params) => {
+            auditEntries.push(params);
+            return null as never;
+          },
+        },
+      })
+    );
+    assertDenied(next.outcome!);
+    expect(next.outcome.reason).toBe('autonomy_denied');
+    expect(next.outcome.message).toBe(
+      'update_task not permitted: space autonomy level 1 < required level 5. Request human approval.'
+    );
+    expect(auditEntries.length).toBe(0);
+  });
+
   test('clears the contextual task when a completed numeric lookup misses', async () => {
     const sendToTask = defineAction({
       name: 'send_message_to_task',
@@ -1036,36 +1164,6 @@ describe('executeAction', () => {
     const next = await executeAction(audited);
     assertFailed(next.outcome!);
     expect(next.outcome.error).toContain('handler failure');
-  });
-
-  test('re-denies when a state-dependent requirement rises before the handler runs', async () => {
-    let required = 1;
-    const stateful = defineAction({
-      name: 'update_task',
-      family: 'tasks',
-      safetyClass: 'mutate',
-      description: 'Update task',
-      paramsDoc: '{ task_id: string }',
-      paramsSchema: z.object({ task_id: z.string() }),
-      autonomyRequirement: async () => required,
-      handler: async () => ({}),
-    });
-    const ctx = applyRoleAdmission(
-      applySafetyClass(
-        resolveAction(
-          buildCtx(
-            { actionName: 'update_task', params: { task_id: 't-1' } },
-            { registry: createActionRegistry([stateful]) }
-          )
-        )
-      )
-    );
-    const autonomied = await applyAutonomyGate({ ...ctx, spaceLevel: 1 });
-    expect(autonomied.outcome).toBeUndefined();
-    required = 5;
-    const next = await executeAction(autonomied);
-    assertDenied(next.outcome!);
-    expect(next.outcome.reason).toBe('autonomy_denied');
   });
 });
 
@@ -1353,6 +1451,40 @@ describe('runDispatchAction', () => {
     });
     assertDispatched(outcome);
     expect(telemetry.length).toBe(1);
+    expect(telemetry[0].workflowRunId).toBeUndefined();
+  });
+
+  test('drops the stale session run from gate-denied telemetry when the parsed task target differs', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
+    const archiveTask = defineAction({
+      name: 'archive_task',
+      family: 'tasks',
+      safetyClass: 'destructive',
+      description: 'Archive task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      autonomyRequirement: 4,
+      handler: async () => ({}),
+    });
+    const deps = baseDeps({
+      registry: createActionRegistry([archiveTask]),
+      emitTelemetry: (event) => {
+        telemetry.push(event);
+      },
+    });
+    const outcome = await runDispatchAction(deps, {
+      ...baseInput({
+        actionName: 'archive_task',
+        params: { task_id: 'task-b' },
+        taskId: 'session-task-a',
+        workflowRunId: 'run-a',
+      }),
+      spaceLevel: 2,
+    });
+    assertDenied(outcome);
+    expect(outcome.reason).toBe('autonomy_denied');
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].taskId).toBe('task-b');
     expect(telemetry[0].workflowRunId).toBeUndefined();
   });
 
