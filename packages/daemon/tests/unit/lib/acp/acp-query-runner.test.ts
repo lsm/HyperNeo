@@ -1795,6 +1795,35 @@ describe('AcpQueryRunner', () => {
     }
   });
 
+  test('aborts session establishment when interrupted before option building completes', async () => {
+    const client = createMockClient();
+    const { runner, ctx } = createRunnerFixture({ client });
+    let releaseBuild!: () => void;
+    const buildEntered = new Promise<void>((resolve) => {
+      (ctx.optionsBuilder as unknown as { build: ReturnType<typeof mock> }).build = mock(
+        async () => {
+          resolve();
+          await new Promise<void>((resolveBuild) => {
+            releaseBuild = resolveBuild;
+          });
+          return { cwd: '/tmp/acp-session', mcpServers: {} };
+        }
+      );
+    });
+
+    await runner.start();
+    await buildEntered;
+    ctx.queryAbortController?.abort();
+    ctx.queryAbortController = null;
+    releaseBuild();
+    await ctx.queryPromise;
+
+    expect(client.sendPrompt).not.toHaveBeenCalled();
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: expect.anything() });
+    }
+  });
+
   test('keeps the old ACP session id when the replacement command fails to start', async () => {
     const client = createMockClient();
     client.initialize.mockImplementation(async () => {
