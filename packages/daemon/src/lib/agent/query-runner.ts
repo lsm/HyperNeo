@@ -953,13 +953,17 @@ export class QueryRunner {
             const processingState = stateManager.getState();
             await drainDeliveryWaitersOnTerminalSDKMessage(stateManager, message as SDKMessage);
 
+            const publishGuard = () =>
+              !this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === queryGeneration;
+
             await errorManager.handleError(
               session.id,
               error as Error,
               ErrorCategory.MESSAGE,
               'Error processing SDK message. The session has been reset.',
               processingState,
-              { messageType: (message as SDKMessage).type }
+              { messageType: (message as SDKMessage).type },
+              publishGuard
             );
           }
         }
@@ -1188,39 +1192,69 @@ export class QueryRunner {
         }
 
         const { route, finalizer } = decision;
+        const owner = stateManager.idleOwnerForQuery(queryGeneration);
+        let terminalIdleArmed = false;
 
         if (route.action === 'api_validation') {
           if (!finalizer.skipBeginTerminalIdle) {
-            stateManager.beginTerminalIdle(stateManager.idleOwnerForQuery(queryGeneration));
+            if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
+              return;
+            }
+            stateManager.beginTerminalIdle(owner);
+            terminalIdleArmed = true;
           }
-          await this.displayErrorAsAssistantMessage(route.text, {
-            markAsError: true,
-          });
+          try {
+            await this.displayErrorAsAssistantMessage(route.text, {
+              markAsError: true,
+            });
+          } catch (error) {
+            if (terminalIdleArmed) {
+              stateManager.cancelTerminalIdleArm(owner);
+            }
+            throw error;
+          }
         } else if (route.action === 'terminal') {
           if (!finalizer.skipBeginTerminalIdle) {
-            stateManager.beginTerminalIdle(stateManager.idleOwnerForQuery(queryGeneration));
+            if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
+              return;
+            }
+            stateManager.beginTerminalIdle(owner);
+            terminalIdleArmed = true;
           }
           if (!finalizer.skipErrorManager) {
-            await errorManager.handleError(
-              session.id,
-              error as Error,
-              route.category,
-              this.terminalUserMessageFor(route.messageHint, maxProviderRetries),
-              processingState,
-              {
-                errorMessage,
-                queueSize: messageQueue.size(),
-                providerId: providerId ?? 'anthropic',
-                workspacePath: session.workspacePath ?? undefined,
-                isRootWorkspace: !session.worktree,
-                startupTimeoutMs: STARTUP_TIMEOUT_MS,
+            const publishGuard = () =>
+              !this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === queryGeneration;
+            try {
+              await errorManager.handleError(
+                session.id,
+                error as Error,
+                route.category,
+                this.terminalUserMessageFor(route.messageHint, maxProviderRetries),
+                processingState,
+                {
+                  errorMessage,
+                  queueSize: messageQueue.size(),
+                  providerId: providerId ?? 'anthropic',
+                  workspacePath: session.workspacePath ?? undefined,
+                  isRootWorkspace: !session.worktree,
+                  startupTimeoutMs: STARTUP_TIMEOUT_MS,
+                },
+                publishGuard
+              );
+            } catch (error) {
+              if (terminalIdleArmed) {
+                stateManager.cancelTerminalIdleArm(owner);
               }
-            );
+              throw error;
+            }
           }
         }
 
         if (!finalizer.skipCatchIdle) {
-          await stateManager.setIdle({ owner: stateManager.idleOwnerForQuery(queryGeneration) });
+          if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
+            return;
+          }
+          await stateManager.setIdle({ owner });
         }
       }
     } finally {

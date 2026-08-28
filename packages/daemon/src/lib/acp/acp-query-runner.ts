@@ -892,13 +892,17 @@ export class AcpQueryRunner {
                   acpMessage as SDKMessage
                 );
 
+                const publishGuard = () =>
+                  !this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === queryGeneration;
+
                 await errorManager.handleError(
                   session.id,
                   error as Error,
                   ErrorCategory.MESSAGE,
                   'Error processing ACP message. The session has been reset.',
                   processingState,
-                  { messageType: (acpMessage as SDKMessage).type, providerId: 'acp' }
+                  { messageType: (acpMessage as SDKMessage).type, providerId: 'acp' },
+                  publishGuard
                 );
               }
             }
@@ -1146,26 +1150,35 @@ export class AcpQueryRunner {
         if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
           return;
         }
-        stateManager.beginTerminalIdle(stateManager.idleOwnerForQuery(queryGeneration));
-        await errorManager.handleError(
-          session.id,
-          error instanceof Error ? error : new Error(errorMessage),
-          category,
-          userMessage,
-          stateManager.getState(),
-          {
-            errorMessage,
-            queueSize: messageQueue.size(),
-            providerId: 'acp',
-            workspacePath: session.workspacePath ?? undefined,
-            startupTimeoutMs: getStartupTimeoutMs(),
-          }
-        );
+        const owner = stateManager.idleOwnerForQuery(queryGeneration);
+        stateManager.beginTerminalIdle(owner);
+        const publishGuard = () =>
+          !this.ctx.isCleaningUp() && this.ctx.getQueryGeneration() === queryGeneration;
+        try {
+          await errorManager.handleError(
+            session.id,
+            error instanceof Error ? error : new Error(errorMessage),
+            category,
+            userMessage,
+            stateManager.getState(),
+            {
+              errorMessage,
+              queueSize: messageQueue.size(),
+              providerId: 'acp',
+              workspacePath: session.workspacePath ?? undefined,
+              startupTimeoutMs: getStartupTimeoutMs(),
+            },
+            publishGuard
+          );
+        } catch (error) {
+          stateManager.cancelTerminalIdleArm(owner);
+          throw error;
+        }
         if (this.ctx.isCleaningUp() || this.ctx.getQueryGeneration() !== queryGeneration) {
-          stateManager.cancelTerminalIdleArm(stateManager.idleOwnerForQuery(queryGeneration));
+          stateManager.cancelTerminalIdleArm(owner);
           return;
         }
-        await stateManager.setIdle({ owner: stateManager.idleOwnerForQuery(queryGeneration) });
+        await stateManager.setIdle({ owner });
       }
     }
   }

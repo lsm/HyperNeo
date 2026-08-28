@@ -1827,7 +1827,8 @@ describe('AcpQueryRunner', () => {
       'system',
       undefined,
       expect.any(Object),
-      expect.objectContaining({ providerId: 'acp' })
+      expect.objectContaining({ providerId: 'acp' }),
+      expect.any(Function)
     );
   });
 
@@ -2102,7 +2103,8 @@ describe('AcpQueryRunner', () => {
       'message',
       'Error processing ACP message. The session has been reset.',
       expect.any(Object),
-      expect.objectContaining({ providerId: 'acp' })
+      expect.objectContaining({ providerId: 'acp' }),
+      expect.any(Function)
     );
   });
 
@@ -2304,6 +2306,47 @@ describe('AcpQueryRunner', () => {
       turnToken: 0,
     });
     expect(ctx.stateManager.setIdle).not.toHaveBeenCalled();
+  });
+
+  test('cancels the terminal arm when error publication rejects', async () => {
+    const client = createMockClient();
+    client.initialize.mockRejectedValue(new Error('401 Unauthorized'));
+    const { ctx } = createRunnerFixture({ client });
+    ctx.errorManager.handleError = mock(async () => {
+      throw new Error('publish failed');
+    });
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    runner.start();
+    await expect(ctx.queryPromise).rejects.toThrow('publish failed');
+
+    expect(ctx.stateManager.beginTerminalIdle).toHaveBeenCalledTimes(1);
+    expect(ctx.stateManager.cancelTerminalIdleArm).toHaveBeenCalledWith({
+      queryGeneration: 1,
+      turnToken: 0,
+    });
+  });
+
+  test('passes a publishGuard tied to current query generation and cleanup state', async () => {
+    const client = createMockClient();
+    client.initialize.mockRejectedValue(new Error('401 Unauthorized'));
+    const { ctx } = createRunnerFixture({ client });
+    const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+    runner.start();
+    await ctx.queryPromise;
+
+    expect(ctx.errorManager.handleError).toHaveBeenCalledTimes(1);
+    const guard = ctx.errorManager.handleError.mock.calls[0][6] as () => boolean;
+    expect(typeof guard).toBe('function');
+    expect(guard()).toBe(true);
+
+    ctx.incrementQueryGeneration();
+    expect(guard()).toBe(false);
+
+    ctx.incrementQueryGeneration = () => 1;
+    ctx.isCleaningUp = () => true;
+    expect(guard()).toBe(false);
   });
 
   test('surfaces provider auth failure without spawning ACP client', async () => {

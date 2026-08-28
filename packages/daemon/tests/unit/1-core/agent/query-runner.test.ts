@@ -1683,7 +1683,8 @@ describe('QueryRunner', () => {
         expect.any(String),
         expect.stringContaining('HYPERNEO_SDK_STARTUP_TIMEOUT_MS'),
         expect.anything(),
-        expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
+        expect.objectContaining({ isRootWorkspace: expect.any(Boolean) }),
+        expect.any(Function)
       );
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('attempt(s)');
@@ -1716,7 +1717,8 @@ describe('QueryRunner', () => {
         expect.any(String),
         expect.stringContaining('session could not be resumed'),
         expect.anything(),
-        expect.objectContaining({ isRootWorkspace: expect.any(Boolean) })
+        expect.objectContaining({ isRootWorkspace: expect.any(Boolean) }),
+        expect.any(Function)
       );
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
@@ -2220,7 +2222,8 @@ describe('QueryRunner', () => {
           ErrorCategory.TIMEOUT,
           expect.anything(),
           expect.anything(),
-          expect.anything()
+          expect.anything(),
+          expect.any(Function)
         );
       }
     }
@@ -2949,7 +2952,8 @@ describe('QueryRunner', () => {
         ErrorCategory.RATE_LIMIT,
         undefined,
         expect.anything(),
-        expect.anything()
+        expect.anything(),
+        expect.any(Function)
       );
     });
 
@@ -2964,7 +2968,8 @@ describe('QueryRunner', () => {
         ErrorCategory.RATE_LIMIT,
         undefined,
         expect.anything(),
-        expect.anything()
+        expect.anything(),
+        expect.any(Function)
       );
       expect(setIdleSpy.mock.calls.length).toBeGreaterThan(0);
     });
@@ -2985,7 +2990,8 @@ describe('QueryRunner', () => {
         ErrorCategory.SYSTEM,
         undefined,
         expect.anything(),
-        expect.anything()
+        expect.anything(),
+        expect.any(Function)
       );
       expect(setIdleSpy.mock.calls.length).toBeGreaterThan(0);
     });
@@ -3151,6 +3157,37 @@ describe('QueryRunner', () => {
         queryGeneration: 1,
         turnToken: 0,
       });
+    });
+
+    it('cancels the terminal fence when error publication rejects', async () => {
+      handleErrorSpy.mockImplementation(async () => {
+        throw new Error('publish failed');
+      });
+
+      const { outcome } = await runTerminalFailure('terminal query failure');
+
+      expect(String(outcome)).toContain('publish failed');
+      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({
+        queryGeneration: 1,
+        turnToken: 0,
+      });
+    });
+
+    it('passes a publishGuard tied to current query generation and cleanup state', async () => {
+      const { ctx } = await runTerminalFailure('terminal query failure');
+
+      expect(handleErrorSpy).toHaveBeenCalledTimes(1);
+      const guard = handleErrorSpy.mock.calls[0][6] as () => boolean;
+      expect(typeof guard).toBe('function');
+      expect(guard()).toBe(true);
+
+      queryGeneration += 1;
+      expect(guard()).toBe(false);
+      queryGeneration -= 1;
+
+      ctx.isCleaningUp = () => true;
+      expect(guard()).toBe(false);
     });
   });
 
@@ -3855,7 +3892,8 @@ describe('QueryRunner', () => {
         ErrorCategory.CONNECTION,
         expect.any(String),
         expect.anything(),
-        expect.any(Object)
+        expect.any(Object),
+        expect.any(Function)
       );
     });
 
@@ -4178,7 +4216,8 @@ describe('QueryRunner', () => {
         expect.any(String),
         expect.stringContaining('temporarily unavailable'),
         expect.anything(),
-        expect.any(Object)
+        expect.any(Object),
+        expect.any(Function)
       );
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).toContain('retried');
