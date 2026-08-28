@@ -2165,6 +2165,36 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('marks a requeued yielded survivor durable so its timeout resolves', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('uuid-durable-move', 'durable survivor', false, {});
+      const generator = q.messageGenerator(testSessionId);
+      const first = await generator.next();
+      expect(first.value.message.uuid).toBe('uuid-durable-move');
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-durable-move'] }),
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      q.overrideTimeoutMsForTest(20);
+      const second = await generator.next();
+      expect(second.value.message.uuid).toBe('uuid-durable-move');
+
+      const outcome = await Promise.race([
+        delivered.then(
+          () => 'resolved',
+          () => 'rejected'
+        ),
+        tick(150).then(() => 'pending'),
+      ]);
+      expect(outcome).toBe('resolved');
+      expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-durable-move')).toBe(false);
+      q.stop();
+    });
+
     it('ignores a stale send acknowledgment from the previous generator after a requeue', async () => {
       const q = new MessageQueue();
       q.start();

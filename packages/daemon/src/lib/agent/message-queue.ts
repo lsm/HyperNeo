@@ -546,11 +546,14 @@ export class MessageQueue {
     return false;
   }
 
-  requeueYielded(messageId: string): boolean {
+  requeueYielded(messageId: string, options?: { durable?: boolean }): boolean {
     for (const message of this.yielded) {
       if (message.id !== messageId) continue;
       this.yielded.delete(message);
       message.yieldAttempt = undefined;
+      if (options?.durable) {
+        message.durable = true;
+      }
       if (message.timeoutId) {
         clearTimeout(message.timeoutId);
         message.timeoutId = undefined;
@@ -1025,7 +1028,7 @@ export class MessageQueue {
       );
       return;
     }
-    if (this.requeueYielded(uuid)) {
+    if (this.requeueYielded(uuid, { durable: true })) {
       opts.logger.info(
         `requeued cancelled survivor ${uuid} for session ${opts.sessionId} from its ` +
           `live in-flight entry before send acknowledgment`
