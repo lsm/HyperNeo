@@ -351,6 +351,35 @@ function isCurationOnlyConfigUpdate(
   return true;
 }
 
+function hasEndpointChanged(previous: string | undefined, next: string | undefined): boolean {
+  const normalize = (value: string | undefined): string | undefined =>
+    value === '' ? undefined : value;
+  return normalize(previous) !== normalize(next);
+}
+
+const PROVIDERS_WITH_FIXED_DISCOVERY_ENDPOINT = new Set([
+  'anthropic',
+  'deepseek',
+  'glm',
+  'openrouter',
+]);
+
+function providerIgnoresSavedEndpoint(provider: Provider, savedBaseUrl?: string): boolean {
+  if (!savedBaseUrl) return false;
+  let withBaseUrl: string | undefined;
+  let withoutBaseUrl: string | undefined;
+  try {
+    withBaseUrl = provider.getDiscoveryEndpointFingerprint?.(savedBaseUrl);
+    withoutBaseUrl = provider.getDiscoveryEndpointFingerprint?.();
+  } catch {
+    return PROVIDERS_WITH_FIXED_DISCOVERY_ENDPOINT.has(provider.id);
+  }
+  if (withBaseUrl !== undefined && withoutBaseUrl !== undefined && withBaseUrl === withoutBaseUrl) {
+    return true;
+  }
+  return PROVIDERS_WITH_FIXED_DISCOVERY_ENDPOINT.has(provider.id);
+}
+
 export interface ProviderHandlerDeps {
   messageHub: MessageHub;
   providerRepo: ProviderRepository;
@@ -537,6 +566,8 @@ interface CommitSavedConfigDiscoveryRefreshDeps {
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   getModelsCacheClearSequence(): number;
   getCurrentCacheLoad(cacheKey?: string): Promise<void> | undefined;
+  getModelsCache(): Map<string, ModelInfo[]>;
+  restoreProviderModelsSlice(providerId: string, slice: ModelInfo[], cacheKey?: string): void;
   applyDiscoveredProviderModels(
     providerId: string,
     models: ModelInfo[],
@@ -566,6 +597,7 @@ interface CommitSavedConfigDiscoveryRefreshCtx {
   persistedConfig?: { baseUrl?: string; configJson?: string };
   normalizedDiscovered?: ModelInfo[];
   appliedSlice?: ModelInfo[];
+  previousSlice?: ModelInfo[];
   truncated?: boolean;
   recoveredFailure?: boolean;
   outcome?: SavedConfigDiscoveryRefreshOutcome;
@@ -621,6 +653,9 @@ async function applyDiscoveredSliceToLiveCache(
   ctx: CommitSavedConfigDiscoveryRefreshCtx
 ): Promise<CommitSavedConfigDiscoveryRefreshCtx> {
   const normalizedDiscovered = ctx.deps.mergeDiscoveredWithStatic(ctx.providerId, ctx.discovered);
+  const previousSlice = (ctx.deps.getModelsCache().get('global') ?? []).filter(
+    (model) => model.provider === ctx.providerId
+  );
   const firstApply = ctx.deps.applyDiscoveredProviderModels(
     ctx.providerId,
     normalizedDiscovered,
@@ -632,14 +667,14 @@ async function applyDiscoveredSliceToLiveCache(
     if (ctx.discoveryBaseUrl !== undefined) {
       ctx.deps.markModelsCacheSliceProtected('global');
     }
-    return { ...ctx, normalizedDiscovered, appliedSlice: firstApply.models };
+    return { ...ctx, normalizedDiscovered, appliedSlice: firstApply.models, previousSlice };
   }
   const inFlight = ctx.deps.getCurrentCacheLoad();
   if (!inFlight) {
     if (ctx.discoveryBaseUrl === undefined) {
       ctx.deps.schedulePendingSliceRelease(ctx.providerId);
     }
-    return { ...ctx, normalizedDiscovered };
+    return { ...ctx, normalizedDiscovered, previousSlice };
   }
   await raceWithTimeout(
     inFlight.catch(() => {}),
@@ -657,12 +692,16 @@ async function applyDiscoveredSliceToLiveCache(
   const currentRow = ctx.deps.providerRepo.getProvider(ctx.rowId);
   if (supersededDuringWait) {
     ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+    ctx.deps.restoreProviderModelsSlice(ctx.providerId, previousSlice);
     if (currentRow && currentRow.configJson === ctx.persistedConfig!.configJson) {
       ctx.deps.providerRepo.updateProvider(ctx.rowId, { configJson: ctx.originalConfigJson });
     }
     ctx.deps.provider.clearModelCache?.();
     return { ...ctx, normalizedDiscovered, outcome: { success: false, reason: 'superseded' } };
   }
+  const retryPreviousSlice = (ctx.deps.getModelsCache().get('global') ?? []).filter(
+    (model) => model.provider === ctx.providerId
+  );
   const retryApply = ctx.deps.applyDiscoveredProviderModels(
     ctx.providerId,
     normalizedDiscovered,
@@ -677,7 +716,12 @@ async function applyDiscoveredSliceToLiveCache(
   } else if (ctx.discoveryBaseUrl === undefined) {
     ctx.deps.schedulePendingSliceRelease(ctx.providerId);
   }
-  return { ...ctx, normalizedDiscovered, appliedSlice: retryApply.models };
+  return {
+    ...ctx,
+    normalizedDiscovered,
+    appliedSlice: retryApply.models,
+    previousSlice: retryPreviousSlice,
+  };
 }
 
 async function revalidateBeforeCommittingSuccess(
@@ -698,6 +742,7 @@ async function revalidateBeforeCommittingSuccess(
   }
   const currentRow = ctx.deps.providerRepo.getProvider(ctx.rowId);
   ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
+  ctx.deps.restoreProviderModelsSlice(ctx.providerId, ctx.previousSlice ?? []);
   if (currentRow && currentRow.configJson === ctx.persistedConfig!.configJson) {
     ctx.deps.providerRepo.updateProvider(ctx.rowId, { configJson: ctx.originalConfigJson });
   }
@@ -843,6 +888,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     const {
       getModelsCacheClearSequence,
       getCurrentCacheLoad,
+      getModelsCache,
+      restoreProviderModelsSlice,
       applyDiscoveredProviderModels,
       releaseAppliedProviderSlice,
       schedulePendingSliceRelease,
@@ -854,6 +901,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     const clearsAtStart = getModelsCacheClearSequence();
     const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
     const discoveryBaseUrl = record.baseUrl || undefined;
+    if (providerIgnoresSavedEndpoint(provider, discoveryBaseUrl)) {
+      throw new Error(
+        `Provider ${record.providerId} does not support discovery refresh with a saved baseUrl`
+      );
+    }
     const credentialsAtStart = credentialIdentity(await provider.getCredentials?.());
 
     const discoveryPromise = provider.listRemoteModels({
@@ -899,6 +951,8 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
           internalEventBus,
           getModelsCacheClearSequence,
           getCurrentCacheLoad,
+          getModelsCache,
+          restoreProviderModelsSlice,
           applyDiscoveredProviderModels,
           releaseAppliedProviderSlice,
           schedulePendingSliceRelease,
@@ -1055,8 +1109,11 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
 
           const discoveryInvalidating =
             data.credentials !== undefined ||
-            updates.baseUrl !== undefined ||
-            updates.customEndpointConfigJson !== undefined ||
+            hasEndpointChanged(existing.baseUrl, updates.baseUrl) ||
+            hasEndpointChanged(
+              existing.customEndpointConfigJson,
+              updates.customEndpointConfigJson
+            ) ||
             updates.isEnabled === false ||
             (updates.configJson !== undefined &&
               !isCurationOnlyConfigUpdate(existing.configJson, updates.configJson));

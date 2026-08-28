@@ -1459,6 +1459,18 @@ export function updateProviderModelsInCache(
   return true;
 }
 
+export function restoreProviderModelsSlice(
+  providerId: string,
+  slice: ModelInfo[],
+  cacheKey: string = 'global'
+): void {
+  const current = modelsCache.get(cacheKey) ?? [];
+  modelsCache.set(cacheKey, [
+    ...current.filter((model) => model.provider !== providerId),
+    ...slice,
+  ]);
+}
+
 export function getModelsCacheClearSequence(): number {
   return cacheClearSequence;
 }
