@@ -51,7 +51,6 @@ import type { ExternalEventStore } from '../../external-events/external-event-st
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern.ts';
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
 import {
-  computeQueueAgeStats,
   ExternalEventQueueMetrics,
   type QueueHealthGauges,
   type QueueHealthSnapshot,
@@ -94,26 +93,14 @@ import {
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
 } from './constants.ts';
-import { deliveryModeFromFailureReason } from './delivery-mode.ts';
 import {
-  buildQueueKey,
   DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
-  type ExternalEventTaskDecision,
   evaluateRequeueTaskLifecycle,
-  hasAnyExecutionForTarget,
-  hasTerminalExecutionForTarget,
   isPublishedExternalEventExpired,
-  isQueuedExternalEventExpired,
   isWorkflowTargetOwnedBySpace,
-  prepareExternalEventTask,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
 } from './external-event-admission-gates.ts';
-import {
-  decideExternalEventDelivery,
-  decidePostActivationDelivery,
-  type ExternalEventDeliveryDecision,
-} from './external-event-delivery-pipeline.ts';
 import {
   deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
@@ -336,13 +323,6 @@ function subscriptionReconcileKey(
   return `${nodeId}|${agentName.toLowerCase()}|${topic.toLowerCase()}${taskId ? `|${taskId}` : ''}`;
 }
 
-interface PendingExternalEvent {
-  event: ExternalEventPublishedPayload;
-  deliveryKey: string;
-  deliveryMode: 'immediate' | 'defer';
-  createdAt: number;
-}
-
 interface ExternalEventRateLimitState {
   timestamps: number[];
   cleanupTimer: Timer | null;
@@ -509,27 +489,6 @@ function longHorizonSpaceIdFromWorkflowRunId(workflowRunId: string): string | nu
   return workflowRunId.startsWith(prefix) ? workflowRunId.slice(prefix.length) : null;
 }
 
-function parseSubscriptionQueueKey(
-  key: string
-): Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'> | null {
-  try {
-    const parsed = JSON.parse(key) as unknown;
-    if (!Array.isArray(parsed) || parsed.length !== 4) return null;
-    const [workflowRunId, taskId, nodeId, agentName] = parsed;
-    if (
-      typeof workflowRunId !== 'string' ||
-      typeof taskId !== 'string' ||
-      typeof nodeId !== 'string' ||
-      typeof agentName !== 'string'
-    ) {
-      return null;
-    }
-    return { workflowRunId, taskId, nodeId, agentName };
-  } catch {
-    return null;
-  }
-}
-
 function mapNotificationEventToInternalEvent(event: SpaceNotificationEvent): {
   event: keyof DaemonInternalEventMap;
   payload: DaemonInternalEventMap[keyof DaemonInternalEventMap];
@@ -693,7 +652,6 @@ export class SpaceRuntime {
   private readonly toolContinuationRepo: ToolContinuationRecoveryRepository;
   private readonly workflowEventSubscriptionRepo: SpaceWorkflowEventSubscriptionRepository;
   private readonly topicTrie = new TopicTrie<SubscriptionTarget>();
-  private readonly pendingExternalEventQueue = new Map<string, PendingExternalEvent[]>();
   private readonly externalEventRetryTimers = new Map<string, Timer>();
   private readonly externalEventRetryCounts = new Map<string, number>();
   private readonly externalEventDeliveriesInFlight = new Set<string>();
@@ -833,21 +791,13 @@ export class SpaceRuntime {
     );
   }
 
-  registerRunInterests(
-    workflowRunId: string,
-    taskId: string,
-    nodes: WorkflowNode[],
-    options: { clearQueuedDeliveries?: boolean } = {}
-  ): void {
+  registerRunInterests(workflowRunId: string, taskId: string, nodes: WorkflowNode[]): void {
     this.topicTrie.remove(
       (target) =>
         isWorkflowSubscriptionTarget(target) &&
         target.workflowRunId === workflowRunId &&
         target.subscriptionKind === 'static'
     );
-    if (options.clearQueuedDeliveries) {
-      this.clearQueuedDeliveriesForRun(workflowRunId, 'run_interests_rebuilt');
-    }
     for (const node of nodes) {
       for (const agentEntry of resolveNodeAgents(node)) {
         for (const interest of agentEntry.eventInterests ?? []) {
@@ -1405,213 +1355,6 @@ export class SpaceRuntime {
     this.redispatchPublishedEventsWithoutDeliveries();
   }
 
-  flushPendingNodeQueue(target: WorkflowSubscriptionTarget, excludeDeliveryKey?: string): void {
-    const prepared = this.preparePendingNodeQueueDispatchable(target, excludeDeliveryKey);
-    if (!prepared) return;
-    const { targetWithExecution, dispatchable } = prepared;
-
-    let dispatched = 0;
-    for (const item of dispatchable) {
-      const deliveryTerminal = this.config.externalEventStore?.isDeliveryTerminal(
-        item.event.eventId,
-        item.deliveryKey
-      );
-      const targetStillSubscribed = this.isTargetStillSubscribed(target, item.event.topic);
-      if (deliveryTerminal || !targetStillSubscribed) {
-        if (!deliveryTerminal && !targetStillSubscribed) {
-          this.config.externalEventStore?.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
-            terminal: true,
-            reason: 'subscription_no_longer_active',
-          });
-          this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(
-            item.event.eventId
-          );
-        }
-        this.clearExternalEventRetry(item.deliveryKey);
-        continue;
-      }
-      this.clearExternalEventRetry(item.deliveryKey);
-      dispatched += 1;
-      void this.enqueueDeliverableExternalEvent(
-        targetWithExecution,
-        item.event,
-        item.deliveryKey,
-        item.deliveryMode,
-        item.createdAt
-      );
-    }
-    this.queueHealthMetrics.recordFlushAttempt(dispatched);
-  }
-
-  private async flushPendingNodeQueueAsync(
-    target: WorkflowSubscriptionTarget,
-    excludeDeliveryKey?: string,
-    includeCurrent?: PendingExternalEvent
-  ): Promise<void> {
-    const prepared = this.preparePendingNodeQueueDispatchable(target, excludeDeliveryKey);
-    if (!prepared) return;
-    const { targetWithExecution, dispatchable } = prepared;
-
-    if (includeCurrent) {
-      dispatchable.push(includeCurrent);
-    }
-
-    if (dispatchable.length > 1) {
-      dispatchable.sort(
-        (a, b) => a.createdAt - b.createdAt || a.event.occurredAt - b.event.occurredAt
-      );
-    }
-
-    let dispatched = 0;
-    for (const item of dispatchable) {
-      const deliveryTerminal = this.config.externalEventStore?.isDeliveryTerminal(
-        item.event.eventId,
-        item.deliveryKey
-      );
-      const targetStillSubscribed = this.isTargetStillSubscribed(target, item.event.topic);
-      if (deliveryTerminal || !targetStillSubscribed) {
-        if (!deliveryTerminal && !targetStillSubscribed) {
-          this.config.externalEventStore?.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
-            terminal: true,
-            reason: 'subscription_no_longer_active',
-          });
-          this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(
-            item.event.eventId
-          );
-        }
-        this.clearExternalEventRetry(item.deliveryKey);
-        continue;
-      }
-      this.clearExternalEventRetry(item.deliveryKey);
-      dispatched += 1;
-      await this.enqueueDeliverableExternalEvent(
-        targetWithExecution,
-        item.event,
-        item.deliveryKey,
-        item.deliveryMode,
-        item.createdAt
-      );
-    }
-    this.queueHealthMetrics.recordFlushAttempt(dispatched);
-  }
-
-  private preparePendingNodeQueueDispatchable(
-    target: WorkflowSubscriptionTarget,
-    excludeDeliveryKey?: string
-  ): {
-    targetWithExecution: WorkflowSubscriptionTarget;
-    dispatchable: PendingExternalEvent[];
-  } | null {
-    if (!target.sessionId) return null;
-    const targetWithExecution = this.resolveSubscriptionTarget(target);
-    const key = this.buildQueueKey(target);
-    const queued = this.pendingExternalEventQueue.get(key);
-    const inMemoryDeliveryKeys = new Set(queued?.map((item) => item.deliveryKey) ?? []);
-
-    const dispatchable: PendingExternalEvent[] = [];
-
-    if (queued) {
-      this.pendingExternalEventQueue.delete(key);
-      const now = Date.now();
-      for (const item of queued) {
-        if (item.deliveryKey === excludeDeliveryKey) continue;
-        if (this.isQueuedExternalEventExpired(item, now)) {
-          this.failQueuedDeliveryForTtl(item, key);
-          continue;
-        }
-        dispatchable.push(item);
-      }
-    }
-
-    this.collectPersistedPendingDeliveries(
-      targetWithExecution,
-      inMemoryDeliveryKeys,
-      dispatchable,
-      excludeDeliveryKey
-    );
-
-    if (dispatchable.length === 0) return { targetWithExecution, dispatchable };
-
-    dispatchable.sort(
-      (a, b) => a.createdAt - b.createdAt || a.event.occurredAt - b.event.occurredAt
-    );
-
-    return { targetWithExecution, dispatchable };
-  }
-
-  private collectPersistedPendingDeliveries(
-    target: WorkflowSubscriptionTarget,
-    skipDeliveryKeys: Set<string>,
-    dispatchable: PendingExternalEvent[],
-    excludeDeliveryKey?: string
-  ): void {
-    const store = this.config.externalEventStore;
-    if (!store || !target.sessionId) return;
-
-    const deliveries = store
-      .listPendingDeliveries(target.workflowRunId)
-      .filter(
-        (delivery) =>
-          delivery.taskId === target.taskId &&
-          delivery.nodeId === target.nodeId &&
-          delivery.agentName === target.agentName &&
-          delivery.deliveryKey !== excludeDeliveryKey &&
-          !skipDeliveryKeys.has(delivery.deliveryKey) &&
-          delivery.failureReason !== null
-      )
-      .map((delivery) => {
-        const eventRecord = store.getById(delivery.eventId);
-        return eventRecord ? { delivery, eventRecord } : null;
-      })
-      .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-      .filter(({ eventRecord }) => eventRecord.state === 'published')
-      .sort(
-        (a, b) =>
-          a.eventRecord.createdAt - b.eventRecord.createdAt ||
-          a.delivery.updatedAt - b.delivery.updatedAt ||
-          a.delivery.deliveryKey.localeCompare(b.delivery.deliveryKey)
-      );
-
-    for (const { delivery, eventRecord } of deliveries) {
-      if (store.isDeliveryTerminal(delivery.eventId, delivery.deliveryKey)) continue;
-      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) {
-        this.queueHealthMetrics.recordClaimConflict();
-        log.debug('SpaceRuntime: external event delivery already in flight; skipped flush', {
-          runId: delivery.workflowRunId,
-          deliveryKey: delivery.deliveryKey,
-        });
-        continue;
-      }
-      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: 'subscription_no_longer_active',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-        this.clearExternalEventRetry(delivery.deliveryKey);
-        log.debug('SpaceRuntime: external event delivery skipped — subscription removed', {
-          runId: delivery.workflowRunId,
-          deliveryKey: delivery.deliveryKey,
-        });
-        continue;
-      }
-
-      const mode = deliveryModeFromFailureReason(delivery.failureReason);
-      const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      const queuedItem: PendingExternalEvent = {
-        event: eventPayload,
-        deliveryKey: delivery.deliveryKey,
-        deliveryMode: mode,
-        createdAt: eventRecord.createdAt,
-      };
-      if (this.isQueuedExternalEventExpired(queuedItem)) {
-        this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
-        continue;
-      }
-      dispatchable.push(queuedItem);
-    }
-  }
-
   private async handleExternalEvent(payload: ExternalEventPublishedPayload): Promise<void> {
     this.externalEventHandlingDepth += 1;
     try {
@@ -1713,101 +1456,11 @@ export class SpaceRuntime {
         );
         continue;
       }
-      await this.deliverExternalEventToWorkflowTarget(target, payload, deliveryKey);
+      const resolved = this.resolveSubscriptionTarget(target);
+      if (resolved.sessionId) {
+        this.scheduleDigestPullForSession(resolved.sessionId, resolved.taskId);
+      }
     }
-  }
-
-  private async deliverExternalEventToWorkflowTarget(
-    target: WorkflowSubscriptionTarget,
-    payload: ExternalEventPublishedPayload,
-    deliveryKey: string
-  ): Promise<void> {
-    const store = this.config.externalEventStore;
-    if (!store) return;
-    const resolved = this.resolveSubscriptionTarget(target);
-    try {
-      const targetRun = this.config.workflowRunRepo.getRun(resolved.workflowRunId);
-      const currentExecution = this.getCurrentQueueableOrActiveExecution(resolved);
-      const decision = decideExternalEventDelivery({
-        deliveryTerminal: store.isDeliveryTerminal(payload.eventId, deliveryKey),
-        deliveryInFlight: this.externalEventDeliveriesInFlight.has(deliveryKey),
-        subscriptionActive: this.isTargetStillSubscribed(resolved, payload.topic),
-        taskDecision: this.prepareExternalEventTask(resolved, payload),
-        targetHasSession: !!resolved.sessionId,
-        targetSessionLive: resolved.sessionId
-          ? this.isTargetSessionLive(resolved.sessionId)
-          : false,
-        targetSpacePaused: !!targetRun && this.pausedSpaceIds.has(targetRun.spaceId),
-        executionPendingActivation:
-          currentExecution?.status === 'pending' || currentExecution?.status === 'waiting_rebind',
-      });
-      await this.executeExternalEventDeliveryDecision(decision, resolved, payload, deliveryKey);
-    } catch (err) {
-      log.warn(
-        `SpaceRuntime: failed to process external event ${payload.eventId} for ` +
-          `${resolved.workflowRunId}/${resolved.nodeId}/${resolved.agentName}: ${formatCommandError(err)}`
-      );
-    }
-  }
-
-  private async executeExternalEventDeliveryDecision(
-    decision: ExternalEventDeliveryDecision,
-    resolved: WorkflowSubscriptionTarget,
-    payload: ExternalEventPublishedPayload,
-    deliveryKey: string
-  ): Promise<void> {
-    const store = this.config.externalEventStore;
-    if (!store) return;
-    if (decision.action === 'skip') {
-      return;
-    }
-    if (decision.action === 'skipClaimConflict') {
-      this.queueHealthMetrics.recordClaimConflict();
-      log.debug('SpaceRuntime: external event delivery already in flight; skipped dispatch', {
-        runId: resolved.workflowRunId,
-        deliveryKey,
-      });
-      return;
-    }
-    if (decision.action === 'failDelivery') {
-      store.markDeliveryFailed(payload.eventId, deliveryKey, {
-        terminal: true,
-        reason: decision.reason,
-      });
-      store.markEventFailedIfAllDeliveriesTerminal(payload.eventId);
-      this.clearExternalEventRetry(deliveryKey);
-      this.clearQueuedDelivery(resolved, deliveryKey);
-      return;
-    }
-    if (decision.action === 'deferStoppedTask') {
-      this.queueHealthMetrics.recordPausedSpaceSkip();
-      store.markDeliveryFailed(payload.eventId, deliveryKey, {
-        terminal: false,
-        reason: 'deliveryMode:defer; task_stopped',
-      });
-      return;
-    }
-    if (decision.action === 'deferPausedSpace') {
-      this.queueHealthMetrics.recordPausedSpaceSkip();
-      store.markDeliveryFailed(payload.eventId, deliveryKey, {
-        terminal: false,
-        reason: 'deliveryMode:defer; space_paused',
-      });
-      return;
-    }
-    if (decision.action === 'deliverLiveSession') {
-      await this.deliverToLiveSessionTarget(resolved, payload, deliveryKey);
-      return;
-    }
-    if (decision.action === 'deliverStaleSession') {
-      await this.deliverToStaleSessionTarget(resolved, payload, deliveryKey);
-      return;
-    }
-    if (decision.action === 'queueForActivation') {
-      await this.queueDeliveryForActivation(decision, resolved, payload, deliveryKey);
-      return;
-    }
-    await this.deliverViaActivation(resolved, payload, deliveryKey);
   }
 
   private async deliverImmediateTierEvent(
@@ -2190,11 +1843,9 @@ export class SpaceRuntime {
       now: () => Date.now(),
       queueTtlMs: EXTERNAL_EVENT_QUEUE_TTL_MS,
       isTargetStillSubscribed: (target, topic) => this.isTargetStillSubscribed(target, topic),
-      failDeliveryTerminal: (target, eventId, deliveryKey, reason) => {
+      failDeliveryTerminal: (_target, eventId, deliveryKey, reason) => {
         store.markDeliveryFailed(eventId, deliveryKey, { terminal: true, reason });
         store.markEventFailedIfAllDeliveriesTerminal(eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
       },
       getEventById: (eventId) => store.getById(eventId),
       saveDigestMessageIfAbsent: async (targetSessionId, message) => {
@@ -2214,12 +1865,8 @@ export class SpaceRuntime {
         const row = messages.getDeliveryContent(targetSessionId, String(message.uuid));
         return row !== null;
       },
-      markDeliveriesDelivered: (target, marks) => {
+      markDeliveriesDelivered: (_target, marks) => {
         store.markDeliveriesDeliveredAtomic(marks);
-        for (const mark of marks) {
-          this.clearExternalEventRetry(mark.deliveryKey);
-          this.clearQueuedDelivery(target, mark.deliveryKey);
-        }
       },
     };
     try {
@@ -2419,186 +2066,6 @@ export class SpaceRuntime {
     }
   }
 
-  private async deliverToLiveSessionTarget(
-    target: WorkflowSubscriptionTarget,
-    payload: ExternalEventPublishedPayload,
-    deliveryKey: string
-  ): Promise<void> {
-    const store = this.config.externalEventStore;
-    if (!store || !target.sessionId) return;
-    const createdAt = this.externalEventCreatedAt(payload);
-    await this.normalizeStaleInterruptedSession(target.sessionId);
-    if (this.parkDeliveryForInterruptedSession(target, payload, deliveryKey, createdAt)) {
-      return;
-    }
-    await this.flushPendingNodeQueueAsync(target, deliveryKey, {
-      event: payload,
-      deliveryKey,
-      deliveryMode: 'defer',
-      createdAt,
-    });
-  }
-
-  private async deliverToStaleSessionTarget(
-    target: WorkflowSubscriptionTarget,
-    payload: ExternalEventPublishedPayload,
-    deliveryKey: string
-  ): Promise<void> {
-    const store = this.config.externalEventStore;
-    if (!store) return;
-    this.queueHealthMetrics.recordStaleSessionSkip();
-    await this.flushPendingNodeQueueAsync(target, deliveryKey, {
-      event: payload,
-      deliveryKey,
-      deliveryMode: 'defer',
-      createdAt: this.externalEventCreatedAt(payload),
-    });
-  }
-
-  private externalEventCreatedAt(payload: ExternalEventPublishedPayload): number {
-    return this.config.externalEventStore?.getById(payload.eventId)?.createdAt ?? Date.now();
-  }
-
-  private async queueDeliveryForActivation(
-    decision: Extract<ExternalEventDeliveryDecision, { action: 'queueForActivation' }>,
-    target: WorkflowSubscriptionTarget,
-    payload: ExternalEventPublishedPayload,
-    deliveryKey: string
-  ): Promise<void> {
-    const store = this.config.externalEventStore;
-    if (!store) return;
-    this.queueForPendingNode(
-      target,
-      payload,
-      deliveryKey,
-      'defer',
-      this.externalEventCreatedAt(payload)
-    );
-    if (decision.retryUnlessPaused && (await this.isTargetSpacePausedOrStopped(target))) {
-      return;
-    }
-    this.scheduleActivationRetry(
-      target,
-      payload,
-      deliveryKey,
-      decision.reason,
-      decision.preserveAttemptCount ? { preserveAttemptCount: true } : {}
-    );
-  }
-
-  private async deliverViaActivation(
-    resolved: WorkflowSubscriptionTarget,
-    payload: ExternalEventPublishedPayload,
-    deliveryKey: string
-  ): Promise<void> {
-    let activatedTarget: WorkflowSubscriptionTarget | null = null;
-    let activationError: string | null = null;
-    try {
-      activatedTarget = await this.activateSubscribedTargetForExternalEvent(resolved);
-    } catch (err) {
-      activationError = err instanceof Error ? err.message : String(err);
-    }
-    const decision = decidePostActivationDelivery({
-      activationError,
-      activatedTargetFound: activatedTarget !== null,
-      activatedHasSession: !!activatedTarget?.sessionId,
-      activatedSessionLive: activatedTarget?.sessionId
-        ? this.isTargetSessionLive(activatedTarget.sessionId)
-        : false,
-    });
-    await this.executePostActivationDecision(
-      decision,
-      resolved,
-      activatedTarget,
-      payload,
-      deliveryKey
-    );
-  }
-
-  private async executePostActivationDecision(
-    decision: ExternalEventDeliveryDecision,
-    resolved: WorkflowSubscriptionTarget,
-    activatedTarget: WorkflowSubscriptionTarget | null,
-    payload: ExternalEventPublishedPayload,
-    deliveryKey: string
-  ): Promise<void> {
-    const store = this.config.externalEventStore;
-    if (!store) return;
-    if (decision.action === 'queueForActivation') {
-      await this.queueDeliveryForActivation(decision, resolved, payload, deliveryKey);
-      return;
-    }
-    if (decision.action === 'deliverLiveSession') {
-      await this.deliverToLiveSessionTarget(activatedTarget!, payload, deliveryKey);
-      return;
-    }
-    if (decision.action === 'deliverStaleSession') {
-      await this.deliverToStaleSessionTarget(activatedTarget!, payload, deliveryKey);
-      return;
-    }
-    if (decision.action === 'deferNotActive') {
-      store.markDeliveryFailed(payload.eventId, deliveryKey, {
-        terminal: false,
-        reason: 'deliveryMode:defer; node_execution_not_active',
-      });
-      if (!(await this.isTargetSpacePausedOrStopped(activatedTarget!))) {
-        this.scheduleActivationRetry(
-          activatedTarget!,
-          payload,
-          deliveryKey,
-          'deliveryMode:defer; node_execution_not_active'
-        );
-      }
-    }
-  }
-
-  private async isTargetSpacePausedOrStopped(target: WorkflowSubscriptionTarget): Promise<boolean> {
-    const task = this.config.taskRepo.getTask(target.taskId);
-    if (!task) return true;
-    const space = await this.config.spaceManager.getSpace(task.spaceId);
-    return !space || space.paused || space.stopped;
-  }
-
-  private async activateSubscribedTargetForExternalEvent(
-    target: WorkflowSubscriptionTarget
-  ): Promise<WorkflowSubscriptionTarget | null> {
-    const task = this.config.taskRepo.getTask(target.taskId);
-    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    if (
-      !task ||
-      !run ||
-      task.workflowRunId !== run.id ||
-      task.spaceId !== run.spaceId ||
-      task.status === 'cancelled' ||
-      task.status === 'archived'
-    ) {
-      return null;
-    }
-    if (this.hasTerminalExecutionForTarget(target)) return null;
-    const currentExecution = this.getCurrentQueueableOrActiveExecution(target);
-    if (currentExecution?.status === 'blocked') return null;
-    if (!this.hasAnyExecutionForTarget(target)) return null;
-    const space = await this.config.spaceManager.getSpace(task.spaceId);
-    if (!space || space.paused || space.stopped || task.status === 'stopped') return target;
-    const activate = this.config.taskAgentManager?.activateTargetSessionsForMessage;
-    if (!activate) return null;
-
-    const activated = await activate.call(
-      this.config.taskAgentManager,
-      target.taskId,
-      target.workflowRunId,
-      target.agentName,
-      {
-        reopenReason: `external event delivery to subscribed agent "${target.agentName}"`,
-        reopenBy: 'external-event',
-        workflowNodeId: target.nodeId,
-      }
-    );
-    if (activated.length === 0) return target;
-
-    return this.resolveSubscriptionTarget(target);
-  }
-
   private externalEventDeliveryMessage(event: ExternalEventPublishedPayload): string {
     if (isExternalEventDeliveryV2Enabled()) {
       const record = this.config.externalEventStore?.getById(event.eventId);
@@ -2717,188 +2184,6 @@ export class SpaceRuntime {
     this.externalEventRetryTimers.set(deliveryKey, timer);
   }
 
-  private async enqueueDeliverableExternalEvent(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload,
-    deliveryKey: string,
-    deliveryMode: 'immediate' | 'defer',
-    createdAt = Date.now()
-  ): Promise<void> {
-    const store = this.config.externalEventStore;
-    if (
-      !store ||
-      store.isDeliveryTerminal(event.eventId, deliveryKey) ||
-      this.externalEventDeliveriesInFlight.has(deliveryKey)
-    ) {
-      return;
-    }
-    this.externalEventDeliveriesInFlight.add(deliveryKey);
-    try {
-      if (!this.isTargetStillSubscribed(target, event.topic)) {
-        store.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: 'subscription_no_longer_active',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        return;
-      }
-
-      const taskDecision = this.prepareExternalEventTask(target, event);
-      if (taskDecision.action === 'fail') {
-        store.markDeliveryFailed(event.eventId, deliveryKey, {
-          terminal: true,
-          reason: taskDecision.reason,
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        return;
-      }
-      if (taskDecision.action === 'hold') {
-        this.queueHealthMetrics.recordPausedSpaceSkip();
-      }
-      this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
-    } finally {
-      this.externalEventDeliveriesInFlight.delete(deliveryKey);
-    }
-  }
-
-  private scheduleActivationRetry(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload,
-    deliveryKey: string,
-    failureReason: string,
-    options: { preserveAttemptCount?: boolean; markFailure?: boolean } = {}
-  ): void {
-    if (this.externalEventRetryTimers.has(deliveryKey)) return;
-    let attempts = this.externalEventRetryCounts.get(deliveryKey) ?? 0;
-    if (!options.preserveAttemptCount) {
-      attempts += 1;
-      this.externalEventRetryCounts.set(deliveryKey, attempts);
-    }
-    if (options.markFailure !== false) {
-      this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
-        terminal: attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS,
-        reason: failureReason,
-      });
-    }
-    if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
-      this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-      this.clearExternalEventRetry(deliveryKey);
-      this.clearQueuedDelivery(target, deliveryKey);
-      return;
-    }
-    const timer = setTimeout(() => {
-      this.externalEventRetryTimers.delete(deliveryKey);
-      if (this.config.externalEventStore?.isDeliveryTerminal(event.eventId, deliveryKey)) {
-        this.clearExternalEventRetry(deliveryKey);
-        return;
-      }
-      const eventRecord = this.config.externalEventStore?.getById(event.eventId);
-      const queuedItem = this.getQueuedDelivery(target, deliveryKey) ?? {
-        event,
-        deliveryKey,
-        deliveryMode: 'immediate',
-        createdAt: eventRecord?.createdAt ?? Date.now(),
-      };
-      const ttlAnchor = eventRecord?.createdAt ?? queuedItem.createdAt;
-      if (this.isQueuedExternalEventExpired({ ...queuedItem, createdAt: ttlAnchor })) {
-        this.failQueuedDeliveryForTtl(
-          { ...queuedItem, createdAt: ttlAnchor },
-          this.buildQueueKey(target)
-        );
-        return;
-      }
-      void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
-    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
-    this.externalEventRetryTimers.set(deliveryKey, timer);
-  }
-
-  private scheduleExternalEventRetry(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload,
-    deliveryKey: string,
-    deliveryMode: 'immediate' | 'defer',
-    failureReason: string,
-    options: { preserveAttemptCount?: boolean; createdAt?: number } = {}
-  ): void {
-    if (!target.sessionId || this.externalEventRetryTimers.has(deliveryKey)) return;
-    const currentAttempts = this.externalEventRetryCounts.get(deliveryKey) ?? 0;
-    const attempts = options.preserveAttemptCount ? currentAttempts : currentAttempts + 1;
-    this.externalEventRetryCounts.set(deliveryKey, attempts);
-    if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
-      this.config.externalEventStore?.markDeliveryFailed(event.eventId, deliveryKey, {
-        terminal: true,
-        reason: failureReason,
-      });
-      this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-      this.clearQueuedDelivery(target, deliveryKey);
-      this.clearExternalEventRetry(deliveryKey);
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      this.externalEventRetryTimers.delete(deliveryKey);
-      if (this.config.externalEventStore?.isDeliveryTerminal(event.eventId, deliveryKey)) {
-        this.clearExternalEventRetry(deliveryKey);
-        return;
-      }
-      if (this.externalEventDeliveriesInFlight.has(deliveryKey)) {
-        this.queueHealthMetrics.recordClaimConflict();
-        this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason, {
-          preserveAttemptCount: true,
-          createdAt: options.createdAt,
-        });
-        return;
-      }
-      const eventRecord = this.config.externalEventStore?.getById(event.eventId);
-      const queued = this.getQueuedDelivery(target, deliveryKey);
-      const queuedItem = queued ?? {
-        event,
-        deliveryKey,
-        deliveryMode,
-        createdAt: eventRecord?.createdAt ?? options.createdAt ?? Date.now(),
-      };
-      const ttlAnchor = eventRecord?.createdAt ?? queuedItem.createdAt;
-      if (this.isQueuedExternalEventExpired({ ...queuedItem, createdAt: ttlAnchor })) {
-        this.failQueuedDeliveryForTtl(
-          { ...queuedItem, createdAt: ttlAnchor },
-          this.buildQueueKey(target)
-        );
-        return;
-      }
-      void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
-    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
-    this.externalEventRetryTimers.set(deliveryKey, timer);
-  }
-
-  private rescheduleQueuedExternalEventRetries(): void {
-    for (const [queueKey, queue] of Array.from(this.pendingExternalEventQueue.entries())) {
-      const target = parseSubscriptionQueueKey(queueKey);
-      if (!target) continue;
-      for (const item of queue) {
-        const eventRecord = this.config.externalEventStore?.getById(item.event.eventId);
-        const ttlAnchor = eventRecord?.createdAt ?? item.createdAt;
-        if (this.isQueuedExternalEventExpired({ ...item, createdAt: ttlAnchor })) {
-          this.failQueuedDeliveryForTtl({ ...item, createdAt: ttlAnchor }, queueKey);
-          continue;
-        }
-        const resolved = this.resolveSubscriptionTarget(target);
-        if (!resolved.sessionId) continue;
-        this.scheduleExternalEventRetry(
-          resolved,
-          item.event,
-          item.deliveryKey,
-          item.deliveryMode,
-          `deliveryMode:${item.deliveryMode}; retry rescheduled after runtime restart`,
-          { preserveAttemptCount: true, createdAt: ttlAnchor }
-        );
-      }
-    }
-  }
-
   private clearExternalEventRetry(deliveryKey: string): void {
     const timer = this.externalEventRetryTimers.get(deliveryKey);
     if (timer) clearTimeout(timer);
@@ -2906,98 +2191,20 @@ export class SpaceRuntime {
     this.externalEventRetryCounts.delete(deliveryKey);
   }
 
-  private getQueuedDelivery(
-    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>,
-    deliveryKey: string
-  ): PendingExternalEvent | undefined {
-    return this.pendingExternalEventQueue
-      .get(this.buildQueueKey(target))
-      ?.find((item) => item.deliveryKey === deliveryKey);
-  }
-
-  private clearQueuedDelivery(target: WorkflowSubscriptionTarget, deliveryKey: string): void {
-    this.clearQueuedDeliveryByKey(this.buildQueueKey(target), deliveryKey);
-  }
-
-  private clearQueuedDeliveryByKey(key: string, deliveryKey: string): void {
-    const queue = this.pendingExternalEventQueue.get(key);
-    if (!queue) return;
-    const remaining = queue.filter((item) => item.deliveryKey !== deliveryKey);
-    if (remaining.length === 0) {
-      this.pendingExternalEventQueue.delete(key);
-    } else {
-      this.pendingExternalEventQueue.set(key, remaining);
-    }
-  }
-
-  private queueForPendingNode(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload,
-    deliveryKey: string,
-    deliveryMode: 'immediate' | 'defer' = 'immediate',
-    createdAt = Date.now()
-  ): void {
-    const key = this.buildQueueKey(target);
-    const queue = this.pendingExternalEventQueue.get(key) ?? [];
-    if (queue.some((item) => item.deliveryKey === deliveryKey)) return;
-    if (queue.length >= 50) {
-      const dropped = queue.shift();
-      if (dropped && this.config.externalEventStore) {
-        this.config.externalEventStore.markDeliveryFailed(
-          dropped.event.eventId,
-          dropped.deliveryKey,
-          {
-            terminal: true,
-            reason: 'pending_node_queue_overflow',
-          }
-        );
-        this.config.externalEventStore.markEventFailedIfAllDeliveriesTerminal(
-          dropped.event.eventId
-        );
-        this.clearExternalEventRetry(dropped.deliveryKey);
-      }
-      log.warn(
-        `SpaceRuntime: pending external event queue overflow for ${key}; dropped oldest event`
-      );
-    }
-    queue.push({ event, deliveryKey, deliveryMode, createdAt });
-    this.pendingExternalEventQueue.set(key, queue);
-    this.queueHealthMetrics.recordEnqueue(event.source, this.describeEnqueueTargetState(target));
-    if (target.sessionId) {
-      this.scheduleDigestPullForSession(target.sessionId, target.taskId);
-    }
-  }
-
-  private describeEnqueueTargetState(target: WorkflowSubscriptionTarget): string {
-    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    const nodeStatus = this.getCurrentQueueableOrActiveExecution(target)?.status ?? 'none';
-    return `run=${run?.status ?? 'unknown'};node=${nodeStatus}`;
-  }
-
   getQueueHealthSnapshot(): QueueHealthSnapshot {
     const now = Date.now();
-    let queueDepth = 0;
-    const inMemoryAges: number[] = [];
-    for (const queue of this.pendingExternalEventQueue.values()) {
-      queueDepth += queue.length;
-      for (const item of queue) inMemoryAges.push(now - item.createdAt);
-    }
     const store = this.config.externalEventStore;
     const persisted = store ? store.summarizePendingDeliveries(now) : null;
     const gauges: QueueHealthGauges = {
-      queueDepth,
-      queueKeys: this.pendingExternalEventQueue.size,
-      inFlight: this.externalEventDeliveriesInFlight.size,
+      queueDepth: 0,
+      queueKeys: 0,
+      inFlight: this.externalEventDeliveriesInFlight.size + this.immediateDispatchesInFlight.size,
       retryTimers: this.externalEventRetryTimers.size,
       persistedPending: persisted?.count ?? 0,
-      queueAgeMs: computeQueueAgeStats(inMemoryAges),
+      queueAgeMs: null,
       persistedAgeMs: persisted,
     };
     return this.queueHealthMetrics.snapshot(gauges, now);
-  }
-
-  private isQueuedExternalEventExpired(item: PendingExternalEvent, now = Date.now()): boolean {
-    return isQueuedExternalEventExpired(item.createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS);
   }
 
   private isPublishedExternalEventExpired(
@@ -3008,33 +2215,10 @@ export class SpaceRuntime {
     return isPublishedExternalEventExpired(createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS);
   }
 
-  private failQueuedDeliveryForTtl(item: PendingExternalEvent, queueKey: string): void {
-    this.config.externalEventStore?.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
-      terminal: true,
-      reason: 'ttl_expired',
-    });
-    this.config.externalEventStore?.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
-    this.clearExternalEventRetry(item.deliveryKey);
-    this.clearQueuedDeliveryByKey(queueKey, item.deliveryKey);
-    log.warn(
-      `SpaceRuntime: dropped expired external event ${item.event.eventId} from pending queue ${queueKey}`
-    );
-  }
-
   private failQueuedDeliveriesForTarget(
     target: Omit<WorkflowSubscriptionTarget, 'sessionId'>,
     reason: string
   ): void {
-    const key = this.buildQueueKey(target);
-    const queued = this.pendingExternalEventQueue.get(key);
-    if (queued) {
-      this.failQueuedDeliveries(queued, reason);
-      for (const item of queued) {
-        this.clearExternalEventRetry(item.deliveryKey);
-      }
-      this.pendingExternalEventQueue.delete(key);
-    }
-
     const store = this.config.externalEventStore;
     if (!store) return;
     for (const delivery of store.listPendingDeliveries(target.workflowRunId)) {
@@ -3051,40 +2235,20 @@ export class SpaceRuntime {
       }
       store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
       store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-      this.clearExternalEventRetry(delivery.deliveryKey);
     }
   }
 
   private clearQueuedDeliveriesForRun(workflowRunId: string, reason: string): void {
     const store = this.config.externalEventStore;
-    for (const [queueKey, queued] of this.pendingExternalEventQueue) {
-      const parsed = parseSubscriptionQueueKey(queueKey);
-      if (!parsed || parsed.workflowRunId !== workflowRunId) continue;
-      this.failQueuedDeliveries(queued, reason);
-      for (const item of queued) {
-        this.clearExternalEventRetry(item.deliveryKey);
-      }
-      this.pendingExternalEventQueue.delete(queueKey);
-    }
     if (!store) return;
     for (const delivery of store.listPendingDeliveries(workflowRunId)) {
       store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, { terminal: true, reason });
       store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-      this.clearExternalEventRetry(delivery.deliveryKey);
     }
   }
 
   private clearQueuedDeliveriesForTask(taskId: string): void {
     const store = this.config.externalEventStore;
-    for (const [queueKey, queued] of this.pendingExternalEventQueue) {
-      const parsed = parseSubscriptionQueueKey(queueKey);
-      if (!parsed || parsed.taskId !== taskId) continue;
-      this.failQueuedDeliveries(queued, 'task_terminal_cleanup');
-      for (const item of queued) {
-        this.clearExternalEventRetry(item.deliveryKey);
-      }
-      this.pendingExternalEventQueue.delete(queueKey);
-    }
     if (!store) return;
     for (const delivery of store.listPendingDeliveries()) {
       if (delivery.taskId !== taskId) continue;
@@ -3093,16 +2257,6 @@ export class SpaceRuntime {
         reason: 'task_terminal_cleanup',
       });
       store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-      this.clearExternalEventRetry(delivery.deliveryKey);
-    }
-  }
-
-  private failQueuedDeliveries(queued: PendingExternalEvent[], reason: string): void {
-    const store = this.config.externalEventStore;
-    if (!store) return;
-    for (const item of queued) {
-      store.markDeliveryFailed(item.event.eventId, item.deliveryKey, { terminal: true, reason });
-      store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
     }
   }
 
@@ -3144,23 +2298,6 @@ export class SpaceRuntime {
     return isWorkflowTargetOwnedBySpace(task, run, spaceId);
   }
 
-  private prepareExternalEventTask(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload
-  ): ExternalEventTaskDecision {
-    const task = this.config.taskRepo.getTask(target.taskId);
-    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    return prepareExternalEventTask(task, run, event);
-  }
-
-  private evaluateRequeueTaskLifecycle(
-    target: Pick<WorkflowSubscriptionTarget, 'taskId'>,
-    event: { topic: string; source: string }
-  ): string | null {
-    const task = this.config.taskRepo.getTask(target.taskId);
-    return evaluateRequeueTaskLifecycle(task, event);
-  }
-
   private getCurrentQueueableOrActiveExecution(
     target: WorkflowSubscriptionTarget
   ): NodeExecution | undefined {
@@ -3174,59 +2311,10 @@ export class SpaceRuntime {
     return this.config.taskAgentManager?.isSessionAlive(sessionId) ?? false;
   }
 
-  private async normalizeStaleInterruptedSession(sessionId: string): Promise<void> {
-    const session = this.config.taskAgentManager?.getAgentSessionById?.(sessionId);
-    await session?.normalizeStaleInterruptedState();
-  }
-
   private isTargetSessionInterrupted(sessionId: string): boolean {
     const session = this.config.taskAgentManager?.getAgentSessionById?.(sessionId);
     if (session?.getProcessingState().status !== 'interrupted') return false;
     return session.isInterruptInProgress();
-  }
-
-  private parkDeliveryForInterruptedSession(
-    target: WorkflowSubscriptionTarget,
-    payload: ExternalEventPublishedPayload,
-    deliveryKey: string,
-    createdAt: number
-  ): boolean {
-    if (!target.sessionId || !this.isTargetSessionInterrupted(target.sessionId)) return false;
-    this.queueForPendingNode(target, payload, deliveryKey, 'defer', createdAt);
-    this.scheduleActivationRetry(
-      target,
-      payload,
-      deliveryKey,
-      'deliveryMode:defer; target_session_interrupted',
-      {
-        preserveAttemptCount: true,
-      }
-    );
-    return true;
-  }
-
-  private hasTerminalExecutionForTarget(
-    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
-  ): boolean {
-    return hasTerminalExecutionForTarget(
-      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
-      target
-    );
-  }
-
-  private hasAnyExecutionForTarget(
-    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
-  ): boolean {
-    return hasAnyExecutionForTarget(
-      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
-      target
-    );
-  }
-
-  private buildQueueKey(
-    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
-  ): string {
-    return buildQueueKey(target);
   }
 
   private getExternalEventRateLimitState(rateLimitKey: string): ExternalEventRateLimitState {
@@ -3815,8 +2903,6 @@ export class SpaceRuntime {
             reason
           );
         }
-      } else if (previous.status === 'stopped') {
-        this.requeuePendingDeliveriesForRun(previous.workflowRunId);
       }
       return updated;
     }
@@ -4172,7 +3258,6 @@ export class SpaceRuntime {
           );
         }
         if (generation !== this.runtimeGeneration) return;
-        this.rescheduleQueuedExternalEventRetries();
         this.requeuePersistedPendingDeliveries(pausedSpaceIds);
         this.subscribeExternalEventPublished();
         this.reconciliationDone = true;
@@ -4182,7 +3267,6 @@ export class SpaceRuntime {
         });
       })();
     } else {
-      this.rescheduleQueuedExternalEventRetries();
       this.subscribeExternalEventPublished();
       this.redispatchRetainedExternalEvents();
       this.executeTick().catch((err: unknown) => {
@@ -4614,7 +3698,6 @@ export class SpaceRuntime {
     if (recoveredWorkflow) {
       this.registerRunInterestsFromWorkflow(recovered.run, recoveredWorkflow);
     }
-    this.requeuePendingDeliveriesForRun(recovered.run.id);
     for (const sessionId of liveSessionIds) {
       const tam = this.config.taskAgentManager;
       const resumeOutcome: 'retried' | 'respawned' | 'noop' =
@@ -4679,7 +3762,7 @@ export class SpaceRuntime {
     return true;
   }
 
-  private requeuePersistedPendingDeliveries(pausedSpaceIds: Set<string> = new Set()): void {
+  private requeuePersistedPendingDeliveries(_pausedSpaceIds: Set<string> = new Set()): void {
     const store = this.config.externalEventStore;
     if (!store) return;
 
@@ -4687,70 +3770,47 @@ export class SpaceRuntime {
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
       const longHorizonSpaceId = longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId);
-      if (longHorizonSpaceId) {
-        const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-        const subscription = this.config.longHorizonAgentRepo?.getSubscription(delivery.taskId);
-        const agent = subscription
-          ? this.config.longHorizonAgentRepo?.getById(subscription.agentId)
-          : null;
-        let target: LongHorizonSubscriptionTarget | null = null;
-        if (subscription) {
-          try {
-            target = {
-              kind: 'long_horizon_agent',
-              spaceId: longHorizonSpaceId,
-              agentId: subscription.agentId,
-              source: subscription.source,
-              topic: composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic),
-              subscriptionId: subscription.id,
-            };
-          } catch (err) {
-            store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-              terminal: true,
-              reason: err instanceof Error ? err.message : String(err),
-            });
-            store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-            continue;
-          }
-        }
-        if (
-          !subscription ||
-          subscription.spaceId !== longHorizonSpaceId ||
-          subscription.status !== 'active' ||
-          !agent ||
-          agent.spaceId !== longHorizonSpaceId ||
-          agent.status !== 'active' ||
-          !target ||
-          !this.lookupSubscriptionTargets(eventPayload.topic).some(
-            (match) =>
-              isLongHorizonSubscriptionTarget(match) &&
-              match.spaceId === target.spaceId &&
-              match.subscriptionId === target.subscriptionId
-          )
-        ) {
+      if (!longHorizonSpaceId) continue;
+      const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
+      const subscription = this.config.longHorizonAgentRepo?.getSubscription(delivery.taskId);
+      const agent = subscription
+        ? this.config.longHorizonAgentRepo?.getById(subscription.agentId)
+        : null;
+      let target: LongHorizonSubscriptionTarget | null = null;
+      if (subscription) {
+        try {
+          target = {
+            kind: 'long_horizon_agent',
+            spaceId: longHorizonSpaceId,
+            agentId: subscription.agentId,
+            source: subscription.source,
+            topic: composeLongHorizonSubscriptionPattern(subscription.source, subscription.topic),
+            subscriptionId: subscription.id,
+          };
+        } catch (err) {
           store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
             terminal: true,
-            reason: 'subscription_no_longer_active',
+            reason: err instanceof Error ? err.message : String(err),
           });
           store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
           continue;
         }
-        void this.deliverToLongHorizonAgent(target, eventPayload, delivery.deliveryKey);
-        continue;
       }
-
-      const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
-      const target = {
-        workflowRunId: delivery.workflowRunId,
-        taskId: delivery.taskId,
-        nodeId: delivery.nodeId,
-        agentName: delivery.agentName,
-      };
-      if (run && pausedSpaceIds.has(run.spaceId)) {
-        continue;
-      }
-
-      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+      if (
+        !subscription ||
+        subscription.spaceId !== longHorizonSpaceId ||
+        subscription.status !== 'active' ||
+        !agent ||
+        agent.spaceId !== longHorizonSpaceId ||
+        agent.status !== 'active' ||
+        !target ||
+        !this.lookupSubscriptionTargets(eventPayload.topic).some(
+          (match) =>
+            isLongHorizonSubscriptionTarget(match) &&
+            match.spaceId === target.spaceId &&
+            match.subscriptionId === target.subscriptionId
+        )
+      ) {
         store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
           terminal: true,
           reason: 'subscription_no_longer_active',
@@ -4758,120 +3818,11 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         continue;
       }
-
-      const lifecycleReason = this.evaluateRequeueTaskLifecycle(target, eventRecord.event);
-      if (lifecycleReason) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: lifecycleReason,
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-        this.clearExternalEventRetry(delivery.deliveryKey);
-        continue;
-      }
-
-      const mode = deliveryModeFromFailureReason(delivery.failureReason);
-      const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      const queuedItem = {
-        event: eventPayload,
-        deliveryKey: delivery.deliveryKey,
-        deliveryMode: mode,
-        createdAt: eventRecord.createdAt,
-      };
-      if (this.isQueuedExternalEventExpired(queuedItem)) {
-        this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
-        continue;
-      }
-      this.queueForPendingNode(
-        target,
-        eventPayload,
-        delivery.deliveryKey,
-        mode,
-        eventRecord.createdAt
-      );
-      const resolved = this.resolveSubscriptionTarget(target);
-      if (resolved.sessionId) {
-        this.scheduleExternalEventRetry(
-          resolved,
-          eventPayload,
-          delivery.deliveryKey,
-          mode,
-          delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after runtime rehydrate`,
-          { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
-        );
-      } else {
-        this.scheduleActivationRetry(
-          target,
-          eventPayload,
-          delivery.deliveryKey,
-          delivery.failureReason ?? 'node_execution_not_active'
-        );
-      }
-    }
-  }
-
-  private requeuePendingDeliveriesForRun(runId: string): void {
-    const store = this.config.externalEventStore;
-    if (!store) return;
-    for (const delivery of store.listPendingDeliveries(runId)) {
-      const target = {
-        workflowRunId: delivery.workflowRunId,
-        taskId: delivery.taskId,
-        nodeId: delivery.nodeId,
-        agentName: delivery.agentName,
-      };
-      const eventRecord = store.getById(delivery.eventId);
-      if (!eventRecord || eventRecord.state !== 'published') continue;
-      const mode = deliveryModeFromFailureReason(delivery.failureReason);
-      const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      const ttlItem = {
-        event: eventPayload,
-        deliveryKey: delivery.deliveryKey,
-        deliveryMode: mode,
-        createdAt: eventRecord.createdAt,
-      };
-      if (this.isQueuedExternalEventExpired(ttlItem)) {
-        this.failQueuedDeliveryForTtl(ttlItem, this.buildQueueKey(target));
-        continue;
-      }
-      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: 'subscription_no_longer_active',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-        continue;
-      }
-      this.queueForPendingNode(
-        target,
-        eventPayload,
-        delivery.deliveryKey,
-        mode,
-        eventRecord.createdAt
-      );
-      const resolved = this.resolveSubscriptionTarget(target);
-      if (resolved.sessionId) {
-        this.scheduleExternalEventRetry(
-          resolved,
-          eventPayload,
-          delivery.deliveryKey,
-          mode,
-          delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after task resume`,
-          { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
-        );
-      } else {
-        this.scheduleActivationRetry(
-          target,
-          eventPayload,
-          delivery.deliveryKey,
-          delivery.failureReason ?? 'node_execution_not_active'
-        );
-      }
+      void this.deliverToLongHorizonAgent(target, eventPayload, delivery.deliveryKey);
     }
   }
 
   onSpaceResumed(spaceId: string): void {
-    const store = this.config.externalEventStore;
     this.pausedSpaceIds.delete(spaceId);
     try {
       this.config.goalService?.retryQueuedRunsForSpace(spaceId);
@@ -4880,7 +3831,6 @@ export class SpaceRuntime {
         `Goal queued-run retry threw for space ${spaceId} on resume: ${err instanceof Error ? err.message : String(err)}`
       );
     }
-    if (!store) return;
 
     const reactiveRuns = this.config.workflowRunRepo
       .listBySpace(spaceId)
@@ -4895,77 +3845,6 @@ export class SpaceRuntime {
             `SpaceRuntime: failed to rebuild static interests for run ${run.id} on resume: ${formatCommandError(err)}`
           );
         }
-      }
-    }
-
-    for (const delivery of store.listPendingDeliveries()) {
-      const task = this.config.taskRepo.getTask(delivery.taskId);
-      if (!task || task.spaceId !== spaceId) continue;
-
-      const target = {
-        workflowRunId: delivery.workflowRunId,
-        taskId: delivery.taskId,
-        nodeId: delivery.nodeId,
-        agentName: delivery.agentName,
-      };
-      const eventRecord = store.getById(delivery.eventId);
-      if (!eventRecord || eventRecord.state !== 'published') continue;
-      const mode = deliveryModeFromFailureReason(delivery.failureReason);
-      const ttlItem = {
-        event: this.externalEventPayloadFromRecord(eventRecord.event),
-        deliveryKey: delivery.deliveryKey,
-        deliveryMode: mode,
-        createdAt: eventRecord.createdAt,
-      };
-      if (this.isQueuedExternalEventExpired(ttlItem)) {
-        this.failQueuedDeliveryForTtl(ttlItem, this.buildQueueKey(target));
-        continue;
-      }
-      if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: 'subscription_no_longer_active',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-        continue;
-      }
-
-      const lifecycleReason = this.evaluateRequeueTaskLifecycle(target, eventRecord.event);
-      if (lifecycleReason) {
-        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-          terminal: true,
-          reason: lifecycleReason,
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-        this.clearExternalEventRetry(delivery.deliveryKey);
-        continue;
-      }
-
-      const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
-      this.queueForPendingNode(
-        target,
-        eventPayload,
-        delivery.deliveryKey,
-        mode,
-        eventRecord.createdAt
-      );
-      const resolved = this.resolveSubscriptionTarget(target);
-      if (resolved.sessionId) {
-        this.scheduleExternalEventRetry(
-          resolved,
-          eventPayload,
-          delivery.deliveryKey,
-          mode,
-          delivery.failureReason ?? `deliveryMode:${mode}; retry requeued after space resume`,
-          { preserveAttemptCount: true, createdAt: eventRecord.createdAt }
-        );
-      } else {
-        this.scheduleActivationRetry(
-          target,
-          eventPayload,
-          delivery.deliveryKey,
-          delivery.failureReason ?? 'node_execution_not_active'
-        );
       }
     }
 
@@ -5576,7 +4455,7 @@ export class SpaceRuntime {
         }
       }
       if (activatedOnChannel) {
-        this.recordRestartRecoveryCycleTraversal(run.id, workflow, channel, channelIndex);
+        this.recordRestartRecoveryCycleTraversal(run.id, workflow, channelIndex);
       }
     }
 
@@ -5676,7 +4555,6 @@ export class SpaceRuntime {
   private recordRestartRecoveryCycleTraversal(
     runId: string,
     workflow: SpaceWorkflow,
-    channel: WorkflowChannel,
     channelIndex: number
   ): void {
     if (!isChannelCyclic(channelIndex, workflow.channels ?? [], workflow.nodes)) return;
@@ -6795,13 +5673,6 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
-          this.flushPendingNodeQueue({
-            workflowRunId: runId,
-            taskId: canonicalTask.id,
-            nodeId: execution.workflowNodeId,
-            agentName: execution.agentName,
-            sessionId,
-          });
           const restartNotice = this.consumeAgentRestartNotice(runId, execution);
           if (restartNotice) {
             void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
@@ -7157,13 +6028,6 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
-          this.flushPendingNodeQueue({
-            workflowRunId: runId,
-            taskId: canonicalTask.id,
-            nodeId: execution.workflowNodeId,
-            agentName: execution.agentName,
-            sessionId,
-          });
           await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
           recordBlockedFlushFailure(targetAgentName, rowsForTarget);
           for (const row of pending) {
