@@ -62,6 +62,7 @@ import {
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
 } from './query-options-builder.js';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
+import { recordResultUsage } from './usage-accounting.ts';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
 
@@ -1220,26 +1221,19 @@ export class SDKMessageHandler {
   private async recordResultUsageMetadata(message: SDKResultMessage): Promise<void> {
     const { session, db, internalEventBus } = this.ctx;
 
-    const usage = message.usage ?? {
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
-    };
-    const inputTokens = usage.input_tokens ?? 0;
-    const outputTokens = usage.output_tokens ?? 0;
-    const totalTokens = inputTokens + outputTokens;
-
-    const sdkCost = message.total_cost_usd || 0;
-    const lastSdkCost = session.metadata?.lastSdkCost || 0;
-    const costBaseline = session.metadata?.costBaseline || 0;
-
-    let newCostBaseline = costBaseline;
-    if (sdkCost < lastSdkCost && lastSdkCost > 0) {
-      newCostBaseline = costBaseline + lastSdkCost;
-    }
-
-    const totalCost = newCostBaseline + sdkCost;
+    const usage = recordResultUsage(
+      {
+        messageCount: session.metadata?.messageCount || 0,
+        totalTokens: session.metadata?.totalTokens || 0,
+        inputTokens: session.metadata?.inputTokens || 0,
+        outputTokens: session.metadata?.outputTokens || 0,
+        totalCost: session.metadata?.totalCost || 0,
+        toolCallCount: session.metadata?.toolCallCount || 0,
+        lastSdkCost: session.metadata?.lastSdkCost || 0,
+        costBaseline: session.metadata?.costBaseline || 0,
+      },
+      message
+    );
 
     session.lastActiveAt = new Date().toISOString();
     const hadRefusalRewindTarget = session.metadata?.refusalRewindTargetUuid != null;
@@ -1247,14 +1241,7 @@ export class SDKMessageHandler {
       session.metadata ?? {};
     session.metadata = {
       ...restMetadata,
-      messageCount: (session.metadata?.messageCount || 0) + 1,
-      totalTokens: (session.metadata?.totalTokens || 0) + totalTokens,
-      inputTokens: (session.metadata?.inputTokens || 0) + inputTokens,
-      outputTokens: (session.metadata?.outputTokens || 0) + outputTokens,
-      totalCost,
-      toolCallCount: session.metadata?.toolCallCount || 0,
-      lastSdkCost: sdkCost,
-      costBaseline: newCostBaseline,
+      ...usage,
     };
 
     db.updateSession(session.id, {

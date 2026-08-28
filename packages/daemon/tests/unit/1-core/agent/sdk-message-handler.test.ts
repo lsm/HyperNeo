@@ -8,6 +8,7 @@ import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
+import { recordResultUsage } from '../../../../src/lib/agent/usage-accounting';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
@@ -3336,6 +3337,28 @@ describe('SDKMessageHandler', () => {
             expect(mockSession.metadata?.totalCost).toBeCloseTo(expectedTotal, 10);
           });
         }
+      });
+
+      it('C3c: handler metadata equals recordResultUsage applied to prior state', async () => {
+        const priorState = {
+          messageCount: 3,
+          totalTokens: 120,
+          inputTokens: 100,
+          outputTokens: 20,
+          totalCost: 0.9,
+          toolCallCount: 7,
+          lastSdkCost: 1.0,
+          costBaseline: 0.4,
+        };
+        mockSession.metadata = { ...priorState, titleSetBy: 'user' };
+
+        const message = makeResultMessage(0.5);
+        await handler.handleMessage(message);
+
+        expect(mockSession.metadata).toEqual({
+          titleSetBy: 'user',
+          ...recordResultUsage(priorState, message),
+        });
       });
 
       describe('legacy-fragility characterization', () => {
