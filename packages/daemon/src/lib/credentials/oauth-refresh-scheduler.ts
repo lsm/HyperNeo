@@ -15,7 +15,7 @@ async function defaultRefreshDiscoveredModels(outcome: ProviderRefreshOutcome): 
   const { clearModelsCache, refreshModels } = await import('../model-service.js');
   clearModelsCache();
   if (outcome === 'refreshed') {
-    refreshModels().catch(() => {});
+    await refreshModels().catch(() => {});
   }
 }
 
@@ -81,7 +81,7 @@ async function resolveCurrentCredentials(
   return { ...ctx, credentials: await ctx.provider.getCredentials() };
 }
 
-async function deferredCredentialIdentity(
+async function providerCredentialIdentity(
   ctx: ScheduledTokenRefreshCtx
 ): Promise<ProviderCredentials | null> {
   if (!ctx.provider.getCredentials) return ctx.credentials;
@@ -98,7 +98,7 @@ async function resumeDeferredInvalidation(
   const { deps, provider } = ctx;
   const entry = deps.pendingInvalidations.get(provider.id);
   if (!entry) return ctx;
-  const identity = await deferredCredentialIdentity(ctx);
+  const identity = await providerCredentialIdentity(ctx);
   if (!identity || credentialRetryKey(provider.id, identity) !== entry.credentialKey) {
     deps.pendingInvalidations.delete(provider.id);
     return ctx;
@@ -115,7 +115,7 @@ async function resumeDeferredInvalidation(
   return { ...ctx, outcome: 'deferred-completed' };
 }
 
-function gateRefreshDue(ctx: ScheduledTokenRefreshCtx): ScheduledTokenRefreshCtx {
+async function gateRefreshDue(ctx: ScheduledTokenRefreshCtx): Promise<ScheduledTokenRefreshCtx> {
   const { credentials, deps, provider } = ctx;
   if (!credentials || credentials.type !== 'oauth') return { ...ctx, outcome: 'skipped' };
   const expiresAt = credentials.expiresAt;
@@ -123,7 +123,10 @@ function gateRefreshDue(ctx: ScheduledTokenRefreshCtx): ScheduledTokenRefreshCtx
   if (expiresAt - deps.now() > deps.refreshWindowMs) return { ...ctx, outcome: 'skipped' };
   const retryKey = credentialRetryKey(provider.id, credentials);
   if ((deps.retryCounts.get(retryKey) ?? 0) >= deps.maxRetries) {
-    return { ...ctx, outcome: 'skipped' };
+    const owned = await providerCredentialIdentity(ctx);
+    if (!owned || credentialRetryKey(provider.id, owned) === retryKey) {
+      return { ...ctx, outcome: 'skipped' };
+    }
   }
   return { ...ctx, retryKey };
 }

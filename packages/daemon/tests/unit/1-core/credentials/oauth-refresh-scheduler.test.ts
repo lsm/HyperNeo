@@ -1121,6 +1121,98 @@ describe('OAuthRefreshScheduler', () => {
     expect(manager.stored).toHaveLength(0);
   });
 
+  it('persists the recovered token after rotation failures exhaust the stale stored key budget', async () => {
+    const registry = new ProviderRegistry();
+    const provider = createProvider(true);
+    const baseRefresh = provider.refreshToken!;
+    let rotateSucceeds = true;
+    provider.refreshToken = async () => {
+      if (!rotateSucceeds) return false;
+      return await baseRefresh();
+    };
+    registry.register(provider);
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    const originalStore = manager.storeOAuthTokens.bind(manager);
+    let storeFails = true;
+    manager.storeOAuthTokens = async (providerId: string, credentials: unknown) => {
+      if (storeFails) throw new Error('credential store failed');
+      await originalStore(providerId, credentials);
+    };
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+      maxRetries: 2,
+    });
+
+    await scheduler.tick();
+    storeFails = false;
+    rotateSucceeds = false;
+    await scheduler.tick();
+    await scheduler.tick();
+    expect(manager.health.get('oauth-provider')).toBe('unhealthy');
+    expect(manager.stored).toHaveLength(0);
+
+    rotateSucceeds = true;
+    await scheduler.tick();
+
+    expect(manager.stored).toHaveLength(1);
+    expect(manager.health.get('oauth-provider')).toBe('healthy');
+  });
+
+  it('stop drains a default discovery refresh still in flight', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(createProvider(true));
+    const manager = new FakeCredentialManager();
+    manager.credentials.set('oauth-provider', {
+      type: 'oauth',
+      accessToken: 'old-token',
+      refreshToken: 'refresh-token',
+      expiresAt: 1_000,
+    });
+    let releaseDiscovery: (() => void) | null = null;
+    refreshModels.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDiscovery = () => resolve();
+        })
+    );
+    const scheduler = new OAuthRefreshScheduler(manager as never, {
+      registry,
+      now: () => 0,
+      refreshWindowMs: 10_000,
+    });
+    try {
+      const ticked = scheduler.tick();
+      for (let i = 0; i < 50 && !releaseDiscovery; i++) {
+        await Promise.resolve();
+      }
+      expect(releaseDiscovery).not.toBeNull();
+
+      let stopResolved = false;
+      const stopped = scheduler.stop().then(() => {
+        stopResolved = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(stopResolved).toBe(false);
+
+      releaseDiscovery?.();
+      await stopped;
+      await ticked;
+
+      expect(stopResolved).toBe(true);
+      expect(manager.stored).toHaveLength(1);
+    } finally {
+      refreshModels.mockRestore();
+    }
+  });
+
   it('refreshes discovered models on rotation before notifying providers', async () => {
     const registry = new ProviderRegistry();
     registry.register(createProvider(true));
