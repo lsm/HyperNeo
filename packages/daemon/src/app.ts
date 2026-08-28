@@ -17,7 +17,9 @@ import {
   MessageHub,
   MessageHubRouter,
 } from '@hyperneo/shared';
-import type { Provider } from '@hyperneo/shared/provider';
+import type { ProviderRecord } from '@hyperneo/shared';
+import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   createDaemonInternalEventBus,
   type DaemonInternalEventMap,
@@ -51,6 +53,8 @@ import { getProviderRegistry } from './lib/providers/registry.js';
 import { OAuthRefreshScheduler } from './lib/credentials/oauth-refresh-scheduler.js';
 import { ProviderCredentialManager } from './lib/credentials/provider-credential-manager.js';
 import { KeychainUnavailableError } from './lib/credentials/credential-store.js';
+import { sameCredentialIdentity } from './lib/credentials/credential-identity.js';
+import { stripPersistedDiscovery } from './lib/providers/discovery-refresh-pipeline.js';
 import { syncAllProviders } from './lib/providers/provider-sync.js';
 import {
   clearProviderFailureRecords,
@@ -121,14 +125,97 @@ import {
   type ProcessSnapshot,
 } from './lib/process-watchdog.ts';
 
-async function applyStoredProviderCredentials(
+interface ReconcilePersistedDiscoveryDeps {
+  credentialManager: ProviderCredentialManager;
+  db: Pick<Database, 'providers'>;
+}
+
+interface ReconcilePersistedDiscoveryCtx {
+  deps: ReconcilePersistedDiscoveryDeps;
+  providerId: string;
+  providerCredentials: ProviderCredentials;
+  storedCredentials?: ProviderCredentials | null;
+  storedCredentialsInaccessible?: boolean;
+  providerRecord?: ProviderRecord | null;
+  envCredentials?: boolean;
+  strip?: boolean;
+}
+
+async function loadPersistedDiscoveryInputs(
+  ctx: ReconcilePersistedDiscoveryCtx
+): Promise<ReconcilePersistedDiscoveryCtx> {
+  let storedCredentials: ProviderCredentials | null = null;
+  try {
+    storedCredentials = await ctx.deps.credentialManager.getCredentials(ctx.providerId);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+  const storeStatus = ctx.deps.credentialManager.getCredentialStoreStatus();
+  return {
+    ...ctx,
+    storedCredentials,
+    storedCredentialsInaccessible:
+      storedCredentials === null &&
+      (storeStatus.backend === 'keychain-unavailable' ||
+        storeStatus.backend === 'keychain-fallback'),
+    providerRecord: ctx.deps.db.providers.getProviderByProviderId(ctx.providerId),
+    envCredentials: ctx.deps.credentialManager.hasEnvironmentCredentials(ctx.providerId),
+  };
+}
+
+function decidePersistedDiscoveryStrip(
+  ctx: ReconcilePersistedDiscoveryCtx
+): ReconcilePersistedDiscoveryCtx {
+  const hasPersistedDiscovery = !!ctx.providerRecord?.configJson?.includes('discoveredModels');
+  const strip =
+    !ctx.storedCredentialsInaccessible &&
+    ((ctx.storedCredentials === null && hasPersistedDiscovery && !ctx.envCredentials) ||
+      (ctx.storedCredentials != null &&
+        !sameCredentialIdentity(ctx.storedCredentials, ctx.providerCredentials)));
+  return { ...ctx, strip };
+}
+
+function stripPersistedDiscoveryFromProviderRow(
+  ctx: ReconcilePersistedDiscoveryCtx
+): ReconcilePersistedDiscoveryCtx {
+  const record = ctx.deps.db.providers.getProviderByProviderId(ctx.providerId);
+  if (!record) return ctx;
+  const strippedConfigJson = stripPersistedDiscovery(record.configJson);
+  if (strippedConfigJson === record.configJson) return ctx;
+  ctx.deps.db.providers.updateProvider(record.id, { configJson: strippedConfigJson });
+  return ctx;
+}
+
+const runReconcilePersistedDiscovery = (
+  superpipe({
+    keepsPersistedDiscovery: (ctx: ReconcilePersistedDiscoveryCtx) => ctx.strip !== true,
+  })('reconcile-persisted-discovery') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(loadPersistedDiscoveryInputs, 'ctx', 'ctx')
+  .pipe(decidePersistedDiscoveryStrip, 'ctx', 'ctx')
+  .pipe('!keepsPersistedDiscovery', 'ctx')
+  .pipe(stripPersistedDiscoveryFromProviderRow, 'ctx', 'ctx')
+  .endAsync('ctx') as unknown as (
+  ctx: ReconcilePersistedDiscoveryCtx
+) => Promise<ReconcilePersistedDiscoveryCtx>;
+
+export async function applyStoredProviderCredentials(
   providers: Provider[],
   credentialManager: ProviderCredentialManager,
+  db: Pick<Database, 'providers'>,
   logError: (...args: unknown[]) => void
 ): Promise<void> {
   for (const provider of providers) {
     try {
       const providerCredentials = await provider.getCredentials?.();
+      if (providerCredentials?.type === 'oauth' || providerCredentials?.type === 'api_key') {
+        await runReconcilePersistedDiscovery({
+          deps: { credentialManager, db },
+          providerId: provider.id,
+          providerCredentials,
+        });
+      }
       if (providerCredentials?.type === 'oauth') {
         await credentialManager.storeOAuthTokens(provider.id, providerCredentials);
         continue;
@@ -380,7 +467,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const providerRegistry = initializeProviders();
     await waitForOptionalProviderRegistration(providerRegistry);
     const credentialManager = ProviderCredentialManager.create(db.getDatabase());
-    await applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
+    await applyStoredProviderCredentials(
+      providerRegistry.getAll(),
+      credentialManager,
+      db,
+      logError
+    );
 
     startupTimer.start('provider sync (migrate / custom endpoints / registry)');
     try {
@@ -546,7 +638,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     credentialManager.registerStatusChangeCallback(() => {
       void stateManager.broadcastSystemChange();
-      void applyStoredProviderCredentials(providerRegistry.getAll(), credentialManager, logError);
+      void applyStoredProviderCredentials(
+        providerRegistry.getAll(),
+        credentialManager,
+        db,
+        logError
+      );
     });
 
     startupTimer.start('github + external event setup');
