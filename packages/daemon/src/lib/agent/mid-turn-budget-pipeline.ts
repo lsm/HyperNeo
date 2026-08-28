@@ -40,6 +40,7 @@ export interface MidTurnBudgetCtx {
   interrupt: MidTurnInterruptDeadline | null;
   survivors: MidTurnSurvivorsDisposition;
   removedPendingCompactions: number;
+  windowBoundarySeq: number;
   restarted: boolean;
   outcome: MidTurnBudgetOutcome | null;
 }
@@ -55,6 +56,7 @@ export type MidTurnBudgetPipelineInput = Omit<
   | 'phase'
   | 'lateReceipt'
   | 'removedPendingCompactions'
+  | 'windowBoundarySeq'
 > & {
   preArmed?: boolean;
   phase?: MidTurnBudgetPhase;
@@ -106,17 +108,25 @@ async function survivorsStage(ctx: MidTurnBudgetCtx): Promise<MidTurnBudgetCtx> 
     return done(ctx, { action: 'stood-down' });
   }
   let removedPendingCompactions = ctx.removedPendingCompactions;
+  let windowBoundarySeq = ctx.windowBoundarySeq;
   if (inLatePhase(ctx)) {
-    removedPendingCompactions = ctx.queue.openLateReceiptWindow(ctx.opts);
+    const window = ctx.queue.openLateReceiptWindow(ctx.opts);
+    removedPendingCompactions = window.removedPendingCompactions;
+    windowBoundarySeq = window.boundarySeq;
   }
   if (ctx.interrupt?.timedOut) {
-    return { ...ctx, removedPendingCompactions, survivors: { toRequeue: [], needsRestart: true } };
+    return {
+      ...ctx,
+      removedPendingCompactions,
+      windowBoundarySeq,
+      survivors: { toRequeue: [], needsRestart: true },
+    };
   }
   const receipt = inLatePhase(ctx)
     ? (ctx.lateReceipt ?? undefined)
     : (ctx.interrupt?.receipt ?? undefined);
   const survivors = await ctx.queue.processInterruptSurvivors(ctx.opts, receipt);
-  return { ...ctx, removedPendingCompactions, survivors };
+  return { ...ctx, removedPendingCompactions, windowBoundarySeq, survivors };
 }
 
 function requeueStage(ctx: MidTurnBudgetCtx): MidTurnBudgetCtx {
@@ -133,7 +143,7 @@ async function restartOrStandDownStage(ctx: MidTurnBudgetCtx): Promise<MidTurnBu
     if (
       !ctx.queue.standsDownFor(ctx.opts) &&
       ctx.queue.shouldEnqueueLateCompaction(ctx.removedPendingCompactions) &&
-      !ctx.queue.shouldSuppressPromptPhaseCompaction() &&
+      !ctx.queue.boundaryCompletedSince(ctx.windowBoundarySeq) &&
       !ctx.queue.hasOutstandingInternalCompaction()
     ) {
       ctx.queue.enqueueMidTurnCompaction(ctx.opts, 'mid-turn-late');
@@ -142,7 +152,9 @@ async function restartOrStandDownStage(ctx: MidTurnBudgetCtx): Promise<MidTurnBu
   }
   ctx.queue.registerLateReceipt(ctx.opts, ctx.interrupt);
   if (ctx.survivors.needsRestart) {
-    await ctx.queue.finishSurvivorTeardownWithRestart(ctx.opts);
+    await ctx.queue.finishSurvivorTeardownWithRestart(ctx.opts, {
+      suppressCompaction: ctx.queue.shouldSuppressPromptPhaseCompaction(),
+    });
     return done({ ...ctx, restarted: true }, { action: 'completed' });
   }
   if (!ctx.queue.shouldSuppressPromptPhaseCompaction()) {
@@ -179,6 +191,7 @@ export async function runMidTurnBudgetPipeline(
     interrupt: null,
     survivors: { toRequeue: [], needsRestart: false },
     removedPendingCompactions: 0,
+    windowBoundarySeq: 0,
     restarted: false,
     outcome: null,
   }) as Promise<MidTurnBudgetCtx>;

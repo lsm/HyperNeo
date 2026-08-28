@@ -2323,6 +2323,51 @@ describe('MessageQueue', () => {
       expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
     }, 15_000);
 
+    it('keeps boundary suppression local to each late-receipt window', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const queued = q.enqueueWithId('compact-boundary-window', '/compact', true, {
+        durable: true,
+      });
+      queued.catch(() => {});
+      q.noteInternalCompactionSent({
+        id: 'uuid-bw1',
+        content: 'boundary-window survivor',
+        internal: false,
+      } as never);
+      let releaseWindow1: (cancelled: boolean) => void = () => {};
+      const window1Cancel = new Promise<boolean>((resolve) => {
+        releaseWindow1 = resolve;
+      });
+      const opts1 = makeInterruptOpts({ cancelAsyncMessage: () => window1Cancel });
+      const opts2 = makeInterruptOpts({});
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+
+      q.armInterruptCycle(opts1);
+      q.registerLateReceipt(opts1, {
+        promise: Promise.resolve({ still_queued: ['uuid-bw1'] }),
+        timedOut: true,
+      });
+      await tick(20);
+      q.noteBoundaryCompleted();
+      q.armInterruptCycle(opts2);
+      q.registerLateReceipt(opts2, {
+        promise: Promise.resolve({ still_queued: [] }),
+        timedOut: true,
+      });
+      await tick(20);
+      releaseWindow1(true);
+      await tick(20);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-bw1', 'boundary-window survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+      q.clear();
+      q.stop();
+    });
+
     it('keeps the removed-compaction count local to each late-receipt window', async () => {
       const q = new MessageQueue();
       q.start();
@@ -2374,6 +2419,38 @@ describe('MessageQueue', () => {
       expect(second.value.message.uuid).toBe('tool-result-mid-turn');
       second.value.onSent();
       await toolResult;
+      q.stop();
+    });
+
+    it('skips the restart compaction when a boundary completed mid-cycle', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-rb',
+        content: 'restart-boundary survivor',
+        internal: false,
+      } as never);
+      const restartMock = mock(async (options?: { beforeStart?: () => void }) => {
+        options?.beforeStart?.();
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        interrupt: async () => {
+          q.noteBoundaryCompleted();
+          return { still_queued: ['uuid-rb'] };
+        },
+        cancelAsyncMessage: async () => false,
+        restart: restartMock,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(restartMock).toHaveBeenCalledTimes(1);
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-rb', 'restart-boundary survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
       q.stop();
     });
 
