@@ -231,24 +231,7 @@ export class AskUserQuestionHandler {
       if (this.pendingResolver?.toolUseId === toolUseID) {
         this.pendingResolver = null;
       }
-      const currentState = stateManager.getState();
-      if (
-        currentState.status === 'waiting_for_input' &&
-        currentState.pendingQuestion.toolUseId === toolUseID
-      ) {
-        try {
-          await stateManager.setIdle({
-            suppressIdlePublish: true,
-            suppressIdleCallback: true,
-            suppressDeliveryWaiters: true,
-          });
-        } catch (idleError) {
-          this.logger.warn(
-            `AskUserQuestion ${toolUseID}: failed to roll back stale waiting state`,
-            idleError
-          );
-        }
-      }
+      await this.rollbackStaleWaitingState(toolUseID);
       return pending;
     }
 
