@@ -413,6 +413,13 @@ export class SDKMessageHandler {
 
       await this.settleIdleForInvocation(tripGeneration);
 
+      if (this.isInvocationStale(tripGeneration)) {
+        this.logger.info(
+          'Skipping circuit breaker teardown notices: the tripped query was superseded during the idle settle.'
+        );
+        return;
+      }
+
       await this.displayErrorAsAssistantMessage(
         `⚠️ **Session Stopped: Error Loop Detected**\n\n${userMessage}\n\n` +
           `The agent has been automatically stopped to prevent further errors.`

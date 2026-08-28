@@ -4073,6 +4073,44 @@ describe('SDKMessageHandler', () => {
       expect(emitSpy.mock.calls.filter(([event]) => event === 'session.error')).toHaveLength(0);
     });
 
+    it('should skip teardown notices when a replacement starts during the idle settle', async () => {
+      mockContext.queryObject = null;
+      mockContext.queryPromise = null;
+      let queryGeneration = 1;
+      mockContext.getQueryGeneration = () => queryGeneration;
+      setIdleSpy.mockImplementation(async () => {
+        queryGeneration += 1;
+      });
+
+      const handlerRestartMidTrip = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerRestartMidTrip.handleMessage({
+          ...errorMessage,
+          uuid: `error-uuid-${i}`,
+        } as SDKMessage);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(
+        saveSDKMessageSpy.mock.calls.filter(([, message]) => message.type === 'assistant')
+      ).toHaveLength(0);
+      expect(emitSpy.mock.calls.filter(([event]) => event === 'session.error')).toHaveLength(0);
+    });
+
     it('should settle idle with the tripped query owner when the trip completes', async () => {
       mockContext.queryObject = null;
       mockContext.queryPromise = null;
