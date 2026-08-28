@@ -438,7 +438,8 @@ export class AcpQueryRunner {
         this.ctx.isCleaningUp() ||
         this.ctx.getQueryGeneration() !== queryGeneration ||
         !attemptToken.isLive() ||
-        stateManager.getState().status === 'interrupted'
+        stateManager.getState().status === 'interrupted' ||
+        runAbortController.signal.aborted
       ) {
         const error = new Error('ACP query aborted during startup');
         error.name = 'AbortError';

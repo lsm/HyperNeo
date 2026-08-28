@@ -1818,6 +1818,7 @@ describe('AcpQueryRunner', () => {
     releaseBuild();
     await ctx.queryPromise;
 
+    expect(client.initialize).not.toHaveBeenCalled();
     expect(client.sendPrompt).not.toHaveBeenCalled();
     for (const call of ctx.db.updateSession.mock.calls) {
       expect(call[1]).not.toMatchObject({ acpSessionId: expect.anything() });
