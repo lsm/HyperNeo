@@ -284,6 +284,30 @@ describe('resolveAction', () => {
     expect(ctx.workflowRunId).toBe('run-b');
   });
 
+  test('clears the contextual task when an explicit run target has no contextual run to correlate', () => {
+    const changePlan = defineAction({
+      name: 'change_plan',
+      family: 'workflows',
+      safetyClass: 'destructive',
+      description: 'Change plan',
+      paramsDoc: '{ run_id: string }',
+      paramsSchema: z.object({ run_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'change_plan',
+          params: { run_id: 'run-b' },
+          taskId: 'standalone-task-a',
+        },
+        { registry: createActionRegistry([changePlan]) }
+      )
+    );
+    expect(ctx.taskId).toBeUndefined();
+    expect(ctx.workflowRunId).toBe('run-b');
+  });
+
   test('attributes camel-case workflowRunId params to the requested run', () => {
     const listDeliveries = defineAction({
       name: 'list_deliveries',
@@ -370,6 +394,33 @@ describe('resolveTargets', () => {
     const next = await resolveTargets(withDeps(ctx, {}));
     expect(next.outcome).toBeUndefined();
     expect(next.taskId).toBe('task-b');
+    expect(next.workflowRunId).toBeUndefined();
+  });
+
+  test('clears numeric attribution when no task resolver is wired', async () => {
+    const sendToTask = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Send message',
+      paramsDoc: '{ task_number: number, message: string }',
+      paramsSchema: z.object({ task_number: z.number(), message: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'send_message_to_task',
+          params: { task_number: 7, message: 'ping' },
+          taskId: 'session-task-a',
+          workflowRunId: 'run-a',
+        },
+        { registry: createActionRegistry([sendToTask]) }
+      )
+    );
+    const next = await resolveTargets(withDeps(ctx, {}));
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBeUndefined();
     expect(next.workflowRunId).toBeUndefined();
   });
 
@@ -1264,6 +1315,45 @@ describe('applyRateAndAudit', () => {
       'update_task not permitted: space autonomy level 1 < required level 5. Request human approval.'
     );
     expect(auditEntries.length).toBe(0);
+  });
+
+  test('skips rate admission when the checkpoint recheck denies', async () => {
+    let required = 1;
+    let budgetCalls = 0;
+    const stateful = defineAction({
+      name: 'update_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Update task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      autonomyRequirement: async () => required,
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            { actionName: 'update_task', params: { task_id: 't-1' } },
+            { registry: createActionRegistry([stateful]) }
+          )
+        )
+      )
+    );
+    const autonomied = await applyAutonomyGate({ ...ctx, spaceLevel: 1 });
+    expect(autonomied.outcome).toBeUndefined();
+    required = 5;
+    const next = await applyRateAndAudit(
+      withDeps(autonomied, {
+        isWithinRateBudget: () => {
+          budgetCalls += 1;
+          return true;
+        },
+      })
+    );
+    assertDenied(next.outcome!);
+    expect(next.outcome.reason).toBe('autonomy_denied');
+    expect(budgetCalls).toBe(0);
   });
 
   test('clears the contextual task when a completed numeric lookup misses', async () => {
