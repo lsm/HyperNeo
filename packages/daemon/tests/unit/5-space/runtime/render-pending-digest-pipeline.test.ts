@@ -372,6 +372,19 @@ describe('render-pending-digest pipeline', () => {
     expect(h.failedDeliveries).toEqual([]);
   });
 
+  it('admitTurnEnd runs terminal-task cleanup even while the session is interrupted', () => {
+    const h = harness();
+    seedPending(h, [['ev-a', 'check']]);
+    h.admissibility.interruptInProgress = true;
+    h.admissibility.taskAdmissible = false;
+    h.admissibility.taskTerminal = true;
+    const ctx = admitTurnEnd(ctxOf(h, { target: TARGET, scopedRows: h.rows }));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+    expect(h.failedDeliveries).toEqual([
+      { eventId: 'ev-a', deliveryKey: 'delivery-ev-a', reason: 'task_terminal' },
+    ]);
+  });
+
   it('admitTurnEnd terminally fails scoped rows for a terminal task, not a transiently stopped one', () => {
     const h = harness();
     seedPending(h, [

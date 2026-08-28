@@ -211,9 +211,6 @@ export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   if (!ctx.deps.ownsCurrentExecution(target, ctx.sessionId)) {
     return { ...ctx, outcome: { action: 'skip', reason: 'session_not_current' } };
   }
-  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
-    return { ...ctx, outcome: { action: 'skip', reason: 'session_interrupted' } };
-  }
   if (!ctx.deps.isTaskAdmissible(target.taskId)) {
     if (ctx.deps.isTaskTerminal(target.taskId)) {
       const consumedDurableEventIds = ctx.consumedDurableEventIds ?? collectConsumedEvidence(ctx);
@@ -241,6 +238,9 @@ export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   }
   if (ctx.deps.isSpacePaused(target.workflowRunId)) {
     return { ...ctx, outcome: { action: 'skip', reason: 'space_paused' } };
+  }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_interrupted' } };
   }
   return ctx;
 }

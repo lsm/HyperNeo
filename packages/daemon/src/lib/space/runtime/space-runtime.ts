@@ -1567,13 +1567,7 @@ export class SpaceRuntime {
       }
       void this.renderPendingDigestScopesForSession(sessionId, taskId)
         .then((outcomes) => {
-          const retryPending = outcomes.some(
-            (outcome) =>
-              outcome?.action === 'failed' ||
-              outcome?.action === 'held' ||
-              (outcome?.action === 'skip' && outcome.reason === 'session_interrupted')
-          );
-          if (!retryPending) {
+          if (!outcomes.some((outcome) => this.isDigestOutcomeRetryable(outcome))) {
             this.turnEndDigestRetryCounts.delete(sessionId);
           }
         })
@@ -1707,6 +1701,14 @@ export class SpaceRuntime {
     return false;
   }
 
+  private isDigestOutcomeRetryable(outcome: RenderPendingDigestOutcome | null): boolean {
+    return (
+      outcome?.action === 'failed' ||
+      outcome?.action === 'held' ||
+      (outcome?.action === 'skip' && outcome.reason === 'session_interrupted')
+    );
+  }
+
   private listPendingDigestTaskScopes(
     sessionId: string,
     fallbackTaskId?: string
@@ -1747,13 +1749,19 @@ export class SpaceRuntime {
     this.clearDigestPullState(sessionId);
     if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
     if (!this.isTargetSessionLive(sessionId)) return;
-    void this.renderPendingDigestScopesForSession(sessionId, state.taskId).catch((error) => {
-      log.warn(
-        `SpaceRuntime: ${trigger} digest pull for session ${sessionId} failed: ` +
-          `${formatCommandError(error)}`
-      );
-      this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
-    });
+    void this.renderPendingDigestScopesForSession(sessionId, state.taskId)
+      .then((outcomes) => {
+        if (outcomes.some((outcome) => this.isDigestOutcomeRetryable(outcome))) {
+          this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
+        }
+      })
+      .catch((error) => {
+        log.warn(
+          `SpaceRuntime: ${trigger} digest pull for session ${sessionId} failed: ` +
+            `${formatCommandError(error)}`
+        );
+        this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
+      });
   }
 
   private clearDigestPullState(sessionId: string): void {
@@ -1936,13 +1944,11 @@ export class SpaceRuntime {
           }
           return { action: 'failed', stage: 'digestCleanup', error: cleanupError };
         }
-        if (
-          (outcome.action === 'failed' ||
-            outcome.action === 'held' ||
-            (outcome.action === 'skip' && outcome.reason === 'session_interrupted')) &&
-          this.isTargetSessionLive(sessionId)
-        ) {
+        if (this.isDigestOutcomeRetryable(outcome) && this.isTargetSessionLive(sessionId)) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);
+          if (outcome.action === 'skip' && outcome.reason === 'session_interrupted') {
+            this.scheduleDigestPullForSession(sessionId, taskId);
+          }
         }
       }
       return outcome;

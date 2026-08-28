@@ -2109,6 +2109,27 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows[0]?.sdk_message).toContain('(1 event, PR #42):');
       expect(eventStore.listDeliveries('evt-interrupt-1')[0]?.state).toBe('delivered');
     });
+
+    test('digest pull stays held through an interrupt longer than the retry budget', async () => {
+      await startLiveSession('session-long-interrupt');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-long-interrupt', 'interrupted');
+      tam.interrupting.add('session-long-interrupt');
+
+      await eventService.publish(makeEvent({ id: 'evt-long-interrupt-1', topic }));
+      await wait(6500);
+
+      expect(digestRows('session-long-interrupt')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-long-interrupt-1')[0]?.state).toBe('pending');
+
+      tam.interrupting.delete('session-long-interrupt');
+      tam.processingStates.set('session-long-interrupt', 'idle');
+      await wait(400);
+
+      const rows = digestRows('session-long-interrupt');
+      expect(rows).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-long-interrupt-1')[0]?.state).toBe('delivered');
+    });
   });
 
   describe('surviving delivery invariants after the V1 deletion', () => {
