@@ -2364,8 +2364,7 @@ export class SpaceRuntime {
 
   private isTargetSessionInterrupted(sessionId: string): boolean {
     const session = this.config.taskAgentManager?.getAgentSessionById?.(sessionId);
-    if (session?.getProcessingState().status !== 'interrupted') return false;
-    return session.isInterruptInProgress();
+    return session?.isInterruptInProgress() ?? false;
   }
 
   private getExternalEventRateLimitState(rateLimitKey: string): ExternalEventRateLimitState {

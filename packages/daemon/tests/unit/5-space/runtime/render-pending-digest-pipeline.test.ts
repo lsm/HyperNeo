@@ -477,14 +477,14 @@ describe('render-pending-digest pipeline', () => {
     expect(ctx.replayDigestMessage).toBeUndefined();
   });
 
-  it('claimPending skips in-flight, legacy, membership, and immediate-tier rows', () => {
+  it('claimPending skips in-flight, legacy, and immediate-tier rows, marking membership rows delivered', () => {
     const h = harness();
     for (const eventId of ['ev-inflight', 'ev-legacy', 'ev-member', 'ev-immediate', 'ev-ok']) {
       seedPending(h, [[eventId, 'comment']]);
     }
     h.inFlight.add('delivery-ev-inflight');
     h.legacyRows.set('deferred', [legacyDurableRow('ev-legacy', TOPICS.comment)]);
-    h.digestRows.push(digestMembershipRow(['ev-member']));
+    h.digestRows.push(digestMembershipRow(['ev-member'], 'enqueued'));
     h.deliveryContent.set(buildImmediateEventMessageUuid('ev-immediate', 'delivery-ev-immediate'), {
       sendStatus: 'submitted',
     });
@@ -499,6 +499,7 @@ describe('render-pending-digest pipeline', () => {
     );
     expect(ctx.pendingRows?.map((row) => row.eventId)).toEqual(['ev-ok']);
     expect(h.acquiredClaims).toEqual(['delivery-ev-ok']);
+    expect(h.marks).toEqual([{ eventId: 'ev-member', deliveryKey: 'delivery-ev-member' }]);
     expect(h.failedDeliveries).toEqual([]);
   });
 
@@ -940,7 +941,7 @@ describe('render-pending-digest pipeline', () => {
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
   });
 
-  it('end to end: pending rows covered by an in-flight persisted digest are held, not re-delivered', async () => {
+  it('end to end: pending rows covered by an in-flight persisted digest are reconciled as delivered, not re-delivered', async () => {
     const h = harness();
     seedPending(h, [
       ['ev-a', 'check'],
@@ -954,7 +955,10 @@ describe('render-pending-digest pipeline', () => {
     expect(outcome).toEqual({ action: 'skip', reason: 'no_claimable_events' });
     expect(h.saved).toEqual([]);
     expect(h.appended).toEqual([]);
-    expect(h.marks).toEqual([]);
+    expect(h.marks).toEqual([
+      { eventId: 'ev-a', deliveryKey: 'delivery-ev-a' },
+      { eventId: 'ev-b', deliveryKey: 'delivery-ev-b' },
+    ]);
     expect(h.failedDeliveries).toEqual([]);
   });
 

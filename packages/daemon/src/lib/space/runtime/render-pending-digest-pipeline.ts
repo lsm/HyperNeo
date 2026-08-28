@@ -375,7 +375,10 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
       continue;
     }
     if (ctx.legacyDurableEventIds?.has(row.eventId)) continue;
-    if (ctx.digestMembershipEventIds?.has(row.eventId)) continue;
+    if (ctx.digestMembershipEventIds?.has(row.eventId)) {
+      consumedMarks.push({ eventId: row.eventId, deliveryKey: row.deliveryKey });
+      continue;
+    }
     const immediate = ctx.deps.getDeliveryContent(
       ctx.sessionId,
       buildImmediateEventMessageUuid(row.eventId, row.deliveryKey)

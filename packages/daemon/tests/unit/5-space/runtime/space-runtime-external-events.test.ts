@@ -2130,6 +2130,52 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows).toHaveLength(1);
       expect(eventStore.listDeliveries('evt-long-interrupt-1')[0]?.state).toBe('delivered');
     });
+
+    test('an event fanned out to two tasks on one session delivers both rows via one digest', async () => {
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { run, task } = await startLiveSession('session-shared-event', topic);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topic).success
+      ).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-shared-1', topic }));
+      await wait(150);
+
+      const deliveries = eventStore.listDeliveries('evt-shared-1');
+      expect(deliveries.map((delivery) => delivery.taskId).sort()).toEqual(
+        [task.id, secondTask.id].sort()
+      );
+      for (const delivery of deliveries) {
+        expect(delivery.state).toBe('delivered');
+      }
+      expect(digestRows('session-shared-event')).toHaveLength(1);
+    });
+
+    test('digest pull holds while an interrupt is requested but the interrupted state has not landed', async () => {
+      await startLiveSession('session-early-interrupt');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-early-interrupt', 'processing');
+      tam.interrupting.add('session-early-interrupt');
+
+      await eventService.publish(makeEvent({ id: 'evt-early-interrupt-1', topic }));
+      await wait(150);
+
+      expect(digestRows('session-early-interrupt')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-early-interrupt-1')[0]?.state).toBe('pending');
+
+      tam.interrupting.delete('session-early-interrupt');
+      tam.processingStates.set('session-early-interrupt', 'idle');
+      await wait(1200);
+
+      expect(digestRows('session-early-interrupt')).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-early-interrupt-1')[0]?.state).toBe('delivered');
+    });
   });
 
   describe('surviving delivery invariants after the V1 deletion', () => {

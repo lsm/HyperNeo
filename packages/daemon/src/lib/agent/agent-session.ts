@@ -900,7 +900,10 @@ export class AgentSession
   }
 
   isInterruptInProgress(): boolean {
-    return this.interruptHandler.getInterruptPromise() !== null;
+    return (
+      this.interruptHandler.isInterruptRequested() ||
+      this.interruptHandler.getInterruptPromise() !== null
+    );
   }
 
   async normalizeStaleInterruptedState(): Promise<void> {

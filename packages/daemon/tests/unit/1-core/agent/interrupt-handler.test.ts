@@ -153,6 +153,34 @@ describe('InterruptHandler', () => {
     });
   });
 
+  describe('isInterruptRequested', () => {
+    it('marks the interrupt as requested synchronously before the first await', async () => {
+      let releaseInterrupted!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseInterrupted = resolve;
+      });
+      setInterruptedSpy.mockImplementation(() => gate);
+      handler = createHandler();
+
+      const pending = handler.handleInterrupt();
+      expect(handler.isInterruptRequested()).toBe(true);
+
+      releaseInterrupted();
+      await pending;
+      expect(handler.isInterruptRequested()).toBe(false);
+      expect(handler.getInterruptPromise()).toBeNull();
+    });
+
+    it('clears the requested flag on the idle early-return path', async () => {
+      getStateSpy.mockReturnValue({ status: 'idle' });
+      handler = createHandler();
+
+      await handler.handleInterrupt();
+
+      expect(handler.isInterruptRequested()).toBe(false);
+    });
+  });
+
   describe('handleInterrupt', () => {
     it('should skip interrupt if already idle', async () => {
       getStateSpy.mockReturnValue({ status: 'idle' });
