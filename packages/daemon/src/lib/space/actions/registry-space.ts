@@ -155,6 +155,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Send a user message to an ad-hoc session and optionally clear a pending question; returns the delivery result.',
       paramsDoc: 'session_id, message, answer_question?',
       paramsSchema: SendSessionMessageSchema,
+      auditRedactKeys: ['message'],
       handler: (args) => handlers.send_session_message(args),
     }),
     defineAction({
