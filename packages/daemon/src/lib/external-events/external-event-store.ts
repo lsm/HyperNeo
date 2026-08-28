@@ -1,6 +1,6 @@
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { DeliveryTerminalEvent, QueueAgeStats } from './queue-health-metrics.ts';
+import type { DeliveryTerminalEvent, PendingDeliverySummary } from './queue-health-metrics.ts';
 import { validateLiteralTopic, validateSource } from './topic-validator.ts';
 import {
   type DeliveryFailure,
@@ -273,7 +273,7 @@ export class ExternalEventStore {
     }
   }
 
-  registerExpectedDelivery(eventId: string, deliveryKey: string, target: DeliveryTarget): void {
+  registerExpectedDelivery(eventId: string, deliveryKey: string, target: DeliveryTarget): boolean {
     if (!this.getById(eventId)) {
       throw new Error(`registerExpectedDelivery: unknown source event id "${eventId}"`);
     }
@@ -344,6 +344,7 @@ export class ExternalEventStore {
         );
       }
     }
+    return result.changes > 0;
   }
 
   isDeliveryTerminal(eventId: string, deliveryKey: string): boolean {
@@ -615,11 +616,12 @@ export class ExternalEventStore {
     return rows.map(deliveryRowToRecord);
   }
 
-  summarizePendingDeliveries(now: number = Date.now()): QueueAgeStats | null {
+  summarizePendingDeliveries(now: number = Date.now()): PendingDeliverySummary | null {
     const agg = this.db
       .prepare(
         `SELECT
            COUNT(*) AS count,
+           COUNT(DISTINCT d.workflow_run_id || '|' || d.task_id || '|' || d.node_id || '|' || d.agent_name) AS distinctTargets,
            MIN(? - e.created_at) AS minMs,
            MAX(? - e.created_at) AS maxMs,
            AVG(? - e.created_at) AS avgMs
@@ -629,6 +631,7 @@ export class ExternalEventStore {
       )
       .get(now, now, now) as {
       count: number;
+      distinctTargets: number;
       minMs: number | null;
       maxMs: number | null;
       avgMs: number | null;
@@ -648,6 +651,7 @@ export class ExternalEventStore {
       .get(now, p95Offset) as { age: number } | undefined;
     return {
       count,
+      distinctTargets: agg.distinctTargets ?? 0,
       minMs: agg.minMs ?? 0,
       maxMs: agg.maxMs ?? 0,
       avgMs: Math.round(agg.avgMs ?? 0),

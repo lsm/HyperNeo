@@ -347,6 +347,21 @@ describe('registerExpectedDelivery', () => {
     expect(deliveries).toHaveLength(1);
   });
 
+  test('reports whether the registration inserted a new row', () => {
+    store.store(EVENT_A);
+    const target = {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    };
+    expect(store.registerExpectedDelivery('evt-a', 'dk-1', target)).toBe(true);
+    expect(store.registerExpectedDelivery('evt-a', 'dk-1', target)).toBe(false);
+
+    store.markDeliveryDelivered('evt-a', 'dk-1');
+    expect(store.registerExpectedDelivery('evt-a', 'dk-1', target)).toBe(false);
+  });
+
   test('preserves terminal state on duplicate registration', () => {
     store.store(EVENT_A);
     const target = {
@@ -1048,6 +1063,38 @@ describe('summarizePendingDeliveries', () => {
     expect(afterDeliver!.count).toBe(1);
     expect(afterDeliver!.minMs).toBe(afterDeliver!.maxMs);
     expect(afterDeliver!.p95Ms).toBe(afterDeliver!.maxMs);
+  });
+
+  test('counts distinct pending delivery targets', () => {
+    const now = Date.now();
+    store.store(EVENT_A);
+    store.store(EVENT_B);
+    store.registerExpectedDelivery('evt-a', 'dk-a', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+    store.registerExpectedDelivery('evt-b', 'dk-b', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'node-1',
+      agentName: 'coder',
+    });
+
+    const sameTarget = store.summarizePendingDeliveries(now);
+    expect(sameTarget!.count).toBe(2);
+    expect(sameTarget!.distinctTargets).toBe(1);
+
+    store.registerExpectedDelivery('evt-a', 'dk-a-run2', {
+      workflowRunId: 'run-2',
+      taskId: 'task-2',
+      nodeId: 'node-2',
+      agentName: 'coder',
+    });
+    const twoTargets = store.summarizePendingDeliveries(now);
+    expect(twoTargets!.count).toBe(3);
+    expect(twoTargets!.distinctTargets).toBe(2);
   });
 });
 

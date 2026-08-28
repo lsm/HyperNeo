@@ -1083,6 +1083,77 @@ describe('SpaceRuntime external event subscriptions', () => {
         .get() as { n: number };
       expect(digestRows.n).toBe(0);
     }, 10_000);
+
+    test('flag on: a delivered immediate event still records an enqueue counter', async () => {
+      await attachLiveSession('session-immediate-enqueue', 'processing');
+      const event = immediateEvent();
+      await eventService.publish(event);
+
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+      const snapshot = runtime.getQueueHealthSnapshot();
+      expect(snapshot.counters.enqueue).toBe(1);
+      expect(snapshot.counters.enqueueBySource['github']).toBe(1);
+      expect(snapshot.counters.enqueueByTargetState).toEqual({
+        'run=in_progress;node=in_progress': 1,
+      });
+      expect(snapshot.gauges.queueDepth).toBe(0);
+      expect(snapshot.gauges.queueKeys).toBe(0);
+      expect(snapshot.gauges.queueAgeMs).toBeNull();
+    });
+  });
+
+  describe('queue health snapshot', () => {
+    test('digest tier: enqueue counters increment per registered delivery and gauges track the persisted summary', async () => {
+      const { run } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const events = [
+        makeEvent({
+          id: 'evt-queue-health-a',
+          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+        }),
+        makeEvent({
+          id: 'evt-queue-health-b',
+          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+        }),
+      ];
+      for (const event of events) {
+        await eventService.publish(event);
+        expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+      }
+
+      const frozenNow = Date.now();
+      const originalNow = Date.now;
+      Date.now = () => frozenNow;
+      let snapshot: ReturnType<typeof runtime.getQueueHealthSnapshot>;
+      let persisted: ReturnType<typeof eventStore.summarizePendingDeliveries>;
+      try {
+        snapshot = runtime.getQueueHealthSnapshot();
+        persisted = eventStore.summarizePendingDeliveries(frozenNow);
+      } finally {
+        Date.now = originalNow;
+      }
+
+      expect(snapshot.counters.enqueue).toBe(2);
+      expect(snapshot.counters.enqueueBySource['github']).toBe(2);
+      expect(snapshot.counters.enqueueByTargetState).toEqual({ 'run=in_progress;node=idle': 2 });
+
+      expect(snapshot.gauges.queueDepth).toBe(2);
+      expect(snapshot.gauges.queueDepth).toBe(persisted!.count);
+      expect(snapshot.gauges.queueKeys).toBe(persisted!.distinctTargets);
+      expect(snapshot.gauges.queueKeys).toBe(1);
+      expect(snapshot.gauges.persistedPending).toBe(2);
+      expect(snapshot.gauges.queueAgeMs).toEqual(persisted);
+      expect(snapshot.gauges.persistedAgeMs).toEqual(persisted);
+      expect(snapshot.gauges.queueAgeMs!.count).toBe(2);
+    });
   });
 
   describe('events delivery v2 turn-end digest pull', () => {
