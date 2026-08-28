@@ -723,6 +723,130 @@ describe('markDeliveryFailed', () => {
   });
 });
 
+describe('markPendingDeliveriesFailedBefore', () => {
+  const TARGET = {
+    workflowRunId: 'run-1',
+    taskId: 'task-1',
+    nodeId: 'node-1',
+    agentName: 'coder',
+  };
+
+  function ageEvent(eventId: string, createdAt: number): void {
+    db.prepare('UPDATE space_external_events SET created_at = ? WHERE id = ?').run(
+      createdAt,
+      eventId
+    );
+  }
+
+  test('expires pending deliveries on events past the cutoff and rolls up the event', () => {
+    const hookCalls: Array<{ eventId: string; deliveryKey: string; reason: string | null }> = [];
+    store.setDeliveryTerminalHook((event) =>
+      hookCalls.push({
+        eventId: event.eventId,
+        deliveryKey: event.deliveryKey,
+        reason: event.reason,
+      })
+    );
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-1', TARGET);
+    store.registerExpectedDelivery('evt-a', 'dk-2', TARGET);
+    store.registerExpectedDelivery('evt-a', 'dk-3', TARGET);
+    store.markDeliveryDelivered('evt-a', 'dk-3');
+    hookCalls.length = 0;
+
+    const now = Date.now();
+    ageEvent('evt-a', now - 400_000);
+
+    const expired = store.markPendingDeliveriesFailedBefore(now - 300_000, new Set(), now);
+
+    expect(expired).toEqual([
+      { eventId: 'evt-a', deliveryKey: 'dk-1' },
+      { eventId: 'evt-a', deliveryKey: 'dk-2' },
+    ]);
+    expect(store.getDelivery('evt-a', 'dk-1')).toMatchObject({
+      state: 'failed',
+      failureReason: 'ttl_expired',
+    });
+    expect(store.getDelivery('evt-a', 'dk-2')).toMatchObject({
+      state: 'failed',
+      failureReason: 'ttl_expired',
+    });
+    expect(store.getDelivery('evt-a', 'dk-3')!.state).toBe('delivered');
+    expect(store.getById('evt-a')!.state).toBe('failed');
+    expect(hookCalls).toEqual([
+      { eventId: 'evt-a', deliveryKey: 'dk-1', reason: 'ttl_expired' },
+      { eventId: 'evt-a', deliveryKey: 'dk-2', reason: 'ttl_expired' },
+    ]);
+  });
+
+  test('leaves fresh rows untouched', () => {
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-1', TARGET);
+
+    const expired = store.markPendingDeliveriesFailedBefore(Date.now() - 300_000, new Set());
+
+    expect(expired).toEqual([]);
+    expect(store.getDelivery('evt-a', 'dk-1')!.state).toBe('pending');
+    expect(store.getById('evt-a')!.state).toBe('published');
+  });
+
+  test('skips in-flight delivery keys and keeps the event published while one is pending', () => {
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-in-flight', TARGET);
+    store.registerExpectedDelivery('evt-a', 'dk-orphan', TARGET);
+
+    const now = Date.now();
+    ageEvent('evt-a', now - 400_000);
+
+    const expired = store.markPendingDeliveriesFailedBefore(
+      now - 300_000,
+      new Set(['dk-in-flight']),
+      now
+    );
+
+    expect(expired).toEqual([{ eventId: 'evt-a', deliveryKey: 'dk-orphan' }]);
+    expect(store.getDelivery('evt-a', 'dk-in-flight')!.state).toBe('pending');
+    expect(store.getDelivery('evt-a', 'dk-orphan')).toMatchObject({
+      state: 'failed',
+      failureReason: 'ttl_expired',
+    });
+    expect(store.getById('evt-a')!.state).toBe('published');
+  });
+
+  test('rolls up an event left published with all-terminal ttl_expired deliveries', () => {
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-1', TARGET);
+    store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'ttl_expired' });
+    expect(store.getById('evt-a')!.state).toBe('published');
+
+    const expired = store.markPendingDeliveriesFailedBefore(Date.now() - 300_000, new Set());
+
+    expect(expired).toEqual([]);
+    expect(store.getById('evt-a')!.state).toBe('failed');
+  });
+
+  test('sweeps more distinct events than the SQLite host-parameter limit', () => {
+    const now = Date.now();
+    for (let i = 0; i < 1200; i += 1) {
+      const event: ExternalEvent = {
+        ...EVENT_A,
+        id: `evt-bulk-${i}`,
+        dedupeKey: `dedupe-bulk-${i}`,
+      };
+      store.store(event);
+      store.registerExpectedDelivery(event.id, `dk-bulk-${i}`, TARGET);
+      ageEvent(event.id, now - 400_000);
+    }
+
+    const expired = store.markPendingDeliveriesFailedBefore(now - 300_000, new Set(), now);
+
+    expect(expired).toHaveLength(1200);
+    expect(store.getById('evt-bulk-0')!.state).toBe('failed');
+    expect(store.getById('evt-bulk-1199')!.state).toBe('failed');
+    expect(store.summarizePendingDeliveries(now + 1)?.count ?? 0).toBe(0);
+  });
+});
+
 describe('markEventDeliveredIfAllDeliveriesDelivered', () => {
   test('delivers when all deliveries are delivered', () => {
     store.store(EVENT_A);
