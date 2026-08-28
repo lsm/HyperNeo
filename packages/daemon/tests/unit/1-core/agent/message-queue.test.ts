@@ -2639,6 +2639,46 @@ describe('MessageQueue', () => {
       q.stop();
     }, 15_000);
 
+    it('stands down a late receipt after a user stop follows a failed restart', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-failed-stop', 'failed-stop-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => true,
+        onResumeClear,
+        restart: async (options) => {
+          q.stop();
+          await options?.beforeStart?.();
+          throw new Error('restart failed');
+        },
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      q.noteUserInterrupt();
+      q.clear();
+      releaseInterrupt({ still_queued: ['uuid-failed-stop'] });
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-failed-stop')).toBe(false);
+      expect(q.size()).toBe(0);
+      expect(onResumeClear).toHaveBeenCalled();
+      q.stop();
+    }, 15_000);
+
     it('wakes a waiting generator when a yielded survivor is requeued', async () => {
       const q = new MessageQueue();
       q.start();

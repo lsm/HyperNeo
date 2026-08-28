@@ -1567,7 +1567,14 @@ export class AgentSession
             .getJobQueueRepo?.()
             ?.getActiveDeliveryBatchUuids?.(this.session.id, uuid);
           if (batchUuids && batchUuids.length > 1) {
-            return this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids).content;
+            const rebuilt = this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids);
+            const admitted = rebuilt.admittedUuids ?? [uuid];
+            if (admitted.length < batchUuids.length) {
+              this.db
+                .getJobQueueRepo?.()
+                ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, admitted);
+            }
+            return rebuilt.content;
           }
         } catch (error) {
           this.logger.warn(

@@ -102,6 +102,8 @@ export class MessageQueue {
   private resolveEarlyDeliveryGate: (() => void) | undefined;
   private internalRestartInFlight: boolean = false;
   private internalRestartFailed: boolean = false;
+  private internalRestartFailedClearEpoch: number = 0;
+  private internalRestartFailedInterruptEpoch: number = 0;
   private recoveryRestartEpoch: number | undefined;
   private earlyGateReleasePending: boolean = false;
   private stopEpoch: number = 0;
@@ -802,7 +804,14 @@ export class MessageQueue {
 
   standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean {
     if (this.internalRestartInFlight) return false;
-    if (this.internalRestartFailed && !this.isRunning()) return false;
+    if (
+      this.internalRestartFailed &&
+      !this.isRunning() &&
+      this.clearEpoch === this.internalRestartFailedClearEpoch &&
+      this.userInterruptEpoch === this.internalRestartFailedInterruptEpoch
+    ) {
+      return false;
+    }
     if (!this.recoveryOwnsCurrentTurn() && opts.ownsTurn && !opts.ownsTurn()) return true;
     return !this.isRunning();
   }
@@ -1080,6 +1089,8 @@ export class MessageQueue {
         }
         restartFailed = true;
         this.internalRestartFailed = true;
+        this.internalRestartFailedClearEpoch = this.clearEpoch;
+        this.internalRestartFailedInterruptEpoch = this.userInterruptEpoch;
         if (!this.hasOutstandingInternalCompaction()) {
           if (!this.shouldSuppressPromptPhaseCompaction()) {
             this.enqueueMidTurnCompaction(opts, 'mid-turn-restart-failed');

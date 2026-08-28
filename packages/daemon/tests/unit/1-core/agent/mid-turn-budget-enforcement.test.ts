@@ -573,6 +573,54 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     );
   });
 
+  it('narrows the recovered batch to the admitted members on a partial rebuild', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    const narrowSpy = mock(() => true);
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: (sessionId: string, uuid: string) => string | null;
+          markDeliveryRetryableByUuid: () => string | null;
+          getDeliveryContent: (
+            sessionId: string,
+            uuid: string
+          ) => { content: string; sendStatus: string } | null;
+        };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-partial' ? 'kickoff-text' : null,
+      markDeliveryRetryableByUuid: () => null,
+      getDeliveryContent: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-partial'
+          ? { content: 'kickoff-text', sendStatus: 'submitted' }
+          : { content: 'member-text', sendStatus: 'deferred' },
+    });
+    (
+      session.db as unknown as {
+        getJobQueueRepo: () => {
+          getActiveDeliveryBatchUuids: () => string[] | null;
+          narrowActiveDeliveryBatchUuids: () => boolean;
+        };
+      }
+    ).getJobQueueRepo = () => ({
+      getActiveDeliveryBatchUuids: () => ['uuid-partial', 'uuid-member-deferred'],
+      narrowActiveDeliveryBatchUuids: narrowSpy,
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-partial'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy).toHaveBeenCalledWith('uuid-partial', 'kickoff-text', false, {
+      durable: true,
+      prepend: true,
+    });
+    expect(narrowSpy).toHaveBeenCalledWith(session.session.id, 'uuid-partial', ['uuid-partial']);
+  });
+
   it('falls back to the recovered kickoff when the batch lookup throws', async () => {
     const session = createAgentSession();
     const harness = makeQuery();
