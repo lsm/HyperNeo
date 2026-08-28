@@ -346,6 +346,91 @@ describe('applySafetyClass', () => {
   });
 });
 
+describe('resolveTargets', () => {
+  test('clears an unverifiable contextual run when the params target a task', async () => {
+    const archiveTask = defineAction({
+      name: 'archive_task',
+      family: 'tasks',
+      safetyClass: 'destructive',
+      description: 'Archive task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'archive_task',
+          params: { task_id: 'task-b' },
+          workflowRunId: 'run-a',
+        },
+        { registry: createActionRegistry([archiveTask]) }
+      )
+    );
+    const next = await resolveTargets(withDeps(ctx, {}));
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBe('task-b');
+    expect(next.workflowRunId).toBeUndefined();
+  });
+
+  test('keeps the contextual run when the parsed task target is the same contextual task', async () => {
+    const archiveTask = defineAction({
+      name: 'archive_task',
+      family: 'tasks',
+      safetyClass: 'destructive',
+      description: 'Archive task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'archive_task',
+          params: { task_id: 'session-task-a' },
+          taskId: 'session-task-a',
+          workflowRunId: 'run-a',
+        },
+        { registry: createActionRegistry([archiveTask]) }
+      )
+    );
+    const next = await resolveTargets(withDeps(ctx, {}));
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBe('session-task-a');
+    expect(next.workflowRunId).toBe('run-a');
+  });
+
+  test('prefers the derived run over the same-task contextual run when the resolver is wired', async () => {
+    const archiveTask = defineAction({
+      name: 'archive_task',
+      family: 'tasks',
+      safetyClass: 'destructive',
+      description: 'Archive task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'archive_task',
+          params: { task_id: 'session-task-a' },
+          taskId: 'session-task-a',
+          workflowRunId: 'run-a',
+        },
+        { registry: createActionRegistry([archiveTask]) }
+      )
+    );
+    const next = await resolveTargets(
+      withDeps(ctx, {
+        resolveRunId: () => 'run-repo-truth',
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(next.workflowRunId).toBe('run-repo-truth');
+  });
+});
+
 describe('applyRoleAdmission', () => {
   test('allows coordinator to access space-family actions', () => {
     const ctx = applySafetyClass(resolveAction(buildCtx({ actionName: 'list_tasks' })));
@@ -772,7 +857,7 @@ describe('applyRateAndAudit', () => {
     expect(next.taskId).toBe('task-from-9');
   });
 
-  test('falls back to the contextual task id when the resolver throws', async () => {
+  test('clears the contextual task when the numeric resolver throws', async () => {
     const sendToTask = defineAction({
       name: 'send_message_to_task',
       family: 'tasks',
@@ -809,7 +894,8 @@ describe('applyRateAndAudit', () => {
       )
     );
     expect(next.outcome).toBeUndefined();
-    expect(next.taskId).toBe('session-task');
+    expect(next.taskId).toBeUndefined();
+    expect(next.workflowRunId).toBeUndefined();
   });
 
   test('resolves task_number when task_id is an empty string', async () => {
@@ -1131,36 +1217,6 @@ describe('applyRateAndAudit', () => {
         })
       )
     );
-    expect(next.outcome).toBeUndefined();
-    expect(next.taskId).toBe('task-b');
-    expect(next.workflowRunId).toBeUndefined();
-  });
-
-  test('clears an unverifiable contextual run when the params target a task', async () => {
-    const archiveTask = defineAction({
-      name: 'archive_task',
-      family: 'tasks',
-      safetyClass: 'destructive',
-      description: 'Archive task',
-      paramsDoc: '{ task_id: string }',
-      paramsSchema: z.object({ task_id: z.string() }),
-      handler: async () => ({}),
-    });
-    const ctx = applyRoleAdmission(
-      applySafetyClass(
-        resolveAction(
-          buildCtx(
-            {
-              actionName: 'archive_task',
-              params: { task_id: 'task-b' },
-              workflowRunId: 'run-a',
-            },
-            { registry: createActionRegistry([archiveTask]) }
-          )
-        )
-      )
-    );
-    const next = await resolveTargets(withDeps(ctx, {}));
     expect(next.outcome).toBeUndefined();
     expect(next.taskId).toBe('task-b');
     expect(next.workflowRunId).toBeUndefined();

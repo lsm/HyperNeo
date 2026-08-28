@@ -64,6 +64,7 @@ export interface DispatchActionCtx extends DispatchActionInput {
   deps: DispatchActionDeps;
   action?: RegisteredAction;
   parsedParams?: unknown;
+  contextualTaskId?: string;
   isMutating?: boolean;
   rawResult?: unknown;
   outcome?: DispatchActionOutcome;
@@ -157,6 +158,7 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
     ...ctx,
     action,
     parsedParams: parsed.data,
+    contextualTaskId: ctx.taskId,
     taskId: targetTaskId ?? (runTargetChanged ? undefined : ctx.taskId),
     workflowRunId: targetRunId ?? (taskTargetChanged ? undefined : ctx.workflowRunId),
   };
@@ -166,6 +168,7 @@ export async function resolveTargets(ctx: DispatchActionCtx): Promise<DispatchAc
   if (ctx.outcome) return ctx;
   const action = ctx.action!;
   const params = (ctx.parsedParams ?? null) as Record<string, unknown> | null;
+  const contextualTaskId = ctx.contextualTaskId;
   let taskId = ctx.taskId;
   let numericLookupMissed = false;
   if (ctx.deps.resolveTaskId && params !== null) {
@@ -175,7 +178,10 @@ export async function resolveTargets(ctx: DispatchActionCtx): Promise<DispatchAc
       try {
         taskId = await ctx.deps.resolveTaskId(params);
         if (taskId === undefined) numericLookupMissed = true;
-      } catch {}
+      } catch {
+        taskId = undefined;
+        numericLookupMissed = true;
+      }
     }
   }
   const explicitRunTarget =
@@ -189,7 +195,7 @@ export async function resolveTargets(ctx: DispatchActionCtx): Promise<DispatchAc
       typeof params.task_number === 'number');
   let workflowRunId = ctx.workflowRunId;
   if (!explicitRunTarget && (numericLookupMissed || targetsTask)) {
-    workflowRunId = undefined;
+    if (taskId !== contextualTaskId) workflowRunId = undefined;
     if (ctx.deps.resolveRunId && taskId !== undefined) {
       try {
         workflowRunId = (await ctx.deps.resolveRunId(taskId)) ?? undefined;
