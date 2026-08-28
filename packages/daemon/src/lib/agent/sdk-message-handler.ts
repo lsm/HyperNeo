@@ -62,6 +62,8 @@ import {
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
 } from './query-options-builder.js';
 import { RepeatedToolErrorGuardrail } from './repeated-tool-error-guardrail.ts';
+import type { TurnEndFlags, TurnEndPlan, TurnEndResultEvent } from './turn-end-routing.ts';
+import { routeTurnEnd } from './turn-end-routing.ts';
 import { recordResultUsage } from './usage-accounting.ts';
 
 const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
@@ -367,6 +369,50 @@ export class SDKMessageHandler {
     this.suppressedResultWaiter = null;
     clearTimeout(waiter.timer);
     waiter.resolve(outcome);
+  }
+
+  private currentTurnEndFlags(): TurnEndFlags {
+    return {
+      suppressIdleOnNextResult: this.suppressIdleOnNextResult,
+      usesSessionStateChangedTurnEnd: this.usesSessionStateChangedTurnEnd,
+      expectsSessionStateIdleAfterResult: this.expectsSessionStateIdleAfterResult,
+      lastResultWasSuccess: this.lastResultWasSuccess,
+      clearAwaitingTrailingIdle: this.clearAwaitingTrailingIdle,
+      clearMessageInFlight: this.clearMessageInFlight,
+    };
+  }
+
+  private applyTurnEndFlags(flags: TurnEndFlags): void {
+    this.suppressIdleOnNextResult = flags.suppressIdleOnNextResult;
+    this.usesSessionStateChangedTurnEnd = flags.usesSessionStateChangedTurnEnd;
+    this.expectsSessionStateIdleAfterResult = flags.expectsSessionStateIdleAfterResult;
+    this.lastResultWasSuccess = flags.lastResultWasSuccess;
+    this.clearAwaitingTrailingIdle = flags.clearAwaitingTrailingIdle;
+    this.clearMessageInFlight = flags.clearMessageInFlight;
+  }
+
+  private turnEndQueryMode(): 'immediate' | 'manual' {
+    return this.ctx.session.config.queryMode === 'manual' ? 'manual' : 'immediate';
+  }
+
+  private routeResultTurnEnd(result: TurnEndResultEvent): TurnEndPlan {
+    return routeTurnEnd(
+      this.currentTurnEndFlags(),
+      { kind: 'result', result },
+      {
+        queryMode: this.turnEndQueryMode(),
+      }
+    );
+  }
+
+  private routeSessionStateTurnEnd(state: 'idle' | 'running' | 'requires_action'): TurnEndPlan {
+    return routeTurnEnd(
+      this.currentTurnEndFlags(),
+      { kind: 'sessionState', state },
+      {
+        queryMode: this.turnEndQueryMode(),
+      }
+    );
   }
 
   markApiSuccess(): void {
@@ -991,8 +1037,16 @@ export class SDKMessageHandler {
       }
 
       const observesArmedClearResult = this.matchesArmedClearResult(message);
-      const settlesArmedClearError = observesArmedClearResult && !isSDKResultSuccess(message);
-      if (observesArmedClearResult) {
+      const preRecoveryPlan = isSDKResultMessage(message)
+        ? this.routeResultTurnEnd({
+            isTopLevel: isTopLevelResult,
+            isSuccess: isSDKResultSuccess(message),
+            isLimitError: false,
+            isLimitRecoveryEngaged: null,
+            confirmsArmedClear: observesArmedClearResult,
+          })
+        : null;
+      if (preRecoveryPlan?.cancelSuppressedTimer) {
         this.cancelSuppressedResultTimer();
       }
 
@@ -1004,9 +1058,13 @@ export class SDKMessageHandler {
 
       let limitEngaged = false;
       let limitBillingTerminal = false;
+      let resultLimitError = false;
       if (isTopLevelResult) {
-        this.resetThinkingTokenTracking();
+        if (preRecoveryPlan?.resetThinkingTokens) {
+          this.resetThinkingTokenTracking();
+        }
         const limitError = this.assessResultLimitError(message);
+        resultLimitError = limitError !== null;
         if (limitError) {
           limitBillingTerminal = limitError.hint.billingTerminal === true;
           limitEngaged =
@@ -1017,13 +1075,24 @@ export class SDKMessageHandler {
               invocationGeneration ?? undefined
             )) ?? false;
         }
-        this.lastResultWasSuccess = limitError === null && isSDKResultSuccess(message);
         this.lastRateLimitInfo = null;
         this.lastSdkErrorTag = null;
       }
 
-      if (isTopLevelResult && !limitEngaged && !this.suppressIdleOnNextResult) {
-        stateManager.beginTerminalIdle(this.invocationIdleOwner(invocationGeneration));
+      const turnEndPlan = isSDKResultMessage(message)
+        ? this.routeResultTurnEnd({
+            isTopLevel: isTopLevelResult,
+            isSuccess: isSDKResultSuccess(message),
+            isLimitError: resultLimitError,
+            isLimitRecoveryEngaged: isTopLevelResult ? limitEngaged : null,
+            confirmsArmedClear: observesArmedClearResult,
+          })
+        : null;
+      if (turnEndPlan) {
+        this.applyTurnEndFlags(turnEndPlan.nextFlags);
+        if (turnEndPlan.idleFence) {
+          stateManager.beginTerminalIdle(this.invocationIdleOwner(invocationGeneration));
+        }
       }
 
       messageHub.event(
@@ -1072,24 +1141,19 @@ export class SDKMessageHandler {
         return;
       }
 
-      if (isSDKSessionStateChangedMessage(message)) {
+      if (isSDKSessionStateChangedMessage(message) && message.state !== 'idle') {
         if (!this.isInvocationStale(invocationGeneration)) {
-          this.usesSessionStateChangedTurnEnd = true;
-          if (message.state !== 'idle') {
-            this.expectsSessionStateIdleAfterResult = true;
-          }
+          this.applyTurnEndFlags(this.routeSessionStateTurnEnd(message.state).nextFlags);
         }
       }
 
       let enforcedTurnEnd = false;
-      if (isTopLevelResult && !this.usesSessionStateChangedTurnEnd) {
-        if (!this.suppressIdleOnNextResult && !settlesArmedClearError) {
-          const compactingClear = this.clearStaleCompacting();
-          await this.refreshContextUsage('turn-end', undefined, invocationGeneration, resultOwner);
-          enforcedTurnEnd = true;
-          await compactingClear;
-          await this.settleIdleForInvocation(invocationGeneration, undefined, resultOwner);
-        }
+      if (turnEndPlan?.earlySetIdle) {
+        const compactingClear = this.clearStaleCompacting();
+        await this.refreshContextUsage('turn-end', undefined, invocationGeneration, resultOwner);
+        enforcedTurnEnd = true;
+        await compactingClear;
+        await this.settleIdleForInvocation(invocationGeneration, undefined, resultOwner);
       }
 
       if (isSDKUserMessage(message)) {
@@ -1142,7 +1206,7 @@ export class SDKMessageHandler {
       }
 
       if (isSDKResultMessage(message)) {
-        if (settlesArmedClearError) {
+        if (turnEndPlan?.clearSuppression) {
           this.clearIdleSuppression();
         }
         return;
@@ -1466,64 +1530,55 @@ export class SDKMessageHandler {
       return;
     }
 
-    this.usesSessionStateChangedTurnEnd = true;
-    if (message.state === 'idle') {
-      try {
+    const turnEndPlan = this.routeSessionStateTurnEnd(message.state);
+    this.applyTurnEndFlags(turnEndPlan.nextFlags);
+    if (message.state !== 'idle') {
+      return;
+    }
+    try {
+      if (turnEndPlan.resetThinkingTokens) {
         this.resetThinkingTokenTracking();
-        const currentOwner = this.invocationIdleOwner(invocationGeneration);
-        if (
-          this.trailingIdleGeneration !== null &&
-          this.trailingIdleGeneration !== invocationGeneration
-        ) {
-          this.logger.info(
-            `Ignoring trailing idle from a superseded query (armed ${this.trailingIdleGeneration}, ` +
-              `current ${invocationGeneration}).`
-          );
-          this.releaseTrailingIdleDeliveryGate();
-          return;
-        }
-        if (
-          this.trailingIdleOwner !== undefined &&
-          currentOwner !== undefined &&
-          !isSameIdleOwner(this.trailingIdleOwner, currentOwner)
-        ) {
-          this.logger.info(
-            'Ignoring trailing idle from a superseded turn (delivery owner advanced).'
-          );
-          this.releaseTrailingIdleDeliveryGate();
-          return;
-        }
-        const clearTurnPending = this.clearAwaitingTrailingIdle || this.suppressIdleOnNextResult;
-        if (clearTurnPending) {
-          await this.settleIdleForInvocation(invocationGeneration, {
-            suppressDeliveryWaiters: true,
-            suppressIdlePublish: true,
-            suppressIdleCallback: true,
-          });
-        } else {
-          const allowQueueReplay = this.lastResultWasSuccess !== false;
-          await this.finishTurn(allowQueueReplay, invocationGeneration);
-          if (this.isInvocationStale(invocationGeneration)) return;
-          this.usesSessionStateChangedTurnEnd = false;
-          this.expectsSessionStateIdleAfterResult = false;
-          this.lastResultWasSuccess = null;
-        }
-        if (this.clearAwaitingTrailingIdle) {
-          this.clearAwaitingTrailingIdle = false;
-          this.clearMessageInFlight = false;
-          this.usesSessionStateChangedTurnEnd = false;
-          this.expectsSessionStateIdleAfterResult = false;
-          this.lastResultWasSuccess = null;
-          this.settleSuppressedResultWaiter('confirmed');
-        } else if (clearTurnPending) {
-          this.usesSessionStateChangedTurnEnd = false;
-          this.expectsSessionStateIdleAfterResult = false;
-          this.lastResultWasSuccess = null;
-        }
-        this.releaseTrailingIdleDeliveryGate();
-      } finally {
-        this.releaseTrailingIdleDeliveryGate();
       }
+      const currentOwner = this.invocationIdleOwner(invocationGeneration);
+      if (
+        this.trailingIdleGeneration !== null &&
+        this.trailingIdleGeneration !== invocationGeneration
+      ) {
+        this.logger.info(
+          `Ignoring trailing idle from a superseded query (armed ${this.trailingIdleGeneration}, ` +
+            `current ${invocationGeneration}).`
+        );
+        this.releaseTrailingIdleDeliveryGate();
+        return;
+      }
+      if (
+        this.trailingIdleOwner !== undefined &&
+        currentOwner !== undefined &&
+        !isSameIdleOwner(this.trailingIdleOwner, currentOwner)
+      ) {
+        this.logger.info(
+          'Ignoring trailing idle from a superseded turn (delivery owner advanced).'
+        );
+        this.releaseTrailingIdleDeliveryGate();
+        return;
+      }
+      if (turnEndPlan.setIdleSuppressed) {
+        await this.settleIdleForInvocation(invocationGeneration, {
+          suppressDeliveryWaiters: true,
+          suppressIdlePublish: true,
+          suppressIdleCallback: true,
+        });
+      } else if (turnEndPlan.finishTurn) {
+        await this.finishTurn(turnEndPlan.allowQueueReplay, invocationGeneration);
+        if (this.isInvocationStale(invocationGeneration)) return;
+      }
+      this.applyTurnEndFlags(turnEndPlan.afterEffectsFlags);
+      if (turnEndPlan.settleSuppressedWaiter === 'confirmed') {
+        this.settleSuppressedResultWaiter('confirmed');
+      }
+      this.releaseTrailingIdleDeliveryGate();
+    } finally {
+      this.releaseTrailingIdleDeliveryGate();
     }
   }
 
