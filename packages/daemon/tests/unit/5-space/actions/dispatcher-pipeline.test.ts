@@ -187,6 +187,30 @@ describe('resolveAction', () => {
     );
     expect(ctx.taskId).toBe('task-42');
   });
+
+  test('prefers the action target task over the session contextual task', () => {
+    const archiveTask = defineAction({
+      name: 'archive_task',
+      family: 'tasks',
+      safetyClass: 'destructive',
+      description: 'Archive task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const registry = createActionRegistry([archiveTask]);
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'archive_task',
+          params: { task_id: 'target-task' },
+          taskId: 'session-task',
+        },
+        { registry }
+      )
+    );
+    expect(ctx.taskId).toBe('target-task');
+  });
 });
 
 describe('applySafetyClass', () => {

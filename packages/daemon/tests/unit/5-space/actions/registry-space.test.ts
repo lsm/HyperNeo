@@ -236,6 +236,13 @@ describe('createSpaceRegistryEntries — composition', () => {
         title: 'Workflow task',
         description: '',
         workflowRunId: run.id,
+        status: 'in_progress',
+      });
+      const openWorkflowTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Open workflow task',
+        description: '',
+        workflowRunId: run.id,
       });
       const standaloneTask = ctx.taskRepo.createTask({
         spaceId: SPACE_ID,
@@ -252,6 +259,7 @@ describe('createSpaceRegistryEntries — composition', () => {
         expect(await resolve({ task_id: workflowTask.id, status: 'cancelled' })).toBe(
           SESSION_WRITE_AUTONOMY_LEVEL
         );
+        expect(await resolve({ task_id: openWorkflowTask.id, status: 'cancelled' })).toBe(1);
         expect(await resolve({ task_id: standaloneTask.id, status: 'cancelled' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', status: 'blocked' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', title: 'Edited' })).toBe(1);

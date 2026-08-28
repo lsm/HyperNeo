@@ -1,3 +1,4 @@
+import { isRateOrUsageLimited, type SpaceTaskStatus } from '@hyperneo/shared';
 import type { z } from 'zod';
 import {
   ApprovePendingCompletionSchema,
@@ -47,6 +48,16 @@ import { type ActionDefinition, defineAction } from './registry.ts';
 
 const DEFAULT_COMPLETION_AUTONOMY_LEVEL = 5;
 
+function routeCancelsActiveWorkflowRun(currentStatus: SpaceTaskStatus): boolean {
+  const rateOrUsageLimited = isRateOrUsageLimited(currentStatus);
+  return (
+    currentStatus === 'in_progress' ||
+    currentStatus === 'blocked' ||
+    currentStatus === 'stopped' ||
+    rateOrUsageLimited
+  );
+}
+
 const DESTRUCTIVE_ACTION_AUTONOMY_LEVEL = SESSION_WRITE_AUTONOMY_LEVEL;
 
 const HUMAN_ONLY_AUTONOMY_LEVEL = 5;
@@ -65,7 +76,9 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     if (params.status === 'archived') return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
     if (params.status === 'cancelled') {
       const task = config.taskRepo.getTask(params.task_id);
-      if (task?.workflowRunId) return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+      if (task?.workflowRunId && routeCancelsActiveWorkflowRun(task.status)) {
+        return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+      }
     }
     return 1;
   };

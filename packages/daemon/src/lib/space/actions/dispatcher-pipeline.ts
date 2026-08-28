@@ -124,7 +124,7 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
     ...ctx,
     action,
     parsedParams: parsed.data,
-    taskId: ctx.taskId ?? targetTaskId,
+    taskId: targetTaskId ?? ctx.taskId,
   };
 }
 
