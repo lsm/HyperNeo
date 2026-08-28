@@ -1351,12 +1351,15 @@ describe('AskUserQuestionHandler', () => {
         { questionIndex: 0, selectedLabels: ['A'] },
       ]);
       expect(setProcessingSpy).not.toHaveBeenCalled();
-      expect(currentState.status).toBe('waiting_for_input');
+      expect(currentState.status).toBe('idle');
       const submitResult = await submitPromise;
       expect(submitResult.behavior).toBe('deny');
       expect((submitResult as { message: string }).message).toContain('superseded');
-
-      currentState = { status: 'idle' };
+      await expect(
+        submitHandler.handleQuestionResponse('attempt-dead-submit', [
+          { questionIndex: 0, selectedLabels: ['A'] },
+        ])
+      ).rejects.toThrow('agent is not waiting for input');
 
       const cancelHandler = new AskUserQuestionHandler(mockContext);
       let cancelLive = true;
@@ -1365,10 +1368,13 @@ describe('AskUserQuestionHandler', () => {
       cancelLive = false;
       await cancelHandler.handleQuestionCancel('attempt-dead-cancel');
       expect(setProcessingSpy).not.toHaveBeenCalled();
-      expect(currentState.status).toBe('waiting_for_input');
+      expect(currentState.status).toBe('idle');
       const cancelResult = await cancelPromise;
       expect(cancelResult.behavior).toBe('deny');
       expect((cancelResult as { message: string }).message).toContain('User cancelled');
+      await expect(cancelHandler.handleQuestionCancel('attempt-dead-cancel')).rejects.toThrow(
+        'agent is not waiting for input'
+      );
     });
 
     it("patches the history record to cancelled when a superseded question's submit is dropped", async () => {

@@ -60,8 +60,6 @@ export class InterruptHandler {
 
     this.ctx.onInterruptRequested?.();
 
-    this.ctx.attemptTokens?.invalidateCurrent();
-
     const processExitSnapshot = this.ctx.processExitedPromise ?? Promise.resolve();
     const interruptQueryGeneration = this.ctx.getQueryGeneration?.();
 
@@ -106,6 +104,7 @@ export class InterruptHandler {
       }
       return;
     }
+    this.ctx.attemptTokens?.invalidateCurrent();
     this.deferredReplaySuppressed = opts?.skipDeferredReplay === true;
 
     const interruptCompletePromise = new Promise<void>((resolve) => {

@@ -212,6 +212,7 @@ export class AskUserQuestionHandler {
     }
 
     const stillCurrent =
+      attemptToken.isLive() &&
       this.pendingResolver?.toolUseId === toolUseID &&
       stateAfterSetWaiting.status === 'waiting_for_input' &&
       stateAfterSetWaiting.pendingQuestion.toolUseId === toolUseID;
@@ -366,6 +367,7 @@ export class AskUserQuestionHandler {
           'The query attempt that asked this question was superseded; the answer could not ' +
           'be delivered.',
       });
+      await this.rollbackStaleWaitingState(toolUseId);
       return;
     }
 
@@ -468,6 +470,7 @@ export class AskUserQuestionHandler {
         behavior: 'deny',
         message: QUESTION_CANCEL_MESSAGE,
       });
+      await this.rollbackStaleWaitingState(toolUseId);
       return;
     }
 
@@ -598,6 +601,28 @@ export class AskUserQuestionHandler {
       }
     }
     return answers;
+  }
+
+  private async rollbackStaleWaitingState(toolUseId: string): Promise<void> {
+    const { stateManager } = this.ctx;
+    const currentState = stateManager.getState();
+    if (
+      currentState.status === 'waiting_for_input' &&
+      currentState.pendingQuestion.toolUseId === toolUseId
+    ) {
+      try {
+        await stateManager.setIdle({
+          suppressIdlePublish: true,
+          suppressIdleCallback: true,
+          suppressDeliveryWaiters: true,
+        });
+      } catch (idleError) {
+        this.logger.warn(
+          `AskUserQuestion ${toolUseId}: failed to roll back stale waiting state`,
+          idleError
+        );
+      }
+    }
   }
 
   private async deliverQueuedAnswer(
