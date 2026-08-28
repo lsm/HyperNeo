@@ -1472,7 +1472,7 @@ export function applyDiscoveredProviderModels(
   models: ModelInfo[],
   cacheKey: string = 'global',
   persistedDiscovered: ReadonlyArray<{ id: string; name?: string }> = []
-): boolean {
+): { applied: boolean; models: ModelInfo[] } {
   const curatedIds = getCuratedModelIds(providerId);
   let enriched = models;
   if (curatedIds !== undefined) {
@@ -1520,12 +1520,9 @@ export function applyDiscoveredProviderModels(
       if (seeded.length > 0) enriched = [...seeded, ...models];
     }
   }
-  const applied = updateProviderModelsInCache(
-    providerId,
-    filterProviderModels(providerId, enriched),
-    cacheKey
-  );
-  return applied;
+  const appliedModels = filterProviderModels(providerId, enriched);
+  const applied = updateProviderModelsInCache(providerId, appliedModels, cacheKey);
+  return { applied, models: appliedModels };
 }
 
 export function markModelsCacheSliceProtected(cacheKey: string = 'global'): void {

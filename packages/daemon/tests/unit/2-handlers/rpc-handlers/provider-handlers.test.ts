@@ -1409,6 +1409,49 @@ describe('Provider RPC handlers', () => {
       expect(catalog.map((model) => model.id)).not.toContain('default-endpoint-model');
     });
 
+    it('seeds the catalog with curated models retained through enrichment', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({
+          models: [{ id: 'curated-kept' }, { id: 'discovered-a' }],
+        }),
+      });
+      getProviderRegistry().setCuratedModels('remote', [
+        { id: 'curated-kept' },
+        { id: 'discovered-a' },
+      ]);
+      const provider = {
+        id: 'remote',
+        isAvailable: async () => true,
+        listRemoteModels: async () => [makeDiscoveredModel('discovered-a')],
+        getModels: async () => [makeDiscoveredModel('discovered-a')],
+      } as unknown as Provider;
+      getProviderRegistry().register(provider);
+      setModelsCache(new Map([['global', [makeDiscoveredModel('existing')]]]));
+      const handlers = setup();
+      const { getProviderCatalogModels } = await import('../../../../src/lib/model-service');
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+      expect(result.success).toBe(true);
+
+      const cacheIds = (getModelsCache().get('global') ?? [])
+        .filter((model) => model.provider === 'remote')
+        .map((model) => model.id);
+      expect(cacheIds).toContain('curated-kept');
+      expect(cacheIds).toContain('discovered-a');
+
+      const catalog = await getProviderCatalogModels('remote', provider);
+      const catalogIds = catalog.map((model) => model.id);
+      expect(catalogIds).toContain('curated-kept');
+      expect(catalogIds).toContain('discovered-a');
+    });
+
     it('seeds the canonical model instead of a duplicate alias when curation stores an alias', async () => {
       const created = repo.createProvider({
         providerId: 'kimi',

@@ -542,7 +542,7 @@ interface CommitSavedConfigDiscoveryRefreshDeps {
     models: ModelInfo[],
     cacheKey?: string,
     persistedDiscovered?: ReadonlyArray<{ id: string; name?: string }>
-  ): boolean;
+  ): { applied: boolean; models: ModelInfo[] };
   releaseAppliedProviderSlice(providerId: string, cacheKey?: string): void;
   schedulePendingSliceRelease(providerId: string, cacheKey?: string): void;
   markProviderRefreshSucceeded(providerId: string): boolean;
@@ -565,6 +565,7 @@ interface CommitSavedConfigDiscoveryRefreshCtx {
   currentRecord?: ProviderRecord | null;
   persistedConfig?: { baseUrl?: string; configJson?: string };
   normalizedDiscovered?: ModelInfo[];
+  appliedSlice?: ModelInfo[];
   truncated?: boolean;
   recoveredFailure?: boolean;
   outcome?: SavedConfigDiscoveryRefreshOutcome;
@@ -620,18 +621,18 @@ async function applyDiscoveredSliceToLiveCache(
   ctx: CommitSavedConfigDiscoveryRefreshCtx
 ): Promise<CommitSavedConfigDiscoveryRefreshCtx> {
   const normalizedDiscovered = ctx.deps.mergeDiscoveredWithStatic(ctx.providerId, ctx.discovered);
-  const applied = ctx.deps.applyDiscoveredProviderModels(
+  const firstApply = ctx.deps.applyDiscoveredProviderModels(
     ctx.providerId,
     normalizedDiscovered,
     'global',
     ctx.persistedDiscovered
   );
-  if (applied) {
+  if (firstApply.applied) {
     ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
     if (ctx.discoveryBaseUrl !== undefined) {
       ctx.deps.markModelsCacheSliceProtected('global');
     }
-    return { ...ctx, normalizedDiscovered };
+    return { ...ctx, normalizedDiscovered, appliedSlice: firstApply.models };
   }
   const inFlight = ctx.deps.getCurrentCacheLoad();
   if (!inFlight) {
@@ -662,14 +663,13 @@ async function applyDiscoveredSliceToLiveCache(
     ctx.deps.provider.clearModelCache?.();
     return { ...ctx, normalizedDiscovered, outcome: { success: false, reason: 'superseded' } };
   }
-  if (
-    ctx.deps.applyDiscoveredProviderModels(
-      ctx.providerId,
-      normalizedDiscovered,
-      'global',
-      ctx.persistedDiscovered
-    )
-  ) {
+  const retryApply = ctx.deps.applyDiscoveredProviderModels(
+    ctx.providerId,
+    normalizedDiscovered,
+    'global',
+    ctx.persistedDiscovered
+  );
+  if (retryApply.applied) {
     ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
     if (ctx.discoveryBaseUrl !== undefined) {
       ctx.deps.markModelsCacheSliceProtected('global');
@@ -677,7 +677,7 @@ async function applyDiscoveredSliceToLiveCache(
   } else if (ctx.discoveryBaseUrl === undefined) {
     ctx.deps.schedulePendingSliceRelease(ctx.providerId);
   }
-  return { ...ctx, normalizedDiscovered };
+  return { ...ctx, normalizedDiscovered, appliedSlice: retryApply.models };
 }
 
 async function revalidateBeforeCommittingSuccess(
@@ -709,7 +709,10 @@ function markRefreshSucceededAndHealthy(
   ctx: CommitSavedConfigDiscoveryRefreshCtx
 ): CommitSavedConfigDiscoveryRefreshCtx {
   const recoveredFailure = ctx.deps.markProviderRefreshSucceeded(ctx.providerId);
-  ctx.deps.seedProviderCatalogModels(ctx.deps.provider, ctx.normalizedDiscovered ?? ctx.discovered);
+  ctx.deps.seedProviderCatalogModels(
+    ctx.deps.provider,
+    ctx.appliedSlice ?? ctx.normalizedDiscovered ?? ctx.discovered
+  );
   ctx.deps.providerRepo.updateProvider(ctx.rowId, {
     healthStatus: 'healthy',
     lastHealthCheckAt: Date.now(),
