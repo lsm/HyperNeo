@@ -462,4 +462,201 @@ describe('MessageInput — recording UI', () => {
     expect(onSend).not.toHaveBeenCalled();
     expect(draft.value).toBe('');
   });
+
+  describe('stop-and-transcribe outcome branches', () => {
+    it('discards the recording with an error toast when the hub is disconnected at stop', async () => {
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+      const onSend = vi.fn(async () => true);
+      render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+      fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+
+      await waitFor(() => expect(voiceCancel).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Not connected'));
+      expect(voiceStop).toHaveBeenCalledTimes(1);
+      expect(transcribeRequest).not.toHaveBeenCalled();
+      expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeFalsy();
+      expect(enqueueTranscript).not.toHaveBeenCalled();
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it('cancels the recorder without retrying when the transcribe RPC fails', async () => {
+      transcribeRequest.mockRejectedValueOnce(new Error('ASR unavailable'));
+      const onSend = vi.fn(async () => true);
+      render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+      vi.useFakeTimers();
+      try {
+        fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+        await vi.waitFor(() => {
+          expect(voiceCancel).toHaveBeenCalledTimes(1);
+          expect(toast.error).toHaveBeenCalledWith('ASR unavailable');
+        });
+        expect(transcribeRequest).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(130_000);
+        expect(transcribeRequest).toHaveBeenCalledTimes(1);
+        expect(onSend).not.toHaveBeenCalled();
+        expect(enqueueTranscript).not.toHaveBeenCalled();
+        expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeFalsy();
+      } finally {
+        vi.useRealTimers();
+      }
+      await waitFor(() => expect(screen.getByTestId('send-button')).toBeTruthy());
+    });
+
+    it('discards silent audio (peakLevel below 0.001) without transcribing', async () => {
+      voiceStop.mockResolvedValueOnce({
+        audioBase64: 'aGk=',
+        mimeType: 'audio/wav',
+        peakLevel: 0.0004,
+      });
+      const onSend = vi.fn(async () => true);
+      render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+      fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          'No microphone signal detected — check your mic or input device'
+        )
+      );
+      expect(transcribeRequest).not.toHaveBeenCalled();
+      expect(voiceCancel).not.toHaveBeenCalled();
+      expect(onSend).not.toHaveBeenCalled();
+      expect(enqueueTranscript).not.toHaveBeenCalled();
+      expect(draft.value).toBe('');
+    });
+
+    it('discards a successful transcript when the session changes during transcription', async () => {
+      let resolveTranscribe!: (value: { text: string }) => void;
+      transcribeRequest.mockReturnValueOnce(
+        new Promise<{ text: string }>((resolve) => {
+          resolveTranscribe = resolve;
+        })
+      );
+
+      const onSend = vi.fn(async () => true);
+      const { rerender } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+      fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+      await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+      rerender(<MessageInput sessionId="s2" onSend={onSend} />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      resolveTranscribe({ text: 'hello world' });
+
+      await waitFor(() =>
+        expect(toast.info).toHaveBeenCalledWith('Recording target changed — transcript discarded')
+      );
+      expect(draft.value).toBe('');
+      expect(onSend).not.toHaveBeenCalled();
+      expect(voiceCancel).not.toHaveBeenCalled();
+      expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeFalsy();
+      expect(enqueueTranscript).not.toHaveBeenCalled();
+    });
+
+    it('parks an unmounted send in the durable outbox when draft staging is refused', async () => {
+      let resolveTranscribe!: (value: { text: string }) => void;
+      transcribeRequest.mockReturnValueOnce(
+        new Promise<{ text: string }>((resolve) => {
+          resolveTranscribe = resolve;
+        })
+      );
+
+      const onSend = vi.fn(async () => false);
+      const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+      fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+      await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+      unmount();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      hubRequest.mockImplementation(async (method: string) => {
+        if (method === 'voice.transcribe') return transcribeRequest(method);
+        throw new Error('socket closed mid-request');
+      });
+      resolveTranscribe({ text: 'hello world' });
+
+      await waitFor(() =>
+        expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', expect.any(String))
+      );
+      await waitFor(() =>
+        expect(toast.info).toHaveBeenCalledWith(
+          'Voice transcript saved — will be delivered when reconnected'
+        )
+      );
+      const stageCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
+      expect(stageCall).toBeTruthy();
+      const outboxId = enqueueTranscript.mock.calls[0]?.[2];
+      expect(outboxId).toEqual(expect.any(String));
+      expect(stageCall[1]).toEqual(
+        expect.objectContaining({
+          sessionId: 's1',
+          text: 'hello world',
+          dedupId: outboxId,
+        })
+      );
+      expect(hubRequest.mock.calls.find(([m]) => m === 'session.clearInputDraftIf')).toBeFalsy();
+    });
+
+    it('keeps an unmounted send only in this tab when the outbox write is not durable', async () => {
+      let resolveTranscribe!: (value: { text: string }) => void;
+      transcribeRequest.mockReturnValueOnce(
+        new Promise<{ text: string }>((resolve) => {
+          resolveTranscribe = resolve;
+        })
+      );
+      enqueueTranscript.mockReturnValue(false);
+
+      const onSend = vi.fn(async () => false);
+      const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+      fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+      await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+      unmount();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      hubRequest.mockImplementation(async (method: string) => {
+        if (method === 'voice.transcribe') return transcribeRequest(method);
+        throw new Error('socket closed mid-request');
+      });
+      resolveTranscribe({ text: 'hello world' });
+
+      await waitFor(() =>
+        expect(toast.info).toHaveBeenCalledWith(
+          'Voice transcript kept in this tab — reconnect before closing it'
+        )
+      );
+      expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', expect.any(String));
+      expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeTruthy();
+    });
+
+    it('reports the transcript as lost when draft staging is permanently refused', async () => {
+      let resolveTranscribe!: (value: { text: string }) => void;
+      transcribeRequest.mockReturnValueOnce(
+        new Promise<{ text: string }>((resolve) => {
+          resolveTranscribe = resolve;
+        })
+      );
+
+      const onSend = vi.fn(async () => true);
+      const { unmount } = render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+      fireEvent.click(screen.getByLabelText('Stop recording and transcribe'));
+      await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+      unmount();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      isPermanentAppendRefusal.mockReturnValueOnce(true);
+      hubRequest.mockImplementation(async (method: string) => {
+        if (method === 'voice.transcribe') return transcribeRequest(method);
+        throw new Error('Session not found: s1');
+      });
+      resolveTranscribe({ text: 'hello world' });
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          'Voice transcript could not be delivered — it was lost'
+        )
+      );
+      expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeTruthy();
+      expect(enqueueTranscript).not.toHaveBeenCalled();
+    });
+  });
 });
