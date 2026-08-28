@@ -1,4 +1,5 @@
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { getProviderRegistry, type ProviderRegistry } from '../providers/registry.js';
 import { getProviderFailure } from '../providers/provider-failure-store.js';
 import type { ProviderRecoveryOutcome } from '../model-service.js';
@@ -30,11 +31,295 @@ export interface OAuthRefreshSchedulerOptions {
   refreshDiscoveredModels?: (outcome: ProviderRefreshOutcome) => void | Promise<void>;
 }
 
+interface PendingInvalidation {
+  retries: number;
+  credentialKey: string;
+}
+
+interface ScheduledTokenRefreshDeps {
+  credentialManager: ProviderCredentialManager;
+  maxRetries: number;
+  refreshWindowMs: number;
+  now: () => number;
+  retryCounts: Map<string, number>;
+  pendingInvalidations: Map<string, PendingInvalidation>;
+  onPreRecoveryInvalidate?: (providerId: string) => Promise<void> | void;
+  recoverDormantProvider?: (providerId: string) => Promise<ProviderRecoveryOutcome>;
+  onProviderChanged?: (providerId: string, outcome: ProviderRefreshOutcome) => void | Promise<void>;
+  refreshDiscoveredModels: (outcome: ProviderRefreshOutcome) => void | Promise<void>;
+}
+
+interface ScheduledTokenRefreshCtx {
+  deps: ScheduledTokenRefreshDeps;
+  provider: Provider;
+  credentials: ProviderCredentials | null;
+  retryKey: string;
+  nextCredentials?: ProviderCredentials | null;
+  refreshed: boolean;
+  persistenceFailed: boolean;
+  outcome?:
+    | 'deferred-completed'
+    | 'deferred-failed'
+    | 'skipped'
+    | 'rotation-failed'
+    | 'persistence-failed'
+    | 'invalidation-failed'
+    | 'refreshed';
+}
+
+function credentialRetryKey(providerId: string, credentials: ProviderCredentials): string {
+  if (credentials.type !== 'oauth') return providerId;
+  return `${providerId}:${credentials.refreshToken ?? credentials.accessToken ?? ''}:${credentials.expiresAt ?? ''}`;
+}
+
+async function resolveCurrentCredentials(
+  ctx: ScheduledTokenRefreshCtx
+): Promise<ScheduledTokenRefreshCtx> {
+  const stored = await ctx.deps.credentialManager.getCredentials(ctx.provider.id);
+  if (stored) return { ...ctx, credentials: stored };
+  if (!ctx.provider.getCredentials) return ctx;
+  return { ...ctx, credentials: await ctx.provider.getCredentials() };
+}
+
+async function deferredCredentialIdentity(
+  ctx: ScheduledTokenRefreshCtx
+): Promise<ProviderCredentials | null> {
+  if (!ctx.provider.getCredentials) return ctx.credentials;
+  try {
+    return (await ctx.provider.getCredentials()) ?? ctx.credentials;
+  } catch {
+    return ctx.credentials;
+  }
+}
+
+async function resumeDeferredInvalidation(
+  ctx: ScheduledTokenRefreshCtx
+): Promise<ScheduledTokenRefreshCtx> {
+  const { deps, provider } = ctx;
+  const entry = deps.pendingInvalidations.get(provider.id);
+  if (!entry) return ctx;
+  const identity = await deferredCredentialIdentity(ctx);
+  if (!identity || credentialRetryKey(provider.id, identity) !== entry.credentialKey) {
+    deps.pendingInvalidations.delete(provider.id);
+    return ctx;
+  }
+  if (!(await runPreRecoveryInvalidation(deps, provider.id))) {
+    await retryPendingTokenPersistence(provider, deps);
+    markUnhealthyWhenFailureRecorded(deps, provider.id);
+    await recordPendingInvalidationFailure(deps, provider.id, entry.credentialKey);
+    return { ...ctx, outcome: 'deferred-failed' };
+  }
+  deps.credentialManager.markProviderHealth(provider.id, 'healthy');
+  await recoverDormant(deps, provider.id);
+  await emitProviderChanged(deps, provider.id, 'refreshed');
+  return { ...ctx, outcome: 'deferred-completed' };
+}
+
+function gateRefreshDue(ctx: ScheduledTokenRefreshCtx): ScheduledTokenRefreshCtx {
+  const { credentials, deps, provider } = ctx;
+  if (!credentials || credentials.type !== 'oauth') return { ...ctx, outcome: 'skipped' };
+  const expiresAt = credentials.expiresAt;
+  if (typeof expiresAt !== 'number') return { ...ctx, outcome: 'skipped' };
+  if (expiresAt - deps.now() > deps.refreshWindowMs) return { ...ctx, outcome: 'skipped' };
+  const retryKey = credentialRetryKey(provider.id, credentials);
+  if ((deps.retryCounts.get(retryKey) ?? 0) >= deps.maxRetries) {
+    return { ...ctx, outcome: 'skipped' };
+  }
+  return { ...ctx, retryKey };
+}
+
+async function rotateToken(ctx: ScheduledTokenRefreshCtx): Promise<ScheduledTokenRefreshCtx> {
+  let refreshed = false;
+  try {
+    refreshed = await ctx.provider.refreshToken!();
+  } catch {
+    refreshed = false;
+  }
+  return { ...ctx, refreshed };
+}
+
+async function failExhaustedRotation(
+  ctx: ScheduledTokenRefreshCtx
+): Promise<ScheduledTokenRefreshCtx> {
+  if (ctx.refreshed) return ctx;
+  await recordFailedRefresh(ctx.deps, ctx.provider.id, ctx.retryKey);
+  return { ...ctx, outcome: 'rotation-failed' };
+}
+
+async function persistRotatedTokens(
+  ctx: ScheduledTokenRefreshCtx
+): Promise<ScheduledTokenRefreshCtx> {
+  if (!ctx.provider.getCredentials) return { ...ctx, nextCredentials: ctx.credentials };
+  const nextCredentials = (await ctx.provider.getCredentials()) ?? ctx.credentials;
+  let persistenceFailed = false;
+  try {
+    if (nextCredentials) {
+      await ctx.deps.credentialManager.storeOAuthTokens(ctx.provider.id, nextCredentials);
+    }
+  } catch {
+    persistenceFailed = true;
+  }
+  return { ...ctx, nextCredentials, persistenceFailed };
+}
+
+async function failOverOnPersistenceFailure(
+  ctx: ScheduledTokenRefreshCtx
+): Promise<ScheduledTokenRefreshCtx> {
+  if (!ctx.persistenceFailed) return ctx;
+  const { deps, provider } = ctx;
+  if (!(await runPreRecoveryInvalidation(deps, provider.id))) {
+    markUnhealthyWhenFailureRecorded(deps, provider.id);
+    await recordPendingInvalidationFailure(
+      deps,
+      provider.id,
+      credentialRetryKey(provider.id, ctx.nextCredentials ?? ctx.credentials!)
+    );
+  }
+  return { ...ctx, outcome: 'persistence-failed' };
+}
+
+async function completeRefreshedRotation(
+  ctx: ScheduledTokenRefreshCtx
+): Promise<ScheduledTokenRefreshCtx> {
+  const { deps, provider } = ctx;
+  deps.retryCounts.delete(ctx.retryKey);
+  if (!(await runPreRecoveryInvalidation(deps, provider.id))) {
+    markUnhealthyWhenFailureRecorded(deps, provider.id);
+    await recordPendingInvalidationFailure(
+      deps,
+      provider.id,
+      credentialRetryKey(provider.id, ctx.nextCredentials ?? ctx.credentials!)
+    );
+    return { ...ctx, outcome: 'invalidation-failed' };
+  }
+  deps.credentialManager.markProviderHealth(provider.id, 'healthy');
+  await recoverDormant(deps, provider.id);
+  await emitProviderChanged(deps, provider.id, 'refreshed');
+  return { ...ctx, outcome: 'refreshed' };
+}
+
+async function runPreRecoveryInvalidation(
+  deps: ScheduledTokenRefreshDeps,
+  providerId: string
+): Promise<boolean> {
+  const onPreRecovery = deps.onPreRecoveryInvalidate;
+  if (!onPreRecovery) return true;
+  try {
+    await onPreRecovery(providerId);
+    deps.pendingInvalidations.delete(providerId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function retryPendingTokenPersistence(
+  provider: Provider,
+  deps: ScheduledTokenRefreshDeps
+): Promise<void> {
+  if (!provider.getCredentials) return;
+  let credentials: ProviderCredentials | null;
+  try {
+    credentials = await provider.getCredentials();
+  } catch {
+    return;
+  }
+  if (!credentials || credentials.type !== 'oauth') return;
+  try {
+    await deps.credentialManager.storeOAuthTokens(provider.id, credentials);
+  } catch {}
+}
+
+function markUnhealthyWhenFailureRecorded(
+  deps: ScheduledTokenRefreshDeps,
+  providerId: string
+): void {
+  if (!getProviderFailure(providerId)) return;
+  deps.credentialManager.markProviderHealth(providerId, 'unhealthy');
+}
+
+async function recordPendingInvalidationFailure(
+  deps: ScheduledTokenRefreshDeps,
+  providerId: string,
+  credentialKey: string
+): Promise<void> {
+  const retries = (deps.pendingInvalidations.get(providerId)?.retries ?? 0) + 1;
+  deps.pendingInvalidations.set(providerId, { retries, credentialKey });
+  if (retries === deps.maxRetries) {
+    deps.credentialManager.markProviderHealth(providerId, 'unhealthy');
+    await emitProviderChanged(deps, providerId, 'exhausted');
+    return;
+  }
+  if (retries > deps.maxRetries) {
+    deps.credentialManager.markProviderHealth(providerId, 'unhealthy');
+  }
+}
+
+async function recordFailedRefresh(
+  deps: ScheduledTokenRefreshDeps,
+  providerId: string,
+  retryKey: string
+): Promise<void> {
+  const retries = (deps.retryCounts.get(retryKey) ?? 0) + 1;
+  deps.retryCounts.set(retryKey, retries);
+  if (retries >= deps.maxRetries) {
+    deps.credentialManager.markProviderHealth(providerId, 'unhealthy');
+    await emitProviderChanged(deps, providerId, 'exhausted');
+  }
+}
+
+async function recoverDormant(deps: ScheduledTokenRefreshDeps, providerId: string): Promise<void> {
+  if (!deps.recoverDormantProvider) return;
+  try {
+    const outcome = await deps.recoverDormantProvider(providerId);
+    if (outcome === 'failed') {
+      deps.credentialManager.markProviderHealth(providerId, 'unhealthy');
+    } else if (outcome === 'no-op' && getProviderFailure(providerId)) {
+      deps.credentialManager.markProviderHealth(providerId, 'unhealthy');
+    }
+  } catch {}
+}
+
+async function emitProviderChanged(
+  deps: ScheduledTokenRefreshDeps,
+  providerId: string,
+  outcome: ProviderRefreshOutcome
+): Promise<void> {
+  try {
+    await deps.refreshDiscoveredModels(outcome);
+  } catch {}
+  await deps.onProviderChanged?.(providerId, outcome);
+}
+
+const runScheduledTokenRefresh = (
+  superpipe<{
+    settled: (ctx: ScheduledTokenRefreshCtx) => boolean;
+  }>({
+    settled: (ctx: ScheduledTokenRefreshCtx): boolean => ctx.outcome !== undefined,
+  })('scheduled-oauth-token-refresh') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(resolveCurrentCredentials, 'ctx', 'ctx')
+  .pipe(resumeDeferredInvalidation, 'ctx', 'ctx')
+  .pipe('!settled', 'ctx')
+  .pipe(gateRefreshDue, 'ctx', 'ctx')
+  .pipe('!settled', 'ctx')
+  .pipe(rotateToken, 'ctx', 'ctx')
+  .pipe(failExhaustedRotation, 'ctx', 'ctx')
+  .pipe('!settled', 'ctx')
+  .pipe(persistRotatedTokens, 'ctx', 'ctx')
+  .pipe(failOverOnPersistenceFailure, 'ctx', 'ctx')
+  .pipe('!settled', 'ctx')
+  .pipe(completeRefreshedRotation, 'ctx', 'ctx')
+  .endAsync('ctx') as unknown as (
+  ctx: ScheduledTokenRefreshCtx
+) => Promise<ScheduledTokenRefreshCtx>;
+
 export class OAuthRefreshScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private activeTick: Promise<void> | null = null;
   private readonly retryCounts = new Map<string, number>();
-  private readonly pendingInvalidationRetries = new Map<string, number>();
+  private readonly pendingInvalidations = new Map<string, PendingInvalidation>();
   private readonly intervalMs: number;
   private readonly refreshWindowMs: number;
   private readonly maxRetries: number;
@@ -108,164 +393,24 @@ export class OAuthRefreshScheduler {
 
   private async refreshProviderIfNeeded(provider: Provider): Promise<void> {
     if (!provider.refreshToken) return;
-    if (await this.retryPendingInvalidation(provider)) return;
-    const credentials = await this.credentialsForProvider(provider);
-    if (!credentials || credentials.type !== 'oauth') return;
-
-    const expiresAt = credentials.expiresAt;
-    if (typeof expiresAt !== 'number') return;
-    if (expiresAt - this.now() > this.refreshWindowMs) return;
-
-    const retryKey = this.retryKey(provider.id, credentials);
-    if ((this.retryCounts.get(retryKey) ?? 0) >= this.maxRetries) return;
-
-    let refreshed = false;
-    try {
-      refreshed = await provider.refreshToken();
-    } catch {
-      refreshed = false;
-    }
-
-    if (refreshed) {
-      const nextCredentials = await this.credentialsFromProvider(provider, credentials);
-      let persistenceFailed = false;
-      try {
-        if (nextCredentials) {
-          await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
-        }
-      } catch {
-        persistenceFailed = true;
-      }
-      if (persistenceFailed) {
-        if (!(await this.runPreRecoveryInvalidation(provider.id))) {
-          this.markUnhealthyWhenFailureRecorded(provider.id);
-          await this.recordPendingInvalidationFailure(provider.id);
-        }
-        return;
-      }
-      this.retryCounts.delete(retryKey);
-      if (!(await this.runPreRecoveryInvalidation(provider.id))) {
-        this.markUnhealthyWhenFailureRecorded(provider.id);
-        await this.recordPendingInvalidationFailure(provider.id);
-        return;
-      }
-      this.credentialManager.markProviderHealth(provider.id, 'healthy');
-      await this.recoverDormant(provider.id);
-      await this.emitProviderChanged(provider.id, 'refreshed');
-      return;
-    }
-
-    await this.recordFailedRefresh(provider.id, retryKey);
-  }
-
-  private async retryPendingInvalidation(provider: Provider): Promise<boolean> {
-    if (!this.pendingInvalidationRetries.has(provider.id)) return false;
-    if (!(await this.runPreRecoveryInvalidation(provider.id))) {
-      await this.retryPendingTokenPersistence(provider);
-      this.markUnhealthyWhenFailureRecorded(provider.id);
-      await this.recordPendingInvalidationFailure(provider.id);
-      return true;
-    }
-    this.credentialManager.markProviderHealth(provider.id, 'healthy');
-    await this.recoverDormant(provider.id);
-    await this.emitProviderChanged(provider.id, 'refreshed');
-    return true;
-  }
-
-  private async retryPendingTokenPersistence(provider: Provider): Promise<void> {
-    if (!provider.getCredentials) return;
-    let credentials: ProviderCredentials | null;
-    try {
-      credentials = await provider.getCredentials();
-    } catch {
-      return;
-    }
-    if (!credentials || credentials.type !== 'oauth') return;
-    try {
-      await this.credentialManager.storeOAuthTokens(provider.id, credentials);
-    } catch {}
-  }
-
-  private markUnhealthyWhenFailureRecorded(providerId: string): void {
-    if (!getProviderFailure(providerId)) return;
-    this.credentialManager.markProviderHealth(providerId, 'unhealthy');
-  }
-
-  private async runPreRecoveryInvalidation(providerId: string): Promise<boolean> {
-    const onPreRecovery = this.onPreRecoveryInvalidate;
-    if (!onPreRecovery) return true;
-    try {
-      await onPreRecovery(providerId);
-      this.pendingInvalidationRetries.delete(providerId);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private bumpPendingInvalidationRetries(providerId: string): number {
-    const retries = (this.pendingInvalidationRetries.get(providerId) ?? 0) + 1;
-    this.pendingInvalidationRetries.set(providerId, retries);
-    return retries;
-  }
-
-  private async recordPendingInvalidationFailure(providerId: string): Promise<void> {
-    const retries = this.bumpPendingInvalidationRetries(providerId);
-    if (retries > this.maxRetries) return;
-    if (retries === this.maxRetries) {
-      this.credentialManager.markProviderHealth(providerId, 'unhealthy');
-      await this.emitProviderChanged(providerId, 'exhausted');
-    }
-  }
-
-  private async recordFailedRefresh(providerId: string, retryKey: string): Promise<void> {
-    const retries = (this.retryCounts.get(retryKey) ?? 0) + 1;
-    this.retryCounts.set(retryKey, retries);
-    if (retries >= this.maxRetries) {
-      this.credentialManager.markProviderHealth(providerId, 'unhealthy');
-      await this.emitProviderChanged(providerId, 'exhausted');
-    }
-  }
-
-  private async emitProviderChanged(
-    providerId: string,
-    outcome: ProviderRefreshOutcome
-  ): Promise<void> {
-    try {
-      await this.refreshDiscoveredModels(outcome);
-    } catch {}
-    await this.onProviderChanged?.(providerId, outcome);
-  }
-
-  private async recoverDormant(providerId: string): Promise<void> {
-    if (!this.recoverDormantProvider) return;
-    try {
-      const outcome = await this.recoverDormantProvider(providerId);
-      if (outcome === 'failed') {
-        this.credentialManager.markProviderHealth(providerId, 'unhealthy');
-      } else if (outcome === 'no-op' && getProviderFailure(providerId)) {
-        this.credentialManager.markProviderHealth(providerId, 'unhealthy');
-      }
-    } catch {}
-  }
-
-  private async credentialsForProvider(provider: Provider): Promise<ProviderCredentials | null> {
-    const stored = await this.credentialManager.getCredentials(provider.id);
-    if (stored) return stored;
-    if (!provider.getCredentials) return null;
-    return await provider.getCredentials();
-  }
-
-  private async credentialsFromProvider(
-    provider: Provider,
-    fallback: ProviderCredentials
-  ): Promise<ProviderCredentials> {
-    if (!provider.getCredentials) return fallback;
-    return (await provider.getCredentials()) ?? fallback;
-  }
-
-  private retryKey(providerId: string, credentials: ProviderCredentials): string {
-    if (credentials.type !== 'oauth') return providerId;
-    return `${providerId}:${credentials.refreshToken ?? credentials.accessToken ?? ''}:${credentials.expiresAt ?? ''}`;
+    await runScheduledTokenRefresh({
+      deps: {
+        credentialManager: this.credentialManager,
+        maxRetries: this.maxRetries,
+        refreshWindowMs: this.refreshWindowMs,
+        now: this.now,
+        retryCounts: this.retryCounts,
+        pendingInvalidations: this.pendingInvalidations,
+        onPreRecoveryInvalidate: this.onPreRecoveryInvalidate,
+        recoverDormantProvider: this.recoverDormantProvider,
+        onProviderChanged: this.onProviderChanged,
+        refreshDiscoveredModels: this.refreshDiscoveredModels,
+      },
+      provider,
+      credentials: null,
+      retryKey: '',
+      refreshed: false,
+      persistenceFailed: false,
+    });
   }
 }
