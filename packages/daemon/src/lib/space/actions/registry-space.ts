@@ -67,6 +67,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
 
   const approveTaskAutonomy = async (params: z.infer<typeof ApproveTaskSchema>) => {
     const task = config.taskRepo.getTask(params.task_id);
+    if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
     const run = task?.workflowRunId ? config.workflowRunRepo.getRun(task.workflowRunId) : null;
     const workflow = run?.workflowId ? config.workflowManager.getWorkflowForRun(run) : null;
     return workflow?.completionAutonomyLevel ?? DEFAULT_COMPLETION_AUTONOMY_LEVEL;
@@ -94,15 +95,17 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
   };
 
   const cancelTaskAutonomy = async (params: z.infer<typeof CancelTaskSchema>) => {
-    if (params.cancel_workflow_run === true) {
-      const task = config.taskRepo.getTask(params.task_id);
-      if (task?.workflowRunId) return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    const task = config.taskRepo.getTask(params.task_id);
+    if (task?.pendingCheckpointType === 'task_completion') return HUMAN_ONLY_AUTONOMY_LEVEL;
+    if (params.cancel_workflow_run === true && task?.workflowRunId) {
+      return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
     }
     return 1;
   };
 
   const changePlanAutonomy = async (params: z.infer<typeof ChangePlanSchema>) =>
-    params.workflow_id !== undefined || params.workflow_handle !== undefined
+    (params.workflow_id !== undefined && params.workflow_id.length > 0) ||
+    (params.workflow_handle !== undefined && params.workflow_handle.length > 0)
       ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL
       : 1;
 
@@ -508,6 +511,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       paramsDoc:
         'task_id or task_number, message, node_id? or target? (@handle/@role/@session/@worker)',
       paramsSchema: SendMessageToTaskSchema,
+      auditRedactKeys: ['message'],
       handler: (args) => handlers.send_message_to_task(args),
     }),
     defineAction({

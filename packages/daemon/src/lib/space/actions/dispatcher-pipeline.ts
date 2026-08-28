@@ -115,19 +115,30 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
     };
   }
   const parsedParams = parsed.data as Record<string, unknown> | null;
+  const hasTaskId =
+    parsedParams !== null &&
+    typeof parsedParams.task_id === 'string' &&
+    parsedParams.task_id.length > 0;
   const suppressTaskId =
     action.taskIdPreference === 'task_number' &&
     parsedParams !== null &&
     typeof parsedParams.task_number === 'number';
   const targetTaskId =
-    parsedParams !== null && typeof parsedParams.task_id === 'string' && !suppressTaskId
-      ? parsedParams.task_id
+    hasTaskId && !suppressTaskId && parsedParams !== null
+      ? (parsedParams.task_id as string)
+      : undefined;
+  const targetRunId =
+    parsedParams !== null &&
+    typeof parsedParams.run_id === 'string' &&
+    parsedParams.run_id.length > 0
+      ? parsedParams.run_id
       : undefined;
   return {
     ...ctx,
     action,
     parsedParams: parsed.data,
     taskId: targetTaskId ?? ctx.taskId,
+    workflowRunId: targetRunId ?? ctx.workflowRunId,
   };
 }
 
@@ -205,8 +216,8 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
   let taskId = ctx.taskId;
   if (ctx.deps.resolveTaskId && ctx.parsedParams) {
     const params = ctx.parsedParams as Record<string, unknown>;
-    const prefersNumber =
-      action.taskIdPreference === 'task_number' || typeof params.task_id !== 'string';
+    const hasTaskId = typeof params.task_id === 'string' && params.task_id.length > 0;
+    const prefersNumber = action.taskIdPreference === 'task_number' || !hasTaskId;
     if (typeof params.task_number === 'number' && prefersNumber) {
       try {
         const resolved = await ctx.deps.resolveTaskId(params);
@@ -216,11 +227,15 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
   }
   if (ctx.isMutating && ctx.deps.auditLogRepo) {
     try {
+      const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
+      for (const key of action.auditRedactKeys ?? []) {
+        delete summaryParams[key];
+      }
       ctx.deps.auditLogRepo.createEntry({
         agentName: ctx.agentName ?? null,
         sessionId: ctx.sessionId ?? null,
         toolName: action.name,
-        paramsSummary: JSON.stringify(ctx.parsedParams ?? {}),
+        paramsSummary: JSON.stringify(summaryParams),
         spaceId: ctx.spaceId,
         taskId: taskId ?? null,
         workflowRunId: ctx.workflowRunId ?? null,

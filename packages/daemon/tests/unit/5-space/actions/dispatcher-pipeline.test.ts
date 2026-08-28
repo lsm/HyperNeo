@@ -234,6 +234,29 @@ describe('resolveAction', () => {
     );
     expect(ctx.taskId).toBe('task-a');
   });
+
+  test('attributes workflow actions to the parsed run id over the session context', () => {
+    const changePlan = defineAction({
+      name: 'change_plan',
+      family: 'workflows',
+      safetyClass: 'destructive',
+      description: 'Change plan',
+      paramsDoc: '{ run_id: string }',
+      paramsSchema: z.object({ run_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'change_plan',
+          params: { run_id: 'run-b' },
+          workflowRunId: 'run-a',
+        },
+        { registry: createActionRegistry([changePlan]) }
+      )
+    );
+    expect(ctx.workflowRunId).toBe('run-b');
+  });
 });
 
 describe('applySafetyClass', () => {
@@ -706,6 +729,81 @@ describe('applyRateAndAudit', () => {
     );
     expect(next.outcome).toBeUndefined();
     expect(next.taskId).toBe('session-task');
+  });
+
+  test('resolves task_number when task_id is an empty string', async () => {
+    const sendToTask = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Send message',
+      paramsDoc: '{ task_id: string, task_number: number, message: string }',
+      paramsSchema: z.object({ task_id: z.string(), task_number: z.number(), message: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'send_message_to_task',
+              params: { task_id: '', task_number: 7, message: 'ping' },
+            },
+            { registry: createActionRegistry([sendToTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        resolveTaskId: (params) =>
+          typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBe('task-from-7');
+  });
+
+  test('redacts listed keys from the audit params summary', async () => {
+    const auditEntries: CreateMcpAuditLogParams[] = [];
+    const sendToTask = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Send message',
+      paramsDoc: '{ task_id: string, message: string }',
+      paramsSchema: z.object({ task_id: z.string(), message: z.string() }),
+      auditRedactKeys: ['message'],
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'send_message_to_task',
+              params: { task_id: 'task-a', message: 'top secret' },
+            },
+            { registry: createActionRegistry([sendToTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        auditLogRepo: {
+          createEntry: (params) => {
+            auditEntries.push(params);
+            return null as never;
+          },
+        },
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(auditEntries.length).toBe(1);
+    const summary = JSON.parse(auditEntries[0].paramsSummary ?? '{}');
+    expect(summary.task_id).toBe('task-a');
+    expect('message' in summary).toBe(false);
   });
 
   test('skips audit for read actions', async () => {

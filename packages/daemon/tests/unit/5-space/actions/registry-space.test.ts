@@ -306,6 +306,15 @@ describe('createSpaceRegistryEntries — composition', () => {
         title: 'Standalone task',
         description: '',
       });
+      const checkpointTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Checkpoint task',
+        description: '',
+      });
+      ctx.taskRepo.updateTask(checkpointTask.id, {
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+      });
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
@@ -314,6 +323,7 @@ describe('createSpaceRegistryEntries — composition', () => {
           SESSION_WRITE_AUTONOMY_LEVEL
         );
         expect(await resolve({ task_id: standaloneTask.id, cancel_workflow_run: true })).toBe(1);
+        expect(await resolve({ task_id: checkpointTask.id })).toBe(5);
         expect(await resolve({ task_id: workflowTask.id })).toBe(1);
         expect(await resolve({ task_id: workflowTask.id, cancel_workflow_run: false })).toBe(1);
       }
@@ -336,6 +346,7 @@ describe('createSpaceRegistryEntries — composition', () => {
           SESSION_WRITE_AUTONOMY_LEVEL
         );
         expect(await resolve({ run_id: 'run-1', description: 'Update' })).toBe(1);
+        expect(await resolve({ run_id: 'run-1', workflow_id: '' })).toBe(1);
         expect(await resolve({ run_id: 'run-1' })).toBe(1);
       }
     } finally {
@@ -369,6 +380,16 @@ describe('createSpaceRegistryEntries — composition', () => {
         title: 'Standalone task',
         description: '',
       });
+      const checkpointTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Checkpoint task',
+        description: '',
+        workflowRunId: run.id,
+      });
+      ctx.taskRepo.updateTask(checkpointTask.id, {
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+      });
 
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'approve_task')?.autonomyRequirement;
@@ -376,6 +397,7 @@ describe('createSpaceRegistryEntries — composition', () => {
       if (typeof resolve === 'function') {
         expect(await resolve({ task_id: workflowTask.id })).toBe(3);
         expect(await resolve({ task_id: standaloneTask.id })).toBe(5);
+        expect(await resolve({ task_id: checkpointTask.id })).toBe(5);
         expect(await resolve({ task_id: 'missing-task' })).toBe(5);
       }
     } finally {
