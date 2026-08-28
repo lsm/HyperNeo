@@ -143,9 +143,15 @@ interface ReconcilePersistedDiscoveryCtx {
 async function loadPersistedDiscoveryInputs(
   ctx: ReconcilePersistedDiscoveryCtx
 ): Promise<ReconcilePersistedDiscoveryCtx> {
+  let storedCredentials: ProviderCredentials | null = null;
+  try {
+    storedCredentials = await ctx.deps.credentialManager.getCredentials(ctx.providerId);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
   return {
     ...ctx,
-    storedCredentials: await ctx.deps.credentialManager.getCredentials(ctx.providerId),
+    storedCredentials,
     providerRecord: ctx.deps.db.providers.getProviderByProviderId(ctx.providerId),
     envCredentials: ctx.deps.credentialManager.hasEnvironmentCredentials(ctx.providerId),
   };

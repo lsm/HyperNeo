@@ -177,6 +177,27 @@ describe('startup persisted-discovery reconciliation', () => {
     expect(result.assigned).toEqual([apiKey('sk-stored')]);
   });
 
+  test('malformed stored credentials: treats them as absent, strips, and still repairs the store', async () => {
+    let storedData: string | null = 'not json';
+    const result = await runScenario({
+      providerCredentials: apiKey('sk-live'),
+      configJson: DISCOVERY_CONFIG,
+      store: {
+        get: async () => storedData,
+        set: async (_service, _account, data) => {
+          storedData = data;
+        },
+        delete: async () => {
+          storedData = null;
+        },
+        listServices: async () => [],
+      },
+    });
+    expect(result.configJson()).toBe(STRIPPED_CONFIG);
+    expect(await result.stored()).toEqual(apiKey('sk-live'));
+    expect(result.healthStatus()).toBe('healthy');
+  });
+
   test('keychain-unavailable store: continues without stripping or marking unhealthy', async () => {
     const result = await runScenario({
       providerCredentials: apiKey('sk-live'),
