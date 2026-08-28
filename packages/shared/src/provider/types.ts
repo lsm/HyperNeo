@@ -71,6 +71,7 @@ export interface ListRemoteModelsOptions {
   force?: boolean;
   command?: string;
   baseUrl?: string;
+  discoveryOnly?: boolean;
 }
 
 export interface Provider {
