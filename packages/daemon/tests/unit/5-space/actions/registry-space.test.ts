@@ -258,6 +258,15 @@ describe('createSpaceRegistryEntries — composition', () => {
         status: 'review',
         pendingCheckpointType: 'task_completion',
       });
+      const stoppedCheckpointTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Stopped checkpoint task',
+        description: '',
+      });
+      ctx.taskRepo.updateTask(stoppedCheckpointTask.id, {
+        status: 'stopped',
+        pendingCheckpointType: 'task_completion',
+      });
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'update_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
@@ -273,6 +282,7 @@ describe('createSpaceRegistryEntries — composition', () => {
         expect(await resolve({ task_id: checkpointTask.id, status: 'in_progress' })).toBe(5);
         expect(await resolve({ task_id: checkpointTask.id, status: 'review' })).toBe(1);
         expect(await resolve({ task_id: checkpointTask.id, title: 'Edited' })).toBe(1);
+        expect(await resolve({ task_id: stoppedCheckpointTask.id, status: 'in_progress' })).toBe(5);
         expect(await resolve({ task_id: 'task-1', status: 'blocked' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', title: 'Edited' })).toBe(1);
       }
@@ -335,6 +345,27 @@ describe('createSpaceRegistryEntries — composition', () => {
   test('change_plan requires workflow-switch clearance only when switching workflows', async () => {
     const ctx = makeCtx();
     try {
+      const workflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Switch target',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const run = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Run',
+      });
+      const checkpointTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Checkpoint task',
+        description: '',
+        workflowRunId: run.id,
+      });
+      ctx.taskRepo.updateTask(checkpointTask.id, {
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+      });
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'change_plan')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
@@ -345,6 +376,7 @@ describe('createSpaceRegistryEntries — composition', () => {
         expect(await resolve({ run_id: 'run-1', workflow_handle: 'coding' })).toBe(
           SESSION_WRITE_AUTONOMY_LEVEL
         );
+        expect(await resolve({ run_id: run.id, workflow_id: 'wf-2' })).toBe(5);
         expect(await resolve({ run_id: 'run-1', description: 'Update' })).toBe(1);
         expect(await resolve({ run_id: 'run-1', workflow_id: '' })).toBe(1);
         expect(await resolve({ run_id: 'run-1' })).toBe(1);

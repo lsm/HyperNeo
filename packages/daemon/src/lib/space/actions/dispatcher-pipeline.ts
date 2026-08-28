@@ -57,6 +57,7 @@ export interface DispatchActionDeps {
   resolveTaskId?: (
     params: Record<string, unknown>
   ) => string | undefined | Promise<string | undefined>;
+  resolveRunId?: (taskId: string) => string | undefined | Promise<string | undefined>;
 }
 
 export interface DispatchActionCtx extends DispatchActionInput {
@@ -225,6 +226,13 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       } catch {}
     }
   }
+  let workflowRunId = ctx.workflowRunId;
+  if (workflowRunId === undefined && ctx.deps.resolveRunId && taskId !== undefined) {
+    try {
+      const resolved = await ctx.deps.resolveRunId(taskId);
+      if (resolved !== undefined) workflowRunId = resolved;
+    } catch {}
+  }
   if (ctx.isMutating && ctx.deps.auditLogRepo) {
     try {
       const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
@@ -238,11 +246,11 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
         paramsSummary: JSON.stringify(summaryParams),
         spaceId: ctx.spaceId,
         taskId: taskId ?? null,
-        workflowRunId: ctx.workflowRunId ?? null,
+        workflowRunId: workflowRunId ?? null,
       });
     } catch {}
   }
-  return { ...ctx, taskId };
+  return { ...ctx, taskId, workflowRunId };
 }
 
 export async function executeAction(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {

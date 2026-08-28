@@ -86,8 +86,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     if (
       params.status !== undefined &&
       params.status !== task?.status &&
-      task?.status === 'review' &&
-      task.pendingCheckpointType === 'task_completion'
+      task?.pendingCheckpointType === 'task_completion'
     ) {
       return HUMAN_ONLY_AUTONOMY_LEVEL;
     }
@@ -103,11 +102,18 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     return 1;
   };
 
-  const changePlanAutonomy = async (params: z.infer<typeof ChangePlanSchema>) =>
-    (params.workflow_id !== undefined && params.workflow_id.length > 0) ||
-    (params.workflow_handle !== undefined && params.workflow_handle.length > 0)
-      ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL
-      : 1;
+  const changePlanAutonomy = async (params: z.infer<typeof ChangePlanSchema>) => {
+    const switching =
+      (params.workflow_id !== undefined && params.workflow_id.length > 0) ||
+      (params.workflow_handle !== undefined && params.workflow_handle.length > 0);
+    if (!switching) return 1;
+    const run = config.workflowRunRepo.getRun(params.run_id);
+    const runTasks = run ? config.taskRepo.listByWorkflowRun(run.id) : [];
+    if (runTasks.some((task) => task.pendingCheckpointType === 'task_completion')) {
+      return HUMAN_ONLY_AUTONOMY_LEVEL;
+    }
+    return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+  };
 
   const sessionEntries: ActionDefinition[] = [
     defineAction({

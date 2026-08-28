@@ -806,6 +806,47 @@ describe('applyRateAndAudit', () => {
     expect('message' in summary).toBe(false);
   });
 
+  test('derives the run from the resolved target task for task-triggered mutations', async () => {
+    const auditEntries: CreateMcpAuditLogParams[] = [];
+    const cancelTask = defineAction({
+      name: 'cancel_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Cancel task',
+      paramsDoc: '{ task_id: string, cancel_workflow_run: boolean }',
+      paramsSchema: z.object({ task_id: z.string(), cancel_workflow_run: z.boolean() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'cancel_task',
+              params: { task_id: 'task-b', cancel_workflow_run: true },
+            },
+            { registry: createActionRegistry([cancelTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        auditLogRepo: {
+          createEntry: (params) => {
+            auditEntries.push(params);
+            return null as never;
+          },
+        },
+        resolveRunId: (taskId) => (taskId === 'task-b' ? 'run-b' : undefined),
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(next.workflowRunId).toBe('run-b');
+    expect(auditEntries.length).toBe(1);
+    expect(auditEntries[0].workflowRunId).toBe('run-b');
+  });
+
   test('skips audit for read actions', async () => {
     const auditEntries: CreateMcpAuditLogParams[] = [];
     const ctx = applyRoleAdmission(
