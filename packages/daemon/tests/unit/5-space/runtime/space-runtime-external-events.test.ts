@@ -2157,8 +2157,11 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.getById(stale.id)?.state).toBe('failed');
       expect(eventStore.listDeliveries(stale.id)).toHaveLength(0);
       expect(eventStore.getById(fresh.id)?.state).toBe('published');
-      expect(eventStore.getById(withDelivery.id)?.state).toBe('published');
-      expect(eventStore.listDeliveries(withDelivery.id)).toHaveLength(1);
+      expect(eventStore.getById(withDelivery.id)?.state).toBe('failed');
+      expect(eventStore.getDelivery(withDelivery.id, 'dk-ttl-sweep-1')).toMatchObject({
+        state: 'failed',
+        failureReason: 'ttl_expired',
+      });
 
       Date.now = () => now + 2000;
       try {
@@ -2169,7 +2172,59 @@ describe('SpaceRuntime external event subscriptions', () => {
 
       expect(eventStore.getById(stale.id)?.state).toBe('failed');
       expect(eventStore.getById(fresh.id)?.state).toBe('published');
-      expect(eventStore.getById(withDelivery.id)?.state).toBe('published');
+      expect(eventStore.getById(withDelivery.id)?.state).toBe('failed');
+    });
+
+    test('TTL sweep skips deliveries whose key is in flight', async () => {
+      await runtime.executeTick();
+
+      const stale = makeEvent({
+        id: 'evt-ttl-sweep-in-flight',
+        topic: 'github/lsm/neokai/issues/102.comment_created',
+      });
+      eventStore.store(stale);
+      eventStore.registerExpectedDelivery(stale.id, 'dk-ttl-in-flight', {
+        workflowRunId: 'run-ttl-sweep',
+        taskId: 'task-ttl-sweep',
+        nodeId: 'code',
+        agentName: 'coder',
+      });
+      eventStore.registerExpectedDelivery(stale.id, 'dk-ttl-orphan', {
+        workflowRunId: 'run-ttl-sweep',
+        taskId: 'task-ttl-sweep',
+        nodeId: 'review',
+        agentName: 'reviewer',
+      });
+
+      const now = Date.now();
+      db.prepare('UPDATE space_external_events SET created_at = ? WHERE id = ?').run(
+        now - 400_000,
+        stale.id
+      );
+
+      const inFlight = (runtime as unknown as { externalEventDeliveriesInFlight: Set<string> })
+        .externalEventDeliveriesInFlight;
+      inFlight.add('dk-ttl-in-flight');
+      try {
+        await runtime.executeTick();
+      } finally {
+        inFlight.delete('dk-ttl-in-flight');
+      }
+
+      expect(eventStore.getDelivery(stale.id, 'dk-ttl-in-flight')?.state).toBe('pending');
+      expect(eventStore.getDelivery(stale.id, 'dk-ttl-orphan')).toMatchObject({
+        state: 'failed',
+        failureReason: 'ttl_expired',
+      });
+      expect(eventStore.getById(stale.id)?.state).toBe('published');
+
+      await runtime.executeTick();
+
+      expect(eventStore.getDelivery(stale.id, 'dk-ttl-in-flight')).toMatchObject({
+        state: 'failed',
+        failureReason: 'ttl_expired',
+      });
+      expect(eventStore.getById(stale.id)?.state).toBe('failed');
     });
 
     test('digest admission terminalizes pending deliveries for a done task without reactivating it', async () => {

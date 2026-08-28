@@ -3376,6 +3376,7 @@ export class SpaceRuntime {
       await this.recoverRateLimitedTasks();
 
       this.expirePublishedExternalEventsPastTtl();
+      this.expirePendingExternalEventDeliveriesPastTtl();
 
       this.pruneExpiredCycleEvents();
     } finally {
@@ -3867,6 +3868,22 @@ export class SpaceRuntime {
     } catch (err) {
       log.warn(
         `SpaceRuntime: TTL sweep failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  private expirePendingExternalEventDeliveriesPastTtl(now = Date.now()): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    try {
+      const inFlightKeys = new Set<string>([
+        ...this.externalEventDeliveriesInFlight,
+        ...this.immediateDispatchesInFlight,
+      ]);
+      store.markPendingDeliveriesFailedBefore(now - EXTERNAL_EVENT_QUEUE_TTL_MS, inFlightKeys, now);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: pending-delivery TTL sweep failed: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }
