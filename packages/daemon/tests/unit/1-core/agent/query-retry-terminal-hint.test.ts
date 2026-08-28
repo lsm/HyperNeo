@@ -72,6 +72,10 @@ describe('resolveTerminalMessageHint', () => {
       expected: 'startup_timeout',
     },
     {
+      signal: { isConversationNotFound: true, isMessageNotFound: true },
+      expected: 'conversation_not_found',
+    },
+    {
       signal: { isMessageNotFound: true, isRetryableProviderError: true },
       env: { attempt: 3, maxProviderRetries: 3 },
       expected: 'message_not_found',

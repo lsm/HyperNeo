@@ -131,6 +131,8 @@ describe('decideProviderTerminalCategory', () => {
     },
     { raw: 'econnrefused', flags: { isRateLimit: true }, expected: ErrorCategory.CONNECTION },
     { raw: '429', flags: { isStartupTimeout: true }, expected: ErrorCategory.RATE_LIMIT },
+    { raw: 'model_not_found timeout', expected: ErrorCategory.TIMEOUT },
+    { raw: 'model_not_found permission', expected: ErrorCategory.MODEL },
     { raw: 'UNAUTHORIZED Request', expected: ErrorCategory.AUTHENTICATION },
     { raw: 'job 14012 failed', family: 'provider', expected: ErrorCategory.SYSTEM },
     { raw: 'port 4033', family: 'provider', expected: ErrorCategory.SYSTEM },
