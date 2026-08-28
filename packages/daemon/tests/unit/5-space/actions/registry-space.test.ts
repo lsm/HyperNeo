@@ -281,18 +281,41 @@ describe('createSpaceRegistryEntries — composition', () => {
     }
   });
 
-  test('cancel_task requires workflow-run clearance only when cancel_workflow_run is set', async () => {
+  test('cancel_task requires workflow-run clearance only for workflow-backed tasks with the flag', async () => {
     const ctx = makeCtx();
     try {
+      const workflow = ctx.workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Cancel target',
+        nodes: [{ name: 'Work', agents: [{ agentId: 'agent-coder-1', name: 'Coder' }] }],
+        tags: [],
+      });
+      const run = ctx.workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Run',
+      });
+      const workflowTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Workflow task',
+        description: '',
+        workflowRunId: run.id,
+      });
+      const standaloneTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Standalone task',
+        description: '',
+      });
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'cancel_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
       if (typeof resolve === 'function') {
-        expect(await resolve({ task_id: 'task-1', cancel_workflow_run: true })).toBe(
+        expect(await resolve({ task_id: workflowTask.id, cancel_workflow_run: true })).toBe(
           SESSION_WRITE_AUTONOMY_LEVEL
         );
-        expect(await resolve({ task_id: 'task-1' })).toBe(1);
-        expect(await resolve({ task_id: 'task-1', cancel_workflow_run: false })).toBe(1);
+        expect(await resolve({ task_id: standaloneTask.id, cancel_workflow_run: true })).toBe(1);
+        expect(await resolve({ task_id: workflowTask.id })).toBe(1);
+        expect(await resolve({ task_id: workflowTask.id, cancel_workflow_run: false })).toBe(1);
       }
     } finally {
       ctx.db.close();

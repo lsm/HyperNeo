@@ -211,6 +211,29 @@ describe('resolveAction', () => {
     );
     expect(ctx.taskId).toBe('target-task');
   });
+
+  test('keeps task_id for a task_number-preference action when no number is present', () => {
+    const getTaskDetail = defineAction({
+      name: 'get_task_detail',
+      family: 'tasks',
+      safetyClass: 'read',
+      description: 'Get task detail',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      taskIdPreference: 'task_number',
+      handler: async () => ({}),
+    });
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'get_task_detail',
+          params: { task_id: 'task-a' },
+        },
+        { registry: createActionRegistry([getTaskDetail]) }
+      )
+    );
+    expect(ctx.taskId).toBe('task-a');
+  });
 });
 
 describe('applySafetyClass', () => {

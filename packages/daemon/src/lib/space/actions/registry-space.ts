@@ -93,8 +93,13 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     return 1;
   };
 
-  const cancelTaskAutonomy = async (params: z.infer<typeof CancelTaskSchema>) =>
-    params.cancel_workflow_run === true ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL : 1;
+  const cancelTaskAutonomy = async (params: z.infer<typeof CancelTaskSchema>) => {
+    if (params.cancel_workflow_run === true) {
+      const task = config.taskRepo.getTask(params.task_id);
+      if (task?.workflowRunId) return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    }
+    return 1;
+  };
 
   const changePlanAutonomy = async (params: z.infer<typeof ChangePlanSchema>) =>
     params.workflow_id !== undefined || params.workflow_handle !== undefined

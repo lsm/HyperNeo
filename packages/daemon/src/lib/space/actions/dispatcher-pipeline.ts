@@ -115,10 +115,12 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
     };
   }
   const parsedParams = parsed.data as Record<string, unknown> | null;
-  const targetTaskId =
-    action.taskIdPreference !== 'task_number' &&
+  const suppressTaskId =
+    action.taskIdPreference === 'task_number' &&
     parsedParams !== null &&
-    typeof parsedParams.task_id === 'string'
+    typeof parsedParams.task_number === 'number';
+  const targetTaskId =
+    parsedParams !== null && typeof parsedParams.task_id === 'string' && !suppressTaskId
       ? parsedParams.task_id
       : undefined;
   return {
