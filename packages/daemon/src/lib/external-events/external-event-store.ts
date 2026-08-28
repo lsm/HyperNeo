@@ -621,7 +621,6 @@ export class ExternalEventStore {
       .prepare(
         `SELECT
            COUNT(*) AS count,
-           COUNT(DISTINCT d.workflow_run_id || '|' || d.task_id || '|' || d.node_id || '|' || d.agent_name) AS distinctTargets,
            MIN(? - e.created_at) AS minMs,
            MAX(? - e.created_at) AS maxMs,
            AVG(? - e.created_at) AS avgMs
@@ -631,13 +630,22 @@ export class ExternalEventStore {
       )
       .get(now, now, now) as {
       count: number;
-      distinctTargets: number;
       minMs: number | null;
       maxMs: number | null;
       avgMs: number | null;
     };
     const count = agg?.count ?? 0;
     if (count === 0) return null;
+    const targets = this.db
+      .prepare(
+        `SELECT COUNT(*) AS distinctTargets FROM (
+           SELECT 1 FROM space_external_event_deliveries d
+           INNER JOIN space_external_events e ON e.id = d.event_id
+           WHERE d.state = 'pending'
+           GROUP BY d.workflow_run_id, d.task_id, d.node_id, d.agent_name
+         )`
+      )
+      .get() as { distinctTargets: number };
     const p95Offset = Math.min(count - 1, Math.ceil(count * 0.95) - 1);
     const p95 = this.db
       .prepare(
@@ -651,7 +659,7 @@ export class ExternalEventStore {
       .get(now, p95Offset) as { age: number } | undefined;
     return {
       count,
-      distinctTargets: agg.distinctTargets ?? 0,
+      distinctTargets: targets.distinctTargets ?? 0,
       minMs: agg.minMs ?? 0,
       maxMs: agg.maxMs ?? 0,
       avgMs: Math.round(agg.avgMs ?? 0),

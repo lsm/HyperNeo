@@ -1096,6 +1096,27 @@ describe('summarizePendingDeliveries', () => {
     expect(twoTargets!.count).toBe(3);
     expect(twoTargets!.distinctTargets).toBe(2);
   });
+
+  test('counts targets whose fields contain the delimiter as distinct', () => {
+    const now = Date.now();
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-pipe-a', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'x',
+      agentName: 'y|z',
+    });
+    store.registerExpectedDelivery('evt-a', 'dk-pipe-b', {
+      workflowRunId: 'run-1',
+      taskId: 'task-1',
+      nodeId: 'x|y',
+      agentName: 'z',
+    });
+
+    const summary = store.summarizePendingDeliveries(now);
+    expect(summary!.count).toBe(2);
+    expect(summary!.distinctTargets).toBe(2);
+  });
 });
 
 describe('reactive invalidation', () => {

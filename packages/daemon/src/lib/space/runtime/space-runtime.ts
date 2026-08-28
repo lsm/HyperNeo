@@ -1406,12 +1406,15 @@ export class SpaceRuntime {
       try {
         if (isLongHorizonSubscriptionTarget(match)) {
           const deliveryKey = this.buildLongHorizonDeliveryKey(match, payload);
-          store.registerExpectedDelivery(payload.eventId, deliveryKey, {
+          const longHorizonTarget = {
             workflowRunId: `long_horizon:${match.spaceId}`,
             taskId: match.subscriptionId,
             nodeId: match.agentId,
             agentName: match.agentId,
-          });
+          };
+          if (store.registerExpectedDelivery(payload.eventId, deliveryKey, longHorizonTarget)) {
+            this.queueHealthMetrics.recordEnqueue(payload.source, 'long_horizon=active');
+          }
           longHorizonDeliveries.set(deliveryKey, { target: match, deliveryKey });
           continue;
         }

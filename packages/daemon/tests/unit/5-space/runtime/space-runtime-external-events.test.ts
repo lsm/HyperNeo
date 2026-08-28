@@ -361,6 +361,11 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]!.state).toBe('delivered');
     expect(longHorizonMessages[0]!.idempotencyKey).toBe(deliveries[0]!.deliveryKey);
+
+    const snapshot = runtime.getQueueHealthSnapshot();
+    expect(snapshot.counters.enqueue).toBe(1);
+    expect(snapshot.counters.enqueueBySource['github']).toBe(1);
+    expect(snapshot.counters.enqueueByTargetState).toEqual({ 'long_horizon=active': 1 });
   });
 
   test('rehydrates relative long-horizon agent subscriptions and matches full event topics', async () => {
