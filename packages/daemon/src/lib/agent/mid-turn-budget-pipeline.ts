@@ -133,6 +133,7 @@ async function restartOrStandDownStage(ctx: MidTurnBudgetCtx): Promise<MidTurnBu
     if (
       !ctx.queue.standsDownFor(ctx.opts) &&
       ctx.queue.shouldEnqueueLateCompaction(ctx.removedPendingCompactions) &&
+      !ctx.queue.shouldSuppressPromptPhaseCompaction() &&
       !ctx.queue.hasOutstandingInternalCompaction()
     ) {
       ctx.queue.enqueueMidTurnCompaction(ctx.opts, 'mid-turn-late');

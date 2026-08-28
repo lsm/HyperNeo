@@ -2244,6 +2244,49 @@ describe('MessageQueue', () => {
       q.stop();
     }, 15_000);
 
+    it('skips the late replacement compaction when a boundary lands mid-window', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const queued = q.enqueueWithId('compact-late-boundary', '/compact', true, {
+        durable: true,
+      });
+      queued.catch(() => {});
+      q.noteInternalCompactionSent({
+        id: 'uuid-lb',
+        content: 'late-survivor',
+        internal: false,
+      } as never);
+      let releaseCancel: () => void = () => {};
+      const cancelGate = new Promise<void>((resolve) => {
+        releaseCancel = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        cancelAsyncMessage: async () => {
+          await cancelGate;
+          return true;
+        },
+      });
+
+      q.armInterruptCycle(opts);
+      q.registerLateReceipt(opts, {
+        promise: Promise.resolve({ still_queued: ['uuid-lb'] }),
+        timedOut: true,
+      });
+      await tick(20);
+      q.noteBoundaryCompleted();
+      releaseCancel();
+      await tick(50);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-lb', 'late-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.filter((call) => call[1] === '/compact')).toHaveLength(0);
+      q.clear();
+      q.stop();
+    });
+
     it('skips a second compaction when the recovery boundary already completed', async () => {
       const q = new MessageQueue();
       q.start();

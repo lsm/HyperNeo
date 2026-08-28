@@ -810,6 +810,8 @@ export class MessageQueue {
   }
 
   openLateReceiptWindow(_opts: MidTurnBudgetInterruptOptions): number {
+    this.midTurnCycleActive = true;
+    this.midTurnBoundaryCompleted = false;
     return this.removePendingInternalCompactions();
   }
 
@@ -847,6 +849,7 @@ export class MessageQueue {
         decideCompaction: undefined,
       });
     } finally {
+      this.midTurnCycleActive = false;
       resolveLateGate?.();
     }
   }
