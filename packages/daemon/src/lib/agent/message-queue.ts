@@ -100,7 +100,7 @@ export class MessageQueue {
   private resolveEarlyDeliveryGate: (() => void) | undefined;
   private internalRestartInFlight: boolean = false;
   private internalRestartFailed: boolean = false;
-  private recoveryRestarted: boolean = false;
+  private recoveryRestartEpoch: number | undefined;
   private earlyGateReleasePending: boolean = false;
   private stopEpoch: number = 0;
   private midTurnBoundarySeq: number = 0;
@@ -706,7 +706,7 @@ export class MessageQueue {
 
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
     this.internalRestartFailed = false;
-    this.recoveryRestarted = false;
+    this.recoveryRestartEpoch = undefined;
     this.promptPhaseBoundarySeq = this.midTurnBoundarySeq;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
@@ -773,10 +773,14 @@ export class MessageQueue {
     return { promise: interruptPromise, timedOut, hardFailed, receipt };
   }
 
+  private recoveryOwnsCurrentTurn(): boolean {
+    return this.recoveryRestartEpoch !== undefined && this.stopEpoch === this.recoveryRestartEpoch;
+  }
+
   standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean {
-    if (!this.recoveryRestarted && opts.ownsTurn && !opts.ownsTurn()) return true;
     if (this.internalRestartInFlight) return false;
-    if (this.internalRestartFailed) return false;
+    if (this.internalRestartFailed && this.recoveryOwnsCurrentTurn()) return false;
+    if (!this.recoveryOwnsCurrentTurn() && opts.ownsTurn && !opts.ownsTurn()) return true;
     return !this.isRunning();
   }
 
@@ -1004,10 +1008,11 @@ export class MessageQueue {
     const deliveryGate = new Promise<void>((resolve) => {
       resolveDeliveryGate = resolve;
     });
-    const stopEpochBeforeRestart = this.stopEpoch;
-    const restartAbortedByStop = () => this.stopEpoch > stopEpochBeforeRestart + 1;
+    const clearEpochBeforeRestart = this.clearEpoch;
+    let abortedByStop = false;
     const beforeStart = () => {
-      if (restartAbortedByStop()) {
+      if (this.clearEpoch > clearEpochBeforeRestart) {
+        abortedByStop = true;
         throw new Error('user stop observed during the recovery restart; aborting the replacement');
       }
       this.setDeliveryGate(deliveryGate);
@@ -1015,7 +1020,6 @@ export class MessageQueue {
         this.enqueueMidTurnCompaction(opts, 'mid-turn-restart');
       }
     };
-    this.recoveryRestarted = true;
     this.internalRestartInFlight = true;
     const restart = opts
       .restart({ beforeStart })
@@ -1025,7 +1029,7 @@ export class MessageQueue {
             `session ${opts.sessionId}:`,
           error
         );
-        if (restartAbortedByStop()) {
+        if (abortedByStop) {
           opts.onResumeClear();
           return;
         }
@@ -1045,6 +1049,7 @@ export class MessageQueue {
       })
       .finally(() => {
         this.internalRestartInFlight = false;
+        this.recoveryRestartEpoch = this.stopEpoch;
         if (this.earlyGateReleasePending) {
           this.earlyGateReleasePending = false;
           this.releaseEarlyDeliveryGate();

@@ -1562,11 +1562,19 @@ export class AgentSession
         const repo = this.db.getSDKMessageRepo();
         const kickoff = repo.getUserMessageContentByUuid(this.session.id, uuid);
         if (kickoff === null || kickoff === undefined) return undefined;
-        const batchUuids = this.db
-          .getJobQueueRepo?.()
-          ?.getActiveDeliveryBatchUuids?.(this.session.id, uuid);
-        if (batchUuids && batchUuids.length > 1) {
-          return this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids).content;
+        try {
+          const batchUuids = this.db
+            .getJobQueueRepo?.()
+            ?.getActiveDeliveryBatchUuids?.(this.session.id, uuid);
+          if (batchUuids && batchUuids.length > 1) {
+            return this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids).content;
+          }
+        } catch (error) {
+          this.logger.warn(
+            `batch content rebuild for evicted survivor ${uuid} in session ${this.session.id} ` +
+              `failed; falling back to the recovered kickoff content:`,
+            error
+          );
         }
         return kickoff;
       },

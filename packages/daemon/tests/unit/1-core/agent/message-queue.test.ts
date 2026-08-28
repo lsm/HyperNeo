@@ -2334,7 +2334,7 @@ describe('MessageQueue', () => {
         cancelAsyncMessage: async () => false,
         restart: async (options) => {
           q.stop();
-          q.stop();
+          q.clear();
           await options?.beforeStart?.();
         },
         onResumeClear,
@@ -2349,6 +2349,85 @@ describe('MessageQueue', () => {
       expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
       expect(onResumeClear).toHaveBeenCalledTimes(1);
     });
+
+    it('does not abort the recovery restart on its own teardown stops', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-teardown-stops', 'teardown-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-teardown-stops'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async (options) => {
+          q.stop();
+          q.stop();
+          q.stop();
+          await options?.beforeStart?.();
+          q.start();
+        },
+        onResumeClear,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-teardown-stops', 'teardown-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(true);
+      expect(onResumeClear).not.toHaveBeenCalled();
+      q.stop();
+    });
+
+    it('stands down a late receipt after the recovery replacement was stopped', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-stale-receipt', 'stale-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      let ownsTurn = true;
+      const opts = makeInterruptOpts({
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => true,
+        ownsTurn: () => ownsTurn,
+        restart: async (options) => {
+          q.stop();
+          ownsTurn = false;
+          await options?.beforeStart?.();
+          q.start();
+        },
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      q.stop();
+      q.start();
+      releaseInterrupt({ still_queued: ['uuid-stale-receipt'] });
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy).not.toHaveBeenCalledWith(
+        'uuid-stale-receipt',
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      );
+      q.stop();
+    }, 15_000);
 
     it('preserves a late receipt that arrives during the recovery restart', async () => {
       const q = new MessageQueue();

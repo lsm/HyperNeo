@@ -572,4 +572,40 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       { durable: true, prepend: true }
     );
   });
+
+  it('falls back to the recovered kickoff when the batch lookup throws', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: (sessionId: string, uuid: string) => string | null;
+          markDeliveryRetryableByUuid: () => string | null;
+        };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-batch-throw' ? 'kickoff-only' : null,
+      markDeliveryRetryableByUuid: () => null,
+    });
+    (
+      session.db as unknown as {
+        getJobQueueRepo: () => { getActiveDeliveryBatchUuids: () => string[] | null };
+      }
+    ).getJobQueueRepo = () => ({
+      getActiveDeliveryBatchUuids: () => {
+        throw new Error('sqlite busy');
+      },
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-batch-throw'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy).toHaveBeenCalledWith('uuid-batch-throw', 'kickoff-only', false, {
+      durable: true,
+      prepend: true,
+    });
+  });
 });
