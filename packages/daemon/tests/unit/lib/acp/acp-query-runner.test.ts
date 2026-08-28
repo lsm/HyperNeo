@@ -181,6 +181,7 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     clear: mock(() => {}),
     size: mock(() => overrides.queueSize ?? 0),
     enqueueWithId: mock(async () => {}),
+    requeueYielded: mock(() => true),
     onMessageEnqueued: undefined,
     messageGenerator: mock(generatorFactory),
   } as unknown as MessageQueue;
@@ -934,6 +935,7 @@ describe('AcpQueryRunner', () => {
 
         expect(client.cancel).not.toHaveBeenCalled();
         expect(client.close).not.toHaveBeenCalled();
+        expect(ctx.startupTimeoutTimer).toBeNull();
         expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
 
         releaseInitialize?.();
@@ -1036,6 +1038,64 @@ describe('AcpQueryRunner', () => {
       await ctx.queryPromise;
 
       expect(handler.markACPDeliveryFailed).not.toHaveBeenCalled();
+    }, 1000);
+
+    test('a stale prompt-loop break requeues the yielded prompt for the successor', async () => {
+      const { runner, ctx, messageQueue, onSent } = createRunnerFixture();
+      let releaseSetProcessing: (() => void) | undefined;
+      (ctx.stateManager as unknown as { setProcessing: ReturnType<typeof mock> }).setProcessing =
+        mock(async () => {
+          await new Promise<void>((resolve) => {
+            releaseSetProcessing = resolve;
+          });
+        });
+
+      await runner.start();
+      for (let i = 0; i < 100 && !releaseSetProcessing; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      ctx.attemptTokens.invalidateCurrent();
+
+      releaseSetProcessing?.();
+      await ctx.queryPromise;
+
+      expect(messageQueue.requeueYielded).toHaveBeenCalledWith('user-message-1');
+      expect(onSent).not.toHaveBeenCalled();
+    }, 1000);
+
+    test('a stale handshake skips persisting session results after a replacement', async () => {
+      const client = createMockClient();
+      client.canLoadSession.mockImplementation(() => true);
+      let releaseLoad: (() => void) | undefined;
+      client.loadSession.mockImplementation(async () => {
+        await new Promise<void>((resolve) => {
+          releaseLoad = resolve;
+        });
+        return { sessionId: 'acp-session-1', configOptions: [] };
+      });
+      const { runner, ctx } = createRunnerFixture({
+        client,
+        session: { acpSessionId: 'preset-acp-session' } as Partial<Session>,
+      });
+
+      await runner.start();
+      for (let i = 0; i < 100 && !releaseLoad; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      ctx.incrementQueryGeneration();
+      ctx.attemptTokens.allocate();
+
+      releaseLoad?.();
+      await ctx.queryPromise;
+
+      expect(ctx.session.acpSessionId).toBe('preset-acp-session');
+      expect(ctx.db.updateSession).not.toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: 'acp-session-1' })
+      );
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
     }, 1000);
   });
 

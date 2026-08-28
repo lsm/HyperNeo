@@ -423,6 +423,12 @@ export class AcpQueryRunner {
         : QueryAttemptRegistry.detached();
     const attemptOwnsRun = () =>
       attemptToken.isLive() && this.ctx.getQueryGeneration() === queryGeneration;
+    const requeueYieldedPrompt = (yieldedMessage: SDKUserMessage) => {
+      const yieldedUuid = yieldedMessage.uuid;
+      if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
+        logger.warn(`ACP prompt loop: could not requeue yielded prompt ${yieldedUuid}.`);
+      }
+    };
     const assertActiveAcpStartup = () => {
       if (
         this.ctx.isCleaningUp() ||
@@ -577,7 +583,14 @@ export class AcpQueryRunner {
               startupTimeoutReached = false;
               queryStartTime = Date.now();
               this.ctx.startupTimeoutTimer = setTimeout(() => {
-                if (!attemptOwnsRun()) return;
+                if (!attemptOwnsRun()) {
+                  const firedTimer = this.ctx.startupTimeoutTimer;
+                  if (firedTimer) {
+                    clearTimeout(firedTimer);
+                    this.ctx.startupTimeoutTimer = null;
+                  }
+                  return;
+                }
                 if (!hasFirstMessage()) {
                   startupTimeoutReached = true;
                   const elapsed = Date.now() - queryStartTime;
@@ -718,13 +731,17 @@ export class AcpQueryRunner {
 
         try {
           const result = await acpClient.loadSession(existingAcpSessionId, cwd, acpMcpServers);
-          this.persistAcpSessionId(result.sessionId);
-          this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
+          if (attemptOwnsRun()) {
+            this.persistAcpSessionId(result.sessionId);
+            this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
+          }
         } catch (loadError) {
           try {
             const result = await acpClient.resumeSession(existingAcpSessionId, cwd, acpMcpServers);
-            this.persistAcpSessionId(result.sessionId);
-            this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
+            if (attemptOwnsRun()) {
+              this.persistAcpSessionId(result.sessionId);
+              this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
+            }
           } catch (resumeError) {
             const loadMessage = loadError instanceof Error ? loadError.message : String(loadError);
             const resumeMessage =
@@ -739,12 +756,14 @@ export class AcpQueryRunner {
         }
       } else {
         const result = await acpClient.createSession(cwd, acpMcpServers);
-        this.persistAcpSessionId(result.sessionId);
-        this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
+        if (attemptOwnsRun()) {
+          this.persistAcpSessionId(result.sessionId);
+          this.updateAcpModelCache(result.configOptions, { syncSessionModel: false });
+        }
         createdAcpSessionDuringRun = true;
       }
-      await this.applyStoredAcpModel(acpClient);
-      await this.applyStoredAcpThinkingLevel(acpClient);
+      await this.applyStoredAcpModel(acpClient, attemptOwnsRun);
+      await this.applyStoredAcpThinkingLevel(acpClient, attemptOwnsRun);
       assertActiveAcpStartup();
       this.updateAcpModelCache(acpClient.getConfigOptions());
       startupHandshakeActive = false;
@@ -773,17 +792,26 @@ export class AcpQueryRunner {
 
         const queuedMessage = message as SDKUserMessage & { internal?: boolean };
         if (!queuedMessage.internal) {
-          if (!attemptOwnsRun()) break;
+          if (!attemptOwnsRun()) {
+            requeueYieldedPrompt(message);
+            break;
+          }
           await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
-          if (!attemptOwnsRun()) break;
+          if (!attemptOwnsRun()) {
+            requeueYieldedPrompt(message);
+            break;
+          }
           this._lastConsumedUserMessage = {
             uuid: message.uuid ?? '',
             content: (message.message?.content ?? '') as unknown as string | MessageContent[],
           };
         }
 
-        await this.applyStoredAcpThinkingLevel(acpClient);
-        if (!attemptOwnsRun()) break;
+        await this.applyStoredAcpThinkingLevel(acpClient, attemptOwnsRun);
+        if (!attemptOwnsRun()) {
+          requeueYieldedPrompt(message);
+          break;
+        }
 
         const promptContent = prependInstructionsToNextPrompt
           ? [...instructionBlocks, ...toAcpPromptContent(message)]
@@ -1312,7 +1340,10 @@ export class AcpQueryRunner {
     db.updateSession(session.id, { metadata: session.metadata });
   }
 
-  private async applyStoredAcpModel(client: AcpClient): Promise<void> {
+  private async applyStoredAcpModel(
+    client: AcpClient,
+    ownsRun: () => boolean = () => true
+  ): Promise<void> {
     const storedModel = this.ctx.session.config.model;
     if (storedModel === 'acp-default') return;
 
@@ -1321,10 +1352,13 @@ export class AcpQueryRunner {
     if (!flattenConfigChoices(modelOption).some((choice) => choice.value === storedModel)) return;
 
     const configOptions = await client.setConfigOption(modelOption.id, storedModel);
-    this.updateAcpModelCache(configOptions);
+    if (ownsRun()) this.updateAcpModelCache(configOptions);
   }
 
-  private async applyStoredAcpThinkingLevel(client: AcpClient): Promise<void> {
+  private async applyStoredAcpThinkingLevel(
+    client: AcpClient,
+    ownsRun: () => boolean = () => true
+  ): Promise<void> {
     const thinkingLevel = this.ctx.session.config.thinkingLevel;
     if (!thinkingLevel) return;
 
@@ -1336,7 +1370,7 @@ export class AcpQueryRunner {
     if (option.currentValue === value) return;
 
     const configOptions = await client.setConfigOption(option.id, value);
-    this.updateAcpModelCache(configOptions);
+    if (ownsRun()) this.updateAcpModelCache(configOptions);
   }
 
   private persistAcpContextUsageEstimate(used: number): void {
