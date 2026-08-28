@@ -390,6 +390,76 @@ describe('discovery-refresh pipeline helpers', () => {
       expect(restored).toEqual(['mock']);
       expect(JSON.parse(store.get('row-1')!.configJson!)).toEqual({ a: 2 });
     });
+
+    it('skips snapshot restores when a cache clear caused the supersession', async () => {
+      let resolveLoad: () => void = () => {};
+      const load = new Promise<void>((resolve) => {
+        resolveLoad = resolve;
+      });
+      const { repo, store } = createMockProviderRepo(makeRecord({ configJson: '{"a":1}' }));
+      const restored: string[] = [];
+      const deps = makeDeps({
+        providerRepo: repo,
+        applyDiscoveredProviderModels: ((_providerId: string, models: ModelInfo[]) => ({
+          applied: false,
+          models,
+        })) as CommitSavedConfigDiscoveryRefreshDeps['applyDiscoveredProviderModels'],
+        getModelsCache: () => new Map(),
+        getCurrentCacheLoad: () => load,
+        getModelsCacheClearSequence: () => 6,
+        restoreProviderModelsSlice: (providerId: string) => restored.push(providerId),
+      });
+      const run = applyDiscoveredSliceToLiveCache(
+        makeCtx({
+          deps,
+          clearsAtStart: 5,
+          persistedConfig: { configJson: JSON.stringify({ a: 1 }) },
+          originalConfigJson: '{"orig":1}',
+        })
+      );
+      resolveLoad();
+      const out = await run;
+      expect(out.outcome).toEqual({ success: false, reason: 'superseded' });
+      expect(restored).toEqual([]);
+      expect(JSON.parse(store.get('row-1')!.configJson!)).toEqual({ orig: 1 });
+    });
+
+    it('keeps the pre-apply slice for rollback across the deferred retry', async () => {
+      let resolveLoad: () => void = () => {};
+      const load = new Promise<void>((resolve) => {
+        resolveLoad = resolve;
+      });
+      const { repo } = createMockProviderRepo(
+        makeRecord({ configJson: '{"a":1}', baseUrl: undefined })
+      );
+      const cacheMap = new Map<string, ModelInfo[]>();
+      let applyCalls = 0;
+      const deps = makeDeps({
+        providerRepo: repo,
+        provider: new FakeProvider(null),
+        applyDiscoveredProviderModels: ((_providerId: string, models: ModelInfo[]) => {
+          applyCalls += 1;
+          return { applied: applyCalls > 1, models };
+        }) as CommitSavedConfigDiscoveryRefreshDeps['applyDiscoveredProviderModels'],
+        getModelsCache: (() => cacheMap) as CommitSavedConfigDiscoveryRefreshDeps['getModelsCache'],
+        getCurrentCacheLoad: () =>
+          load.then(() => {
+            cacheMap.set('global', [makeModel('mock-1'), makeModel('mock-2')]);
+          }),
+      });
+      const run = applyDiscoveredSliceToLiveCache(
+        makeCtx({
+          deps,
+          credentialsAtStart: 'null',
+          persistedConfig: { configJson: JSON.stringify({ a: 1 }) },
+        })
+      );
+      resolveLoad();
+      const out = await run;
+      expect(out.outcome).toBeUndefined();
+      expect(out.appliedSlice!.map((model) => model.id)).toEqual(['mock-1', 'mock-2']);
+      expect(out.previousSlice).toEqual([]);
+    });
   });
 
   describe('revalidateBeforeCommittingSuccess', () => {
@@ -413,6 +483,31 @@ describe('discovery-refresh pipeline helpers', () => {
       expect(out.outcome).toEqual({ success: false, reason: 'superseded' });
       expect(restored).toEqual(['mock']);
       expect(overlays).toEqual([undefined]);
+      expect(JSON.parse(store.get('row-1')!.configJson!)).toEqual({ original: 1 });
+    });
+
+    it('skips snapshot restores when a cache clear caused the supersession', async () => {
+      const { repo, store } = createMockProviderRepo(makeRecord({ configJson: '{"persisted":1}' }));
+      const restored: string[] = [];
+      const overlays: Array<ModelInfo[] | undefined> = [];
+      const deps = makeDeps({
+        providerRepo: repo,
+        getModelsCacheClearSequence: () => 6,
+        restoreProviderModelsSlice: (providerId: string) => restored.push(providerId),
+        restoreProviderPendingSlice: (_providerId, slice) => overlays.push(slice),
+      });
+      const out = await revalidateBeforeCommittingSuccess(
+        makeCtx({
+          deps,
+          clearsAtStart: 5,
+          persistedConfig: { configJson: store.get('row-1')!.configJson },
+          originalConfigJson: '{"original":1}',
+          previousSlice: [makeModel('prior-1')],
+        })
+      );
+      expect(out.outcome).toEqual({ success: false, reason: 'superseded' });
+      expect(restored).toEqual([]);
+      expect(overlays).toEqual([]);
       expect(JSON.parse(store.get('row-1')!.configJson!)).toEqual({ original: 1 });
     });
 

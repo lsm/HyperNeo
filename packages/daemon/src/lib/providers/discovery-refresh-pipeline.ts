@@ -371,8 +371,10 @@ export async function applyDiscoveredSliceToLiveCache(
   );
   const currentRow = ctx.deps.providerRepo.getProvider(ctx.rowId);
   if (supersededDuringWait) {
-    ctx.deps.restoreProviderPendingSlice(ctx.providerId, previousOverlay);
-    ctx.deps.restoreProviderModelsSlice(ctx.providerId, previousSlice);
+    if (ctx.deps.getModelsCacheClearSequence() === ctx.clearsAtStart) {
+      ctx.deps.restoreProviderPendingSlice(ctx.providerId, previousOverlay);
+      ctx.deps.restoreProviderModelsSlice(ctx.providerId, previousSlice);
+    }
     if (currentRow && currentRow.configJson === ctx.persistedConfig!.configJson) {
       ctx.deps.providerRepo.updateProvider(ctx.rowId, { configJson: ctx.originalConfigJson });
     }
@@ -384,9 +386,6 @@ export async function applyDiscoveredSliceToLiveCache(
       outcome: { success: false, reason: 'superseded' },
     };
   }
-  const retryPreviousSlice = (ctx.deps.getModelsCache().get('global') ?? []).filter(
-    (model) => model.provider === ctx.providerId
-  );
   const retryApply = ctx.deps.applyDiscoveredProviderModels(
     ctx.providerId,
     normalizedDiscovered,
@@ -406,7 +405,7 @@ export async function applyDiscoveredSliceToLiveCache(
     ...ctx,
     normalizedDiscovered,
     appliedSlice: retryApply.models,
-    previousSlice: retryPreviousSlice,
+    previousSlice,
     previousOverlay,
   };
 }
@@ -428,8 +427,10 @@ export async function revalidateBeforeCommittingSuccess(
     return ctx;
   }
   const currentRow = ctx.deps.providerRepo.getProvider(ctx.rowId);
-  ctx.deps.restoreProviderPendingSlice(ctx.providerId, ctx.previousOverlay);
-  ctx.deps.restoreProviderModelsSlice(ctx.providerId, ctx.previousSlice ?? []);
+  if (ctx.deps.getModelsCacheClearSequence() === ctx.clearsAtStart) {
+    ctx.deps.restoreProviderPendingSlice(ctx.providerId, ctx.previousOverlay);
+    ctx.deps.restoreProviderModelsSlice(ctx.providerId, ctx.previousSlice ?? []);
+  }
   if (currentRow && currentRow.configJson === ctx.persistedConfig!.configJson) {
     ctx.deps.providerRepo.updateProvider(ctx.rowId, { configJson: ctx.originalConfigJson });
   }
