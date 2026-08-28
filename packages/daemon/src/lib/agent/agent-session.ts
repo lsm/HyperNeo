@@ -1597,7 +1597,7 @@ export class AgentSession
         },
       });
     } finally {
-      this.messageQueue.releaseEarlyDeliveryGate();
+      this.messageQueue.releaseEarlyDeliveryGate(opts);
     }
   }
 

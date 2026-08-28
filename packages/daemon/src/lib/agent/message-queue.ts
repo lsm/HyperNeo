@@ -10,6 +10,13 @@ import type {
 } from './mid-turn-budget-pipeline.ts';
 import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
 import { buildQueueTimeoutError, resolveQueueTimeout } from './message-queue-timeout-policy.ts';
+import {
+  evictedYieldKey,
+  ownsLastYield as ownsLastYieldGate,
+  ownsYieldedGeneration as ownsYieldedGenerationGate,
+  type YieldedRowSnapshot,
+  type YieldGenerationStamp,
+} from './yield-ownership-gates.ts';
 
 function isToolResultContent(content: MessageContent): content is ToolResultContent {
   return content.type === 'tool_result' && 'tool_use_id' in content;
@@ -40,6 +47,8 @@ interface QueuedMessage {
   durable?: boolean;
   onResolved?: () => void;
   onRejected?: (error: Error) => void;
+  yieldAttempt?: unknown;
+  yieldQueryGeneration?: number;
 }
 
 export interface MidTurnBudgetInterruptOptions {
@@ -58,6 +67,7 @@ export interface MidTurnBudgetInterruptOptions {
   onResumeClear: () => void;
   onSurvivorRequeued?: (uuid: string) => void;
   getDurableMessageContent?: (uuid: string) => string | MessageContent[] | undefined;
+  ownsTurn?: () => boolean;
 }
 
 export interface MidTurnLateWindow {
@@ -66,6 +76,7 @@ export interface MidTurnLateWindow {
 }
 
 export interface MidTurnQueueSeam {
+  noteBudgetCycleStarted(): void;
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void;
   awaitInterruptDeadline(opts: MidTurnBudgetInterruptOptions): Promise<MidTurnInterruptDeadline>;
   standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean;
@@ -96,8 +107,24 @@ export class MessageQueue {
   private running: boolean = false;
   private timeoutMs: number = MESSAGE_QUEUE_TIMEOUT_MS;
   private deliveryGate: Promise<void> | null = null;
-  private resolveEarlyDeliveryGate: (() => void) | undefined;
+  private earlyDeliveryGateResolvers = new Map<MidTurnBudgetInterruptOptions, () => void>();
   private internalRestartInFlight: boolean = false;
+  private internalRestartFailed: boolean = false;
+  private internalRestartFailedClearEpoch: number = 0;
+  private internalRestartFailedInterruptEpoch: number = 0;
+  private recoveryRestartEpoch: number | undefined;
+  private earlyGateReleasePending: Array<() => void> = [];
+  private stopEpoch: number = 0;
+  private userInterruptEpoch: number = 0;
+  private cycleStoodDown: boolean = false;
+  private cycleArmClearEpoch: number = 0;
+  private cycleArmUserInterruptEpoch: number = 0;
+  private budgetCycleClearEpoch: number = 0;
+  private budgetCycleUserInterruptEpoch: number = 0;
+  private requeuedByCycle: WeakMap<MidTurnBudgetInterruptOptions, string[]> = new WeakMap();
+  private recoveryRestartChain: Promise<void> = Promise.resolve();
+  private lastYieldGenerations: Map<string, YieldGenerationStamp> = new Map();
+  private evictedYieldEpochs: Set<string> = new Set();
   private midTurnBoundarySeq: number = 0;
   private promptPhaseBoundarySeq: number = 0;
   private midTurnCompactionQueued: boolean = false;
@@ -132,6 +159,7 @@ export class MessageQueue {
   noteInternalCompactionSent(message: QueuedMessage): void {
     if (this.isInternalCompaction(message)) {
       this.midTurnCompactionQueued = false;
+      this.internalRestartFailed = false;
       this.internalCompactionsAwaitingBoundary += 1;
       this.internalCompactionIdsAwaitingBoundary.add(message.id);
     } else {
@@ -392,6 +420,7 @@ export class MessageQueue {
   }
 
   clear(): void {
+    this.stopEpoch += 1;
     this.clearEpoch += 1;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     const rejectedCompactions =
@@ -432,6 +461,10 @@ export class MessageQueue {
 
   getClearEpoch(): number {
     return this.clearEpoch;
+  }
+
+  noteUserInterrupt(): void {
+    this.userInterruptEpoch += 1;
   }
 
   remove(messageId: string): boolean {
@@ -482,7 +515,52 @@ export class MessageQueue {
     return false;
   }
 
-  acknowledgeYielded(messageId: string): boolean {
+  ownsYieldedGeneration(messageId: string, generation: number | null | undefined): boolean {
+    return ownsYieldedGenerationGate({
+      yielded: [...this.yielded].map(
+        (message): YieldedRowSnapshot => ({
+          id: message.id,
+          yieldQueryGeneration: message.yieldQueryGeneration,
+        })
+      ),
+      lastYieldGenerations: this.lastYieldGenerations,
+      messageId,
+      generation,
+    });
+  }
+
+  ownsLastYield(messageId: string, generation: number | null | undefined): boolean {
+    return ownsLastYieldGate({
+      lastYieldGenerations: this.lastYieldGenerations,
+      evictedYieldEpochs: this.evictedYieldEpochs,
+      messageId,
+      generation,
+      stopEpoch: this.stopEpoch,
+    });
+  }
+
+  private isTrackedMessageId(messageId: string): boolean {
+    return (
+      this.queue.some((message) => message.id === messageId) ||
+      [...this.claimed].some((message) => message.id === messageId) ||
+      [...this.yielded].some((message) => message.id === messageId)
+    );
+  }
+
+  private recordEvictedYieldEpoch(stamp: YieldGenerationStamp): void {
+    const evictedKey = evictedYieldKey(stamp.generation, stamp.stopEpoch);
+    if (this.evictedYieldEpochs.has(evictedKey)) return;
+    this.evictedYieldEpochs.add(evictedKey);
+    if (this.evictedYieldEpochs.size > 256) {
+      const oldestEpoch = this.evictedYieldEpochs.values().next().value;
+      if (oldestEpoch !== undefined) {
+        this.evictedYieldEpochs.delete(oldestEpoch);
+      }
+    }
+  }
+
+  acknowledgeYielded(messageId: string, fromQueryGeneration?: number): boolean {
+    if (!this.ownsYieldedGeneration(messageId, fromQueryGeneration ?? null)) return false;
     for (const message of this.yielded) {
       if (message.id !== messageId) continue;
       this.yielded.delete(message);
@@ -493,15 +571,20 @@ export class MessageQueue {
     return false;
   }
 
-  requeueYielded(messageId: string): boolean {
+  requeueYielded(messageId: string, options?: { durable?: boolean }): boolean {
     for (const message of this.yielded) {
       if (message.id !== messageId) continue;
       this.yielded.delete(message);
+      message.yieldAttempt = undefined;
+      if (options?.durable) {
+        message.durable = true;
+      }
       if (message.timeoutId) {
         clearTimeout(message.timeoutId);
         message.timeoutId = undefined;
       }
       this.queue.unshift(message);
+      this.wakeWaiters();
       return true;
     }
     return false;
@@ -552,6 +635,7 @@ export class MessageQueue {
   }
 
   stop(): void {
+    this.stopEpoch += 1;
     this.running = false;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     const rejectedCompactions =
@@ -576,7 +660,7 @@ export class MessageQueue {
 
   async *messageGenerator(
     sessionId: string,
-    options?: { suppressPreYieldCallback?: boolean }
+    options?: { suppressPreYieldCallback?: boolean; queryGeneration?: number }
   ): AsyncGenerator<{ message: SDKUserMessage; onSent: () => void }> {
     const myGeneration = this.generation;
 
@@ -637,9 +721,40 @@ export class MessageQueue {
       if (!queuedMessage.timeoutId) {
         this.armQueueTimeout(queuedMessage);
       }
+      const yieldAttempt: unknown = {};
+      queuedMessage.yieldAttempt = yieldAttempt;
+      queuedMessage.yieldQueryGeneration = options?.queryGeneration;
+      if (options?.queryGeneration !== undefined) {
+        this.lastYieldGenerations.set(queuedMessage.id, {
+          generation: options.queryGeneration,
+          stopEpoch: this.stopEpoch,
+        });
+        if (this.lastYieldGenerations.size > 64) {
+          const retainedIds = [...this.lastYieldGenerations.keys()];
+          for (const retainedId of retainedIds) {
+            if (this.lastYieldGenerations.size <= 64) break;
+            if (this.isTrackedMessageId(retainedId)) continue;
+            const retainedStamp = this.lastYieldGenerations.get(retainedId);
+            if (retainedStamp && retainedStamp.stopEpoch !== this.stopEpoch) continue;
+            if (retainedStamp) {
+              this.recordEvictedYieldEpoch(retainedStamp);
+            }
+            this.lastYieldGenerations.delete(retainedId);
+          }
+          for (const retainedId of retainedIds) {
+            if (this.lastYieldGenerations.size <= 256) break;
+            const evictedStamp = this.lastYieldGenerations.get(retainedId);
+            if (evictedStamp) {
+              this.recordEvictedYieldEpoch(evictedStamp);
+            }
+            this.lastYieldGenerations.delete(retainedId);
+          }
+        }
+      }
       yield {
         message: sdkUserMessage,
         onSent: () => {
+          if (queuedMessage.yieldAttempt !== yieldAttempt) return;
           if (this.yielded.delete(queuedMessage)) {
             this.noteInternalCompactionSent(queuedMessage);
             queuedMessage.resolve(queuedMessage.id);
@@ -697,7 +812,16 @@ export class MessageQueue {
     return null;
   }
 
+  noteBudgetCycleStarted(): void {
+    this.budgetCycleClearEpoch = this.clearEpoch;
+    this.budgetCycleUserInterruptEpoch = this.userInterruptEpoch;
+  }
+
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
+    this.internalRestartFailed = false;
+    this.cycleStoodDown = false;
+    this.cycleArmClearEpoch = this.budgetCycleClearEpoch;
+    this.cycleArmUserInterruptEpoch = this.budgetCycleUserInterruptEpoch;
     this.promptPhaseBoundarySeq = this.midTurnBoundarySeq;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
@@ -706,14 +830,20 @@ export class MessageQueue {
         `(provider=${opts.providerId}, budget=${opts.budgetKey} tokens)`
     );
     const earlyDeliveryGate = new Promise<void>((resolve) => {
-      this.resolveEarlyDeliveryGate = resolve;
+      this.earlyDeliveryGateResolvers.set(opts, resolve);
     });
     this.setDeliveryGate(earlyDeliveryGate);
   }
 
-  releaseEarlyDeliveryGate(): void {
-    this.resolveEarlyDeliveryGate?.();
-    this.resolveEarlyDeliveryGate = undefined;
+  releaseEarlyDeliveryGate(opts: MidTurnBudgetInterruptOptions): void {
+    const resolve = this.earlyDeliveryGateResolvers.get(opts);
+    if (!resolve) return;
+    this.earlyDeliveryGateResolvers.delete(opts);
+    if (this.internalRestartInFlight) {
+      this.earlyGateReleasePending.push(resolve);
+      return;
+    }
+    resolve();
   }
 
   async awaitInterruptDeadline(
@@ -760,12 +890,27 @@ export class MessageQueue {
     return { promise: interruptPromise, timedOut, hardFailed, receipt };
   }
 
-  standsDownFor(_opts: MidTurnBudgetInterruptOptions): boolean {
+  private recoveryOwnsCurrentTurn(): boolean {
+    return this.recoveryRestartEpoch !== undefined && this.stopEpoch === this.recoveryRestartEpoch;
+  }
+
+  standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean {
     if (this.internalRestartInFlight) return false;
+    if (this.cycleStoodDown) return true;
+    if (
+      this.internalRestartFailed &&
+      !this.isRunning() &&
+      this.clearEpoch === this.internalRestartFailedClearEpoch &&
+      this.userInterruptEpoch === this.internalRestartFailedInterruptEpoch
+    ) {
+      return false;
+    }
+    if (!this.recoveryOwnsCurrentTurn() && opts.ownsTurn && !opts.ownsTurn()) return true;
     return !this.isRunning();
   }
 
   async runMidTurnBudgetInterrupt(opts: MidTurnBudgetInterruptOptions): Promise<void> {
+    this.noteBudgetCycleStarted();
     this.armInterruptCycle(opts);
     try {
       await runMidTurnBudgetPipeline({
@@ -777,7 +922,7 @@ export class MessageQueue {
         decideCompaction: undefined,
       });
     } finally {
-      this.releaseEarlyDeliveryGate();
+      this.releaseEarlyDeliveryGate(opts);
     }
   }
 
@@ -819,7 +964,7 @@ export class MessageQueue {
   }
 
   shouldEnqueueLateCompaction(removedPendingCompactions: number): boolean {
-    return removedPendingCompactions > 0;
+    return removedPendingCompactions > 0 || this.internalRestartFailed;
   }
 
   noteBoundaryCompleted(): void {
@@ -848,6 +993,7 @@ export class MessageQueue {
         opts,
         queue: this,
         phase: 'late-receipt',
+        preArmed: true,
         lateReceipt: receipt,
         checkEligibility: undefined,
         refreshUsage: undefined,
@@ -912,7 +1058,13 @@ export class MessageQueue {
   }
 
   requeueInterruptSurvivors(opts: MidTurnBudgetInterruptOptions, uuids: string[]): void {
+    let requeuedIds = this.requeuedByCycle.get(opts);
+    if (!requeuedIds) {
+      requeuedIds = [];
+      this.requeuedByCycle.set(opts, requeuedIds);
+    }
     for (let index = uuids.length - 1; index >= 0; index--) {
+      requeuedIds.push(uuids[index]);
       this.requeueInterruptSurvivor(opts, uuids[index]);
     }
   }
@@ -924,6 +1076,22 @@ export class MessageQueue {
           `${opts.sessionId}; a replacement compaction is enqueued after survivor ` +
           `processing`
       );
+      return;
+    }
+    if (this.requeueYielded(uuid, { durable: true })) {
+      opts.logger.info(
+        `requeued cancelled survivor ${uuid} for session ${opts.sessionId} from its ` +
+          `live in-flight entry before send acknowledgment`
+      );
+      try {
+        opts.onSurvivorRequeued?.(uuid);
+      } catch (error) {
+        opts.logger.warn(
+          `retryable-state update for requeued survivor ${uuid} failed for session ` +
+            `${opts.sessionId}:`,
+          error
+        );
+      }
       return;
     }
     let content = this.getSentPromptContent(uuid);
@@ -969,11 +1137,78 @@ export class MessageQueue {
   }
 
   async finishSurvivorTeardownWithRestart(opts: MidTurnBudgetInterruptOptions): Promise<void> {
+    const previousChain = this.recoveryRestartChain;
+    let releaseChain: () => void = () => {};
+    this.recoveryRestartChain = new Promise<void>((resolve) => {
+      releaseChain = resolve;
+    });
+    let chainReleased = false;
+    const releaseChainOnce = () => {
+      if (chainReleased) return;
+      chainReleased = true;
+      releaseChain();
+    };
+    let signalStarted: () => void = () => {};
+    const startGate = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    void previousChain.catch(() => {}).then(() => signalStarted());
+    try {
+      await this.runSerializedSurvivorTeardownWithRestart(opts, startGate, releaseChainOnce);
+    } catch (error) {
+      releaseChainOnce();
+      throw error;
+    }
+  }
+
+  private async runSerializedSurvivorTeardownWithRestart(
+    opts: MidTurnBudgetInterruptOptions,
+    startGate: Promise<void>,
+    releaseChain: () => void
+  ): Promise<void> {
+    await startGate;
+    const recoveredIds = this.requeuedByCycle.get(opts) ?? [];
     let resolveDeliveryGate: (() => void) | undefined;
     const deliveryGate = new Promise<void>((resolve) => {
       resolveDeliveryGate = resolve;
     });
+    const clearEpochBeforeRestart = this.cycleArmClearEpoch;
+    const userInterruptEpochBeforeRestart = this.cycleArmUserInterruptEpoch;
+    const stopEpochBeforeRestart = this.stopEpoch;
+    let abortedByStop = false;
+    let restartFailed = false;
+    let stoodDownForUserStop = false;
+    const removeRecoveredEntries = () => {
+      for (const id of recoveredIds) {
+        this.remove(id);
+      }
+      this.removePendingInternalCompactions();
+    };
+    const standDownForUserStop = () => {
+      if (stoodDownForUserStop || abortedByStop) return;
+      if (
+        this.clearEpoch <= clearEpochBeforeRestart &&
+        this.userInterruptEpoch <= userInterruptEpochBeforeRestart
+      ) {
+        return;
+      }
+      stoodDownForUserStop = true;
+      this.cycleStoodDown = true;
+      removeRecoveredEntries();
+      opts.logger.info(
+        `user stop observed while the recovery replacement started for session ` +
+          `${opts.sessionId}; standing requeued work down`
+      );
+      opts.onResumeClear();
+    };
     const beforeStart = () => {
+      if (
+        this.clearEpoch > clearEpochBeforeRestart ||
+        this.userInterruptEpoch > userInterruptEpochBeforeRestart
+      ) {
+        abortedByStop = true;
+        throw new Error('user stop observed during the recovery restart; aborting the replacement');
+      }
       this.setDeliveryGate(deliveryGate);
       if (!this.shouldSuppressPromptPhaseCompaction()) {
         this.enqueueMidTurnCompaction(opts, 'mid-turn-restart');
@@ -988,6 +1223,29 @@ export class MessageQueue {
             `session ${opts.sessionId}:`,
           error
         );
+        if (abortedByStop) {
+          removeRecoveredEntries();
+          this.cycleStoodDown = true;
+          opts.onResumeClear();
+          return;
+        }
+        if (this.stopEpoch === stopEpochBeforeRestart) {
+          opts.logger.info(
+            `query restart for session ${opts.sessionId} failed before any teardown; ` +
+              `standing the cycle down instead of preserving failed-restart recovery`
+          );
+          restartFailed = true;
+          this.cycleStoodDown = true;
+          stoodDownForUserStop = true;
+          removeRecoveredEntries();
+          opts.contextTracker.clearCompactionCooldown();
+          opts.onResumeClear();
+          return;
+        }
+        restartFailed = true;
+        this.internalRestartFailed = true;
+        this.internalRestartFailedClearEpoch = this.clearEpoch;
+        this.internalRestartFailedInterruptEpoch = this.userInterruptEpoch;
         if (!this.hasOutstandingInternalCompaction()) {
           if (!this.shouldSuppressPromptPhaseCompaction()) {
             this.enqueueMidTurnCompaction(opts, 'mid-turn-restart-failed');
@@ -1003,7 +1261,27 @@ export class MessageQueue {
       })
       .finally(() => {
         this.internalRestartInFlight = false;
+        if (
+          !abortedByStop &&
+          !restartFailed &&
+          this.clearEpoch === clearEpochBeforeRestart &&
+          this.userInterruptEpoch === userInterruptEpochBeforeRestart
+        ) {
+          this.recoveryRestartEpoch = this.stopEpoch;
+        }
+        standDownForUserStop();
+        if (this.earlyGateReleasePending.length > 0) {
+          const pendingReleases = this.earlyGateReleasePending;
+          this.earlyGateReleasePending = [];
+          for (const pendingRelease of pendingReleases) {
+            pendingRelease();
+          }
+        }
+        if (!abortedByStop) {
+          resolveDeliveryGate?.();
+        }
       });
+    void restart.then(() => releaseChain());
     await Promise.race([
       restart,
       new Promise<void>((resolve) => {
@@ -1013,7 +1291,6 @@ export class MessageQueue {
         }
       }),
     ]);
-    resolveDeliveryGate?.();
   }
 
   enqueueMidTurnCompaction(opts: MidTurnBudgetInterruptOptions, reason: string): void {
