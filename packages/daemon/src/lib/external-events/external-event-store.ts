@@ -279,32 +279,37 @@ export class ExternalEventStore {
          RETURNING event_id, delivery_key`
       )
       .all(now, createdAtBefore, ...skip) as Array<{ event_id: string; delivery_key: string }>;
-    if (expired.length === 0) return [];
+    if (expired.length > 0) {
+      this.notify();
+      if (this.deliveryTerminalHook) {
+        for (const row of expired) {
+          this.deliveryTerminalHook({
+            eventId: row.event_id,
+            deliveryKey: row.delivery_key,
+            outcome: 'failed',
+            reason: 'ttl_expired',
+          });
+        }
+      }
+    }
 
-    const eventIds = [...new Set(expired.map((row) => row.event_id))];
-    this.db
+    const rollup = this.db
       .prepare(
         `UPDATE space_external_events
          SET state = 'failed', updated_at = ?
          WHERE state = 'published'
-           AND id IN (${eventIds.map(() => '?').join(',')})
+           AND EXISTS (
+             SELECT 1 FROM space_external_event_deliveries d
+             WHERE d.event_id = space_external_events.id
+               AND d.state = 'failed' AND d.failure_reason = 'ttl_expired'
+           )
            AND NOT EXISTS (
              SELECT 1 FROM space_external_event_deliveries d
              WHERE d.event_id = space_external_events.id AND d.state = 'pending'
            )`
       )
-      .run(now, ...eventIds);
-    this.notify();
-    if (this.deliveryTerminalHook) {
-      for (const row of expired) {
-        this.deliveryTerminalHook({
-          eventId: row.event_id,
-          deliveryKey: row.delivery_key,
-          outcome: 'failed',
-          reason: 'ttl_expired',
-        });
-      }
-    }
+      .run(now);
+    if (expired.length === 0 && rollup.changes > 0) this.notify(['space_external_events']);
     return expired.map((row) => ({ eventId: row.event_id, deliveryKey: row.delivery_key }));
   }
 

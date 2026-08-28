@@ -797,6 +797,39 @@ describe('markPendingDeliveriesFailedBefore', () => {
     });
     expect(store.getById('evt-a')!.state).toBe('published');
   });
+
+  test('rolls up an event left published with all-terminal ttl_expired deliveries', () => {
+    store.store(EVENT_A);
+    store.registerExpectedDelivery('evt-a', 'dk-1', TARGET);
+    store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'ttl_expired' });
+    expect(store.getById('evt-a')!.state).toBe('published');
+
+    const expired = store.markPendingDeliveriesFailedBefore(Date.now() - 300_000, new Set());
+
+    expect(expired).toEqual([]);
+    expect(store.getById('evt-a')!.state).toBe('failed');
+  });
+
+  test('sweeps more distinct events than the SQLite host-parameter limit', () => {
+    const now = Date.now();
+    for (let i = 0; i < 1200; i += 1) {
+      const event: ExternalEvent = {
+        ...EVENT_A,
+        id: `evt-bulk-${i}`,
+        dedupeKey: `dedupe-bulk-${i}`,
+      };
+      store.store(event);
+      store.registerExpectedDelivery(event.id, `dk-bulk-${i}`, TARGET);
+      ageEvent(event.id, now - 400_000);
+    }
+
+    const expired = store.markPendingDeliveriesFailedBefore(now - 300_000, new Set(), now);
+
+    expect(expired).toHaveLength(1200);
+    expect(store.getById('evt-bulk-0')!.state).toBe('failed');
+    expect(store.getById('evt-bulk-1199')!.state).toBe('failed');
+    expect(store.summarizePendingDeliveries(now + 1)?.count ?? 0).toBe(0);
+  });
 });
 
 describe('markEventDeliveredIfAllDeliveriesDelivered', () => {
