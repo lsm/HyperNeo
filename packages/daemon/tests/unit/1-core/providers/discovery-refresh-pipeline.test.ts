@@ -321,6 +321,10 @@ describe('discovery-refresh pipeline helpers', () => {
         baseUrl: undefined,
         configJson: store.get('row-1')!.configJson,
       });
+      expect(out.persistedEntries).toEqual([
+        { id: 'mock-2', name: 'Mock 2' },
+        { id: 'mock-1', name: 'mock-1' },
+      ]);
     });
 
     it('clears the provider cache and rethrows when the saved config is unwritable', () => {
@@ -489,6 +493,31 @@ describe('discovery-refresh pipeline helpers', () => {
       expect(out.appliedSlice!.map((model) => model.id)).toEqual(['mock-1', 'mock-2']);
       expect(out.previousSlice).toEqual([]);
     });
+
+    it('seeds from the newly persisted entries rather than the pre-refresh snapshot', async () => {
+      const seededFrom: Array<ReadonlyArray<{ id: string; name?: string }>> = [];
+      const deps = makeDeps({
+        applyDiscoveredProviderModels: ((
+          _providerId: string,
+          models: ModelInfo[],
+          _cacheKey?: string,
+          persistedDiscovered?: ReadonlyArray<{ id: string; name?: string }>
+        ) => {
+          seededFrom.push(persistedDiscovered ?? []);
+          return { applied: true, models };
+        }) as CommitSavedConfigDiscoveryRefreshDeps['applyDiscoveredProviderModels'],
+        getModelsCache: () => new Map([['global', []]]),
+      });
+      const out = await applyDiscoveredSliceToLiveCache(
+        makeCtx({
+          deps,
+          persistedDiscovered: [{ id: 'old-entry' }],
+          persistedEntries: [{ id: 'curated-only', name: 'Curated Only' }],
+        })
+      );
+      expect(out.outcome).toBeUndefined();
+      expect(seededFrom).toEqual([[{ id: 'curated-only', name: 'Curated Only' }]]);
+    });
   });
 
   describe('revalidateBeforeCommittingSuccess', () => {
@@ -580,6 +609,24 @@ describe('discovery-refresh pipeline helpers', () => {
       });
       markRefreshSucceededAndHealthy(makeCtx({ deps, discoveryBaseUrl: 'https://saved' }));
       expect(protectedKeys).toEqual(['global']);
+    });
+
+    it('defers failure-state clearing until the health row is persisted', () => {
+      const marked: string[] = [];
+      const deps = makeDeps({
+        providerRepo: {
+          getProvider: () => makeRecord(),
+          updateProvider: () => {
+            throw new Error('db locked');
+          },
+        } as unknown as ProviderRepository,
+        markProviderRefreshSucceeded: (providerId: string) => {
+          marked.push(providerId);
+          return false;
+        },
+      });
+      expect(() => markRefreshSucceededAndHealthy(makeCtx({ deps }))).toThrow(/db locked/);
+      expect(marked).toEqual([]);
     });
 
     it('publishes providers.changed only when no failure was recovered', () => {

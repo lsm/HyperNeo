@@ -173,7 +173,7 @@ function persistLastGoodDiscoveredModels(
   record: ProviderRecord,
   discovered: ReadonlyArray<{ id: string; name?: string }>,
   endpointFingerprint?: string
-): boolean {
+): LastGoodDiscoveredModels {
   let base: Record<string, unknown> = {};
   if (record.configJson) {
     let parsed: unknown;
@@ -201,7 +201,7 @@ function persistLastGoodDiscoveredModels(
     ...(endpointFingerprint === undefined ? {} : { fingerprint: endpointFingerprint }),
   };
   providerRepo.updateProvider(record.id, { configJson: JSON.stringify(base) });
-  return lastGood.truncated === true;
+  return lastGood;
 }
 
 export function stripPersistedDiscovery(configJson: string | undefined): string | undefined {
@@ -265,6 +265,7 @@ export interface CommitSavedConfigDiscoveryRefreshCtx {
   clearsAtStart: number;
   discovered: ModelInfo[];
   persistedDiscovered: ReadonlyArray<{ id: string; name?: string }>;
+  persistedEntries?: ReadonlyArray<{ id: string; name?: string }>;
   currentRecord?: ProviderRecord | null;
   persistedConfig?: { baseUrl?: string; configJson?: string };
   normalizedDiscovered?: ModelInfo[];
@@ -300,7 +301,7 @@ export async function revalidateSavedConfigUnderLock(
 export function persistLastGoodSlice(
   ctx: CommitSavedConfigDiscoveryRefreshCtx
 ): CommitSavedConfigDiscoveryRefreshCtx {
-  let truncated = false;
+  let persistedLastGood: LastGoodDiscoveredModels = { models: [] };
   try {
     const endpointFingerprint = ctx.deps.provider.getDiscoveryEndpointFingerprint?.(
       ctx.discoveryBaseUrl
@@ -310,7 +311,7 @@ export function persistLastGoodSlice(
         `Provider ${ctx.providerId} cannot persist endpoint-specific discovery without an endpoint fingerprint`
       );
     }
-    truncated = persistLastGoodDiscoveredModels(
+    persistedLastGood = persistLastGoodDiscoveredModels(
       ctx.deps.providerRepo,
       ctx.currentRecord!,
       ctx.discovered,
@@ -322,7 +323,8 @@ export function persistLastGoodSlice(
   }
   return {
     ...ctx,
-    truncated,
+    truncated: persistedLastGood.truncated === true,
+    persistedEntries: persistedLastGood.models,
     persistedConfig: {
       baseUrl: ctx.savedConfig.baseUrl,
       configJson: ctx.deps.providerRepo.getProvider(ctx.rowId)?.configJson,
@@ -334,6 +336,7 @@ export async function applyDiscoveredSliceToLiveCache(
   ctx: CommitSavedConfigDiscoveryRefreshCtx
 ): Promise<CommitSavedConfigDiscoveryRefreshCtx> {
   const normalizedDiscovered = ctx.deps.mergeDiscoveredWithStatic(ctx.providerId, ctx.discovered);
+  const persistedForSeeding = ctx.persistedEntries ?? ctx.persistedDiscovered;
   const previousSlice = (ctx.deps.getModelsCache().get('global') ?? []).filter(
     (model) => model.provider === ctx.providerId
   );
@@ -342,7 +345,7 @@ export async function applyDiscoveredSliceToLiveCache(
     ctx.providerId,
     normalizedDiscovered,
     'global',
-    ctx.persistedDiscovered
+    persistedForSeeding
   );
   if (firstApply.applied) {
     if (ctx.discoveryBaseUrl === undefined) {
@@ -397,7 +400,7 @@ export async function applyDiscoveredSliceToLiveCache(
     ctx.providerId,
     normalizedDiscovered,
     'global',
-    ctx.persistedDiscovered
+    persistedForSeeding
   );
   if (retryApply.applied) {
     if (ctx.discoveryBaseUrl === undefined) {
@@ -446,6 +449,10 @@ export async function revalidateBeforeCommittingSuccess(
 export function markRefreshSucceededAndHealthy(
   ctx: CommitSavedConfigDiscoveryRefreshCtx
 ): CommitSavedConfigDiscoveryRefreshCtx {
+  ctx.deps.providerRepo.updateProvider(ctx.rowId, {
+    healthStatus: 'healthy',
+    lastHealthCheckAt: Date.now(),
+  });
   const recoveredFailure = ctx.deps.markProviderRefreshSucceeded(ctx.providerId);
   if (ctx.discoveryBaseUrl !== undefined) {
     ctx.deps.markModelsCacheSliceProtected('global');
@@ -454,10 +461,6 @@ export function markRefreshSucceededAndHealthy(
     ctx.deps.provider,
     ctx.appliedSlice ?? ctx.normalizedDiscovered ?? ctx.discovered
   );
-  ctx.deps.providerRepo.updateProvider(ctx.rowId, {
-    healthStatus: 'healthy',
-    lastHealthCheckAt: Date.now(),
-  });
   return { ...ctx, recoveredFailure };
 }
 
