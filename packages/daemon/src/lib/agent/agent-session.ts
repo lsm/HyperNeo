@@ -1558,8 +1558,19 @@ export class AgentSession
         this.pendingResumeAfterCompaction = false;
       },
       onSurvivorRequeued: (uuid) => this.reopenDeliveryForRetry(uuid),
-      getDurableMessageContent: (uuid) =>
-        this.db.getSDKMessageRepo().getUserMessageContentByUuid(this.session.id, uuid) ?? undefined,
+      getDurableMessageContent: (uuid) => {
+        const repo = this.db.getSDKMessageRepo();
+        const kickoff = repo.getUserMessageContentByUuid(this.session.id, uuid);
+        if (kickoff === null || kickoff === undefined) return undefined;
+        const batchUuids = this.db
+          .getJobQueueRepo?.()
+          ?.getActiveDeliveryBatchUuids?.(this.session.id, uuid);
+        if (batchUuids && batchUuids.length > 1) {
+          return this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids).content;
+        }
+        return kickoff;
+      },
+      ownsTurn: () => this.queryObject === queryObject,
     };
     try {
       await runMidTurnBudgetPipeline({

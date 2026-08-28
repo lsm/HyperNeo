@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { buildBatchedDeliveryContent } from '../../../../src/lib/agent/message-delivery.ts';
 import type { QueryLike } from '../../../../src/lib/agent/query-like.ts';
 import type {
   DaemonInternalEventMap,
@@ -526,5 +527,49 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       prepend: true,
     });
     expect(retryMock).toHaveBeenCalledWith(expect.any(String), 'uuid-lru-evicted');
+  });
+
+  it('rebuilds evicted batched survivor content from the active batch', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: (sessionId: string, uuid: string) => string | null;
+          markDeliveryRetryableByUuid: () => string | null;
+          getDeliveryContent: (
+            sessionId: string,
+            uuid: string
+          ) => { content: string; sendStatus: string } | null;
+        };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-batch-1' ? 'kickoff-text' : null,
+      markDeliveryRetryableByUuid: () => null,
+      getDeliveryContent: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-batch-1'
+          ? { content: 'kickoff-text', sendStatus: 'submitted' }
+          : { content: 'member-text', sendStatus: 'submitted' },
+    });
+    (
+      session.db as unknown as {
+        getJobQueueRepo: () => { getActiveDeliveryBatchUuids: () => string[] | null };
+      }
+    ).getJobQueueRepo = () => ({
+      getActiveDeliveryBatchUuids: () => ['uuid-batch-1', 'uuid-batch-2'],
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-batch-1'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy).toHaveBeenCalledWith(
+      'uuid-batch-1',
+      buildBatchedDeliveryContent(['kickoff-text', 'member-text']),
+      false,
+      { durable: true, prepend: true }
+    );
   });
 });

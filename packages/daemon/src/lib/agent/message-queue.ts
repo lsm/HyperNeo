@@ -58,6 +58,7 @@ export interface MidTurnBudgetInterruptOptions {
   onResumeClear: () => void;
   onSurvivorRequeued?: (uuid: string) => void;
   getDurableMessageContent?: (uuid: string) => string | MessageContent[] | undefined;
+  ownsTurn?: () => boolean;
 }
 
 export interface MidTurnLateWindow {
@@ -98,6 +99,10 @@ export class MessageQueue {
   private deliveryGate: Promise<void> | null = null;
   private resolveEarlyDeliveryGate: (() => void) | undefined;
   private internalRestartInFlight: boolean = false;
+  private internalRestartFailed: boolean = false;
+  private recoveryRestarted: boolean = false;
+  private earlyGateReleasePending: boolean = false;
+  private stopEpoch: number = 0;
   private midTurnBoundarySeq: number = 0;
   private promptPhaseBoundarySeq: number = 0;
   private midTurnCompactionQueued: boolean = false;
@@ -392,6 +397,7 @@ export class MessageQueue {
   }
 
   clear(): void {
+    this.stopEpoch += 1;
     this.clearEpoch += 1;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     const rejectedCompactions =
@@ -552,6 +558,7 @@ export class MessageQueue {
   }
 
   stop(): void {
+    this.stopEpoch += 1;
     this.running = false;
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     const rejectedCompactions =
@@ -698,6 +705,8 @@ export class MessageQueue {
   }
 
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
+    this.internalRestartFailed = false;
+    this.recoveryRestarted = false;
     this.promptPhaseBoundarySeq = this.midTurnBoundarySeq;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
@@ -712,6 +721,10 @@ export class MessageQueue {
   }
 
   releaseEarlyDeliveryGate(): void {
+    if (this.internalRestartInFlight) {
+      this.earlyGateReleasePending = true;
+      return;
+    }
     this.resolveEarlyDeliveryGate?.();
     this.resolveEarlyDeliveryGate = undefined;
   }
@@ -760,8 +773,10 @@ export class MessageQueue {
     return { promise: interruptPromise, timedOut, hardFailed, receipt };
   }
 
-  standsDownFor(_opts: MidTurnBudgetInterruptOptions): boolean {
+  standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean {
+    if (!this.recoveryRestarted && opts.ownsTurn && !opts.ownsTurn()) return true;
     if (this.internalRestartInFlight) return false;
+    if (this.internalRestartFailed) return false;
     return !this.isRunning();
   }
 
@@ -819,7 +834,7 @@ export class MessageQueue {
   }
 
   shouldEnqueueLateCompaction(removedPendingCompactions: number): boolean {
-    return removedPendingCompactions > 0;
+    return removedPendingCompactions > 0 || this.internalRestartFailed;
   }
 
   noteBoundaryCompleted(): void {
@@ -926,6 +941,22 @@ export class MessageQueue {
       );
       return;
     }
+    if (this.requeueYielded(uuid)) {
+      opts.logger.info(
+        `requeued cancelled survivor ${uuid} for session ${opts.sessionId} from its ` +
+          `live in-flight entry before send acknowledgment`
+      );
+      try {
+        opts.onSurvivorRequeued?.(uuid);
+      } catch (error) {
+        opts.logger.warn(
+          `retryable-state update for requeued survivor ${uuid} failed for session ` +
+            `${opts.sessionId}:`,
+          error
+        );
+      }
+      return;
+    }
     let content = this.getSentPromptContent(uuid);
     if (content === undefined && opts.getDurableMessageContent) {
       try {
@@ -973,12 +1004,18 @@ export class MessageQueue {
     const deliveryGate = new Promise<void>((resolve) => {
       resolveDeliveryGate = resolve;
     });
+    const stopEpochBeforeRestart = this.stopEpoch;
+    const restartAbortedByStop = () => this.stopEpoch > stopEpochBeforeRestart + 1;
     const beforeStart = () => {
+      if (restartAbortedByStop()) {
+        throw new Error('user stop observed during the recovery restart; aborting the replacement');
+      }
       this.setDeliveryGate(deliveryGate);
       if (!this.shouldSuppressPromptPhaseCompaction()) {
         this.enqueueMidTurnCompaction(opts, 'mid-turn-restart');
       }
     };
+    this.recoveryRestarted = true;
     this.internalRestartInFlight = true;
     const restart = opts
       .restart({ beforeStart })
@@ -988,6 +1025,11 @@ export class MessageQueue {
             `session ${opts.sessionId}:`,
           error
         );
+        if (restartAbortedByStop()) {
+          opts.onResumeClear();
+          return;
+        }
+        this.internalRestartFailed = true;
         if (!this.hasOutstandingInternalCompaction()) {
           if (!this.shouldSuppressPromptPhaseCompaction()) {
             this.enqueueMidTurnCompaction(opts, 'mid-turn-restart-failed');
@@ -1003,6 +1045,10 @@ export class MessageQueue {
       })
       .finally(() => {
         this.internalRestartInFlight = false;
+        if (this.earlyGateReleasePending) {
+          this.earlyGateReleasePending = false;
+          this.releaseEarlyDeliveryGate();
+        }
       });
     await Promise.race([
       restart,
