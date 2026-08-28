@@ -138,7 +138,7 @@ export class OAuthRefreshScheduler {
       }
       if (persistenceFailed) {
         if (!(await this.runPreRecoveryInvalidation(provider.id))) {
-          this.bumpPendingInvalidationRetries(provider.id);
+          await this.recordPendingInvalidationFailure(provider.id);
         }
         return;
       }

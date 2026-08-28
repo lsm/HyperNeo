@@ -621,8 +621,8 @@ describe('OAuthRefreshScheduler', () => {
 
     await expect(scheduler.tick()).resolves.toBeUndefined();
 
-    expect(events).toEqual([]);
-    expect(manager.health.has('oauth-provider')).toBe(false);
+    expect(events).toEqual(['changed:oauth-provider:exhausted']);
+    expect(manager.health.get('oauth-provider')).toBe('unhealthy');
   });
 
   it('retries a failed pre-recovery invalidation on later ticks against the stored credential', async () => {
@@ -745,8 +745,8 @@ describe('OAuthRefreshScheduler', () => {
 
     await scheduler.tick();
     expect(invalidationAttempts).toBe(1);
-    expect(events).toEqual([]);
-    expect(manager.health.has('oauth-provider')).toBe(false);
+    expect(events).toEqual(['changed:oauth-provider:exhausted']);
+    expect(manager.health.get('oauth-provider')).toBe('unhealthy');
 
     manager.credentials.set('oauth-provider', {
       type: 'oauth',
@@ -757,7 +757,11 @@ describe('OAuthRefreshScheduler', () => {
     await scheduler.tick();
 
     expect(invalidationAttempts).toBe(2);
-    expect(events).toEqual(['recovered:oauth-provider', 'changed:oauth-provider:refreshed']);
+    expect(events).toEqual([
+      'changed:oauth-provider:exhausted',
+      'recovered:oauth-provider',
+      'changed:oauth-provider:refreshed',
+    ]);
     expect(manager.health.get('oauth-provider')).toBe('healthy');
   });
 
