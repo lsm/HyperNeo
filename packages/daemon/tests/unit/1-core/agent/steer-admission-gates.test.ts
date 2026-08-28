@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'bun:test';
 import type { AgentProcessingState } from '@hyperneo/shared';
-import type { SteerAdmissionDecision } from '../../../../src/lib/agent/delivery-turn-routing';
-import { resolveSteerAdmission } from '../../../../src/lib/agent/delivery-turn-routing';
+import type {
+  SteerAdmissionCtx,
+  SteerAdmissionDecision,
+} from '../../../../src/lib/agent/delivery-turn-routing';
+import {
+  applyClaimSupersededGate,
+  applyProcessingAcpAwaitGate,
+  applyProcessingFeedGate,
+  applyProcessingInvalidGate,
+  applyProcessingPromoteGate,
+  applyPromoteGate,
+  applyQueuedParkGate,
+  resolveSteerAdmission,
+} from '../../../../src/lib/agent/delivery-turn-routing';
 
 type SteerInput = Parameters<typeof resolveSteerAdmission>[0];
 
@@ -227,5 +239,107 @@ describe('resolveSteerAdmission status dispatch', () => {
     ])
   )('%s', (_label, input) => {
     expect(resolveSteerAdmission(input)).toEqual({ action: 'promote' });
+  });
+});
+
+function steerCtx(overrides: Partial<SteerInput> = {}): SteerAdmissionCtx {
+  return { ...steerRow(overrides), admission: null };
+}
+
+function admissionCtx(
+  overrides: Partial<SteerInput>,
+  admission: SteerAdmissionDecision | null
+): SteerAdmissionCtx {
+  return { ...steerRow(overrides), admission };
+}
+
+const GATES = [
+  applyClaimSupersededGate,
+  applyProcessingInvalidGate,
+  applyProcessingPromoteGate,
+  applyProcessingAcpAwaitGate,
+  applyProcessingFeedGate,
+  applyQueuedParkGate,
+  applyPromoteGate,
+] as const;
+
+function runSteerAdmissionGates(input: SteerInput): SteerAdmissionDecision {
+  const ctx = GATES.reduce((c, gate) => gate(c), {
+    ...input,
+    admission: null,
+  } as SteerAdmissionCtx);
+  return ctx.admission ?? { action: 'promote' };
+}
+
+describe('steer admission gate cascade', () => {
+  it('matches resolveSteerAdmission on the full AR-4 matrix', () => {
+    for (const input of MATRIX) {
+      const expected = resolveSteerAdmission(input);
+      expect(runSteerAdmissionGates(input)).toEqual(expected);
+    }
+  });
+
+  it('each gate no-ops when admission is already set', () => {
+    const settled = admissionCtx({}, { action: 'feed' });
+    for (const gate of GATES) {
+      expect(gate({ ...settled })).toEqual(settled);
+    }
+  });
+
+  it('applyClaimSupersededGate fires on a superseded claim', () => {
+    expect(applyClaimSupersededGate(steerCtx({ claimCurrent: false }))).toEqual(
+      admissionCtx({ claimCurrent: false }, { action: 'aborted', reason: 'claim_superseded' })
+    );
+    expect(applyClaimSupersededGate(steerCtx())).toEqual(steerCtx());
+  });
+
+  it('applyProcessingInvalidGate fires on a processing status with invalid delivery', () => {
+    expect(applyProcessingInvalidGate(steerCtx({ deliveryValid: false }))).toEqual(
+      admissionCtx({ deliveryValid: false }, { action: 'aborted', reason: 'delivery_invalid' })
+    );
+    expect(applyProcessingInvalidGate(steerCtx({ status: 'idle', deliveryValid: false }))).toEqual(
+      steerCtx({ status: 'idle', deliveryValid: false })
+    );
+  });
+
+  it('applyProcessingPromoteGate fires on a processing status with no live query', () => {
+    expect(applyProcessingPromoteGate(steerCtx({ hasLiveQuery: false }))).toEqual(
+      admissionCtx({ hasLiveQuery: false }, { action: 'promote' })
+    );
+    expect(applyProcessingPromoteGate(steerCtx({ hasLiveQuery: true }))).toEqual(
+      steerCtx({ hasLiveQuery: true })
+    );
+  });
+
+  it('applyProcessingAcpAwaitGate fires on a processing ACP steer with pending ownership', () => {
+    expect(
+      applyProcessingAcpAwaitGate(steerCtx({ provider: 'acp', queueOwnsMessage: true }))
+    ).toEqual(
+      admissionCtx({ provider: 'acp', queueOwnsMessage: true }, { action: 'awaiting_acceptance' })
+    );
+    expect(applyProcessingAcpAwaitGate(steerCtx({ queueOwnsMessage: true }))).toEqual(
+      steerCtx({ queueOwnsMessage: true })
+    );
+  });
+
+  it('applyProcessingFeedGate fires on a processing status', () => {
+    expect(applyProcessingFeedGate(steerCtx())).toEqual(admissionCtx({}, { action: 'feed' }));
+    expect(applyProcessingFeedGate(steerCtx({ status: 'idle' }))).toEqual(
+      steerCtx({ status: 'idle' })
+    );
+  });
+
+  it('applyQueuedParkGate fires on a queued status', () => {
+    expect(applyQueuedParkGate(steerCtx({ status: 'queued' }))).toEqual(
+      admissionCtx({ status: 'queued' }, { action: 'park' })
+    );
+    expect(applyQueuedParkGate(steerCtx({ status: 'idle' }))).toEqual(steerCtx({ status: 'idle' }));
+  });
+
+  it('applyPromoteGate is the catch-all default', () => {
+    expect(applyPromoteGate(steerCtx({ status: 'idle' }))).toEqual(
+      admissionCtx({ status: 'idle' }, { action: 'promote' })
+    );
+    expect(applyPromoteGate(steerCtx())).toEqual(admissionCtx({}, { action: 'promote' }));
   });
 });
