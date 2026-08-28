@@ -1785,6 +1785,7 @@ describe('AcpQueryRunner', () => {
     await runner.start();
     await loadEntered;
     ctx.queryAbortController?.abort();
+    ctx.queryAbortController = null;
     releaseLoad();
     await ctx.queryPromise;
 

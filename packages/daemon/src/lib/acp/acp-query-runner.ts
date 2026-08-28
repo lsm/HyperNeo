@@ -417,6 +417,7 @@ export class AcpQueryRunner {
     recoveryState = { rateLimitCooldownScheduled: false }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    let runAbortController: AbortController | null = this.ctx.queryAbortController;
     const attemptToken =
       this.ctx.getQueryGeneration() === queryGeneration
         ? this.ctx.attemptTokens.allocate()
@@ -424,7 +425,7 @@ export class AcpQueryRunner {
     const attemptOwnsRun = () =>
       attemptToken.isLive() && this.ctx.getQueryGeneration() === queryGeneration;
     const ownsSessionWrite = () =>
-      attemptOwnsRun() && this.ctx.queryAbortController?.signal.aborted !== true;
+      attemptOwnsRun() && runAbortController?.signal.aborted !== true;
     const requeueYieldedPrompt = (yieldedMessage: SDKUserMessage) => {
       const yieldedUuid = yieldedMessage.uuid;
       if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
@@ -452,7 +453,6 @@ export class AcpQueryRunner {
     let proxyBridge: AcpMcpProxyBridge | null = null;
     let terminalManager: AcpTerminalManager | null = null;
     let turnCompletedNormally = false;
-    let runAbortController: AbortController | null = this.ctx.queryAbortController;
     let abortController: AbortController | null = null;
     let acpMcpServers: AcpMcpServerConfig[] = [];
     let cwd: string = process.cwd();
