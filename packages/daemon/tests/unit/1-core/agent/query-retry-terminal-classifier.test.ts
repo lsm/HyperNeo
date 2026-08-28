@@ -132,6 +132,10 @@ describe('decideProviderTerminalCategory', () => {
     { raw: 'econnrefused', flags: { isRateLimit: true }, expected: ErrorCategory.CONNECTION },
     { raw: '429', flags: { isStartupTimeout: true }, expected: ErrorCategory.RATE_LIMIT },
     { raw: 'UNAUTHORIZED Request', expected: ErrorCategory.AUTHENTICATION },
+    { raw: 'job 14012 failed', family: 'provider', expected: ErrorCategory.SYSTEM },
+    { raw: 'port 4033', family: 'provider', expected: ErrorCategory.SYSTEM },
+    { raw: 'HTTP 5030', family: 'provider', expected: ErrorCategory.SYSTEM },
+    { raw: 'upstream 5021', family: 'provider', expected: ErrorCategory.SYSTEM },
   ];
 
   for (const { raw, family, flags, expected } of cases) {
@@ -153,6 +157,8 @@ describe('decideProviderTerminalCategory', () => {
     '503 service unavailable',
     'unknown error',
     'job 14012 failed',
+    'error 4290',
+    'page 4020',
     'model not found',
     'insufficient quota',
   ];

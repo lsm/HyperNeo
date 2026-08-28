@@ -60,6 +60,7 @@ describe('resolveTerminalMessageHint', () => {
       env: { attempt: 2, maxProviderRetries: 3 },
       expected: undefined,
     },
+    { env: { attempt: 3, maxProviderRetries: 3 }, expected: undefined },
     {
       signal: { isTransientConnectionError: true },
       env: { attempt: 1 },
