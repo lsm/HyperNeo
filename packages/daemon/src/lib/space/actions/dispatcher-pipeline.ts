@@ -201,10 +201,11 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
   }
   if (ctx.isMutating && (ctx.deps.auditLogRepo || ctx.deps.resolveTaskId)) {
     let taskId = ctx.taskId;
-    if (taskId === undefined && ctx.deps.resolveTaskId && ctx.parsedParams) {
+    if (ctx.deps.resolveTaskId && ctx.parsedParams) {
       const params = ctx.parsedParams as Record<string, unknown>;
       if (typeof params.task_number === 'number') {
-        taskId = (await ctx.deps.resolveTaskId(params)) ?? taskId;
+        const resolved = await ctx.deps.resolveTaskId(params);
+        if (resolved !== undefined) taskId = resolved;
       }
     }
     if (ctx.deps.auditLogRepo) {
