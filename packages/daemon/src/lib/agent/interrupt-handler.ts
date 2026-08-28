@@ -64,7 +64,9 @@ export class InterruptHandler {
     const interruptQueryGeneration = this.ctx.getQueryGeneration?.();
 
     const stateAtEntry = stateManager.getState();
-    if (stateAtEntry.status !== 'idle' && stateAtEntry.status !== 'interrupted') {
+    const teardownRequiredAtEntry =
+      stateAtEntry.status !== 'idle' && stateAtEntry.status !== 'interrupted';
+    if (teardownRequiredAtEntry) {
       this.ctx.attemptTokens?.invalidateCurrent();
     }
 
@@ -103,7 +105,10 @@ export class InterruptHandler {
 
     const currentState = stateManager.getState();
 
-    if (currentState.status === 'idle' || currentState.status === 'interrupted') {
+    if (
+      !teardownRequiredAtEntry &&
+      (currentState.status === 'idle' || currentState.status === 'interrupted')
+    ) {
       if (opts?.skipDeferredReplay) {
         this.deferredReplaySuppressed = true;
       }

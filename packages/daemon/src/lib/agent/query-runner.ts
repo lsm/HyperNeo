@@ -913,7 +913,8 @@ export class QueryRunner {
       if (
         runAbortController.signal.aborted ||
         this.ctx.isCleaningUp() ||
-        this.ctx.getQueryGeneration() !== queryGeneration
+        this.ctx.getQueryGeneration() !== queryGeneration ||
+        !attemptToken.isLive()
       ) {
         releaseStartupPermit('aborted_while_queued');
         const gateAbort = new Error('SDK startup gate: query aborted while awaiting admission');

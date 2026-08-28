@@ -154,8 +154,18 @@ export class AskUserQuestionHandler {
       askedAt: Date.now(),
     };
 
-    if (this.pendingResolver?.toolUseId === toolUseID) {
+    if (
+      this.pendingResolver?.toolUseId === toolUseID &&
+      this.pendingResolver.attemptToken === attemptToken
+    ) {
       return this.pendingResolver.promise;
+    }
+
+    if (this.pendingResolver?.toolUseId === toolUseID) {
+      this.logger.warn(
+        `AskUserQuestion ${toolUseID}: same-ID re-entry from a new query attempt; ` +
+          `superseding the stale resolver from the predecessor attempt`
+      );
     }
 
     let resolvePending!: (result: PermissionResult) => void;
