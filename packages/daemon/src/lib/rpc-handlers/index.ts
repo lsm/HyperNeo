@@ -331,7 +331,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.messageHub,
     deps.authManager,
     deps.credentialManager,
-    deps.internalEventBus
+    deps.internalEventBus,
+    deps.db.providers
   );
   registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
   registerSettingsHandlers(

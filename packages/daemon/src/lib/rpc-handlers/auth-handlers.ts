@@ -1,4 +1,5 @@
-import type { MessageHub } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import type { MessageHub, ProviderRecord } from '@hyperneo/shared';
 import type {
   ProviderAuthStatus,
   ProviderAuthResponse,
@@ -21,20 +22,106 @@ import { bumpProviderCatalogEpoch } from '../model-service.js';
 import { providerEnvCoordinator } from '../providers/provider-env-enrollment.ts';
 import { registerBuiltInProvider } from '../providers/factory.js';
 import {
+  credentialIdentity,
+  stripPersistedDiscovery,
+} from '../providers/discovery-refresh-pipeline.ts';
+import type { ProviderRepository } from '../../storage/repositories/provider-repository.ts';
+import {
   applyRecordedFailureToAuthStatus,
   classifyProviderFailure,
 } from '../providers/provider-failure-store.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { withProviderLock } from './provider-mutation-lock.ts';
 import { Logger } from '../logger.ts';
 const log = new Logger('auth-handlers');
 
-async function clearCacheAndNotifyProvidersChanged(
-  internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined,
-  providerId?: string
-): Promise<void> {
+type ClearCacheCtx = {
+  internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined;
+  providerId?: string;
+  providerRepo?: ProviderRepository;
+  stripPersisted: boolean;
+  record?: ProviderRecord | null;
+  stripped?: string;
+  readError?: unknown;
+  stripError?: unknown;
+};
+
+function clearCacheLoadRecord(ctx: ClearCacheCtx): ClearCacheCtx {
+  if (ctx.providerId && ctx.providerRepo && ctx.stripPersisted) {
+    try {
+      ctx.record = ctx.providerRepo.getProviderByProviderId(ctx.providerId);
+    } catch (error) {
+      ctx.readError = error;
+    }
+  }
+  return ctx;
+}
+
+function clearCacheStripRecord(ctx: ClearCacheCtx): ClearCacheCtx {
+  if (ctx.record) {
+    ctx.stripped = stripPersistedDiscovery(ctx.record.configJson);
+    if (ctx.stripped !== ctx.record.configJson) {
+      try {
+        ctx.providerRepo!.updateProvider(ctx.record.id, { configJson: ctx.stripped });
+      } catch (error) {
+        ctx.stripError = error;
+      }
+    }
+  }
+  return ctx;
+}
+
+async function clearCacheInvalidate(ctx: ClearCacheCtx): Promise<ClearCacheCtx> {
   const { clearModelsCache } = await import('../model-service.js');
-  clearModelsCache(undefined, providerId);
-  internalEventBus?.publishAsync('providers.changed', { sessionId: 'global' });
+  clearModelsCache(undefined, ctx.providerId);
+  return ctx;
+}
+
+function clearCachePublishChanged(ctx: ClearCacheCtx): ClearCacheCtx {
+  ctx.internalEventBus?.publishAsync('providers.changed', { sessionId: 'global' });
+  return ctx;
+}
+
+function clearCacheRethrowIfNeeded(ctx: ClearCacheCtx): ClearCacheCtx {
+  if (ctx.readError) throw ctx.readError;
+  if (ctx.stripError) throw ctx.stripError;
+  return ctx;
+}
+
+const runClearCacheAndNotifyProvidersChanged = (
+  superpipe({})('clear-cache-and-notify-providers-changed') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(clearCacheLoadRecord, 'ctx', 'ctx')
+  .pipe(clearCacheStripRecord, 'ctx', 'ctx')
+  .pipe(clearCacheInvalidate, 'ctx', 'ctx')
+  .pipe(clearCachePublishChanged, 'ctx', 'ctx')
+  .pipe(clearCacheRethrowIfNeeded, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: ClearCacheCtx) => Promise<ClearCacheCtx>;
+
+export async function clearCacheAndNotifyProvidersChanged(
+  internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined,
+  providerId?: string,
+  providerRepo?: ProviderRepository,
+  stripPersisted = true
+): Promise<void> {
+  await runClearCacheAndNotifyProvidersChanged({
+    internalEventBus,
+    providerId,
+    providerRepo,
+    stripPersisted,
+  });
+}
+
+async function lockedClearCacheAndNotifyProvidersChanged(
+  internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined,
+  providerId?: string,
+  providerRepo?: ProviderRepository,
+  stripPersisted = true
+): Promise<void> {
+  await withProviderLock(() =>
+    clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo, stripPersisted)
+  );
 }
 
 async function removeCredentialsOrKeychainError(
@@ -57,7 +144,8 @@ export function setupAuthHandlers(
   messageHub: MessageHub,
   authManager: AuthManager,
   credentialManager?: ProviderCredentialManager,
-  internalEventBus?: InternalEventBus<DaemonInternalEventMap>
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>,
+  providerRepo?: ProviderRepository
 ): void {
   messageHub.onRequest('auth.status', async () => {
     const authStatus = await authManager.getAuthStatus();
@@ -146,13 +234,33 @@ export function setupAuthHandlers(
         let unsubscribe: (() => void) | undefined;
         const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
           bumpProviderCatalogEpoch(providerId);
+          let storeError: unknown;
           if (credentials.type === 'oauth') {
-            await credentialManager?.storeOAuthTokens(providerId, credentials);
+            try {
+              await credentialManager?.storeOAuthTokens(providerId, credentials);
+            } catch (error) {
+              storeError = error;
+            }
           }
           unsubscribe?.();
-          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId);
+          let stripError: unknown;
+          try {
+            await lockedClearCacheAndNotifyProvidersChanged(
+              internalEventBus,
+              providerId,
+              providerRepo
+            );
+          } catch (error) {
+            stripError = error;
+          }
+          if (storeError) throw storeError;
+          if (stripError) throw stripError;
         };
-        unsubscribe = provider.onCredentialsChanged?.(persistCredentials);
+        unsubscribe = provider.onCredentialsChanged?.((credentials) =>
+          persistCredentials(credentials).catch((error) => {
+            log.error(`Failed to persist credentials for ${providerId}:`, error);
+          })
+        );
         const flowData = await provider.startOAuthFlow();
         if (!provider.onCredentialsChanged) {
           const credentials = await provider.getCredentials?.();
@@ -192,6 +300,7 @@ export function setupAuthHandlers(
         };
       }
 
+      let storedCredentials: ProviderCredentials | null = null;
       try {
         bumpProviderCatalogEpoch(providerId);
         const hasEnvironmentCredentials = await providerEnvCoordinator.runWithLease(
@@ -206,7 +315,6 @@ export function setupAuthHandlers(
           };
         }
 
-        let storedCredentials: ProviderCredentials | null = null;
         try {
           storedCredentials = (await credentialManager?.getCredentials(providerId)) ?? null;
         } catch (readError) {
@@ -218,6 +326,13 @@ export function setupAuthHandlers(
               log.error(`Provider logout failed for ${providerId}:`, logoutError);
             }
           }
+          try {
+            await lockedClearCacheAndNotifyProvidersChanged(
+              internalEventBus,
+              providerId,
+              providerRepo
+            );
+          } catch {}
           log.error(`Logout failed for ${providerId}:`, readError);
           return {
             success: false,
@@ -245,7 +360,13 @@ export function setupAuthHandlers(
         if (!provider.logout && provider.setCredentials) {
           provider.setCredentials({ type: 'api_key', apiKey: '' });
         }
-        await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId);
+        try {
+          await lockedClearCacheAndNotifyProvidersChanged(
+            internalEventBus,
+            providerId,
+            providerRepo
+          );
+        } catch {}
         return { success: true };
       } catch (error) {
         try {
@@ -255,11 +376,23 @@ export function setupAuthHandlers(
             log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
           }
         }
-        const refused =
-          error instanceof Error &&
-          (error as Error & { logoutRefused?: boolean }).logoutRefused === true;
-        if (!refused) {
-          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId);
+        let remainingCredentials: ProviderCredentials | null = null;
+        try {
+          remainingCredentials = (await provider.getCredentials?.()) ?? null;
+        } catch {}
+        const identityChanged =
+          !storedCredentials ||
+          !remainingCredentials ||
+          credentialIdentity(storedCredentials) !== credentialIdentity(remainingCredentials);
+        if (identityChanged) {
+          try {
+            await lockedClearCacheAndNotifyProvidersChanged(
+              internalEventBus,
+              providerId,
+              providerRepo,
+              identityChanged
+            );
+          } catch {}
         }
         log.error(`Logout failed for ${providerId}:`, error);
         return {
@@ -291,15 +424,44 @@ export function setupAuthHandlers(
         };
       }
 
+      let preRefreshCredentials: ProviderCredentials | null = null;
+      try {
+        preRefreshCredentials = (await provider.getCredentials?.()) ?? null;
+      } catch {}
+
       try {
         bumpProviderCatalogEpoch(providerId);
         const refreshed = await provider.refreshToken();
         if (!refreshed) {
-          await removeCredentialsOrKeychainError(credentialManager, providerId);
-          const remaining = await provider.getCredentials?.();
-          if (remaining?.type === 'oauth') {
-            await credentialManager?.storeOAuthTokens(providerId, remaining);
+          let previousCredentials: ProviderCredentials | null = null;
+          try {
+            previousCredentials = (await credentialManager?.getCredentials?.(providerId)) ?? null;
+          } catch {}
+          let cleanupError: unknown;
+          let remaining: ProviderCredentials | null | undefined;
+          try {
+            await removeCredentialsOrKeychainError(credentialManager, providerId);
+            remaining = await provider.getCredentials?.();
+            if (remaining?.type === 'oauth') {
+              await credentialManager?.storeOAuthTokens(providerId, remaining);
+            }
+          } catch (error) {
+            cleanupError = error;
           }
+          const baseline = preRefreshCredentials ?? previousCredentials;
+          const identityChanged =
+            !remaining ||
+            credentialIdentity(baseline) !== credentialIdentity(remaining) ||
+            cleanupError !== undefined;
+          try {
+            await lockedClearCacheAndNotifyProvidersChanged(
+              internalEventBus,
+              providerId,
+              providerRepo,
+              identityChanged
+            );
+          } catch {}
+          if (cleanupError) throw cleanupError;
           return {
             success: false,
             error: 'Token refresh failed. Please try logging out and logging in again.',
@@ -309,7 +471,12 @@ export function setupAuthHandlers(
         if (credentials?.type === 'oauth') {
           await credentialManager?.storeOAuthTokens(providerId, credentials);
         }
-        await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId);
+        await lockedClearCacheAndNotifyProvidersChanged(
+          internalEventBus,
+          providerId,
+          providerRepo,
+          false
+        );
         return { success: true };
       } catch (error) {
         log.error(`Token refresh failed for ${providerId}:`, error);

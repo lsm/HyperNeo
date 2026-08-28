@@ -33,6 +33,8 @@ import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
 import { parseAcpCommand } from '../acp/acp-command.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { clearCacheAndNotifyProvidersChanged } from './auth-handlers.ts';
+import { withProviderLock } from './provider-mutation-lock.ts';
 import { Logger } from '../logger.ts';
 
 const log = new Logger('provider-handlers');
@@ -147,14 +149,6 @@ export async function resolveCredentialsForHydration(
     if (live) return live;
   }
   return credentialManager.getCredentials(providerId);
-}
-
-let mutationQueue: Promise<unknown> = Promise.resolve();
-
-function withProviderLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = mutationQueue.then(fn, fn);
-  mutationQueue = run.catch(() => {});
-  return run;
 }
 
 function rethrowKeychainError(err: unknown, action: string, providerId: string): never {
@@ -282,14 +276,6 @@ export interface ProviderHandlerDeps {
 
 function notifyProvidersChanged(internalEventBus: InternalEventBus<DaemonInternalEventMap>): void {
   internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
-}
-
-async function clearCacheAndNotifyProvidersChanged(
-  internalEventBus: InternalEventBus<DaemonInternalEventMap>
-): Promise<void> {
-  const { clearModelsCache } = await import('../model-service.js');
-  clearModelsCache();
-  notifyProvidersChanged(internalEventBus);
 }
 
 export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
@@ -572,37 +558,68 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
-          const record = providerRepo.updateProvider(data.id, updates);
-          if (!record) throw new Error(`Provider ${data.id} not found`);
+          let record: ProviderRecord | null = null;
+          try {
+            record = providerRepo.updateProvider(data.id, updates);
+            if (!record) throw new Error(`Provider ${data.id} not found`);
 
-          const shouldResync =
-            data.credentials !== undefined ||
-            updates.baseUrl !== undefined ||
-            updates.customEndpointConfigJson !== undefined ||
-            updates.configJson !== undefined ||
-            updates.isEnabled !== undefined;
+            const shouldResync =
+              data.credentials !== undefined ||
+              updates.baseUrl !== undefined ||
+              updates.customEndpointConfigJson !== undefined ||
+              updates.configJson !== undefined ||
+              updates.isEnabled !== undefined;
 
-          if (shouldResync) {
-            if (record.isEnabled === false) {
-              if (record.kind === 'built_in') {
-                markBuiltInProviderDisabled(record.providerId);
+            if (shouldResync) {
+              if (record.isEnabled === false) {
+                if (record.kind === 'built_in') {
+                  markBuiltInProviderDisabled(record.providerId);
+                }
+                await removeProviderFromRegistry(record.providerId, { preserveCredentials: true });
+              } else {
+                const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
+                await ensureBuiltInProviderRegistered(record.providerId);
+                const creds = await resolveCredentialsForHydration(
+                  credentialManager,
+                  record.providerId,
+                  data.credentials
+                );
+                await syncProviderToRegistry(record, creds);
               }
-              await removeProviderFromRegistry(record.providerId, { preserveCredentials: true });
-            } else {
-              const { ensureBuiltInProviderRegistered } = await import('../providers/factory.js');
-              await ensureBuiltInProviderRegistered(record.providerId);
-              const creds = await resolveCredentialsForHydration(
-                credentialManager,
-                record.providerId,
-                data.credentials
-              );
-              await syncProviderToRegistry(record, creds);
             }
+          } catch (error) {
+            if (data.credentials && existing.kind !== 'custom_endpoint') {
+              try {
+                await clearCacheAndNotifyProvidersChanged(
+                  internalEventBus,
+                  record?.providerId ?? existing.providerId,
+                  providerRepo
+                );
+              } catch (stripError) {
+                log.error(
+                  `Failed to clear cache after update error for ${existing.providerId}:`,
+                  stripError
+                );
+              }
+            }
+            throw error;
           }
 
-          await clearCacheAndNotifyProvidersChanged(internalEventBus);
+          if (!record) throw new Error(`Provider ${data.id} not found`);
 
-          return { success: true, provider: record };
+          if (data.credentials && existing.kind !== 'custom_endpoint') {
+            await clearCacheAndNotifyProvidersChanged(
+              internalEventBus,
+              record.providerId,
+              providerRepo
+            );
+          } else {
+            await clearCacheAndNotifyProvidersChanged(internalEventBus);
+          }
+
+          const finalRecord = providerRepo.getProvider(record.id);
+          if (!finalRecord) throw new Error(`Provider ${data.id} not found`);
+          return { success: true, provider: finalRecord };
         });
       });
     }
