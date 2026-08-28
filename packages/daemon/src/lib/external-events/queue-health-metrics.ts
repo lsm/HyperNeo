@@ -13,6 +13,10 @@ export interface QueueAgeStats {
   p95Ms: number;
 }
 
+export interface PendingDeliverySummary extends QueueAgeStats {
+  distinctTargets: number;
+}
+
 export interface QueueHealthCounters {
   since: number;
   enqueue: number;

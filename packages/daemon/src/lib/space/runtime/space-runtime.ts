@@ -1406,18 +1406,26 @@ export class SpaceRuntime {
       try {
         if (isLongHorizonSubscriptionTarget(match)) {
           const deliveryKey = this.buildLongHorizonDeliveryKey(match, payload);
-          store.registerExpectedDelivery(payload.eventId, deliveryKey, {
+          const longHorizonTarget = {
             workflowRunId: `long_horizon:${match.spaceId}`,
             taskId: match.subscriptionId,
             nodeId: match.agentId,
             agentName: match.agentId,
-          });
+          };
+          if (store.registerExpectedDelivery(payload.eventId, deliveryKey, longHorizonTarget)) {
+            this.queueHealthMetrics.recordEnqueue(payload.source, 'long_horizon=active');
+          }
           longHorizonDeliveries.set(deliveryKey, { target: match, deliveryKey });
           continue;
         }
         const target = this.resolveSubscriptionTarget(match);
         const deliveryKey = this.buildDeliveryKey(target, payload);
-        store.registerExpectedDelivery(payload.eventId, deliveryKey, target);
+        if (store.registerExpectedDelivery(payload.eventId, deliveryKey, target)) {
+          this.queueHealthMetrics.recordEnqueue(
+            payload.source,
+            this.describeEnqueueTargetState(target)
+          );
+        }
         workflowDeliveries.set(deliveryKey, { target, deliveryKey });
       } catch (err) {
         const targetDescription = isLongHorizonSubscriptionTarget(match)
@@ -2196,15 +2204,21 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     const persisted = store ? store.summarizePendingDeliveries(now) : null;
     const gauges: QueueHealthGauges = {
-      queueDepth: 0,
-      queueKeys: 0,
+      queueDepth: persisted?.count ?? 0,
+      queueKeys: persisted?.distinctTargets ?? 0,
       inFlight: this.externalEventDeliveriesInFlight.size + this.immediateDispatchesInFlight.size,
       retryTimers: this.externalEventRetryTimers.size,
       persistedPending: persisted?.count ?? 0,
-      queueAgeMs: null,
+      queueAgeMs: persisted,
       persistedAgeMs: persisted,
     };
     return this.queueHealthMetrics.snapshot(gauges, now);
+  }
+
+  private describeEnqueueTargetState(target: WorkflowSubscriptionTarget): string {
+    const run = this.config.workflowRunRepo.getRun(target.workflowRunId);
+    const nodeStatus = this.getCurrentQueueableOrActiveExecution(target)?.status ?? 'none';
+    return `run=${run?.status ?? 'unknown'};node=${nodeStatus}`;
   }
 
   private isPublishedExternalEventExpired(
