@@ -14,14 +14,28 @@ function makeRequest(result: unknown, error: unknown = null) {
   return request;
 }
 
-function createFakeIdb({ failOpen = false, failPuts = false, failCommit = false } = {}) {
+function createFakeIdb({
+  failOpen = false,
+  failPuts = false,
+  failDeletes = false,
+  failCommit = false,
+} = {}) {
   const data = new Map();
+  const ops: string[] = [];
+  let closed = false;
   const db = {
+    onversionchange: null,
+    onclose: null,
     objectStoreNames: { contains: (name: string) => data.has(name) },
     createObjectStore: (name: string) => {
       data.set(name, new Map());
     },
+    close: () => {
+      closed = true;
+    },
     transaction: () => {
+      if (closed) throw new Error('connection closed');
+      let failed = false;
       const tx = {
         oncomplete: null,
         onabort: null,
@@ -29,19 +43,32 @@ function createFakeIdb({ failOpen = false, failPuts = false, failCommit = false 
         objectStore: (name: string) => {
           const store = data.get(name) ?? new Map();
           return {
-            put: (value: unknown) =>
-              failPuts
-                ? makeRequest(undefined, new Error('quota'))
-                : (store.set(value.id, value), makeRequest(value.id)),
+            put: (value: unknown) => {
+              ops.push('put');
+              if (failPuts) {
+                failed = true;
+                return makeRequest(undefined, new Error('quota'));
+              }
+              store.set(value.id, value);
+              return makeRequest(value.id);
+            },
             get: (id: string) => makeRequest(store.get(id)),
             getAll: () => makeRequest([...store.values()]),
-            delete: (id: string) => (store.delete(id), makeRequest(undefined)),
+            delete: (id: string) => {
+              ops.push('delete');
+              if (failDeletes) {
+                failed = true;
+                return makeRequest(undefined, new Error('locked'));
+              }
+              store.delete(id);
+              return makeRequest(undefined);
+            },
           };
         },
       };
       queueMicrotask(() =>
         queueMicrotask(() => {
-          if (failCommit) tx.onabort?.();
+          if (failCommit || failed) tx.onabort?.();
           else tx.oncomplete?.();
         })
       );
@@ -49,8 +76,10 @@ function createFakeIdb({ failOpen = false, failPuts = false, failCommit = false 
     },
   };
   return {
+    ops,
     open: () => {
-      if (failOpen) return errorRequest(new Error('blocked'));
+      if (failOpen) return makeRequest(undefined, new Error('blocked'));
+      closed = false;
       const request = {
         result: null,
         error: null,
@@ -69,6 +98,7 @@ function createFakeIdb({ failOpen = false, failPuts = false, failCommit = false 
       if (!data.has('records')) data.set('records', new Map());
       data.get('records').set(id, value);
     },
+    simulateVersionChange: () => db.onversionchange?.(),
   };
 }
 
@@ -132,6 +162,22 @@ describe('voice audio record store', () => {
     expect(await getVoiceRecord('stale')).toBeNull();
   });
 
+  it('frees durable capacity before writing when the store is at the cap', async () => {
+    const idb = createFakeIdb();
+    globalThis.indexedDB = idb;
+    for (let i = 0; i < 5; i++) idb.seed(`seed${i}`, makeEntry(`seed${i}`, NOW + i));
+    idb.ops.length = 0;
+    await putVoiceRecord(makeEntry('r5', NOW + 5));
+    expect(idb.ops).toEqual(['delete', 'put']);
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual([
+      'seed1',
+      'seed2',
+      'seed3',
+      'seed4',
+      'r5',
+    ]);
+  });
+
   it('deletes a record from both the mirror and durable storage', async () => {
     globalThis.indexedDB = createFakeIdb();
     await putVoiceRecord(makeEntry('r1', NOW));
@@ -140,6 +186,22 @@ describe('voice audio record store', () => {
     expect(await listVoiceRecords()).toHaveLength(0);
     resetVoiceAudioStore();
     expect(await getVoiceRecord('r1')).toBeNull();
+  });
+
+  it('keeps a deleted record suppressed when the durable removal fails', async () => {
+    globalThis.indexedDB = createFakeIdb({ failDeletes: true });
+    await putVoiceRecord(makeEntry('r1', NOW));
+    await deleteVoiceRecord('r1');
+    expect(await getVoiceRecord('r1')).toBeNull();
+    expect(await listVoiceRecords()).toHaveLength(0);
+  });
+
+  it('drops the cached connection when a version upgrade is requested elsewhere', async () => {
+    const idb = createFakeIdb();
+    globalThis.indexedDB = idb;
+    await putVoiceRecord(makeEntry('r1', NOW));
+    idb.simulateVersionChange();
+    expect((await getVoiceRecord('r1'))?.audioBase64).toBe('wav-bytes-r1');
   });
 
   it('degrades to in-memory-only when opening the database fails', async () => {
@@ -168,8 +230,10 @@ describe('voice audio record store', () => {
     await putVoiceRecord(makeEntry('ok', NOW));
     idb.seed('junk', { nope: 1 });
     idb.seed('junk2', null);
+    idb.seed('partial', { id: 'partial', sessionId: 's1', audioBase64: 'x' });
     idb.seed('stale', makeEntry('stale', NOW - DAY_MS - 1_000));
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['ok']);
     expect(await getVoiceRecord('stale')).toBeNull();
+    expect(await getVoiceRecord('partial')).toBeNull();
   });
 });

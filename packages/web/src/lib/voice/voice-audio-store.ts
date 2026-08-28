@@ -15,6 +15,7 @@ const MAX_AUDIO_RECORDS = 5;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const mirror = new Map<string, VoiceRecordEntry>();
+const tombstones = new Set<string>();
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
 function openDatabase(): Promise<IDBDatabase | null> {
@@ -37,7 +38,17 @@ function openDatabase(): Promise<IDBDatabase | null> {
           db.createObjectStore(STORE_NAME, { keyPath: 'id' });
         }
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        const db = request.result;
+        db.onversionchange = () => {
+          db.close();
+          dbPromise = null;
+        };
+        db.onclose = () => {
+          dbPromise = null;
+        };
+        resolve(db);
+      };
       request.onerror = () => resolve(null);
       request.onblocked = () => resolve(null);
     });
@@ -51,12 +62,12 @@ function openDatabase(): Promise<IDBDatabase | null> {
 function runStoreOp<T>(
   mode: IDBTransactionMode,
   op: (store: IDBObjectStore) => IDBRequest<T>
-): Promise<T | null> {
+): Promise<{ ok: boolean; value: T | null }> {
   return openDatabase().then(
     (db) =>
-      new Promise<T | null>((resolve) => {
+      new Promise((resolve) => {
         if (!db) {
-          resolve(null);
+          resolve({ ok: false, value: null });
           return;
         }
         let tx: IDBTransaction;
@@ -65,7 +76,7 @@ function runStoreOp<T>(
           tx = db.transaction(STORE_NAME, mode);
           request = op(tx.objectStore(STORE_NAME));
         } catch {
-          resolve(null);
+          resolve({ ok: false, value: null });
           return;
         }
         let value: T | null = null;
@@ -73,9 +84,9 @@ function runStoreOp<T>(
           value = request.result ?? null;
         };
         request.onerror = () => {};
-        tx.oncomplete = () => resolve(value);
-        tx.onabort = () => resolve(null);
-        tx.onerror = () => resolve(null);
+        tx.oncomplete = () => resolve({ ok: true, value });
+        tx.onabort = () => resolve({ ok: false, value: null });
+        tx.onerror = () => resolve({ ok: false, value: null });
       })
   );
 }
@@ -86,15 +97,20 @@ function isVoiceRecordEntry(value: unknown): value is VoiceRecordEntry {
   return (
     typeof entry.id === 'string' &&
     typeof entry.sessionId === 'string' &&
-    typeof entry.audioBase64 === 'string'
+    typeof entry.audioBase64 === 'string' &&
+    typeof entry.mimeType === 'string' &&
+    typeof entry.peakLevel === 'number' &&
+    Number.isFinite(entry.peakLevel) &&
+    typeof entry.createdAt === 'number' &&
+    Number.isFinite(entry.createdAt)
   );
 }
 
 async function readMerged(): Promise<VoiceRecordEntry[]> {
-  const stored = (await runStoreOp('readonly', (store) => store.getAll())) ?? [];
+  const stored = (await runStoreOp('readonly', (store) => store.getAll())).value ?? [];
   const merged = new Map<string, VoiceRecordEntry>();
   for (const entry of stored) {
-    if (isVoiceRecordEntry(entry)) merged.set(entry.id, entry);
+    if (isVoiceRecordEntry(entry) && !tombstones.has(entry.id)) merged.set(entry.id, entry);
   }
   for (const [id, entry] of mirror) merged.set(id, entry);
   return [...merged.values()].sort((a, b) => a.createdAt - b.createdAt);
@@ -102,16 +118,18 @@ async function readMerged(): Promise<VoiceRecordEntry[]> {
 
 export async function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
   mirror.set(entry.id, entry);
-  const key = await runStoreOp('readwrite', (store) => store.put(entry));
+  tombstones.delete(entry.id);
   await pruneVoiceRecords();
-  return key !== null;
+  if (!mirror.has(entry.id)) return false;
+  const result = await runStoreOp('readwrite', (store) => store.put(entry));
+  return result.ok;
 }
 
 export async function getVoiceRecord(id: string): Promise<VoiceRecordEntry | null> {
   const mirrored = mirror.get(id);
   if (mirrored && Date.now() - mirrored.createdAt < MAX_AGE_MS) return mirrored;
-  const stored = await runStoreOp('readonly', (store) => store.get(id));
-  if (!isVoiceRecordEntry(stored)) return null;
+  const stored = (await runStoreOp('readonly', (store) => store.get(id))).value;
+  if (!isVoiceRecordEntry(stored) || tombstones.has(stored.id)) return null;
   return Date.now() - stored.createdAt < MAX_AGE_MS ? stored : null;
 }
 
@@ -122,7 +140,9 @@ export async function listVoiceRecords(): Promise<VoiceRecordEntry[]> {
 
 export async function deleteVoiceRecord(id: string): Promise<void> {
   mirror.delete(id);
-  await runStoreOp('readwrite', (store) => store.delete(id));
+  tombstones.add(id);
+  const result = await runStoreOp('readwrite', (store) => store.delete(id));
+  if (result.ok) tombstones.delete(id);
 }
 
 export async function pruneVoiceRecords(): Promise<void> {
@@ -141,5 +161,6 @@ export async function pruneVoiceRecords(): Promise<void> {
 
 export function resetVoiceAudioStore(): void {
   mirror.clear();
+  tombstones.clear();
   dbPromise = null;
 }
