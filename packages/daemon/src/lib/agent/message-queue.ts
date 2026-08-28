@@ -103,6 +103,7 @@ export class MessageQueue {
   private recoveryRestartEpoch: number | undefined;
   private earlyGateReleasePending: boolean = false;
   private stopEpoch: number = 0;
+  private userInterruptEpoch: number = 0;
   private midTurnBoundarySeq: number = 0;
   private promptPhaseBoundarySeq: number = 0;
   private midTurnCompactionQueued: boolean = false;
@@ -440,6 +441,10 @@ export class MessageQueue {
     return this.clearEpoch;
   }
 
+  noteUserInterrupt(): void {
+    this.userInterruptEpoch += 1;
+  }
+
   remove(messageId: string): boolean {
     const index = this.queue.findIndex((msg) => msg.id === messageId);
     if (index !== -1) {
@@ -706,7 +711,6 @@ export class MessageQueue {
 
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
     this.internalRestartFailed = false;
-    this.recoveryRestartEpoch = undefined;
     this.promptPhaseBoundarySeq = this.midTurnBoundarySeq;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
@@ -1009,9 +1013,13 @@ export class MessageQueue {
       resolveDeliveryGate = resolve;
     });
     const clearEpochBeforeRestart = this.clearEpoch;
+    const userInterruptEpochBeforeRestart = this.userInterruptEpoch;
     let abortedByStop = false;
     const beforeStart = () => {
-      if (this.clearEpoch > clearEpochBeforeRestart) {
+      if (
+        this.clearEpoch > clearEpochBeforeRestart ||
+        this.userInterruptEpoch > userInterruptEpochBeforeRestart
+      ) {
         abortedByStop = true;
         throw new Error('user stop observed during the recovery restart; aborting the replacement');
       }

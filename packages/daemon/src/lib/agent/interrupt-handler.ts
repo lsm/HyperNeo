@@ -110,6 +110,7 @@ export class InterruptHandler {
 
     try {
       await stateManager.setInterrupted();
+      messageQueue.noteUserInterrupt();
 
       const queueSize = messageQueue.size();
       if (queueSize > 0) {

@@ -65,6 +65,7 @@ describe('InterruptHandler', () => {
       size: queueSizeSpy,
       clear: queueClearSpy,
       stop: queueStopSpy,
+      noteUserInterrupt: mock(() => {}),
     } as unknown as MessageQueue;
 
     setInterruptedSpy = mock(async () => {});

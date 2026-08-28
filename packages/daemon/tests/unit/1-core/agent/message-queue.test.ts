@@ -2385,6 +2385,82 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('aborts the recovery restart when a user interrupt lands with an empty queue', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-empty-stop', 'empty-queue-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-empty-stop'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async (options) => {
+          q.stop();
+          q.noteUserInterrupt();
+          await options?.beforeStart?.();
+        },
+        onResumeClear,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-empty-stop', 'empty-queue-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+      expect(onResumeClear).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the recovery fence when a later cycle arms on the same replacement', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueueWithId('uuid-fence-keep', 'fence-survivor', false, {
+        durable: true,
+      });
+      const generator = q.messageGenerator(testSessionId);
+      (await generator.next()).value.onSent();
+      await sent;
+      let releaseInterrupt: (receipt: { still_queued: string[] }) => void = () => {};
+      const slowInterrupt = new Promise<{ still_queued: string[] }>((resolve) => {
+        releaseInterrupt = resolve;
+      });
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      let ownsTurn = true;
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: () => slowInterrupt,
+        cancelAsyncMessage: async () => true,
+        ownsTurn: () => ownsTurn,
+        onResumeClear,
+        restart: async (options) => {
+          q.stop();
+          ownsTurn = false;
+          await options?.beforeStart?.();
+          q.start();
+        },
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_200);
+      q.armInterruptCycle(makeInterruptOpts({}));
+      releaseInterrupt({ still_queued: ['uuid-fence-keep'] });
+      await run;
+      await tick(50);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-fence-keep', 'fence-survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(onResumeClear).not.toHaveBeenCalled();
+      q.stop();
+    }, 15_000);
+
     it('stands down a late receipt after the recovery replacement was stopped', async () => {
       const q = new MessageQueue();
       q.start();
