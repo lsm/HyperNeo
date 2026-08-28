@@ -84,7 +84,7 @@ describe('classifyVoiceSubmitError', () => {
   });
 
   it.each([
-    400, 401, 403, 404, 413, 422,
+    400, 401, 403, 404, 405, 406, 410, 413, 414, 415, 422, 426, 451,
   ])('discards deterministic client failures: failed with HTTP %i', (status) => {
     expect(
       classifyVoiceSubmitError(new Error(`Voice transcription failed with HTTP ${status}`))
@@ -92,7 +92,7 @@ describe('classifyVoiceSubmitError', () => {
   });
 
   it.each([
-    408, 429, 500, 502, 503,
+    408, 409, 421, 423, 425, 429, 500, 502, 503, 504,
   ])('retries transient statuses: failed with HTTP %i', (status) => {
     expect(
       classifyVoiceSubmitError(

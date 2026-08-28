@@ -31,8 +31,12 @@ export function classifyVoiceSubmitError(
   return 'retry';
 }
 
+const PERMANENT_CLIENT_STATUSES = new Set([
+  400, 401, 403, 404, 405, 406, 410, 413, 414, 415, 422, 426, 451,
+]);
+
 function isDeterministicClientStatus(status: number): boolean {
-  return status >= 400 && status < 500 && status !== 408 && status !== 429;
+  return PERMANENT_CLIENT_STATUSES.has(status);
 }
 
 export function voiceRetryPolicy(attempt: number): number {
