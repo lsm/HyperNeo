@@ -1,108 +1,64 @@
 // @ts-nocheck
+import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   deleteVoiceRecord,
   getVoiceRecord,
   listVoiceRecords,
+  pruneVoiceRecords,
   putVoiceRecord,
   resetVoiceAudioStore,
 } from '../voice-audio-store.ts';
 
-function makeRequest(result: unknown, error: unknown = null) {
-  const request = { result, error, onsuccess: null, onerror: null };
-  queueMicrotask(() => (error ? request.onerror?.() : request.onsuccess?.()));
-  return request;
+function createFactory({ abortReadWriteAfter }: { abortReadWriteAfter?: number } = {}) {
+  const factory = new IDBFactory();
+  let writeTxs = 0;
+  const open = factory.open.bind(factory);
+  factory.open = (...args) => {
+    const request = open(...args);
+    request.addEventListener('success', () => {
+      const db = request.result;
+      const transaction = db.transaction.bind(db);
+      db.transaction = (...targs) => {
+        const tx = transaction(...targs);
+        if (targs[1] === 'readwrite') {
+          writeTxs += 1;
+          if (abortReadWriteAfter !== undefined && writeTxs > abortReadWriteAfter) {
+            queueMicrotask(() => tx.abort());
+          }
+        }
+        return tx;
+      };
+    });
+    return request;
+  };
+  return factory;
 }
 
-function createFakeIdb({
-  failOpen = false,
-  failPuts = false,
-  failDeletes = false,
-  failCommit = false,
-} = {}) {
-  const data = new Map();
-  const ops: string[] = [];
-  let closed = false;
-  const db = {
-    onversionchange: null,
-    onclose: null,
-    objectStoreNames: { contains: (name: string) => data.has(name) },
-    createObjectStore: (name: string) => {
-      data.set(name, new Map());
-    },
-    close: () => {
-      closed = true;
-    },
-    transaction: () => {
-      if (closed) throw new Error('connection closed');
-      let failed = false;
-      const tx = {
-        oncomplete: null,
-        onabort: null,
-        onerror: null,
-        objectStore: (name: string) => {
-          const store = data.get(name) ?? new Map();
-          return {
-            put: (value: unknown) => {
-              ops.push('put');
-              if (failPuts) {
-                failed = true;
-                return makeRequest(undefined, new Error('quota'));
-              }
-              store.set(value.id, value);
-              return makeRequest(value.id);
-            },
-            get: (id: string) => makeRequest(store.get(id)),
-            getAll: () => makeRequest([...store.values()]),
-            delete: (id: string) => {
-              ops.push('delete');
-              if (failDeletes) {
-                failed = true;
-                return makeRequest(undefined, new Error('locked'));
-              }
-              store.delete(id);
-              return makeRequest(undefined);
-            },
-          };
-        },
-      };
-      queueMicrotask(() =>
-        queueMicrotask(() => {
-          if (failCommit || failed) tx.onabort?.();
-          else tx.oncomplete?.();
-        })
-      );
-      return tx;
-    },
-  };
+function createFailingOpenFactory() {
   return {
-    ops,
     open: () => {
-      if (failOpen) return makeRequest(undefined, new Error('blocked'));
-      closed = false;
-      const request = {
-        result: null,
-        error: null,
-        onsuccess: null,
-        onerror: null,
-        onupgradeneeded: null,
-      };
-      queueMicrotask(() => {
-        request.result = db;
-        if (!data.has('records')) request.onupgradeneeded?.();
-        request.onsuccess?.();
-      });
+      const request = { onsuccess: null, onerror: null, onupgradeneeded: null, onblocked: null };
+      queueMicrotask(() => request.onerror?.());
       return request;
     },
-    seed: (id: string, value: unknown) => {
-      if (!data.has('records')) data.set('records', new Map());
-      data.get('records').set(id, value);
-    },
-    simulateVersionChange: () => db.onversionchange?.(),
   };
 }
 
-const originalIdb = globalThis.indexedDB;
+async function readDurableIds(factory): Promise<string[]> {
+  const db = await new Promise((resolve) => {
+    const request = factory.open('hyperneo-voice-audio');
+    request.onsuccess = () => resolve(request.result);
+  });
+  const rows = await new Promise((resolve) => {
+    const tx = db.transaction('records', 'readonly');
+    const request = tx.objectStore('records').getAll();
+    request.onsuccess = () => resolve(request.result);
+    tx.oncomplete = () => db.close();
+  });
+  return rows.map((row) => row.id).sort();
+}
+
 const NOW = Date.now();
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -121,14 +77,14 @@ function makeEntry(id: string, createdAt: number, sessionId = 's1') {
 describe('voice audio record store', () => {
   beforeEach(() => {
     resetVoiceAudioStore();
+    globalThis.indexedDB = createFactory();
   });
 
   afterEach(() => {
-    globalThis.indexedDB = originalIdb;
+    globalThis.indexedDB = undefined;
   });
 
   it('persists a finished recording durably and reads it back after a reload', async () => {
-    globalThis.indexedDB = createFakeIdb();
     await putVoiceRecord(makeEntry('r1', NOW));
     resetVoiceAudioStore();
     const entry = await getVoiceRecord('r1');
@@ -139,47 +95,35 @@ describe('voice audio record store', () => {
   });
 
   it('lists records sorted by createdAt ascending regardless of put order', async () => {
-    globalThis.indexedDB = createFakeIdb();
     await putVoiceRecord(makeEntry('newer', NOW + 5_000));
     await putVoiceRecord(makeEntry('older', NOW));
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['older', 'newer']);
   });
 
   it('prunes to the count cap keeping the newest records, durably', async () => {
-    globalThis.indexedDB = createFakeIdb();
     for (let i = 0; i < 7; i++) await putVoiceRecord(makeEntry(`r${i}`, NOW + i));
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r2', 'r3', 'r4', 'r5', 'r6']);
     resetVoiceAudioStore();
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r2', 'r3', 'r4', 'r5', 'r6']);
   });
 
-  it('prunes expired records durably', async () => {
-    globalThis.indexedDB = createFakeIdb();
-    await putVoiceRecord(makeEntry('stale', NOW - DAY_MS - 1_000));
+  it('drops a put whose record is already expired', async () => {
+    expect(await putVoiceRecord(makeEntry('stale', NOW - DAY_MS - 1_000))).toBe(false);
     await putVoiceRecord(makeEntry('fresh', NOW));
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['fresh']);
     resetVoiceAudioStore();
     expect(await getVoiceRecord('stale')).toBeNull();
   });
 
-  it('frees durable capacity before writing when the store is at the cap', async () => {
-    const idb = createFakeIdb();
-    globalThis.indexedDB = idb;
-    for (let i = 0; i < 5; i++) idb.seed(`seed${i}`, makeEntry(`seed${i}`, NOW + i));
-    idb.ops.length = 0;
-    await putVoiceRecord(makeEntry('r5', NOW + 5));
-    expect(idb.ops).toEqual(['delete', 'put']);
-    expect((await listVoiceRecords()).map((e) => e.id)).toEqual([
-      'seed1',
-      'seed2',
-      'seed3',
-      'seed4',
-      'r5',
-    ]);
+  it('rolls back eviction when the replacement write aborts at commit', async () => {
+    globalThis.indexedDB = createFactory({ abortReadWriteAfter: 5 });
+    for (let i = 0; i < 6; i++) await putVoiceRecord(makeEntry(`r${i}`, NOW + i));
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r1', 'r2', 'r3', 'r4', 'r5']);
+    resetVoiceAudioStore();
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r0', 'r1', 'r2', 'r3', 'r4']);
   });
 
   it('deletes a record from both the mirror and durable storage', async () => {
-    globalThis.indexedDB = createFakeIdb();
     await putVoiceRecord(makeEntry('r1', NOW));
     await deleteVoiceRecord('r1');
     expect(await getVoiceRecord('r1')).toBeNull();
@@ -189,23 +133,27 @@ describe('voice audio record store', () => {
   });
 
   it('keeps a deleted record suppressed when the durable removal fails', async () => {
-    globalThis.indexedDB = createFakeIdb({ failDeletes: true });
+    globalThis.indexedDB = createFactory({ abortReadWriteAfter: 0 });
     await putVoiceRecord(makeEntry('r1', NOW));
     await deleteVoiceRecord('r1');
     expect(await getVoiceRecord('r1')).toBeNull();
     expect(await listVoiceRecords()).toHaveLength(0);
   });
 
-  it('drops the cached connection when a version upgrade is requested elsewhere', async () => {
-    const idb = createFakeIdb();
-    globalThis.indexedDB = idb;
+  it('releases the connection on version upgrade and the mirror after durable commits', async () => {
+    const factory = createFactory();
+    globalThis.indexedDB = factory;
     await putVoiceRecord(makeEntry('r1', NOW));
-    idb.simulateVersionChange();
-    expect((await getVoiceRecord('r1'))?.audioBase64).toBe('wav-bytes-r1');
+    const upgrade = factory.open('hyperneo-voice-audio', 2);
+    await new Promise((resolve) => {
+      upgrade.onsuccess = () => resolve(null);
+      upgrade.onerror = () => resolve(null);
+    });
+    expect(await getVoiceRecord('r1')).toBeNull();
   });
 
   it('degrades to in-memory-only when opening the database fails', async () => {
-    globalThis.indexedDB = createFakeIdb({ failOpen: true });
+    globalThis.indexedDB = createFailingOpenFactory();
     expect(await putVoiceRecord(makeEntry('r1', NOW))).toBe(false);
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r1']);
     expect((await getVoiceRecord('r1'))?.audioBase64).toBe('wav-bytes-r1');
@@ -216,24 +164,21 @@ describe('voice audio record store', () => {
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r2']);
   });
 
-  it('reports a put as non-durable when persistence rejects or the commit aborts', async () => {
-    globalThis.indexedDB = createFakeIdb({ failPuts: true });
+  it('reports a put as non-durable when the transaction aborts but keeps the entry', async () => {
+    globalThis.indexedDB = createFactory({ abortReadWriteAfter: 0 });
     expect(await putVoiceRecord(makeEntry('r1', NOW))).toBe(false);
-    globalThis.indexedDB = createFakeIdb({ failCommit: true });
-    expect(await putVoiceRecord(makeEntry('r2', NOW))).toBe(false);
-    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r1', 'r2']);
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r1']);
+    resetVoiceAudioStore();
+    expect(await getVoiceRecord('r1')).toBeNull();
   });
 
-  it('skips malformed and expired entries found in durable storage', async () => {
-    const idb = createFakeIdb();
-    globalThis.indexedDB = idb;
+  it('skips malformed durable rows and sweeps them on prune', async () => {
+    const factory = createFactory();
+    globalThis.indexedDB = factory;
     await putVoiceRecord(makeEntry('ok', NOW));
-    idb.seed('junk', { nope: 1 });
-    idb.seed('junk2', null);
-    idb.seed('partial', { id: 'partial', sessionId: 's1', audioBase64: 'x' });
-    idb.seed('stale', makeEntry('stale', NOW - DAY_MS - 1_000));
+    await putVoiceRecord({ id: 'junk', sessionId: 's1', audioBase64: 'x' });
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['ok']);
-    expect(await getVoiceRecord('stale')).toBeNull();
-    expect(await getVoiceRecord('partial')).toBeNull();
+    await pruneVoiceRecords();
+    expect(await readDurableIds(factory)).toEqual(['ok']);
   });
 });

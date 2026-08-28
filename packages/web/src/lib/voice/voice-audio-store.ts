@@ -59,34 +59,28 @@ function openDatabase(): Promise<IDBDatabase | null> {
   return dbPromise;
 }
 
-function runStoreOp<T>(
+function runTx<T>(
   mode: IDBTransactionMode,
-  op: (store: IDBObjectStore) => IDBRequest<T>
-): Promise<{ ok: boolean; value: T | null }> {
+  op: (store: IDBObjectStore) => IDBRequest<T> | null
+): Promise<boolean> {
   return openDatabase().then(
     (db) =>
-      new Promise((resolve) => {
+      new Promise<boolean>((resolve) => {
         if (!db) {
-          resolve({ ok: false, value: null });
+          resolve(false);
           return;
         }
         let tx: IDBTransaction;
-        let request: IDBRequest<T>;
         try {
           tx = db.transaction(STORE_NAME, mode);
-          request = op(tx.objectStore(STORE_NAME));
+          op(tx.objectStore(STORE_NAME));
         } catch {
-          resolve({ ok: false, value: null });
+          resolve(false);
           return;
         }
-        let value: T | null = null;
-        request.onsuccess = () => {
-          value = request.result ?? null;
-        };
-        request.onerror = () => {};
-        tx.oncomplete = () => resolve({ ok: true, value });
-        tx.onabort = () => resolve({ ok: false, value: null });
-        tx.onerror = () => resolve({ ok: false, value: null });
+        tx.oncomplete = () => resolve(true);
+        tx.onabort = () => resolve(false);
+        tx.onerror = () => resolve(false);
       })
   );
 }
@@ -106,57 +100,106 @@ function isVoiceRecordEntry(value: unknown): value is VoiceRecordEntry {
   );
 }
 
-async function readMerged(): Promise<VoiceRecordEntry[]> {
-  const stored = (await runStoreOp('readonly', (store) => store.getAll())).value ?? [];
-  const merged = new Map<string, VoiceRecordEntry>();
-  for (const entry of stored) {
-    if (isVoiceRecordEntry(entry) && !tombstones.has(entry.id)) merged.set(entry.id, entry);
+function readStore<T>(read: (store: IDBObjectStore) => IDBRequest<T>): Promise<T | undefined> {
+  const container = { value: undefined as T | undefined };
+  return runTx('readonly', (store) => {
+    const request = read(store);
+    request.onsuccess = () => {
+      container.value = request.result;
+    };
+    return request;
+  }).then(() => container.value);
+}
+
+interface DoomPlan {
+  keys: IDBValidKey[];
+  ids: Set<string>;
+  merged: VoiceRecordEntry[];
+}
+
+async function planDoom(): Promise<DoomPlan> {
+  const keys: IDBValidKey[] = [];
+  const ids = new Set<string>();
+  const valid = new Map<string, VoiceRecordEntry>();
+  const rows = (await readStore((store) => store.getAll())) ?? [];
+  for (const row of rows) {
+    const key = (row as { id?: IDBValidKey } | null)?.id;
+    if (key === undefined || key === null) continue;
+    if (isVoiceRecordEntry(row) && !tombstones.has(key as string)) {
+      valid.set(key as string, row);
+    } else {
+      keys.push(key);
+      ids.add(key as string);
+    }
   }
-  for (const [id, entry] of mirror) merged.set(id, entry);
-  return [...merged.values()].sort((a, b) => a.createdAt - b.createdAt);
+  for (const entry of mirror.values()) {
+    if (isVoiceRecordEntry(entry)) valid.set(entry.id, entry);
+  }
+  const merged = [...valid.values()].sort((a, b) => a.createdAt - b.createdAt);
+  const now = Date.now();
+  const doomed = merged.filter((entry) => now - entry.createdAt >= MAX_AGE_MS);
+  const fresh = merged.filter((entry) => now - entry.createdAt < MAX_AGE_MS);
+  if (fresh.length > MAX_AUDIO_RECORDS) {
+    doomed.push(...fresh.slice(0, fresh.length - MAX_AUDIO_RECORDS));
+  }
+  for (const entry of doomed) {
+    keys.push(entry.id);
+    ids.add(entry.id);
+  }
+  return { keys, ids, merged };
 }
 
 export async function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
   mirror.set(entry.id, entry);
   tombstones.delete(entry.id);
-  await pruneVoiceRecords();
-  if (!mirror.has(entry.id)) return false;
-  const result = await runStoreOp('readwrite', (store) => store.put(entry));
-  return result.ok;
+  const plan = await planDoom();
+  const selfDoomed = plan.ids.has(entry.id);
+  for (const id of plan.ids) {
+    mirror.delete(id);
+    tombstones.add(id);
+  }
+  const committed = await runTx('readwrite', (store) => {
+    for (const key of plan.keys) store.delete(key);
+    return selfDoomed ? null : store.put(entry);
+  });
+  if (!committed) return false;
+  for (const id of plan.ids) tombstones.delete(id);
+  if (!selfDoomed) mirror.delete(entry.id);
+  return !selfDoomed;
 }
 
 export async function getVoiceRecord(id: string): Promise<VoiceRecordEntry | null> {
   const mirrored = mirror.get(id);
   if (mirrored && Date.now() - mirrored.createdAt < MAX_AGE_MS) return mirrored;
-  const stored = (await runStoreOp('readonly', (store) => store.get(id))).value;
-  if (!isVoiceRecordEntry(stored) || tombstones.has(stored.id)) return null;
-  return Date.now() - stored.createdAt < MAX_AGE_MS ? stored : null;
+  const row = await readStore((store) => store.get(id));
+  if (!isVoiceRecordEntry(row) || tombstones.has(id)) return null;
+  return Date.now() - row.createdAt < MAX_AGE_MS ? row : null;
 }
 
 export async function listVoiceRecords(): Promise<VoiceRecordEntry[]> {
   const now = Date.now();
-  return (await readMerged()).filter((entry) => now - entry.createdAt < MAX_AGE_MS);
+  return (await planDoom()).merged.filter((entry) => now - entry.createdAt < MAX_AGE_MS);
 }
 
 export async function deleteVoiceRecord(id: string): Promise<void> {
   mirror.delete(id);
   tombstones.add(id);
-  const result = await runStoreOp('readwrite', (store) => store.delete(id));
-  if (result.ok) tombstones.delete(id);
+  const removed = await runTx('readwrite', (store) => store.delete(id));
+  if (removed) tombstones.delete(id);
 }
 
 export async function pruneVoiceRecords(): Promise<void> {
-  const merged = await readMerged();
-  const now = Date.now();
-  const doomed = new Set<string>();
-  for (const entry of merged) {
-    if (now - entry.createdAt >= MAX_AGE_MS) doomed.add(entry.id);
+  const plan = await planDoom();
+  if (plan.keys.length === 0) return;
+  for (const id of plan.ids) {
+    mirror.delete(id);
+    tombstones.add(id);
   }
-  const live = merged.filter((entry) => now - entry.createdAt < MAX_AGE_MS);
-  if (live.length > MAX_AUDIO_RECORDS) {
-    for (const entry of live.slice(0, live.length - MAX_AUDIO_RECORDS)) doomed.add(entry.id);
-  }
-  for (const id of doomed) await deleteVoiceRecord(id);
+  const swept = await runTx('readwrite', (store) => {
+    for (const key of plan.keys) store.delete(key);
+    return null;
+  });
+  if (swept) for (const id of plan.ids) tombstones.delete(id);
 }
 
 export function resetVoiceAudioStore(): void {
