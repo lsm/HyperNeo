@@ -1309,6 +1309,24 @@ describe('QueryRunner', () => {
 
       expect(onMarkApiSuccessSpy).toHaveBeenCalled();
     });
+
+    it('should pass the query generation to onMarkApiSuccess', async () => {
+      runner = createRunner();
+
+      const message = {
+        type: 'assistant',
+        uuid: 'asst-uuid',
+        message: { role: 'assistant', content: [] },
+      };
+
+      await runner.handleSDKMessage(message as unknown as SDKMessage, 7);
+
+      expect(onMarkApiSuccessSpy).toHaveBeenCalledWith(message, 7);
+
+      await runner.handleSDKMessage(message as unknown as SDKMessage);
+
+      expect(onMarkApiSuccessSpy).toHaveBeenLastCalledWith(message, undefined);
+    });
   });
 
   describe('createAbortableQuery', () => {
