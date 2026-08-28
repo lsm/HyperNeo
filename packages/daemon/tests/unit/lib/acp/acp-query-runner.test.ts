@@ -1720,6 +1720,45 @@ describe('AcpQueryRunner', () => {
     }
   });
 
+  test('aborts the stored-model cache write when the run is superseded mid-apply', async () => {
+    const client = createMockClient();
+    const modelOption: AcpConfigOption = {
+      id: 'model',
+      name: 'Model',
+      type: 'select',
+      options: [{ name: 'Fast', value: 'acp-fast' }],
+      currentValue: 'acp-slow',
+      category: 'model',
+    };
+    client.getConfigOptions.mockImplementation(() => [modelOption]);
+    let releaseSet!: () => void;
+    const setEntered = new Promise<void>((resolve) => {
+      client.setConfigOption.mockImplementation(async () => {
+        resolve();
+        await new Promise<void>((resolveSet) => {
+          releaseSet = resolveSet;
+        });
+        return [{ ...modelOption, currentValue: 'acp-other' }];
+      });
+    });
+    const { runner, ctx } = createRunnerFixture({
+      client,
+      session: { config: { model: 'acp-fast', provider: 'acp' } } as Partial<Session>,
+    });
+
+    await runner.start();
+    await setEntered;
+    ctx.getQueryGeneration = () => 999;
+    releaseSet();
+    await ctx.queryPromise;
+
+    expect(client.setConfigOption).toHaveBeenCalled();
+    expect(ctx.session.config.model).toBe('acp-fast');
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ config: expect.anything() });
+    }
+  });
+
   test('keeps the old ACP session id when the replacement command fails to start', async () => {
     const client = createMockClient();
     client.initialize.mockImplementation(async () => {

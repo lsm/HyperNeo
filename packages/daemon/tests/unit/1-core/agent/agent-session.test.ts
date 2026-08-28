@@ -3843,6 +3843,35 @@ describe('AgentSession', () => {
 
       expect(getModelsCache().get('test-session-id')).toBeUndefined();
     });
+
+    it('drops the cache write when the attempt token is invalidated during discovery', async () => {
+      const attemptToken = agentSession.attemptTokens.allocate();
+      agentSession.queryObject = {
+        supportedModels: mock(async () => {
+          agentSession.attemptTokens.invalidate(attemptToken);
+          return [{ value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet · Test' }];
+        }),
+      } as unknown as AgentSession['queryObject'];
+      const generation = agentSession.getQueryGeneration();
+
+      await agentSession.onModelsFetched(generation, attemptToken);
+
+      expect(getModelsCache().get('test-session-id')).toBeUndefined();
+    });
+
+    it('caches discovered models when the attempt token stays live', async () => {
+      const attemptToken = agentSession.attemptTokens.allocate();
+      agentSession.queryObject = {
+        supportedModels: mock(async () => [
+          { value: 'sonnet', displayName: 'Sonnet', description: 'Sonnet · Test' },
+        ]),
+      } as unknown as AgentSession['queryObject'];
+      const generation = agentSession.getQueryGeneration();
+
+      await agentSession.onModelsFetched(generation, attemptToken);
+
+      expect(getModelsCache().get('test-session-id')?.length).toBe(1);
+    });
   });
 
   describe('getSlashCommands', () => {

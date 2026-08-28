@@ -203,7 +203,7 @@ import {
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
-import { QueryAttemptRegistry } from './query-attempt-token.ts';
+import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import {
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   QueryOptionsBuilder,
@@ -2159,7 +2159,7 @@ export class AgentSession
     await this.slashCommandManager.updateFromCommandsChanged(commands);
   }
 
-  async onModelsFetched(queryGeneration?: number): Promise<void> {
+  async onModelsFetched(queryGeneration?: number, attemptToken?: QueryAttemptToken): Promise<void> {
     if (queryGeneration !== undefined && this.getQueryGeneration() !== queryGeneration) {
       this.logger.info(
         `Skipping model discovery for superseded query generation ` +
@@ -2173,9 +2173,13 @@ export class AgentSession
       await getSupportedModelsFromQuery(
         this.queryObject,
         this.session.id,
-        queryGeneration === undefined
+        queryGeneration === undefined && attemptToken === undefined
           ? undefined
-          : { isLive: () => this.getQueryGeneration() === queryGeneration }
+          : {
+              isLive: () =>
+                (queryGeneration === undefined || this.getQueryGeneration() === queryGeneration) &&
+                (attemptToken === undefined || attemptToken.isLive()),
+            }
       );
     } catch (error) {
       this.logger.warn('Failed to fetch models from SDK:', error);
