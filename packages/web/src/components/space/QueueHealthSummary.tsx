@@ -153,7 +153,6 @@ export function QueueHealthSummary(): preact.JSX.Element {
               value={`${gauges.inFlight}`}
               hint={`${gauges.retryTimers} retry timer${gauges.retryTimers === 1 ? '' : 's'}`}
             />
-            <Metric label="Digest backlog" value={`${gauges.digestBacklog}`} />
             <Metric
               label="Queue age"
               value={gauges.queueDepth > 0 ? formatAge(gauges.queueAgeMs?.p95Ms ?? 0) : '—'}

@@ -50,7 +50,6 @@ const sampleSnapshot = {
     queueDepth: 2,
     queueKeys: 1,
     inFlight: 1,
-    digestBacklog: 0,
     retryTimers: 1,
     persistedPending: 0,
     queueAgeMs: { count: 2, minMs: 1000, maxMs: 5000, avgMs: 3000, p95Ms: 5000 },

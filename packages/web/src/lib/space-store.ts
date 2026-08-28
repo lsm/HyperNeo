@@ -109,7 +109,6 @@ export interface QueueHealthGauges {
   queueDepth: number;
   queueKeys: number;
   inFlight: number;
-  digestBacklog: number;
   retryTimers: number;
   persistedPending: number;
   queueAgeMs: QueueAgeStats | null;

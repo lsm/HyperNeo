@@ -59,11 +59,7 @@ import {
 import { TopicTrie } from '../../external-events/topic-trie.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import type { ExternalEvent } from '../../external-events/types.ts';
-import {
-  type DaemonCommandMap,
-  type InternalCommandBus,
-  MissingCommandHandlerError,
-} from '../../internal-command-bus.ts';
+import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
@@ -111,7 +107,6 @@ import {
   isWorkflowTargetOwnedBySpace,
   prepareExternalEventTask,
   resolveCurrentQueueableOrActiveExecution,
-  resolveLiveDeliveryTarget,
   resolveSubscriptionTarget,
 } from './external-event-admission-gates.ts';
 import {
@@ -208,8 +203,6 @@ export interface SpaceRuntimeConfig {
   commandBus?: InternalCommandBus<DaemonCommandMap>;
   externalEventStore?: ExternalEventStore;
   queueHealthMetrics?: ExternalEventQueueMetrics;
-  externalEventDeliveryCooldownMs?: number;
-  externalEventDeliveryCooldownMapCap?: number;
   completionDetector?: CompletionDetector;
   artifactRepo?: WorkflowRunArtifactRepository;
   artifactProfile?: WorkflowArtifactProfile;
@@ -350,19 +343,8 @@ interface PendingExternalEvent {
   createdAt: number;
 }
 
-interface ExternalEventDigestItem {
-  target: WorkflowSubscriptionTarget;
-  event: ExternalEventPublishedPayload;
-  deliveryKey: string;
-  deliveryMode: 'immediate' | 'defer';
-  createdAt: number;
-  allowTargetSessionFallback: boolean;
-}
-
 interface ExternalEventRateLimitState {
   timestamps: number[];
-  pendingDigest: ExternalEventDigestItem[];
-  digestTimer: Timer | null;
   cleanupTimer: Timer | null;
 }
 
@@ -424,14 +406,6 @@ const EXTERNAL_EVENT_RATE_WINDOW_MS = 60_000;
 const EXTERNAL_EVENT_RATE_LIMIT_PER_MIN = parsePositiveIntegerEnv(
   'EXTERNAL_EVENT_RATE_LIMIT_PER_MIN',
   10
-);
-const EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS = parsePositiveIntegerEnv(
-  'HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS',
-  30_000
-);
-const EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP = parsePositiveIntegerEnv(
-  'HYPERNEO_EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP',
-  4096
 );
 const EXTERNAL_EVENT_QUEUE_TTL_MS = parsePositiveIntegerEnv(
   'EXTERNAL_EVENT_QUEUE_TTL_MS',
@@ -738,9 +712,6 @@ export class SpaceRuntime {
   private readonly cancelledLongHorizonDeliveries = new Set<string>();
   private readonly longHorizonSubscriptionPatterns = new Map<string, string>();
   private readonly externalEventRateLimits = new Map<string, ExternalEventRateLimitState>();
-  private readonly externalEventDeliveryCooldowns = new Map<string, number>();
-  private readonly deliveryCooldownMs: number;
-  private readonly deliveryCooldownMapCap: number;
   private readonly queueHealthMetrics: ExternalEventQueueMetrics;
   private unsubscribeExternalEventPublished?: () => void;
   private unsubscribeSdkToolUseCreated?: () => void;
@@ -771,10 +742,6 @@ export class SpaceRuntime {
       this.workflowEventSubscriptionRepo.ensureSchema();
     }
     this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
-    this.deliveryCooldownMs =
-      config.externalEventDeliveryCooldownMs ?? EXTERNAL_EVENT_DELIVERY_COOLDOWN_MS;
-    this.deliveryCooldownMapCap =
-      config.externalEventDeliveryCooldownMapCap ?? EXTERNAL_EVENT_DELIVERY_COOLDOWN_MAP_CAP;
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
     this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
@@ -1470,8 +1437,7 @@ export class SpaceRuntime {
         item.event,
         item.deliveryKey,
         item.deliveryMode,
-        item.createdAt,
-        true
+        item.createdAt
       );
     }
     this.queueHealthMetrics.recordFlushAttempt(dispatched);
@@ -1523,8 +1489,7 @@ export class SpaceRuntime {
         item.event,
         item.deliveryKey,
         item.deliveryMode,
-        item.createdAt,
-        true
+        item.createdAt
       );
     }
     this.queueHealthMetrics.recordFlushAttempt(dispatched);
@@ -1739,10 +1704,6 @@ export class SpaceRuntime {
     const routeImmediateTier = immediateRecord?.event.urgency === 'immediate';
 
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
-      if (this.isDeliveryInDeliveryCooldown(deliveryKey)) {
-        this.queueHealthMetrics.recordCooldownSkip();
-        continue;
-      }
       if (routeImmediateTier) {
         await this.deliverImmediateTierEvent(
           target,
@@ -2761,8 +2722,7 @@ export class SpaceRuntime {
     event: ExternalEventPublishedPayload,
     deliveryKey: string,
     deliveryMode: 'immediate' | 'defer',
-    createdAt = Date.now(),
-    allowTargetSessionFallback = false
+    createdAt = Date.now()
   ): Promise<void> {
     const store = this.config.externalEventStore;
     if (
@@ -2773,7 +2733,6 @@ export class SpaceRuntime {
       return;
     }
     this.externalEventDeliveriesInFlight.add(deliveryKey);
-    let retainClaim = false;
     try {
       if (!this.isTargetStillSubscribed(target, event.topic)) {
         store.markDeliveryFailed(event.eventId, deliveryKey, {
@@ -2783,32 +2742,6 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
         this.clearExternalEventRetry(deliveryKey);
         this.clearQueuedDelivery(target, deliveryKey);
-        return;
-      }
-
-      const now = Date.now();
-      const rateLimitKey = this.buildRateLimitKey(target);
-      const state = this.getExternalEventRateLimitState(rateLimitKey);
-      state.timestamps = state.timestamps.filter(
-        (timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
-      );
-      state.timestamps.push(now);
-      if (state.timestamps.length > EXTERNAL_EVENT_RATE_LIMIT_PER_MIN) {
-        state.pendingDigest.push({
-          target,
-          event,
-          deliveryKey,
-          deliveryMode,
-          createdAt,
-          allowTargetSessionFallback,
-        });
-        retainClaim = true;
-        if (!state.digestTimer) {
-          state.digestTimer = setTimeout(() => {
-            state.digestTimer = null;
-            void this.flushExternalEventDigest(rateLimitKey);
-          }, 0);
-        }
         return;
       }
 
@@ -2825,258 +2758,8 @@ export class SpaceRuntime {
       }
       if (taskDecision.action === 'hold') {
         this.queueHealthMetrics.recordPausedSpaceSkip();
-        this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
-        return;
       }
-
-      await this.deliverToSession(target, event, deliveryKey, deliveryMode, createdAt);
-      this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
-    } finally {
-      if (!retainClaim) this.externalEventDeliveriesInFlight.delete(deliveryKey);
-    }
-  }
-
-  private async flushExternalEventDigest(rateLimitKey: string): Promise<void> {
-    const state = this.externalEventRateLimits.get(rateLimitKey);
-    if (!state || state.pendingDigest.length === 0) return;
-    const now = Date.now();
-    const digestItems = state.pendingDigest.splice(0);
-    state.timestamps = state.timestamps.filter(
-      (timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
-    );
-    if (state.digestTimer) {
-      clearTimeout(state.digestTimer);
-      state.digestTimer = null;
-    }
-    this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
-    await this.deliverDigestToSession(digestItems);
-  }
-
-  private async deliverDigestToSession(items: ExternalEventDigestItem[]): Promise<void> {
-    const store = this.config.externalEventStore;
-    if (!store || items.length === 0) return;
-    const dispatchable: ExternalEventDigestItem[] = [];
-    for (const item of items) {
-      if (store.isDeliveryTerminal(item.event.eventId, item.deliveryKey)) {
-        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
-        continue;
-      }
-      if (!this.isTargetStillSubscribed(item.target, item.event.topic)) {
-        store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
-          terminal: true,
-          reason: 'subscription_no_longer_active',
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
-        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
-        continue;
-      }
-      const taskDecision = this.prepareExternalEventTask(item.target, item.event);
-      if (taskDecision.action === 'fail') {
-        store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
-          terminal: true,
-          reason: taskDecision.reason,
-        });
-        store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
-        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
-        continue;
-      }
-      if (taskDecision.action === 'hold') {
-        this.queueHealthMetrics.recordPausedSpaceSkip();
-        this.preservePendingDigestItem(item);
-        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
-        continue;
-      }
-      dispatchable.push(item);
-    }
-    if (dispatchable.length === 0) return;
-    items = dispatchable;
-    const target = this.resolveDigestDeliveryTarget(items[0]!);
-    const pausedRun = target.workflowRunId
-      ? this.config.workflowRunRepo.getRun(target.workflowRunId)
-      : null;
-    const spacePaused = !!(pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId));
-    if (!target.sessionId || spacePaused) {
-      const sessionLoss = !target.sessionId;
-      const reason = spacePaused ? 'space_paused' : 'session loss';
-      for (const item of items) {
-        if (sessionLoss) this.queueHealthMetrics.recordStaleSessionSkip();
-        else this.queueHealthMetrics.recordPausedSpaceSkip();
-        store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
-          terminal: false,
-          reason: `deliveryMode:${item.deliveryMode}; digest requeued after ${reason}`,
-        });
-        this.queueForPendingNode(
-          item.target,
-          item.event,
-          item.deliveryKey,
-          item.deliveryMode,
-          item.createdAt
-        );
-        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
-      }
-      if (sessionLoss) {
-        log.debug('SpaceRuntime: external event digest requeued — target session not live', {
-          runId: target.workflowRunId,
-          count: items.length,
-        });
-      }
-      return;
-    }
-    const deliveryKeys = items.map((item) => item.deliveryKey);
-    for (const deliveryKey of deliveryKeys) {
-      this.externalEventDeliveriesInFlight.add(deliveryKey);
-    }
-    try {
-      if (!this.config.commandBus) {
-        throw new MissingCommandHandlerError('agent.message.inject');
-      }
-      const digestMessage = this.formatExternalEventDigestMessage(items);
-      const result = await this.config.commandBus.dispatch('agent.message.inject', {
-        sessionId: target.sessionId,
-        message: digestMessage,
-        deliveryMode: items.some((item) => item.deliveryMode === 'immediate')
-          ? 'immediate'
-          : 'defer',
-        metadata: {
-          workflowRunId: target.workflowRunId,
-          taskId: target.taskId,
-          nodeId: target.nodeId,
-          agentName: target.agentName,
-          source: 'external_event_digest',
-          eventIds: items.map((item) => item.event.eventId),
-          topics: [...new Set(items.map((item) => item.event.topic))],
-        },
-      });
-      if (!result?.ok) {
-        throw new Error(formatCommandError(result?.error ?? 'agent.message.inject unavailable'));
-      }
-      for (const item of items) {
-        this.clearExternalEventRetry(item.deliveryKey);
-        this.clearQueuedDelivery(item.target, item.deliveryKey);
-        store.markDeliveryDelivered(item.event.eventId, item.deliveryKey);
-        store.markEventDeliveredIfAllDeliveriesDelivered(item.event.eventId);
-        store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
-      }
-    } catch (err) {
-      const rawFailureReason = err instanceof Error ? err.message : String(err);
-      const terminal = err instanceof MissingCommandHandlerError;
-      for (const item of items) {
-        const failureReason = `deliveryMode:${item.deliveryMode}; digest; ${rawFailureReason}`;
-        store.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
-          terminal,
-          reason: failureReason,
-        });
-        if (terminal) {
-          this.clearExternalEventRetry(item.deliveryKey);
-          this.clearQueuedDelivery(item.target, item.deliveryKey);
-          store.markEventFailedIfAllDeliveriesTerminal(item.event.eventId);
-          continue;
-        }
-        this.queueForRetry(
-          target,
-          item.event,
-          item.deliveryKey,
-          item.deliveryMode,
-          failureReason,
-          item.createdAt
-        );
-      }
-    } finally {
-      for (const deliveryKey of deliveryKeys) {
-        this.externalEventDeliveriesInFlight.delete(deliveryKey);
-      }
-    }
-  }
-
-  private resolveDigestDeliveryTarget(item: ExternalEventDigestItem): WorkflowSubscriptionTarget {
-    const target = item.target;
-    const liveTarget = this.resolveLiveDeliveryTarget({
-      workflowRunId: target.workflowRunId,
-      taskId: target.taskId,
-      nodeId: target.nodeId,
-      agentName: target.agentName,
-    });
-    if (liveTarget?.sessionId) return liveTarget;
-    if (
-      item.allowTargetSessionFallback &&
-      target.sessionId &&
-      this.isTargetSessionLive(target.sessionId)
-    ) {
-      return target;
-    }
-    return {
-      workflowRunId: target.workflowRunId,
-      taskId: target.taskId,
-      nodeId: target.nodeId,
-      agentName: target.agentName,
-    };
-  }
-
-  private async deliverToSession(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload,
-    deliveryKey: string,
-    deliveryMode: 'immediate' | 'defer',
-    fallbackCreatedAt?: number
-  ): Promise<void> {
-    const store = this.config.externalEventStore;
-    if (!store || !target.sessionId) return;
-    const pausedRun = this.config.workflowRunRepo.getRun(target.workflowRunId);
-    if (pausedRun && this.pausedSpaceIds.has(pausedRun.spaceId)) {
-      this.queueHealthMetrics.recordPausedSpaceSkip();
-      return;
-    }
-    this.externalEventDeliveriesInFlight.add(deliveryKey);
-    try {
-      if (!this.config.commandBus) {
-        throw new MissingCommandHandlerError('agent.message.inject');
-      }
-      const result = await this.config.commandBus.dispatch('agent.message.inject', {
-        sessionId: target.sessionId,
-        message: formatExternalEventEssence(event),
-        deliveryMode,
-        metadata: {
-          workflowRunId: target.workflowRunId,
-          taskId: target.taskId,
-          nodeId: target.nodeId,
-          agentName: target.agentName,
-          source: 'external_event',
-          eventId: event.eventId,
-          topic: event.topic,
-        },
-      });
-      if (!result?.ok) {
-        throw new Error(formatCommandError(result?.error ?? 'agent.message.inject unavailable'));
-      }
-      this.clearExternalEventRetry(deliveryKey);
-      this.clearQueuedDelivery(target, deliveryKey);
-      store.markDeliveryDelivered(event.eventId, deliveryKey);
-      store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
-      store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-    } catch (err) {
-      const rawFailureReason = err instanceof Error ? err.message : String(err);
-      const failureReason = `deliveryMode:${deliveryMode}; ${rawFailureReason}`;
-      const terminal = err instanceof MissingCommandHandlerError;
-      store.markDeliveryFailed(event.eventId, deliveryKey, {
-        terminal,
-        reason: failureReason,
-      });
-      if (terminal) {
-        this.clearExternalEventRetry(deliveryKey);
-        this.clearQueuedDelivery(target, deliveryKey);
-        store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
-        return;
-      }
-      this.armDeliveryCooldown(deliveryKey);
-      const queued = this.getQueuedDelivery(target, deliveryKey);
-      this.queueForRetry(
-        target,
-        event,
-        deliveryKey,
-        deliveryMode,
-        failureReason,
-        queued?.createdAt ?? fallbackCreatedAt
-      );
+      this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
     } finally {
       this.externalEventDeliveriesInFlight.delete(deliveryKey);
     }
@@ -3131,25 +2814,6 @@ export class SpaceRuntime {
       void this.deliverExternalEventToWorkflowTarget(target, event, deliveryKey);
     }, EXTERNAL_EVENT_RETRY_DELAY_MS);
     this.externalEventRetryTimers.set(deliveryKey, timer);
-  }
-
-  private queueForRetry(
-    target: WorkflowSubscriptionTarget,
-    event: ExternalEventPublishedPayload,
-    deliveryKey: string,
-    deliveryMode: 'immediate' | 'defer',
-    failureReason: string,
-    createdAt = Date.now()
-  ): void {
-    const queuedItem = { event, deliveryKey, deliveryMode, createdAt };
-    if (this.isQueuedExternalEventExpired(queuedItem)) {
-      this.failQueuedDeliveryForTtl(queuedItem, this.buildQueueKey(target));
-      return;
-    }
-    this.queueForPendingNode(target, event, deliveryKey, deliveryMode, createdAt);
-    this.scheduleExternalEventRetry(target, event, deliveryKey, deliveryMode, failureReason, {
-      createdAt,
-    });
   }
 
   private scheduleExternalEventRetry(
@@ -3266,23 +2930,6 @@ export class SpaceRuntime {
     }
   }
 
-  private preservePendingDigestItem(item: ExternalEventDigestItem): void {
-    const key = this.buildQueueKey(item.target);
-    const queue = this.pendingExternalEventQueue.get(key) ?? [];
-    if (queue.some((queued) => queued.deliveryKey === item.deliveryKey)) return;
-    queue.push({
-      event: item.event,
-      deliveryKey: item.deliveryKey,
-      deliveryMode: item.deliveryMode,
-      createdAt: item.createdAt,
-    });
-    this.pendingExternalEventQueue.set(key, queue);
-    this.queueHealthMetrics.recordEnqueue(
-      item.event.source,
-      this.describeEnqueueTargetState(item.target)
-    );
-  }
-
   private queueForPendingNode(
     target: WorkflowSubscriptionTarget,
     event: ExternalEventPublishedPayload,
@@ -3335,17 +2982,12 @@ export class SpaceRuntime {
       queueDepth += queue.length;
       for (const item of queue) inMemoryAges.push(now - item.createdAt);
     }
-    let digestBacklog = 0;
-    for (const state of this.externalEventRateLimits.values()) {
-      digestBacklog += state.pendingDigest.length;
-    }
     const store = this.config.externalEventStore;
     const persisted = store ? store.summarizePendingDeliveries(now) : null;
     const gauges: QueueHealthGauges = {
       queueDepth,
       queueKeys: this.pendingExternalEventQueue.size,
       inFlight: this.externalEventDeliveriesInFlight.size,
-      digestBacklog,
       retryTimers: this.externalEventRetryTimers.size,
       persistedPending: persisted?.count ?? 0,
       queueAgeMs: computeQueueAgeStats(inMemoryAges),
@@ -3473,15 +3115,6 @@ export class SpaceRuntime {
     );
   }
 
-  private resolveLiveDeliveryTarget(
-    target: Pick<WorkflowSubscriptionTarget, 'workflowRunId' | 'taskId' | 'nodeId' | 'agentName'>
-  ): WorkflowSubscriptionTarget | null {
-    return resolveLiveDeliveryTarget(
-      this.config.nodeExecutionRepo.listByNode(target.workflowRunId, target.nodeId),
-      target
-    );
-  }
-
   private isRunInterestRebuildEligible(run: SpaceWorkflowRun): boolean {
     return this.isRunInterestRebuildEligibleWithTasks(
       run,
@@ -3596,25 +3229,6 @@ export class SpaceRuntime {
     return buildQueueKey(target);
   }
 
-  private isDeliveryInDeliveryCooldown(deliveryKey: string): boolean {
-    const lastFailureAt = this.externalEventDeliveryCooldowns.get(deliveryKey);
-    if (lastFailureAt === undefined) return false;
-    if (Date.now() - lastFailureAt < this.deliveryCooldownMs) return true;
-    this.externalEventDeliveryCooldowns.delete(deliveryKey);
-    return false;
-  }
-
-  private armDeliveryCooldown(deliveryKey: string): void {
-    const map = this.externalEventDeliveryCooldowns;
-    map.set(deliveryKey, Date.now());
-    if (map.size > this.deliveryCooldownMapCap) {
-      const now = Date.now();
-      for (const [key, lastFailureAt] of map) {
-        if (now - lastFailureAt >= this.deliveryCooldownMs) map.delete(key);
-      }
-    }
-  }
-
   private getExternalEventRateLimitState(rateLimitKey: string): ExternalEventRateLimitState {
     const existing = this.externalEventRateLimits.get(rateLimitKey);
     if (existing) {
@@ -3626,8 +3240,6 @@ export class SpaceRuntime {
     }
     const created = {
       timestamps: [],
-      pendingDigest: [],
-      digestTimer: null,
       cleanupTimer: null,
     };
     this.externalEventRateLimits.set(rateLimitKey, created);
@@ -3636,7 +3248,7 @@ export class SpaceRuntime {
 
   private scheduleExternalEventRateLimitCleanup(rateLimitKey: string): void {
     const state = this.externalEventRateLimits.get(rateLimitKey);
-    if (!state || state.pendingDigest.length > 0 || state.cleanupTimer) return;
+    if (!state || state.cleanupTimer) return;
     const now = Date.now();
     state.timestamps = state.timestamps.filter(
       (timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
@@ -3651,7 +3263,6 @@ export class SpaceRuntime {
         const current = this.externalEventRateLimits.get(rateLimitKey);
         if (!current) return;
         current.cleanupTimer = null;
-        if (current.pendingDigest.length > 0) return;
         const cleanupNow = Date.now();
         current.timestamps = current.timestamps.filter(
           (timestamp) => cleanupNow - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
@@ -3724,22 +3335,6 @@ export class SpaceRuntime {
     } catch {
       return null;
     }
-  }
-
-  private formatExternalEventDigestMessage(items: ExternalEventDigestItem[]): string {
-    const topics = [...new Set(items.map((item) => item.event.topic))].sort();
-    const occurredAtValues = items.map((item) => item.event.occurredAt);
-    const oldest = new Date(Math.min(...occurredAtValues)).toISOString();
-    const newest = new Date(Math.max(...occurredAtValues)).toISOString();
-    const eventIds = JSON.stringify(
-      items.map((item) => ({ id: item.event.eventId, topic: item.event.topic }))
-    );
-    return (
-      `${items.length} events received for topics: ${topics.join(', ')} ` +
-      `(oldest: ${oldest}, newest: ${newest}). ` +
-      `Event IDs: ${eventIds}. ` +
-      `Use get_external_event(eventId) for full details.`
-    );
   }
 
   emitTaskThreadEvent(sessionId: string, subtype: string, payload: Record<string, unknown>): void {
@@ -4639,19 +4234,9 @@ export class SpaceRuntime {
       this.digestPullTriggers.delete(sessionId);
     }
     for (const state of this.externalEventRateLimits.values()) {
-      if (state.digestTimer) clearTimeout(state.digestTimer);
       if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
-      for (const item of state.pendingDigest) {
-        this.config.externalEventStore?.markDeliveryFailed(item.event.eventId, item.deliveryKey, {
-          terminal: false,
-          reason: `deliveryMode:${item.deliveryMode}; digest pending during runtime stop`,
-        });
-        this.preservePendingDigestItem(item);
-        this.externalEventDeliveriesInFlight.delete(item.deliveryKey);
-      }
     }
     this.externalEventRateLimits.clear();
-    this.externalEventDeliveryCooldowns.clear();
     this.acceptingExternalEvents = false;
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer);

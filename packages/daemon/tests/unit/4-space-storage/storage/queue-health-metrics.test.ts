@@ -10,7 +10,6 @@ const EMPTY_GAUGES: QueueHealthGauges = {
   queueDepth: 0,
   queueKeys: 0,
   inFlight: 0,
-  digestBacklog: 0,
   retryTimers: 0,
   persistedPending: 0,
   queueAgeMs: null,
