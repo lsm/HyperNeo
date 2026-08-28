@@ -4,6 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.js';
 import { getProviderRegistry } from './registry.js';
+import { buildLastGoodDiscoveredModels } from './shared/last-good-discovery.js';
 
 const MAX_JSON_FIELD_LEN = 64 * 1024;
 
@@ -115,63 +116,27 @@ function lastGoodDiscoveryBudget(
   );
 }
 
-function buildLastGoodDiscoveredModels(
+function resolveCuratedEntries(
   providerId: string,
-  discovered: ReadonlyArray<{ id: string; name?: string; alias?: string }>,
-  budget: number
-): LastGoodDiscoveredModels {
-  const registry = getProviderRegistry();
+  discovered: ReadonlyArray<{ id: string; name?: string; alias?: string }>
+): CuratedModel[] {
   const canonicalByAlias = new Map<string, { id: string; name?: string }>();
   for (const model of discovered) {
     if (model.alias !== undefined && model.alias !== model.id) {
       canonicalByAlias.set(model.alias, model);
     }
   }
-  const byId = new Map<string, CuratedModel>();
-  for (const curated of registry.getCuratedModels(providerId) ?? []) {
+  const resolved: CuratedModel[] = [];
+  const seen = new Set<string>();
+  for (const curated of getProviderRegistry().getCuratedModels(providerId) ?? []) {
     const canonical = canonicalByAlias.get(curated.id);
     const id = canonical?.id ?? curated.id;
-    if (!byId.has(id)) {
-      const name = canonical?.name ?? curated.name;
-      byId.set(id, { id, ...(name === undefined ? {} : { name }) });
-    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const name = canonical?.name ?? curated.name;
+    resolved.push({ id, ...(name === undefined ? {} : { name }) });
   }
-  const curatedCount = byId.size;
-  for (const model of discovered) {
-    const seeded = byId.get(model.id);
-    if (seeded) {
-      if (seeded.name === undefined && model.name !== undefined) seeded.name = model.name;
-      continue;
-    }
-    byId.set(model.id, { id: model.id, ...(model.name === undefined ? {} : { name: model.name }) });
-  }
-  const models: CuratedModel[] = [];
-  let used = 2;
-  let index = 0;
-  let truncated = false;
-  for (const entry of byId.values()) {
-    let candidate = entry;
-    let cost = JSON.stringify(entry).length + (models.length === 0 ? 0 : 1);
-    if (used + cost > budget && entry.name !== undefined) {
-      const bare: CuratedModel = { id: entry.id };
-      const bareCost = JSON.stringify(bare).length + (models.length === 0 ? 0 : 1);
-      if (used + bareCost <= budget) {
-        candidate = bare;
-        cost = bareCost;
-      }
-    }
-    if (used + cost > budget) {
-      if (index < curatedCount) {
-        throw new Error('Provider config has no capacity to retain all curated models');
-      }
-      truncated = true;
-      break;
-    }
-    models.push(candidate);
-    used += cost;
-    index++;
-  }
-  return { models, ...(truncated ? { truncated: true } : {}) };
+  return resolved;
 }
 
 function persistLastGoodDiscoveredModels(
@@ -201,7 +166,11 @@ function persistLastGoodDiscoveredModels(
   if (budget < 2) {
     throw new Error('Provider config has no capacity to persist discovery results');
   }
-  const lastGood = buildLastGoodDiscoveredModels(record.providerId, discovered, budget);
+  const lastGood = buildLastGoodDiscoveredModels(
+    resolveCuratedEntries(record.providerId, discovered),
+    discovered,
+    budget
+  );
   base[LAST_GOOD_DISCOVERY_KEY] = {
     ...lastGood,
     ...(endpointFingerprint === undefined ? {} : { fingerprint: endpointFingerprint }),

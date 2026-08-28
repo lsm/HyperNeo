@@ -146,6 +146,16 @@ function withoutFingerprint(provider: FakeProvider): Provider {
   return provider;
 }
 
+function padConfigForBudget(budget: number, fingerprint?: string): string {
+  const wrapperReserve =
+    `"discoveredModels":${JSON.stringify({ models: [], truncated: true })}`.length + 1;
+  const fingerprintReserve =
+    fingerprint === undefined ? 0 : `,"fingerprint":${JSON.stringify(fingerprint)}`.length;
+  return JSON.stringify({
+    pad: 'x'.repeat(64 * 1024 - 11 - wrapperReserve - fingerprintReserve - budget),
+  });
+}
+
 function makeDeps(
   overrides: Partial<CommitSavedConfigDiscoveryRefreshDeps> = {}
 ): CommitSavedConfigDiscoveryRefreshDeps {
@@ -340,6 +350,44 @@ describe('discovery-refresh pipeline helpers', () => {
       expect(out.persistedEntries).toEqual([{ id: 'mock-k3[1m]', name: 'Mock K3' }]);
       const persisted = JSON.parse(store.get('row-1')!.configJson!);
       expect(persisted.discoveredModels.models).toEqual([{ id: 'mock-k3[1m]', name: 'Mock K3' }]);
+    });
+
+    it('delegates bounding to the landed builder, reserving bare capacity for later curated ids', () => {
+      const longName = 'A'.repeat(60);
+      getProviderRegistry().setCuratedModels('mock', [
+        { id: 'cur-a', name: longName },
+        { id: 'cur-b' },
+      ]);
+      const fullFirst = JSON.stringify({ id: 'cur-a', name: longName }).length;
+      const { repo, store } = createMockProviderRepo(
+        makeRecord({ configJson: padConfigForBudget(2 + fullFirst, 'fp:default') })
+      );
+      const ctx = makeCtx({
+        deps: makeDeps({ providerRepo: repo }),
+        discovered: [makeModel('cur-a'), makeModel('cur-b')],
+        currentRecord: store.get('row-1') ?? null,
+      });
+      const out = persistLastGoodSlice(ctx);
+      expect(out.truncated).toBe(false);
+      const persisted = JSON.parse(store.get('row-1')!.configJson!);
+      expect(persisted.discoveredModels).toEqual({
+        models: [{ id: 'cur-a' }, { id: 'cur-b', name: 'cur-b' }],
+        fingerprint: 'fp:default',
+      });
+      expect(out.persistedEntries).toEqual([{ id: 'cur-a' }, { id: 'cur-b', name: 'cur-b' }]);
+    });
+
+    it('rejects persistence when the remaining config budget cannot hold the wrapper', () => {
+      const provider = new FakeProvider();
+      const { repo, store } = createMockProviderRepo(
+        makeRecord({ configJson: padConfigForBudget(1, 'fp:default') })
+      );
+      const ctx = makeCtx({
+        deps: makeDeps({ providerRepo: repo, provider }),
+        currentRecord: store.get('row-1') ?? null,
+      });
+      expect(() => persistLastGoodSlice(ctx)).toThrow(/no capacity to persist discovery results/);
+      expect(provider.clearModelCache).toHaveBeenCalledTimes(1);
     });
 
     it('clears the provider cache and rethrows when the saved config is unwritable', () => {
