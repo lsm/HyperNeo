@@ -109,6 +109,7 @@ export class InterruptHandler {
       }
       return;
     }
+    this.ctx.attemptTokens?.invalidateCurrent();
     this.deferredReplaySuppressed = opts?.skipDeferredReplay === true;
 
     const interruptCompletePromise = new Promise<void>((resolve) => {
