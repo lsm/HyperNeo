@@ -1852,6 +1852,44 @@ describe('Provider RPC handlers', () => {
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
 
+    it('keeps the refresh when an OAuth access token rotates mid-fetch without an identity change', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'oauth',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      let credentialReads = 0;
+      getProviderRegistry().register({
+        id: 'remote',
+        isAvailable: async () => true,
+        getCredentials: async () => {
+          credentialReads += 1;
+          return {
+            type: 'oauth',
+            accessToken: credentialReads <= 3 ? 'access-1' : 'access-2',
+            refreshToken: 'refresh-stable',
+          };
+        },
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      } as unknown as Provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; reason?: string };
+
+      expect(result.success).toBe(true);
+      const persisted = parsePersisted(repo.getProvider(created.id)?.configJson) as {
+        discoveredModels: { models: Array<{ id: string }> };
+      };
+      expect(persisted.discoveredModels.models.map((model) => model.id)).toEqual(['remote-a']);
+      expect(eventBus.publishAsync).toHaveBeenCalled();
+    });
+
     it('releases the parked deferred slice when the final recheck discards the commit', async () => {
       const created = repo.createProvider({
         providerId: 'remote',
