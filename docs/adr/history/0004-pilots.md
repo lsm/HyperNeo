@@ -1703,35 +1703,43 @@ Chain B closed the query-runner half of the same survey (§4/§8.2): the
 catch-block classification and its four retry arms became
 `query-retry-routing.ts` — `classifyQueryRetryRoute` (the 37-branch cascade as
 a pure table over error class/subtype, attempt × cap, provider family,
-lifecycle, and recovery/supersede flags) composed synchronously as
-`decideQueryRetry`, a `decisionRun` over the classifier and arm-mapping gates,
-interpreted branch-per-route in `query-runner.ts`'s catch; the four-copy
-teardown liturgy collapsed into `runRetryTeardown` (B4); and the B5 series
-fenced the stale-continuation windows the pins had mapped — the per-attempt
-token (`query-attempt-token.ts`, B5a), owned-fence cancellation (B5b), the
-owner-scoped idle with its three-owner waiter filter (query, rate-limit
-episode, turn/delivery) in `processing-state-manager.ts` (B5E, re-sliced from
-one over-budget PR into five), post-await watchdog-write fencing on #2779's
-gates (B5d), generation-fenced dispatch/catch/queue-seam/permission paths
-across both runners (B5f–B5l), and the notice-publication fallback (B5j).
-B5h was cancelled — B5g's attempt-token binding (ACP retries preserve
+lifecycle, and supersede/cleanup flags — recovery state is not a classifier
+dimension; it configures finalizer behavior in the arm-mapping stage)
+composed synchronously as `decideQueryRetry`, a `decisionRun` over the
+classifier and arm-mapping gates, interpreted branch-per-route in
+`query-runner.ts`'s catch; the four-copy teardown liturgy collapsed into
+`runRetryTeardown` (B4); and the B5 series fenced the stale-continuation
+windows the pins had mapped — the per-attempt token (`query-attempt-token.ts`,
+B5a), owned-fence cancellation (B5b), the owner-scoped idle with its
+three-owner waiter filter (query, rate-limit episode, turn/delivery) in
+`processing-state-manager.ts` (B5E, re-sliced from one over-budget PR into
+five), post-await watchdog-write fencing on #2779's gates (B5d),
+generation-fenced dispatch/catch/queue-seam/permission paths across both
+runners (B5f–B5l), and the notice-publication fallback (B5j). B5h was
+cancelled — B5g's attempt-token binding (ACP retries preserve
 `queryGeneration`) closed the same interleaving.
 
-**The composition boundary held where the ADR draws it.** Classification and
-route selection became a pipeline; the B5 fencing did not — it landed as
-in-place ownership revalidation (resnapshot and owner checks at await
-boundaries, generation/attempt-guarded writes) because those seams sit on the
-query error path and per-message/permission callbacks, where the ADR's
-hot-path exclusion applies and restructuring into stages would have moved
-code without removing a window. Effects stayed in the shell throughout; B3c
-added the finalizer's post-await guards as plain identity/lifecycle checks.
+**The composition boundary.** Two effectful pipelines landed inside the
+chain: B4's teardown dedup is the named `query-retry-teardown` superpipe
+(`endAsync`) running the awaited teardown effects — idle transition, notice
+publication, process-exit wait, environment restoration, retry recursion —
+and B5E's waiter admission composes `idle-waiter-admission-pipeline.ts`
+(`runIdleWaiterAdmission`, invoked by `ProcessingStateManager` for the
+three-owner filter). The remaining B5 fencing stayed in-place ownership
+revalidation (resnapshot and owner checks at await boundaries,
+generation/attempt-guarded writes): those seams sit on the query error path
+and per-message/permission callbacks, where the ADR's hot-path exclusion
+applies and restructuring into stages would have moved code without removing
+a window. B3c added the finalizer's post-await guards as plain
+identity/lifecycle checks in the shell.
 
-Closing sweep (this PR): the measured removal pass found nothing left to
-delete — knip green with the module's export ignore removed, every
-B-introduced export consumed by production or by its equivalence pins, and
-each apply slice had already replaced the cascade it landed on (B5l even
-dropped rebase-introduced dead calls in flight). Prod Δ = 0; this entry is
-the deliverable. The successor plan
+Closing sweep (this PR): the measured removal pass found the chain already
+clean — each apply slice had replaced the cascade it landed on (B5l even
+dropped rebase-introduced dead calls in flight), and the one remnant was
+`knip.json`'s vestigial `ignoreIssues` entry for `query-retry-routing.ts`,
+deleted here (knip green before and after: every export is consumed in
+production, pinned by tests, or used within the module's own signature).
+Code Δ = 0; this entry is the deliverable. The successor plan
 (`docs/superpipe-migration-plans/agent-routing.md`) retires trailing
 cleanup slices outright — dead-code deletion rides with each phase's final
 apply slice — re-verifies `decideQueryRetry` as wired, and pins its pure
@@ -1815,12 +1823,13 @@ Pilot 14 PRs: #2900, #2902, #2905, #2903, #2914, #2925, #2930, #2941, #2945,
   the closing dead-code sweep.
 - **Done (pilot 14, agent-layer chain B):** the query-retry classifier and
   route arms as `decideQueryRetry` (`decisionRun`) interpreted in the
-  `query-runner.ts` catch, the teardown liturgy deduped into
-  `runRetryTeardown`, and the B5 ownership-fencing series (attempt token,
-  owned fences, three-owner idle filter, post-await watchdog/dispatch/catch/
-  queue/permission revalidation) — see "Pilot 14" above for why the fencing
-  stayed as in-place guards rather than pipelines, and the zero-Δ closing
-  sweep.
+  `query-runner.ts` catch, the teardown liturgy deduped into the effectful
+  `query-retry-teardown` superpipe, and the B5 ownership-fencing series
+  (attempt token, owned fences, three-owner idle-admission pipeline,
+  post-await watchdog/dispatch/catch/queue/permission revalidation) — see
+  "Pilot 14" above for the composition boundary (which fencing became
+  pipelines and which stayed in-place guards) and the closing sweep that
+  deleted the chain's one vestigial knip ignore line.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -1971,10 +1980,12 @@ Pilot 14 PRs: #2900, #2902, #2905, #2903, #2914, #2925, #2930, #2941, #2945,
   #2915, #2917, #2916, #2924, #2922, #2956, #2955, #2934, #2933, #2962,
   #2965, #2977, plus this closing sweep.
 - Pilot 14 (agent-layer chain B) files:
-  `packages/daemon/src/lib/agent/{query-retry-routing,query-attempt-token}.ts`;
+  `packages/daemon/src/lib/agent/{query-retry-routing,query-attempt-token,
+  idle-waiter-admission-pipeline}.ts`;
   interpreter in `query-runner.ts` (catch-arm routing, `runRetryTeardown`,
-  finalizer guards); owner-scoped idle in `processing-state-manager.ts`;
-  watchdog fencing on `rate-limit-watchdog{,-gates}.ts`; ACP-side fencing in
+  finalizer guards); owner-scoped idle admission in
+  `processing-state-manager.ts`; watchdog fencing on
+  `rate-limit-watchdog{,-gates}.ts`; ACP-side fencing in
   `acp/acp-query-runner.ts` and `acp/acp-query-adapter.ts`; pins in
   `packages/daemon/tests/unit/1-core/agent/`; survey and chain plan in
   `docs/agent-layer-superpipe-pilot-proposal.md`, successor plan in

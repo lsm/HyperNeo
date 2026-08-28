@@ -54,7 +54,6 @@
     "packages/daemon/src/lib/agent/delivery-turn-routing.ts": ["exports"],
     "packages/daemon/src/lib/agent/loop-detector-hook.ts": ["exports"],
     "packages/daemon/src/lib/agent/message-queue-timeout-policy.ts": ["exports"],
-    "packages/daemon/src/lib/agent/query-retry-routing.ts": ["exports"],
     "packages/daemon/src/lib/agent/reconciler-sweep.ts": ["exports"],
     "packages/daemon/src/lib/agent/turn-end-pipeline.ts": ["exports"],
     "packages/daemon/src/lib/agent/usage-accounting.ts": ["exports"],
