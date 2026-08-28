@@ -1825,6 +1825,32 @@ describe('AcpQueryRunner', () => {
     }
   });
 
+  test('skips ACP session writes when cleanup starts mid-handshake', async () => {
+    const client = createMockClient();
+    let releaseCreate!: () => void;
+    const createEntered = new Promise<void>((resolve) => {
+      client.createSession.mockImplementation(async () => {
+        resolve();
+        await new Promise<void>((resolveCreate) => {
+          releaseCreate = resolveCreate;
+        });
+        return { sessionId: 'acp-session-1', configOptions: [] };
+      });
+    });
+    const { runner, ctx } = createRunnerFixture({ client });
+
+    await runner.start();
+    await createEntered;
+    ctx.isCleaningUp = () => true;
+    releaseCreate();
+    await ctx.queryPromise;
+
+    expect(ctx.session.acpSessionId).toBeUndefined();
+    for (const call of ctx.db.updateSession.mock.calls) {
+      expect(call[1]).not.toMatchObject({ acpSessionId: expect.anything() });
+    }
+  });
+
   test('keeps the old ACP session id when the replacement command fails to start', async () => {
     const client = createMockClient();
     client.initialize.mockImplementation(async () => {

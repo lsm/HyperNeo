@@ -426,7 +426,8 @@ export class AcpQueryRunner {
         : QueryAttemptRegistry.detached();
     const attemptOwnsRun = () =>
       attemptToken.isLive() && this.ctx.getQueryGeneration() === queryGeneration;
-    const ownsSessionWrite = () => attemptOwnsRun() && !runAbortController.signal.aborted;
+    const ownsSessionWrite = () =>
+      attemptOwnsRun() && !runAbortController.signal.aborted && !this.ctx.isCleaningUp();
     const requeueYieldedPrompt = (yieldedMessage: SDKUserMessage) => {
       const yieldedUuid = yieldedMessage.uuid;
       if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
@@ -832,7 +833,7 @@ export class AcpQueryRunner {
             if (attemptOwnsRun()) this.persistAcpContextUsageEstimate(used);
           },
           onConfigOptionsUpdate: (configOptions) => {
-            if (!ownsSessionWrite() || this.ctx.isCleaningUp()) return;
+            if (!ownsSessionWrite()) return;
             this.updateAcpModelCache(configOptions);
           },
           onSubmitted: () => {
