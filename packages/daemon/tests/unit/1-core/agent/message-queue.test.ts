@@ -2861,8 +2861,62 @@ describe('MessageQueue', () => {
       expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
       expect(onResumeClear).toHaveBeenCalled();
       expect(q.isRunning()).toBe(true);
+      expect(q.hasPendingOrClaimed('uuid-no-teardown')).toBe(false);
       q.stop();
     }, 15_000);
+
+    it('aborts the restart when a user stop lands during survivor cancellation', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-arm-stop',
+        content: 'arm stop survivor',
+        internal: false,
+      } as never);
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-arm-stop'] }),
+        cancelAsyncMessage: async () => {
+          q.noteUserInterrupt();
+          return false;
+        },
+        onResumeClear,
+        restart: async (options) => {
+          q.stop();
+          await options?.beforeStart?.();
+          q.start();
+        },
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+      expect(onResumeClear).toHaveBeenCalled();
+      q.stop();
+    });
+
+    it('retains yield stamps for outstanding messages past the retention cap', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const generator = q.messageGenerator(testSessionId, { queryGeneration: 3 });
+      const steps: Array<{ message: { uuid: string }; onSent: () => void }> = [];
+      for (let index = 0; index < 70; index += 1) {
+        const delivered = q.enqueueWithId(`uuid-ret-${index}`, `retained ${index}`, false, {});
+        delivered.catch(() => {});
+        const step = await generator.next();
+        steps.push(step.value);
+      }
+      for (let index = 10; index < 70; index += 1) {
+        steps[index].onSent();
+      }
+      const extra = q.enqueueWithId('uuid-ret-extra', 'retained extra', false, {});
+      extra.catch(() => {});
+      (await generator.next()).value.onSent();
+
+      q.stop();
+      expect(q.ownsLastYield('uuid-ret-3', 3)).toBe(false);
+    });
 
     it('stands down a late receipt after the recovery replacement was stopped', async () => {
       const q = new MessageQueue();

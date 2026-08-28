@@ -109,6 +109,9 @@ export class MessageQueue {
   private stopEpoch: number = 0;
   private userInterruptEpoch: number = 0;
   private cycleStoodDown: boolean = false;
+  private cycleArmClearEpoch: number = 0;
+  private cycleArmUserInterruptEpoch: number = 0;
+  private cycleRequeuedIds: string[] = [];
   private lastYieldGenerations: Map<string, { generation: number; stopEpoch: number }> = new Map();
   private midTurnBoundarySeq: number = 0;
   private promptPhaseBoundarySeq: number = 0;
@@ -522,6 +525,14 @@ export class MessageQueue {
     );
   }
 
+  private isTrackedMessageId(messageId: string): boolean {
+    return (
+      this.queue.some((message) => message.id === messageId) ||
+      [...this.claimed].some((message) => message.id === messageId) ||
+      [...this.yielded].some((message) => message.id === messageId)
+    );
+  }
+
   acknowledgeYielded(messageId: string, fromQueryGeneration?: number): boolean {
     if (!this.ownsYieldedGeneration(messageId, fromQueryGeneration ?? null)) return false;
     for (const message of this.yielded) {
@@ -690,9 +701,10 @@ export class MessageQueue {
           stopEpoch: this.stopEpoch,
         });
         if (this.lastYieldGenerations.size > 64) {
-          const oldest = this.lastYieldGenerations.keys().next().value;
-          if (oldest !== undefined) {
-            this.lastYieldGenerations.delete(oldest);
+          for (const retainedId of [...this.lastYieldGenerations.keys()]) {
+            if (this.lastYieldGenerations.size <= 64) break;
+            if (this.isTrackedMessageId(retainedId)) continue;
+            this.lastYieldGenerations.delete(retainedId);
           }
         }
       }
@@ -760,6 +772,9 @@ export class MessageQueue {
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
     this.internalRestartFailed = false;
     this.cycleStoodDown = false;
+    this.cycleArmClearEpoch = this.clearEpoch;
+    this.cycleArmUserInterruptEpoch = this.userInterruptEpoch;
+    this.cycleRequeuedIds = [];
     this.promptPhaseBoundarySeq = this.midTurnBoundarySeq;
     opts.onResumeArm();
     this.clearNonCompactionSentSinceBoundary();
@@ -993,6 +1008,7 @@ export class MessageQueue {
 
   requeueInterruptSurvivors(opts: MidTurnBudgetInterruptOptions, uuids: string[]): void {
     for (let index = uuids.length - 1; index >= 0; index--) {
+      this.cycleRequeuedIds.push(uuids[index]);
       this.requeueInterruptSurvivor(opts, uuids[index]);
     }
   }
@@ -1069,12 +1085,18 @@ export class MessageQueue {
     const deliveryGate = new Promise<void>((resolve) => {
       resolveDeliveryGate = resolve;
     });
-    const clearEpochBeforeRestart = this.clearEpoch;
-    const userInterruptEpochBeforeRestart = this.userInterruptEpoch;
+    const clearEpochBeforeRestart = this.cycleArmClearEpoch;
+    const userInterruptEpochBeforeRestart = this.cycleArmUserInterruptEpoch;
     const stopEpochBeforeRestart = this.stopEpoch;
     let abortedByStop = false;
     let restartFailed = false;
     let stoodDownForUserStop = false;
+    const removeRecoveredEntries = () => {
+      for (const id of this.cycleRequeuedIds) {
+        this.remove(id);
+      }
+      this.removePendingInternalCompactions();
+    };
     const standDownForUserStop = () => {
       if (stoodDownForUserStop || abortedByStop) return;
       if (
@@ -1085,9 +1107,7 @@ export class MessageQueue {
       }
       stoodDownForUserStop = true;
       this.cycleStoodDown = true;
-      if (!opts.ownsTurn || opts.ownsTurn()) {
-        this.clear();
-      }
+      removeRecoveredEntries();
       opts.logger.info(
         `user stop observed while the recovery replacement started for session ` +
           `${opts.sessionId}; standing requeued work down`
@@ -1117,7 +1137,7 @@ export class MessageQueue {
           error
         );
         if (abortedByStop) {
-          this.clear();
+          removeRecoveredEntries();
           this.cycleStoodDown = true;
           opts.onResumeClear();
           return;
