@@ -1,11 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { rmSync } from 'node:fs';
-import { cpus, tmpdir } from 'node:os';
+import { cpus } from 'node:os';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import { Database } from '../../src/storage/sqlite-compat.ts';
-import { createTables } from '../../src/storage/schema/index.ts';
 import { decisionRun } from '../../src/lib/space/runtime/decision-pipeline.ts';
 import {
   decideMessageAdmission,
@@ -15,13 +12,8 @@ import { planAdmissionBadgeUpdate } from '../../src/storage/repositories/sdk-mes
 
 const ITERATIONS = 100_000;
 const WARMUP_ITERATIONS = 1_000_000;
-const INSERT_ITERATIONS = 10_000;
-const INSERT_WARMUP_ITERATIONS = 10_000;
-const INSERT_SEED_ITERATIONS = 10_000;
 const SAMPLES = 5;
-const log = (message: string): void => {
-  process.stdout.write(`${message}\n`);
-};
+const log = (message: string): void => process.stdout.write(`${message}\n`);
 
 type RouterDecision = 'defer' | 'reject' | 'deny-self' | 'queue' | 'prioritize' | 'route';
 
@@ -40,7 +32,7 @@ type RouterContext = {
 };
 
 type RouterInput = Omit<RouterContext, 'decision'>;
-type Variant = 'decisionRun' | 'if-cascade' | 'save-pipeline' | 'save-direct' | 'sqlite-insert';
+type Variant = 'decisionRun' | 'if-cascade' | 'save-pipeline' | 'save-direct';
 
 type Measurement = { nsPerOp: number; checksum: number };
 
@@ -52,20 +44,7 @@ type SaveState = {
   dbId?: string;
   admission?: ReturnType<typeof decideMessageAdmission>;
   badgeUpdate?: ReturnType<typeof planAdmissionBadgeUpdate>;
-  deps: { save: (s: SaveState) => { dbId: string } };
-};
-
-type InsertRow = {
-  id: string;
-  sessionId: string;
-  messageType: string;
-  messageSubtype: string | null;
-  sdkMessage: string;
-  timestamp: string;
-  isRenderable: 0 | 1;
-  isTerminal: 0 | 1;
-  parentToolUseId: string | null;
-  sdkUuid: string | null;
+  deps: { save: (ctx: SaveState) => { dbId: string } };
 };
 
 const inputs: readonly RouterInput[] = [
@@ -165,15 +144,13 @@ const saveMessages: readonly SDKMessage[] = [
   } as unknown as SDKMessage,
 ];
 
-const saveDeps: SaveState['deps'] = { save: () => ({ dbId: generateUUID() }) };
+const saveDeps: SaveState['deps'] = { save: (ctx: SaveState) => ({ dbId: ctx.dbId! }) };
 
 const saveInputs: readonly SaveState[] = saveMessages.map((message) => ({
   sessionId: saveSessionId,
   message,
   deps: saveDeps,
 }));
-
-const insertTimestamp = new Date().toISOString();
 
 const decide = (ctx: RouterContext, decision: RouterDecision): RouterContext => ({
   ...ctx,
@@ -242,88 +219,6 @@ function saveChecksum(ctx: SaveState): number {
   );
 }
 
-function setupInsert(): {
-  db: typeof Database.prototype;
-  dbPath: string;
-  reset: () => void;
-  seed: (rows: readonly InsertRow[]) => number;
-  run: (row: InsertRow) => number;
-} {
-  const dbPath = `${tmpdir()}/hyperneo-bench-${process.pid}-${Date.now()}.db`;
-  const db = new Database(dbPath);
-  db.exec('PRAGMA journal_mode = WAL');
-  db.exec('PRAGMA synchronous = NORMAL');
-  db.exec('PRAGMA busy_timeout = 5000');
-  db.exec('PRAGMA foreign_keys = ON');
-  createTables(db);
-  db.prepare(
-    'INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, visible_message_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(saveSessionId, 'benchmark', insertTimestamp, insertTimestamp, 'active', '{}', '{}', 0);
-  const insertStmt = db.prepare(
-    'INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, origin, is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index, sdk_uuid, replacement_metadata_normalized) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  );
-  const deleteStmt = db.prepare('DELETE FROM sdk_messages');
-  const resetSessionStmt = db.prepare('UPDATE sessions SET visible_message_count = 0 WHERE id = ?');
-  const insert = db.transaction((row: InsertRow) => {
-    insertStmt.run(
-      row.id,
-      row.sessionId,
-      row.messageType,
-      row.messageSubtype,
-      row.sdkMessage,
-      row.timestamp,
-      null,
-      row.isRenderable,
-      row.isTerminal,
-      row.parentToolUseId,
-      null,
-      null,
-      row.sdkUuid,
-      1
-    );
-    return 1;
-  });
-  const seed = db.transaction((rows: readonly InsertRow[]) => {
-    for (const row of rows) insert(row);
-    return rows.length;
-  });
-  return {
-    db,
-    dbPath,
-    reset: () => {
-      deleteStmt.run();
-      resetSessionStmt.run(saveSessionId);
-    },
-    seed: (rows: readonly InsertRow[]) => seed(rows),
-    run: (row: InsertRow) => insert(row),
-  };
-}
-
-function buildInsertRows(count: number, timestampBase: number): readonly InsertRow[] {
-  return Array.from({ length: count }, (_, index) => {
-    const message = saveMessages[index % saveMessages.length];
-    const id = generateUUID();
-    const sdkUuid = generateUUID();
-    const sdkMessage = { ...message, uuid: sdkUuid } as unknown as SDKMessage;
-    const admission = decideMessageAdmission(normalizeMessageAdmissionInput(sdkMessage), {
-      variant: 'sdk',
-      sendStatus: null,
-    });
-    return {
-      id,
-      sessionId: saveSessionId,
-      messageType: sdkMessage.type,
-      messageSubtype: (sdkMessage as { subtype?: string }).subtype ?? null,
-      sdkMessage: JSON.stringify(sdkMessage),
-      timestamp: new Date(timestampBase + index).toISOString(),
-      isRenderable: admission.isRenderable,
-      isTerminal: admission.isTerminal,
-      parentToolUseId: admission.parentToolUseId,
-      sdkUuid,
-    };
-  });
-}
-
 function verifyEquivalentDecisions(): void {
   for (const input of inputs) {
     const pipelineDecision = runDecisionPipeline(input).decision;
@@ -368,34 +263,6 @@ function collectSample(variant: Variant): Sample {
     const warm = runIterations(saveInputs, run, ITERATIONS);
     return { cold, warm };
   }
-  if (variant === 'sqlite-insert') {
-    const seedTimestampBase = Date.now();
-    const seedRows = buildInsertRows(INSERT_SEED_ITERATIONS, seedTimestampBase);
-    const coldRows = buildInsertRows(INSERT_ITERATIONS, seedTimestampBase + INSERT_SEED_ITERATIONS);
-    const warmupRows = buildInsertRows(
-      INSERT_WARMUP_ITERATIONS,
-      seedTimestampBase + INSERT_SEED_ITERATIONS + INSERT_ITERATIONS
-    );
-    const warmRows = buildInsertRows(
-      INSERT_ITERATIONS,
-      seedTimestampBase + INSERT_SEED_ITERATIONS + INSERT_ITERATIONS + INSERT_WARMUP_ITERATIONS
-    );
-    const { db, dbPath, reset, seed, run } = setupInsert();
-    reset();
-    seed(seedRows);
-    const cold = runIterations(coldRows, run, INSERT_ITERATIONS);
-    reset();
-    seed(seedRows);
-    runIterations(warmupRows, run, INSERT_WARMUP_ITERATIONS);
-    reset();
-    seed(seedRows);
-    const warm = runIterations(warmRows, run, INSERT_ITERATIONS);
-    db.close();
-    for (const suffix of ['', '-wal', '-shm']) {
-      rmSync(`${dbPath}${suffix}`, { force: true });
-    }
-    return { cold, warm };
-  }
   throw new Error(`Unknown variant: ${variant}`);
 }
 
@@ -430,8 +297,7 @@ if (
   variant === 'decisionRun' ||
   variant === 'if-cascade' ||
   variant === 'save-pipeline' ||
-  variant === 'save-direct' ||
-  variant === 'sqlite-insert'
+  variant === 'save-direct'
 ) {
   process.stdout.write(JSON.stringify(collectSample(variant)));
 } else if (variant !== undefined) {
@@ -441,7 +307,6 @@ if (
   const cascadeSamples = Array.from({ length: SAMPLES }, () => runChild('if-cascade'));
   const savePipelineSamples = Array.from({ length: SAMPLES }, () => runChild('save-pipeline'));
   const saveDirectSamples = Array.from({ length: SAMPLES }, () => runChild('save-direct'));
-  const insertSamples = Array.from({ length: SAMPLES }, () => runChild('sqlite-insert'));
   verifyEquivalentDecisions();
 
   const decisionChecksums = [...decisionSamples, ...cascadeSamples].flatMap((sample) => [
@@ -464,15 +329,12 @@ if (
     `Bun ${Bun.version}; ${process.platform} ${process.arch}; ${cpus()[0]?.model ?? 'unknown CPU'}`
   );
   log(`${ITERATIONS.toLocaleString()} measured iterations; ${SAMPLES} fresh processes per variant`);
-  log(
-    `${INSERT_ITERATIONS.toLocaleString()} insert iterations; ${INSERT_WARMUP_ITERATIONS.toLocaleString()} insert warmup\n`
-  );
+  log(`${WARMUP_ITERATIONS.toLocaleString()} iterations before each warm measurement\n`);
   log('variant           cold ns/op: median [samples]   warm ns/op: median [samples]');
   summarize('decisionRun', decisionSamples);
   summarize('if-cascade', cascadeSamples);
   summarize('save-pipeline', savePipelineSamples);
   summarize('save-direct', saveDirectSamples);
-  summarize('sqlite-insert', insertSamples);
 
   const saveOverheadCold =
     median(savePipelineSamples.map((sample) => sample.cold.nsPerOp)) -
@@ -480,13 +342,7 @@ if (
   const saveOverheadWarm =
     median(savePipelineSamples.map((sample) => sample.warm.nsPerOp)) -
     median(saveDirectSamples.map((sample) => sample.warm.nsPerOp));
-  const insertCold = median(insertSamples.map((sample) => sample.cold.nsPerOp));
-  const insertWarm = median(insertSamples.map((sample) => sample.warm.nsPerOp));
   log('');
-  log(
-    `save-pipeline overhead (cold): ${saveOverheadCold.toFixed(1)} ns/op; insert (cold): ${insertCold.toFixed(1)} ns/op; ratio: ${((saveOverheadCold / insertCold) * 100).toFixed(1)}%`
-  );
-  log(
-    `save-pipeline overhead (warm): ${saveOverheadWarm.toFixed(1)} ns/op; insert (warm): ${insertWarm.toFixed(1)} ns/op; ratio: ${((saveOverheadWarm / insertWarm) * 100).toFixed(1)}%`
-  );
+  log(`save-pipeline overhead (cold): ${saveOverheadCold.toFixed(1)} ns/op`);
+  log(`save-pipeline overhead (warm): ${saveOverheadWarm.toFixed(1)} ns/op`);
 }
