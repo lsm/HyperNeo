@@ -105,7 +105,7 @@ export class MessageQueue {
   private internalRestartFailedClearEpoch: number = 0;
   private internalRestartFailedInterruptEpoch: number = 0;
   private recoveryRestartEpoch: number | undefined;
-  private earlyGateReleasePending: boolean = false;
+  private earlyGateReleasePending: Array<() => void> = [];
   private stopEpoch: number = 0;
   private userInterruptEpoch: number = 0;
   private cycleStoodDown: boolean = false;
@@ -411,7 +411,6 @@ export class MessageQueue {
   clear(): void {
     this.stopEpoch += 1;
     this.clearEpoch += 1;
-    this.lastYieldGenerations.clear();
     const deliveredCompactions = this.internalCompactionsAwaitingBoundary > 0;
     const rejectedCompactions =
       this.queue.some((message) => this.isInternalCompaction(message)) ||
@@ -792,7 +791,9 @@ export class MessageQueue {
 
   releaseEarlyDeliveryGate(): void {
     if (this.internalRestartInFlight) {
-      this.earlyGateReleasePending = true;
+      if (this.resolveEarlyDeliveryGate) {
+        this.earlyGateReleasePending.push(this.resolveEarlyDeliveryGate);
+      }
       return;
     }
     this.resolveEarlyDeliveryGate?.();
@@ -1214,9 +1215,12 @@ export class MessageQueue {
           this.recoveryRestartEpoch = this.stopEpoch;
         }
         standDownForUserStop();
-        if (this.earlyGateReleasePending) {
-          this.earlyGateReleasePending = false;
-          this.releaseEarlyDeliveryGate();
+        if (this.earlyGateReleasePending.length > 0) {
+          const pendingReleases = this.earlyGateReleasePending;
+          this.earlyGateReleasePending = [];
+          for (const pendingRelease of pendingReleases) {
+            pendingRelease();
+          }
         }
         if (!abortedByStop) {
           resolveDeliveryGate?.();

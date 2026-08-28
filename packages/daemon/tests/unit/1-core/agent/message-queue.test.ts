@@ -2786,7 +2786,63 @@ describe('MessageQueue', () => {
       expect(q.ownsLastYield('uuid-direct-ack', 6)).toBe(false);
       expect(q.ownsLastYield('uuid-direct-ack', null)).toBe(true);
       expect(q.ownsLastYield('uuid-never-yielded', 6)).toBe(true);
+      q.clear();
+      expect(q.ownsLastYield('uuid-direct-ack', 6)).toBe(false);
     });
+
+    it('scopes a deferred early-gate release to the cycle that requested it', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-scope-1',
+        content: 'scope survivor 1',
+        internal: false,
+      } as never);
+      q.noteInternalCompactionSent({
+        id: 'uuid-scope-2',
+        content: 'scope survivor 2',
+        internal: false,
+      } as never);
+      let releaseFirst: () => void = () => {};
+      const firstHang = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      let releaseSecond: () => void = () => {};
+      const secondHang = new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+      const firstOpts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-scope-1'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async () => {
+          await firstHang;
+        },
+      });
+      const secondOpts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-scope-2'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async () => {
+          await secondHang;
+        },
+      });
+
+      const first = q.runMidTurnBudgetInterrupt(firstOpts);
+      await tick(30);
+      q.releaseEarlyDeliveryGate();
+      const second = q.runMidTurnBudgetInterrupt(secondOpts);
+      await tick(50);
+
+      releaseFirst();
+      await tick(100);
+      releaseSecond();
+      await Promise.all([first, second]);
+      await tick(100);
+
+      const generator = q.messageGenerator(testSessionId);
+      const step = await Promise.race([generator.next(), tick(200).then(() => null)]);
+      expect(step?.value?.message).toBeDefined();
+      q.stop();
+    }, 15_000);
 
     it('preserves fresh work in the delayed stand-down when turn ownership moved on', async () => {
       const q = new MessageQueue();
