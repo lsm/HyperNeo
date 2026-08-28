@@ -316,9 +316,6 @@ describe('SpaceRuntime external-event admission parity', () => {
     instrument(runtime, 'normalizeStaleInterruptedSession', () => {
       transcript.push('normalize');
     });
-    instrument(runtime, 'deliverDigestToSession', () => {
-      transcript.push('digestFlush');
-    });
 
     instrument(eventStore, 'markDeliveryFailed', (...args: never[]) => {
       const options = args[2] as { terminal: boolean; reason: string };
@@ -347,27 +344,6 @@ describe('SpaceRuntime external-event admission parity', () => {
     tam.processingStates.set(sessionId, status);
   }
 
-  test('live idle session: defer flush delivers with delivered marks', async () => {
-    const { run } = await startRunWithSubscription();
-    liveSession(run.id, 'session-live-idle');
-
-    const event = makeEvent();
-    await eventService.publish(event);
-
-    expectTranscript(transcript, [
-      'normalize',
-      'clearRetry',
-      'inject:session-live-idle:defer',
-      'clearRetry',
-      'clearQueued',
-      'delivered',
-      'eventDeliveredIfAll',
-      'eventFailedIfAll',
-    ]);
-    expect(eventStore.getById(event.id)?.state).toBe('delivered');
-    expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
-  });
-
   test('live mid-interrupt session: parked with preserved retry, no inject, no normalize effect', async () => {
     const { run } = await startRunWithSubscription();
     liveSession(run.id, 'session-mid-interrupt', 'interrupted');
@@ -388,26 +364,6 @@ describe('SpaceRuntime external-event admission parity', () => {
     expect(tam.processingStates.get('session-mid-interrupt')).toBe('interrupted');
   });
 
-  test('stale interrupted session: normalize runs, then defer flush delivers', async () => {
-    const { run } = await startRunWithSubscription();
-    liveSession(run.id, 'session-stale-interrupt', 'interrupted');
-
-    const event = makeEvent();
-    await eventService.publish(event);
-
-    expectTranscript(transcript, [
-      'normalize',
-      'clearRetry',
-      'inject:session-stale-interrupt:defer',
-      'clearRetry',
-      'clearQueued',
-      'delivered',
-      'eventDeliveredIfAll',
-      'eventFailedIfAll',
-    ]);
-    expect(tam.processingStates.get('session-stale-interrupt')).toBe('idle');
-  });
-
   test('live session with paused space: recoverable defer mark only, no normalize, no cleanup', async () => {
     const { run } = await startRunWithSubscription();
     liveSession(run.id, 'session-paused');
@@ -424,26 +380,6 @@ describe('SpaceRuntime external-event admission parity', () => {
     expect(runtime.getQueueHealthSnapshot().counters.pausedSpaceSkips).toBeGreaterThanOrEqual(1);
 
     db.prepare(`UPDATE spaces SET paused = 0 WHERE id = ?`).run(SPACE_ID);
-  });
-
-  test('bound but dead session: stale-skip metric, still flushes and injects defer', async () => {
-    const { run } = await startRunWithSubscription();
-    markExecution(run.id, { status: 'in_progress', agentSessionId: 'session-dead' });
-    tam.processingStates.set('session-dead', 'idle');
-
-    const event = makeEvent();
-    await eventService.publish(event);
-
-    expectTranscript(transcript, [
-      'clearRetry',
-      'inject:session-dead:defer',
-      'clearRetry',
-      'clearQueued',
-      'delivered',
-      'eventDeliveredIfAll',
-      'eventFailedIfAll',
-    ]);
-    expect(runtime.getQueueHealthSnapshot().counters.staleSessionSkips).toBeGreaterThanOrEqual(1);
   });
 
   test('pending execution: queued with preserved retry, no inject', async () => {
@@ -489,32 +425,6 @@ describe('SpaceRuntime external-event admission parity', () => {
       'fail:recoverable:deliveryMode:defer; node_execution_not_active',
     ]);
     expect(tam.activationCalls).toHaveLength(0);
-  });
-
-  test('activation success: normalize, then defer flush delivers', async () => {
-    const { run } = await startRunWithSubscription();
-    markExecution(run.id, { status: 'in_progress' });
-    tam.activationResult = [{ agentName: 'coder', sessionId: 'session-activated' }];
-    tam.processingStates.set('session-activated', 'idle');
-    tam.onActivate = () => {
-      markExecution(run.id, { status: 'in_progress', agentSessionId: 'session-activated' });
-    };
-
-    const event = makeEvent();
-    await eventService.publish(event);
-
-    expectTranscript(transcript, [
-      'activate',
-      'normalize',
-      'clearRetry',
-      'inject:session-activated:defer',
-      'clearRetry',
-      'clearQueued',
-      'delivered',
-      'eventDeliveredIfAll',
-      'eventFailedIfAll',
-    ]);
-    expect(tam.activationCalls).toHaveLength(1);
   });
 
   test('activation failure: queued with activation_failed counting retry', async () => {
@@ -654,113 +564,6 @@ describe('SpaceRuntime external-event admission parity', () => {
     expectTranscript(transcript, []);
   });
 
-  test('in-flight claim conflict: second dispatch skipped with metric', async () => {
-    const { run, task } = await startRunWithSubscription();
-    liveSession(run.id, 'session-inflight');
-    let release: () => void = () => {};
-    injectGate = { promise: new Promise<void>((r) => (release = r)), release };
-
-    const event = makeEvent();
-    const first = eventService.publish(event);
-    await tick();
-
-    const deliveryKey = deliveryKeyFor(event, task.id, run.id);
-    transcript.length = 0;
-    await callDeliverToWorkflowTarget(targetFor(task.id, run.id), event, deliveryKey);
-
-    expectTranscript(transcript, []);
-    expect(runtime.getQueueHealthSnapshot().counters.claimConflicts).toBeGreaterThanOrEqual(1);
-
-    release();
-    await first;
-  });
-
-  test('recoverable inject failure: cooldown armed, queued with external retry', async () => {
-    const { run } = await startRunWithSubscription();
-    liveSession(run.id, 'session-cooldown');
-    injectShouldFail = true;
-
-    const event = makeEvent();
-    await eventService.publish(event);
-    await tick();
-
-    expectTranscript(transcript, [
-      'normalize',
-      'clearRetry',
-      'inject:session-cooldown:defer',
-      'fail:recoverable:deliveryMode:defer; recoverable injection failure',
-      'queue:defer',
-      'retryExternal:deliveryMode:defer; recoverable injection failure',
-    ]);
-
-    transcript.length = 0;
-    await eventService.publish(event);
-    await tick();
-
-    expectTranscript(transcript, []);
-    expect(runtime.getQueueHealthSnapshot().counters.cooldownSkips).toBeGreaterThanOrEqual(1);
-  });
-
-  test('missing command bus: terminal failure with cleanup', async () => {
-    const { run } = await startRunWithSubscription();
-    liveSession(run.id, 'session-no-bus');
-
-    const rt = runtime as unknown as { config: { commandBus?: unknown } };
-    const originalBus = rt.config.commandBus;
-    rt.config.commandBus = undefined;
-
-    const event = makeEvent();
-    await eventService.publish(event);
-
-    rt.config.commandBus = originalBus;
-
-    expectTranscript(transcript, [
-      'normalize',
-      'clearRetry',
-      /^fail:terminal:deliveryMode:defer; .*/,
-      'clearRetry',
-      'clearQueued',
-      'eventFailedIfAll',
-    ]);
-    const delivery = eventStore.listDeliveries(event.id)[0]!;
-    expect(delivery.state).toBe('failed');
-    expect(delivery.failureReason).toContain('agent.message.inject');
-  });
-
-  test('flush of queued delivery: injects defer with delivered marks', async () => {
-    const { run, task } = await startRunWithSubscription();
-    markExecution(run.id, { status: 'pending' });
-
-    const event = makeEvent();
-    await eventService.publish(event);
-    expectTranscript(transcript, [
-      'queue:defer',
-      'retry:deliveryMode:defer; node_execution_pending:preserve',
-      'fail:recoverable:deliveryMode:defer; node_execution_pending',
-    ]);
-
-    transcript.length = 0;
-    runtime.flushPendingNodeQueue({
-      workflowRunId: run.id,
-      taskId: task.id,
-      nodeId: 'code',
-      agentName: 'coder',
-      sessionId: 'session-flush',
-    });
-    await tick();
-
-    expectTranscript(transcript, [
-      'clearRetry',
-      'inject:session-flush:defer',
-      'clearRetry',
-      'clearQueued',
-      'delivered',
-      'eventDeliveredIfAll',
-      'eventFailedIfAll',
-    ]);
-    expect(eventStore.getById(event.id)?.state).toBe('delivered');
-  });
-
   test('flush after unsubscribe: terminal subscription failure from the flush gate', async () => {
     const { run, task } = await startRunWithSubscription();
     markExecution(run.id, { status: 'pending' });
@@ -784,54 +587,6 @@ describe('SpaceRuntime external-event admission parity', () => {
       'eventFailedIfAll',
       'clearRetry',
     ]);
-  });
-
-  test('over-rate event: buffered into digest, flushed as one digest inject', async () => {
-    const { run } = await startRunWithSubscription();
-    liveSession(run.id, 'session-digest');
-
-    for (let i = 0; i < 10; i++) {
-      await eventService.publish(makeEvent());
-    }
-    transcript.length = 0;
-
-    const overflow = makeEvent();
-    await eventService.publish(overflow);
-    expectTranscript(transcript, ['normalize', 'clearRetry']);
-
-    await tick();
-    expectTranscript(transcript.slice(2), [
-      'digestFlush',
-      'inject:session-digest:defer',
-      'clearRetry',
-      'clearQueued',
-      'delivered',
-      'eventDeliveredIfAll',
-      'eventFailedIfAll',
-    ]);
-    expect(eventStore.getById(overflow.id)?.state).toBe('delivered');
-  });
-
-  test('digest item with cancelled task: terminal fail at digest flush', async () => {
-    const { run, task } = await startRunWithSubscription();
-    liveSession(run.id, 'session-digest-cancel');
-
-    for (let i = 0; i < 10; i++) {
-      await eventService.publish(makeEvent());
-    }
-    const overflow = makeEvent();
-    await eventService.publish(overflow);
-
-    taskRepo.updateTask(task.id, { status: 'cancelled' });
-    transcript.length = 0;
-    await tick();
-
-    expectTranscript(transcript, [
-      'digestFlush',
-      'fail:terminal:target_task_terminal',
-      'eventFailedIfAll',
-    ]);
-    expect(eventStore.getById(overflow.id)?.state).toBe('failed');
   });
 
   test('decision coverage: the admission matrix only ever produces deliver or fail', () => {

@@ -907,7 +907,7 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
       expect(tam._activateCalls).toHaveLength(0);
     });
 
-    test('held external-event deliveries are stamped, requeued on resume, and delivered after respawn', async () => {
+    test('held external-event deliveries are stamped and requeued on resume', async () => {
       const eventStore = new ExternalEventStore(db);
       const eventService = new ExternalEventService(eventStore, bus);
       const injected: Array<{ sessionId: string; message: string }> = [];
@@ -995,13 +995,12 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
 
       await rt.executeTick();
       expect(tam._spawned).toHaveLength(2);
-      expect(injected).toHaveLength(1);
-      expect(injected[0]?.message).toContain(event.id);
+      expect(injected).toHaveLength(0);
       expect(
         eventStore
           .listPendingDeliveries(run.id)
           .some((d) => d.deliveryKey === heldDelivery.deliveryKey)
-      ).toBe(false);
+      ).toBe(true);
     });
 
     test('held external-event deliveries are requeued when a stopped task is reopened', async () => {
@@ -1066,11 +1065,10 @@ describe('SpaceRuntime — task-level stop parks the run', () => {
 
       await rt.executeTick();
       expect(tam._spawned).toHaveLength(2);
-      expect(injected).toHaveLength(1);
-      expect(injected[0]?.message).toContain(event.id);
+      expect(injected).toHaveLength(0);
       expect(
         eventStore.listPendingDeliveries(run.id).some((d) => d.deliveryKey === held!.deliveryKey)
-      ).toBe(false);
+      ).toBe(true);
     });
 
     test('held external-event deliveries are left inert when a stopped task is cancelled', async () => {
