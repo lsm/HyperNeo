@@ -1067,6 +1067,34 @@ describe('Provider RPC handlers', () => {
       });
     });
 
+    it('strips persisted discovery when credential update changes identity', async () => {
+      const created = repo.createProvider({
+        providerId: 'anthropic',
+        displayName: 'Anthropic',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({
+          command: 'test-command',
+          discoveredModels: { models: [{ id: 'old-model' }] },
+        }),
+      });
+      const handlers = setup();
+      const result = (await handlers.get('providers.update')!(
+        {
+          id: created.id,
+          params: {},
+          credentials: { apiKey: 'new-key' },
+        },
+        {}
+      )) as { success: boolean; provider: ProviderRecord };
+
+      expect(result.success).toBe(true);
+      expect(result.provider.authType).toBe('api_key');
+      const after = repo.getProvider(created.id);
+      expect(after?.configJson).toBe(JSON.stringify({ command: 'test-command' }));
+      expect(eventBus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
     it('surfaces keychain guidance and leaves the record untouched when storeApiKey throws KeychainUnavailableError', async () => {
       const created = repo.createProvider({
         providerId: 'anthropic',

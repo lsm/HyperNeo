@@ -20,6 +20,7 @@ import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
 import { parseAcpCommand } from '../acp/acp-command.js';
 import { withCustomEndpointsLock } from './custom-endpoint-handlers.js';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { clearCacheAndNotifyProvidersChanged } from './auth-handlers.ts';
 import { Logger } from '../logger.ts';
 
 const log = new Logger('provider-handlers');
@@ -256,14 +257,6 @@ function notifyProvidersChanged(internalEventBus: InternalEventBus<DaemonInterna
   internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
 }
 
-async function clearCacheAndNotifyProvidersChanged(
-  internalEventBus: InternalEventBus<DaemonInternalEventMap>
-): Promise<void> {
-  const { clearModelsCache } = await import('../model-service.js');
-  clearModelsCache();
-  notifyProvidersChanged(internalEventBus);
-}
-
 export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
   const { messageHub, providerRepo, credentialManager, internalEventBus } = deps;
 
@@ -464,7 +457,15 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
             }
           }
 
-          await clearCacheAndNotifyProvidersChanged(internalEventBus);
+          if (data.credentials && existing.kind !== 'custom_endpoint') {
+            await clearCacheAndNotifyProvidersChanged(
+              internalEventBus,
+              record.providerId,
+              providerRepo
+            );
+          } else {
+            await clearCacheAndNotifyProvidersChanged(internalEventBus);
+          }
 
           return { success: true, provider: record };
         });

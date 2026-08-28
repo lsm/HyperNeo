@@ -284,6 +284,7 @@ export function setupAuthHandlers(
         };
       }
 
+      let storedCredentials: ProviderCredentials | null = null;
       try {
         bumpProviderCatalogEpoch(providerId);
         const hasEnvironmentCredentials = await providerEnvCoordinator.runWithLease(
@@ -298,7 +299,6 @@ export function setupAuthHandlers(
           };
         }
 
-        let storedCredentials: ProviderCredentials | null = null;
         try {
           storedCredentials = (await credentialManager?.getCredentials(providerId)) ?? null;
         } catch (readError) {
@@ -352,9 +352,24 @@ export function setupAuthHandlers(
             log.error(`Cleanup after logout failure failed for ${providerId}:`, cleanupError);
           }
         }
+        let remainingCredentials: ProviderCredentials | null = null;
         try {
-          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+          remainingCredentials = (await provider.getCredentials?.()) ?? null;
         } catch {}
+        const identityChanged =
+          !storedCredentials ||
+          !remainingCredentials ||
+          credentialIdentity(storedCredentials) !== credentialIdentity(remainingCredentials);
+        if (identityChanged) {
+          try {
+            await clearCacheAndNotifyProvidersChanged(
+              internalEventBus,
+              providerId,
+              providerRepo,
+              identityChanged
+            );
+          } catch {}
+        }
         log.error(`Logout failed for ${providerId}:`, error);
         return {
           success: false,
