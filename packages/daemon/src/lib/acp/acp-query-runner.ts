@@ -552,7 +552,8 @@ export class AcpQueryRunner {
             });
 
             proxyBridge = new AcpMcpProxyBridge(
-              (queryOptions.mcpServers ?? {}) as Record<string, McpServerConfig>
+              (queryOptions.mcpServers ?? {}) as Record<string, McpServerConfig>,
+              () => attemptToken.isLive()
             );
             if (proxyBridge.tools.length > 0) {
               await proxyBridge.start();
