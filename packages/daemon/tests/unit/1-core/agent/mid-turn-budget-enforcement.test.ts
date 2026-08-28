@@ -674,7 +674,6 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     });
     expect(narrowSpy).toHaveBeenCalledWith(session.session.id, 'uuid-kickoff-filtered', [
       'uuid-kickoff-filtered',
-      'uuid-member-live',
     ]);
   });
 

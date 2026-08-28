@@ -493,9 +493,15 @@ export class SDKMessageHandler {
     }
   }
 
-  private async acknowledgePersistedUserMessage(message: SDKMessage): Promise<boolean> {
-    const { session, db } = this.ctx;
+  private async acknowledgePersistedUserMessage(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<boolean> {
+    const { session, db, messageQueue } = this.ctx;
     if (message.type !== 'user' || !message.uuid) {
+      return false;
+    }
+    if (!messageQueue.ownsLastYield(message.uuid, invocationGeneration)) {
       return false;
     }
 
@@ -923,7 +929,7 @@ export class SDKMessageHandler {
       this.lastSdkErrorTag = message.error;
     }
 
-    if (await this.acknowledgePersistedUserMessage(message)) {
+    if (await this.acknowledgePersistedUserMessage(message, invocationGeneration)) {
       this.maybeRefreshContextOnEvent(message, invocationGeneration);
       return;
     }

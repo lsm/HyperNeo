@@ -1568,12 +1568,17 @@ export class AgentSession
             ?.getActiveDeliveryBatchUuids?.(this.session.id, uuid);
           if (batchUuids && batchUuids.length > 1) {
             const rebuilt = this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids);
-            const admitted = rebuilt.admittedUuids ?? [uuid];
-            const admittedWithKickoff = admitted.includes(uuid) ? admitted : [uuid, ...admitted];
-            if (admittedWithKickoff.length < batchUuids.length) {
+            const admitted = rebuilt.admittedUuids ?? [];
+            if (!admitted.includes(uuid)) {
               this.db
                 .getJobQueueRepo?.()
-                ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, admittedWithKickoff);
+                ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, [uuid]);
+              return kickoff;
+            }
+            if (admitted.length < batchUuids.length) {
+              this.db
+                .getJobQueueRepo?.()
+                ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, admitted);
             }
             return rebuilt.content;
           }

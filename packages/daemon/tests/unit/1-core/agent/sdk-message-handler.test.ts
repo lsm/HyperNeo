@@ -96,6 +96,7 @@ describe('SDKMessageHandler', () => {
   let hasYieldedSpy: ReturnType<typeof mock>;
   let acknowledgeYieldedSpy: ReturnType<typeof mock>;
   let ownsYieldedGenerationSpy: ReturnType<typeof mock>;
+  let ownsLastYieldSpy: ReturnType<typeof mock>;
   let setDeliveryGateSpy: ReturnType<typeof mock>;
   let hasQueuedMessagesSpy: ReturnType<typeof mock>;
   let hasOutstandingInternalCompactionSpy: ReturnType<typeof mock>;
@@ -206,6 +207,7 @@ describe('SDKMessageHandler', () => {
     hasYieldedSpy = mock(() => false);
     acknowledgeYieldedSpy = mock(() => false);
     ownsYieldedGenerationSpy = mock(() => true);
+    ownsLastYieldSpy = mock(() => true);
     setDeliveryGateSpy = mock(() => {});
     hasQueuedMessagesSpy = mock(() => false);
     hasOutstandingInternalCompactionSpy = mock(() => false);
@@ -222,6 +224,7 @@ describe('SDKMessageHandler', () => {
       hasYielded: hasYieldedSpy,
       acknowledgeYielded: acknowledgeYieldedSpy,
       ownsYieldedGeneration: ownsYieldedGenerationSpy,
+      ownsLastYield: ownsLastYieldSpy,
       setDeliveryGate: setDeliveryGateSpy,
       hasQueuedMessages: hasQueuedMessagesSpy,
       hasOutstandingInternalCompaction: hasOutstandingInternalCompactionSpy,

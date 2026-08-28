@@ -2770,6 +2770,63 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('fences direct persisted-user acknowledgments after the yielding query stopped', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('uuid-direct-ack', 'direct survivor', false, {
+        durable: true,
+      });
+      delivered.catch(() => {});
+      const generator = q.messageGenerator(testSessionId, { queryGeneration: 6 });
+      const step = await generator.next();
+      expect(step.value.message.uuid).toBe('uuid-direct-ack');
+
+      expect(q.ownsLastYield('uuid-direct-ack', 6)).toBe(true);
+      q.stop();
+      expect(q.ownsLastYield('uuid-direct-ack', 6)).toBe(false);
+      expect(q.ownsLastYield('uuid-direct-ack', null)).toBe(true);
+      expect(q.ownsLastYield('uuid-never-yielded', 6)).toBe(true);
+    });
+
+    it('preserves fresh work in the delayed stand-down when turn ownership moved on', async () => {
+      const q = new MessageQueue();
+      q.start();
+      let releaseRestart: () => void = () => {};
+      const restartHang = new Promise<void>((resolve) => {
+        releaseRestart = resolve;
+      });
+      let ownsTurn = true;
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-delayed-own'] }),
+        cancelAsyncMessage: async () => false,
+        ownsTurn: () => ownsTurn,
+        restart: async (options) => {
+          q.stop();
+          await options?.beforeStart?.();
+          await restartHang;
+          q.start();
+        },
+        onResumeClear,
+      });
+
+      const run = q.runMidTurnBudgetInterrupt(opts);
+      await tick(5_400);
+      q.noteUserInterrupt();
+      const fresh = q.enqueueWithId('uuid-fresh-work', 'fresh user work', false, {
+        durable: true,
+      });
+      fresh.catch(() => {});
+      ownsTurn = false;
+      releaseRestart();
+      await run;
+      await tick(50);
+
+      expect(q.hasPendingOrClaimed('uuid-fresh-work')).toBe(true);
+      expect(onResumeClear).toHaveBeenCalled();
+      q.stop();
+    }, 15_000);
+
     it('stands the cycle down when the restart fails before any teardown', async () => {
       const q = new MessageQueue();
       q.start();

@@ -109,7 +109,7 @@ export class MessageQueue {
   private stopEpoch: number = 0;
   private userInterruptEpoch: number = 0;
   private cycleStoodDown: boolean = false;
-  private lastYieldGenerations: Map<string, number> = new Map();
+  private lastYieldGenerations: Map<string, { generation: number; stopEpoch: number }> = new Map();
   private midTurnBoundarySeq: number = 0;
   private promptPhaseBoundarySeq: number = 0;
   private midTurnCompactionQueued: boolean = false;
@@ -509,7 +509,17 @@ export class MessageQueue {
     }
     const lastYieldGeneration = this.lastYieldGenerations.get(messageId);
     if (lastYieldGeneration === undefined) return true;
-    return lastYieldGeneration === generation;
+    return lastYieldGeneration.generation === generation;
+  }
+
+  ownsLastYield(messageId: string, generation: number | null | undefined): boolean {
+    if (generation === null || generation === undefined) return true;
+    const lastYieldGeneration = this.lastYieldGenerations.get(messageId);
+    if (lastYieldGeneration === undefined) return true;
+    return (
+      lastYieldGeneration.generation === generation &&
+      lastYieldGeneration.stopEpoch === this.stopEpoch
+    );
   }
 
   acknowledgeYielded(messageId: string, fromQueryGeneration?: number): boolean {
@@ -675,7 +685,10 @@ export class MessageQueue {
       queuedMessage.yieldAttempt = yieldAttempt;
       queuedMessage.yieldQueryGeneration = options?.queryGeneration;
       if (options?.queryGeneration !== undefined) {
-        this.lastYieldGenerations.set(queuedMessage.id, options.queryGeneration);
+        this.lastYieldGenerations.set(queuedMessage.id, {
+          generation: options.queryGeneration,
+          stopEpoch: this.stopEpoch,
+        });
         if (this.lastYieldGenerations.size > 64) {
           const oldest = this.lastYieldGenerations.keys().next().value;
           if (oldest !== undefined) {
@@ -1072,11 +1085,13 @@ export class MessageQueue {
       }
       stoodDownForUserStop = true;
       this.cycleStoodDown = true;
+      if (!opts.ownsTurn || opts.ownsTurn()) {
+        this.clear();
+      }
       opts.logger.info(
         `user stop observed while the recovery replacement started for session ` +
           `${opts.sessionId}; standing requeued work down`
       );
-      this.clear();
       opts.onResumeClear();
     };
     const beforeStart = () => {
