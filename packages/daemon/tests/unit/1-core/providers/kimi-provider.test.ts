@@ -345,6 +345,19 @@ describe('KimiProvider', () => {
       expect(init?.headers).toEqual({ Authorization: 'Bearer test-key' });
     });
 
+    it('returns only endpoint discovery when discoveryOnly is set, even with curated models', async () => {
+      process.env.KIMI_API_KEY = 'test-key';
+      installModelListFetch([{ data: [] }, { data: [] }]);
+      provider = new KimiProvider();
+      provider.setCuratedModels([{ id: 'kimi', name: 'Kimi' }]);
+
+      const merged = await provider.listRemoteModels();
+      const discoveryOnly = await provider.listRemoteModels({ force: true, discoveryOnly: true });
+
+      expect(merged.map((model) => model.id)).toContain('kimi-for-coding');
+      expect(discoveryOnly).toEqual([]);
+    });
+
     it('uses the global OpenAI endpoint rather than appending models to the Anthropic base', async () => {
       process.env.KIMI_API_KEY = 'test-key';
       process.env.KIMI_REGION = 'global';

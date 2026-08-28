@@ -885,6 +885,37 @@ describe('Provider RPC handlers', () => {
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
 
+    it('rejects the refresh when the endpoint yields nothing and only curated merges remain', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'api_key',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      const curatedMerge = makeDiscoveredModel('curated-only-model');
+      const listRemoteModels = mock(async (options?: { discoveryOnly?: boolean }) =>
+        options?.discoveryOnly ? [] : [curatedMerge]
+      );
+      getProviderRegistry().register({
+        id: 'remote',
+        isAvailable: async () => true,
+        listRemoteModels,
+        getModels: async () => [curatedMerge],
+      } as unknown as Provider);
+      const handlers = setup();
+
+      await expect(
+        handlers.get('providers.refreshDiscovery')!({ id: created.id }, {})
+      ).rejects.toThrow('Provider remote returned no models');
+
+      expect(listRemoteModels).toHaveBeenCalledWith({ force: true, discoveryOnly: true });
+      expect(repo.getProvider(created.id)?.configJson).toBe(
+        JSON.stringify({ command: 'saved acp' })
+      );
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
     it('discards everything when the credential identity changes mid-fetch', async () => {
       let credentials: unknown = { type: 'api_key', apiKey: 'key-1' };
       const created = repo.createProvider({
@@ -911,7 +942,7 @@ describe('Provider RPC handlers', () => {
         {}
       )) as { success: boolean; reason?: string };
 
-      expect(listRemoteModels).toHaveBeenCalledWith({ force: true });
+      expect(listRemoteModels).toHaveBeenCalledWith({ force: true, discoveryOnly: true });
       expect(result).toEqual({ success: false, reason: 'superseded' });
       expect(repo.getProvider(created.id)?.configJson).toBe(
         JSON.stringify({ command: 'saved acp' })
@@ -1707,7 +1738,7 @@ describe('Provider RPC handlers', () => {
       )) as { success: boolean };
 
       expect(result.success).toBe(true);
-      expect(listRemoteModels).toHaveBeenCalledWith({ force: true });
+      expect(listRemoteModels).toHaveBeenCalledWith({ force: true, discoveryOnly: true });
       expect(fingerprintedBaseUrl).toBeUndefined();
       const persisted = parsePersisted(repo.getProvider(created.id)?.configJson) as {
         discoveredModels: { fingerprint?: string };
@@ -1747,6 +1778,78 @@ describe('Provider RPC handlers', () => {
       };
       expect(persisted.pad).toBe(pad);
       expect(persisted.discoveredModels.truncated).toBe(true);
+    });
+
+    it('drops oversized discovered names instead of truncating the persisted catalog', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const discovered = [
+        makeDiscoveredModel('big-name-model', 'N'.repeat(70_000)),
+        makeDiscoveredModel('normal-a'),
+        makeDiscoveredModel('normal-b'),
+      ];
+      registerRemoteProvider({
+        listRemoteModels: async () => discovered,
+        getModels: async () => discovered,
+      });
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; truncated?: boolean };
+
+      expect(result.success).toBe(true);
+      expect(result.truncated).toBeUndefined();
+      const persisted = parsePersisted(repo.getProvider(created.id)?.configJson) as {
+        discoveredModels: { models: Array<{ id: string; name?: string }>; truncated?: boolean };
+      };
+      expect(persisted.discoveredModels.models.map((model) => model.id)).toEqual([
+        'big-name-model',
+        'normal-a',
+        'normal-b',
+      ]);
+      expect(persisted.discoveredModels.models[0]).toEqual({ id: 'big-name-model' });
+      expect(persisted.discoveredModels.truncated).toBeUndefined();
+    });
+
+    it('discards the commit when a global cache clear lands after the slice applies', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      let credentialReads = 0;
+      getProviderRegistry().register({
+        id: 'remote',
+        isAvailable: async () => true,
+        getCredentials: async () => {
+          credentialReads += 1;
+          if (credentialReads === 4) clearModelsCache();
+          return null;
+        },
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      } as unknown as Provider);
+      setModelsCache(new Map([['global', [makeDiscoveredModel('existing')]]]));
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; reason?: string };
+
+      expect(result).toEqual({ success: false, reason: 'superseded' });
+      expect(repo.getProvider(created.id)?.configJson).toBe(
+        JSON.stringify({ command: 'saved acp' })
+      );
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
   });
 
