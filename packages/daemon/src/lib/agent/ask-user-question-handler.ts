@@ -360,6 +360,7 @@ export class AskUserQuestionHandler {
           `callback with deny so the closed query can finish without mutating the ` +
           `successor's state`
       );
+      this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', responses);
       this.pendingResolver = null;
       resolver.resolve({
         behavior: 'deny',
@@ -465,6 +466,7 @@ export class AskUserQuestionHandler {
           `callback with deny so the closed query can finish without mutating the ` +
           `successor's state`
       );
+      this.trackResolvedQuestion(toolUseId, pendingQuestion, 'cancelled', []);
       this.pendingResolver = null;
       resolver.resolve({
         behavior: 'deny',
