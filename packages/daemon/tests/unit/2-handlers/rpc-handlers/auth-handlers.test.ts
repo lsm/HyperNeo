@@ -1,8 +1,12 @@
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
-import { setupAuthHandlers } from '../../../../src/lib/rpc-handlers/auth-handlers';
+import {
+  setupAuthHandlers,
+  clearCacheAndNotifyProvidersChanged,
+} from '../../../../src/lib/rpc-handlers/auth-handlers';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@hyperneo/shared/provider';
+import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { providerEnvCoordinator } from '../../../../src/lib/providers/provider-env-enrollment';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
@@ -1120,6 +1124,63 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Token refresh failed');
+    });
+  });
+
+  describe('clearCacheAndNotifyProvidersChanged', () => {
+    const baseConfigJson = JSON.stringify({
+      command: 'test-command',
+      discoveredModels: { models: [{ id: 'a' }] },
+    });
+    const strippedConfigJson = JSON.stringify({ command: 'test-command' });
+
+    function makeBus() {
+      return { publishAsync: mock(() => {}) };
+    }
+
+    function makeRepo(
+      configJson: string | undefined = baseConfigJson,
+      throws = false
+    ): ProviderRepository {
+      return {
+        getProviderByProviderId: mock(() => ({
+          id: 'provider-uuid',
+          providerId: 'test-provider',
+          configJson,
+        })),
+        updateProvider: throws
+          ? mock(() => {
+              throw new Error('db write failed');
+            })
+          : mock(() => null),
+      } as unknown as ProviderRepository;
+    }
+
+    it('strips persisted discovery and updates the provider row', async () => {
+      const bus = makeBus();
+      const repo = makeRepo();
+      await clearCacheAndNotifyProvidersChanged(bus as never, 'test-provider', repo);
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips update when the saved config has no discovery to strip', async () => {
+      const bus = makeBus();
+      const repo = makeRepo(JSON.stringify({ command: 'test-command' }));
+      await clearCacheAndNotifyProvidersChanged(bus as never, 'test-provider', repo);
+      expect(repo.updateProvider).not.toHaveBeenCalled();
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates providerRepo update failure and does not publish', async () => {
+      const bus = makeBus();
+      const repo = makeRepo(baseConfigJson, true);
+      await expect(
+        clearCacheAndNotifyProvidersChanged(bus as never, 'test-provider', repo)
+      ).rejects.toThrow('db write failed');
+      expect(bus.publishAsync).not.toHaveBeenCalled();
     });
   });
 });
