@@ -502,6 +502,54 @@ describe('Auth RPC Handlers', () => {
       expect(bus.publishAsync).toHaveBeenCalledTimes(1);
     });
 
+    it('still invalidates cache when OAuth token storage fails in the async callback', async () => {
+      const credentialManager = {
+        storeOAuthTokens: mock(async () => {
+          throw new Error('token store failed');
+        }),
+      };
+      const bus = makeBus();
+      const repo = makeRepo();
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never,
+        bus as never,
+        repo as never
+      );
+      const credentials = {
+        type: 'oauth' as const,
+        accessToken: 'new-token',
+        refreshToken: 'refresh-token',
+      };
+      let listener: ((credentials: typeof credentials) => void | Promise<void>) | undefined;
+      const mockProvider = createMockProvider({
+        onCredentialsChanged: mock((handler) => {
+          listener = handler as typeof listener;
+          return () => {
+            listener = undefined;
+          };
+        }),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.login');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+      await listener?.(credentials);
+      await Promise.resolve();
+
+      expect(result.success).toBe(true);
+      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', credentials);
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
     it('returns error when direct OAuth credential storage fails', async () => {
       const credentialManager = {
         storeOAuthTokens: mock(async () => {
@@ -1156,6 +1204,45 @@ describe('Auth RPC Handlers', () => {
     it('strips persisted discovery when refresh failure leaves no credentials', async () => {
       const credentialManager = {
         removeCredentials: mock(async () => {}),
+      };
+      const bus = makeBus();
+      const repo = makeRepo();
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never,
+        bus as never,
+        repo as never
+      );
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => null),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(repo.getProviderByProviderId).toHaveBeenCalledWith('test-provider');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('strips persisted discovery when refresh read of stored credentials fails', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+        getCredentials: mock(async () => {
+          throw new Error('corrupt row');
+        }),
       };
       const bus = makeBus();
       const repo = makeRepo();

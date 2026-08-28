@@ -222,11 +222,23 @@ export function setupAuthHandlers(
         let unsubscribe: (() => void) | undefined;
         const persistCredentials = async (credentials: ProviderCredentials): Promise<void> => {
           bumpProviderCatalogEpoch(providerId);
+          let storeError: unknown;
           if (credentials.type === 'oauth') {
-            await credentialManager?.storeOAuthTokens(providerId, credentials);
+            try {
+              await credentialManager?.storeOAuthTokens(providerId, credentials);
+            } catch (error) {
+              storeError = error;
+            }
           }
           unsubscribe?.();
-          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+          let stripError: unknown;
+          try {
+            await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+          } catch (error) {
+            stripError = error;
+          }
+          if (storeError) throw storeError;
+          if (stripError) throw stripError;
         };
         unsubscribe = provider.onCredentialsChanged?.((credentials) =>
           persistCredentials(credentials).catch((error) => {
@@ -382,8 +394,10 @@ export function setupAuthHandlers(
         bumpProviderCatalogEpoch(providerId);
         const refreshed = await provider.refreshToken();
         if (!refreshed) {
-          const previousCredentials =
-            (await credentialManager?.getCredentials?.(providerId)) ?? null;
+          let previousCredentials: ProviderCredentials | null = null;
+          try {
+            previousCredentials = (await credentialManager?.getCredentials?.(providerId)) ?? null;
+          } catch {}
           await removeCredentialsOrKeychainError(credentialManager, providerId);
           const remaining = await provider.getCredentials?.();
           if (remaining?.type === 'oauth') {
