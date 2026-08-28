@@ -327,6 +327,21 @@ describe('discovery-refresh pipeline helpers', () => {
       ]);
     });
 
+    it('canonicalizes curated aliases against the discovered catalog when persisting', () => {
+      getProviderRegistry().setCuratedModels('mock', [{ id: 'mock-k3' }]);
+      const { repo, store } = createMockProviderRepo(makeRecord());
+      const canonical = { ...makeModel('mock-k3[1m]'), name: 'Mock K3', alias: 'mock-k3' };
+      const ctx = makeCtx({
+        deps: makeDeps({ providerRepo: repo }),
+        discovered: [canonical],
+        currentRecord: store.get('row-1') ?? null,
+      });
+      const out = persistLastGoodSlice(ctx);
+      expect(out.persistedEntries).toEqual([{ id: 'mock-k3[1m]', name: 'Mock K3' }]);
+      const persisted = JSON.parse(store.get('row-1')!.configJson!);
+      expect(persisted.discoveredModels.models).toEqual([{ id: 'mock-k3[1m]', name: 'Mock K3' }]);
+    });
+
     it('clears the provider cache and rethrows when the saved config is unwritable', () => {
       const provider = new FakeProvider();
       const { repo } = createMockProviderRepo(makeRecord({ configJson: 'not json' }));
@@ -389,7 +404,7 @@ describe('discovery-refresh pipeline helpers', () => {
       });
       const out = await applyDiscoveredSliceToLiveCache(makeCtx({ deps }));
       expect(scheduled).toEqual(['mock']);
-      expect(out.appliedSlice).toBeUndefined();
+      expect(out.appliedSlice!.map((model) => model.id)).toEqual(['mock-1', 'mock-2']);
     });
 
     it('rolls back and halts when superseded while awaiting an in-flight cache load', async () => {

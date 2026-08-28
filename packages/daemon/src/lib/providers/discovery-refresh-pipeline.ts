@@ -117,17 +117,23 @@ function lastGoodDiscoveryBudget(
 
 function buildLastGoodDiscoveredModels(
   providerId: string,
-  discovered: ReadonlyArray<{ id: string; name?: string }>,
+  discovered: ReadonlyArray<{ id: string; name?: string; alias?: string }>,
   budget: number
 ): LastGoodDiscoveredModels {
   const registry = getProviderRegistry();
+  const canonicalByAlias = new Map<string, { id: string; name?: string }>();
+  for (const model of discovered) {
+    if (model.alias !== undefined && model.alias !== model.id) {
+      canonicalByAlias.set(model.alias, model);
+    }
+  }
   const byId = new Map<string, CuratedModel>();
   for (const curated of registry.getCuratedModels(providerId) ?? []) {
-    if (!byId.has(curated.id)) {
-      byId.set(curated.id, {
-        id: curated.id,
-        ...(curated.name === undefined ? {} : { name: curated.name }),
-      });
+    const canonical = canonicalByAlias.get(curated.id);
+    const id = canonical?.id ?? curated.id;
+    if (!byId.has(id)) {
+      const name = canonical?.name ?? curated.name;
+      byId.set(id, { id, ...(name === undefined ? {} : { name }) });
     }
   }
   const curatedCount = byId.size;
@@ -171,7 +177,7 @@ function buildLastGoodDiscoveredModels(
 function persistLastGoodDiscoveredModels(
   providerRepo: ProviderRepository,
   record: ProviderRecord,
-  discovered: ReadonlyArray<{ id: string; name?: string }>,
+  discovered: ReadonlyArray<{ id: string; name?: string; alias?: string }>,
   endpointFingerprint?: string
 ): LastGoodDiscoveredModels {
   let base: Record<string, unknown> = {};
@@ -364,7 +370,13 @@ export async function applyDiscoveredSliceToLiveCache(
     if (ctx.discoveryBaseUrl === undefined) {
       ctx.deps.schedulePendingSliceRelease(ctx.providerId);
     }
-    return { ...ctx, normalizedDiscovered, previousSlice, previousOverlay };
+    return {
+      ...ctx,
+      normalizedDiscovered,
+      appliedSlice: firstApply.models,
+      previousSlice,
+      previousOverlay,
+    };
   }
   await raceWithTimeout(
     inFlight.catch(() => {}),
