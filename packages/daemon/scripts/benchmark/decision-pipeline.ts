@@ -1,7 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { cpus } from 'node:os';
-
+import { generateUUID } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { decisionRun } from '../../src/lib/space/runtime/decision-pipeline.ts';
+import {
+  decideMessageAdmission,
+  normalizeMessageAdmissionInput,
+} from '../../src/storage/repositories/sdk-message-admission.ts';
+import { planAdmissionBadgeUpdate } from '../../src/storage/repositories/sdk-message-badge.ts';
 
 const ITERATIONS = 100_000;
 const WARMUP_ITERATIONS = 1_000_000;
@@ -25,16 +32,19 @@ type RouterContext = {
 };
 
 type RouterInput = Omit<RouterContext, 'decision'>;
-type Variant = 'decisionRun' | 'if-cascade';
+type Variant = 'decisionRun' | 'if-cascade' | 'save-pipeline' | 'save-direct';
 
-type Measurement = {
-  nsPerOp: number;
-  checksum: number;
-};
+type Measurement = { nsPerOp: number; checksum: number };
 
-type Sample = {
-  cold: Measurement;
-  warm: Measurement;
+type Sample = { cold: Measurement; warm: Measurement };
+
+type SaveState = {
+  sessionId: string;
+  message: SDKMessage;
+  dbId?: string;
+  admission?: ReturnType<typeof decideMessageAdmission>;
+  badgeUpdate?: ReturnType<typeof planAdmissionBadgeUpdate>;
+  deps: { save: (ctx: SaveState) => { dbId: string } };
 };
 
 const inputs: readonly RouterInput[] = [
@@ -112,6 +122,36 @@ const inputs: readonly RouterInput[] = [
   },
 ];
 
+const saveSessionId = 'session-bench';
+const saveMessages: readonly SDKMessage[] = [
+  {
+    type: 'user',
+    message: { content: [{ type: 'text', text: 'hello' }] },
+    parent_tool_use_id: null,
+    uuid: 'u-1',
+  } as unknown as SDKMessage,
+  {
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: 'hi' }] },
+    parent_tool_use_id: null,
+    uuid: 'u-2',
+  } as unknown as SDKMessage,
+  {
+    type: 'result',
+    subtype: 'success',
+    parent_tool_use_id: null,
+    uuid: 'u-3',
+  } as unknown as SDKMessage,
+];
+
+const saveDeps: SaveState['deps'] = { save: (ctx: SaveState) => ({ dbId: ctx.dbId! }) };
+
+const saveInputs: readonly SaveState[] = saveMessages.map((message) => ({
+  sessionId: saveSessionId,
+  message,
+  deps: saveDeps,
+}));
+
 const decide = (ctx: RouterContext, decision: RouterDecision): RouterContext => ({
   ...ctx,
   decision,
@@ -139,6 +179,46 @@ function runIfCascade(input: RouterInput): RouterContext {
   return ctx;
 }
 
+function snapshot(ctx: SaveState): SaveState {
+  return { ...ctx, dbId: generateUUID() };
+}
+
+function admit(ctx: SaveState): SaveState {
+  const admission = decideMessageAdmission(normalizeMessageAdmissionInput(ctx.message), {
+    variant: 'sdk',
+    sendStatus: null,
+  });
+  return { ...ctx, admission, badgeUpdate: planAdmissionBadgeUpdate(admission) };
+}
+
+function save(ctx: SaveState): SaveState {
+  return { ...ctx, dbId: ctx.deps.save(ctx).dbId };
+}
+
+function publish(ctx: SaveState): SaveState {
+  return ctx;
+}
+
+const runSavePipeline = (superpipe({})('save-benchmark') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(snapshot, 'ctx', 'ctx')
+  .pipe(admit, 'ctx', 'ctx')
+  .pipe(save, 'ctx', 'ctx')
+  .pipe(publish, 'ctx', 'ctx')
+  .end('ctx') as (ctx: SaveState) => SaveState;
+
+function runSaveDirect(ctx: SaveState): SaveState {
+  return publish(save(admit(snapshot(ctx))));
+}
+
+function saveChecksum(ctx: SaveState): number {
+  return (
+    ctx.admission!.isRenderable +
+    (ctx.admission!.isTerminal << 1) +
+    (ctx.badgeUpdate!.kind === 'delta' ? 1 << 2 : 0)
+  );
+}
+
 function verifyEquivalentDecisions(): void {
   for (const input of inputs) {
     const pipelineDecision = runDecisionPipeline(input).decision;
@@ -151,25 +231,39 @@ function verifyEquivalentDecisions(): void {
   }
 }
 
-function runIterations(
-  run: (input: RouterInput) => RouterContext,
+function runIterations<T>(
+  inputs: readonly T[],
+  run: (input: T) => number,
   iterations: number
 ): Measurement {
   let checksum = 0;
   const start = Bun.nanoseconds();
   for (let index = 0; index < iterations; index++) {
-    const decision = run(inputs[index % inputs.length]).decision;
-    checksum += decision?.charCodeAt(0) ?? 0;
+    checksum += run(inputs[index % inputs.length]);
   }
   return { nsPerOp: (Bun.nanoseconds() - start) / iterations, checksum };
 }
 
 function collectSample(variant: Variant): Sample {
-  const run = variant === 'decisionRun' ? runDecisionPipeline : runIfCascade;
-  const cold = runIterations(run, ITERATIONS);
-  runIterations(run, WARMUP_ITERATIONS);
-  const warm = runIterations(run, ITERATIONS);
-  return { cold, warm };
+  if (variant === 'decisionRun' || variant === 'if-cascade') {
+    const run =
+      variant === 'decisionRun'
+        ? (input: RouterInput) => runDecisionPipeline(input).decision?.charCodeAt(0) ?? 0
+        : (input: RouterInput) => runIfCascade(input).decision?.charCodeAt(0) ?? 0;
+    const cold = runIterations(inputs, run, ITERATIONS);
+    runIterations(inputs, run, WARMUP_ITERATIONS);
+    const warm = runIterations(inputs, run, ITERATIONS);
+    return { cold, warm };
+  }
+  if (variant === 'save-pipeline' || variant === 'save-direct') {
+    const runSave = variant === 'save-pipeline' ? runSavePipeline : runSaveDirect;
+    const run = (input: SaveState) => saveChecksum(runSave(input));
+    const cold = runIterations(saveInputs, run, ITERATIONS);
+    runIterations(saveInputs, run, WARMUP_ITERATIONS);
+    const warm = runIterations(saveInputs, run, ITERATIONS);
+    return { cold, warm };
+  }
+  throw new Error(`Unknown variant: ${variant}`);
 }
 
 function median(values: readonly number[]): number {
@@ -192,25 +286,43 @@ function summarize(variant: Variant, samples: readonly Sample[]): void {
   const cold = samples.map((sample) => sample.cold.nsPerOp);
   const warm = samples.map((sample) => sample.warm.nsPerOp);
   log(
-    `${variant.padEnd(12)} ${formatValues(cold).padStart(52)} ${formatValues(warm).padStart(52)}`
+    `${variant.padEnd(14)} ${formatValues(cold).padStart(50)} ${formatValues(warm).padStart(50)}`
   );
 }
 
 const variantIndex = process.argv.indexOf('--variant');
-const variant = process.argv[variantIndex + 1] as Variant | undefined;
+const variant = variantIndex === -1 ? undefined : (process.argv[variantIndex + 1] as Variant);
 
-if (variant === 'decisionRun' || variant === 'if-cascade') {
+if (
+  variant === 'decisionRun' ||
+  variant === 'if-cascade' ||
+  variant === 'save-pipeline' ||
+  variant === 'save-direct'
+) {
   process.stdout.write(JSON.stringify(collectSample(variant)));
+} else if (variant !== undefined) {
+  throw new Error(`Unknown variant: ${variant}`);
 } else {
   const decisionSamples = Array.from({ length: SAMPLES }, () => runChild('decisionRun'));
   const cascadeSamples = Array.from({ length: SAMPLES }, () => runChild('if-cascade'));
+  const savePipelineSamples = Array.from({ length: SAMPLES }, () => runChild('save-pipeline'));
+  const saveDirectSamples = Array.from({ length: SAMPLES }, () => runChild('save-direct'));
   verifyEquivalentDecisions();
-  const checksums = [...decisionSamples, ...cascadeSamples].flatMap((sample) => [
+
+  const decisionChecksums = [...decisionSamples, ...cascadeSamples].flatMap((sample) => [
     sample.cold.checksum,
     sample.warm.checksum,
   ]);
-  if (!checksums.every((checksum) => checksum === checksums[0])) {
+  if (!decisionChecksums.every((checksum) => checksum === decisionChecksums[0])) {
     throw new Error('Benchmark samples produced inconsistent checksums');
+  }
+
+  const saveChecksums = [...savePipelineSamples, ...saveDirectSamples].flatMap((sample) => [
+    sample.cold.checksum,
+    sample.warm.checksum,
+  ]);
+  if (!saveChecksums.every((checksum) => checksum === saveChecksums[0])) {
+    throw new Error('Save benchmark samples produced inconsistent checksums');
   }
 
   log(
@@ -218,9 +330,19 @@ if (variant === 'decisionRun' || variant === 'if-cascade') {
   );
   log(`${ITERATIONS.toLocaleString()} measured iterations; ${SAMPLES} fresh processes per variant`);
   log(`${WARMUP_ITERATIONS.toLocaleString()} iterations before each warm measurement\n`);
-  log(
-    'variant                         cold ns/op: median [samples]   warm ns/op: median [samples]'
-  );
+  log('variant           cold ns/op: median [samples]   warm ns/op: median [samples]');
   summarize('decisionRun', decisionSamples);
   summarize('if-cascade', cascadeSamples);
+  summarize('save-pipeline', savePipelineSamples);
+  summarize('save-direct', saveDirectSamples);
+
+  const saveOverheadCold =
+    median(savePipelineSamples.map((sample) => sample.cold.nsPerOp)) -
+    median(saveDirectSamples.map((sample) => sample.cold.nsPerOp));
+  const saveOverheadWarm =
+    median(savePipelineSamples.map((sample) => sample.warm.nsPerOp)) -
+    median(saveDirectSamples.map((sample) => sample.warm.nsPerOp));
+  log('');
+  log(`save-pipeline overhead (cold): ${saveOverheadCold.toFixed(1)} ns/op`);
+  log(`save-pipeline overhead (warm): ${saveOverheadWarm.toFixed(1)} ns/op`);
 }
