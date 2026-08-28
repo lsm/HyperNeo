@@ -1,12 +1,25 @@
 import { execFileSync } from 'node:child_process';
 import { cpus } from 'node:os';
-
+import { generateUUID } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import { Database } from '../../src/storage/sqlite-compat.ts';
+import { createTables } from '../../src/storage/schema/index.ts';
 import { decisionRun } from '../../src/lib/space/runtime/decision-pipeline.ts';
+import {
+  decideMessageAdmission,
+  normalizeMessageAdmissionInput,
+} from '../../src/storage/repositories/sdk-message-admission.ts';
+import { planAdmissionBadgeUpdate } from '../../src/storage/repositories/sdk-message-badge.ts';
 
 const ITERATIONS = 100_000;
 const WARMUP_ITERATIONS = 1_000_000;
+const INSERT_ITERATIONS = 10_000;
+const INSERT_WARMUP_ITERATIONS = 50_000;
 const SAMPLES = 5;
-const log = (message: string): void => process.stdout.write(`${message}\n`);
+const log = (message: string): void => {
+  process.stdout.write(`${message}\n`);
+};
 
 type RouterDecision = 'defer' | 'reject' | 'deny-self' | 'queue' | 'prioritize' | 'route';
 
@@ -25,16 +38,30 @@ type RouterContext = {
 };
 
 type RouterInput = Omit<RouterContext, 'decision'>;
-type Variant = 'decisionRun' | 'if-cascade';
+type Variant = 'decisionRun' | 'if-cascade' | 'save-pipeline' | 'save-direct' | 'sqlite-insert';
 
-type Measurement = {
-  nsPerOp: number;
-  checksum: number;
+type Measurement = { nsPerOp: number; checksum: number };
+
+type Sample = { cold: Measurement; warm: Measurement };
+
+type SaveState = {
+  sessionId: string;
+  message: SDKMessage;
+  dbId?: string;
+  admission?: ReturnType<typeof decideMessageAdmission>;
+  badgeUpdate?: ReturnType<typeof planAdmissionBadgeUpdate>;
+  deps: { save: (s: SaveState) => { dbId: string } };
 };
 
-type Sample = {
-  cold: Measurement;
-  warm: Measurement;
+type InsertRow = {
+  sessionId: string;
+  messageType: string;
+  messageSubtype: string | null;
+  sdkMessage: string;
+  isRenderable: 0 | 1;
+  isTerminal: 0 | 1;
+  parentToolUseId: string | null;
+  sdkUuid: string | null;
 };
 
 const inputs: readonly RouterInput[] = [
@@ -112,6 +139,54 @@ const inputs: readonly RouterInput[] = [
   },
 ];
 
+const saveSessionId = 'session-bench';
+const saveMessages: readonly SDKMessage[] = [
+  {
+    type: 'user',
+    message: { content: [{ type: 'text', text: 'hello' }] },
+    parent_tool_use_id: null,
+    uuid: 'u-1',
+  } as unknown as SDKMessage,
+  {
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: 'hi' }] },
+    parent_tool_use_id: null,
+    uuid: 'u-2',
+  } as unknown as SDKMessage,
+  {
+    type: 'result',
+    subtype: 'success',
+    parent_tool_use_id: null,
+    uuid: 'u-3',
+  } as unknown as SDKMessage,
+];
+
+const saveDeps: SaveState['deps'] = { save: () => ({ dbId: generateUUID() }) };
+
+const saveInputs: readonly SaveState[] = saveMessages.map((message) => ({
+  sessionId: saveSessionId,
+  message,
+  deps: saveDeps,
+}));
+
+const insertTimestamp = new Date().toISOString();
+const insertRows: readonly InsertRow[] = saveMessages.map((message) => {
+  const admission = decideMessageAdmission(normalizeMessageAdmissionInput(message), {
+    variant: 'sdk',
+    sendStatus: null,
+  });
+  return {
+    sessionId: saveSessionId,
+    messageType: message.type,
+    messageSubtype: (message as { subtype?: string }).subtype ?? null,
+    sdkMessage: JSON.stringify(message),
+    isRenderable: admission.isRenderable,
+    isTerminal: admission.isTerminal,
+    parentToolUseId: admission.parentToolUseId,
+    sdkUuid: admission.sdkUuid,
+  };
+});
+
 const decide = (ctx: RouterContext, decision: RouterDecision): RouterContext => ({
   ...ctx,
   decision,
@@ -139,6 +214,86 @@ function runIfCascade(input: RouterInput): RouterContext {
   return ctx;
 }
 
+function snapshot(ctx: SaveState): SaveState {
+  return { ...ctx, dbId: generateUUID() };
+}
+
+function admit(ctx: SaveState): SaveState {
+  const admission = decideMessageAdmission(normalizeMessageAdmissionInput(ctx.message), {
+    variant: 'sdk',
+    sendStatus: null,
+  });
+  return { ...ctx, admission, badgeUpdate: planAdmissionBadgeUpdate(admission) };
+}
+
+function save(ctx: SaveState): SaveState {
+  return { ...ctx, dbId: ctx.deps.save(ctx).dbId };
+}
+
+function publish(ctx: SaveState): SaveState {
+  return ctx;
+}
+
+const runSavePipeline = (superpipe({})('save-benchmark') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(snapshot, 'ctx', 'ctx')
+  .pipe(admit, 'ctx', 'ctx')
+  .pipe(save, 'ctx', 'ctx')
+  .pipe(publish, 'ctx', 'ctx')
+  .end('ctx') as (ctx: SaveState) => SaveState;
+
+function runSaveDirect(ctx: SaveState): SaveState {
+  return publish(save(admit(snapshot(ctx))));
+}
+
+function saveChecksum(ctx: SaveState): number {
+  return (
+    ctx.admission!.isRenderable +
+    (ctx.admission!.isTerminal << 1) +
+    (ctx.badgeUpdate!.kind === 'delta' ? 1 << 2 : 0)
+  );
+}
+
+function setupInsert(): { db: typeof Database.prototype; run: (row: InsertRow) => number } {
+  const db = new Database(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  createTables(db);
+  db.prepare(
+    'INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata, visible_message_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(saveSessionId, 'benchmark', insertTimestamp, insertTimestamp, 'active', '{}', '{}', 0);
+  const insertStmt = db.prepare(
+    'INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, origin, is_renderable, is_terminal, parent_tool_use_id, task_id, conversation_turn_index, sdk_uuid, replacement_metadata_normalized) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  );
+  let counter = 0;
+  const insert = db.transaction((row: InsertRow, id: string) => {
+    insertStmt.run(
+      id,
+      row.sessionId,
+      row.messageType,
+      row.messageSubtype,
+      row.sdkMessage,
+      insertTimestamp,
+      null,
+      row.isRenderable,
+      row.isTerminal,
+      row.parentToolUseId,
+      null,
+      null,
+      row.sdkUuid,
+      1
+    );
+    return 1;
+  });
+  return {
+    db,
+    run: (row: InsertRow) => {
+      const id = `${++counter}-${row.sessionId}`;
+      insert(row, id);
+      return 1;
+    },
+  };
+}
+
 function verifyEquivalentDecisions(): void {
   for (const input of inputs) {
     const pipelineDecision = runDecisionPipeline(input).decision;
@@ -151,25 +306,47 @@ function verifyEquivalentDecisions(): void {
   }
 }
 
-function runIterations(
-  run: (input: RouterInput) => RouterContext,
+function runIterations<T>(
+  inputs: readonly T[],
+  run: (input: T) => number,
   iterations: number
 ): Measurement {
   let checksum = 0;
   const start = Bun.nanoseconds();
   for (let index = 0; index < iterations; index++) {
-    const decision = run(inputs[index % inputs.length]).decision;
-    checksum += decision?.charCodeAt(0) ?? 0;
+    checksum += run(inputs[index % inputs.length]);
   }
   return { nsPerOp: (Bun.nanoseconds() - start) / iterations, checksum };
 }
 
 function collectSample(variant: Variant): Sample {
-  const run = variant === 'decisionRun' ? runDecisionPipeline : runIfCascade;
-  const cold = runIterations(run, ITERATIONS);
-  runIterations(run, WARMUP_ITERATIONS);
-  const warm = runIterations(run, ITERATIONS);
-  return { cold, warm };
+  if (variant === 'decisionRun' || variant === 'if-cascade') {
+    const run =
+      variant === 'decisionRun'
+        ? (input: RouterInput) => runDecisionPipeline(input).decision?.charCodeAt(0) ?? 0
+        : (input: RouterInput) => runIfCascade(input).decision?.charCodeAt(0) ?? 0;
+    const cold = runIterations(inputs, run, ITERATIONS);
+    runIterations(inputs, run, WARMUP_ITERATIONS);
+    const warm = runIterations(inputs, run, ITERATIONS);
+    return { cold, warm };
+  }
+  if (variant === 'save-pipeline' || variant === 'save-direct') {
+    const runSave = variant === 'save-pipeline' ? runSavePipeline : runSaveDirect;
+    const run = (input: SaveState) => saveChecksum(runSave(input));
+    const cold = runIterations(saveInputs, run, ITERATIONS);
+    runIterations(saveInputs, run, WARMUP_ITERATIONS);
+    const warm = runIterations(saveInputs, run, ITERATIONS);
+    return { cold, warm };
+  }
+  if (variant === 'sqlite-insert') {
+    const { db, run } = setupInsert();
+    const cold = runIterations(insertRows, run, INSERT_ITERATIONS);
+    runIterations(insertRows, run, INSERT_WARMUP_ITERATIONS);
+    const warm = runIterations(insertRows, run, INSERT_ITERATIONS);
+    db.close();
+    return { cold, warm };
+  }
+  throw new Error(`Unknown variant: ${variant}`);
 }
 
 function median(values: readonly number[]): number {
@@ -192,35 +369,74 @@ function summarize(variant: Variant, samples: readonly Sample[]): void {
   const cold = samples.map((sample) => sample.cold.nsPerOp);
   const warm = samples.map((sample) => sample.warm.nsPerOp);
   log(
-    `${variant.padEnd(12)} ${formatValues(cold).padStart(52)} ${formatValues(warm).padStart(52)}`
+    `${variant.padEnd(14)} ${formatValues(cold).padStart(50)} ${formatValues(warm).padStart(50)}`
   );
 }
 
 const variantIndex = process.argv.indexOf('--variant');
-const variant = process.argv[variantIndex + 1] as Variant | undefined;
+const variant = variantIndex === -1 ? undefined : (process.argv[variantIndex + 1] as Variant);
 
-if (variant === 'decisionRun' || variant === 'if-cascade') {
+if (
+  variant === 'decisionRun' ||
+  variant === 'if-cascade' ||
+  variant === 'save-pipeline' ||
+  variant === 'save-direct' ||
+  variant === 'sqlite-insert'
+) {
   process.stdout.write(JSON.stringify(collectSample(variant)));
+} else if (variant !== undefined) {
+  throw new Error(`Unknown variant: ${variant}`);
 } else {
   const decisionSamples = Array.from({ length: SAMPLES }, () => runChild('decisionRun'));
   const cascadeSamples = Array.from({ length: SAMPLES }, () => runChild('if-cascade'));
+  const savePipelineSamples = Array.from({ length: SAMPLES }, () => runChild('save-pipeline'));
+  const saveDirectSamples = Array.from({ length: SAMPLES }, () => runChild('save-direct'));
+  const insertSamples = Array.from({ length: SAMPLES }, () => runChild('sqlite-insert'));
   verifyEquivalentDecisions();
-  const checksums = [...decisionSamples, ...cascadeSamples].flatMap((sample) => [
+
+  const decisionChecksums = [...decisionSamples, ...cascadeSamples].flatMap((sample) => [
     sample.cold.checksum,
     sample.warm.checksum,
   ]);
-  if (!checksums.every((checksum) => checksum === checksums[0])) {
+  if (!decisionChecksums.every((checksum) => checksum === decisionChecksums[0])) {
     throw new Error('Benchmark samples produced inconsistent checksums');
+  }
+
+  const saveChecksums = [...savePipelineSamples, ...saveDirectSamples].flatMap((sample) => [
+    sample.cold.checksum,
+    sample.warm.checksum,
+  ]);
+  if (!saveChecksums.every((checksum) => checksum === saveChecksums[0])) {
+    throw new Error('Save benchmark samples produced inconsistent checksums');
   }
 
   log(
     `Bun ${Bun.version}; ${process.platform} ${process.arch}; ${cpus()[0]?.model ?? 'unknown CPU'}`
   );
   log(`${ITERATIONS.toLocaleString()} measured iterations; ${SAMPLES} fresh processes per variant`);
-  log(`${WARMUP_ITERATIONS.toLocaleString()} iterations before each warm measurement\n`);
   log(
-    'variant                         cold ns/op: median [samples]   warm ns/op: median [samples]'
+    `${INSERT_ITERATIONS.toLocaleString()} insert iterations; ${INSERT_WARMUP_ITERATIONS.toLocaleString()} insert warmup\n`
   );
+  log('variant           cold ns/op: median [samples]   warm ns/op: median [samples]');
   summarize('decisionRun', decisionSamples);
   summarize('if-cascade', cascadeSamples);
+  summarize('save-pipeline', savePipelineSamples);
+  summarize('save-direct', saveDirectSamples);
+  summarize('sqlite-insert', insertSamples);
+
+  const saveOverheadCold =
+    median(savePipelineSamples.map((sample) => sample.cold.nsPerOp)) -
+    median(saveDirectSamples.map((sample) => sample.cold.nsPerOp));
+  const saveOverheadWarm =
+    median(savePipelineSamples.map((sample) => sample.warm.nsPerOp)) -
+    median(saveDirectSamples.map((sample) => sample.warm.nsPerOp));
+  const insertCold = median(insertSamples.map((sample) => sample.cold.nsPerOp));
+  const insertWarm = median(insertSamples.map((sample) => sample.warm.nsPerOp));
+  log('');
+  log(
+    `save-pipeline overhead (cold): ${saveOverheadCold.toFixed(1)} ns/op; insert (cold): ${insertCold.toFixed(1)} ns/op; ratio: ${((saveOverheadCold / insertCold) * 100).toFixed(1)}%`
+  );
+  log(
+    `save-pipeline overhead (warm): ${saveOverheadWarm.toFixed(1)} ns/op; insert (warm): ${insertWarm.toFixed(1)} ns/op; ratio: ${((saveOverheadWarm / insertWarm) * 100).toFixed(1)}%`
+  );
 }
