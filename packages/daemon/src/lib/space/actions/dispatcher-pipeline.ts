@@ -203,7 +203,7 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
     let taskId = ctx.taskId;
     if (ctx.deps.resolveTaskId && ctx.parsedParams) {
       const params = ctx.parsedParams as Record<string, unknown>;
-      if (typeof params.task_number === 'number') {
+      if (typeof params.task_number === 'number' && typeof params.task_id !== 'string') {
         const resolved = await ctx.deps.resolveTaskId(params);
         if (resolved !== undefined) taskId = resolved;
       }

@@ -249,6 +249,15 @@ describe('createSpaceRegistryEntries — composition', () => {
         title: 'Standalone task',
         description: '',
       });
+      const checkpointTask = ctx.taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Checkpoint task',
+        description: '',
+      });
+      ctx.taskRepo.updateTask(checkpointTask.id, {
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+      });
       const entries = createSpaceRegistryEntries(ctx.config);
       const resolve = entries.find((entry) => entry.name === 'update_task')?.autonomyRequirement;
       expect(typeof resolve).toBe('function');
@@ -261,6 +270,8 @@ describe('createSpaceRegistryEntries — composition', () => {
         );
         expect(await resolve({ task_id: openWorkflowTask.id, status: 'cancelled' })).toBe(1);
         expect(await resolve({ task_id: standaloneTask.id, status: 'cancelled' })).toBe(1);
+        expect(await resolve({ task_id: checkpointTask.id, status: 'in_progress' })).toBe(5);
+        expect(await resolve({ task_id: checkpointTask.id, title: 'Edited' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', status: 'blocked' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', title: 'Edited' })).toBe(1);
       }

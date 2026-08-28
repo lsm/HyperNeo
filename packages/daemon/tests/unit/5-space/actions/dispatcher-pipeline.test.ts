@@ -568,6 +568,52 @@ describe('applyRateAndAudit', () => {
     expect(auditEntries[0].taskId).toBe('task-from-7');
   });
 
+  test('keeps task_id precedence over task_number in attribution', async () => {
+    const auditEntries: CreateMcpAuditLogParams[] = [];
+    let resolverCalls = 0;
+    const sendToTask = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Send message',
+      paramsDoc: '{ task_id: string, task_number: number, message: string }',
+      paramsSchema: z.object({ task_id: z.string(), task_number: z.number(), message: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'send_message_to_task',
+              params: { task_id: 'task-a', task_number: 7, message: 'ping' },
+            },
+            { registry: createActionRegistry([sendToTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        auditLogRepo: {
+          createEntry: (params) => {
+            auditEntries.push(params);
+            return null as never;
+          },
+        },
+        resolveTaskId: (params) => {
+          resolverCalls += 1;
+          return `task-from-${params.task_number}`;
+        },
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(resolverCalls).toBe(0);
+    expect(next.taskId).toBe('task-a');
+    expect(auditEntries.length).toBe(1);
+    expect(auditEntries[0].taskId).toBe('task-a');
+  });
+
   test('skips audit for read actions', async () => {
     const auditEntries: CreateMcpAuditLogParams[] = [];
     const ctx = applyRoleAdmission(
