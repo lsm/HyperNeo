@@ -1,6 +1,11 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { VOICE_CREDENTIAL_PROVIDER_ID } from './settings-handlers.ts';
-import type { CreateProviderParams, ProviderRecord, UpdateProviderParams } from '@hyperneo/shared';
+import type {
+  CreateProviderParams,
+  ModelInfo,
+  ProviderRecord,
+  UpdateProviderParams,
+} from '@hyperneo/shared';
 import type { ListRemoteModelsOptions, ProviderCredentials } from '@hyperneo/shared/provider';
 import type { ProviderRepository } from '../../storage/repositories/provider-repository.ts';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
@@ -14,6 +19,14 @@ import {
   removeProviderFromRegistry,
 } from '../providers/provider-sync.js';
 import { getProviderRegistry } from '../providers/registry.js';
+import {
+  DISCOVERY_REFRESH_TIMEOUT_MS,
+  credentialIdentity,
+  isSupersededSavedConfigRefresh,
+  providerIgnoresSavedEndpoint,
+  raceWithTimeout,
+  runCommitSavedConfigDiscoveryRefresh,
+} from '../providers/discovery-refresh-pipeline.js';
 import { markBuiltInProviderDisabled } from '../providers/factory.js';
 import { AcpProvider } from '../providers/acp-provider.js';
 import { fetchAcpModels } from '../acp/acp-model-fetcher.js';
@@ -225,6 +238,21 @@ function validateRemoteModelRequest(data: unknown): RemoteModelRequest {
   return { id: input.id, options: input.options };
 }
 
+type RefreshDiscoveryRequest = { id: string };
+
+function validateRefreshDiscoveryRequest(data: unknown): RefreshDiscoveryRequest {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Invalid refresh discovery request');
+  }
+  const input = data as Record<string, unknown>;
+  const unknown = Object.keys(input).find((key) => key !== 'id');
+  if (unknown) throw new Error(`Unknown refresh discovery request field: ${unknown}`);
+  if (typeof input.id !== 'string' || !input.id.trim()) {
+    throw new Error('Provider id is required');
+  }
+  return { id: input.id };
+}
+
 async function listAcpRemoteModels(
   record: ProviderRecord,
   options: ListRemoteModelsOptions
@@ -315,6 +343,114 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     return {
       models: models.map(({ id, name }) => ({ id, ...(name === undefined ? {} : { name }) })),
     };
+  });
+
+  messageHub.onRequest('providers.refreshDiscovery', async (data: unknown) => {
+    const request = validateRefreshDiscoveryRequest(data);
+    const record = providerRepo.getProvider(request.id);
+    if (!record) throw new Error(`Provider ${request.id} not found`);
+    const provider = getProviderRegistry().get(record.providerId);
+    if (!provider) throw new Error(`Provider ${record.providerId} is not registered`);
+    if (!provider.listRemoteModels) {
+      throw new Error(`Provider ${record.providerId} does not support remote model listing`);
+    }
+
+    const {
+      getModelsCacheClearSequence,
+      getCurrentCacheLoad,
+      getModelsCache,
+      restoreProviderModelsSlice,
+      applyDiscoveredProviderModels,
+      releaseAppliedProviderSlice,
+      getPendingProviderSlice,
+      restoreProviderPendingSlice,
+      schedulePendingSliceRelease,
+      markProviderRefreshSucceeded,
+      mergeDiscoveredWithStatic,
+      markModelsCacheSliceProtected,
+      seedProviderCatalogModels,
+    } = await import('../model-service.js');
+    const clearsAtStart = getModelsCacheClearSequence();
+    const savedConfig = { baseUrl: record.baseUrl, configJson: record.configJson };
+    const discoveryBaseUrl = record.baseUrl || undefined;
+    if (providerIgnoresSavedEndpoint(provider, discoveryBaseUrl)) {
+      throw new Error(
+        `Provider ${record.providerId} does not support discovery refresh with a saved baseUrl`
+      );
+    }
+    const credentialsAtStart = credentialIdentity(await provider.getCredentials?.());
+
+    const discoveryPromise = provider.listRemoteModels({
+      force: true,
+      discoveryOnly: true,
+      ...(discoveryBaseUrl ? { baseUrl: discoveryBaseUrl } : {}),
+    });
+    let discovered: ModelInfo[];
+    try {
+      discovered = await raceWithTimeout(discoveryPromise, DISCOVERY_REFRESH_TIMEOUT_MS);
+    } catch (error) {
+      provider.clearModelCache?.();
+      discoveryPromise.then(() => provider.clearModelCache?.()).catch(() => {});
+      throw error;
+    }
+    if (discovered.length === 0) {
+      provider.clearModelCache?.();
+      throw new Error(`Provider ${record.providerId} returned no models`);
+    }
+
+    if (
+      await isSupersededSavedConfigRefresh(
+        provider,
+        providerRepo,
+        request.id,
+        savedConfig,
+        clearsAtStart,
+        credentialsAtStart,
+        getModelsCacheClearSequence
+      )
+    ) {
+      provider.clearModelCache?.();
+      return { success: false, reason: 'superseded' };
+    }
+    const persistedConfig = parseProviderConfig(savedConfig.configJson);
+    const persistedDiscovered = persistedConfig.models ?? [];
+
+    const committed = await withProviderLock(() =>
+      runCommitSavedConfigDiscoveryRefresh({
+        deps: {
+          providerRepo,
+          provider,
+          internalEventBus,
+          getModelsCacheClearSequence,
+          getCurrentCacheLoad,
+          getModelsCache,
+          restoreProviderModelsSlice,
+          applyDiscoveredProviderModels,
+          releaseAppliedProviderSlice,
+          getPendingProviderSlice,
+          restoreProviderPendingSlice,
+          schedulePendingSliceRelease,
+          markProviderRefreshSucceeded,
+          mergeDiscoveredWithStatic,
+          markModelsCacheSliceProtected,
+          seedProviderCatalogModels,
+        },
+        providerId: record.providerId,
+        rowId: request.id,
+        savedConfig,
+        discoveryBaseUrl,
+        originalConfigJson: record.configJson,
+        credentialsAtStart,
+        clearsAtStart,
+        discovered,
+        persistedDiscovered,
+      })
+    );
+    const outcome = committed?.outcome;
+    if (!outcome) {
+      throw new Error('providers.refreshDiscovery: commit settled without an outcome');
+    }
+    return outcome;
   });
 
   messageHub.onRequest(

@@ -215,6 +215,31 @@ describe('DeepSeekProvider', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(2);
     });
 
+    it('returns the raw remote slice without curated synthesis for discovery-only refreshes', async () => {
+      process.env.DEEPSEEK_API_KEY = 'test-key';
+      installModelListFetch(
+        async () =>
+          new Response(JSON.stringify({ data: [{ id: 'deepseek-v4-pro' }] }), { status: 200 })
+      );
+      const provider = new DeepSeekProvider(process.env);
+      provider.setCuratedModels([{ id: 'deepseek-v5', name: 'DeepSeek V5' }]);
+
+      const discoveryOnly = await provider.listRemoteModels({ force: true, discoveryOnly: true });
+
+      expect(discoveryOnly.map((m) => m.id)).toEqual(['deepseek-v4-pro']);
+    });
+
+    it('reports an empty discovery-only slice when the remote endpoint returns nothing', async () => {
+      process.env.DEEPSEEK_API_KEY = 'test-key';
+      installModelListFetch(
+        async () => new Response(JSON.stringify({ data: [] }), { status: 200 })
+      );
+      const provider = new DeepSeekProvider(process.env);
+      provider.setCuratedModels([{ id: 'deepseek-v5', name: 'DeepSeek V5' }]);
+
+      expect(await provider.listRemoteModels({ force: true, discoveryOnly: true })).toEqual([]);
+    });
+
     it('clears the discovery cache when credentials change', async () => {
       const fetchImpl = installModelListFetch(
         async (call) =>
