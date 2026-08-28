@@ -1,5 +1,5 @@
-import { resolveEffectiveAutonomyLevel } from '../tools/tool-admission-gates.ts';
 import type { ActionRegistry, RegisteredAction } from './registry.ts';
+import { resolveEffectiveAutonomyLevel } from '../tools/tool-admission-gates.ts';
 
 export interface BuildCallActionDescriptionInput {
   role: string;
