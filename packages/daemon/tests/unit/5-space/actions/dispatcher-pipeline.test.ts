@@ -16,6 +16,7 @@ import {
   executeAction,
   formatResult,
   resolveAction,
+  resolveTargets,
   runDispatchAction,
 } from '../../../../src/lib/space/actions/dispatcher-pipeline.ts';
 import { createActionRegistry, defineAction } from '../../../../src/lib/space/actions/registry.ts';
@@ -255,6 +256,31 @@ describe('resolveAction', () => {
         { registry: createActionRegistry([changePlan]) }
       )
     );
+    expect(ctx.workflowRunId).toBe('run-b');
+  });
+
+  test('clears the contextual task when the parsed run target differs', () => {
+    const changePlan = defineAction({
+      name: 'change_plan',
+      family: 'workflows',
+      safetyClass: 'destructive',
+      description: 'Change plan',
+      paramsDoc: '{ run_id: string }',
+      paramsSchema: z.object({ run_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'change_plan',
+          params: { run_id: 'run-b' },
+          taskId: 'session-task-a',
+          workflowRunId: 'run-a',
+        },
+        { registry: createActionRegistry([changePlan]) }
+      )
+    );
+    expect(ctx.taskId).toBeUndefined();
     expect(ctx.workflowRunId).toBe('run-b');
   });
 
@@ -576,16 +602,18 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        auditLogRepo: {
-          createEntry: (params) => {
-            auditEntries.push(params);
-            return null as never;
+      await resolveTargets(
+        withDeps(ctx, {
+          auditLogRepo: {
+            createEntry: (params) => {
+              auditEntries.push(params);
+              return null as never;
+            },
           },
-        },
-        resolveTaskId: (params) =>
-          typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
-      })
+          resolveTaskId: (params) =>
+            typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(next.taskId).toBe('task-from-42');
@@ -619,16 +647,18 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        auditLogRepo: {
-          createEntry: (params) => {
-            auditEntries.push(params);
-            return null as never;
+      await resolveTargets(
+        withDeps(ctx, {
+          auditLogRepo: {
+            createEntry: (params) => {
+              auditEntries.push(params);
+              return null as never;
+            },
           },
-        },
-        resolveTaskId: (params) =>
-          typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
-      })
+          resolveTaskId: (params) =>
+            typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(next.taskId).toBe('task-from-7');
@@ -662,18 +692,20 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        auditLogRepo: {
-          createEntry: (params) => {
-            auditEntries.push(params);
-            return null as never;
+      await resolveTargets(
+        withDeps(ctx, {
+          auditLogRepo: {
+            createEntry: (params) => {
+              auditEntries.push(params);
+              return null as never;
+            },
           },
-        },
-        resolveTaskId: (params) => {
-          resolverCalls += 1;
-          return `task-from-${params.task_number}`;
-        },
-      })
+          resolveTaskId: (params) => {
+            resolverCalls += 1;
+            return `task-from-${params.task_number}`;
+          },
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(resolverCalls).toBe(0);
@@ -706,10 +738,12 @@ describe('applyRateAndAudit', () => {
     );
     expect(ctx.taskId).toBeUndefined();
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        resolveTaskId: (params) =>
-          typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
-      })
+      await resolveTargets(
+        withDeps(ctx, {
+          resolveTaskId: (params) =>
+            typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(next.taskId).toBe('task-from-9');
@@ -740,14 +774,16 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        auditLogRepo: {
-          createEntry: () => null as never,
-        },
-        resolveTaskId: () => {
-          throw new Error('repo unavailable');
-        },
-      })
+      await resolveTargets(
+        withDeps(ctx, {
+          auditLogRepo: {
+            createEntry: () => null as never,
+          },
+          resolveTaskId: () => {
+            throw new Error('repo unavailable');
+          },
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(next.taskId).toBe('session-task');
@@ -777,10 +813,12 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        resolveTaskId: (params) =>
-          typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
-      })
+      await resolveTargets(
+        withDeps(ctx, {
+          resolveTaskId: (params) =>
+            typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(next.taskId).toBe('task-from-7');
@@ -853,17 +891,19 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(
-        { ...ctx, workflowRunId: 'run-a' },
-        {
-          auditLogRepo: {
-            createEntry: (params) => {
-              auditEntries.push(params);
-              return null as never;
+      await resolveTargets(
+        withDeps(
+          { ...ctx, workflowRunId: 'run-a' },
+          {
+            auditLogRepo: {
+              createEntry: (params) => {
+                auditEntries.push(params);
+                return null as never;
+              },
             },
-          },
-          resolveRunId: (taskId) => (taskId === 'task-b' ? 'run-b' : undefined),
-        }
+            resolveRunId: (taskId) => (taskId === 'task-b' ? 'run-b' : undefined),
+          }
+        )
       )
     );
     expect(next.outcome).toBeUndefined();
@@ -897,9 +937,11 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        resolveRunId: () => undefined,
-      })
+      await resolveTargets(
+        withDeps(ctx, {
+          resolveRunId: () => undefined,
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(next.workflowRunId).toBeUndefined();
@@ -931,12 +973,14 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        resolveRunId: (taskId) => {
-          resolverCalls += 1;
-          return `run-of-${taskId}`;
-        },
-      })
+      await resolveTargets(
+        withDeps(ctx, {
+          resolveRunId: (taskId) => {
+            resolverCalls += 1;
+            return `run-of-${taskId}`;
+          },
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(resolverCalls).toBe(0);
@@ -970,12 +1014,14 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        resolveRunId: (taskId) => {
-          resolverCalls += 1;
-          return `run-of-${taskId}`;
-        },
-      })
+      await resolveTargets(
+        withDeps(ctx, {
+          resolveRunId: (taskId) => {
+            resolverCalls += 1;
+            return `run-of-${taskId}`;
+          },
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(resolverCalls).toBe(0);
@@ -1010,21 +1056,61 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        resolveTaskId: () => undefined,
-        auditLogRepo: {
-          createEntry: (params) => {
-            auditEntries.push(params);
-            return null as never;
+      await resolveTargets(
+        withDeps(ctx, {
+          resolveTaskId: () => undefined,
+          auditLogRepo: {
+            createEntry: (params) => {
+              auditEntries.push(params);
+              return null as never;
+            },
           },
-        },
-      })
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(next.taskId).toBeUndefined();
     expect(next.workflowRunId).toBeUndefined();
     expect(auditEntries[0].taskId).toBeNull();
     expect(auditEntries[0].workflowRunId).toBeNull();
+  });
+
+  test('clears the stale session run when a numeric lookup resolves a different task without a run resolver', async () => {
+    const updateTask = defineAction({
+      name: 'update_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Update task',
+      paramsDoc: '{ task_number: number }',
+      paramsSchema: z.object({ task_number: z.number() }),
+      taskIdPreference: 'task_number',
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'update_task',
+              params: { task_number: 7 },
+              taskId: 'session-task-a',
+              workflowRunId: 'run-a',
+            },
+            { registry: createActionRegistry([updateTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      await resolveTargets(
+        withDeps(ctx, {
+          resolveTaskId: () => 'task-b',
+        })
+      )
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBe('task-b');
+    expect(next.workflowRunId).toBeUndefined();
   });
 
   test('re-denies with standard diagnostics and no audit entry when a state-dependent requirement rises', async () => {
@@ -1096,9 +1182,11 @@ describe('applyRateAndAudit', () => {
       )
     );
     const next = await applyRateAndAudit(
-      withDeps(ctx, {
-        resolveTaskId: () => undefined,
-      })
+      await resolveTargets(
+        withDeps(ctx, {
+          resolveTaskId: () => undefined,
+        })
+      )
     );
     expect(next.outcome).toBeUndefined();
     expect(next.taskId).toBeUndefined();
@@ -1486,6 +1574,41 @@ describe('runDispatchAction', () => {
     expect(telemetry.length).toBe(1);
     expect(telemetry[0].taskId).toBe('task-b');
     expect(telemetry[0].workflowRunId).toBeUndefined();
+  });
+
+  test('attributes rate-denied numeric targets through the resolvers', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
+    const sendToTask = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Send message',
+      paramsDoc: '{ task_number: number, message: string }',
+      paramsSchema: z.object({ task_number: z.number(), message: z.string() }),
+      handler: async () => ({}),
+    });
+    const deps = baseDeps({
+      registry: createActionRegistry([sendToTask]),
+      emitTelemetry: (event) => {
+        telemetry.push(event);
+      },
+      isWithinRateBudget: () => false,
+      resolveTaskId: () => 'task-b',
+      resolveRunId: () => 'run-of-task-b',
+    });
+    const outcome = await runDispatchAction(deps, {
+      ...baseInput({
+        actionName: 'send_message_to_task',
+        params: { task_number: 7, message: 'ping' },
+        taskId: 'session-task-a',
+        workflowRunId: 'run-a',
+      }),
+    });
+    assertDenied(outcome);
+    expect(outcome.reason).toBe('rate_limited');
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].taskId).toBe('task-b');
+    expect(telemetry[0].workflowRunId).toBe('run-of-task-b');
   });
 
   test('denies actions at the role gate', async () => {
