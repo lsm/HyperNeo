@@ -1198,6 +1198,70 @@ describe('AcpQueryRunner', () => {
     expect(constructorOptions[0].args).toEqual(['--stdio']);
   });
 
+  describe('displayErrorAsAssistantMessage', () => {
+    test('returns true and publishes the transcript delta when the persist succeeds', async () => {
+      const { runner, ctx } = createRunnerFixture();
+      const saveSDKMessage = ctx.db.saveSDKMessage as unknown as ReturnType<typeof mock>;
+      const messageHubEvent = (ctx.messageHub as { event: ReturnType<typeof mock> }).event;
+      saveSDKMessage.mockImplementation(() => true);
+
+      const published = await runner.displayErrorAsAssistantMessage('ACP notice');
+
+      expect(published).toBe(true);
+      expect(messageHubEvent).toHaveBeenCalledWith(
+        'state.sdkMessages.delta',
+        expect.objectContaining({
+          added: [expect.objectContaining({ type: 'assistant', session_id: 'session-1' })],
+        }),
+        { channel: 'session:session-1' }
+      );
+    });
+
+    test('returns false and publishes the session.error fallback when the persist fails', async () => {
+      const { runner, ctx } = createRunnerFixture();
+      const saveSDKMessage = ctx.db.saveSDKMessage as unknown as ReturnType<typeof mock>;
+      const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+      const messageHubEvent = (ctx.messageHub as { event: ReturnType<typeof mock> }).event;
+      saveSDKMessage.mockImplementation(() => false);
+
+      const published = await runner.displayErrorAsAssistantMessage('Unpersisted ACP notice');
+
+      expect(published).toBe(false);
+      expect(publishAsync).toHaveBeenCalledWith('session.error', {
+        sessionId: 'session-1',
+        error: 'Unpersisted ACP notice',
+        details: {
+          category: 'system',
+          message: 'Unpersisted ACP notice',
+          userMessage: 'Unpersisted ACP notice',
+        },
+      });
+      expect(messageHubEvent).not.toHaveBeenCalled();
+    });
+
+    test('publishes the session.error fallback when the persist throws', async () => {
+      const { runner, ctx } = createRunnerFixture();
+      const saveSDKMessage = ctx.db.saveSDKMessage as unknown as ReturnType<typeof mock>;
+      const publishAsync = ctx.internalEventBus.publishAsync as unknown as ReturnType<typeof mock>;
+      saveSDKMessage.mockImplementation(() => {
+        throw new Error('database is closed');
+      });
+
+      const published = await runner.displayErrorAsAssistantMessage('Thrown persist notice');
+
+      expect(published).toBe(false);
+      expect(publishAsync).toHaveBeenCalledWith('session.error', {
+        sessionId: 'session-1',
+        error: 'Thrown persist notice',
+        details: {
+          category: 'system',
+          message: 'Thrown persist notice',
+          userMessage: 'Thrown persist notice',
+        },
+      });
+    });
+  });
+
   describe('ACP model cache seam', () => {
     const anthropicModel: ModelInfo = {
       id: 'sonnet',

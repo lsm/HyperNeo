@@ -101,6 +101,20 @@ describe('RepeatedToolErrorGuardrail', () => {
     expect(deps.emitEvidence).toHaveBeenCalledTimes(1);
   });
 
+  it('threads the observing query generation into routeRecoveryMessage', async () => {
+    const { guardrail, deps } = makeGuardrail();
+
+    guardrail.recordToolUse('tool-1', 'Read');
+    await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'file not found'), 7);
+    const triggered = await guardrail.observeToolResultErrors(
+      makeErrorResult('tool-1', 'file not found'),
+      7
+    );
+
+    expect(triggered).toBe(true);
+    expect(deps.routeRecoveryMessage).toHaveBeenCalledWith(expect.any(String), 7);
+  });
+
   it('resets the streak when a different tool errors', async () => {
     const { guardrail, deps } = makeGuardrail();
 
@@ -715,7 +729,8 @@ describe('RepeatedToolErrorGuardrail', () => {
       await guardrail.observeToolResultErrors(makeErrorResult('tool-1', 'file not found'));
 
       expect(deps.routeRecoveryMessage).toHaveBeenCalledWith(
-        '⚠️ Repeated tool error detected: `Read` failed 2 consecutive times with the same error.\n\nError: file not found\n\nStop retrying this operation. Re-validate the arguments, try an alternative path, or ask the operator for help.'
+        '⚠️ Repeated tool error detected: `Read` failed 2 consecutive times with the same error.\n\nError: file not found\n\nStop retrying this operation. Re-validate the arguments, try an alternative path, or ask the operator for help.',
+        undefined
       );
     });
 
@@ -728,7 +743,8 @@ describe('RepeatedToolErrorGuardrail', () => {
       await guardrail.observeToolResultErrors(makeErrorResult('tool-1', longError));
 
       expect(deps.routeRecoveryMessage).toHaveBeenCalledWith(
-        `⚠️ Repeated tool error detected: \`Read\` failed 2 consecutive times with the same error.\n\nError: ${'x'.repeat(200)}…\n\nStop retrying this operation. Re-validate the arguments, try an alternative path, or ask the operator for help.`
+        `⚠️ Repeated tool error detected: \`Read\` failed 2 consecutive times with the same error.\n\nError: ${'x'.repeat(200)}…\n\nStop retrying this operation. Re-validate the arguments, try an alternative path, or ask the operator for help.`,
+        undefined
       );
       expect(deps.emitEvidence).toHaveBeenCalledWith({
         scopeId: 'scope-1',

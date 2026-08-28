@@ -49,6 +49,8 @@ describe('QueryRunner', () => {
   let cancelTerminalIdleArmSpy: ReturnType<typeof mock>;
   let handleErrorSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
+  let internalEventBusSpy: ReturnType<typeof mock>;
+  let mockInternalEventBus: QueryRunnerContext['internalEventBus'];
   let saveSDKMessageSpy: ReturnType<typeof mock>;
   let updateSessionSpy: ReturnType<typeof mock>;
   let getSDKMessagesSpy: ReturnType<typeof mock>;
@@ -105,7 +107,7 @@ describe('QueryRunner', () => {
     onModelsFetchedSpy = mock(async () => {});
     onMarkApiSuccessSpy = mock(async () => {});
 
-    saveSDKMessageSpy = mock(() => {});
+    saveSDKMessageSpy = mock(() => true);
     updateSessionSpy = mock(() => {});
     getSDKMessagesSpy = mock(() => ({ messages: [], hasMore: false }));
     updateMessageStatusSpy = mock(() => {});
@@ -131,6 +133,12 @@ describe('QueryRunner', () => {
       query: mock(async () => ({})),
       command: mock(async () => {}),
     } as unknown as MessageHub;
+
+    internalEventBusSpy = mock(() => {});
+    mockInternalEventBus = {
+      publish: mock(async () => {}),
+      publishAsync: internalEventBusSpy,
+    } as unknown as QueryRunnerContext['internalEventBus'];
 
     isRunningSpy = mock(() => false);
     startSpy = mock(() => {
@@ -214,6 +222,7 @@ describe('QueryRunner', () => {
       session: mockSession,
       db: mockDb,
       messageHub: mockMessageHub,
+      internalEventBus: mockInternalEventBus,
       messageQueue: mockMessageQueue,
       stateManager: mockStateManager,
       errorManager: mockErrorManager,
@@ -1035,6 +1044,49 @@ describe('QueryRunner', () => {
 
       const savedMessage = saveSDKMessageSpy.mock.calls[0][1];
       expect(savedMessage.parent_tool_use_id).toBeNull();
+    });
+
+    it('returns true when the persist succeeds', async () => {
+      runner = createRunner();
+
+      const published = await runner.displayErrorAsAssistantMessage('Persisted notice');
+
+      expect(published).toBe(true);
+      expect(internalEventBusSpy).not.toHaveBeenCalledWith('session.error', expect.anything());
+    });
+
+    it('returns false and publishes the session.error fallback when the persist fails', async () => {
+      runner = createRunner();
+      saveSDKMessageSpy.mockImplementation(() => false);
+
+      const published = await runner.displayErrorAsAssistantMessage('Unpersisted notice', {
+        markAsError: true,
+      });
+
+      expect(published).toBe(false);
+      expect(internalEventBusSpy).toHaveBeenCalledWith('session.error', {
+        sessionId: 'test-session-id',
+        error: 'Unpersisted notice',
+        details: {
+          category: 'system',
+          message: 'Unpersisted notice',
+          userMessage: 'Unpersisted notice',
+        },
+      });
+      expect(publishSpy).not.toHaveBeenCalled();
+    });
+
+    it('returns false without the terminal fallback for informational retry notices', async () => {
+      runner = createRunner();
+      saveSDKMessageSpy.mockImplementation(() => false);
+
+      const published = await runner.displayErrorAsAssistantMessage('Retrying attempt 1/3…', {
+        markAsError: false,
+      });
+
+      expect(published).toBe(false);
+      expect(internalEventBusSpy).not.toHaveBeenCalled();
+      expect(publishSpy).not.toHaveBeenCalled();
     });
   });
 

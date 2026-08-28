@@ -3935,6 +3935,380 @@ describe('SDKMessageHandler', () => {
         sessionId: 'test-session-id',
       });
     });
+
+    it('should skip teardown when the tripped query is superseded during the errorClear await', async () => {
+      mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      let queryGeneration = 1;
+      mockContext.getQueryGeneration = () => queryGeneration;
+      emitSpy.mockImplementation(async (event: string) => {
+        if (event === 'session.errorClear') queryGeneration += 1;
+      });
+
+      const handlerSuperseded = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerSuperseded.handleMessage({
+          ...errorMessage,
+          uuid: `error-uuid-${i}`,
+        } as SDKMessage);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(lifecycleStopSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(
+        saveSDKMessageSpy.mock.calls.filter(([, message]) => message.type === 'assistant')
+      ).toHaveLength(0);
+    });
+
+    it('should reject a trip from a superseded query before mutating shared state', async () => {
+      mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      mockContext.getQueryGeneration = () => 9;
+
+      const handlerStaleTrip = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerStaleTrip.handleMessage(
+          {
+            ...errorMessage,
+            uuid: `error-uuid-${i}`,
+          } as SDKMessage,
+          8
+        );
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(messageQueueClearSpy).not.toHaveBeenCalled();
+      expect(emitSpy.mock.calls.filter(([event]) => event === 'session.errorClear')).toHaveLength(
+        0
+      );
+      expect(lifecycleStopSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+    });
+
+    it('should not count superseded errors toward the circuit breaker streak', async () => {
+      mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      mockContext.getQueryGeneration = () => 9;
+
+      const handlerMixedStreak = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      await handlerMixedStreak.handleMessage(
+        { ...errorMessage, uuid: 'error-uuid-stale-0' } as SDKMessage,
+        8
+      );
+      await handlerMixedStreak.handleMessage(
+        { ...errorMessage, uuid: 'error-uuid-stale-1' } as SDKMessage,
+        8
+      );
+      await handlerMixedStreak.handleMessage(
+        { ...errorMessage, uuid: 'error-uuid-current-0' } as SDKMessage,
+        9
+      );
+      await handlerMixedStreak.handleMessage(
+        { ...errorMessage, uuid: 'error-uuid-current-1' } as SDKMessage,
+        9
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(messageQueueClearSpy).not.toHaveBeenCalled();
+      expect(lifecycleStopSpy).not.toHaveBeenCalled();
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+    });
+
+    it('should skip teardown notices when a replacement starts during the lifecycle stop', async () => {
+      mockContext.queryObject = {} as unknown as SDKMessageHandlerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      let queryGeneration = 1;
+      mockContext.getQueryGeneration = () => queryGeneration;
+      lifecycleStopSpy.mockImplementation(async () => {
+        queryGeneration += 1;
+      });
+
+      const handlerStoppedMidTrip = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerStoppedMidTrip.handleMessage({
+          ...errorMessage,
+          uuid: `error-uuid-${i}`,
+        } as SDKMessage);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(lifecycleStopSpy).toHaveBeenCalledTimes(1);
+      expect(setIdleSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(
+        saveSDKMessageSpy.mock.calls.filter(([, message]) => message.type === 'assistant')
+      ).toHaveLength(0);
+      expect(emitSpy.mock.calls.filter(([event]) => event === 'session.error')).toHaveLength(0);
+    });
+
+    it('should skip teardown notices when a replacement starts during the idle settle', async () => {
+      mockContext.queryObject = null;
+      mockContext.queryPromise = null;
+      let queryGeneration = 1;
+      mockContext.getQueryGeneration = () => queryGeneration;
+      setIdleSpy.mockImplementation(async () => {
+        queryGeneration += 1;
+      });
+
+      const handlerRestartMidTrip = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerRestartMidTrip.handleMessage({
+          ...errorMessage,
+          uuid: `error-uuid-${i}`,
+        } as SDKMessage);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(setIdleSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(
+        saveSDKMessageSpy.mock.calls.filter(([, message]) => message.type === 'assistant')
+      ).toHaveLength(0);
+      expect(emitSpy.mock.calls.filter(([event]) => event === 'session.error')).toHaveLength(0);
+    });
+
+    it('should settle idle with the tripped query owner when the trip completes', async () => {
+      mockContext.queryObject = null;
+      mockContext.queryPromise = null;
+      mockContext.getQueryGeneration = () => 3;
+
+      const handlerOwned = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerOwned.handleMessage({
+          ...errorMessage,
+          uuid: `error-uuid-${i}`,
+        } as SDKMessage);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(setIdleSpy).toHaveBeenCalledWith({
+        owner: { queryGeneration: 3, turnToken: 0 },
+      });
+
+      const publishGuard = handleErrorSpy.mock.calls[0][6];
+      expect(typeof publishGuard).toBe('function');
+      expect(publishGuard()).toBe(true);
+      mockContext.getQueryGeneration = () => 4;
+      expect(publishGuard()).toBe(false);
+    });
+
+    it('should publish a session.error fallback when the trip notice persist fails', async () => {
+      mockContext.queryObject = null;
+      mockContext.queryPromise = null;
+      saveSDKMessageSpy.mockImplementation(() => false);
+
+      const handlerPersistFailed = new SDKMessageHandler(mockContext);
+
+      const errorMessage: SDKMessage = {
+        type: 'user',
+        uuid: 'error-uuid',
+        message: {
+          role: 'user',
+          content:
+            '<local-command-stderr>Error: prompt is too long: 200000 tokens > 128000 maximum</local-command-stderr>',
+        },
+      } as unknown as SDKMessage;
+
+      for (let i = 0; i < 4; i++) {
+        await handlerPersistFailed.handleMessage({
+          ...errorMessage,
+          uuid: `error-uuid-${i}`,
+        } as SDKMessage);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(emitSpy).toHaveBeenCalledWith(
+        'session.error',
+        expect.objectContaining({
+          sessionId: 'test-session-id',
+          error: expect.stringContaining('Session Stopped'),
+          details: expect.objectContaining({ category: 'system' }),
+        })
+      );
+      expect(
+        publishSpy.mock.calls.filter(([event]) => event === 'state.sdkMessages.delta')
+      ).toHaveLength(0);
+    });
+  });
+
+  describe('repeated tool error recovery enqueue fencing', () => {
+    let recoveryTaskRepo: { getTaskBySessionId: () => unknown; getTask: () => null };
+
+    beforeEach(() => {
+      recoveryTaskRepo = {
+        getTaskBySessionId: () => ({ id: 'task-1', evolutionScopeId: 'scope-1' }),
+        getTask: () => null,
+      };
+      mockContext.db = {
+        ...mockDb,
+        getSpaceTaskRepo: () => recoveryTaskRepo,
+      } as unknown as Database;
+    });
+
+    async function driveToolUseRecording(handler: SDKMessageHandler, generation: number) {
+      await handler.handleMessage(
+        {
+          type: 'assistant',
+          uuid: 'assistant-tool-use',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: {} }],
+          },
+        } as unknown as SDKMessage,
+        generation
+      );
+    }
+
+    async function driveToolResultError(
+      handler: SDKMessageHandler,
+      uuid: string,
+      generation: number
+    ) {
+      await handler.handleMessage(
+        {
+          type: 'user',
+          uuid,
+          parent_tool_use_id: null,
+          message: {
+            role: 'user',
+            content: [
+              { type: 'tool_result', tool_use_id: 'tu-1', is_error: true, content: 'boom' },
+            ],
+          },
+        } as unknown as SDKMessage,
+        generation
+      );
+    }
+
+    it('enqueues the recovery message when the observing query is current', async () => {
+      mockContext.getQueryGeneration = () => 9;
+      const currentHandler = new SDKMessageHandler(mockContext);
+
+      await driveToolUseRecording(currentHandler, 9);
+      await driveToolResultError(currentHandler, 'tool-error-0', 9);
+      await driveToolResultError(currentHandler, 'tool-error-1', 9);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueMessageSpy.mock.calls[0][0]).toEqual(expect.any(String));
+    });
+
+    it('skips the recovery enqueue when the observing query was superseded', async () => {
+      mockContext.getQueryGeneration = () => 9;
+      const fencedHandler = new SDKMessageHandler(mockContext);
+
+      await driveToolUseRecording(fencedHandler, 9);
+      await driveToolResultError(fencedHandler, 'tool-error-0', 8);
+      await driveToolResultError(fencedHandler, 'tool-error-1', 8);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(enqueueMessageSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not seed the guardrail streak from a superseded query tool error', async () => {
+      mockContext.getQueryGeneration = () => 9;
+      const streakHandler = new SDKMessageHandler(mockContext);
+
+      await driveToolUseRecording(streakHandler, 9);
+      await driveToolResultError(streakHandler, 'tool-error-0', 8);
+      await driveToolResultError(streakHandler, 'tool-error-1', 8);
+      await driveToolResultError(streakHandler, 'tool-error-2', 9);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(enqueueMessageSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps recovery available after a superseded threshold-crossing pair', async () => {
+      mockContext.getQueryGeneration = () => 9;
+      const cooldownHandler = new SDKMessageHandler(mockContext);
+
+      await driveToolUseRecording(cooldownHandler, 9);
+      await driveToolResultError(cooldownHandler, 'tool-error-0', 8);
+      await driveToolResultError(cooldownHandler, 'tool-error-1', 8);
+      await driveToolResultError(cooldownHandler, 'tool-error-2', 9);
+      await driveToolResultError(cooldownHandler, 'tool-error-3', 9);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('context refresh via SDK getContextUsage()', () => {
