@@ -1255,6 +1255,36 @@ describe('runDispatchAction', () => {
     expect(telemetry[0].workflowRunId).toBe('run-b');
   });
 
+  test('telemetry agrees with the audit when the target task clears the session run', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
+    const cancelTask = defineAction({
+      name: 'cancel_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Cancel task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const deps = baseDeps({
+      registry: createActionRegistry([cancelTask]),
+      emitTelemetry: (event) => {
+        telemetry.push(event);
+      },
+      resolveRunId: () => undefined,
+    });
+    const outcome = await runDispatchAction(deps, {
+      ...baseInput({
+        actionName: 'cancel_task',
+        params: { task_id: 'standalone-task' },
+        workflowRunId: 'run-a',
+      }),
+    });
+    assertDispatched(outcome);
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].workflowRunId).toBeUndefined();
+  });
+
   test('denies actions at the role gate', async () => {
     const telemetry: DispatchTelemetryEvent[] = [];
     const outcome = await runDispatchAction(
