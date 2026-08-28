@@ -271,6 +271,7 @@ describe('createSpaceRegistryEntries — composition', () => {
         expect(await resolve({ task_id: openWorkflowTask.id, status: 'cancelled' })).toBe(1);
         expect(await resolve({ task_id: standaloneTask.id, status: 'cancelled' })).toBe(1);
         expect(await resolve({ task_id: checkpointTask.id, status: 'in_progress' })).toBe(5);
+        expect(await resolve({ task_id: checkpointTask.id, status: 'review' })).toBe(1);
         expect(await resolve({ task_id: checkpointTask.id, title: 'Edited' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', status: 'blocked' })).toBe(1);
         expect(await resolve({ task_id: 'task-1', title: 'Edited' })).toBe(1);

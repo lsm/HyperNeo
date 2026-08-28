@@ -614,6 +614,77 @@ describe('applyRateAndAudit', () => {
     expect(auditEntries[0].taskId).toBe('task-a');
   });
 
+  test('resolves task_number for reads whose handler prefers the numeric identifier', async () => {
+    const getTaskDetail = defineAction({
+      name: 'get_task_detail',
+      family: 'tasks',
+      safetyClass: 'read',
+      description: 'Get task detail',
+      paramsDoc: '{ task_number: number, task_id: string }',
+      paramsSchema: z.object({ task_number: z.number(), task_id: z.string() }),
+      taskIdPreference: 'task_number',
+      handler: async () => ({}),
+    });
+    const ctx = applySafetyClass(
+      resolveAction(
+        buildCtx(
+          {
+            actionName: 'get_task_detail',
+            params: { task_number: 9, task_id: 'task-a' },
+          },
+          { registry: createActionRegistry([getTaskDetail]) }
+        )
+      )
+    );
+    expect(ctx.taskId).toBeUndefined();
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        resolveTaskId: (params) =>
+          typeof params.task_number === 'number' ? `task-from-${params.task_number}` : undefined,
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBe('task-from-9');
+  });
+
+  test('falls back to the contextual task id when the resolver throws', async () => {
+    const sendToTask = defineAction({
+      name: 'send_message_to_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Send message',
+      paramsDoc: '{ task_number: number, message: string }',
+      paramsSchema: z.object({ task_number: z.number(), message: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'send_message_to_task',
+              params: { task_number: 7, message: 'ping' },
+              taskId: 'session-task',
+            },
+            { registry: createActionRegistry([sendToTask]) }
+          )
+        )
+      )
+    );
+    const next = await applyRateAndAudit(
+      withDeps(ctx, {
+        auditLogRepo: {
+          createEntry: () => null as never,
+        },
+        resolveTaskId: () => {
+          throw new Error('repo unavailable');
+        },
+      })
+    );
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBe('session-task');
+  });
+
   test('skips audit for read actions', async () => {
     const auditEntries: CreateMcpAuditLogParams[] = [];
     const ctx = applyRoleAdmission(
@@ -674,6 +745,36 @@ describe('executeAction', () => {
     const next = await executeAction(audited);
     assertFailed(next.outcome!);
     expect(next.outcome.error).toContain('handler failure');
+  });
+
+  test('re-denies when a state-dependent requirement rises before the handler runs', async () => {
+    let required = 1;
+    const stateful = defineAction({
+      name: 'update_task',
+      family: 'tasks',
+      safetyClass: 'mutate',
+      description: 'Update task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      autonomyRequirement: async () => required,
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            { actionName: 'update_task', params: { task_id: 't-1' } },
+            { registry: createActionRegistry([stateful]) }
+          )
+        )
+      )
+    );
+    const autonomied = await applyAutonomyGate({ ...ctx, spaceLevel: 1 });
+    expect(autonomied.outcome).toBeUndefined();
+    required = 5;
+    const next = await executeAction(autonomied);
+    assertDenied(next.outcome!);
+    expect(next.outcome.reason).toBe('autonomy_denied');
   });
 });
 

@@ -84,6 +84,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     }
     if (
       params.status !== undefined &&
+      params.status !== task?.status &&
       task?.status === 'review' &&
       task.pendingCheckpointType === 'task_completion'
     ) {
@@ -427,6 +428,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Read one task including status, result, and metadata; returns the full task record.',
       paramsDoc: 'task_number (preferred) or task_id',
       paramsSchema: GetTaskDetailSchema,
+      taskIdPreference: 'task_number',
       handler: (args) => handlers.get_task_detail(args),
     }),
     defineAction({

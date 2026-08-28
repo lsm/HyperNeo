@@ -114,11 +114,12 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
       ),
     };
   }
+  const parsedParams = parsed.data as Record<string, unknown> | null;
   const targetTaskId =
-    typeof parsed.data === 'object' &&
-    parsed.data !== null &&
-    typeof (parsed.data as Record<string, unknown>).task_id === 'string'
-      ? ((parsed.data as Record<string, unknown>).task_id as string)
+    action.taskIdPreference !== 'task_number' &&
+    parsedParams !== null &&
+    typeof parsedParams.task_id === 'string'
+      ? parsedParams.task_id
       : undefined;
   return {
     ...ctx,
@@ -199,36 +200,52 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       };
     }
   }
-  if (ctx.isMutating && (ctx.deps.auditLogRepo || ctx.deps.resolveTaskId)) {
-    let taskId = ctx.taskId;
-    if (ctx.deps.resolveTaskId && ctx.parsedParams) {
-      const params = ctx.parsedParams as Record<string, unknown>;
-      if (typeof params.task_number === 'number' && typeof params.task_id !== 'string') {
+  let taskId = ctx.taskId;
+  if (ctx.deps.resolveTaskId && ctx.parsedParams) {
+    const params = ctx.parsedParams as Record<string, unknown>;
+    const prefersNumber =
+      action.taskIdPreference === 'task_number' || typeof params.task_id !== 'string';
+    if (typeof params.task_number === 'number' && prefersNumber) {
+      try {
         const resolved = await ctx.deps.resolveTaskId(params);
         if (resolved !== undefined) taskId = resolved;
-      }
-    }
-    if (ctx.deps.auditLogRepo) {
-      try {
-        ctx.deps.auditLogRepo.createEntry({
-          agentName: ctx.agentName ?? null,
-          sessionId: ctx.sessionId ?? null,
-          toolName: action.name,
-          paramsSummary: JSON.stringify(ctx.parsedParams ?? {}),
-          spaceId: ctx.spaceId,
-          taskId: taskId ?? null,
-          workflowRunId: ctx.workflowRunId ?? null,
-        });
       } catch {}
     }
-    return { ...ctx, taskId };
   }
-  return ctx;
+  if (ctx.isMutating && ctx.deps.auditLogRepo) {
+    try {
+      ctx.deps.auditLogRepo.createEntry({
+        agentName: ctx.agentName ?? null,
+        sessionId: ctx.sessionId ?? null,
+        toolName: action.name,
+        paramsSummary: JSON.stringify(ctx.parsedParams ?? {}),
+        spaceId: ctx.spaceId,
+        taskId: taskId ?? null,
+        workflowRunId: ctx.workflowRunId ?? null,
+      });
+    } catch {}
+  }
+  return { ...ctx, taskId };
 }
 
 export async function executeAction(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
   if (ctx.outcome) return ctx;
   const action = ctx.action!;
+  if (typeof action.autonomyRequirement === 'function') {
+    const required = await action.autonomyRequirement(ctx.parsedParams);
+    const spaceLevel = ctx.spaceLevel ?? 1;
+    const agentLevel = ctx.agentLevel ?? null;
+    const effective = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
+    if (effective.level < required) {
+      return {
+        ...ctx,
+        outcome: deniedOutcome(
+          'autonomy_denied',
+          `Action ${action.name} requires autonomy level ${required}; effective level is ${effective.level}.`
+        ),
+      };
+    }
+  }
   try {
     const rawResult = await action.handler(ctx.parsedParams);
     return { ...ctx, rawResult };

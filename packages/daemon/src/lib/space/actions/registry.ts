@@ -8,6 +8,8 @@ export type ErasedActionAutonomyResolver = (params: unknown) => Promise<number>;
 
 export type ErasedActionHandler = (params: unknown) => Promise<unknown>;
 
+export type ActionTaskIdPreference = 'task_id' | 'task_number';
+
 export interface ActionEntry<P> {
   readonly name: string;
   readonly family: string;
@@ -16,6 +18,7 @@ export interface ActionEntry<P> {
   readonly paramsDoc: string;
   readonly returnsHint?: string;
   readonly paramsSchema: z.ZodType<P>;
+  readonly taskIdPreference?: ActionTaskIdPreference;
   readonly autonomyRequirement?: number | ActionAutonomyResolver<P>;
   readonly handler: (params: P) => Promise<unknown>;
 }
@@ -28,6 +31,7 @@ export interface ActionDefinition {
   readonly paramsDoc: string;
   readonly returnsHint?: string;
   readonly paramsSchema: z.ZodType<unknown>;
+  readonly taskIdPreference?: ActionTaskIdPreference;
   readonly autonomyRequirement?: number | ErasedActionAutonomyResolver;
   readonly handler: ErasedActionHandler;
 }
