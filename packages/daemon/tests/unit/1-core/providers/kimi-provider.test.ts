@@ -654,6 +654,39 @@ describe('KimiProvider', () => {
     });
   });
 
+  describe('getDiscoveryEndpointFingerprint', () => {
+    beforeEach(() => {
+      provider = new KimiProvider();
+    });
+
+    it('keys on the region and its listing endpoint when no base URL is configured', () => {
+      expect(provider.getDiscoveryEndpointFingerprint()).toBe(
+        '["china","https://api.kimi.com/coding/v1","",""]'
+      );
+      process.env.KIMI_REGION = 'global';
+      expect(provider.getDiscoveryEndpointFingerprint()).toBe(
+        '["global","https://api.moonshot.ai/v1","",""]'
+      );
+    });
+
+    it('omits the region and keys on the resolved base URL for an explicit endpoint', () => {
+      expect(provider.getDiscoveryEndpointFingerprint('https://proxy.example.com/kimi')).toBe(
+        '["","https://proxy.example.com/kimi","",""]'
+      );
+      process.env.KIMI_BASE_URL = 'https://proxy.example.com/kimi';
+      expect(provider.getDiscoveryEndpointFingerprint()).toBe(
+        '["","https://proxy.example.com/kimi","",""]'
+      );
+    });
+
+    it('does not leak the credential into the endpoint fingerprint', () => {
+      process.env.KIMI_API_KEY = 'sk-secret-value';
+      expect(provider.getDiscoveryEndpointFingerprint()).toBe(
+        '["china","https://api.kimi.com/coding/v1","",""]'
+      );
+    });
+  });
+
   describe('ownsModel', () => {
     beforeEach(() => {
       provider = new KimiProvider();
