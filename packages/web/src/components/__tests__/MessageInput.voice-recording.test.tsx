@@ -485,16 +485,22 @@ describe('MessageInput — recording UI', () => {
       const onSend = vi.fn(async () => true);
       render(<MessageInput sessionId="s1" onSend={onSend} />);
 
-      fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
-
-      await waitFor(() => expect(voiceCancel).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('ASR unavailable'));
-      expect(transcribeRequest).toHaveBeenCalledTimes(1);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(transcribeRequest).toHaveBeenCalledTimes(1);
-      expect(onSend).not.toHaveBeenCalled();
-      expect(enqueueTranscript).not.toHaveBeenCalled();
-      expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeFalsy();
+      vi.useFakeTimers();
+      try {
+        fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+        await vi.waitFor(() => {
+          expect(voiceCancel).toHaveBeenCalledTimes(1);
+          expect(toast.error).toHaveBeenCalledWith('ASR unavailable');
+        });
+        expect(transcribeRequest).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(130_000);
+        expect(transcribeRequest).toHaveBeenCalledTimes(1);
+        expect(onSend).not.toHaveBeenCalled();
+        expect(enqueueTranscript).not.toHaveBeenCalled();
+        expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeFalsy();
+      } finally {
+        vi.useRealTimers();
+      }
       await waitFor(() => expect(screen.getByTestId('send-button')).toBeTruthy());
     });
 
@@ -579,11 +585,13 @@ describe('MessageInput — recording UI', () => {
       );
       const stageCall = hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft');
       expect(stageCall).toBeTruthy();
+      const outboxId = enqueueTranscript.mock.calls[0]?.[2];
+      expect(outboxId).toEqual(expect.any(String));
       expect(stageCall[1]).toEqual(
         expect.objectContaining({
           sessionId: 's1',
           text: 'hello world',
-          dedupId: expect.any(String),
+          dedupId: outboxId,
         })
       );
       expect(hubRequest.mock.calls.find(([m]) => m === 'session.clearInputDraftIf')).toBeFalsy();
@@ -616,6 +624,7 @@ describe('MessageInput — recording UI', () => {
           'Voice transcript kept in this tab — reconnect before closing it'
         )
       );
+      expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', expect.any(String));
       expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeTruthy();
     });
 
