@@ -1575,6 +1575,17 @@ export class AgentSession
               `failed; falling back to the recovered kickoff content:`,
             error
           );
+          try {
+            this.db
+              .getJobQueueRepo?.()
+              ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, [uuid]);
+          } catch (narrowError) {
+            this.logger.warn(
+              `detaching the failed batch for evicted survivor ${uuid} in session ` +
+                `${this.session.id} failed:`,
+              narrowError
+            );
+          }
         }
         return kickoff;
       },

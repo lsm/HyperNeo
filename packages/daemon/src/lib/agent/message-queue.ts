@@ -527,6 +527,7 @@ export class MessageQueue {
         message.timeoutId = undefined;
       }
       this.queue.unshift(message);
+      this.wakeWaiters();
       return true;
     }
     return false;
@@ -801,7 +802,7 @@ export class MessageQueue {
 
   standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean {
     if (this.internalRestartInFlight) return false;
-    if (this.internalRestartFailed && this.recoveryOwnsCurrentTurn()) return false;
+    if (this.internalRestartFailed && !this.isRunning()) return false;
     if (!this.recoveryOwnsCurrentTurn() && opts.ownsTurn && !opts.ownsTurn()) return true;
     return !this.isRunning();
   }
@@ -1033,6 +1034,24 @@ export class MessageQueue {
     const clearEpochBeforeRestart = this.clearEpoch;
     const userInterruptEpochBeforeRestart = this.userInterruptEpoch;
     let abortedByStop = false;
+    let restartFailed = false;
+    let stoodDownForUserStop = false;
+    const standDownForUserStop = () => {
+      if (stoodDownForUserStop || abortedByStop) return;
+      if (
+        this.clearEpoch <= clearEpochBeforeRestart &&
+        this.userInterruptEpoch <= userInterruptEpochBeforeRestart
+      ) {
+        return;
+      }
+      stoodDownForUserStop = true;
+      opts.logger.info(
+        `user stop observed while the recovery replacement started for session ` +
+          `${opts.sessionId}; standing requeued work down`
+      );
+      this.clear();
+      opts.onResumeClear();
+    };
     const beforeStart = () => {
       if (
         this.clearEpoch > clearEpochBeforeRestart ||
@@ -1059,6 +1078,7 @@ export class MessageQueue {
           opts.onResumeClear();
           return;
         }
+        restartFailed = true;
         this.internalRestartFailed = true;
         if (!this.hasOutstandingInternalCompaction()) {
           if (!this.shouldSuppressPromptPhaseCompaction()) {
@@ -1077,11 +1097,13 @@ export class MessageQueue {
         this.internalRestartInFlight = false;
         if (
           !abortedByStop &&
+          !restartFailed &&
           this.clearEpoch === clearEpochBeforeRestart &&
           this.userInterruptEpoch === userInterruptEpochBeforeRestart
         ) {
           this.recoveryRestartEpoch = this.stopEpoch;
         }
+        standDownForUserStop();
         if (this.earlyGateReleasePending) {
           this.earlyGateReleasePending = false;
           this.releaseEarlyDeliveryGate();
@@ -1096,21 +1118,8 @@ export class MessageQueue {
         }
       }),
     ]);
-    if (abortedByStop) {
-      resolveDeliveryGate?.();
-      return;
-    }
-    if (
-      this.clearEpoch > clearEpochBeforeRestart ||
-      this.userInterruptEpoch > userInterruptEpochBeforeRestart
-    ) {
-      opts.logger.info(
-        `user stop observed while the recovery replacement started for session ` +
-          `${opts.sessionId}; standing requeued work down`
-      );
-      this.clear();
-      opts.onResumeClear();
-      return;
+    if (!abortedByStop) {
+      standDownForUserStop();
     }
     resolveDeliveryGate?.();
   }

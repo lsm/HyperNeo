@@ -589,14 +589,19 @@ describe('AgentSession mid-turn context budget enforcement', () => {
         uuid === 'uuid-batch-throw' ? 'kickoff-only' : null,
       markDeliveryRetryableByUuid: () => null,
     });
+    const narrowSpy = mock(() => true);
     (
       session.db as unknown as {
-        getJobQueueRepo: () => { getActiveDeliveryBatchUuids: () => string[] | null };
+        getJobQueueRepo: () => {
+          getActiveDeliveryBatchUuids: () => string[] | null;
+          narrowActiveDeliveryBatchUuids: () => boolean;
+        };
       }
     ).getJobQueueRepo = () => ({
       getActiveDeliveryBatchUuids: () => {
         throw new Error('sqlite busy');
       },
+      narrowActiveDeliveryBatchUuids: narrowSpy,
     });
     const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
     harness.setInterruptResult(async () => ({ still_queued: ['uuid-batch-throw'] }));
@@ -607,5 +612,8 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       durable: true,
       prepend: true,
     });
+    expect(narrowSpy).toHaveBeenCalledWith(session.session.id, 'uuid-batch-throw', [
+      'uuid-batch-throw',
+    ]);
   });
 });
