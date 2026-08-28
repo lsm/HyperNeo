@@ -21,6 +21,17 @@ or manufactured on the construction site.
 
 - A pipeline stage, gate helper, or primitive that is itself complex is its
   own **build** deliverable — landed additive and unwired, reviewed alone.
+- **Pipes before pipelines.** A pipeline slice may COMPOSE existing pure
+  functions, but it never writes or changes them: every pure function it
+  needs that does not already exist — anything beyond a couple of lines
+  (~10) or any complex pipe — is built in its own build slice first.
+- **Shared types are their own slice.** The shared types that define a
+  pipeline's interface land separately, before the pipeline.
+- **The RPC is the last step.** After the pipes (pure functions), the shared
+  types, and the pipeline that assembles them exist on `dev`, the RPC/handler
+  registration — the interface the UI calls — is the final wiring slice.
+  A large ported or characterization test suite (>~300 test lines) may be
+  its own test-only slice riding after the wiring.
 - A **wire** slice is assembly only: single call-site swaps connecting parts
   that already exist on `dev`. If wiring requires writing new complex logic,
   that logic belongs in a separate build slice cut first.
