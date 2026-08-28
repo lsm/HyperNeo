@@ -112,6 +112,7 @@ export class MessageQueue {
   private cycleArmClearEpoch: number = 0;
   private cycleArmUserInterruptEpoch: number = 0;
   private cycleRequeuedIds: string[] = [];
+  private recoveryRestartChain: Promise<void> = Promise.resolve();
   private lastYieldGenerations: Map<string, { generation: number; stopEpoch: number }> = new Map();
   private midTurnBoundarySeq: number = 0;
   private promptPhaseBoundarySeq: number = 0;
@@ -147,6 +148,7 @@ export class MessageQueue {
   noteInternalCompactionSent(message: QueuedMessage): void {
     if (this.isInternalCompaction(message)) {
       this.midTurnCompactionQueued = false;
+      this.internalRestartFailed = false;
       this.internalCompactionsAwaitingBoundary += 1;
       this.internalCompactionIdsAwaitingBoundary.add(message.id);
     } else {
@@ -919,7 +921,6 @@ export class MessageQueue {
 
   noteBoundaryCompleted(): void {
     this.midTurnBoundarySeq += 1;
-    this.internalRestartFailed = false;
   }
 
   shouldSuppressPromptPhaseCompaction(): boolean {
@@ -1082,6 +1083,22 @@ export class MessageQueue {
   }
 
   async finishSurvivorTeardownWithRestart(opts: MidTurnBudgetInterruptOptions): Promise<void> {
+    const previousChain = this.recoveryRestartChain;
+    let releaseChain: () => void = () => {};
+    this.recoveryRestartChain = new Promise<void>((resolve) => {
+      releaseChain = resolve;
+    });
+    await previousChain.catch(() => {});
+    try {
+      await this.runSerializedSurvivorTeardownWithRestart(opts);
+    } finally {
+      releaseChain();
+    }
+  }
+
+  private async runSerializedSurvivorTeardownWithRestart(
+    opts: MidTurnBudgetInterruptOptions
+  ): Promise<void> {
     let resolveDeliveryGate: (() => void) | undefined;
     const deliveryGate = new Promise<void>((resolve) => {
       resolveDeliveryGate = resolve;
@@ -1150,6 +1167,7 @@ export class MessageQueue {
           );
           restartFailed = true;
           this.cycleStoodDown = true;
+          removeRecoveredEntries();
           opts.contextTracker.clearCompactionCooldown();
           opts.onResumeClear();
           return;

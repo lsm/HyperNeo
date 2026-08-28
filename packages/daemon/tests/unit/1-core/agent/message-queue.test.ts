@@ -2942,6 +2942,99 @@ describe('MessageQueue', () => {
       q.stop();
     }, 15_000);
 
+    it('removes restored survivors when an immediate receipt precedes a pre-teardown failure', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-imm-fail',
+        content: 'immediate survivor',
+        internal: false,
+      } as never);
+      const onResumeClear = mock(() => {});
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-imm-fail'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async () => {
+          throw new Error('session.errorClear rejected');
+        },
+        onResumeClear,
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(q.hasPendingOrClaimed('uuid-imm-fail')).toBe(false);
+      expect(onResumeClear).toHaveBeenCalled();
+      expect(q.isRunning()).toBe(true);
+    });
+
+    it('keeps failed-restart recovery across unrelated boundaries until its compaction is sent', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-boundary-bind',
+        content: 'boundary survivor',
+        internal: false,
+      } as never);
+      const opts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-boundary-bind'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async () => {
+          q.stop();
+          throw new Error('restart failed');
+        },
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(q.shouldEnqueueLateCompaction(0)).toBe(true);
+      q.noteBoundaryCompleted();
+      expect(q.shouldEnqueueLateCompaction(0)).toBe(true);
+      q.noteInternalCompactionSent({
+        id: 'uuid-recovery-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      expect(q.shouldEnqueueLateCompaction(0)).toBe(false);
+    });
+
+    it('serializes concurrent recovery restarts', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const order: string[] = [];
+      let releaseFirst: () => void = () => {};
+      const firstHang = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      const firstOpts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-ser-1'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async () => {
+          order.push('first-start');
+          await firstHang;
+          order.push('first-end');
+        },
+      });
+      const secondOpts = makeInterruptOpts({
+        interrupt: async () => ({ still_queued: ['uuid-ser-2'] }),
+        cancelAsyncMessage: async () => false,
+        restart: async () => {
+          order.push('second-start');
+          order.push('second-end');
+        },
+      });
+
+      const first = q.runMidTurnBudgetInterrupt(firstOpts);
+      await tick(30);
+      const second = q.runMidTurnBudgetInterrupt(secondOpts);
+      await tick(50);
+
+      expect(order).toEqual(['first-start']);
+
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(order).toEqual(['first-start', 'first-end', 'second-start', 'second-end']);
+    });
+
     it('retains yield stamps for outstanding messages past the retention cap', async () => {
       const q = new MessageQueue();
       q.start();
