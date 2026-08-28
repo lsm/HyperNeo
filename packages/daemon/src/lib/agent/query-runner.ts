@@ -1039,6 +1039,8 @@ export class QueryRunner {
     } catch (error) {
       logger.error('Streaming query error:', error);
 
+      this.ctx.attemptTokens.invalidate(attemptToken);
+
       releaseStartupPermit('query_error');
 
       const errorMessage = String(error);
