@@ -1505,11 +1505,15 @@ export function applyDiscoveredProviderModels(
       if (seeded.length > 0) enriched = [...seeded, ...models];
     }
   }
-  return updateProviderModelsInCache(
+  const applied = updateProviderModelsInCache(
     providerId,
     filterProviderModels(providerId, enriched),
     cacheKey
   );
+  if (applied) {
+    cacheTimestamps.set(cacheKey, Date.now());
+  }
+  return applied;
 }
 
 export function markProviderRefreshSucceeded(providerId: string): boolean {

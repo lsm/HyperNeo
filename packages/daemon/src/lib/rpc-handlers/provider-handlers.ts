@@ -299,6 +299,23 @@ function isUnchangedSavedConfig(
   );
 }
 
+async function isSupersededSavedConfigRefresh(
+  provider: Provider,
+  providerRepo: ProviderRepository,
+  rowId: string,
+  saved: { baseUrl?: string; configJson?: string },
+  clearsAtStart: number,
+  credentialsAtStart: string,
+  getModelsCacheClearSequence: () => number
+): Promise<boolean> {
+  const credentialsNow = JSON.stringify((await provider.getCredentials?.()) ?? null);
+  return (
+    credentialsNow !== credentialsAtStart ||
+    getModelsCacheClearSequence() !== clearsAtStart ||
+    !isUnchangedSavedConfig(providerRepo.getProvider(rowId), saved)
+  );
+}
+
 function isCurationOnlyConfigUpdate(
   previousConfigJson: string | undefined,
   nextConfigJson: string | undefined
@@ -545,10 +562,15 @@ async function revalidateSavedConfigUnderLock(
 ): Promise<CommitSavedConfigDiscoveryRefreshCtx> {
   const currentRecord = ctx.deps.providerRepo.getProvider(ctx.rowId);
   if (
-    ctx.deps.getModelsCacheClearSequence() !== ctx.clearsAtStart ||
-    JSON.stringify((await ctx.deps.provider.getCredentials?.()) ?? null) !==
-      ctx.credentialsAtStart ||
-    !isUnchangedSavedConfig(currentRecord, ctx.savedConfig)
+    await isSupersededSavedConfigRefresh(
+      ctx.deps.provider,
+      ctx.deps.providerRepo,
+      ctx.rowId,
+      ctx.savedConfig,
+      ctx.clearsAtStart,
+      ctx.credentialsAtStart,
+      ctx.deps.getModelsCacheClearSequence
+    )
   ) {
     ctx.deps.provider.clearModelCache?.();
     return { ...ctx, currentRecord, outcome: { success: false, reason: 'superseded' } };
@@ -604,11 +626,15 @@ async function applyDiscoveredSliceToLiveCache(
     inFlight.catch(() => {}),
     DISCOVERY_REFRESH_TIMEOUT_MS
   ).catch(() => {});
-  const supersededDuringWait =
-    ctx.deps.getModelsCacheClearSequence() !== ctx.clearsAtStart ||
-    JSON.stringify((await ctx.deps.provider.getCredentials?.()) ?? null) !==
-      ctx.credentialsAtStart ||
-    !isUnchangedSavedConfig(ctx.deps.providerRepo.getProvider(ctx.rowId), ctx.persistedConfig!);
+  const supersededDuringWait = await isSupersededSavedConfigRefresh(
+    ctx.deps.provider,
+    ctx.deps.providerRepo,
+    ctx.rowId,
+    ctx.persistedConfig!,
+    ctx.clearsAtStart,
+    ctx.credentialsAtStart,
+    ctx.deps.getModelsCacheClearSequence
+  );
   const currentRow = ctx.deps.providerRepo.getProvider(ctx.rowId);
   if (supersededDuringWait) {
     ctx.deps.releaseAppliedProviderSlice(ctx.providerId);
@@ -798,9 +824,15 @@ export function setupProviderHandlers(deps: ProviderHandlerDeps): void {
     }
 
     if (
-      getModelsCacheClearSequence() !== clearsAtStart ||
-      JSON.stringify((await provider.getCredentials?.()) ?? null) !== credentialsAtStart ||
-      !isUnchangedSavedConfig(providerRepo.getProvider(request.id), savedConfig)
+      await isSupersededSavedConfigRefresh(
+        provider,
+        providerRepo,
+        request.id,
+        savedConfig,
+        clearsAtStart,
+        credentialsAtStart,
+        getModelsCacheClearSequence
+      )
     ) {
       provider.clearModelCache?.();
       return { success: false, reason: 'superseded' };

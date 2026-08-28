@@ -979,6 +979,81 @@ describe('Provider RPC handlers', () => {
       expect(eventBus.publishAsync).not.toHaveBeenCalled();
     });
 
+    it('discards everything when a global cache clear lands during the credentials await', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+        configJson: JSON.stringify({ command: 'saved acp' }),
+      });
+      let credentialReads = 0;
+      getProviderRegistry().register({
+        id: 'remote',
+        isAvailable: async () => true,
+        getCredentials: async () => {
+          credentialReads += 1;
+          if (credentialReads === 3) clearModelsCache();
+          return null;
+        },
+        listRemoteModels: async () => [makeDiscoveredModel('remote-a')],
+        getModels: async () => [makeDiscoveredModel('remote-a')],
+      } as unknown as Provider);
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean; reason?: string };
+
+      expect(result).toEqual({ success: false, reason: 'superseded' });
+      expect(repo.getProvider(created.id)?.configJson).toBe(
+        JSON.stringify({ command: 'saved acp' })
+      );
+      expect(eventBus.publishAsync).not.toHaveBeenCalled();
+    });
+
+    it('refreshes the cache timestamp when the slice applies so stale reads cannot clobber it', async () => {
+      const created = repo.createProvider({
+        providerId: 'remote',
+        displayName: 'Remote',
+        kind: 'built_in',
+        authType: 'none',
+      });
+      const { getModels } = registerRemoteProvider({
+        listRemoteModels: async () => [makeDiscoveredModel('override-endpoint-model')],
+        getModels: async () => [makeDiscoveredModel('default-endpoint-model')],
+      });
+      setModelsCache(
+        new Map([['global', [makeDiscoveredModel('existing')]]]),
+        Date.now() - 5 * 60 * 60 * 1000
+      );
+      const handlers = setup();
+
+      const result = (await handlers.get('providers.refreshDiscovery')!(
+        { id: created.id },
+        {}
+      )) as { success: boolean };
+
+      expect(result.success).toBe(true);
+      expect(
+        getModelsCache()
+          .get('global')
+          ?.map((model) => model.id)
+      ).toEqual(['override-endpoint-model']);
+
+      const { getAvailableModels } = await import('../../../../src/lib/model-service');
+      getAvailableModels('global');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(getModels).not.toHaveBeenCalled();
+      expect(
+        getModelsCache()
+          .get('global')
+          ?.map((model) => model.id)
+      ).toEqual(['override-endpoint-model']);
+    });
+
     it('rejects the refresh when the saved config cannot fit the discovery wrapper', async () => {
       const pad = 'x'.repeat(64 * 1024 - 20);
       const created = repo.createProvider({
