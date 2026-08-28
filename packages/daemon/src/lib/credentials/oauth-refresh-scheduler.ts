@@ -8,26 +8,46 @@ const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_RETRIES = 3;
 
+type ProviderRefreshOutcome = 'refreshed' | 'exhausted';
+
+async function defaultRefreshDiscoveredModels(outcome: ProviderRefreshOutcome): Promise<void> {
+  const { clearModelsCache, refreshModels } = await import('../model-service.js');
+  clearModelsCache();
+  if (outcome === 'refreshed') {
+    refreshModels().catch(() => {});
+  }
+}
+
 export interface OAuthRefreshSchedulerOptions {
   intervalMs?: number;
   refreshWindowMs?: number;
   maxRetries?: number;
   registry?: ProviderRegistry;
   now?: () => number;
-  onProviderChanged?: (providerId: string) => void;
+  onProviderChanged?: (providerId: string, outcome: ProviderRefreshOutcome) => void | Promise<void>;
   recoverDormantProvider?: (providerId: string) => Promise<ProviderRecoveryOutcome>;
+  onPreRecoveryInvalidate?: (providerId: string) => Promise<void> | void;
+  refreshDiscoveredModels?: (outcome: ProviderRefreshOutcome) => void | Promise<void>;
 }
 
 export class OAuthRefreshScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private activeTick: Promise<void> | null = null;
   private readonly retryCounts = new Map<string, number>();
+  private readonly pendingInvalidationRetries = new Map<string, number>();
   private readonly intervalMs: number;
   private readonly refreshWindowMs: number;
   private readonly maxRetries: number;
   private readonly registry: ProviderRegistry;
   private readonly now: () => number;
-  private readonly onProviderChanged?: (providerId: string) => void;
+  private readonly onProviderChanged?: (
+    providerId: string,
+    outcome: ProviderRefreshOutcome
+  ) => void | Promise<void>;
+  private readonly onPreRecoveryInvalidate?: (providerId: string) => Promise<void> | void;
+  private readonly refreshDiscoveredModels: (
+    outcome: ProviderRefreshOutcome
+  ) => void | Promise<void>;
   private readonly recoverDormantProvider?: (
     providerId: string
   ) => Promise<ProviderRecoveryOutcome>;
@@ -42,6 +62,9 @@ export class OAuthRefreshScheduler {
     this.registry = options.registry ?? getProviderRegistry();
     this.now = options.now ?? Date.now;
     this.onProviderChanged = options.onProviderChanged;
+    this.onPreRecoveryInvalidate = options.onPreRecoveryInvalidate;
+    this.refreshDiscoveredModels =
+      options.refreshDiscoveredModels ?? defaultRefreshDiscoveredModels;
     this.recoverDormantProvider = options.recoverDormantProvider;
   }
 
@@ -85,6 +108,7 @@ export class OAuthRefreshScheduler {
 
   private async refreshProviderIfNeeded(provider: Provider): Promise<void> {
     if (!provider.refreshToken) return;
+    await this.retryPendingInvalidation(provider);
     const credentials = await this.credentialsForProvider(provider);
     if (!credentials || credentials.type !== 'oauth') return;
 
@@ -103,23 +127,91 @@ export class OAuthRefreshScheduler {
     }
 
     if (refreshed) {
-      this.retryCounts.delete(retryKey);
       const nextCredentials = await this.credentialsFromProvider(provider, credentials);
-      if (nextCredentials) {
-        await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
+      let persistenceFailed = false;
+      try {
+        if (nextCredentials) {
+          await this.credentialManager.storeOAuthTokens(provider.id, nextCredentials);
+        }
+      } catch {
+        persistenceFailed = true;
+      }
+      if (persistenceFailed) {
+        if (!(await this.runPreRecoveryInvalidation(provider.id))) {
+          this.bumpPendingInvalidationRetries(provider.id);
+        }
+        await this.recordFailedRefresh(provider.id, retryKey);
+        return;
+      }
+      this.retryCounts.delete(retryKey);
+      if (!(await this.runPreRecoveryInvalidation(provider.id))) {
+        await this.recordPendingInvalidationFailure(provider.id);
+        return;
       }
       this.credentialManager.markProviderHealth(provider.id, 'healthy');
       await this.recoverDormant(provider.id);
-      this.onProviderChanged?.(provider.id);
+      await this.emitProviderChanged(provider.id, 'refreshed');
       return;
     }
 
+    await this.recordFailedRefresh(provider.id, retryKey);
+  }
+
+  private async retryPendingInvalidation(provider: Provider): Promise<void> {
+    if (!this.pendingInvalidationRetries.has(provider.id)) return;
+    if (!(await this.runPreRecoveryInvalidation(provider.id))) {
+      await this.recordPendingInvalidationFailure(provider.id);
+      return;
+    }
+    this.credentialManager.markProviderHealth(provider.id, 'healthy');
+    await this.recoverDormant(provider.id);
+    await this.emitProviderChanged(provider.id, 'refreshed');
+  }
+
+  private async runPreRecoveryInvalidation(providerId: string): Promise<boolean> {
+    const onPreRecovery = this.onPreRecoveryInvalidate;
+    if (!onPreRecovery) return true;
+    try {
+      await onPreRecovery(providerId);
+      this.pendingInvalidationRetries.delete(providerId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private bumpPendingInvalidationRetries(providerId: string): number {
+    const retries = (this.pendingInvalidationRetries.get(providerId) ?? 0) + 1;
+    this.pendingInvalidationRetries.set(providerId, retries);
+    return retries;
+  }
+
+  private async recordPendingInvalidationFailure(providerId: string): Promise<void> {
+    const retries = this.bumpPendingInvalidationRetries(providerId);
+    if (retries > this.maxRetries) return;
+    if (retries === this.maxRetries) {
+      this.credentialManager.markProviderHealth(providerId, 'unhealthy');
+      await this.emitProviderChanged(providerId, 'exhausted');
+    }
+  }
+
+  private async recordFailedRefresh(providerId: string, retryKey: string): Promise<void> {
     const retries = (this.retryCounts.get(retryKey) ?? 0) + 1;
     this.retryCounts.set(retryKey, retries);
     if (retries >= this.maxRetries) {
-      this.credentialManager.markProviderHealth(provider.id, 'unhealthy');
-      this.onProviderChanged?.(provider.id);
+      this.credentialManager.markProviderHealth(providerId, 'unhealthy');
+      await this.emitProviderChanged(providerId, 'exhausted');
     }
+  }
+
+  private async emitProviderChanged(
+    providerId: string,
+    outcome: ProviderRefreshOutcome
+  ): Promise<void> {
+    try {
+      await this.refreshDiscoveredModels(outcome);
+    } catch {}
+    await this.onProviderChanged?.(providerId, outcome);
   }
 
   private async recoverDormant(providerId: string): Promise<void> {
