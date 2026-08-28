@@ -1776,6 +1776,66 @@ Pilot 14 PRs: #2900, #2902, #2905, #2903, #2914, #2925, #2930, #2941, #2945,
 #2943, #2942, #2953, #2959, #2958, #3168, #3189, #3065, #3066, #3082, #3108,
 #3127, #3190, #3218, #3210, #3219, #3216, #3211, plus this closing entry.
 
+## Pilot 15 — agent-layer chain C: sdk-message-handler turn-end & ack cores (2026-08-28)
+
+Chain C closed the dispatch half of the same survey (§5 Chain C / §8.3): the
+turn-end flag machine, the acknowledgment selectors, and the usage-accounting
+fold of `sdk-message-handler.ts`. Ten slices, applied after the complete B5
+series whose dispatch/catch fencing the exceptional-exit contract consumes:
+C1a–C1c the pins (#2911, #2912, #2910), C2a–C2d the cores (#2927, #2919,
+#2921, #2936), C3a–C3c the applies (#3287, #3284, #3279). Extracted:
+
+- `turn-end-routing.ts` — `routeTurnEnd`: the flag machine as one pure cascade
+  over (flags, result | session-state event, queryMode) → `TurnEndPlan` — idle
+  fence, `finishTurn`/replay gates, suppression-timer handling, and the
+  `nextFlags` → `afterEffectsFlags` turnover — pinned by C1a's 1,950-line
+  truth table.
+- `usage-accounting.ts` — `recordResultUsage`, the cost-baseline fold (a
+  dropped SDK cost moves the prior one into the baseline; C1c's table).
+- `ack-selection.ts` — `selectPersistedAckRow`, turn-end eligibility
+  (`isTurnEndAckEligible`), and delivery-uuid composition.
+- `turn-end-pipeline.ts` — the C2d `decisionRun` composition over the three
+  (`decideTurnEnd`); see the composition boundary below.
+
+The applies: C3a wired `routeTurnEnd` at the two settle seams (the result
+settle region and `handleSessionStateChangedMessage`) as snapshot → route →
+apply, recomputing the settle decision after the awaited `sdk.message`
+publication (both race-preservation rows from review); C3b routed the
+persisted acknowledgment and the turn-end fallback-ack loop through the
+selectors with per-row ownership revalidation immediately before every
+acknowledgement (the loop is snapshot-then-await-consume); C3c applied
+`recordResultUsage` in `recordResultUsageMetadata` with an equivalence row
+(handler metadata ≡ core applied to prior state).
+
+**The composition boundary.** The applies went to the cores directly, not
+through the composed `decideTurnEnd`: the seams are effect-interleaved
+(publication awaits, error-clear unwind, fence cancellation), so each applies
+its routing core in place while the effects stay in the shell.
+`turn-end-pipeline.ts` is therefore still test-only production code, and this
+sweep keeps it deliberately: the successor plan
+(`docs/superpipe-migration-plans/agent-routing.md`, PRs 19–20) names it the
+ONE SDK turn-end business path's composition point — extended with the routing
+gates, then wired with its effects — and mandates its API stability.
+`selectYieldedAckRow` (the yielded-ack ladder, still inline at
+`handleMessageYielded`) is likewise claimed: agent-gates-recovery's
+`ack-yielded` pipeline keeps it exported. Unclaimed by any plan, exactly one
+export measured dead: `commitPendingCost` — C2b's reset-on-clear fold, whose
+reset behavior lives inline at its three live sites
+(`query-lifecycle-manager.ts`, `agent-session.ts`, `session-manager.ts`, each
+with its own pins) — deleted here with its two unit rows. knip stays green
+with the suppressions the still-additive modules need (`turn-end-pipeline.ts`,
+`ack-selection.ts`, `usage-accounting.ts`).
+
+Costs: production +512 net across C2–C3 — the four cores +426 (175 + 62 + 54
++ 135) against the handler rewires +222/−136 (C3a +160/−74, C3b +47/−34, C3c
++15/−28); tests +3,567 (C1 pins 2,604, core suites 755, apply rows 208).
+As with the sibling chains, the value is testability: the C1 truth tables
+held every apply slice to behavior-preservation and surfaced both mid-publish
+and mid-loop revalidation races as pinned rows.
+
+Pilot 15 PRs: #2911, #2912, #2910, #2927, #2919, #2921, #2936, #3287, #3284,
+#3279, plus this closing sweep.
+
 ## Roadmap
 
 - **Done (pilot):** admission gates extracted as pure functions (no superpipe
@@ -1858,6 +1918,14 @@ Pilot 14 PRs: #2900, #2902, #2905, #2903, #2914, #2925, #2930, #2941, #2945,
   writes, pre-check dispatch mutations, late-pull queue seam, duplicated
   transient/provider predicates), and the closing sweep that deleted the
   chain's one vestigial knip ignore line.
+- **Done (pilot 15, agent-layer chain C):** the sdk-message-handler turn-end
+  flag machine, ack selectors, and usage fold as `turn-end-routing.ts` /
+  `ack-selection.ts` / `usage-accounting.ts`, applied directly at the settle,
+  ack, and metadata seams (C3a–C3c) with per-row and post-publication
+  revalidation — see "Pilot 15" above for the composition boundary (the
+  unwired `turn-end-pipeline.ts` stays as the successor plan's PR 19–20
+  composition point) and the closing sweep that deleted the one plan-unclaimed
+  export.
 - **Phase 1 — job settlement decider** (`job-queue-processor.ts`): already a
   discriminated union (`complete | retry | dead-letter | park | ignore-stale-claim`)
   with existing tests. First test of whether an async core is ever needed, or
@@ -2021,5 +2089,16 @@ Pilot 14 PRs: #2900, #2902, #2905, #2903, #2914, #2925, #2930, #2941, #2945,
   #2902, #2905, #2903, #2914, #2925, #2930, #2941, #2945, #2943, #2942,
   #2953, #2959, #2958, #3168, #3189, #3065, #3066, #3082, #3108, #3127,
   #3190, #3218, #3210, #3219, #3216, #3211, plus this closing entry.
+- Pilot 15 (agent-layer chain C) files:
+  `packages/daemon/src/lib/agent/{turn-end-routing,usage-accounting,
+  ack-selection,turn-end-pipeline}.ts`; interpreters in
+  `sdk-message-handler.ts` (the result settle region,
+  `handleSessionStateChangedMessage`, the persisted-ack and fallback-ack
+  loops, `recordResultUsageMetadata`); pins in
+  `packages/daemon/tests/unit/1-core/agent/`; survey and chain plan in
+  `docs/agent-layer-superpipe-pilot-proposal.md`, successor plans in
+  `docs/superpipe-migration-plans/{agent-routing,agent-gates-recovery}.md`.
+  Pilot 15 PRs: #2911, #2912, #2910, #2927, #2919, #2921, #2936, #3287,
+  #3284, #3279, plus this closing sweep.
 - superpipe 0.17.0 — library semantics map and contract tests produced during the
   pilot.
