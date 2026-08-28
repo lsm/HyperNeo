@@ -1,4 +1,5 @@
-import type { MessageHub } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
+import type { MessageHub, ProviderRecord } from '@hyperneo/shared';
 import type {
   ProviderAuthStatus,
   ProviderAuthResponse,
@@ -30,24 +31,76 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 const log = new Logger('auth-handlers');
 
+type ClearCacheCtx = {
+  internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined;
+  providerId?: string;
+  providerRepo?: ProviderRepository;
+  stripPersisted: boolean;
+  record?: ProviderRecord | null;
+  stripped?: string;
+  stripError?: unknown;
+};
+
+function clearCacheLoadRecord(ctx: ClearCacheCtx): ClearCacheCtx {
+  if (ctx.providerId && ctx.providerRepo && ctx.stripPersisted) {
+    ctx.record = ctx.providerRepo.getProviderByProviderId(ctx.providerId);
+  }
+  return ctx;
+}
+
+function clearCacheStripRecord(ctx: ClearCacheCtx): ClearCacheCtx {
+  if (ctx.record) {
+    ctx.stripped = stripPersistedDiscovery(ctx.record.configJson);
+    if (ctx.stripped !== ctx.record.configJson) {
+      try {
+        ctx.providerRepo!.updateProvider(ctx.record.id, { configJson: ctx.stripped });
+      } catch (error) {
+        ctx.stripError = error;
+      }
+    }
+  }
+  return ctx;
+}
+
+async function clearCacheInvalidate(ctx: ClearCacheCtx): Promise<ClearCacheCtx> {
+  const { clearModelsCache } = await import('../model-service.js');
+  clearModelsCache(undefined, ctx.providerId);
+  return ctx;
+}
+
+function clearCachePublishChanged(ctx: ClearCacheCtx): ClearCacheCtx {
+  ctx.internalEventBus?.publishAsync('providers.changed', { sessionId: 'global' });
+  return ctx;
+}
+
+function clearCacheRethrowIfNeeded(ctx: ClearCacheCtx): ClearCacheCtx {
+  if (ctx.stripError) throw ctx.stripError;
+  return ctx;
+}
+
+const runClearCacheAndNotifyProvidersChanged = (
+  superpipe({})('clear-cache-and-notify-providers-changed') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(clearCacheLoadRecord, 'ctx', 'ctx')
+  .pipe(clearCacheStripRecord, 'ctx', 'ctx')
+  .pipe(clearCacheInvalidate, 'ctx', 'ctx')
+  .pipe(clearCachePublishChanged, 'ctx', 'ctx')
+  .pipe(clearCacheRethrowIfNeeded, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: ClearCacheCtx) => Promise<ClearCacheCtx>;
+
 export async function clearCacheAndNotifyProvidersChanged(
   internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined,
   providerId?: string,
   providerRepo?: ProviderRepository,
   stripPersisted = true
 ): Promise<void> {
-  if (providerId && providerRepo && stripPersisted) {
-    const record = providerRepo.getProviderByProviderId(providerId);
-    if (record) {
-      const stripped = stripPersistedDiscovery(record.configJson);
-      if (stripped !== record.configJson) {
-        providerRepo.updateProvider(record.id, { configJson: stripped });
-      }
-    }
-  }
-  const { clearModelsCache } = await import('../model-service.js');
-  clearModelsCache(undefined, providerId);
-  internalEventBus?.publishAsync('providers.changed', { sessionId: 'global' });
+  await runClearCacheAndNotifyProvidersChanged({
+    internalEventBus,
+    providerId,
+    providerRepo,
+    stripPersisted,
+  });
 }
 
 async function removeCredentialsOrKeychainError(
@@ -232,6 +285,9 @@ export function setupAuthHandlers(
               log.error(`Provider logout failed for ${providerId}:`, logoutError);
             }
           }
+          try {
+            await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+          } catch {}
           log.error(`Logout failed for ${providerId}:`, readError);
           return {
             success: false,
@@ -273,12 +329,9 @@ export function setupAuthHandlers(
           error instanceof Error &&
           (error as Error & { logoutRefused?: boolean }).logoutRefused === true;
         if (!refused) {
-          await clearCacheAndNotifyProvidersChanged(
-            internalEventBus,
-            providerId,
-            providerRepo,
-            false
-          );
+          try {
+            await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+          } catch {}
         }
         log.error(`Logout failed for ${providerId}:`, error);
         return {
@@ -319,6 +372,14 @@ export function setupAuthHandlers(
           if (remaining?.type === 'oauth') {
             await credentialManager?.storeOAuthTokens(providerId, remaining);
           }
+          try {
+            await clearCacheAndNotifyProvidersChanged(
+              internalEventBus,
+              providerId,
+              providerRepo,
+              remaining?.type !== 'oauth'
+            );
+          } catch {}
           return {
             success: false,
             error: 'Token refresh failed. Please try logging out and logging in again.',

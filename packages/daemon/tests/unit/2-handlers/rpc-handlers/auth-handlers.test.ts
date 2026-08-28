@@ -16,6 +16,34 @@ import {
 } from '../../../../src/lib/providers/provider-failure-store';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
 
+const baseConfigJson = JSON.stringify({
+  command: 'test-command',
+  discoveredModels: { models: [{ id: 'a' }] },
+});
+const strippedConfigJson = JSON.stringify({ command: 'test-command' });
+
+function makeBus() {
+  return { publishAsync: mock(() => {}) };
+}
+
+function makeRepo(
+  configJson: string | undefined = baseConfigJson,
+  throws = false
+): ProviderRepository {
+  return {
+    getProviderByProviderId: mock(() => ({
+      id: 'provider-uuid',
+      providerId: 'test-provider',
+      configJson,
+    })),
+    updateProvider: throws
+      ? mock(() => {
+          throw new Error('db write failed');
+        })
+      : mock(() => null),
+  } as unknown as ProviderRepository;
+}
+
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
 const mockAuthManager = {
@@ -1036,6 +1064,42 @@ describe('Auth RPC Handlers', () => {
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
+    it('strips persisted discovery when refresh failure leaves no credentials', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+      };
+      const bus = makeBus();
+      const repo = makeRepo();
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never,
+        bus as never,
+        repo as never
+      );
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => null),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(repo.getProviderByProviderId).toHaveBeenCalledWith('test-provider');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
     it('restores credential store row on transient refresh failure', async () => {
       const credentialManager = {
         removeCredentials: mock(async () => {}),
@@ -1128,34 +1192,6 @@ describe('Auth RPC Handlers', () => {
   });
 
   describe('clearCacheAndNotifyProvidersChanged', () => {
-    const baseConfigJson = JSON.stringify({
-      command: 'test-command',
-      discoveredModels: { models: [{ id: 'a' }] },
-    });
-    const strippedConfigJson = JSON.stringify({ command: 'test-command' });
-
-    function makeBus() {
-      return { publishAsync: mock(() => {}) };
-    }
-
-    function makeRepo(
-      configJson: string | undefined = baseConfigJson,
-      throws = false
-    ): ProviderRepository {
-      return {
-        getProviderByProviderId: mock(() => ({
-          id: 'provider-uuid',
-          providerId: 'test-provider',
-          configJson,
-        })),
-        updateProvider: throws
-          ? mock(() => {
-              throw new Error('db write failed');
-            })
-          : mock(() => null),
-      } as unknown as ProviderRepository;
-    }
-
     it('strips persisted discovery and updates the provider row', async () => {
       const bus = makeBus();
       const repo = makeRepo();
@@ -1174,13 +1210,16 @@ describe('Auth RPC Handlers', () => {
       expect(bus.publishAsync).toHaveBeenCalledTimes(1);
     });
 
-    it('propagates providerRepo update failure and does not publish', async () => {
+    it('propagates providerRepo update failure and still invalidates cache and publishes', async () => {
       const bus = makeBus();
       const repo = makeRepo(baseConfigJson, true);
       await expect(
         clearCacheAndNotifyProvidersChanged(bus as never, 'test-provider', repo)
       ).rejects.toThrow('db write failed');
-      expect(bus.publishAsync).not.toHaveBeenCalled();
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
     });
 
     it('does not write when stripPersisted is false', async () => {
