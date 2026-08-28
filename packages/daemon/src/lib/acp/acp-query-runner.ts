@@ -37,6 +37,7 @@ import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery.ts';
 import { assessLimitError } from '../agent/limit-error-classifier.ts';
 import type { AgentSession } from '../agent/agent-session.ts';
+import { QueryAttemptRegistry, type QueryAttemptToken } from '../agent/query-attempt-token.ts';
 import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
@@ -406,16 +407,27 @@ export class AcpQueryRunner {
     this.ctx.queryPromise = this.runQuery(currentGeneration);
   }
 
+  invalidateAttemptTokens(): void {
+    this.ctx.attemptTokens.invalidateCurrent();
+  }
+
   private async runQuery(
     queryGeneration: number,
     isRetry = false,
     recoveryState = { rateLimitCooldownScheduled: false }
   ): Promise<void> {
     const { session, messageQueue, stateManager, errorManager, logger, optionsBuilder } = this.ctx;
+    const attemptToken =
+      this.ctx.getQueryGeneration() === queryGeneration
+        ? this.ctx.attemptTokens.allocate()
+        : QueryAttemptRegistry.detached();
+    const attemptOwnsRun = () =>
+      attemptToken.isLive() && this.ctx.getQueryGeneration() === queryGeneration;
     const assertActiveAcpStartup = () => {
       if (
         this.ctx.isCleaningUp() ||
         this.ctx.getQueryGeneration() !== queryGeneration ||
+        !attemptToken.isLive() ||
         stateManager.getState().status === 'interrupted'
       ) {
         const error = new Error('ACP query aborted during startup');
@@ -560,10 +572,12 @@ export class AcpQueryRunner {
             const previousOnMessageEnqueued = messageQueue.onMessageEnqueued;
 
             startStartupTimer = (hasFirstMessage: () => boolean) => {
+              if (!attemptOwnsRun()) return;
               this.clearStartupTimer();
               startupTimeoutReached = false;
               queryStartTime = Date.now();
               this.ctx.startupTimeoutTimer = setTimeout(() => {
+                if (!attemptOwnsRun()) return;
                 if (!hasFirstMessage()) {
                   startupTimeoutReached = true;
                   const elapsed = Date.now() - queryStartTime;
@@ -731,6 +745,7 @@ export class AcpQueryRunner {
       }
       await this.applyStoredAcpModel(acpClient);
       await this.applyStoredAcpThinkingLevel(acpClient);
+      assertActiveAcpStartup();
       this.updateAcpModelCache(acpClient.getConfigOptions());
       startupHandshakeActive = false;
       restoreMessageEnqueuedHandler?.();
@@ -759,6 +774,7 @@ export class AcpQueryRunner {
         const queuedMessage = message as SDKUserMessage & { internal?: boolean };
         if (!queuedMessage.internal) {
           await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
+          if (!attemptOwnsRun()) break;
           this._lastConsumedUserMessage = {
             uuid: message.uuid ?? '',
             content: (message.message?.content ?? '') as unknown as string | MessageContent[],
@@ -766,6 +782,7 @@ export class AcpQueryRunner {
         }
 
         await this.applyStoredAcpThinkingLevel(acpClient);
+        if (!attemptOwnsRun()) break;
 
         const promptContent = prependInstructionsToNextPrompt
           ? [...instructionBlocks, ...toAcpPromptContent(message)]
@@ -777,10 +794,15 @@ export class AcpQueryRunner {
         const adapter = new AcpQueryAdapter(acpClient, promptContent, {
           contextWindow: getAcpContextWindow(),
           initialUsageEstimate: getAcpContextUsageEstimate(session),
-          onContextUsageUpdate: (used) => this.persistAcpContextUsageEstimate(used),
-          onConfigOptionsUpdate: (configOptions) => this.updateAcpModelCache(configOptions),
+          onContextUsageUpdate: (used) => {
+            if (attemptOwnsRun()) this.persistAcpContextUsageEstimate(used);
+          },
+          onConfigOptionsUpdate: (configOptions) => {
+            if (attemptOwnsRun()) this.updateAcpModelCache(configOptions);
+          },
           onSubmitted: () => {
             if (submitted) return;
+            if (!attemptOwnsRun()) return;
             const persisted = this.ctx.messageHandler.markMessageSubmitted(message.uuid ?? '');
             if (!persisted) {
               throw new Error('ACP prompt was revoked before submission');
@@ -789,6 +811,7 @@ export class AcpQueryRunner {
             onSent();
           },
           onAccepted: () => {
+            if (!attemptOwnsRun()) return;
             this.ctx.messageHandler.markMessageAccepted(message.uuid ?? '');
             accepted = true;
           },
@@ -854,7 +877,7 @@ export class AcpQueryRunner {
             throw new Error('ACP startup timeout - query aborted');
           }
         } finally {
-          if (!accepted) {
+          if (!accepted && attemptOwnsRun()) {
             this.ctx.messageHandler.markACPDeliveryFailed(message.uuid ?? '');
           }
         }
@@ -876,6 +899,7 @@ export class AcpQueryRunner {
       await this.handleRunError(
         effectiveError,
         queryGeneration,
+        attemptToken,
         isRetry,
         client,
         createdAcpSessionDuringRun,
@@ -887,6 +911,7 @@ export class AcpQueryRunner {
         recoveryState
       );
     } finally {
+      this.ctx.attemptTokens.invalidate(attemptToken);
       restoreMessageEnqueuedHandler?.();
       (terminalManager as AcpTerminalManager | null)?.dispose();
       await (proxyBridge as AcpMcpProxyBridge | null)?.close();
@@ -958,6 +983,7 @@ export class AcpQueryRunner {
   private async handleRunError(
     error: unknown,
     queryGeneration: number,
+    attemptToken: QueryAttemptToken,
     isRetry: boolean,
     client?: AcpClient | null,
     createdAcpSessionDuringRun = false,
@@ -992,6 +1018,7 @@ export class AcpQueryRunner {
       !isRetry &&
       !this.ctx.isCleaningUp()
     ) {
+      this.ctx.attemptTokens.invalidate(attemptToken);
       logger.warn(
         isStartupTimeout
           ? 'Auto-retrying ACP query after startup timeout (1 retry).'
