@@ -284,6 +284,29 @@ describe('resolveAction', () => {
     expect(ctx.workflowRunId).toBe('run-b');
   });
 
+  test('attributes camel-case workflowRunId params to the requested run', () => {
+    const listDeliveries = defineAction({
+      name: 'list_deliveries',
+      family: 'node',
+      safetyClass: 'read',
+      description: 'List deliveries',
+      paramsDoc: '{ workflowRunId?: string }',
+      paramsSchema: z.object({ workflowRunId: z.string().optional() }),
+      handler: async () => ({}),
+    });
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'list_deliveries',
+          params: { workflowRunId: 'run-b' },
+          workflowRunId: 'run-a',
+        },
+        { registry: createActionRegistry([listDeliveries]) }
+      )
+    );
+    expect(ctx.workflowRunId).toBe('run-b');
+  });
+
   test('attributes workflow_run_id-filtered listings to the requested run', () => {
     const listTasks = defineAction({
       name: 'list_tasks',
@@ -1113,6 +1136,36 @@ describe('applyRateAndAudit', () => {
     expect(next.workflowRunId).toBeUndefined();
   });
 
+  test('clears an unverifiable contextual run when the params target a task', async () => {
+    const archiveTask = defineAction({
+      name: 'archive_task',
+      family: 'tasks',
+      safetyClass: 'destructive',
+      description: 'Archive task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = applyRoleAdmission(
+      applySafetyClass(
+        resolveAction(
+          buildCtx(
+            {
+              actionName: 'archive_task',
+              params: { task_id: 'task-b' },
+              workflowRunId: 'run-a',
+            },
+            { registry: createActionRegistry([archiveTask]) }
+          )
+        )
+      )
+    );
+    const next = await resolveTargets(withDeps(ctx, {}));
+    expect(next.outcome).toBeUndefined();
+    expect(next.taskId).toBe('task-b');
+    expect(next.workflowRunId).toBeUndefined();
+  });
+
   test('re-denies with standard diagnostics and no audit entry when a state-dependent requirement rises', async () => {
     let required = 1;
     const stateful = defineAction({
@@ -1609,6 +1662,43 @@ describe('runDispatchAction', () => {
     expect(telemetry.length).toBe(1);
     expect(telemetry[0].taskId).toBe('task-b');
     expect(telemetry[0].workflowRunId).toBe('run-of-task-b');
+  });
+
+  test('carries the resolved target into failed telemetry when a stage throws', async () => {
+    const telemetry: DispatchTelemetryEvent[] = [];
+    const archiveTask = defineAction({
+      name: 'archive_task',
+      family: 'tasks',
+      safetyClass: 'destructive',
+      description: 'Archive task',
+      paramsDoc: '{ task_id: string }',
+      paramsSchema: z.object({ task_id: z.string() }),
+      autonomyRequirement: 4,
+      handler: async () => ({}),
+    });
+    const deps = baseDeps({
+      registry: createActionRegistry([archiveTask]),
+      emitTelemetry: (event) => {
+        telemetry.push(event);
+      },
+      getSpaceAutonomyLevel: async () => {
+        throw new Error('level lookup failed');
+      },
+    });
+    const outcome = await runDispatchAction(deps, {
+      ...baseInput({
+        actionName: 'archive_task',
+        params: { task_id: 'task-b' },
+        taskId: 'session-task-a',
+        workflowRunId: 'run-a',
+      }),
+    });
+    assertFailed(outcome);
+    expect(outcome.error).toContain('level lookup failed');
+    expect(telemetry.length).toBe(1);
+    expect(telemetry[0].outcome).toBe('failed');
+    expect(telemetry[0].taskId).toBe('task-b');
+    expect(telemetry[0].workflowRunId).toBeUndefined();
   });
 
   test('denies actions at the role gate', async () => {

@@ -140,7 +140,13 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
     parsedParams.workflow_run_id.length > 0
       ? parsedParams.workflow_run_id
       : undefined;
-  const targetRunId = parsedRunId ?? parsedWorkflowRunId;
+  const parsedCamelRunId =
+    parsedParams !== null &&
+    typeof parsedParams.workflowRunId === 'string' &&
+    parsedParams.workflowRunId.length > 0
+      ? parsedParams.workflowRunId
+      : undefined;
+  const targetRunId = parsedRunId ?? parsedWorkflowRunId ?? parsedCamelRunId;
   const taskTargetChanged =
     targetTaskId !== undefined && ctx.taskId !== undefined && targetTaskId !== ctx.taskId;
   const runTargetChanged =
@@ -162,39 +168,33 @@ export async function resolveTargets(ctx: DispatchActionCtx): Promise<DispatchAc
   const params = (ctx.parsedParams ?? null) as Record<string, unknown> | null;
   let taskId = ctx.taskId;
   let numericLookupMissed = false;
-  let resolvedTaskChanged = false;
   if (ctx.deps.resolveTaskId && params !== null) {
     const hasTaskId = typeof params.task_id === 'string' && params.task_id.length > 0;
     const prefersNumber = action.taskIdPreference === 'task_number' || !hasTaskId;
     if (typeof params.task_number === 'number' && prefersNumber) {
       try {
         taskId = await ctx.deps.resolveTaskId(params);
-        if (taskId === undefined) {
-          numericLookupMissed = true;
-        } else if (taskId !== ctx.taskId) {
-          resolvedTaskChanged = true;
-        }
+        if (taskId === undefined) numericLookupMissed = true;
       } catch {}
     }
   }
   const explicitRunTarget =
     params !== null &&
     ((typeof params.run_id === 'string' && params.run_id.length > 0) ||
-      (typeof params.workflow_run_id === 'string' && params.workflow_run_id.length > 0));
+      (typeof params.workflow_run_id === 'string' && params.workflow_run_id.length > 0) ||
+      (typeof params.workflowRunId === 'string' && params.workflowRunId.length > 0));
+  const targetsTask =
+    params !== null &&
+    ((typeof params.task_id === 'string' && params.task_id.length > 0) ||
+      typeof params.task_number === 'number');
   let workflowRunId = ctx.workflowRunId;
-  if (numericLookupMissed) {
-    if (!explicitRunTarget) workflowRunId = undefined;
-  } else if (ctx.deps.resolveRunId && params !== null) {
-    const targetsTask =
-      (typeof params.task_id === 'string' && params.task_id.length > 0) ||
-      typeof params.task_number === 'number';
-    if (targetsTask && taskId !== undefined && !explicitRunTarget) {
+  if (!explicitRunTarget && (numericLookupMissed || targetsTask)) {
+    workflowRunId = undefined;
+    if (ctx.deps.resolveRunId && taskId !== undefined) {
       try {
         workflowRunId = (await ctx.deps.resolveRunId(taskId)) ?? undefined;
       } catch {}
     }
-  } else if (resolvedTaskChanged && !explicitRunTarget) {
-    workflowRunId = undefined;
   }
   return { ...ctx, taskId, workflowRunId };
 }
@@ -425,7 +425,16 @@ export async function runDispatchAction(
     const error = err instanceof Error ? err.message : String(err);
     const outcome = failedOutcome(error);
     const action = deps.registry.get(input.actionName);
-    await emitDispatchTelemetry(deps, input, action, outcome, Date.now() - startedAt);
+    let telemetryInput = input;
+    try {
+      const recovered = await resolveTargets(applySafetyClass(resolveAction({ ...input, deps })));
+      telemetryInput = {
+        ...input,
+        taskId: recovered.taskId,
+        workflowRunId: recovered.workflowRunId,
+      };
+    } catch {}
+    await emitDispatchTelemetry(deps, telemetryInput, action, outcome, Date.now() - startedAt);
     return outcome;
   }
 }
