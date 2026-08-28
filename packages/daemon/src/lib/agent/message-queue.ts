@@ -75,10 +75,7 @@ export interface MidTurnQueueSeam {
     receipt: MidTurnInterruptReceipt | undefined
   ): Promise<MidTurnSurvivorsDisposition>;
   requeueInterruptSurvivors(opts: MidTurnBudgetInterruptOptions, uuids: string[]): void;
-  finishSurvivorTeardownWithRestart(
-    opts: MidTurnBudgetInterruptOptions,
-    options?: { suppressCompaction?: boolean }
-  ): Promise<void>;
+  finishSurvivorTeardownWithRestart(opts: MidTurnBudgetInterruptOptions): Promise<void>;
   shouldEnqueueLateCompaction(removedPendingCompactions: number): boolean;
   shouldSuppressPromptPhaseCompaction(): boolean;
   boundaryCompletedSince(seq: number): boolean;
@@ -971,17 +968,14 @@ export class MessageQueue {
     );
   }
 
-  async finishSurvivorTeardownWithRestart(
-    opts: MidTurnBudgetInterruptOptions,
-    options?: { suppressCompaction?: boolean }
-  ): Promise<void> {
+  async finishSurvivorTeardownWithRestart(opts: MidTurnBudgetInterruptOptions): Promise<void> {
     let resolveDeliveryGate: (() => void) | undefined;
     const deliveryGate = new Promise<void>((resolve) => {
       resolveDeliveryGate = resolve;
     });
     const beforeStart = () => {
       this.setDeliveryGate(deliveryGate);
-      if (!options?.suppressCompaction) {
+      if (!this.shouldSuppressPromptPhaseCompaction()) {
         this.enqueueMidTurnCompaction(opts, 'mid-turn-restart');
       }
     };
@@ -995,7 +989,9 @@ export class MessageQueue {
           error
         );
         if (!this.hasOutstandingInternalCompaction()) {
-          this.enqueueMidTurnCompaction(opts, 'mid-turn-restart-failed');
+          if (!this.shouldSuppressPromptPhaseCompaction()) {
+            this.enqueueMidTurnCompaction(opts, 'mid-turn-restart-failed');
+          }
           opts.contextTracker.clearCompactionCooldown();
           opts.onResumeClear();
         } else {

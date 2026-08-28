@@ -2454,6 +2454,34 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('skips the restart-failure compaction when a boundary completed mid-cycle', async () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'uuid-rbf',
+        content: 'restart-failure survivor',
+        internal: false,
+      } as never);
+      const enqueueSpy = spyOn(q, 'enqueueWithId').mockResolvedValue(undefined);
+      const opts = makeInterruptOpts({
+        interrupt: async () => {
+          q.noteBoundaryCompleted();
+          return { still_queued: ['uuid-rbf'] };
+        },
+        cancelAsyncMessage: async () => false,
+        restart: () => Promise.reject(new Error('restart failed')),
+      });
+
+      await q.runMidTurnBudgetInterrupt(opts);
+
+      expect(enqueueSpy).toHaveBeenCalledWith('uuid-rbf', 'restart-failure survivor', false, {
+        durable: true,
+        prepend: true,
+      });
+      expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+      q.stop();
+    });
+
     it('reports queued compactions aborted by stop', async () => {
       const q = new MessageQueue();
       q.start();

@@ -152,9 +152,7 @@ async function restartOrStandDownStage(ctx: MidTurnBudgetCtx): Promise<MidTurnBu
   }
   ctx.queue.registerLateReceipt(ctx.opts, ctx.interrupt);
   if (ctx.survivors.needsRestart) {
-    await ctx.queue.finishSurvivorTeardownWithRestart(ctx.opts, {
-      suppressCompaction: ctx.queue.shouldSuppressPromptPhaseCompaction(),
-    });
+    await ctx.queue.finishSurvivorTeardownWithRestart(ctx.opts);
     return done({ ...ctx, restarted: true }, { action: 'completed' });
   }
   if (!ctx.queue.shouldSuppressPromptPhaseCompaction()) {
