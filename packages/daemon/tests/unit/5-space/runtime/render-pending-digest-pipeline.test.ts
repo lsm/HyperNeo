@@ -779,6 +779,26 @@ describe('render-pending-digest pipeline', () => {
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
   });
 
+  it('end to end: an interrupt starting during the append await skips before marking', async () => {
+    const h = harness({
+      appendDigest: async (_sessionId, message) => {
+        h.appended.push(message);
+        h.admissibility.interruptInProgress = true;
+        return true;
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.saved).toHaveLength(1);
+    expect(h.appended).toHaveLength(1);
+    expect(h.marks).toEqual([]);
+    expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
   it('end to end: a pending subset of a persisted digest renders fresh instead of replaying stored content', async () => {
     const h = harness();
     seedPending(h, [

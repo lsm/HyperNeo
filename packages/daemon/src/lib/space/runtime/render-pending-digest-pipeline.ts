@@ -541,6 +541,9 @@ export async function persistAndAppend(
       outcome: { action: 'held', reason: 'mailbox_rejected', uuid, dbId },
     };
   }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    return { ...ctx, digestDbId: dbId, outcome: { action: 'skip', reason: 'session_interrupted' } };
+  }
   const marks = survivingRows
     .filter((row) => renderedEventIds.has(row.eventId))
     .map((row) => ({ eventId: row.eventId, deliveryKey: row.deliveryKey }));

@@ -191,6 +191,30 @@ describe('InterruptHandler', () => {
       expect(handler.isInterruptRequested()).toBe(false);
       expect(handler.getInterruptPromise()).toBeNull();
     });
+
+    it('keeps the requested flag while an overlapping interrupt is still running', async () => {
+      let releaseFirst!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      setInterruptedSpy.mockImplementation(() => gate);
+      handler = createHandler();
+
+      const first = handler.handleInterrupt();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(setInterruptedSpy).toHaveBeenCalled();
+      expect(handler.isInterruptRequested()).toBe(true);
+
+      cancelForSessionSpy.mockImplementation(() => {
+        throw new Error('job queue unavailable');
+      });
+      await expect(handler.handleInterrupt()).rejects.toThrow('job queue unavailable');
+      expect(handler.isInterruptRequested()).toBe(true);
+
+      releaseFirst();
+      await first;
+      expect(handler.isInterruptRequested()).toBe(false);
+    });
   });
 
   describe('handleInterrupt', () => {

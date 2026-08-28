@@ -1600,6 +1600,76 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(1);
     });
 
+    test('flag on: another task inadmissible pull keeps a delivered digest owned by a sibling task', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const event = makeEvent({ id: 'evt-cross-task-drop', topic });
+      await eventService.publish(event);
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      eventStore.markDeliveryDelivered(event.id, delivery.deliveryKey);
+
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'stopped',
+        workflowRunId: run.id,
+      });
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-cross-task-drop',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-cross-task-drop',
+        'session-cross-task-drop',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const owed = {
+        type: 'user',
+        uuid: 'digest-owed-cross-task',
+        session_id: 'session-cross-task-drop',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'handoff pending digest' }] },
+        externalEventIds: [event.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-cross-task-drop', owed, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession(
+        'session-cross-task-drop',
+        secondTask.id
+      );
+      expect(outcome).toEqual({ action: 'skip', reason: 'no_pending_events' });
+      expect(eventStore.listDeliveries(event.id)[0]!.taskId).toBe(task.id);
+
+      const rows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-cross-task-drop'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .get() as { n: number };
+      expect(rows.n).toBe(1);
+    });
+
     test('flag on: an admission-rejected pull drops the deferred digest rows', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'

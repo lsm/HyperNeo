@@ -44,7 +44,7 @@ export interface InterruptHandlerContext {
 export class InterruptHandler {
   private interruptPromise: Promise<void> | null = null;
   private interruptResolve: (() => void) | null = null;
-  private interruptRequested = false;
+  private interruptRequests = 0;
   private deferredReplaySuppressed = false;
 
   constructor(private ctx: InterruptHandlerContext) {}
@@ -54,7 +54,7 @@ export class InterruptHandler {
   }
 
   isInterruptRequested(): boolean {
-    return this.interruptRequested;
+    return this.interruptRequests > 0;
   }
 
   async handleInterrupt(opts?: {
@@ -63,7 +63,7 @@ export class InterruptHandler {
   }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
-    this.interruptRequested = true;
+    this.interruptRequests += 1;
     try {
       this.ctx.onInterruptRequested?.();
 
@@ -235,7 +235,7 @@ export class InterruptHandler {
         this.interruptPromise = null;
       }
     } finally {
-      this.interruptRequested = false;
+      this.interruptRequests -= 1;
     }
   }
 

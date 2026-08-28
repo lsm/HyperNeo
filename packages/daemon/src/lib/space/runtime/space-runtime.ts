@@ -1825,12 +1825,12 @@ export class SpaceRuntime {
     }
   }
 
-  reconcilePersistedDigestRowsForSession(sessionId: string, taskId?: string): boolean {
+  reconcilePersistedDigestRowsForSession(sessionId: string, _taskId?: string): boolean {
     const store = this.config.externalEventStore;
     if (!store) return false;
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     if (!execution) return false;
-    this.dropUncoveredDeferredDigestRows(sessionId, store, taskId);
+    this.dropUncoveredDeferredDigestRows(sessionId, store);
     return true;
   }
 
@@ -1960,7 +1960,7 @@ export class SpaceRuntime {
         }
       } else {
         try {
-          this.dropUncoveredDeferredDigestRows(sessionId, store, taskId);
+          this.dropUncoveredDeferredDigestRows(sessionId, store);
         } catch (cleanupError) {
           if (this.isTargetSessionLive(sessionId)) {
             this.scheduleTurnEndDigestRetry(sessionId, taskId);
@@ -1977,7 +1977,7 @@ export class SpaceRuntime {
       return outcome;
     } catch (error) {
       try {
-        this.dropUncoveredDeferredDigestRows(sessionId, store, taskId);
+        this.dropUncoveredDeferredDigestRows(sessionId, store);
       } catch (cleanupError) {
         if (this.isTargetSessionLive(sessionId)) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);
@@ -2034,17 +2034,12 @@ export class SpaceRuntime {
     this.digestSupersedeRetryTimers.set(key, timer);
   }
 
-  private dropUncoveredDeferredDigestRows(
-    sessionId: string,
-    store: ExternalEventStore,
-    taskId?: string
-  ): void {
+  private dropUncoveredDeferredDigestRows(sessionId: string, store: ExternalEventStore): void {
     const messages = this.getSdkMessageRepo();
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     const targetWorkflowRunId = execution?.workflowRunId;
     const targetNodeId = execution?.workflowNodeId;
     const targetAgentName = execution?.agentName;
-    const targetTaskId = taskId ?? (execution as { taskId?: string } | null)?.taskId;
     const rows = messages
       .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
       .filter((row) => row.sendStatus === 'deferred');
@@ -2067,7 +2062,6 @@ export class SpaceRuntime {
                 delivery.workflowRunId === targetWorkflowRunId &&
                 delivery.nodeId === targetNodeId &&
                 delivery.agentName === targetAgentName &&
-                (targetTaskId === undefined || delivery.taskId === targetTaskId) &&
                 delivery.state === 'delivered'
             )
         );
