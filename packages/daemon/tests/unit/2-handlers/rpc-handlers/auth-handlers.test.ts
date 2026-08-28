@@ -1182,5 +1182,14 @@ describe('Auth RPC Handlers', () => {
       ).rejects.toThrow('db write failed');
       expect(bus.publishAsync).not.toHaveBeenCalled();
     });
+
+    it('does not write when stripPersisted is false', async () => {
+      const bus = makeBus();
+      const repo = makeRepo();
+      await clearCacheAndNotifyProvidersChanged(bus as never, 'test-provider', repo, false);
+      expect(repo.getProviderByProviderId).not.toHaveBeenCalled();
+      expect(repo.updateProvider).not.toHaveBeenCalled();
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
   });
 });

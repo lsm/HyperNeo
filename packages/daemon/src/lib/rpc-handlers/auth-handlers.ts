@@ -273,7 +273,12 @@ export function setupAuthHandlers(
           error instanceof Error &&
           (error as Error & { logoutRefused?: boolean }).logoutRefused === true;
         if (!refused) {
-          await clearCacheAndNotifyProvidersChanged(internalEventBus, providerId, providerRepo);
+          await clearCacheAndNotifyProvidersChanged(
+            internalEventBus,
+            providerId,
+            providerRepo,
+            false
+          );
         }
         log.error(`Logout failed for ${providerId}:`, error);
         return {
