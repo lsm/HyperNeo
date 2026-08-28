@@ -76,6 +76,7 @@ export interface MidTurnLateWindow {
 }
 
 export interface MidTurnQueueSeam {
+  noteBudgetCycleStarted(): void;
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void;
   awaitInterruptDeadline(opts: MidTurnBudgetInterruptOptions): Promise<MidTurnInterruptDeadline>;
   standsDownFor(opts: MidTurnBudgetInterruptOptions): boolean;
@@ -817,7 +818,6 @@ export class MessageQueue {
   }
 
   armInterruptCycle(opts: MidTurnBudgetInterruptOptions): void {
-    this.noteBudgetCycleStarted();
     this.internalRestartFailed = false;
     this.cycleStoodDown = false;
     this.cycleArmClearEpoch = this.budgetCycleClearEpoch;
@@ -910,6 +910,7 @@ export class MessageQueue {
   }
 
   async runMidTurnBudgetInterrupt(opts: MidTurnBudgetInterruptOptions): Promise<void> {
+    this.noteBudgetCycleStarted();
     this.armInterruptCycle(opts);
     try {
       await runMidTurnBudgetPipeline({
