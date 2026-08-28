@@ -68,6 +68,7 @@
     "packages/daemon/src/lib/rpc-handlers/custom-endpoint-handlers.ts": ["exports"],
     "packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts": ["exports"],
     "packages/daemon/src/lib/rpc-handlers/voice-handlers.ts": ["exports"],
+    "packages/daemon/src/lib/voice/transcribe-pipeline.ts": ["exports"],
     "packages/daemon/src/lib/space/agents/agent-template-hash.ts": ["exports"],
     "packages/daemon/src/lib/space/agents/custom-agent.ts": ["exports"],
     "packages/daemon/src/lib/space/agents/seed-agents.ts": ["exports"],
