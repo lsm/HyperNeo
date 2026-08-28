@@ -135,6 +135,7 @@ interface ReconcilePersistedDiscoveryCtx {
   providerId: string;
   providerCredentials: ProviderCredentials;
   storedCredentials?: ProviderCredentials | null;
+  storedCredentialsInaccessible?: boolean;
   providerRecord?: ProviderRecord | null;
   envCredentials?: boolean;
   strip?: boolean;
@@ -149,9 +150,14 @@ async function loadPersistedDiscoveryInputs(
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
   }
+  const storeStatus = ctx.deps.credentialManager.getCredentialStoreStatus();
   return {
     ...ctx,
     storedCredentials,
+    storedCredentialsInaccessible:
+      storedCredentials === null &&
+      (storeStatus.backend === 'keychain-unavailable' ||
+        storeStatus.backend === 'keychain-fallback'),
     providerRecord: ctx.deps.db.providers.getProviderByProviderId(ctx.providerId),
     envCredentials: ctx.deps.credentialManager.hasEnvironmentCredentials(ctx.providerId),
   };
@@ -162,9 +168,10 @@ function decidePersistedDiscoveryStrip(
 ): ReconcilePersistedDiscoveryCtx {
   const hasPersistedDiscovery = !!ctx.providerRecord?.configJson?.includes('discoveredModels');
   const strip =
-    (ctx.storedCredentials === null && hasPersistedDiscovery && !ctx.envCredentials) ||
-    (ctx.storedCredentials != null &&
-      !sameCredentialIdentity(ctx.storedCredentials, ctx.providerCredentials));
+    !ctx.storedCredentialsInaccessible &&
+    ((ctx.storedCredentials === null && hasPersistedDiscovery && !ctx.envCredentials) ||
+      (ctx.storedCredentials != null &&
+        !sameCredentialIdentity(ctx.storedCredentials, ctx.providerCredentials)));
   return { ...ctx, strip };
 }
 

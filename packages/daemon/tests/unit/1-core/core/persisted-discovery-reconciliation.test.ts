@@ -218,6 +218,33 @@ describe('startup persisted-discovery reconciliation', () => {
     expect(result.configJson()).toBe(JSON.stringify({ curated: ['model-b'] }));
   });
 
+  test('swallowed keychain unavailability: null read is not treated as absent credentials', async () => {
+    const runWithBackend = async (backend: 'keychain-unavailable' | 'keychain-fallback') => {
+      let repaired: string | null = null;
+      const result = await runScenario({
+        providerCredentials: apiKey('sk-live'),
+        configJson: DISCOVERY_CONFIG,
+        store: () => ({
+          get: async () => null,
+          set: async (_service, _account, data) => {
+            repaired = data;
+          },
+          delete: async () => {},
+          listServices: async () => [],
+          getStatus: () => ({ backend, keychainAvailable: false }),
+        }),
+      });
+      return { configJson: result.configJson(), repaired };
+    };
+
+    const unavailable = await runWithBackend('keychain-unavailable');
+    expect(unavailable.configJson).toBe(DISCOVERY_CONFIG);
+    expect(unavailable.repaired).toBeTruthy();
+
+    const fallback = await runWithBackend('keychain-fallback');
+    expect(fallback.configJson).toBe(DISCOVERY_CONFIG);
+  });
+
   test('keychain-unavailable store: continues without stripping or marking unhealthy', async () => {
     const result = await runScenario({
       providerCredentials: apiKey('sk-live'),
