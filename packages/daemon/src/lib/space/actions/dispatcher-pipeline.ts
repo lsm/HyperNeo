@@ -128,12 +128,19 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
     hasTaskId && !suppressTaskId && parsedParams !== null
       ? (parsedParams.task_id as string)
       : undefined;
-  const targetRunId =
+  const parsedRunId =
     parsedParams !== null &&
     typeof parsedParams.run_id === 'string' &&
     parsedParams.run_id.length > 0
       ? parsedParams.run_id
       : undefined;
+  const parsedWorkflowRunId =
+    parsedParams !== null &&
+    typeof parsedParams.workflow_run_id === 'string' &&
+    parsedParams.workflow_run_id.length > 0
+      ? parsedParams.workflow_run_id
+      : undefined;
+  const targetRunId = parsedRunId ?? parsedWorkflowRunId;
   return {
     ...ctx,
     action,

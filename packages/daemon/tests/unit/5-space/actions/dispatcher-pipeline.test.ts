@@ -257,6 +257,28 @@ describe('resolveAction', () => {
     );
     expect(ctx.workflowRunId).toBe('run-b');
   });
+
+  test('attributes workflow_run_id-filtered listings to the requested run', () => {
+    const listTasks = defineAction({
+      name: 'list_tasks',
+      family: 'tasks',
+      safetyClass: 'read',
+      description: 'List tasks',
+      paramsDoc: '{ workflow_run_id: string }',
+      paramsSchema: z.object({ workflow_run_id: z.string() }),
+      handler: async () => ({}),
+    });
+    const ctx = resolveAction(
+      buildCtx(
+        {
+          actionName: 'list_tasks',
+          params: { workflow_run_id: 'run-b' },
+        },
+        { registry: createActionRegistry([listTasks]) }
+      )
+    );
+    expect(ctx.workflowRunId).toBe('run-b');
+  });
 });
 
 describe('applySafetyClass', () => {
