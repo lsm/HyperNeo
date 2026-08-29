@@ -8,11 +8,11 @@ import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
-import { recordResultUsage } from '../../../../src/lib/agent/usage-accounting';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
+import { recordResultUsage } from '../../../../src/lib/agent/usage-accounting';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
@@ -5444,7 +5444,7 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
-      it('does not enqueue /compact for non-PROVIDER_NO_SDK_AUTO_COMPACT providers (SDK handles)', async () => {
+      it('does not enqueue /compact for openrouter when SDK auto-compact is active (SDK handles)', async () => {
         setModelsCache(
           new Map([
             [

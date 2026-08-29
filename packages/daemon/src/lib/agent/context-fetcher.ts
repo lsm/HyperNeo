@@ -14,7 +14,6 @@ import type { QueryLike } from './query-like.ts';
 import {
   buildProviderSettings,
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
-  PROVIDER_NO_SDK_AUTO_COMPACT,
 } from './query-options-builder.js';
 
 type ContextMetadata =
@@ -178,7 +177,6 @@ export class ContextFetcher {
   ): void {
     const providerId = modelMetadata?.provider;
     if (!providerId || !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(providerId)) return;
-    if (PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId)) return;
     const metadataCapacity = positiveInteger(modelMetadata?.contextWindow);
     if (!metadataCapacity) return;
     const sdkCapacity = positiveInteger(response.maxTokens);
@@ -368,11 +366,7 @@ export class ContextFetcher {
     }
     const enforcementProvider = modelMetadata?.provider;
     let daemonBackstopActive = false;
-    if (
-      enforcementProvider &&
-      !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider) &&
-      !PROVIDER_NO_SDK_AUTO_COMPACT.has(enforcementProvider)
-    ) {
+    if (enforcementProvider && !NATIVE_CONTEXT_WINDOW_PROVIDER_IDS.includes(enforcementProvider)) {
       const effectivePercent = resolveAutoCompactPercent(modelMetadata?.autoCompactPercent);
       const budgetThreshold = scaledAutoCompactWindow(capacity, modelMetadata?.autoCompactPercent);
       const rawThresholdKnown =
