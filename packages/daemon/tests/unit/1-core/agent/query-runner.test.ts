@@ -6332,6 +6332,7 @@ describe('QueryRunner', () => {
           .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
           .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
         queryFactory = hangingStartupTimeoutQuery;
+        mockSession.workspacePath = undefined;
 
         const ctx = createContext({
           messageQueue: {
@@ -6409,6 +6410,7 @@ describe('QueryRunner', () => {
         }
       );
       queryFactory = hangingStartupTimeoutQuery;
+      mockSession.workspacePath = undefined;
 
       const ctx = createContext();
       runner = new QueryRunner(ctx);
