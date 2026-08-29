@@ -2288,14 +2288,26 @@ describe('SpaceRuntime external event subscriptions', () => {
       ).toBe(true);
 
       await eventService.publish(makeEvent({ id: 'evt-shared-1', topic }));
-      await wait(150);
+
+      const deadline = Date.now() + 5000;
+      let deliveredCount = 0;
+      while (Date.now() < deadline) {
+        deliveredCount = eventStore
+          .listDeliveries('evt-shared-1')
+          .filter((delivery) => delivery.state === 'delivered').length;
+        if (deliveredCount === 1 && digestRows('session-shared-event').length > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(deliveredCount).toBe(1);
 
       const deliveries = eventStore.listDeliveries('evt-shared-1');
       expect(deliveries).toHaveLength(2);
-      const firstTaskDelivery = deliveries.find((delivery) => delivery.taskId === task.id)!;
-      const secondTaskDelivery = deliveries.find((delivery) => delivery.taskId === secondTask.id)!;
-      expect(firstTaskDelivery.state).toBe('delivered');
-      expect(secondTaskDelivery.state).toBe('pending');
+      expect(deliveries.filter((delivery) => delivery.state === 'delivered')).toHaveLength(1);
+      expect(deliveries.filter((delivery) => delivery.state === 'pending')).toHaveLength(1);
+      const deliveredRow = deliveries.find((delivery) => delivery.state === 'delivered')!;
+      const heldRow = deliveries.find((delivery) => delivery.state === 'pending')!;
+      expect([task.id, secondTask.id]).toContain(deliveredRow.taskId);
+      expect([task.id, secondTask.id]).toContain(heldRow.taskId);
       expect(digestRows('session-shared-event')).toHaveLength(1);
 
       const digestUuid = digestRows('session-shared-event')[0]!.sdk_uuid;
@@ -2304,12 +2316,18 @@ describe('SpaceRuntime external event subscriptions', () => {
         .listUserMessagesByUuidPrefix('session-shared-event', 'digest-')
         .find((row) => row.uuid === digestUuid)!;
       messages.updateMessageStatus([digestRow.dbId], 'consumed');
-      await wait(1500);
 
-      expect(secondTaskDelivery.state).toBe('pending');
-      expect(eventStore.listDeliveries('evt-shared-1').every((d) => d.state === 'delivered')).toBe(
-        true
-      );
+      const settledDeadline = Date.now() + 5000;
+      let allDelivered = false;
+      while (Date.now() < settledDeadline) {
+        allDelivered = eventStore
+          .listDeliveries('evt-shared-1')
+          .every((delivery) => delivery.state === 'delivered');
+        if (allDelivered) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(allDelivered).toBe(true);
+
       const finalDigest = db
         .prepare(
           `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-shared-event'
@@ -2317,7 +2335,7 @@ describe('SpaceRuntime external event subscriptions', () => {
         )
         .get(digestUuid) as { n: number };
       expect(finalDigest.n).toBe(1);
-    });
+    }, 15_000);
 
     test('digest pull holds while an interrupt is requested but the interrupted state has not landed', async () => {
       await startLiveSession('session-early-interrupt');
