@@ -3552,25 +3552,39 @@ export class SpaceRuntime {
     }
     this.digestHandoffRetryTimers.clear();
     this.digestHandoffRetryCounts.clear();
+    const staleSupersedeRetryTimers = Array.from(this.digestSupersedeRetryTimers.entries());
+    const staleSupersedeRetryCounts = Array.from(this.digestSupersedeRetryCounts.entries());
+    const stalePullTriggers = Array.from(this.digestPullTriggers.entries());
+    const staleRateLimits = Array.from(this.externalEventRateLimits.entries());
     const pendingRenders = Array.from(this.renderPendingDigestQueues.values());
     this.renderPendingDigestQueues.clear();
     await Promise.all(pendingRenders.map((render) => render.catch(() => null)));
+    for (const [key, timer] of staleSupersedeRetryTimers) {
+      if (this.digestSupersedeRetryTimers.get(key) === timer) {
+        clearTimeout(timer);
+        this.digestSupersedeRetryTimers.delete(key);
+      }
+    }
+    for (const [key, count] of staleSupersedeRetryCounts) {
+      if (this.digestSupersedeRetryCounts.get(key) === count) {
+        this.digestSupersedeRetryCounts.delete(key);
+      }
+    }
+    for (const [sessionId, state] of stalePullTriggers) {
+      if (this.digestPullTriggers.get(sessionId) === state) {
+        if (state.idleTimer) clearTimeout(state.idleTimer);
+        if (state.safetyTimer) clearTimeout(state.safetyTimer);
+        if (state.countTimer) clearTimeout(state.countTimer);
+        this.digestPullTriggers.delete(sessionId);
+      }
+    }
+    for (const [key, state] of staleRateLimits) {
+      if (this.externalEventRateLimits.get(key) === state) {
+        if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
+        this.externalEventRateLimits.delete(key);
+      }
+    }
     if (shutdownGeneration !== this.runtimeGeneration) return;
-    for (const timer of this.digestSupersedeRetryTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.digestSupersedeRetryTimers.clear();
-    this.digestSupersedeRetryCounts.clear();
-    for (const [sessionId, state] of this.digestPullTriggers) {
-      if (state.idleTimer) clearTimeout(state.idleTimer);
-      if (state.safetyTimer) clearTimeout(state.safetyTimer);
-      if (state.countTimer) clearTimeout(state.countTimer);
-      this.digestPullTriggers.delete(sessionId);
-    }
-    for (const state of this.externalEventRateLimits.values()) {
-      if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
-    }
-    this.externalEventRateLimits.clear();
     this.acceptingExternalEvents = false;
     if (this.tickInFlight) {
       const MAX_TICK_DRAIN_MS = 30_000;

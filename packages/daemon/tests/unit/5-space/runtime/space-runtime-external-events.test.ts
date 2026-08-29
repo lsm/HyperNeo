@@ -2855,6 +2855,14 @@ describe('SpaceRuntime external event subscriptions', () => {
       }
       expect(saveStarted).toBe(true);
 
+      (
+        runtime as unknown as { scheduleDigestProbeForSession: (sessionId: string) => void }
+      ).scheduleDigestProbeForSession(sessionId);
+      const staleProbe = (
+        runtime as unknown as { digestPullTriggers: Map<string, unknown> }
+      ).digestPullTriggers.get(sessionId);
+      expect(staleProbe).toBeDefined();
+
       const stopPromise = runtime.stop();
       runtime.start();
       unblockSave!('db-race');
@@ -2867,9 +2875,11 @@ describe('SpaceRuntime external event subscriptions', () => {
       const internals = runtime as unknown as {
         acceptingExternalEvents: boolean;
         tickTimer: unknown;
+        digestPullTriggers: Map<string, unknown>;
       };
       expect(internals.acceptingExternalEvents).toBe(true);
       expect(internals.tickTimer).not.toBeNull();
+      expect(internals.digestPullTriggers.get(sessionId)).not.toBe(staleProbe);
 
       await eventService.publish(makeEvent({ id: 'evt-race-2', topic }));
       const postRace = await runtime.renderPendingDigestForSession(sessionId, task.id);
