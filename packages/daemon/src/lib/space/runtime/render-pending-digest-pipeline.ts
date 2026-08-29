@@ -80,6 +80,7 @@ export interface RenderPendingDigestDeps {
     message: SDKUserMessage
   ): Promise<RenderPendingDigestSavedDigest>;
   reopenFailedDigest(sessionId: string, uuid: string): void;
+  deleteDigestMessage(sessionId: string, dbId: string): void;
   appendDigest(sessionId: string, message: SDKUserMessage): Promise<boolean>;
   markDeliveriesDelivered(
     target: RenderPendingDigestTarget,
@@ -130,6 +131,7 @@ export interface RenderPendingDigestDelivered {
   eventIds: string[];
   deliveryKeys: string[];
   replayed: boolean;
+  taskId: string;
 }
 
 export type RenderPendingDigestOutcome =
@@ -431,6 +433,7 @@ export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   const digestMessage = {
     ...buildSyntheticExternalEventMessage(ctx.sessionId, ctx.digestText ?? '', digestUuid),
     externalEventIds: eventIds,
+    externalEventTaskId: ctx.target?.taskId,
   } as SDKUserMessage;
   return { ...ctx, digestUuid, digestMessage };
 }
@@ -492,7 +495,16 @@ export async function persistAndAppend(
     };
   }
   if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
-    return { ...ctx, digestDbId: dbId, outcome: { action: 'skip', reason: 'session_interrupted' } };
+    try {
+      ctx.deps.deleteDigestMessage(ctx.sessionId, dbId);
+    } catch (error) {
+      return { ...ctx, outcome: { action: 'failed', stage: 'digestCleanup', error } };
+    }
+    return {
+      ...ctx,
+      digestDbId: dbId,
+      outcome: { action: 'skip', reason: 'session_interrupted' },
+    };
   }
   const marks = survivingRows
     .filter((row) => renderedEventIds.has(row.eventId))
@@ -515,6 +527,7 @@ export async function persistAndAppend(
       eventIds: (ctx.essences ?? []).map((essence) => essence.eventId),
       deliveryKeys: marks.map((mark) => mark.deliveryKey),
       replayed: saved.replayed,
+      taskId: ctx.target!.taskId,
     },
   };
 }

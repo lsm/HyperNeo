@@ -673,9 +673,10 @@ export class SpaceRuntime {
   private readonly turnEndDigestRetryCounts = new Map<string, number>();
   private readonly digestHandoffRetryTimers = new Map<string, Timer>();
   private readonly digestHandoffRetryCounts = new Map<string, number>();
+  private readonly digestHandoffDebt = new Set<string>();
   private readonly digestSupersedeRetryTimers = new Map<string, Timer>();
   private readonly digestSupersedeRetryCounts = new Map<string, number>();
-  private readonly renderPendingDigestsInFlight = new Map<
+  private readonly renderPendingDigestQueues = new Map<
     string,
     Promise<RenderPendingDigestOutcome | null>
   >();
@@ -1604,6 +1605,7 @@ export class SpaceRuntime {
       const role = deliverMessage(this.getJobQueueRepo(), sessionId, messageUuid, {
         origin: 'space_inject',
       });
+      this.digestHandoffDebt.delete(`${sessionId}:${messageUuid}`);
       if (role !== 'turn') return;
       const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
       if (session?.stateManager) {
@@ -1629,6 +1631,7 @@ export class SpaceRuntime {
     const attempts = (this.digestHandoffRetryCounts.get(key) ?? 0) + 1;
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
       this.digestHandoffRetryCounts.delete(key);
+      this.digestHandoffDebt.add(key);
       return;
     }
     this.digestHandoffRetryCounts.set(key, attempts);
@@ -1711,7 +1714,10 @@ export class SpaceRuntime {
       this.clearDigestPullState(sessionId);
       return;
     }
-    if (!this.isTargetSessionLive(sessionId)) return;
+    if (!this.isTargetSessionLive(sessionId)) {
+      this.clearDigestPullState(sessionId);
+      return;
+    }
     if (this.hasUnconsumedDigestForSession(sessionId)) {
       const idleMs = parsePositiveIntegerEnv(
         'HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS',
@@ -1729,7 +1735,11 @@ export class SpaceRuntime {
       DETERMINISTIC_DIGEST_UUID_PREFIX
     )) {
       const status = row.sendStatus;
-      if (status && status !== 'consumed' && status !== 'failed') return true;
+      if (!status || status === 'consumed' || status === 'failed') continue;
+      const handoffKey = `${sessionId}:${String(row.uuid)}`;
+      if (this.digestHandoffDebt.has(handoffKey)) continue;
+      if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
+      return true;
     }
     return false;
   }
@@ -1756,7 +1766,14 @@ export class SpaceRuntime {
         taskIds.add(row.taskId);
       }
     }
-    return taskIds.size > 0 ? [...taskIds] : [fallbackTaskId];
+    if (taskIds.size === 0) return [fallbackTaskId];
+    const ordered: Array<string | undefined> = [];
+    if (fallbackTaskId !== undefined && taskIds.has(fallbackTaskId)) {
+      ordered.push(fallbackTaskId);
+      taskIds.delete(fallbackTaskId);
+    }
+    for (const taskId of taskIds) ordered.push(taskId);
+    return ordered;
   }
 
   private async renderPendingDigestScopesForSession(
@@ -1825,15 +1842,10 @@ export class SpaceRuntime {
   ): Promise<RenderPendingDigestOutcome | null> {
     const store = this.config.externalEventStore;
     if (!store) return null;
-    const inFlight = this.renderPendingDigestsInFlight.get(sessionId);
-    if (inFlight) return inFlight;
-    const promise = this.renderPendingDigestForSessionInternal(sessionId, taskId);
-    this.renderPendingDigestsInFlight.set(sessionId, promise);
-    try {
-      return await promise;
-    } finally {
-      this.renderPendingDigestsInFlight.delete(sessionId);
-    }
+    const previous = this.renderPendingDigestQueues.get(sessionId) ?? Promise.resolve(null);
+    const next = previous.then(() => this.renderPendingDigestForSessionInternal(sessionId, taskId));
+    this.renderPendingDigestQueues.set(sessionId, next);
+    return next;
   }
 
   private async renderPendingDigestForSessionInternal(
@@ -1929,6 +1941,9 @@ export class SpaceRuntime {
         const failedRow = messages.getMessageByStatusAndUuid(targetSessionId, 'failed', uuid);
         if (failedRow) messages.updateMessageStatus([failedRow.dbId], 'deferred');
       },
+      deleteDigestMessage: (targetSessionId, dbId) => {
+        messages.deletePendingUserMessage(targetSessionId, dbId, 'deferred');
+      },
       appendDigest: async (targetSessionId, message) => {
         const row = messages.getDeliveryContent(targetSessionId, String(message.uuid));
         return row !== null;
@@ -1941,9 +1956,21 @@ export class SpaceRuntime {
       const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
       if (outcome.action === 'delivered') {
         try {
-          this.supersedeObsoleteDigestRows(sessionId, store, outcome.uuid, outcome.eventIds);
+          this.supersedeObsoleteDigestRows(
+            sessionId,
+            store,
+            outcome.uuid,
+            outcome.eventIds,
+            outcome.taskId
+          );
         } catch (cleanupError) {
-          this.scheduleDigestSupersedeRetry(sessionId, store, outcome.uuid, outcome.eventIds);
+          this.scheduleDigestSupersedeRetry(
+            sessionId,
+            store,
+            outcome.uuid,
+            outcome.eventIds,
+            outcome.taskId
+          );
           return { action: 'failed', stage: 'digestSupersede', error: cleanupError };
         }
       } else {
@@ -1957,8 +1984,8 @@ export class SpaceRuntime {
         }
         if (this.isDigestOutcomeRetryable(outcome) && this.isTargetSessionLive(sessionId)) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);
-          if (outcome.action === 'skip' && outcome.reason === 'session_interrupted') {
-            this.scheduleInterruptProbeForSession(sessionId, taskId);
+          if (outcome.action === 'skip') {
+            this.scheduleDigestProbeForSession(sessionId, taskId);
           }
         }
       }
@@ -1983,7 +2010,8 @@ export class SpaceRuntime {
     sessionId: string,
     store: ExternalEventStore,
     deliveredUuid: string,
-    deliveredEventIds: string[]
+    deliveredEventIds: string[],
+    currentTaskId?: string
   ): void {
     const key = `supersede:${sessionId}:${deliveredUuid}`;
     if (this.digestSupersedeRetryTimers.has(key)) return;
@@ -1997,9 +2025,21 @@ export class SpaceRuntime {
       this.digestSupersedeRetryTimers.delete(key);
       if (this.isStopped) return;
       try {
-        this.supersedeObsoleteDigestRows(sessionId, store, deliveredUuid, deliveredEventIds);
+        this.supersedeObsoleteDigestRows(
+          sessionId,
+          store,
+          deliveredUuid,
+          deliveredEventIds,
+          currentTaskId
+        );
       } catch (error) {
-        this.scheduleDigestSupersedeRetry(sessionId, store, deliveredUuid, deliveredEventIds);
+        this.scheduleDigestSupersedeRetry(
+          sessionId,
+          store,
+          deliveredUuid,
+          deliveredEventIds,
+          currentTaskId
+        );
         log.warn(
           `SpaceRuntime: turn-end digest supersede retry for session ${sessionId} failed: ` +
             `${formatCommandError(error)}`
@@ -2019,12 +2059,16 @@ export class SpaceRuntime {
       .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
       .filter((row) => row.sendStatus === 'deferred');
     for (const row of rows) {
+      const handoffKey = `${sessionId}:${String(row.uuid)}`;
+      if (this.digestHandoffDebt.has(handoffKey)) continue;
+      if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
       const membership = (row as { externalEventIds?: unknown }).externalEventIds;
       if (!Array.isArray(membership) || membership.length === 0) continue;
       const eventIds = membership.filter(
         (eventId): eventId is string => typeof eventId === 'string'
       );
       if (eventIds.length === 0) continue;
+      const rowTaskId = (row as { externalEventTaskId?: unknown }).externalEventTaskId;
       const allMembersDelivered =
         targetWorkflowRunId !== undefined &&
         targetNodeId !== undefined &&
@@ -2037,6 +2081,7 @@ export class SpaceRuntime {
                 delivery.workflowRunId === targetWorkflowRunId &&
                 delivery.nodeId === targetNodeId &&
                 delivery.agentName === targetAgentName &&
+                (rowTaskId === undefined || delivery.taskId === rowTaskId) &&
                 delivery.state === 'delivered'
             )
         );
@@ -2050,7 +2095,8 @@ export class SpaceRuntime {
     sessionId: string,
     store: ExternalEventStore,
     deliveredUuid: string | null,
-    deliveredEventIds: string[]
+    deliveredEventIds: string[],
+    currentTaskId?: string
   ): void {
     const messages = this.getSdkMessageRepo();
     const deliveredEventIdSet = new Set(deliveredEventIds);
@@ -2066,33 +2112,47 @@ export class SpaceRuntime {
           (deliveredUuid === null || String(row.uuid) !== deliveredUuid)
       );
     for (const row of rows) {
-      if (this.digestHandoffRetryTimers.has(`${sessionId}:${String(row.uuid)}`)) continue;
+      const handoffKey = `${sessionId}:${String(row.uuid)}`;
+      if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
+      if (this.digestHandoffDebt.has(handoffKey)) continue;
       const membership = (row as { externalEventIds?: unknown }).externalEventIds;
       if (!Array.isArray(membership) || membership.length === 0) continue;
       const eventIds = membership.filter(
         (eventId): eventId is string => typeof eventId === 'string'
       );
       if (eventIds.length === 0) continue;
+      const rowTaskId = (row as { externalEventTaskId?: unknown }).externalEventTaskId as
+        | string
+        | undefined;
       const isObsolete = eventIds.every((eventId) => {
-        if (deliveredEventIdSet.has(eventId)) return true;
-        if (targetWorkflowRunId && targetNodeId && targetAgentName) {
-          const terminalForTarget = store
+        if (
+          deliveredEventIdSet.has(eventId) &&
+          (rowTaskId === undefined || rowTaskId === currentTaskId)
+        ) {
+          return true;
+        }
+        if (
+          targetWorkflowRunId &&
+          targetNodeId &&
+          targetAgentName &&
+          (rowTaskId === undefined || rowTaskId === currentTaskId)
+        ) {
+          const terminalForTask = store
             .listDeliveries(eventId)
             .some(
               (delivery) =>
                 delivery.workflowRunId === targetWorkflowRunId &&
                 delivery.nodeId === targetNodeId &&
                 delivery.agentName === targetAgentName &&
+                (rowTaskId === undefined || delivery.taskId === rowTaskId) &&
                 (delivery.state === 'delivered' || delivery.state === 'failed')
             );
-          if (terminalForTarget) return true;
+          if (terminalForTask) return true;
         }
         const record = store.getById(eventId);
+        if (record === null || record.state === 'failed' || record.state === 'ignored') return true;
         return (
-          record === null ||
-          record.state === 'failed' ||
-          record.state === 'ignored' ||
-          (targetNodeId === undefined && record.state === 'delivered')
+          record.state === 'delivered' && (rowTaskId === undefined || rowTaskId === currentTaskId)
         );
       });
       if (isObsolete) {
@@ -3353,6 +3413,7 @@ export class SpaceRuntime {
     }
     this.digestHandoffRetryTimers.clear();
     this.digestHandoffRetryCounts.clear();
+    this.digestHandoffDebt.clear();
     for (const timer of this.digestSupersedeRetryTimers.values()) {
       clearTimeout(timer);
     }

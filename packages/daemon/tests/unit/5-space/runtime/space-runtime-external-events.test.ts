@@ -1967,6 +1967,80 @@ describe('SpaceRuntime external event subscriptions', () => {
       const payloads = jobs.map((job) => JSON.parse(job.payload) as Record<string, unknown>);
       expect(payloads.some((payload) => payload.messageUuid === delivered.uuid)).toBe(false);
     });
+
+    test('flag on: an exhausted handoff retry protects the deferred digest from supersede', {
+      timeout: 15_000,
+    }, async () => {
+      const previousIdleMs = process.env.HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS;
+      process.env.HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS = '50';
+      try {
+        const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+        const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+        const { run, task } = await startRunWithSubscription(topicA);
+        const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+        nodeExecutionRepo.update(execution.id, {
+          status: 'in_progress',
+          agentSessionId: 'session-handoff-exhaust',
+          completedAt: null,
+          startedAt: Date.now(),
+        });
+        db.prepare(
+          `INSERT INTO sessions
+             (id, title, created_at, last_active_at, status, config, metadata, type)
+           VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+        ).run(
+          'session-handoff-exhaust',
+          'session-handoff-exhaust',
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z'
+        );
+        tam.alive.add('session-handoff-exhaust');
+
+        db.exec('DROP TABLE job_queue');
+
+        await eventService.publish(makeEvent({ id: 'evt-handoff-exhaust-a', topic: topicA }));
+        await new Promise((resolve) => setTimeout(resolve, 5500));
+
+        const secondTask = taskRepo.createTask({
+          spaceId: SPACE_ID,
+          title: 'Second task',
+          status: 'open',
+          workflowRunId: run.id,
+        });
+        expect(
+          runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topicB).success
+        ).toBe(true);
+
+        await eventService.publish(makeEvent({ id: 'evt-handoff-exhaust-b', topic: topicB }));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        const allRows = db
+          .prepare(
+            `SELECT sdk_uuid, send_status FROM sdk_messages
+             WHERE session_id = 'session-handoff-exhaust' AND sdk_uuid LIKE 'digest-%'`
+          )
+          .all() as Array<{ sdk_uuid: string; send_status: string }>;
+        const aDeliveries = eventStore.listDeliveries('evt-handoff-exhaust-a');
+        const bDeliveries = eventStore.listDeliveries('evt-handoff-exhaust-b');
+        const aDelivered = aDeliveries[0];
+        const bDelivered = bDeliveries[0];
+        expect(aDelivered?.state).toBe('delivered');
+        expect(bDelivered?.state).toBe('delivered');
+        const deferredRows = db
+          .prepare(
+            `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-handoff-exhaust'
+             AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+          )
+          .all() as Array<{ sdk_uuid: string }>;
+        expect(deferredRows).toHaveLength(2);
+      } finally {
+        if (previousIdleMs === undefined) {
+          delete process.env.HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS;
+        } else {
+          process.env.HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS = previousIdleMs;
+        }
+      }
+    });
   });
 
   describe('idle/cap/safety digest pull', () => {
@@ -2331,6 +2405,65 @@ describe('SpaceRuntime external event subscriptions', () => {
         .all() as Array<{ sdk_uuid: string }>;
       expect(deferredRows).toHaveLength(2);
       expect(deferredRows.some((row) => row.sdk_uuid === firstDigestRows[0]!.sdk_uuid)).toBe(true);
+    });
+
+    test('flag on: a dead session clears the digest pull probe state', async () => {
+      const { task } = await startLiveSession('session-dead-probe');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.alive.delete('session-dead-probe');
+
+      await eventService.publish(makeEvent({ id: 'evt-dead-probe', topic }));
+      await wait(150);
+
+      const triggers = (runtime as unknown as { digestPullTriggers: Map<string, unknown> })
+        .digestPullTriggers;
+      expect(triggers.has('session-dead-probe')).toBe(false);
+      expect(digestRows('session-dead-probe')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-dead-probe')[0]?.state).toBe('pending');
+    });
+
+    test('flag on: concurrent digest pulls for different task scopes do not coalesce', async () => {
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startLiveSession('session-coalesce', topicA);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topicB).success
+      ).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-coalesce-a', topic: topicA }));
+      await eventService.publish(makeEvent({ id: 'evt-coalesce-b', topic: topicB }));
+
+      const [outcomeA, outcomeB] = await Promise.all([
+        runtime.renderPendingDigestForSession('session-coalesce', task.id),
+        runtime.renderPendingDigestForSession('session-coalesce', secondTask.id),
+      ]);
+
+      expect(outcomeA?.action).toBe('delivered');
+      expect(outcomeB?.action).toBe('delivered');
+      if (outcomeA?.action !== 'delivered' || outcomeB?.action !== 'delivered') return;
+      expect(outcomeA.eventIds).toEqual(['evt-coalesce-a']);
+      expect(outcomeB.eventIds).toEqual(['evt-coalesce-b']);
+
+      const allDigestRows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages
+           WHERE session_id = 'session-coalesce' AND sdk_uuid LIKE 'digest-%'
+           AND send_status IN ('deferred', 'enqueued')`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(allDigestRows).toHaveLength(2);
+      expect(
+        allDigestRows.some((row) => row.sdk_uuid === outcomeA.uuid) &&
+          allDigestRows.some((row) => row.sdk_uuid === outcomeB.uuid)
+      ).toBe(true);
+      expect(eventStore.listDeliveries('evt-coalesce-a')[0]?.state).toBe('delivered');
+      expect(eventStore.listDeliveries('evt-coalesce-b')[0]?.state).toBe('delivered');
     });
   });
 
