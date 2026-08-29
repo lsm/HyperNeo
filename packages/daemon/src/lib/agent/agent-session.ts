@@ -1568,8 +1568,48 @@ export class AgentSession
         this.pendingResumeAfterCompaction = false;
       },
       onSurvivorRequeued: (uuid) => this.reopenDeliveryForRetry(uuid),
-      getDurableMessageContent: (uuid) =>
-        this.db.getSDKMessageRepo().getUserMessageContentByUuid(this.session.id, uuid) ?? undefined,
+      getDurableMessageContent: (uuid) => {
+        const repo = this.db.getSDKMessageRepo();
+        const kickoff = repo.getUserMessageContentByUuid(this.session.id, uuid);
+        if (kickoff === null || kickoff === undefined) return undefined;
+        try {
+          const batchUuids = this.db
+            .getJobQueueRepo?.()
+            ?.getActiveDeliveryBatchUuids?.(this.session.id, uuid);
+          if (batchUuids && batchUuids.length > 1) {
+            const rebuilt = this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids);
+            const admitted = rebuilt.admittedUuids ?? [];
+            if (!admitted.includes(uuid)) {
+              if (!this.narrowRecoveredDeliveryBatch(uuid, [uuid])) return undefined;
+              if (repo.getDeliveryContent(this.session.id, uuid)?.sendStatus === 'failed') {
+                const reopenedId = repo.reopenDeliveryByUuid(this.session.id, uuid);
+                if (reopenedId) {
+                  void this.internalEventBus
+                    .publish('messages.statusChanged', {
+                      sessionId: this.session.id,
+                      messageIds: [reopenedId],
+                      status: 'enqueued',
+                    })
+                    .catch(() => {});
+                }
+              }
+              return kickoff;
+            }
+            if (admitted.length < batchUuids.length) {
+              if (!this.narrowRecoveredDeliveryBatch(uuid, admitted)) return undefined;
+            }
+            return rebuilt.content;
+          }
+        } catch (error) {
+          this.logger.warn(
+            `batch content rebuild for evicted survivor ${uuid} in session ${this.session.id} ` +
+              `failed; falling back to the recovered kickoff content:`,
+            error
+          );
+          if (!this.narrowRecoveredDeliveryBatch(uuid, [uuid])) return undefined;
+        }
+        return kickoff;
+      },
     };
     try {
       await runMidTurnBudgetPipeline({
@@ -3123,6 +3163,29 @@ export class AgentSession
     expected: string | MessageContent[]
   ): boolean {
     return JSON.stringify(queued) === JSON.stringify(expected);
+  }
+
+  private narrowRecoveredDeliveryBatch(uuid: string, admitted: string[]): boolean {
+    try {
+      const narrowed =
+        this.db
+          .getJobQueueRepo?.()
+          ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, admitted) === true;
+      if (!narrowed) {
+        this.logger.warn(
+          `narrowing the delivery batch for evicted survivor ${uuid} in session ` +
+            `${this.session.id} was not applied; declining the recovery`
+        );
+      }
+      return narrowed;
+    } catch (error) {
+      this.logger.warn(
+        `narrowing the delivery batch for evicted survivor ${uuid} in session ` +
+          `${this.session.id} failed:`,
+        error
+      );
+      return false;
+    }
   }
 
   private rebuildBatchDeliveryContent(
