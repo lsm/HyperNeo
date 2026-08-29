@@ -206,7 +206,12 @@ describe('EventSubscriptionSetup', () => {
         const realInterruptHandler = new InterruptHandler({
           session: mockContext.session,
           messageHub: { event: () => {} } as never,
-          messageQueue: { size: () => 0, clear: () => {}, stop: () => {} } as never,
+          messageQueue: {
+            size: () => 0,
+            clear: () => {},
+            stop: () => {},
+            noteUserInterrupt: () => {},
+          } as never,
           stateManager: {
             getState: () => ({ status: 'processing', phase: 'streaming' }),
             setInterrupted: async () => {},
@@ -271,7 +276,12 @@ describe('EventSubscriptionSetup', () => {
         const realInterruptHandler = new InterruptHandler({
           session: mockContext.session,
           messageHub: { event: () => {} } as never,
-          messageQueue: { size: () => 0, clear: () => {}, stop: () => {} } as never,
+          messageQueue: {
+            size: () => 0,
+            clear: () => {},
+            stop: () => {},
+            noteUserInterrupt: () => {},
+          } as never,
           stateManager: {
             getState: () => ({ status: 'processing', phase: 'streaming' }),
             setInterrupted: async () => {},
