@@ -219,7 +219,11 @@ export function deleteVoiceRecord(id: string): Promise<void> {
     mirror.delete(id);
     tombstones.add(id);
     const removed = await runTx('readwrite', (store) => store.delete(id));
-    if (removed) tombstones.delete(id);
+    if (removed) {
+      tombstones.delete(id);
+      return;
+    }
+    await runTx('readwrite', (store) => store.put({ deleted: true, id }));
   });
 }
 

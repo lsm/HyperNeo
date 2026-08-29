@@ -241,6 +241,18 @@ describe('voice audio record store', () => {
     expect(await listVoiceRecords()).toHaveLength(0);
   });
 
+  it('retains a failed durable deletion across a reload and sweeps the marker row', async () => {
+    const factory = createFactory({ abortReadWriteAt: 2 });
+    globalThis.indexedDB = factory;
+    await putVoiceRecord(makeEntry('r1', NOW));
+    await deleteVoiceRecord('r1');
+    resetVoiceAudioStore();
+    expect(await getVoiceRecord('r1')).toBeNull();
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual([]);
+    await putVoiceRecord(makeEntry('r2', NOW + 1));
+    expect(await readDurableIds(factory)).toEqual(['r2']);
+  });
+
   it('releases the connection on version upgrade and the mirror after durable commits', async () => {
     const factory = createFactory();
     globalThis.indexedDB = factory;
