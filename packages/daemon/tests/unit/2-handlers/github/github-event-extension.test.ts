@@ -10187,10 +10187,28 @@ describe('GitHub self-echo pins (GE-P1)', () => {
     };
   }
 
+  function selfUserFetch(login: string): typeof fetch {
+    return (async (url: string | URL | Request) => {
+      if (String(url).endsWith('/user')) {
+        return new Response(JSON.stringify({ login }), { status: 200 });
+      }
+      return new Response('[]', { status: 200 });
+    }) as typeof fetch;
+  }
+
+  async function resolveOwnLogin(extension: GitHubEventExtension): Promise<string | undefined> {
+    const ext = extension as unknown as {
+      resolveTokenStatus(lightweight: boolean): Promise<{ login?: string }>;
+    };
+    return (await ext.resolveTokenStatus(false)).login;
+  }
+
   test("webhook: a comment authored by the token's own login round-trips into the space", async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
-    const extension = new GitHubEventExtension(db, 'token');
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
     await extension.start({
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -10202,6 +10220,7 @@ describe('GitHub self-echo pins (GE-P1)', () => {
       repo: 'widgets',
       webhookSecret: 'secret',
     });
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
 
     const payload = selfCommentPayload('octocat');
     const raw = JSON.stringify(payload);
@@ -10219,7 +10238,9 @@ describe('GitHub self-echo pins (GE-P1)', () => {
   test("poll: an issue-comment row authored by the token's own login round-trips into the space", async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
-    const extension = new GitHubEventExtension(db, 'token');
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
     await extension.start({
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -10231,6 +10252,7 @@ describe('GitHub self-echo pins (GE-P1)', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
     const echoRow = {
       id: 101,
       html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-101',
@@ -10257,7 +10279,9 @@ describe('GitHub self-echo pins (GE-P1)', () => {
 
   test('publishEvent passes events from arbitrary actors through unfiltered', async () => {
     const db = setupDb();
-    const extension = new GitHubEventExtension(db, 'token');
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
     const published: ExternalEvent[] = [];
     const context: ExternalEventExtensionContext = {
       publisher: {
@@ -10276,6 +10300,7 @@ describe('GitHub self-echo pins (GE-P1)', () => {
       ): Promise<void>;
     };
 
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
     for (const login of ['octocat', 'unrelated-user']) {
       const normalized = normalizeGitHubWebhook(
         'issue_comment',
@@ -10315,11 +10340,12 @@ describe('GitHub self-echo pins (GE-P1)', () => {
     expect(first.login).toBe('octocat');
     expect(userCalls).toBe(1);
 
+    ext.lastTokenStatusAt = Date.now() - (5 * 60 * 1000 - 1_000);
     const cached = await ext.resolveTokenStatus(true);
     expect(cached.login).toBe('octocat');
     expect(userCalls).toBe(1);
 
-    ext.lastTokenStatusAt = Date.now() - 6 * 60 * 1000;
+    ext.lastTokenStatusAt = Date.now() - (5 * 60 * 1000 + 1_000);
     const revalidated = await ext.resolveTokenStatus(true);
     expect(revalidated.login).toBe('octocat');
     expect(userCalls).toBe(2);
