@@ -115,7 +115,14 @@ for direct composition: the owning spawn pipelines compose the create stages
 directly — `spawn-post-approval-worker` via TAM-F1, and the spawn flow's
 `createSpawnedSession` dep via TAM-B3 (that slice owns the spawn-flow
 stage-list edit) — no pipeline invokes the create RUNNER from inside another
-pipeline. Fit: strong `stagedRun` — sync admission
+pipeline. The group carries its own PARTIAL lock boundary today (bind/config
+mutations :1148–1215, then `withSessionInjectLock` for workspace migration
+:1221–1269), so composition needs an explicit lock protocol: the group
+accepts an ALREADY-HELD handle from the owning pipeline (or performs its own
+acquisition when standalone) — wrapping the whole group under F1's lock
+deadlocks the non-reentrant promise lock, and leaving it unwrapped puts the
+early mutations outside the terminal fence (pin the full ordering). Fit:
+strong `stagedRun` — sync admission
 gates, CAS effects, awaited
 workspace migration, two compensations. The bind step composes the repo
 primitive the spawn flow also wraps — `nodeExecutionRepo.casExecutionStatus`
@@ -390,17 +397,30 @@ AFTER the post-create recheck but BEFORE the composed delivery effect must
 terminate the just-created worker — never deliver the kickoff and report
 DELIVERED. POST-CREATE FAILURES also need an ownership outcome — a THREE-WAY
 one, carried in the create-stage result: CREATED / LIVE-REUSED /
-COLD-RESTORED-BY-THIS-ATTEMPT. When `ensureNodeAgentAttached` or kickoff
+COLD-RESTORED-BY-THIS-ATTEMPT. The COLD-RESTORED flag needs explicit
+RESTORATION-OWNER PROVENANCE: `rehydrateSubSession` returns the shared
+`rehydrateInFlight` promise to a second caller (:3470–3478), so a JOINER
+cannot be classified as the restoration owner from the index miss alone —
+thread an owner token through rehydration and the create result (a joiner
+misclassified as owner would unwind the other caller's streaming on its own
+failure; the concurrent-join row lands with TAM-F1). When
+`ensureNodeAgentAttached` or kickoff
 injection rejects after `createSubSession` (:5012–5042), today's catch
 releases only the model-pool reservation and leaves the registered streaming
 worker alive, and a bare error return gives P46 no ownership to compensate —
-TAM-F compensates per outcome: a CREATED worker is stopped and unregistered;
-a COLD-RESTORED worker (this attempt started its streaming via
-`rehydrateSubSession`) has its streaming and manager bookkeeping unwound
+TAM-F compensates per outcome: a CREATED worker is stopped, unregistered, AND
+its execution binding CLEARED — the fresh arm bound the execution at
+:1347–1356, and stopping the session alone leaves the execution
+`in_progress` pointing at a dead worker, so CREATED cleanup includes a
+status-and-session-guarded execution unbind/transition (LIVE-REUSED and
+COLD-RESTORED keep their pre-existing binding);
+a COLD-RESTORED worker (the restoration OWNER's attempt started its
+streaming via `rehydrateSubSession`) has its streaming and manager
+bookkeeping unwound
 WITHOUT deleting the durable session — CREATED-only cleanup would leave it
 registered and streaming, consuming capacity indefinitely; an already-live
 REUSED worker is left intact (attach- and inject-rejection rows for all
-three outcomes land with TAM-F1). The protocol
+three outcomes and the execution-row land with TAM-F1). The protocol
 must also distinguish COLD-CACHE RESTORATION:
 `rehydrateSubSession` registers and starts streaming the durable session
 (:3646–3677) BEFORE the create stages report REUSED, so on a terminal skip
