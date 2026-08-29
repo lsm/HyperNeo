@@ -908,6 +908,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Accept, dismiss, or edit a Forge episode draft — use accept/dismiss only after an explicit decision; returns the updated episode.',
       paramsDoc: 'episode_id, status?, title?, outcome_summary?',
       paramsSchema: UpdateForgeEpisodeSchema,
+      auditRedactKeys: ['title', 'outcome_summary'],
       autonomyRequirement: forgeTerminalStatusAutonomy(['accepted', 'dismissed']),
       handler: (args) => handlers.update_forge_episode(args),
     }),
@@ -919,7 +920,8 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Activate, dismiss, or edit a candidate lesson — activation requires an explicit tool call; returns the updated lesson.',
       paramsDoc: 'lesson_id, status?, applies_to?, rule?, why?, confidence?',
       paramsSchema: UpdateForgeLessonSchema,
-      autonomyRequirement: forgeTerminalStatusAutonomy(['dismissed']),
+      auditRedactKeys: ['rule', 'why'],
+      autonomyRequirement: forgeTerminalStatusAutonomy(['active', 'dismissed']),
       handler: (args) => handlers.update_forge_lesson(args),
     }),
     defineAction({
@@ -930,6 +932,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Manually create a Forge task proposal for a scope; a later create_task_from_forge_proposal makes the real task; returns the proposal.',
       paramsDoc: 'scope_id, title, description, reason, priority?, evidence_episode_ids?',
       paramsSchema: CreateForgeTaskProposalSchema,
+      auditRedactKeys: ['description', 'reason'],
       handler: (args) => handlers.create_forge_task_proposal(args),
     }),
     defineAction({
@@ -940,7 +943,8 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Edit, accept, or dismiss a Forge task proposal — creating the SpaceTask is separate and explicit; returns the updated proposal.',
       paramsDoc: 'proposal_id, title?, description?, reason?, priority?, status?',
       paramsSchema: UpdateForgeTaskProposalSchema,
-      autonomyRequirement: forgeTerminalStatusAutonomy(['dismissed']),
+      auditRedactKeys: ['description', 'reason'],
+      autonomyRequirement: forgeTerminalStatusAutonomy(['accepted', 'dismissed']),
       handler: (args) => handlers.update_forge_task_proposal(args),
     }),
     defineAction({
@@ -961,6 +965,8 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Accept a Forge episode and roll its summary/progress/metrics/next steps into the linked recurring goal; returns the rollup result.',
       paramsDoc: 'episode_id, goal_update {summary?, progress?, next_steps?, metrics?}',
       paramsSchema: ApplyForgeRollupSchema,
+      auditRedactKeys: ['goal_update'],
+      autonomyRequirement: DESTRUCTIVE_ACTION_AUTONOMY_LEVEL,
       handler: (args) => handlers.apply_forge_rollup(args),
     }),
   ];

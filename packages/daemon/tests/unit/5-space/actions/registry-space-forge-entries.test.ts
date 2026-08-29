@@ -285,19 +285,29 @@ describe('createSpaceRegistryEntries — forge autonomy', () => {
       expect(await lesson({ lesson_id: 'ls-1', status: 'dismissed' })).toBe(
         SESSION_WRITE_AUTONOMY_LEVEL
       );
-      expect(await lesson({ lesson_id: 'ls-1', status: 'active' })).toBe(1);
+      expect(await lesson({ lesson_id: 'ls-1', status: 'active' })).toBe(
+        SESSION_WRITE_AUTONOMY_LEVEL
+      );
       expect(await lesson({ lesson_id: 'ls-1', rule: 'Tightened' })).toBe(1);
       expect(await proposal({ proposal_id: 'pr-1', status: 'dismissed' })).toBe(
         SESSION_WRITE_AUTONOMY_LEVEL
       );
-      expect(await proposal({ proposal_id: 'pr-1', status: 'accepted' })).toBe(1);
+      expect(await proposal({ proposal_id: 'pr-1', status: 'accepted' })).toBe(
+        SESSION_WRITE_AUTONOMY_LEVEL
+      );
       expect(await proposal({ proposal_id: 'pr-1', title: 'Edited' })).toBe(1);
+      expect(byName.get('apply_forge_rollup')?.autonomyRequirement).toBe(
+        SESSION_WRITE_AUTONOMY_LEVEL
+      );
       for (const entry of byName.values()) {
         if (entry.family !== 'forge') continue;
         if (
-          !['update_forge_episode', 'update_forge_lesson', 'update_forge_task_proposal'].includes(
-            entry.name
-          )
+          ![
+            'update_forge_episode',
+            'update_forge_lesson',
+            'update_forge_task_proposal',
+            'apply_forge_rollup',
+          ].includes(entry.name)
         ) {
           expect(entry.autonomyRequirement).toBeUndefined();
         }
