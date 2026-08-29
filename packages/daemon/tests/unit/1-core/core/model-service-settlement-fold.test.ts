@@ -94,20 +94,20 @@ describe('model-service settlement + fold pins', () => {
     it('clears a recorded failure and armed retry once the provider loads', async () => {
       const { refreshModels } = await import('../../../../src/lib/model-service');
       let failing = true;
-      registerStubProvider('glm', async () => {
+      registerStubProvider('stub-recover', async () => {
         if (failing) throw new Error('Endpoint returned HTTP 503');
-        return [stubModel('glm', 'glm-5-live')];
+        return [stubModel('stub-recover', 'stub-recover-live')];
       });
       await refreshModels();
-      expect(getProviderFailure('glm')?.errorKind).toBe('transient');
-      expect(hasRefreshBeenAttemptedFor('glm')).toBe(true);
+      expect(getProviderFailure('stub-recover')?.errorKind).toBe('transient');
+      expect(hasRefreshBeenAttemptedFor('stub-recover')).toBe(true);
 
       failing = false;
       await refreshModels();
 
-      expect(getProviderFailure('glm')).toBeUndefined();
-      expect(hasRefreshBeenAttemptedFor('glm')).toBe(false);
-      expect(getAvailableModels('global').some((m) => m.id === 'glm-5-live')).toBe(true);
+      expect(getProviderFailure('stub-recover')).toBeUndefined();
+      expect(hasRefreshBeenAttemptedFor('stub-recover')).toBe(false);
+      expect(getAvailableModels('global').some((m) => m.id === 'stub-recover-live')).toBe(true);
     });
 
     it('arms a scheduled retry timer for a transient failure', async () => {
@@ -158,7 +158,7 @@ describe('model-service settlement + fold pins', () => {
       try {
         let calls = 0;
         let releaseProbe: ((models: ModelInfo[]) => void) | null = null;
-        registerStubProvider('glm', async () => {
+        registerStubProvider('stub-recover', async () => {
           calls += 1;
           if (calls === 1) throw new Error('Endpoint returned HTTP 503');
           if (calls === 2) {
@@ -166,28 +166,28 @@ describe('model-service settlement + fold pins', () => {
               releaseProbe = resolve;
             });
           }
-          return [stubModel('glm', 'glm-5-foreground')];
+          return [stubModel('stub-recover', 'stub-recover-foreground')];
         });
 
         await refreshModels();
-        expect(getProviderFailure('glm')?.errorKind).toBe('transient');
+        expect(getProviderFailure('stub-recover')?.errorKind).toBe('transient');
 
         jest.advanceTimersByTime(60_001);
         await flushMicrotasks();
         expect(calls).toBe(2);
 
         await refreshModels();
-        expect(getProviderFailure('glm')).toBeUndefined();
-        expect(getAvailableModels('global').some((m) => m.id === 'glm-5-foreground')).toBe(true);
+        expect(getProviderFailure('stub-recover')).toBeUndefined();
+        expect(getAvailableModels('global').some((m) => m.id === 'stub-recover-foreground')).toBe(
+          true
+        );
 
-        releaseProbe?.([stubModel('glm', 'glm-5-stale')]);
+        releaseProbe?.([stubModel('stub-recover', 'stub-recover-stale')]);
         await flushMicrotasks();
 
-        expect(
-          getAvailableModels('global')
-            .filter((m) => m.provider === 'glm')
-            .map((m) => m.id)
-        ).toEqual(['glm-5-foreground']);
+        const models = getAvailableModels('global');
+        expect(models.some((m) => m.id === 'stub-recover-foreground')).toBe(true);
+        expect(models.some((m) => m.id === 'stub-recover-stale')).toBe(false);
       } finally {
         jest.useRealTimers();
       }
