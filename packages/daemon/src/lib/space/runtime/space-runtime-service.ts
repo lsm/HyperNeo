@@ -865,7 +865,7 @@ export class SpaceRuntimeService {
       throw new Error(result.error ?? 'Failed to refresh long-horizon agent session');
     }
     await session.reevaluateContextBudgetAfterModelSwitch?.();
-    await session.startStreamingQuery();
+    await session.restart();
   }
 
   private async resolveCoordinatorSession(spaceId: string) {

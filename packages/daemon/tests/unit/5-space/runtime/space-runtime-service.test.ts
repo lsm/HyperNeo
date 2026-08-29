@@ -3801,12 +3801,12 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
   test('updates provider undefined → kimi on the next wake', async () => {
     const updateConfig = mock(async () => {});
     const resetQuery = mock(async () => ({ success: true }));
-    const startStreamingQuery = mock(async () => {});
+    const restart = mock(async () => {});
     const stranded = {
       getSessionData: () => ({ config: { model: 'kimi-for-coding', provider: undefined } }),
       updateConfig,
       resetQuery,
-      startStreamingQuery,
+      restart,
     } as unknown as AgentSession;
 
     const built = await (
@@ -3826,7 +3826,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
     expect(updateConfig).toHaveBeenCalledTimes(1);
     expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({ provider: 'kimi' }));
     expect(resetQuery).toHaveBeenCalledWith({ restartQuery: false });
-    expect(startStreamingQuery).toHaveBeenCalledTimes(1);
+    expect(restart).toHaveBeenCalledTimes(1);
   });
 
   test('re-evaluates the context budget before starting the restarted query', async () => {
@@ -3841,15 +3841,15 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
     const reevaluate = mock(async () => {
       order.push('reevaluate');
     });
-    const startStreamingQuery = mock(async () => {
-      order.push('start');
+    const restart = mock(async () => {
+      order.push('restart');
     });
     const session = {
       getSessionData: () => ({ config: { model: 'old-model', provider: 'kimi' } }),
       updateConfig,
       resetQuery,
       reevaluateContextBudgetAfterModelSwitch: reevaluate,
-      startStreamingQuery,
+      restart,
     } as unknown as AgentSession;
 
     await refresh().refreshLongHorizonAgentSessionConfig(session, {
@@ -3859,7 +3859,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
 
     expect(updateConfig).toHaveBeenCalledTimes(1);
     expect(resetQuery).toHaveBeenCalledWith({ restartQuery: false });
-    expect(order).toEqual(['updateConfig', 'resetQuery', 'reevaluate', 'start']);
+    expect(order).toEqual(['updateConfig', 'resetQuery', 'reevaluate', 'restart']);
   });
 
   test('is a no-op when the provider already matches', async () => {
