@@ -63,7 +63,7 @@ pins header parsing and the cooldown/backoff path; the extracted helper modules
 | C3a | head-ref delta maintenance, tracked-PR reconcile | `github-pr-head-ref-index.ts` | ~75 | 0 | No — explicit-state mutator fns |
 | C3b | cursor GC, check-run pending→committed promotion | new `github-poll-cursor-gc.ts` | ~40 | 0 | No — GC mutators; promotion returns replacement record |
 | C4 | `resolveCheckRunSupersession` (pure plan w/ set updates), `resolveCheckRunLegacyOwner` | new `github-check-run-dedupe.ts` | ~45 | 0 | No — pure plan + pure fn |
-| C5 | `resolveMergeConflictTransition`, review freshness/etag policy, reaction freshness policy | new `github-poll-subscans.ts` | ~80 | 0 | No — plain pure fns |
+| C5a/b/c | merge-conflict / review / reaction transition plans (one module, three entry families) | new `github-poll-subscans.ts` | ~80 | 0 | No — pure plans returning cursor-state updates |
 | C6 | `planPollCursorCommit` | new `github-poll-cursor-commit.ts` | ~60 | 0 | No — pure plan, apply stays in class |
 
 ### C1 — response classification (the three-layer rate-limit cascade)
@@ -116,7 +116,13 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
 
 - `resolveEndpointWatermark` (:2315–2325): seed-lookback decision
   (`saved === 0 && committed === 0 && comment endpoint` → `now −
-  COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS`), else saved, else committed. ~15 lines.
+  COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS`), else saved, else committed.
+  Returns the watermark AND the seeded-write update: the source persists the
+  lookback into `endpointLastSeenAt` BEFORE the fetch (:2325), so a failed
+  first poll still pins the seed for the next cycle — a contract returning
+  only the timestamp would let the caller recompute `now − lookback` on every
+  failed cycle, drifting the lower bound forward through an outage and
+  skipping outage-window comments. ~15 lines.
 - `resolvePullsSeedNeed` (:2327–2332): `endpoint === 'pulls' && (pullsSeedInProgress || no tracked PRs || (PRs tracked && no head SHAs))` — the endpoint discriminator is part of the helper contract, not the caller's; without it an empty tracked-PR list would force seed mode (and suppress `since`/page-1 etag) for the comment endpoints too. ~8 lines. This flag also suppresses the
   `since` param (:2333) and the page-1 etag (:2338) — the extraction must keep
   both `!pullsNeedsSeed` uses verbatim.
@@ -181,22 +187,36 @@ maintenance:
   no microtask boundary; the fan-out publish loop (:2710–2729) stays
   imperative.
 
-### C5 — PR-scoped sub-scan transitions
+### C5 — PR-scoped sub-scan transitions (three entry families, three slices)
 
-- `resolveMergeConflictTransition` (:2841–2855): `mergeable === null &&
+The three sub-scans are independent loops (:2770, :2879, :3018) — three entry
+families, sliced separately (GH-E5a/b/c below) into one shared module that
+grows across the slices. Every helper here is a **pure plan returning its
+cursor-state updates for the caller to apply** — eligibility alone cannot
+preserve the current writes (`mergeConflictStates`/`mergeConflictSequences`
+:2851/:2854, `seenReviewIds`/`reviewLastSeenAt` :2982/:2986–2987,
+`seenReactionIds` :3101/:3105), and a bare predicate would either go impure
+or drop state transitions (same contract class as C4's supersession plan).
+
+- C5a `resolveMergeConflictTransition` (:2841–2855): `mergeable === null &&
   mergeableState !== 'dirty'` skip — the input is the `mergeable_state` field
   (:2845–2848), NOT the PR `state`; an open PR with `mergeable: null` and
   `mergeable_state: 'dirty'` must NOT skip (name the helper input
   `mergeableState` so a literal implementation cannot suppress dirty-state
-  conflict events). Conflicting computation, no-change suppression, sequence
-  bump. ~20 lines.
-- Review freshness + etag policy (:2875–2989 subset): first-seen watermark
-  seed, seen-id + watermark gate, single-page etag commit
-  (`complete && singlePage && pendingEtag`) vs delete (:3001–3005). ~25 lines.
-- Reaction freshness (:3094–3107): positive filter + seen-ids +
-  committed-watermark stale suppression. ~20 lines. C5's outputs stop at the
-  scan flags (`reactionPolledAt`, `reactionsFullyPolled`); the
+  conflict events). Returns `{skip} | {conflicting, sequence}` — the caller
+  applies the `mergeConflictStates`/`mergeConflictSequences` writes.
+  ~20 lines.
+- C5b review freshness + etag policy (:2875–2989 subset, :3001–3005):
+  first-seen watermark seed, seen-id + watermark gate (note the stale path
+  marks the id seen WITHOUT advancing the watermark, :2981–2984), single-page
+  etag commit (`complete && singlePage && pendingEtag`) vs delete. Returns
+  `{markSeen?, advanceWatermark?, commitEtag | clearEtag}`. ~25 lines.
+- C5c reaction freshness (:3094–3107): positive filter + seen-ids +
+  committed-watermark stale suppression (the stale path also marks seen,
+  :3100–3103). Returns `{markSeen?, publish?}`. Its outputs stop at the scan
+  flags (`reactionPolledAt`, `reactionsFullyPolled`); the
   `lastReactionPollAt` commit rule (:3196–3198) belongs to C6, not here.
+  ~20 lines.
 
 ### C6 — cursor commit policy (`planPollCursorCommit`)
 
@@ -251,13 +271,15 @@ equivalence pins are added.
 | Slice | Kind | Delivers | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
 | GH-P1a | pin | response-classification decision table (the 429-synthesis, secondary body-sniff, 304, low-remaining dimensions the fake-fetch suites cover only via whole cycles; BOTH 304-vs-limited precedence variants — see C1) | 0 | ≲200 | — |
-| GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × credentialStale × accessible × pollErrorMessage × prior-error presence/value × reactionsFullyPolled × reactionPolledAt × prior cursor.lastReactionPollAt` — the error fields are load-bearing fallbacks at :3154, :3161–3165 and the reaction timestamp reads all three reaction axes at :3196–3198 — → committed/pending watermarks, error fields, reaction timestamp, write split) | 0 | ≲300 | — |
+| GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × credentialStale × accessible × pollErrorMessage × prior-error presence/value × reactionsFullyPolled × reactionPolledAt × prior cursor.lastReactionPollAt × current token fingerprint × prior cursor.lastPollCredentialFingerprint` — the error fields are load-bearing fallbacks at :3154, :3161–3165, the reaction timestamp reads all three reaction axes at :3196–3198, and the credential fingerprint is written from the current token only when accessible (:3199–3201) — → committed/pending watermarks, error fields, reaction timestamp, credential fingerprint, write split) | 0 | ≲350 | — |
 | GH-E1 | extract | C1 two-phase poll-response classifiers + backoff helper, swapped at the 5 cycle sites ONLY — `githubFetch` keeps its own classification (see open question 1) | ≲120 net (−~150 dup) | ≲300 | GH-P1a |
 | GH-E2 | extract | C2 watermark/seed/cutoff/page-advance helpers | ≲100 | ≲250 | — |
 | GH-E3a | extract | C3a head-ref delta policy + tracked-PR reconcile (mutator extraction) | ≲90 | ≲200 | GH-E2 |
 | GH-E3b | extract | C3b cursor GC + check-run promotion (mutator extraction) | ≲50 | ≲150 | GH-E3a |
 | GH-E4 | extract | C4 supersession + legacy-owner decisions | ≲80 | ≲200 | — |
-| GH-E5 | extract | C5 merge/review/reaction transition helpers (one module; split if review prefers) | ≲90 | ≲250 | — |
+| GH-E5a | extract | C5a merge-conflict transition plan (first into `github-poll-subscans.ts`) | ≲40 | ≲120 | — |
+| GH-E5b | extract | C5b review freshness/etag plan (extends `github-poll-subscans.ts`) | ≲40 | ≲120 | — |
+| GH-E5c | extract | C5c reaction freshness plan (extends `github-poll-subscans.ts`) | ≲30 | ≲100 | — |
 | GH-E6 | extract | C6 `planPollCursorCommit` + write-split decision | ≲90 | ≲300 (decision table) | GH-P1b, GH-E2 |
 
 Each slice: one module + its call-site swaps; may not touch the loops'
@@ -268,7 +290,8 @@ purity caveat there). Slice count is an output of measurement — C1 is
 separately sliced from C2–C6 because it deletes duplication across five sites
 while the others are single-cluster moves; C3 splits into C3a/C3b because
 index maintenance and cursor GC are different purposes landing in different
-modules; no slice mixes clusters or modules.
+modules; C5's three sub-scans are three entry families (GH-E5a/b/c) growing
+one shared module across serial slices; no slice mixes clusters or modules.
 
 ## Risks and caveats
 
