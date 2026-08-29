@@ -133,7 +133,7 @@ export interface SDKMessageHandlerContext {
 
   clearPendingResumeAfterCompaction?(): void;
 
-  reevaluateContextBudgetAfterModelSwitch?(opts?: { supersededQueued?: boolean }): Promise<void>;
+  reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
 
   onResultLimitError?(
     errorText: string,
@@ -1751,14 +1751,15 @@ export class SDKMessageHandler {
       model: fallbackModel,
     };
     db.updateSession(session.id, { config: session.config });
+    const reevaluation = this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
     await internalEventBus.publish('session.updated', {
       sessionId: session.id,
       source: 'model-refusal-fallback',
       session: { config: session.config },
     });
-    if (this.ctx.reevaluateContextBudgetAfterModelSwitch) {
+    if (reevaluation) {
       try {
-        await this.ctx.reevaluateContextBudgetAfterModelSwitch();
+        await reevaluation;
       } catch (error) {
         this.logger.warn(
           `post-fallback context budget evaluation failed for ${session.id}:`,

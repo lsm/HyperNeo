@@ -1,11 +1,13 @@
 import { describe, expect, it, mock } from 'bun:test';
-import type { ContextInfo } from '@hyperneo/shared';
+import type { ContextInfo, Session } from '@hyperneo/shared';
 import {
   type ContextBudgetEnforcementInput,
+  type ContextBudgetReevaluationInput,
   enforceContextBudget,
   enqueueBudgetCompaction,
   resolveBudgetThresholds,
   runContextBudgetDecision,
+  runContextBudgetReevaluation,
 } from '../../../../src/lib/agent/context-budget-enforcement';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -146,6 +148,72 @@ describe('enforce-context-budget pipeline', () => {
   ])('halts without enqueueing for %s', (_label, overrides) => {
     const { input, enqueue } = enforcementHarness(overrides);
     const outcome = enforceContextBudget(input);
+    expect(outcome.compactionEnqueued).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('reevaluate-context-budget pipeline', () => {
+  function reevaluationHarness(resolveModelInfo: () => Promise<unknown>) {
+    const session = {
+      id: 'reevaluation-session',
+      config: { model: 'switched-model', provider: 'openrouter' },
+    } as unknown as Session;
+    const trackerInfo = {
+      model: 'old-model',
+      totalUsed: 950_000,
+      totalCapacity: 2_000_000,
+      percentUsed: 47,
+      breakdown: {},
+      isAutoCompactEnabled: false,
+    } as unknown as ContextInfo;
+    const enqueue = mock(async () => 'compact-id');
+    const messageQueue = {
+      enqueue,
+      removePendingInternalCompactions: mock(() => 0),
+      hasOutstandingInternalCompaction: mock(() => false),
+      isRunning: mock(() => false),
+    };
+    const contextTracker = {
+      isCoolingDown: mock(() => false),
+      markCompactionTriggered: mock(() => {}),
+      clearCompactionCooldown: mock(() => {}),
+    };
+    const stateManager = {
+      getIsCompacting: mock(() => false),
+      getState: mock(() => ({ phase: 'idle', status: 'idle' })),
+    };
+    const input: ContextBudgetReevaluationInput = {
+      session,
+      trackerInfo,
+      resolveModelInfo: resolveModelInfo as ContextBudgetReevaluationInput['resolveModelInfo'],
+      limitRecoveryPending: false,
+      contextTracker: contextTracker as never,
+      messageQueue: messageQueue as never,
+      stateManager: stateManager as never,
+      logger: new Logger('reevaluation-test'),
+      resumePendingWork: mock(() => {}),
+      clearPendingResume: mock(() => {}),
+    };
+    return { input, enqueue };
+  }
+
+  it('enqueues a dormant compaction through the enforcement pipeline on a stopped queue', async () => {
+    const { input, enqueue } = reevaluationHarness(async () => ({
+      id: 'switched-model',
+      contextWindow: 1_000_000,
+    }));
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(true);
+    expect(enqueue).toHaveBeenCalledWith('/compact', true, { durable: true, prepend: true });
+  });
+
+  it('halts when the model fence changes while the catalog resolves', async () => {
+    const { input, enqueue } = reevaluationHarness(async () => {
+      input.session.config.model = 'newer-switch';
+      return { id: 'newer-switch', contextWindow: 1_000_000 };
+    });
+    const outcome = await runContextBudgetReevaluation(input);
     expect(outcome.compactionEnqueued).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
   });

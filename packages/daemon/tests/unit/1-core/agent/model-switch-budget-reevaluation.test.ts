@@ -137,4 +137,21 @@ describe('AgentSession model-switch context budget re-evaluation', () => {
       prepend: true,
     });
   });
+
+  it('does not enqueue a second compaction while a delivered one awaits its boundary', async () => {
+    cacheModelsWithWindow(1_000_000);
+    const session = createAgentSession('switched-model');
+    session.contextTracker.restoreFromMetadata(restoreTrackerInfo(950_000, 1_000_000));
+    session.messageQueue.noteInternalCompactionSent({
+      id: 'delivered-compact',
+      content: '/compact',
+      internal: true,
+    } as never);
+    expect(session.messageQueue.hasCompactionsAwaitingBoundary()).toBe(true);
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueue');
+
+    await session.reevaluateContextBudgetAfterModelSwitch();
+
+    expect(enqueueSpy).not.toHaveBeenCalled();
+  });
 });

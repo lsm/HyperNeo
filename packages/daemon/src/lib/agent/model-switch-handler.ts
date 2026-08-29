@@ -53,7 +53,7 @@ export interface ModelSwitchHandlerContext {
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
   readonly disposeAcpSessions?: typeof disposeAcpSessions;
-  reevaluateContextBudgetAfterModelSwitch?(opts?: { supersededQueued?: boolean }): Promise<void>;
+  reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
 }
 
 export interface ModelSwitchResult {

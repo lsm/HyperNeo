@@ -9,6 +9,7 @@ import type {
   MessageContent,
   MessageHub,
   MessageOrigin,
+  ModelInfo,
   Provider,
   QuestionDraftResponse,
   RewindMode,
@@ -147,7 +148,7 @@ import {
   contextBudgetThreshold,
   decideContextBudgetCompaction,
 } from './context-budget-decision.ts';
-import { enforceContextBudget } from './context-budget-enforcement.ts';
+import { runContextBudgetReevaluation } from './context-budget-enforcement.ts';
 import { ContextTracker } from './context-tracker.ts';
 import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
 import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
@@ -1537,71 +1538,41 @@ export class AgentSession
     );
   }
 
-  async reevaluateContextBudgetAfterModelSwitch(opts?: {
-    supersededQueued?: boolean;
-  }): Promise<void> {
+  async reevaluateContextBudgetAfterModelSwitch(): Promise<void> {
     const trackerInfo = this.contextTracker.getContextInfo();
     if (!trackerInfo || trackerInfo.totalUsed <= 0) return;
-    const supersededQueued =
-      opts?.supersededQueued === true || this.messageQueue.revokeAllInternalCompactions() > 0;
-    if (supersededQueued) {
-      this.contextTracker.clearCompactionCooldown();
-    }
-    const fenceModel = this.session.config.model;
-    const fenceProvider = this.session.config.provider;
-    const enforcement = (async () => {
-      let modelInfo = await getSessionModelInfo(this.session);
-      if (!modelInfo) {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, 150);
-          if (typeof timer.unref === 'function') {
-            timer.unref();
-          }
-        });
-        modelInfo = await getSessionModelInfo(this.session);
-      }
-      if (
-        this.session.config.model !== fenceModel ||
-        this.session.config.provider !== fenceProvider
-      ) {
-        return;
-      }
-      const contextInfo: ContextInfo = {
-        ...trackerInfo,
-        totalCapacity:
-          modelInfo?.contextWindow && modelInfo.contextWindow > 0
-            ? modelInfo.contextWindow
-            : trackerInfo.totalCapacity,
-        autoCompactPercent: modelInfo
-          ? modelInfo.autoCompactPercent
-          : trackerInfo.autoCompactPercent,
-      };
-      const outcome = enforceContextBudget({
-        sessionId: this.session.id,
-        providerId: this.session.config.provider,
-        reason: 'model-switch',
-        contextInfo,
-        fallbackContextWindow: modelInfo?.contextWindow,
-        clearedDeadCompaction: false,
-        limitRecoveryPending: this.isLimitRecoveryPending(),
-        contextTracker: this.contextTracker,
-        messageQueue: this.messageQueue,
-        stateManager: this.stateManager,
-        logger: this.logger,
-        onCompactionAbandoned: () => this.clearPendingResumeAfterCompaction(),
+    const reevaluation = runContextBudgetReevaluation({
+      session: this.session,
+      trackerInfo,
+      resolveModelInfo: () => this.resolveSessionModelInfoWithRetry(),
+      limitRecoveryPending: this.isLimitRecoveryPending(),
+      contextTracker: this.contextTracker,
+      messageQueue: this.messageQueue,
+      stateManager: this.stateManager,
+      logger: this.logger,
+      resumePendingWork: () => this.resumePendingWorkAfterCompaction(),
+      clearPendingResume: () => this.clearPendingResumeAfterCompaction(),
+    })
+      .then(() => undefined)
+      .catch((error) => {
+        this.logger.warn('post-switch context budget evaluation failed:', error);
       });
-      if (!outcome.compactionEnqueued && !this.messageQueue.hasOutstandingInternalCompaction()) {
-        if (supersededQueued) {
-          this.resumePendingWorkAfterCompaction();
-        } else {
-          this.clearPendingResumeAfterCompaction();
+    this.messageQueue.setDeliveryGate(boundedDeliveryGate(reevaluation, Date.now() + 5000));
+    await reevaluation;
+  }
+
+  private async resolveSessionModelInfoWithRetry(): Promise<ModelInfo | null> {
+    let modelInfo = await getSessionModelInfo(this.session);
+    if (!modelInfo) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 150);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
         }
-      }
-    })().catch((error) => {
-      this.logger.warn('post-switch context budget evaluation failed:', error);
-    });
-    this.messageQueue.setDeliveryGate(boundedDeliveryGate(enforcement, Date.now() + 5000));
-    await enforcement;
+      });
+      modelInfo = await getSessionModelInfo(this.session);
+    }
+    return modelInfo;
   }
 
   async midTurnContextBudgetCheck(): Promise<void> {

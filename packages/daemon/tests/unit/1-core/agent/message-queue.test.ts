@@ -1126,11 +1126,12 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
-    it('revokeAllInternalCompactions clears queued and delivered compaction bookkeeping', async () => {
+    it('removePendingInternalCompactions keeps a delivered compaction outstanding', async () => {
       const q = new MessageQueue();
       q.start();
       const sent = q.enqueue('/compact', true, { durable: true });
       void q.enqueueWithId('compact-queued', '/compact', true, { durable: true });
+      const userMessage = q.enqueueWithId('user-msg', 'finish the deploy', false);
       const generator = q.messageGenerator(testSessionId);
       const result = await generator.next();
       result.value.onSent();
@@ -1138,22 +1139,12 @@ describe('MessageQueue', () => {
       expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
       expect(q.hasQueuedInternalCompaction()).toBe(true);
 
-      const revoked = q.revokeAllInternalCompactions();
+      const removed = q.removePendingInternalCompactions();
 
-      expect(revoked).toBe(2);
-      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
-      expect(q.hasOutstandingInternalCompaction()).toBe(false);
-      q.stop();
-    });
-
-    it('revokeAllInternalCompactions leaves non-compaction messages queued', async () => {
-      const q = new MessageQueue();
-      q.start();
-      const userMessage = q.enqueueWithId('user-msg', 'finish the deploy', false);
-      expect(q.hasQueuedMessages()).toBe(true);
-
-      expect(q.revokeAllInternalCompactions()).toBe(0);
-
+      expect(removed).toBe(1);
+      expect(q.hasQueuedInternalCompaction()).toBe(false);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
       expect(q.hasQueuedMessages()).toBe(true);
       q.stop();
       q.clear();

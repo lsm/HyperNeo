@@ -212,14 +212,6 @@ export class MessageQueue {
     return this.cancelInternalCompactionEntries(false, false);
   }
 
-  revokeAllInternalCompactions(): number {
-    const revoked = this.removePendingInternalCompactions();
-    const delivered = this.internalCompactionsAwaitingBoundary;
-    this.internalCompactionsAwaitingBoundary = 0;
-    this.internalCompactionIdsAwaitingBoundary.clear();
-    return revoked + delivered;
-  }
-
   revokeDeliveredCompaction(messageId: string): boolean {
     if (!this.internalCompactionIdsAwaitingBoundary.delete(messageId)) return false;
     this.internalCompactionsAwaitingBoundary = Math.max(

@@ -1,4 +1,4 @@
-import type { ContextInfo } from '@hyperneo/shared';
+import type { ContextInfo, ModelInfo, Session } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Logger } from '../logger.ts';
 import {
@@ -127,4 +127,116 @@ export function enforceContextBudget(
     decision: null,
     compactionEnqueued: false,
   });
+}
+
+export interface ContextBudgetReevaluationCtx {
+  session: Session;
+  trackerInfo: ContextInfo;
+  resolveModelInfo: () => Promise<ModelInfo | null>;
+  limitRecoveryPending: boolean;
+  contextTracker: ContextTracker;
+  messageQueue: MessageQueue;
+  stateManager: ProcessingStateManager;
+  logger: Logger;
+  resumePendingWork: () => void;
+  clearPendingResume: () => void;
+  fenceModel: string;
+  fenceProvider: string | undefined;
+  supersededQueued: boolean;
+  modelInfo: ModelInfo | null;
+  compactionEnqueued: boolean;
+}
+
+export type ContextBudgetReevaluationInput = Omit<
+  ContextBudgetReevaluationCtx,
+  'fenceModel' | 'fenceProvider' | 'supersededQueued' | 'modelInfo' | 'compactionEnqueued'
+>;
+
+export function revokeSupersededCompactions(
+  ctx: ContextBudgetReevaluationCtx
+): ContextBudgetReevaluationCtx {
+  const revoked = ctx.messageQueue.removePendingInternalCompactions();
+  if (revoked > 0) {
+    ctx.contextTracker.clearCompactionCooldown();
+  }
+  return { ...ctx, supersededQueued: revoked > 0 };
+}
+
+export async function resolveReevaluationModelInfo(
+  ctx: ContextBudgetReevaluationCtx
+): Promise<ContextBudgetReevaluationCtx> {
+  return { ...ctx, modelInfo: await ctx.resolveModelInfo() };
+}
+
+export function runReevaluationEnforcement(
+  ctx: ContextBudgetReevaluationCtx
+): ContextBudgetReevaluationCtx {
+  const modelInfo = ctx.modelInfo;
+  const contextInfo: ContextInfo = {
+    ...ctx.trackerInfo,
+    totalCapacity:
+      modelInfo?.contextWindow && modelInfo.contextWindow > 0
+        ? modelInfo.contextWindow
+        : ctx.trackerInfo.totalCapacity,
+    autoCompactPercent: modelInfo
+      ? modelInfo.autoCompactPercent
+      : ctx.trackerInfo.autoCompactPercent,
+  };
+  const outcome = enforceContextBudget({
+    sessionId: ctx.session.id,
+    providerId: ctx.session.config.provider,
+    reason: 'model-switch',
+    contextInfo,
+    fallbackContextWindow: modelInfo?.contextWindow,
+    clearedDeadCompaction: false,
+    limitRecoveryPending: ctx.limitRecoveryPending,
+    contextTracker: ctx.contextTracker,
+    messageQueue: ctx.messageQueue,
+    stateManager: ctx.stateManager,
+    logger: ctx.logger,
+    onCompactionAbandoned: ctx.clearPendingResume,
+  });
+  return { ...ctx, compactionEnqueued: outcome.compactionEnqueued };
+}
+
+export function settlePendingResumeAfterReevaluation(
+  ctx: ContextBudgetReevaluationCtx
+): ContextBudgetReevaluationCtx {
+  if (ctx.supersededQueued) {
+    ctx.resumePendingWork();
+  } else {
+    ctx.clearPendingResume();
+  }
+  return ctx;
+}
+
+const runReevaluateContextBudget = (
+  superpipe({
+    modelFenceChanged: (ctx: ContextBudgetReevaluationCtx) =>
+      ctx.session.config.model !== ctx.fenceModel ||
+      ctx.session.config.provider !== ctx.fenceProvider,
+    resumeSettledElsewhere: (ctx: ContextBudgetReevaluationCtx) =>
+      ctx.compactionEnqueued || ctx.messageQueue.hasOutstandingInternalCompaction(),
+  })('reevaluate-context-budget') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(revokeSupersededCompactions, 'ctx', 'ctx')
+  .pipe(resolveReevaluationModelInfo, 'ctx', 'ctx')
+  .pipe('!modelFenceChanged', 'ctx')
+  .pipe(runReevaluationEnforcement, 'ctx', 'ctx')
+  .pipe('!resumeSettledElsewhere', 'ctx')
+  .pipe(settlePendingResumeAfterReevaluation, 'ctx', 'ctx')
+  .endAsync('ctx');
+
+export function runContextBudgetReevaluation(
+  input: ContextBudgetReevaluationInput
+): Promise<ContextBudgetReevaluationCtx> {
+  return runReevaluateContextBudget({
+    ...input,
+    fenceModel: input.session.config.model,
+    fenceProvider: input.session.config.provider,
+    supersededQueued: false,
+    modelInfo: null,
+    compactionEnqueued: false,
+  }) as Promise<ContextBudgetReevaluationCtx>;
 }
