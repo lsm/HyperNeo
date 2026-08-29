@@ -4,9 +4,10 @@ Measured map of `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`
 (5,065 lines; 365 `if`/`else if` arms + 74 ternaries + switch cases ≈ 405+
 branches) against ADR 0004. Measure-only slice: no source changes are proposed
 here. Child implementation slices are cut by the coordinator after owner review.
-The ladder below is the current 35-row table (pin / build / wire / delete /
-extract); coordinators cut child issues from that table, not from any earlier
-summary of it.
+The ladder below is the current 36-row table (pin / build / wire / delete /
+extract) — 35 mandatory slices plus the optional TAM-H non-superpipe
+extraction, which does not count toward the mandatory ladder; coordinators
+cut child issues from that table, not from any earlier summary of it.
 
 Two epic suspects are verified **gone from this file**:
 `recoverWorkflowBackedTask` now lives in `space-runtime-service.ts`, and the
