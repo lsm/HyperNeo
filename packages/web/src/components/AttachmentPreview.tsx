@@ -22,7 +22,7 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
             class="w-full h-full object-cover"
           />
 
-          <div class="absolute inset-0 bg-scrim opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-1">
+          <div class="absolute inset-0 bg-scrim-strong opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-1">
             <div class="text-xs text-accent-fg text-center truncate w-full px-1">
               {attachment.name}
             </div>
@@ -32,7 +32,7 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
           <button
             type="button"
             onClick={() => onRemove(index)}
-            class="absolute top-1 right-1 w-5 h-5 rounded-full bg-danger hover:bg-danger text-accent-fg flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
+            class="absolute top-1 right-1 w-5 h-5 rounded-full bg-danger hover:bg-danger text-on-danger flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
             aria-label="Remove attachment"
             title="Remove attachment"
           >

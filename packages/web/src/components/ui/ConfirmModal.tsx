@@ -37,11 +37,11 @@ export function ConfirmModal({
 
   const confirmButtonClasses =
     confirmButtonVariant === 'danger'
-      ? 'bg-danger hover:bg-danger text-accent-fg disabled:bg-danger/50'
+      ? 'bg-danger hover:bg-danger text-on-danger disabled:bg-danger/50'
       : confirmButtonVariant === 'warning'
         ? 'bg-warning hover:bg-warning text-on-warning disabled:bg-warning/50'
         : confirmButtonVariant === 'approve'
-          ? 'bg-success hover:bg-success text-accent-fg disabled:bg-success/50'
+          ? 'bg-success hover:bg-success text-on-success disabled:bg-success/50'
           : 'bg-accent-hover hover:bg-accent-hover text-accent-fg disabled:bg-accent-hover/50';
 
   return (

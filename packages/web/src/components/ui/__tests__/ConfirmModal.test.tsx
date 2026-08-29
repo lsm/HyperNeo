@@ -511,7 +511,7 @@ describe('ConfirmModal', () => {
       );
       const buttons = document.body.querySelectorAll('button[type="button"]');
       const confirmButton = Array.from(buttons).find((btn) => btn.textContent === 'Confirm');
-      expect(confirmButton?.className).toContain('text-accent-fg');
+      expect(confirmButton?.className).toContain('text-on-danger');
     });
   });
 

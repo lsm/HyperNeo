@@ -49,6 +49,7 @@
   --color-fill-strong: var(--fill-strong);
   --color-scrim: var(--scrim);
   --color-scrim-soft: var(--scrim-soft);
+  --color-scrim-strong: var(--scrim-strong);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-fg: var(--accent-fg);
@@ -58,6 +59,8 @@
   --color-warning: var(--warning);
   --color-warning-soft: var(--warning-soft);
   --color-on-warning: var(--on-warning);
+  --color-on-danger: var(--on-danger);
+  --color-on-success: var(--on-success);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-info: var(--info);
@@ -103,6 +106,7 @@
     --fill: rgb(255 255 255 / 0.1);
     --fill-strong: #2a2a30;
     --scrim: rgb(0 0 0 / 0.7);
+    --scrim-strong: rgb(0 0 0 / 0.6);
     --scrim-soft: rgb(0 0 0 / 0.1);
 
     --accent: #3b82f6;
@@ -111,11 +115,13 @@
     --accent-soft: #93c5fd;
 
     --success: #4ade80;
+    --on-success: #0a0a0b;
     --success-soft: #86efac;
     --warning: #fcd34d;
     --on-warning: #0a0a0b;
     --warning-soft: #fde68a;
     --danger: #f87171;
+    --on-danger: #0a0a0b;
     --danger-soft: #fca5a5;
     --info: #38bdf8;
     --info-soft: #bae6fd;
@@ -198,6 +204,7 @@
     --fill: rgb(0 0 0 / 0.08);
     --fill-strong: #e4e4e7;
     --scrim: rgb(0 0 0 / 0.3);
+    --scrim-strong: rgb(0 0 0 / 0.6);
     --scrim-soft: rgb(0 0 0 / 0.1);
 
     --accent: #2563eb;
@@ -206,11 +213,13 @@
     --accent-soft: #1d4ed8;
 
     --success: #16a34a;
+    --on-success: #0a0a0b;
     --success-soft: #15803d;
     --warning: #d97706;
     --on-warning: #0a0a0b;
     --warning-soft: #b45309;
     --danger: #dc2626;
+    --on-danger: #ffffff;
     --danger-soft: #b91c1c;
     --info: #0284c7;
     --info-soft: #0369a1;

@@ -157,7 +157,7 @@ export function SyntheticMessageBlock({
                   {block.type === 'text' && (
                     <MarkdownRenderer
                       content={block.text as string}
-                      class="text-sm leading-relaxed text-fg-soft [&_h1]:!text-amber-400 [&_h2]:!text-amber-400 [&_h3]:!text-amber-400 [&_h4]:!text-amber-400 [&_h5]:!text-amber-400 [&_h6]:!text-amber-400"
+                      class="text-sm leading-relaxed text-fg-soft [&_h1]:!text-warning-soft [&_h2]:!text-warning-soft [&_h3]:!text-warning-soft [&_h4]:!text-warning-soft [&_h5]:!text-warning-soft [&_h6]:!text-warning-soft"
                     />
                   )}
                   {block.type === 'image' && (

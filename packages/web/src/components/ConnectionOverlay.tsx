@@ -85,7 +85,7 @@ export function ConnectionOverlay() {
 
   return (
     <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-auto">
-      <div class="mt-2 px-4 py-2 rounded-lg bg-danger/90 text-accent-fg text-sm font-medium flex items-center gap-3 shadow-lg">
+      <div class="mt-2 px-4 py-2 rounded-lg bg-danger/90 text-on-danger text-sm font-medium flex items-center gap-3 shadow-lg">
         <span>Unable to reconnect.</span>
         <button
           onClick={handleReconnect}

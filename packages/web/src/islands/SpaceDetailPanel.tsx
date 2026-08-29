@@ -156,7 +156,7 @@ function SpaceDetailSessionRow({
                 void handleArchive();
               }}
               disabled={archiving}
-              class="px-2 py-0.5 rounded text-xs font-medium bg-danger text-accent-fg transition-colors hover:bg-danger disabled:opacity-60"
+              class="px-2 py-0.5 rounded text-xs font-medium bg-danger text-on-danger transition-colors hover:bg-danger disabled:opacity-60"
             >
               {archiving ? 'Archiving…' : 'Archive'}
             </button>

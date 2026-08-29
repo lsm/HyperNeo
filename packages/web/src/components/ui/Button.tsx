@@ -50,7 +50,7 @@ export function Button({
     secondary:
       'bg-surface-raised hover:bg-fill-strong text-fg border border-line-strong hover:border-line-strong active:scale-[0.98]',
     ghost: 'hover:bg-surface-raised text-fg-soft hover:text-fg active:scale-[0.98]',
-    danger: 'bg-danger hover:bg-danger text-accent-fg shadow-sm hover:shadow active:scale-[0.98]',
+    danger: 'bg-danger hover:bg-danger text-on-danger shadow-sm hover:shadow active:scale-[0.98]',
     warning:
       'bg-yellow-600 hover:bg-yellow-700 text-accent-fg shadow-sm hover:shadow active:scale-[0.98]',
     approve:

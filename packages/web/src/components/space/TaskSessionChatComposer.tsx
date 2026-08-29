@@ -144,7 +144,7 @@ export function TaskSessionChatComposer({
         <button
           type="button"
           class={cn(
-            'group inline-flex h-9 w-9 items-center justify-center rounded-full border border-surface/30 text-sm font-bold text-accent-fg shadow-sm ring-1 ring-line/10 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-accent/70 active:scale-95',
+            'group inline-flex h-9 w-9 items-center justify-center rounded-full border border-surface/30 text-sm font-bold text-dark-950 shadow-sm ring-1 ring-line/10 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-accent/70 active:scale-95',
             isNotStarted && 'ring-amber-400/40'
           )}
           style={{ backgroundColor: selectedTargetColor }}

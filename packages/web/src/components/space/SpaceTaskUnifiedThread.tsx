@@ -211,7 +211,7 @@ function ProviderAuthErrorBanner({ member }: { member: AuthErrorBannerMember }) 
       <button
         type="button"
         onClick={() => navigateToSettings('providers')}
-        class="text-xs font-medium px-2 py-0.5 rounded bg-danger hover:bg-danger text-accent-fg transition-colors shrink-0"
+        class="text-xs font-medium px-2 py-0.5 rounded bg-danger hover:bg-danger text-on-danger transition-colors shrink-0"
       >
         Re-authenticate {providerLabel}
       </button>

@@ -156,7 +156,7 @@ export function InputTextarea({
       class={cn(
         'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60',
         !disabled
-          ? 'bg-danger/90 text-accent-fg hover:bg-danger active:scale-95'
+          ? 'bg-danger/90 text-on-danger hover:bg-danger active:scale-95'
           : 'bg-fill-strong/50 text-fg-faint cursor-not-allowed'
       )}
     >

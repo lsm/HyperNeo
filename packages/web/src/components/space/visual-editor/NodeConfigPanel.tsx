@@ -1333,7 +1333,7 @@ export function NodeConfigPanel({
               <button
                 data-testid="delete-confirm-button"
                 onClick={handleDeleteConfirm}
-                class="flex-1 text-xs py-1.5 px-3 rounded bg-danger hover:bg-danger text-accent-fg font-medium transition-colors"
+                class="flex-1 text-xs py-1.5 px-3 rounded bg-danger hover:bg-danger text-on-danger font-medium transition-colors"
               >
                 Delete
               </button>

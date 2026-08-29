@@ -107,7 +107,10 @@ async function main(): Promise<void> {
       failed = true;
       process.stdout.write(`REGRESSION ${area}: ${before} -> ${after}\n`);
     } else if (after < before) {
-      process.stdout.write(`improved ${area}: ${before} -> ${after} (tighten baseline)\n`);
+      failed = true;
+      process.stdout.write(
+        `STALE BASELINE ${area}: ${before} -> ${after} (commit the tightened baseline with --write-baseline)\n`
+      );
     }
   }
   const baselineTotal = Object.values(baseline.areas).reduce((sum, n) => sum + n, 0);

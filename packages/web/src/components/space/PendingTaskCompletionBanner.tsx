@@ -177,7 +177,7 @@ export function PendingTaskCompletionBanner({
               onClick={() => void onApprove()}
               disabled={busy}
               data-testid="pending-task-completion-approve-confirm"
-              class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-success hover:bg-success text-accent-fg disabled:bg-success/50 disabled:cursor-not-allowed"
+              class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-success hover:bg-success text-on-success disabled:bg-success/50 disabled:cursor-not-allowed"
             >
               {busy ? 'Processing...' : 'Approve'}
             </button>
@@ -266,7 +266,7 @@ export function PendingTaskCompletionBanner({
               onClick={() => void onRejectConfirm()}
               disabled={busy}
               data-testid="pending-task-completion-reject-confirm"
-              class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-danger hover:bg-danger text-accent-fg disabled:bg-danger/50 disabled:cursor-not-allowed"
+              class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-danger hover:bg-danger text-on-danger disabled:bg-danger/50 disabled:cursor-not-allowed"
             >
               {busy ? 'Processing...' : 'Send back to agent'}
             </button>

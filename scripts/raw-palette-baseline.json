@@ -3,9 +3,9 @@
   "areas": {
     "components": 84,
     "components/__tests__": 4,
-    "components/sdk": 67,
+    "components/sdk": 61,
     "components/settings": 11,
-    "components/space": 156,
+    "components/space": 155,
     "components/ui": 27,
     "hooks": 3,
     "islands": 24,

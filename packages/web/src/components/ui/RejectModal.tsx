@@ -66,7 +66,7 @@ export function RejectModal({
             type="button"
             onClick={handleConfirm}
             disabled={isLoading || !isValid}
-            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-danger hover:bg-danger text-accent-fg disabled:bg-danger/50"
+            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-danger hover:bg-danger text-on-danger disabled:bg-danger/50"
           >
             {isLoading ? 'Rejecting...' : confirmText}
           </button>

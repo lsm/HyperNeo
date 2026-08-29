@@ -220,7 +220,7 @@ export function ImportPreviewDialog({
         )}
 
         {hasValidationErrors && (
-          <div class="rounded-lg border border-yellow-800 bg-yellow-950/30 p-3">
+          <div class="rounded-lg border border-warning/40 bg-warning/10 p-3">
             <p class="text-xs text-warning-soft">
               Workflows with unresolved agent references cannot be imported. Ensure all referenced
               agents are included in the bundle or already exist in this space.

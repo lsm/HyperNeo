@@ -316,7 +316,7 @@ export function HookEditorPanel({
               value={hook.label ?? ''}
               placeholder="Human-readable label"
               onInput={(e) => updateHook({ label: (e.currentTarget as HTMLInputElement).value })}
-              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft focus:outline-none placeholder-gray-700${
+              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft focus:outline-none placeholder-gray-700 ${
                 labelError
                   ? 'border-danger focus:border-danger'
                   : 'border-line-strong focus:border-accent'
@@ -331,7 +331,7 @@ export function HookEditorPanel({
               data-testid="hook-editor-source-node"
               value={hook.sourceNode}
               onChange={(e) => updateSourceNode(e.currentTarget.value)}
-              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1 text-fg-soft focus:outline-none${
+              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1 text-fg-soft focus:outline-none ${
                 sourceNodeError
                   ? 'border-danger focus:border-danger'
                   : 'border-line-strong focus:border-accent'
@@ -376,7 +376,7 @@ export function HookEditorPanel({
               data-testid="hook-editor-method"
               value={hook.method}
               onChange={(e) => updateMethod(e.currentTarget.value as WorkflowHookMcpMethod)}
-              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1 text-fg-soft focus:outline-none${
+              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1 text-fg-soft focus:outline-none ${
                 methodError
                   ? 'border-danger focus:border-danger'
                   : 'border-line-strong focus:border-accent'
