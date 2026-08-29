@@ -422,6 +422,28 @@ describe('createSpaceRegistryEntries — forge handler wiring', () => {
         );
       }
 
+      const episodeResolver = byName.get('update_forge_episode')?.autonomyRequirement;
+      expect(typeof episodeResolver).toBe('function');
+      if (typeof episodeResolver === 'function') {
+        expect(await episodeResolver({ episode_id: episodeId, title: 'Draft edit' })).toBe(1);
+        expect(await episodeResolver({ episode_id: episodeId, status: 'dismissed' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+        await call('update_forge_episode', { episode_id: episodeId, status: 'accepted' });
+        expect(await episodeResolver({ episode_id: episodeId, title: 'Committed edit' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+      }
+
+      const proposalResolver = byName.get('update_forge_task_proposal')?.autonomyRequirement;
+      expect(typeof proposalResolver).toBe('function');
+      if (typeof proposalResolver === 'function') {
+        expect(await proposalResolver({ proposal_id: proposalId, title: 'Proposed edit' })).toBe(1);
+        expect(await proposalResolver({ proposal_id: proposalId, status: 'accepted' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+      }
+
       const proposal = await call('create_forge_task_proposal', {
         scope_id: scopeId,
         title: 'Registry proposal',
@@ -517,6 +539,12 @@ describe('createSpaceRegistryEntries — forge handler wiring', () => {
       for (const { name, params, success } of cases) {
         const payload = await call(name, params);
         expect(payload.success).toBe(success);
+      }
+
+      if (typeof proposalResolver === 'function') {
+        expect(
+          await proposalResolver({ proposal_id: proposalId, title: 'Post-creation edit' })
+        ).toBe(SESSION_WRITE_AUTONOMY_LEVEL);
       }
     } finally {
       ctx.db.close();

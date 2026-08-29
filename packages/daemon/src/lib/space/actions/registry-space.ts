@@ -176,13 +176,33 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
   };
 
+  const forgeRecordInSpace = (scopeId: string): boolean =>
+    config.evolutionScopeService?.getScope(scopeId)?.spaceId === config.spaceId;
+
   const forgeLessonUpdateAutonomy = async (params: z.infer<typeof UpdateForgeLessonSchema>) => {
     const lesson = config.evolutionEpisodeService?.getLesson(params.lesson_id);
-    const scope = lesson ? config.evolutionScopeService?.getScope(lesson.scopeId) : null;
-    if (scope?.spaceId === config.spaceId && lesson?.status === 'active') {
+    if (lesson && forgeRecordInSpace(lesson.scopeId) && lesson.status === 'active') {
       return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
     }
     return forgeTerminalStatusAutonomy(['active', 'dismissed'])(params);
+  };
+
+  const forgeEpisodeUpdateAutonomy = async (params: z.infer<typeof UpdateForgeEpisodeSchema>) => {
+    const episode = config.evolutionEpisodeService?.getEpisode(params.episode_id);
+    if (episode && forgeRecordInSpace(episode.scopeId) && episode.status !== 'draft') {
+      return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    }
+    return forgeTerminalStatusAutonomy(['accepted', 'dismissed'])(params);
+  };
+
+  const forgeProposalUpdateAutonomy = async (
+    params: z.infer<typeof UpdateForgeTaskProposalSchema>
+  ) => {
+    const proposal = config.evolutionEpisodeService?.getTaskProposal(params.proposal_id);
+    if (proposal && forgeRecordInSpace(proposal.scopeId) && proposal.status !== 'proposed') {
+      return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    }
+    return forgeTerminalStatusAutonomy(['accepted', 'dismissed'])(params);
   };
 
   const sessionEntries: ActionDefinition[] = [
@@ -918,7 +938,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       paramsDoc: 'episode_id, status?, title?, outcome_summary?',
       paramsSchema: UpdateForgeEpisodeSchema,
       auditRedactKeys: ['title', 'outcome_summary'],
-      autonomyRequirement: forgeTerminalStatusAutonomy(['accepted', 'dismissed']),
+      autonomyRequirement: forgeEpisodeUpdateAutonomy,
       handler: (args) => handlers.update_forge_episode(args),
     }),
     defineAction({
@@ -953,7 +973,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       paramsDoc: 'proposal_id, title?, description?, reason?, priority?, status?',
       paramsSchema: UpdateForgeTaskProposalSchema,
       auditRedactKeys: ['description', 'reason'],
-      autonomyRequirement: forgeTerminalStatusAutonomy(['accepted', 'dismissed']),
+      autonomyRequirement: forgeProposalUpdateAutonomy,
       handler: (args) => handlers.update_forge_task_proposal(args),
     }),
     defineAction({
