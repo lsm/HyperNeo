@@ -104,6 +104,8 @@ describe('classifyVoiceSubmitError', () => {
 
   it.each([
     ['Invalid model', 400, 'discard'],
+    ['request failed', 400, 'discard'],
+    ['failed with HTTP 400', 500, 'retry'],
     ['backend exploded', 500, 'retry'],
   ])('classifies %s (failed with HTTP %i) as %s', (body, status, expected) => {
     expect(classifyVoiceSubmitError(new Error(`${body} (failed with HTTP ${status})`))).toBe(

@@ -204,6 +204,17 @@ describe('voice transcribe pipeline', () => {
     });
   });
 
+  it.each([
+    ['request failed', 400, 'request failed (failed with HTTP 400)'],
+    ['failed with HTTP 400', 500, 'failed with HTTP 400 (failed with HTTP 500)'],
+  ])('keeps the daemon HTTP status over body text: %s', async (body, status, expected) => {
+    globalThis.fetch = mock(async () => new Response(body, { status })) as typeof fetch;
+    await expect(transcribe(createDeps())).resolves.toEqual({
+      action: 'failed',
+      error: expected,
+    });
+  });
+
   it('fails when the response has no text field', async () => {
     globalThis.fetch = mock(
       async () => new Response(JSON.stringify({}), { status: 200 })
