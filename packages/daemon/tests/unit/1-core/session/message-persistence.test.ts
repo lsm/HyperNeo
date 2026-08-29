@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
-import { SessionCoordinationStallError } from '../../../../src/lib/agent/message-delivery';
+import {
+  SessionCoordinationStallError,
+  sessionResetCoordinationLocks,
+  withSessionLock,
+  withSessionResetCoordination,
+} from '../../../../src/lib/agent/message-delivery';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import {
   MAX_IMAGE_BASE64_SIZE,
@@ -385,6 +390,36 @@ describe('MessagePersistence', () => {
         skipQueryStart: true,
       })
     );
+  });
+
+  it('reproduces the production stall: persist rejects with SessionCoordinationStallError while a sweep holder is pinned on the inner session lock', async () => {
+    const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+    const previousV2 = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+    void withSessionResetCoordination('test-session-id', () =>
+      withSessionLock('test-session-id', () => new Promise<never>(() => {}))
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    try {
+      const stalled = persistence.persist({
+        sessionId: 'test-session-id',
+        messageId: 'msg-stall-repro',
+        content: 'second message after the first armed a turn',
+      });
+      await expect(stalled).rejects.toBeInstanceOf(SessionCoordinationStallError);
+      await expect(stalled).rejects.toThrow(
+        /Session test-session-id is still completing a prior operation \(waited \d+s, prior holder age \d+s\)/
+      );
+    } finally {
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+      else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previousTimeout;
+      if (previousV2 === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousV2;
+      sessionResetCoordinationLocks.clear();
+    }
   });
 
   it('opt-out legacy dispatch rolls the enqueued row back to failed on coordination stall', async () => {
