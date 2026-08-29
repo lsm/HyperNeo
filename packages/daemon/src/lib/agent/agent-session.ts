@@ -1558,7 +1558,7 @@ export class AgentSession
     const decision = this.contextBudgetReevaluationQueue.then(async () => {
       const trackerInfo = this.contextTracker.getContextInfo();
       if (!trackerInfo || trackerInfo.totalUsed <= 0) return null;
-      return runContextBudgetReevaluation({
+      const run = runContextBudgetReevaluation({
         session: this.session,
         trackerInfo,
         resolveModelInfo: () =>
@@ -1573,6 +1573,13 @@ export class AgentSession
         queueClearEpochAtStart,
         userInterruptEpochAtStart,
       });
+      this.messageQueue.setDeliveryGate(
+        boundedDeliveryGate(
+          run.then(() => undefined).catch(() => {}),
+          Date.now() + 5000
+        )
+      );
+      return run;
     });
     this.contextBudgetReevaluationQueue = decision.then(
       () => undefined,
@@ -1594,22 +1601,26 @@ export class AgentSession
     originQueueClearEpoch: number,
     originUserInterruptEpoch: number
   ): Promise<ModelInfo | null> {
-    const attemptPromise = this.resolveSessionModelInfoWithDelayedRetry();
-    let timedOut = false;
-    const bounded = await Promise.race([
-      attemptPromise,
-      new Promise<null>((resolve) => {
-        const timer = setTimeout(() => {
-          timedOut = true;
-          resolve(null);
-        }, 4_000);
-        if (typeof timer.unref === 'function') {
-          timer.unref();
+    const deadlineAt = Date.now() + 4_000;
+    let exhaustedDeadline = false;
+    const resolved = await (async (): Promise<ModelInfo | null> => {
+      for (;;) {
+        const modelInfo = await this.resolveSessionCatalogModelInfo();
+        if (modelInfo) return modelInfo;
+        if (Date.now() >= deadlineAt) {
+          exhaustedDeadline = true;
+          return null;
         }
-      }),
-    ]);
-    if (timedOut) {
-      void attemptPromise
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 250);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        });
+      }
+    })();
+    if (exhaustedDeadline) {
+      void this.resolveSessionCatalogModelInfo()
         .then((lateModelInfo) => {
           if (lateModelInfo) {
             void this.reevaluateContextBudgetAfterModelSwitch({
@@ -1620,21 +1631,7 @@ export class AgentSession
         })
         .catch(() => {});
     }
-    return bounded;
-  }
-
-  private async resolveSessionModelInfoWithDelayedRetry(): Promise<ModelInfo | null> {
-    let modelInfo = await this.resolveSessionCatalogModelInfo();
-    if (!modelInfo) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, 150);
-        if (typeof timer.unref === 'function') {
-          timer.unref();
-        }
-      });
-      modelInfo = await this.resolveSessionCatalogModelInfo();
-    }
-    return modelInfo;
+    return resolved;
   }
 
   private async resolveSessionCatalogModelInfo(): Promise<ModelInfo | null> {

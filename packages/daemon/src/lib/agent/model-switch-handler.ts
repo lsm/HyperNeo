@@ -235,6 +235,7 @@ export class ModelSwitchHandler {
 
         contextTracker.setModel(resolvedModel);
 
+        const reevaluation = this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         await internalEventBus.publish('session.updated', {
           sessionId: session.id,
           source: 'model-switch',
@@ -243,7 +244,13 @@ export class ModelSwitchHandler {
 
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
-        await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
+        if (reevaluation) {
+          try {
+            await reevaluation;
+          } catch (error) {
+            logger.warn(`post-switch context budget evaluation failed for ${session.id}:`, error);
+          }
+        }
 
         if (clearAcpSessionId && previousAcpSessionId) {
           await this.disposePreviousAcpSession(
