@@ -56,7 +56,7 @@ export function cleanupOrphans(ctx: SettleProviderLoadOutcomeCtx): SettleProvide
 export function markApplied(ctx: SettleProviderLoadOutcomeCtx): SettleProviderLoadOutcomeCtx {
   const applied: string[] = [...ctx.result.appliedProviderIds];
   for (const outcome of ctx.outcomes) {
-    if (outcome.kind !== 'loaded' && outcome.kind !== 'unavailable') continue;
+    if (outcome.kind !== 'loaded') continue;
     ctx.deps.setProviderAppliedSeq(outcome.providerId, ctx.loadSeq);
     applied.push(outcome.providerId);
   }

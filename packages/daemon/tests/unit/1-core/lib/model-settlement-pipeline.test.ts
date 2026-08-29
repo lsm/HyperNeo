@@ -1,49 +1,57 @@
 import { describe, expect, it } from 'bun:test';
 
+import type { ProviderLoadFailure } from '../../../../src/lib/model-service';
 import type { ProviderLoadOutcome } from '../../../../src/lib/model-settlement-routing';
 import {
   runSettleProviderLoadOutcome,
   type SettleProviderLoadOutcomeDeps,
 } from '../../../../src/lib/model-settlement-pipeline';
 
-function failure(providerId: string, errorKind: 'transient' | 'credential', message: string) {
+type TestCase = {
+  name: string;
+  overrides?: Partial<SettleProviderLoadOutcomeDeps>;
+  pre?: (deps: SettleProviderLoadOutcomeDeps) => void;
+  outcomes: ProviderLoadOutcome[];
+  applied?: string[];
+  cleared?: string[];
+  armed?: string[];
+  canceled?: string[];
+  recorded?: ProviderLoadFailure[];
+  emitted?: string[];
+  post?: (deps: SettleProviderLoadOutcomeDeps, emitted: string[]) => void;
+};
+
+function failure(
+  providerId: string,
+  errorKind: 'transient' | 'credential',
+  message: string
+): ProviderLoadFailure {
   return { providerId, errorKind, message };
 }
 
 function fakeDeps(
   overrides?: Partial<SettleProviderLoadOutcomeDeps>
 ): SettleProviderLoadOutcomeDeps {
-  const appliedSeq = new Map<string, number>();
-  const failures = new Map<string, { errorKind: 'transient' | 'credential'; message: string }>();
-  const retries = new Set<string>();
+  const failures = new Map<string, ProviderLoadFailure>();
   const registry = new Set(overrides?.getProviderRegistry ? [] : ['anthropic', 'kimi', 'deepseek']);
   return {
     getProviderRegistry: () => ({ has: (providerId) => registry.has(providerId) }),
     getAllProviderFailures: () =>
-      Array.from(failures.entries()).map(([providerId, record]) => ({
-        providerId,
+      Array.from(failures.values()).map((record) => ({
         ...record,
         firstRecordedAt: 0,
         lastRecordedAt: 0,
       })),
     removeProviderFailure: (providerId) => failures.delete(providerId),
-    clearProviderRetry: (providerId) => {
-      retries.delete(providerId);
-    },
-    setProviderAppliedSeq: (providerId, loadSeq) => {
-      appliedSeq.set(providerId, loadSeq);
-    },
+    clearProviderRetry: () => {},
+    setProviderAppliedSeq: () => {},
     clearProviderFailure: (providerId) => failures.delete(providerId),
     getProviderFailure: (providerId) =>
       failures.has(providerId)
-        ? { providerId, ...failures.get(providerId)!, firstRecordedAt: 0, lastRecordedAt: 0 }
+        ? { ...failures.get(providerId)!, firstRecordedAt: 0, lastRecordedAt: 0 }
         : undefined,
-    armProviderRetry: (providerId) => {
-      retries.add(providerId);
-    },
-    cancelProviderRetry: (providerId) => {
-      retries.add(`${providerId}:canceled`);
-    },
+    armProviderRetry: () => {},
+    cancelProviderRetry: () => {},
     recordClassifiedProviderFailure: (providerId, record) => {
       failures.set(providerId, record);
       return { ...record, firstRecordedAt: 0, lastRecordedAt: 0 };
@@ -56,146 +64,88 @@ function fakeDeps(
 function outcome(
   kind: ProviderLoadOutcome['kind'],
   providerId: string,
-  fail?: ReturnType<typeof failure>
+  fail?: ProviderLoadFailure
 ): ProviderLoadOutcome {
-  if (kind === 'failed') {
-    return { kind, providerId, models: [], failure: fail };
-  }
+  if (kind === 'failed') return { kind, providerId, models: [], failure: fail };
   return { kind, providerId, models: [] };
 }
 
-describe('runSettleProviderLoadOutcome', () => {
-  it('marks loaded and unavailable providers as applied', () => {
-    const result = runSettleProviderLoadOutcome(fakeDeps(), {
-      outcomes: [outcome('loaded', 'anthropic'), outcome('unavailable', 'kimi')],
-      loadSeq: 3,
-    });
-    expect(result.appliedProviderIds).toEqual(['anthropic', 'kimi']);
-  });
-
-  it('clears failure and retry for loaded providers', () => {
-    const deps = fakeDeps();
-    const emitted: string[] = [];
-    deps.emitProviderSettlement = (ids) => emitted.push(...ids);
-    deps.recordClassifiedProviderFailure('anthropic', failure('anthropic', 'transient', 'timeout'));
-    const result = runSettleProviderLoadOutcome(deps, {
-      outcomes: [outcome('loaded', 'anthropic')],
-      loadSeq: 1,
-    });
-    expect(deps.getProviderFailure('anthropic')).toBeUndefined();
-    expect(result.clearedProviderIds).toEqual(['anthropic']);
-    expect(emitted).toEqual(['anthropic']);
-  });
-
-  it('arms retries for transient failures and records them', () => {
-    const result = runSettleProviderLoadOutcome(fakeDeps(), {
-      outcomes: [outcome('failed', 'deepseek', failure('deepseek', 'transient', 'timeout'))],
-      loadSeq: 2,
-    });
-    expect(result.armedProviderIds).toEqual(['deepseek']);
-    expect(result.recordedFailures).toEqual([failure('deepseek', 'transient', 'timeout')]);
-    expect(result.appliedProviderIds).toEqual(['deepseek']);
-  });
-
-  it('cancels retries for credential failures and records them', () => {
-    const result = runSettleProviderLoadOutcome(fakeDeps(), {
-      outcomes: [outcome('failed', 'deepseek', failure('deepseek', 'credential', 'HTTP 401'))],
-      loadSeq: 2,
-    });
-    expect(result.canceledProviderIds).toEqual(['deepseek']);
-    expect(result.recordedFailures).toEqual([failure('deepseek', 'credential', 'HTTP 401')]);
-  });
-
-  it('arms retry for unavailable providers with an existing transient failure', () => {
-    const deps = fakeDeps();
-    deps.recordClassifiedProviderFailure('kimi', failure('kimi', 'transient', 'timeout'));
-    const result = runSettleProviderLoadOutcome(deps, {
-      outcomes: [outcome('unavailable', 'kimi')],
-      loadSeq: 2,
-    });
-    expect(result.appliedProviderIds).toEqual(['kimi']);
-    expect(result.armedProviderIds).toEqual(['kimi']);
-  });
-
-  it('leaves superseded providers untouched', () => {
-    const deps = fakeDeps();
-    deps.recordClassifiedProviderFailure('anthropic', failure('anthropic', 'transient', 'timeout'));
-    const result = runSettleProviderLoadOutcome(deps, {
-      outcomes: [outcome('superseded', 'anthropic')],
-      loadSeq: 1,
-    });
-    expect(result.appliedProviderIds).toEqual([]);
-    expect(result.armedProviderIds).toEqual([]);
-    expect(result.clearedProviderIds).toEqual([]);
-    expect(result.recordedFailures).toEqual([]);
-    expect(deps.getProviderFailure('anthropic')).toBeDefined();
-  });
-
-  it('cleans up orphan failures for providers no longer in the registry', () => {
-    const emitted: string[] = [];
-    const deps = fakeDeps({
+const cases: TestCase[] = [
+  {
+    name: 'loaded providers are applied and cleared; unavailable providers are not applied but arm retry',
+    pre: (deps) =>
+      deps.recordClassifiedProviderFailure('kimi', failure('kimi', 'transient', 'timeout')),
+    outcomes: [
+      outcome('loaded', 'anthropic'),
+      outcome('unavailable', 'kimi'),
+      outcome('failed', 'deepseek', failure('deepseek', 'transient', 'timeout')),
+    ],
+    applied: ['anthropic', 'deepseek'],
+    cleared: ['anthropic'],
+    armed: ['kimi', 'deepseek'],
+    recorded: [failure('deepseek', 'transient', 'timeout')],
+    emitted: ['anthropic', 'deepseek', 'kimi'],
+  },
+  {
+    name: 'credential failures are recorded and canceled',
+    outcomes: [outcome('failed', 'deepseek', failure('deepseek', 'credential', 'HTTP 401'))],
+    applied: ['deepseek'],
+    canceled: ['deepseek'],
+    recorded: [failure('deepseek', 'credential', 'HTTP 401')],
+    emitted: ['deepseek'],
+  },
+  {
+    name: 'superseded providers are left untouched',
+    pre: (deps) =>
+      deps.recordClassifiedProviderFailure(
+        'anthropic',
+        failure('anthropic', 'transient', 'timeout')
+      ),
+    outcomes: [outcome('superseded', 'anthropic')],
+    post: (deps) => expect(deps.getProviderFailure('anthropic')).toBeDefined(),
+  },
+  {
+    name: 'orphan failures are cleaned and empty outcomes return an empty result',
+    overrides: {
       getProviderRegistry: () => ({ has: (providerId) => providerId !== 'removed' }),
-      emitProviderSettlement: (ids) => emitted.push(...ids),
+    },
+    pre: (deps) =>
+      deps.recordClassifiedProviderFailure('removed', failure('removed', 'transient', 'timeout')),
+    outcomes: [],
+    post: (deps, emitted) => {
+      expect(deps.getProviderFailure('removed')).toBeUndefined();
+      expect(emitted).toEqual([]);
+    },
+  },
+  {
+    name: 'failed providers not in the registry are skipped',
+    overrides: {
+      getProviderRegistry: () => ({ has: (providerId) => providerId !== 'deepseek' }),
+    },
+    outcomes: [outcome('failed', 'deepseek', failure('deepseek', 'transient', 'timeout'))],
+  },
+  {
+    name: 'empty outcomes return an empty result',
+    outcomes: [],
+  },
+];
+
+describe('runSettleProviderLoadOutcome', () => {
+  for (const c of cases) {
+    it(c.name, () => {
+      const emitted: string[] = [];
+      const deps = fakeDeps(c.overrides);
+      deps.emitProviderSettlement = (ids) => emitted.push(...ids);
+      c.pre?.(deps);
+      const result = runSettleProviderLoadOutcome(deps, { outcomes: c.outcomes, loadSeq: 1 });
+      expect(result.appliedProviderIds).toEqual(c.applied ?? []);
+      expect(result.clearedProviderIds).toEqual(c.cleared ?? []);
+      expect(result.armedProviderIds).toEqual(c.armed ?? []);
+      expect(result.canceledProviderIds).toEqual(c.canceled ?? []);
+      expect(result.recordedFailures).toEqual(c.recorded ?? []);
+      expect(result.emitted).toBe((c.emitted ?? []).length > 0);
+      expect(emitted).toEqual(c.emitted ?? []);
+      c.post?.(deps, emitted);
     });
-    deps.recordClassifiedProviderFailure('removed', failure('removed', 'transient', 'timeout'));
-    runSettleProviderLoadOutcome(deps, { outcomes: [], loadSeq: 1 });
-    expect(deps.getProviderFailure('removed')).toBeUndefined();
-    expect(emitted).toEqual([]);
-  });
-
-  it('does not record failures or arm for providers not in the registry', () => {
-    const result = runSettleProviderLoadOutcome(
-      fakeDeps({
-        getProviderRegistry: () => ({ has: (providerId) => providerId !== 'deepseek' }),
-      }),
-      {
-        outcomes: [outcome('failed', 'deepseek', failure('deepseek', 'transient', 'timeout'))],
-        loadSeq: 1,
-      }
-    );
-    expect(result.recordedFailures).toEqual([]);
-    expect(result.armedProviderIds).toEqual([]);
-    expect(result.appliedProviderIds).toEqual([]);
-  });
-
-  it('emits settlement for all changed providers', () => {
-    const emitted: string[] = [];
-    const result = runSettleProviderLoadOutcome(
-      fakeDeps({
-        emitProviderSettlement: (ids) => emitted.push(...ids),
-      }),
-      {
-        outcomes: [
-          outcome('loaded', 'anthropic'),
-          outcome('unavailable', 'kimi'),
-          outcome('failed', 'deepseek', failure('deepseek', 'transient', 'timeout')),
-        ],
-        loadSeq: 4,
-      }
-    );
-    expect(emitted).toEqual(['anthropic', 'kimi', 'deepseek']);
-    expect(result.emitted).toBe(true);
-  });
-
-  it('returns an empty result when there are no outcomes', () => {
-    const result = runSettleProviderLoadOutcome(fakeDeps(), { outcomes: [], loadSeq: 1 });
-    expect(result.appliedProviderIds).toEqual([]);
-    expect(result.armedProviderIds).toEqual([]);
-    expect(result.canceledProviderIds).toEqual([]);
-    expect(result.clearedProviderIds).toEqual([]);
-    expect(result.recordedFailures).toEqual([]);
-    expect(result.emitted).toBe(false);
-  });
-
-  it('does not emit when no providers changed', () => {
-    const emitted: string[] = [];
-    const result = runSettleProviderLoadOutcome(
-      fakeDeps({
-        emitProviderSettlement: (ids) => emitted.push(...ids),
-      }),
-      { outcomes: [], loadSeq: 1 }
-    );
-    expect(emitted).toEqual([]);
-    expect(result.emitted).toBe(false);
-  });
+  }
 });
