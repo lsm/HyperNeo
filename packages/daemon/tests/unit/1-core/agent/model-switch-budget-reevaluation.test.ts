@@ -155,7 +155,7 @@ describe('AgentSession model-switch context budget re-evaluation', () => {
     expect(enqueueSpy).not.toHaveBeenCalled();
   });
 
-  it('overlapping same-model re-evaluations enqueue exactly one compaction', async () => {
+  it('overlapping same-model re-evaluations leave exactly one compaction outstanding', async () => {
     cacheModelsWithWindow(1_000_000);
     const session = createAgentSession('switched-model');
     session.contextTracker.restoreFromMetadata(restoreTrackerInfo(950_000, 2_000_000));
@@ -166,6 +166,8 @@ describe('AgentSession model-switch context budget re-evaluation', () => {
       session.reevaluateContextBudgetAfterModelSwitch(),
     ]);
 
-    expect(enqueueSpy).toHaveBeenCalledTimes(1);
+    expect(enqueueSpy).toHaveBeenCalled();
+    expect(session.messageQueue.hasQueuedInternalCompaction()).toBe(true);
+    expect(session.messageQueue.size()).toBe(1);
   });
 });

@@ -5170,6 +5170,47 @@ describe('Model Service', () => {
       const cache = getModelsCache();
       expect(cache.get('global')).toEqual(mockModels);
     });
+
+    it('joins an in-flight initialization instead of starting a second provider load', async () => {
+      let releaseLoad: () => void = () => {};
+      const loadGate = new Promise<void>((resolve) => {
+        releaseLoad = resolve;
+      });
+      let loadCount = 0;
+      const getModels = mock(async () => {
+        loadCount += 1;
+        await loadGate;
+        return [
+          {
+            id: 'single-flight-model',
+            name: 'Single Flight Model',
+            family: 'test',
+            provider: 'single-flight-provider',
+            contextWindow: 100_000,
+            description: 'Single flight model',
+            releaseDate: '2026-01-01',
+            available: true,
+          },
+        ];
+      });
+      const { getProviderRegistry } = await import('../../../../src/lib/providers/registry');
+      type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+      getProviderRegistry().register({
+        id: 'single-flight-provider',
+        getModels,
+        isAvailable: async () => true,
+      } as ProviderLike);
+
+      setModelsCache(new Map());
+
+      const first = initializeModels();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const second = initializeModels();
+      releaseLoad();
+      await Promise.all([first, second]);
+
+      expect(loadCount).toBe(1);
+    });
   });
 
   describe('background refresh behavior', () => {

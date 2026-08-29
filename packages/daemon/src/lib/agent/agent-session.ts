@@ -245,17 +245,6 @@ import {
   taskNotificationRequeryDelayMs,
 } from './task-notification-requery.ts';
 
-let pendingGlobalCatalogPopulation: Promise<void> | null = null;
-
-function populateGlobalCatalogSingleFlight(): Promise<void> {
-  pendingGlobalCatalogPopulation ??= initializeModels()
-    .catch(() => {})
-    .finally(() => {
-      pendingGlobalCatalogPopulation = null;
-    });
-  return pendingGlobalCatalogPopulation;
-}
-
 export class AgentSession
   implements
     RewindHandlerContext,
@@ -368,6 +357,8 @@ export class AgentSession
   private pendingResumeSessionAt: string | undefined;
   private pendingResumeAfterCompaction = false;
   private midTurnBudgetCheckInFlight = false;
+
+  private contextBudgetReevaluationQueue: Promise<void> = Promise.resolve();
   private lastMidTurnUsageRefreshAt = 0;
   private lastMidTurnUsageRefreshKey = '';
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
@@ -1558,18 +1549,25 @@ export class AgentSession
   async reevaluateContextBudgetAfterModelSwitch(): Promise<void> {
     const trackerInfo = this.contextTracker.getContextInfo();
     if (!trackerInfo || trackerInfo.totalUsed <= 0) return;
-    const reevaluation = runContextBudgetReevaluation({
-      session: this.session,
-      trackerInfo,
-      resolveModelInfo: () => this.resolveSessionModelInfoWithRetry(),
-      limitRecoveryPending: this.isLimitRecoveryPending(),
-      contextTracker: this.contextTracker,
-      messageQueue: this.messageQueue,
-      stateManager: this.stateManager,
-      logger: this.logger,
-      resumePendingWork: () => this.resumePendingWorkAfterCompaction(),
-      clearPendingResume: () => this.clearPendingResumeAfterCompaction(),
-    })
+    const decision = this.contextBudgetReevaluationQueue.then(() =>
+      runContextBudgetReevaluation({
+        session: this.session,
+        trackerInfo,
+        resolveModelInfo: () => this.resolveSessionModelInfoWithRetry(),
+        limitRecoveryPending: this.isLimitRecoveryPending(),
+        contextTracker: this.contextTracker,
+        messageQueue: this.messageQueue,
+        stateManager: this.stateManager,
+        logger: this.logger,
+        resumePendingWork: () => this.resumePendingWorkAfterCompaction(),
+        clearPendingResume: () => this.clearPendingResumeAfterCompaction(),
+      })
+    );
+    this.contextBudgetReevaluationQueue = decision.then(
+      () => undefined,
+      () => undefined
+    );
+    const reevaluation = decision
       .then(() => undefined)
       .catch((error) => {
         this.logger.warn('post-switch context budget evaluation failed:', error);
@@ -1604,7 +1602,7 @@ export class AgentSession
     }
     const cached = await getSessionModelInfo(this.session);
     if (cached) return cached;
-    await populateGlobalCatalogSingleFlight();
+    await initializeModels().catch(() => {});
     return getSessionModelInfo(this.session);
   }
 

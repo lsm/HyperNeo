@@ -168,9 +168,10 @@ describe('reevaluate-context-budget pipeline', () => {
       isAutoCompactEnabled: false,
     } as unknown as ContextInfo;
     const enqueue = mock(async () => 'compact-id');
+    const removePendingInternalCompactions = mock(() => 0);
     const messageQueue = {
       enqueue,
-      removePendingInternalCompactions: mock(() => 0),
+      removePendingInternalCompactions,
       hasOutstandingInternalCompaction: mock(() => false),
       isRunning: mock(() => false),
     };
@@ -195,7 +196,7 @@ describe('reevaluate-context-budget pipeline', () => {
       resumePendingWork: mock(() => {}),
       clearPendingResume: mock(() => {}),
     };
-    return { input, enqueue };
+    return { input, enqueue, removePendingInternalCompactions };
   }
 
   it('enqueues a dormant compaction through the enforcement pipeline on a stopped queue', async () => {
@@ -219,9 +220,12 @@ describe('reevaluate-context-budget pipeline', () => {
   });
 
   it('defers instead of deciding against stale capacity when the catalog is unresolved', async () => {
-    const { input, enqueue } = reevaluationHarness(async () => null);
+    const { input, enqueue, removePendingInternalCompactions } = reevaluationHarness(
+      async () => null
+    );
     const outcome = await runContextBudgetReevaluation(input);
     expect(outcome.compactionEnqueued).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
+    expect(removePendingInternalCompactions).not.toHaveBeenCalled();
   });
 });

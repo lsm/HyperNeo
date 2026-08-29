@@ -221,10 +221,10 @@ const runReevaluateContextBudget = (
   })('reevaluate-context-budget') as PipelineAPI
 )
   .input(['ctx'])
-  .pipe(revokeSupersededCompactions, 'ctx', 'ctx')
   .pipe(resolveReevaluationModelInfo, 'ctx', 'ctx')
   .pipe('!modelFenceChanged', 'ctx')
   .pipe('!modelInfoUnresolved', 'ctx')
+  .pipe(revokeSupersededCompactions, 'ctx', 'ctx')
   .pipe(runReevaluationEnforcement, 'ctx', 'ctx')
   .pipe('!resumeSettledElsewhere', 'ctx')
   .pipe(settlePendingResumeAfterReevaluation, 'ctx', 'ctx')
