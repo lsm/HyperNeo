@@ -1890,8 +1890,6 @@ export class SpaceRuntime {
         const run = this.config.workflowRunRepo.getRun(workflowRunId);
         return !!run && this.pausedSpaceIds.has(run.spaceId);
       },
-      listUserMessagesByStatus: (targetSessionId, status) =>
-        messages.getUserMessagesByStatus(targetSessionId, status).messages,
       listUserMessagesByUuidPrefix: (targetSessionId, prefix) =>
         messages.listUserMessagesByUuidPrefix(targetSessionId, prefix),
       getDeliveryContent: (targetSessionId, uuid) =>

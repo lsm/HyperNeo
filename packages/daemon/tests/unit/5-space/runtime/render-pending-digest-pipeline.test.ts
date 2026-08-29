@@ -19,7 +19,6 @@ import {
   resolveTarget,
   runRenderPendingDigest,
   TURN_END_DIGEST_PENDING_ROW_CAP,
-  type LegacyDurableScanStatus,
   type RenderPendingDigestCtx,
   type RenderPendingDigestDeps,
   type RenderPendingDigestLedgerMark,
@@ -52,8 +51,6 @@ interface Harness {
   appended: SDKUserMessage[];
   marks: RenderPendingDigestLedgerMark[];
   listedScopes: unknown[];
-  legacyRows: Map<LegacyDurableScanStatus, SDKUserMessage[]>;
-  consumedRows: SDKUserMessage[];
   digestRows: SDKUserMessage[];
   deliveryContent: Map<string, unknown>;
   inFlight: Set<string>;
@@ -78,12 +75,6 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
   const appended: SDKUserMessage[] = [];
   const marks: RenderPendingDigestLedgerMark[] = [];
   const listedScopes: unknown[] = [];
-  const legacyRows = new Map<LegacyDurableScanStatus, SDKUserMessage[]>([
-    ['deferred', []],
-    ['enqueued', []],
-    ['submitted', []],
-  ]);
-  const consumedRows: SDKUserMessage[] = [];
   const digestRows: SDKUserMessage[] = [];
   const deliveryContent = new Map<string, unknown>();
   const inFlight = new Set<string>();
@@ -109,8 +100,6 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
     isTaskAdmissible: () => admissibility.taskAdmissible,
     isTaskTerminal: () => admissibility.taskTerminal,
     isSpacePaused: () => admissibility.spacePaused,
-    listUserMessagesByStatus: (_sessionId, status, _limit, _direction) =>
-      status === 'consumed' ? consumedRows : (legacyRows.get(status) ?? []),
     listUserMessagesByUuidPrefix: () => digestRows,
     getDeliveryContent: (_sessionId, uuid) => deliveryContent.get(uuid) ?? null,
     isDeliveryInFlight: (deliveryKey) => inFlight.has(deliveryKey),
@@ -156,8 +145,6 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
     appended,
     marks,
     listedScopes,
-    legacyRows,
-    consumedRows,
     digestRows,
     deliveryContent,
     inFlight,
@@ -252,14 +239,6 @@ function seedPending(h: Harness, seeds: Array<[eventId: string, kind: SeedKind]>
       updatedAt: BASE_AT,
     });
   }
-}
-
-function legacyDurableRow(eventId: string, topic: string): SDKUserMessage {
-  return buildSyntheticExternalEventMessage(
-    SESSION_ID,
-    JSON.stringify({ type: 'external_event', eventId, topic }),
-    `legacy-${eventId}`
-  );
 }
 
 function digestMembershipRow(
@@ -413,7 +392,7 @@ describe('render-pending-digest pipeline', () => {
       ['ev-a', 'check'],
       ['ev-b', 'review'],
     ]);
-    h.consumedRows.push(legacyDurableRow('ev-a', TOPICS.check));
+    h.digestRows.push(digestMembershipRow(['ev-a'], 'consumed'));
     h.admissibility.taskAdmissible = false;
     h.admissibility.taskTerminal = true;
     const ctx = admitTurnEnd(ctxOf(h, { target: TARGET, scopedRows: h.rows }));
@@ -442,15 +421,10 @@ describe('render-pending-digest pipeline', () => {
       ['ev-a', 'check'],
       ['ev-b', 'review'],
     ]);
-    h.legacyRows.set('deferred', [legacyDurableRow('ev-legacy', TOPICS.comment)]);
-    h.legacyRows.set('enqueued', [
-      buildSyntheticExternalEventMessage(SESSION_ID, 'not json', 'legacy-noise'),
-    ]);
-    h.consumedRows.push(legacyDurableRow('ev-consumed', TOPICS.comment));
+    h.digestRows.push(digestMembershipRow(['ev-consumed'], 'consumed'));
     h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b']));
     h.digestRows.push(digestMembershipRow(['ev-c'], 'enqueued'));
     const ctx = reconcileDurable(ctxOf(h, { scopedRows: h.rows }));
-    expect(ctx.legacyDurableEventIds).toEqual(new Set(['ev-legacy']));
     expect(ctx.consumedDurableEventIds).toEqual(new Set(['ev-consumed']));
     expect(ctx.digestMembershipEventIds).toEqual(new Set(['ev-c']));
     expect(ctx.replayable).toBe(true);
@@ -477,13 +451,12 @@ describe('render-pending-digest pipeline', () => {
     expect(ctx.replayDigestMessage).toBeUndefined();
   });
 
-  it('claimPending skips in-flight, legacy, membership, and immediate-tier rows without marking them', () => {
+  it('claimPending skips in-flight, membership, and immediate-tier rows without marking them', () => {
     const h = harness();
-    for (const eventId of ['ev-inflight', 'ev-legacy', 'ev-member', 'ev-immediate', 'ev-ok']) {
+    for (const eventId of ['ev-inflight', 'ev-member', 'ev-immediate', 'ev-ok']) {
       seedPending(h, [[eventId, 'comment']]);
     }
     h.inFlight.add('delivery-ev-inflight');
-    h.legacyRows.set('deferred', [legacyDurableRow('ev-legacy', TOPICS.comment)]);
     h.digestRows.push(digestMembershipRow(['ev-member'], 'enqueued'));
     h.deliveryContent.set(buildImmediateEventMessageUuid('ev-immediate', 'delivery-ev-immediate'), {
       sendStatus: 'submitted',
@@ -492,7 +465,6 @@ describe('render-pending-digest pipeline', () => {
       ctxOf(h, {
         target: TARGET,
         scopedRows: h.rows,
-        legacyDurableEventIds: new Set(['ev-legacy']),
         digestMembershipEventIds: new Set(['ev-member']),
         replayable: false,
       })
@@ -533,9 +505,9 @@ describe('render-pending-digest pipeline', () => {
     for (let index = 0; index < TURN_END_DIGEST_PENDING_ROW_CAP; index++) {
       h.rows.push(pendingRow(`ev-fresh-${index}`));
     }
-    const legacyIds = new Set(h.rows.slice(0, blocked).map((row) => row.eventId));
+    const membershipIds = new Set(h.rows.slice(0, blocked).map((row) => row.eventId));
     const ctx = claimPending(
-      ctxOf(h, { target: TARGET, scopedRows: h.rows, legacyDurableEventIds: legacyIds })
+      ctxOf(h, { target: TARGET, scopedRows: h.rows, digestMembershipEventIds: membershipIds })
     );
     expect(ctx.pendingRows).toHaveLength(TURN_END_DIGEST_PENDING_ROW_CAP);
     expect(ctx.pendingRows?.every((row) => row.eventId.startsWith('ev-fresh-'))).toBe(true);
@@ -861,7 +833,7 @@ describe('render-pending-digest pipeline', () => {
       ['ev-fresh', 'check'],
       ['ev-eaten', 'comment'],
     ]);
-    h.consumedRows.push(legacyDurableRow('ev-eaten', TOPICS.comment));
+    h.digestRows.push(digestMembershipRow(['ev-eaten'], 'consumed'));
     const outcome = await runRenderPendingDigest(h.deps, {
       sessionId: SESSION_ID,
       taskId: TARGET.taskId,
@@ -879,7 +851,7 @@ describe('render-pending-digest pipeline', () => {
   it('end to end: every pending row evidenced by consumed rows finalizes without a digest', async () => {
     const h = harness();
     seedPending(h, [['ev-eaten', 'comment']]);
-    h.consumedRows.push(legacyDurableRow('ev-eaten', TOPICS.comment));
+    h.digestRows.push(digestMembershipRow(['ev-eaten'], 'consumed'));
     const outcome = await runRenderPendingDigest(h.deps, {
       sessionId: SESSION_ID,
       taskId: TARGET.taskId,

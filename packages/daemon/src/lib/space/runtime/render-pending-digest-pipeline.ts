@@ -4,9 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   buildExternalEventDigestMessage,
   buildSyntheticExternalEventMessage,
-  deferredExternalEventEntryEvents,
   type ExternalEventEssenceEntry,
-  parseDeferredDeliveryRow,
 } from '../../external-events/deferred-event-digest.ts';
 import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
 import type {
@@ -51,8 +49,6 @@ export interface RenderPendingDigestSavedDigest {
   replayed: boolean;
 }
 
-export type LegacyDurableScanStatus = 'deferred' | 'enqueued' | 'submitted';
-
 export interface RenderPendingDigestDeps {
   getExecutionByAgentSessionId(sessionId: string): TurnEndExecutionRef | null;
   listPendingDeliveries(scope: RenderPendingDigestScope): ExternalEventDeliveryRecord[];
@@ -61,12 +57,6 @@ export interface RenderPendingDigestDeps {
   isTaskAdmissible(taskId: string): boolean;
   isTaskTerminal(taskId: string): boolean;
   isSpacePaused(workflowRunId: string): boolean;
-  listUserMessagesByStatus(
-    sessionId: string,
-    status: LegacyDurableScanStatus | 'consumed',
-    limit: number,
-    direction: 'asc' | 'desc'
-  ): SDKUserMessage[];
   listUserMessagesByUuidPrefix(
     sessionId: string,
     prefix: string
@@ -153,7 +143,6 @@ export interface RenderPendingDigestCtx extends RenderPendingDigestInput {
   execution?: TurnEndExecutionRef;
   scopedRows?: ExternalEventDeliveryRecord[];
   target?: RenderPendingDigestTarget;
-  legacyDurableEventIds?: Set<string>;
   consumedDurableEventIds?: Set<string>;
   replayDigestMessage?: SDKUserMessage;
   replayEventIds?: Set<string>;
@@ -171,10 +160,6 @@ export interface RenderPendingDigestCtx extends RenderPendingDigestInput {
 export const TURN_END_DIGEST_PENDING_ROW_CAP = 200;
 
 export const TURN_END_DIGEST_SCAN_ROW_CAP = TURN_END_DIGEST_PENDING_ROW_CAP * 4;
-
-export const TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP = TURN_END_DIGEST_SCAN_ROW_CAP * 2;
-
-export const LEGACY_DURABLE_SCAN_STATUSES = ['deferred', 'enqueued', 'submitted'] as const;
 
 function eventRecordEssence(record: ExternalEventRecord): ExternalEventEssenceEntry | null {
   return essenceEntryFromExternalEvent(record.event);
@@ -246,27 +231,8 @@ export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   return ctx;
 }
 
-function durableRowEventIds(rows: SDKUserMessage[]): string[] {
-  const ids: string[] = [];
-  for (const row of rows) {
-    const entry = parseDeferredDeliveryRow(row);
-    if (!entry) continue;
-    for (const event of deferredExternalEventEntryEvents(entry)) ids.push(event.eventId);
-  }
-  return ids;
-}
-
 function collectConsumedEvidence(ctx: RenderPendingDigestCtx): Set<string> {
-  const ids = new Set(
-    durableRowEventIds(
-      ctx.deps.listUserMessagesByStatus(
-        ctx.sessionId,
-        'consumed',
-        TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
-        'desc'
-      )
-    )
-  );
+  const ids = new Set<string>();
   for (const row of ctx.deps.listUserMessagesByUuidPrefix(
     ctx.sessionId,
     DETERMINISTIC_DIGEST_UUID_PREFIX
@@ -282,28 +248,7 @@ function collectConsumedEvidence(ctx: RenderPendingDigestCtx): Set<string> {
 }
 
 export function reconcileDurable(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
-  const legacyDurableEventIds = new Set<string>();
-  for (const status of LEGACY_DURABLE_SCAN_STATUSES) {
-    const rows = ctx.deps.listUserMessagesByStatus(
-      ctx.sessionId,
-      status,
-      TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
-      'desc'
-    );
-    for (const eventId of durableRowEventIds(rows)) legacyDurableEventIds.add(eventId);
-  }
-  const consumedDurableEventIds =
-    ctx.consumedDurableEventIds ??
-    new Set(
-      durableRowEventIds(
-        ctx.deps.listUserMessagesByStatus(
-          ctx.sessionId,
-          'consumed',
-          TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
-          'desc'
-        )
-      )
-    );
+  const consumedDurableEventIds = ctx.consumedDurableEventIds ?? new Set<string>();
   const digestMembershipRows: Array<{ message: SDKUserMessage; eventIds: Set<string> }> = [];
   const digestMembershipEventIds = new Set<string>();
   for (const row of ctx.deps.listUserMessagesByUuidPrefix(
@@ -338,7 +283,6 @@ export function reconcileDurable(ctx: RenderPendingDigestCtx): RenderPendingDige
   const replayable = pendingEventIdSet.size > 0 && replayMatch !== undefined;
   return {
     ...ctx,
-    legacyDurableEventIds,
     consumedDurableEventIds,
     digestMembershipEventIds,
     replayDigestMessage: replayMatch?.message,
@@ -376,7 +320,6 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
       consumedMarks.push({ eventId: row.eventId, deliveryKey: row.deliveryKey });
       continue;
     }
-    if (ctx.legacyDurableEventIds?.has(row.eventId)) continue;
     if (ctx.digestMembershipEventIds?.has(row.eventId)) {
       heldDigestInFlight = true;
       continue;
