@@ -1,6 +1,7 @@
 import type { ContextInfo, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type {
+  SDKCompactBoundaryMessage,
   SDKMessage,
   SDKRateLimitInfo,
   SDKResultMessage,
@@ -1073,9 +1074,11 @@ export class SDKMessageHandler {
       let deferredSuccessfully: boolean;
       try {
         deferredSuccessfully = this.withDbChangeBatch(() =>
-          db.saveSDKMessage(session.id, message, undefined, {
-            stampInternalCompactionTurn: stampsInternalCompactionTurn,
-          })
+          stampsInternalCompactionTurn
+            ? db.saveSDKMessage(session.id, message, undefined, {
+                stampInternalCompactionTurn: true,
+              })
+            : db.saveSDKMessage(session.id, message)
         );
       } catch (error) {
         releaseTurnEndGate?.();
@@ -1481,7 +1484,7 @@ export class SDKMessageHandler {
     const armed = this.ctx.messageQueue.consumeInternalCompactionResultAttribution();
     if (result.num_turns !== 0 || !result.uuid || !isSDKResultSuccess(message)) return null;
     if (result.is_error === true) return null;
-    if (!armed && !this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) return null;
+    if (!armed) return null;
     return result.uuid;
   }
 
@@ -1904,9 +1907,12 @@ export class SDKMessageHandler {
           `compaction(s) for session ${session.id}`
       );
     }
-    const acknowledgesInternalCompaction = this.ctx.messageQueue.hasCompactionsAwaitingBoundary();
-    this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+    const manualBoundary =
+      (message as SDKCompactBoundaryMessage).compact_metadata?.trigger === 'manual';
+    const acknowledgesInternalCompaction =
+      manualBoundary && this.ctx.messageQueue.hasCompactionsAwaitingBoundary();
     if (acknowledgesInternalCompaction) {
+      this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
       this.ctx.messageQueue.armInternalCompactionResultAttribution();
     }
     this.ctx.messageQueue.noteBoundaryCompleted();

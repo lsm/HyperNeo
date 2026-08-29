@@ -1895,6 +1895,7 @@ export class SDKMessageRepository {
              WHERE session_id = ? AND message_type = 'result' AND sdk_uuid = ?
                AND message_subtype = 'success' AND is_terminal = 1
                AND parent_tool_use_id IS NULL AND consumed_seq IS NOT NULL
+               AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
              LIMIT 1`
         )
         .get(sessionId, resultUuid) as { consumed_seq: number } | undefined;
