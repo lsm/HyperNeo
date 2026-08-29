@@ -4,10 +4,10 @@ Measured map of `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`
 (5,065 lines; 365 `if`/`else if` arms + 74 ternaries + switch cases ≈ 405+
 branches) against ADR 0004. Measure-only slice: no source changes are proposed
 here. Child implementation slices are cut by the coordinator after owner review.
-The ladder below is the current 38-row table (pin / build / wire / delete /
-extract) — 37 mandatory slices plus the optional TAM-H non-superpipe
+The ladder below is the current 40-row table (pin / build / wire / delete /
+extract) — 39 mandatory slices plus the optional TAM-H non-superpipe
 extraction, which does not count toward the mandatory ladder; coordinators
-cut child issues from that table, not from any earlier summary of it. The 37
+cut child issues from that table, not from any earlier summary of it. The 39
 mandatory slices form a BROAD DEPENDENCY GRAPH (status writers, rehydration,
 delivery, routing); the owner should validate the coordination cost of this
 ladder before the coordinator cuts child issues.
