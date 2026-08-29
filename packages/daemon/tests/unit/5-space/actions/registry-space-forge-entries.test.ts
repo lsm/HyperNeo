@@ -13,6 +13,7 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { SPACE_FORGE_TOOL_SCHEMAS } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
@@ -188,8 +189,11 @@ describe('createSpaceRegistryEntries — forge composition', () => {
           .filter((entry) => entry.family === 'forge')
           .map((entry) => [entry.name, entry.family, entry.safetyClass])
       ).toEqual(FORGE_ENTRIES);
-      expect(entries.slice(-FORGE_ENTRIES.length).map((entry) => entry.name)).toEqual(
-        FORGE_ENTRIES.map(([name]) => name)
+      const names = entries.map((entry) => entry.name);
+      expect(names[names.length - 1]).toBe('review_goal_outcome');
+      expect(names.indexOf('apply_forge_rollup')).toBe(names.length - 2);
+      expect(names.indexOf('create_forge_scope')).toBeGreaterThan(
+        names.indexOf('list_goal_events')
       );
       for (const entry of entries) {
         expect(entry.description.length).toBeGreaterThan(0);
@@ -246,6 +250,60 @@ describe('createSpaceRegistryEntries — forge conditional entries', () => {
       } finally {
         ctx.db.close();
       }
+    }
+  });
+});
+
+describe('createSpaceRegistryEntries — forge autonomy', () => {
+  test('terminal status transitions require destructive clearance; edits and non-terminal statuses stay level 1', async () => {
+    const ctx = makeCtx();
+    try {
+      const byName = new Map(
+        createSpaceRegistryEntries(ctx.config).map((entry) => [entry.name, entry])
+      );
+      const episode = byName.get('update_forge_episode')?.autonomyRequirement;
+      const lesson = byName.get('update_forge_lesson')?.autonomyRequirement;
+      const proposal = byName.get('update_forge_task_proposal')?.autonomyRequirement;
+      expect(typeof episode).toBe('function');
+      expect(typeof lesson).toBe('function');
+      expect(typeof proposal).toBe('function');
+      if (
+        typeof episode !== 'function' ||
+        typeof lesson !== 'function' ||
+        typeof proposal !== 'function'
+      ) {
+        throw new Error('forge autonomy resolvers missing');
+      }
+      expect(await episode({ episode_id: 'ep-1', status: 'accepted' })).toBe(
+        SESSION_WRITE_AUTONOMY_LEVEL
+      );
+      expect(await episode({ episode_id: 'ep-1', status: 'dismissed' })).toBe(
+        SESSION_WRITE_AUTONOMY_LEVEL
+      );
+      expect(await episode({ episode_id: 'ep-1', status: 'draft' })).toBe(1);
+      expect(await episode({ episode_id: 'ep-1', title: 'Edited' })).toBe(1);
+      expect(await lesson({ lesson_id: 'ls-1', status: 'dismissed' })).toBe(
+        SESSION_WRITE_AUTONOMY_LEVEL
+      );
+      expect(await lesson({ lesson_id: 'ls-1', status: 'active' })).toBe(1);
+      expect(await lesson({ lesson_id: 'ls-1', rule: 'Tightened' })).toBe(1);
+      expect(await proposal({ proposal_id: 'pr-1', status: 'dismissed' })).toBe(
+        SESSION_WRITE_AUTONOMY_LEVEL
+      );
+      expect(await proposal({ proposal_id: 'pr-1', status: 'accepted' })).toBe(1);
+      expect(await proposal({ proposal_id: 'pr-1', title: 'Edited' })).toBe(1);
+      for (const entry of byName.values()) {
+        if (entry.family !== 'forge') continue;
+        if (
+          !['update_forge_episode', 'update_forge_lesson', 'update_forge_task_proposal'].includes(
+            entry.name
+          )
+        ) {
+          expect(entry.autonomyRequirement).toBeUndefined();
+        }
+      }
+    } finally {
+      ctx.db.close();
     }
   });
 });

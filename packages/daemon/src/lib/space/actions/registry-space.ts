@@ -99,6 +99,13 @@ const DESTRUCTIVE_ACTION_AUTONOMY_LEVEL = SESSION_WRITE_AUTONOMY_LEVEL;
 
 const HUMAN_ONLY_AUTONOMY_LEVEL = 5;
 
+const forgeTerminalStatusAutonomy =
+  (terminalStatuses: readonly string[]) =>
+  async (params: { status?: string }): Promise<number> =>
+    params.status !== undefined && terminalStatuses.includes(params.status)
+      ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL
+      : 1;
+
 export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): ActionDefinition[] {
   const handlers = createSpaceAgentToolHandlers({ ...config, auditLogRepo: undefined });
 
@@ -725,6 +732,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Create a Forge scope, optionally linked to a recurring goal, with policy for judge guidance; returns the created scope.',
       paramsDoc: 'kind, name, objective, goal_id?, parent_scope_id?, metric_definitions?, policy?',
       paramsSchema: CreateForgeScopeSchema,
+      auditRedactKeys: ['objective', 'metric_definitions', 'policy'],
       handler: (args) => handlers.create_forge_scope(args),
     }),
     defineAction({
@@ -735,6 +743,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Create a mission Forge scope linked to an existing goal, defaulting name/objective from the goal; returns the created scope.',
       paramsDoc: 'goal_id, name?, objective?, metric_definitions?, policy?',
       paramsSchema: CreateForgeScopeFromGoalSchema,
+      auditRedactKeys: ['objective', 'metric_definitions', 'policy'],
       handler: (args) => handlers.create_forge_scope_from_goal(args),
     }),
     defineAction({
@@ -766,6 +775,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       paramsDoc:
         'scope_id, plus goal_id?, kind?, name?, objective?, parent_scope_id?, metric_definitions?, policy?/policy_patch?, episode_judge_model?, episode_judge_provider?',
       paramsSchema: UpdateForgeScopeSchema,
+      auditRedactKeys: ['objective', 'metric_definitions', 'policy', 'policy_patch'],
       handler: (args) => handlers.update_forge_scope(args),
     }),
     defineAction({
@@ -898,6 +908,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Accept, dismiss, or edit a Forge episode draft — use accept/dismiss only after an explicit decision; returns the updated episode.',
       paramsDoc: 'episode_id, status?, title?, outcome_summary?',
       paramsSchema: UpdateForgeEpisodeSchema,
+      autonomyRequirement: forgeTerminalStatusAutonomy(['accepted', 'dismissed']),
       handler: (args) => handlers.update_forge_episode(args),
     }),
     defineAction({
@@ -908,6 +919,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Activate, dismiss, or edit a candidate lesson — activation requires an explicit tool call; returns the updated lesson.',
       paramsDoc: 'lesson_id, status?, applies_to?, rule?, why?, confidence?',
       paramsSchema: UpdateForgeLessonSchema,
+      autonomyRequirement: forgeTerminalStatusAutonomy(['dismissed']),
       handler: (args) => handlers.update_forge_lesson(args),
     }),
     defineAction({
@@ -928,6 +940,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Edit, accept, or dismiss a Forge task proposal — creating the SpaceTask is separate and explicit; returns the updated proposal.',
       paramsDoc: 'proposal_id, title?, description?, reason?, priority?, status?',
       paramsSchema: UpdateForgeTaskProposalSchema,
+      autonomyRequirement: forgeTerminalStatusAutonomy(['dismissed']),
       handler: (args) => handlers.update_forge_task_proposal(args),
     }),
     defineAction({
@@ -956,8 +969,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     ? [...sessionEntries, ...workflowEntries, ...taskEntries, ...partCEntries]
     : [...workflowEntries, ...taskEntries, ...partCEntries];
   if (config.goalService) entries.push(...goalEntries);
-  if (config.evolutionScopeService && config.evolutionEpisodeService)
-    entries.push(...forgeEntries);
+  if (config.evolutionScopeService && config.evolutionEpisodeService) entries.push(...forgeEntries);
   if (config.callerRole === 'long_term_agent' || config.callerRole === 'coordinator')
     entries.push(reviewGoalOutcomeEntry);
   return config.taskAgentManager
