@@ -223,18 +223,23 @@ or drop state transitions (same contract class as C4's supersession plan).
   (:2845–2848), NOT the PR `state`; an open PR with `mergeable: null` and
   `mergeable_state: 'dirty'` must NOT skip (name the helper input
   `mergeableState` so a literal implementation cannot suppress dirty-state
-  conflict events). Returns `{clearState} | {stateWrite, transition}`:
-  `{clearState}` for a closed PR (`pullDetail.state !== 'open'`,
+  conflict events). Returns `{clearState} | {skip} | {stateWrite,
+  transition}`: `{clearState}` for a closed PR (`pullDetail.state !== 'open'`,
   :2841–2843 — the caller applies `delete mergeConflictStates[prNumber]`;
   without that arm a literal extraction retains stale conflict state for
-  closed PRs); otherwise the plan ALWAYS carries the `mergeConflictStates`
-  write (`stateWrite: conflicting` — the source writes the state on every
+  closed PRs); `{skip}` when `mergeable === null && mergeableState !==
+  'dirty'` (mergeability unresolved — the source continues WITHOUT touching
+  the recorded state, so a prior conflict must not be re-resolved on unknown
+  mergeability); otherwise the plan carries the `mergeConflictStates` write
+  (`stateWrite: conflicting` — the source writes the state on every RESOLVED
   open-PR observation, :2851, including a first non-conflicting one that
   then continues without a transition, :2852) plus `transition:
   `{sequence} | null`` — `null` when `conflicting === (previous ?? false)`
   (no sequence bump, no publish). Collapsing the no-transition observation
   into a bare `skip` would lose the cursor write; collapsing it into the
-  transition arm would invent a publish. ~20 lines.
+  transition arm would invent a publish — and dropping the unresolved
+  `skip` arm would publish a false resolution of a prior conflict.
+  ~20 lines.
 - C5b review freshness + etag policy (:2875–2989 subset, :3001–3005):
   first-seen watermark seed, seen-id + watermark gate (note the stale path
   marks the id seen WITHOUT advancing the watermark, :2981–2984), single-page
