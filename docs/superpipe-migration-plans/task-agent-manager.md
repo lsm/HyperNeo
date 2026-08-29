@@ -83,9 +83,16 @@ expected-status derivation duplicated here (:1145–1157, :1344–1356) may beco
 a small plain helper inside the build slice, not a combinator. Risk: the stale
 co-owner cascade (:1167–1197) reads executions via `listByWorkflowRun` then
 writes them with a blind `update` — ADR 0004 bans blind read-modify-write
-inside stages, so the build slice must resolve the write first: an
-expected-status CAS primitive, or the effect stays in the class. The
-per-status branch OUTCOMES are preserved; the blind write itself is not.
+inside stages, so the build slice must resolve the write first: a stale-owner
+CAS guarding BOTH the observed status AND the observed `agentSessionId`
+(`casExecutionStatus` already takes `expectAgentSessionId`,
+`node-execution-repository.ts:211`). Every branch that clears a binding —
+the status-preserving branch AND the idle-transition branch — must condition
+on the existing session id: a same-status rebind by another writer would
+otherwise be cleared and the worker orphaned (double-spawn). A concurrency
+pin must prove a row rebound to another session at the same status is NOT
+cleared. The per-status branch OUTCOMES are preserved; the blind write itself
+is not.
 
 ### `restore-post-approval-worker` — cluster 8, ~175 lines
 
@@ -194,7 +201,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
 | TAM-P | Pins: characterization for clusters 4/8/14/15/19 arms, gap-measured against the existing suites in BOTH `5-space/runtime` (9 `task-agent-manager*` files plus the spawn/pending/injection brick suites) and `5-space/agent` (7 more, incl. spawn-admission/spawn-cas/spawn-flow, post-approval-*, cancel) | test-only | 0 | ≲400 | — |
-| TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + resolved stale-owner write) | build | ≲250 | ≲250 | TAM-P |
+| TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin) | build | ≲250 | ≲250 | TAM-P |
 | TAM-B2 | Delegate the `createSubSession` method body to the B1 pipeline (its only two callers — spawn-flow deps and post-approval, both in-file — stay unchanged) | wire | ≲50 | ≲60 | TAM-B1 |
 | TAM-C1 | `restore-post-approval-worker` stagedRun, unwired | build | ≲180 | ≲150 | TAM-P |
 | TAM-C2 | Wire `restorePostApprovalWorkerSession` | wire | ≲40 | ≲50 | TAM-C1 |
@@ -240,9 +247,11 @@ propose a combinator per ADR 0004's ≈3-use rule; never before.
 5. **Blind-write hot spots** — stale co-owner release (cluster 4) and
    completion/error status writes (cluster 12 handlers) use `update`/`getBy…`
    read-modify-write; ADR 0004 bans carrying them into stages as-is. Each
-   slice that touches one must resolve it up front — expected-status CAS, or
-   the effect stays in the class — never silently preserving or altering the
-   atomicity.
+   slice that touches one must resolve it up front — a CAS guarding status AND
+   session ownership (`expectAgentSessionId`), or the effect stays in the
+   class — never silently preserving or altering the atomicity. Status-only
+   CAS is NOT sufficient where a binding is cleared: a same-status rebind by
+   another writer must not lose ownership.
 6. **Boundary with agent-routing.md** — `decideInjectDelivery`'s gates,
    `injection-delivery-steps.ts`, and the agent-layer delivery pipelines are
    owned by that plan; TAM-E1 embeds the gate functions directly — no nested
@@ -250,9 +259,11 @@ propose a combinator per ADR 0004's ≈3-use rule; never before.
 
 ## Open questions
 
-1. For TAM-B1's stale-owner write (risk 5): expected-status CAS primitive, or
-   the effect stays class-owned? Recommendation: the CAS primitive — the
-   `mustPreserve` branch set is small and stable.
+1. ~~For TAM-B1's stale-owner write (risk 5): expected-status CAS primitive,
+   or the effect stays class-owned?~~ Resolved by review: the dual-guard CAS
+   (status + `expectAgentSessionId`) — both clear-binding branches condition
+   on the observed session id, plus a concurrency pin for the same-status
+   rebind case.
 2. Should cluster 18's builder split (TAM-H-adjacent) be in this epic at all,
    or a separate maintainability epic? It is not superpipe work.
 3. Are the `legacyWorkflowRoute*` fallbacks in cluster 7 still load-bearing,
