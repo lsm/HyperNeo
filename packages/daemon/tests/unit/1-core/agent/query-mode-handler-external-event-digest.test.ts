@@ -246,5 +246,146 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]?.uuid).toBe('uuid-task');
     });
+
+    it('a null digest-pull result excludes deterministic digest rows from the flush', async () => {
+      pullImpl = async () => null as unknown as RenderPendingDigestOutcome;
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow('db-digest', 'digest-00000000-0000-0000-0000-000000000000', 'stale digest'),
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(1);
+      expect(warnMessages.some((message) => String(message).includes('unavailable'))).toBe(true);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+    });
+
+    it('a delivered outcome only flushes its certified digest row', async () => {
+      pullImpl = async () => ({
+        action: 'delivered',
+        uuid: 'digest-certified-0001',
+        dbId: 'db-certified',
+        text: 'certified digest',
+        eventIds: [],
+        deliveryKeys: [],
+        replayed: false,
+        taskId: 'task-certified',
+      });
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow('db-certified', 'digest-certified-0001', 'certified digest'),
+        deferredRow('db-stale', 'digest-stale-0002', 'stale digest'),
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(2);
+      expect(enqueued).toHaveLength(2);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      expect(enqueued[1]?.uuid).toBe('digest-certified-0001');
+    });
+
+    it('a safe skip outcome flushes deferred digest rows', async () => {
+      pullImpl = async () => ({ action: 'skip', reason: 'no_pending_events' });
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow('db-digest', 'digest-owed-0003', 'owed digest'),
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(2);
+      expect(enqueued).toHaveLength(2);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      expect(enqueued[1]?.uuid).toBe('digest-owed-0003');
+    });
+
+    it('a safe skip scopes flushed digest rows to the admitted task', async () => {
+      pullImpl = async () => ({ action: 'skip', reason: 'no_pending_events' });
+      (handlerContext.session as { context?: { taskId?: string } }).context = {
+        taskId: 'task-admitted',
+      };
+      const scoped = deferredRow('db-scoped', 'digest-scoped-0005', 'scoped digest');
+      (scoped as { externalEventTaskId?: string }).externalEventTaskId = 'task-admitted';
+      const otherTask = deferredRow('db-other', 'digest-other-0006', 'other task digest');
+      (otherTask as { externalEventTaskId?: string }).externalEventTaskId = 'task-other';
+      const legacy = deferredRow('db-legacy', 'digest-legacy-0007', 'legacy digest');
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        scoped,
+        otherTask,
+        legacy,
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(2);
+      expect(enqueued).toHaveLength(2);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      expect(enqueued[1]?.uuid).toBe('digest-scoped-0005');
+    });
+
+    it('an unsafe skip outcome excludes deterministic digest rows', async () => {
+      pullImpl = async () => ({
+        action: 'skip',
+        reason: 'session_interrupted',
+      });
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow('db-digest', 'digest-00000000-0000-0000-0000-000000000000', 'stale digest'),
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(1);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+    });
+
+    it('a held outcome excludes deterministic digest rows', async () => {
+      pullImpl = async () => ({
+        action: 'held',
+        reason: 'append_error',
+        uuid: 'digest-held-0004',
+        dbId: 'db-held',
+        error: new Error('mailbox full'),
+      });
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow('db-digest', 'digest-held-0004', 'held digest text'),
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(1);
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+    });
   });
 });

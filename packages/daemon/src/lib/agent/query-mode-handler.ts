@@ -58,29 +58,54 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, logger } = this.ctx;
 
     const runFlush = async (): Promise<number> => {
-      let excludeDigestRows = false;
+      type DigestRowFilter = ((row: { uuid: string; taskId?: string }) => boolean) | null;
+      let digestRowFilter: DigestRowFilter = null;
+      const admittedTaskId = session.context?.taskId;
+      const taskScoped = (row: { uuid: string; taskId?: string }): boolean =>
+        admittedTaskId === undefined || (row.taskId !== undefined && row.taskId === admittedTaskId);
       try {
-        const outcome = await this.ctx.renderPendingDigest?.(session.id, session.context?.taskId);
-        if (outcome && (outcome.action === 'failed' || outcome.action === 'held')) {
-          if (
-            outcome.action === 'failed' &&
-            (outcome.stage === 'digestCleanup' || outcome.stage === 'digestSupersede')
-          ) {
+        const renderDigest = this.ctx.renderPendingDigest;
+        const outcome = renderDigest
+          ? await renderDigest(session.id, session.context?.taskId)
+          : null;
+        if (outcome == null) {
+          if (renderDigest) {
             logger.warn(
-              `turn-end digest ${outcome.stage} failed for session ${session.id} — ` +
-                `excluding digest rows from this flush so stale or duplicate digests are not delivered`
-            );
-            excludeDigestRows = true;
-          } else {
-            logger.warn(
-              `turn-end digest pull for session ${session.id} did not deliver ` +
-                `(action=${outcome.action}${
-                  outcome.action === 'failed'
-                    ? `, stage=${outcome.stage}`
-                    : `, reason=${outcome.reason}`
-                }) — flushing without the digest`
+              `turn-end digest pull for session ${session.id} was unavailable ` +
+                `(runtime stopped or digest pipeline missing) — flushing without the digest`
             );
           }
+        } else if (outcome.action === 'delivered') {
+          digestRowFilter = (row) => row.uuid === outcome.uuid;
+        } else if (outcome.action === 'skip') {
+          if (outcome.heldDigestInFlight) {
+            logger.warn(
+              `turn-end digest pull for session ${session.id} held a digest already in ` +
+                `flight — flushing without the digest`
+            );
+          } else if (
+            outcome.reason === 'session_interrupted' ||
+            outcome.reason === 'session_not_current' ||
+            outcome.reason === 'task_not_admissible' ||
+            outcome.reason === 'space_paused' ||
+            outcome.reason === 'no_execution'
+          ) {
+            logger.warn(
+              `turn-end digest pull for session ${session.id} skipped ` +
+                `(reason=${outcome.reason}) — flushing without the digest`
+            );
+          } else {
+            digestRowFilter = taskScoped;
+          }
+        } else {
+          logger.warn(
+            `turn-end digest pull for session ${session.id} did not deliver ` +
+              `(action=${outcome.action}${
+                outcome.action === 'failed'
+                  ? `, stage=${outcome.stage}`
+                  : `, reason=${outcome.reason}`
+              }) — flushing without the digest`
+          );
         }
       } catch (error) {
         logger.warn(
@@ -88,14 +113,19 @@ export class QueryModeHandler {
             `${error instanceof Error ? error.message : String(error)} — flushing without the digest`
         );
       }
-
       const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
       const backlogBase = options?.excludeMessageUuid
         ? allDeferred.filter((m) => m.uuid !== options.excludeMessageUuid)
         : allDeferred;
-      const backlog = excludeDigestRows
-        ? backlogBase.filter((m) => !String(m.uuid).startsWith(DETERMINISTIC_DIGEST_UUID_PREFIX))
-        : backlogBase;
+      const backlog = backlogBase.filter((m) => {
+        const uuid = String(m.uuid);
+        if (!uuid.startsWith(DETERMINISTIC_DIGEST_UUID_PREFIX)) return true;
+        const rowTaskId = (m as { externalEventTaskId?: unknown }).externalEventTaskId;
+        return (
+          digestRowFilter !== null &&
+          digestRowFilter({ uuid, taskId: typeof rowTaskId === 'string' ? rowTaskId : undefined })
+        );
+      });
 
       if (backlog.length === 0) {
         return 0;

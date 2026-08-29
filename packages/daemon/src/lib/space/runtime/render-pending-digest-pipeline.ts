@@ -80,6 +80,7 @@ export interface RenderPendingDigestDeps {
     message: SDKUserMessage
   ): Promise<RenderPendingDigestSavedDigest>;
   reopenFailedDigest(sessionId: string, uuid: string): void;
+  deleteDigestMessage(sessionId: string, dbId: string): void;
   appendDigest(sessionId: string, message: SDKUserMessage): Promise<boolean>;
   markDeliveriesDelivered(
     target: RenderPendingDigestTarget,
@@ -130,6 +131,7 @@ export interface RenderPendingDigestDelivered {
   eventIds: string[];
   deliveryKeys: string[];
   replayed: boolean;
+  taskId: string;
 }
 
 export type RenderPendingDigestOutcome =
@@ -177,6 +179,8 @@ export function resolveTarget(ctx: RenderPendingDigestCtx): RenderPendingDigestC
     agentName: execution.agentName,
   });
   if (scopedRows.length === 0) {
+    const admissionSkip = skipWhenInadmissible(ctx, execution);
+    if (admissionSkip) return admissionSkip;
     return { ...ctx, outcome: { action: 'skip', reason: 'no_pending_events' } };
   }
   const fallbackTaskId = ctx.taskId ?? scopedRows[0].taskId;
@@ -190,6 +194,31 @@ export function resolveTarget(ctx: RenderPendingDigestCtx): RenderPendingDigestC
     agentName: execution.agentName,
   };
   return { ...ctx, execution, scopedRows: targetScopedRows, target };
+}
+
+function skipWhenInadmissible(
+  ctx: RenderPendingDigestCtx,
+  execution: TurnEndExecutionRef
+): RenderPendingDigestCtx | null {
+  const target: RenderPendingDigestTarget = {
+    workflowRunId: execution.workflowRunId,
+    taskId: ctx.taskId ?? '',
+    nodeId: execution.workflowNodeId,
+    agentName: execution.agentName,
+  };
+  if (!ctx.deps.ownsCurrentExecution(target, ctx.sessionId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_not_current' } };
+  }
+  if (ctx.taskId !== undefined && !ctx.deps.isTaskAdmissible(ctx.taskId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'task_not_admissible' } };
+  }
+  if (ctx.deps.isSpacePaused(execution.workflowRunId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'space_paused' } };
+  }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_interrupted' } };
+  }
+  return null;
 }
 
 export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
@@ -431,6 +460,7 @@ export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   const digestMessage = {
     ...buildSyntheticExternalEventMessage(ctx.sessionId, ctx.digestText ?? '', digestUuid),
     externalEventIds: eventIds,
+    externalEventTaskId: ctx.target?.taskId,
   } as SDKUserMessage;
   return { ...ctx, digestUuid, digestMessage };
 }
@@ -492,7 +522,18 @@ export async function persistAndAppend(
     };
   }
   if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
-    return { ...ctx, digestDbId: dbId, outcome: { action: 'skip', reason: 'session_interrupted' } };
+    if (!saved.replayed) {
+      try {
+        ctx.deps.deleteDigestMessage(ctx.sessionId, dbId);
+      } catch (error) {
+        return { ...ctx, outcome: { action: 'failed', stage: 'digestCleanup', error } };
+      }
+    }
+    return {
+      ...ctx,
+      digestDbId: dbId,
+      outcome: { action: 'skip', reason: 'session_interrupted' },
+    };
   }
   const marks = survivingRows
     .filter((row) => renderedEventIds.has(row.eventId))
@@ -515,6 +556,7 @@ export async function persistAndAppend(
       eventIds: (ctx.essences ?? []).map((essence) => essence.eventId),
       deliveryKeys: marks.map((mark) => mark.deliveryKey),
       replayed: saved.replayed,
+      taskId: ctx.target!.taskId,
     },
   };
 }

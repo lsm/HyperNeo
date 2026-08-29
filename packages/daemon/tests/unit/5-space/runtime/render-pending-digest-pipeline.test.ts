@@ -48,6 +48,7 @@ interface Harness {
   records: Map<string, ExternalEventRecord>;
   saved: SDKUserMessage[];
   reopened: Array<{ sessionId: string; uuid: string }>;
+  deletedDigests: Array<{ sessionId: string; dbId: string }>;
   appended: SDKUserMessage[];
   marks: RenderPendingDigestLedgerMark[];
   listedScopes: unknown[];
@@ -72,6 +73,7 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
   const records = new Map<string, ExternalEventRecord>();
   const saved: SDKUserMessage[] = [];
   const reopened: Array<{ sessionId: string; uuid: string }> = [];
+  const deletedDigests: Array<{ sessionId: string; dbId: string }> = [];
   const appended: SDKUserMessage[] = [];
   const marks: RenderPendingDigestLedgerMark[] = [];
   const listedScopes: unknown[] = [];
@@ -127,6 +129,9 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
     reopenFailedDigest: (sessionId, uuid) => {
       reopened.push({ sessionId, uuid });
     },
+    deleteDigestMessage: (sessionId, dbId) => {
+      deletedDigests.push({ sessionId, dbId });
+    },
     appendDigest: async (_sessionId, message) => {
       appended.push(message);
       return true;
@@ -142,6 +147,7 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
     records,
     saved,
     reopened,
+    deletedDigests,
     appended,
     marks,
     listedScopes,
@@ -678,6 +684,58 @@ describe('render-pending-digest pipeline', () => {
     seedPending(h, [['ev-a', 'check']]);
     const ctx = await persistAndAppend(runStages(h));
     expect(ctx.outcome).toMatchObject({ action: 'failed', stage: 'persistDigest' });
+    expect(h.marks).toEqual([]);
+  });
+
+  it('persistAndAppend deletes an interrupt-struck digest row so the generic flush cannot enqueue it', async () => {
+    const h = harness({
+      appendDigest: async () => {
+        h.admissibility.interruptInProgress = true;
+        return true;
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const ctx = await persistAndAppend(runStages(h));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.saved).toHaveLength(1);
+    expect(h.deletedDigests).toEqual([
+      { sessionId: SESSION_ID, dbId: `db-${String(h.saved[0]!.uuid)}` },
+    ]);
+    expect(h.marks).toEqual([]);
+    expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
+  it('persistAndAppend does not delete a replayed digest row owned by another task on interrupt', async () => {
+    const h = harness({
+      saveDigestMessageIfAbsent: async (_sessionId, message) => {
+        const uuid = String(message.uuid);
+        return { dbId: `db-${uuid}`, replayed: true };
+      },
+      appendDigest: async () => {
+        h.admissibility.interruptInProgress = true;
+        return true;
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const ctx = await persistAndAppend(runStages(h));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.deletedDigests).toEqual([]);
+    expect(h.marks).toEqual([]);
+  });
+
+  it('persistAndAppend reports a digestCleanup failure when an interrupt-struck row cannot be deleted', async () => {
+    const h = harness({
+      appendDigest: async () => {
+        h.admissibility.interruptInProgress = true;
+        return true;
+      },
+      deleteDigestMessage: () => {
+        throw new Error('delete rejected');
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const ctx = await persistAndAppend(runStages(h));
+    expect(ctx.outcome).toMatchObject({ action: 'failed', stage: 'digestCleanup' });
     expect(h.marks).toEqual([]);
   });
 
