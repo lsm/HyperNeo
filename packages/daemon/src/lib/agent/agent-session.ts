@@ -1585,26 +1585,44 @@ export class AgentSession
   }
 
   private async resolveSessionModelInfoWithRetry(): Promise<ModelInfo | null> {
-    const deadline = new Promise<ModelInfo | null>((resolve) => {
-      const timer = setTimeout(() => resolve(null), 4_000);
-      if (typeof timer.unref === 'function') {
-        timer.unref();
-      }
-    });
-    const attempt = async (): Promise<ModelInfo | null> => {
-      let modelInfo = await this.resolveSessionCatalogModelInfo();
-      if (!modelInfo) {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, 150);
-          if (typeof timer.unref === 'function') {
-            timer.unref();
+    const attemptPromise = this.resolveSessionModelInfoWithDelayedRetry();
+    let timedOut = false;
+    const bounded = await Promise.race([
+      attemptPromise,
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => {
+          timedOut = true;
+          resolve(null);
+        }, 4_000);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      }),
+    ]);
+    if (timedOut) {
+      void attemptPromise
+        .then((lateModelInfo) => {
+          if (lateModelInfo) {
+            void this.reevaluateContextBudgetAfterModelSwitch();
           }
-        });
-        modelInfo = await this.resolveSessionCatalogModelInfo();
-      }
-      return modelInfo;
-    };
-    return Promise.race([attempt(), deadline]);
+        })
+        .catch(() => {});
+    }
+    return bounded;
+  }
+
+  private async resolveSessionModelInfoWithDelayedRetry(): Promise<ModelInfo | null> {
+    let modelInfo = await this.resolveSessionCatalogModelInfo();
+    if (!modelInfo) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 150);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      });
+      modelInfo = await this.resolveSessionCatalogModelInfo();
+    }
+    return modelInfo;
   }
 
   private async resolveSessionCatalogModelInfo(): Promise<ModelInfo | null> {
