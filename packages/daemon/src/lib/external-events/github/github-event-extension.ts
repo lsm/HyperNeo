@@ -3293,7 +3293,7 @@ function validateGitHubTokenFormat(token: string): void {
   }
 }
 
-function statusCommitSha(root: Record<string, unknown>): string {
+export function statusCommitSha(root: Record<string, unknown>): string {
   if (typeof root.sha === 'string' && root.sha) return root.sha;
   const commit = root.commit;
   if (commit && typeof commit === 'object') {
