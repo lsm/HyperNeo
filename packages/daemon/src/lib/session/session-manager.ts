@@ -69,6 +69,7 @@ export class SessionManager {
   private toolsConfigManager: ToolsConfigManager;
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
+  private workflowMcpProvisioning = new Map<string, Promise<void>>();
 
   constructor(
     private db: Database,
@@ -435,6 +436,36 @@ export class SessionManager {
     this.spaceRuntimeMcpProvider = provider;
   }
 
+  private isWorkflowSubSession(session: AgentSession): boolean {
+    const sessionId = session.getSessionData().id;
+    return sessionId.includes(':task:') && sessionId.includes(':exec:');
+  }
+
+  private async provisionWorkflowMcpServers(session: AgentSession): Promise<void> {
+    if (!this.isWorkflowSubSession(session)) return;
+    if (session.getSessionData().config.mcpServers?.['node-agent']) return;
+
+    const provider = this.spaceRuntimeMcpProvider;
+    if (!provider?.reattachWorkflowMcpServers) return;
+
+    const sessionId = session.getSessionData().id;
+    const existing = this.workflowMcpProvisioning.get(sessionId);
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const provisioning = provider
+      .reattachWorkflowMcpServers(session, ['node-agent'])
+      .finally(() => {
+        if (this.workflowMcpProvisioning.get(sessionId) === provisioning) {
+          this.workflowMcpProvisioning.delete(sessionId);
+        }
+      });
+    this.workflowMcpProvisioning.set(sessionId, provisioning);
+    await provisioning;
+  }
+
   getSessionLifecycle(): SessionLifecycle {
     return this.sessionLifecycle;
   }
@@ -444,7 +475,10 @@ export class SessionManager {
   }
 
   async getSessionAsync(sessionId: string): Promise<AgentSession | null> {
-    return this.sessionCache.getAsync(sessionId);
+    const session = await this.sessionCache.getAsync(sessionId);
+    if (!session) return null;
+    await this.provisionWorkflowMcpServers(session);
+    return session;
   }
 
   registerSession(agentSession: AgentSession): void {

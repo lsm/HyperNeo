@@ -243,6 +243,7 @@ describe('SessionManager', () => {
 
       expect(result).not.toBeNull();
     });
+
   });
 
   describe('getSessionAsync', () => {
@@ -268,6 +269,64 @@ describe('SessionManager', () => {
       const result = await sessionManager.getSessionAsync('test-session-id');
 
       expect(result).not.toBeNull();
+    });
+
+    it('provisions a workflow sub-session before returning it', async () => {
+      const mockSession: Session = {
+        id: 'space:s1:task:t1:exec:e1',
+        title: 'Worker',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+        context: { spaceId: 's1', taskId: 't1' },
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        reattachWorkflowMcpServers: mock(async (session: AgentSession) => {
+          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+        }),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const session = await sessionManager.getSessionAsync(mockSession.id);
+
+      expect(provider.reattachWorkflowMcpServers).toHaveBeenCalledWith(session, ['node-agent']);
+      expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
+    });
+
+    it('shares in-flight workflow provisioning across concurrent restores', async () => {
+      const mockSession: Session = {
+        id: 'space:s1:task:t1:exec:e1',
+        title: 'Worker',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+        context: { spaceId: 's1', taskId: 't1' },
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+      let releaseProvisioning: (() => void) | undefined;
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        reattachWorkflowMcpServers: mock(
+          () =>
+            new Promise<void>((resolve) => {
+              releaseProvisioning = resolve;
+            })
+        ),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const first = sessionManager.getSessionAsync(mockSession.id);
+      const second = sessionManager.getSessionAsync(mockSession.id);
+      await Promise.resolve();
+      expect(provider.reattachWorkflowMcpServers).toHaveBeenCalledTimes(1);
+
+      releaseProvisioning!();
+      await Promise.all([first, second]);
     });
   });
 
