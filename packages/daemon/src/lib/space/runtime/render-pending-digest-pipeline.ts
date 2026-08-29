@@ -468,8 +468,23 @@ function buildFreshDigestMessage(
   return { digestUuid, digestMessage };
 }
 
+function replayMembershipMatches(
+  essences: ExternalEventEssenceEntry[],
+  replayEventIds: Set<string>
+): boolean {
+  const current = essences.map((essence) => essence.eventId).sort();
+  const matched = [...replayEventIds].sort();
+  return current.length === matched.length && current.every((id, index) => id === matched[index]);
+}
+
 export function capDigestBatch(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
-  if (ctx.replayable) return ctx;
+  if (
+    ctx.replayable &&
+    ctx.replayEventIds &&
+    replayMembershipMatches(ctx.essences ?? [], ctx.replayEventIds)
+  ) {
+    return ctx;
+  }
   const cap = ctx.deps.digestMessageByteCap ?? TURN_END_DIGEST_MESSAGE_BYTE_CAP;
   const ordered = orderEssencesByOccurrence(ctx.essences ?? []);
   const batchFits = (batch: ExternalEventEssenceEntry[]): boolean => {
@@ -495,9 +510,7 @@ export function capDigestBatch(ctx: RenderPendingDigestCtx): RenderPendingDigest
 
 export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
   if (ctx.replayable && ctx.replayDigestMessage && ctx.replayEventIds) {
-    const current = (ctx.essences ?? []).map((essence) => essence.eventId).sort();
-    const matched = [...ctx.replayEventIds].sort();
-    if (current.length === matched.length && current.every((id, index) => id === matched[index])) {
+    if (replayMembershipMatches(ctx.essences ?? [], ctx.replayEventIds)) {
       return {
         ...ctx,
         digestUuid: String(ctx.replayDigestMessage.uuid),

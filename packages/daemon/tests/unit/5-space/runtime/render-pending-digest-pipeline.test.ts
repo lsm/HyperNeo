@@ -718,8 +718,33 @@ describe('render-pending-digest pipeline', () => {
     seedSizedComments(h, ['ev-a', 'ev-b', 'ev-c']);
     h.deps.digestMessageByteCap = 1;
     const essences = loadPending(ctxOf(h, { pendingRows: h.rows })).essences!;
-    const ctx = capDigestBatch(ctxOf(h, { target: TARGET, essences, replayable: true }));
+    const ctx = capDigestBatch(
+      ctxOf(h, {
+        target: TARGET,
+        essences,
+        replayable: true,
+        replayEventIds: new Set(['ev-a', 'ev-b', 'ev-c']),
+      })
+    );
     expect(ctx.essences).toBe(essences);
+  });
+
+  it('capDigestBatch applies the cap when replay membership drifted from the claimed set', () => {
+    const h = harness();
+    seedSizedComments(h, ['ev-a', 'ev-b', 'ev-c']);
+    h.deps.digestMessageByteCap = messageBytesFor(h, ['ev-a']);
+    const essences = loadPending(ctxOf(h, { pendingRows: h.rows })).essences!.filter(
+      (essence) => essence.eventId !== 'ev-c'
+    );
+    const ctx = capDigestBatch(
+      ctxOf(h, {
+        target: TARGET,
+        essences,
+        replayable: true,
+        replayEventIds: new Set(['ev-a', 'ev-b', 'ev-c']),
+      })
+    );
+    expect(ctx.essences?.map((essence) => essence.eventId)).toEqual(['ev-a']);
   });
 
   it('buildMessage derives a deterministic uuid and embeds the membership', () => {
