@@ -403,7 +403,13 @@ RESTORATION-OWNER PROVENANCE: `rehydrateSubSession` returns the shared
 cannot be classified as the restoration owner from the index miss alone —
 thread an owner token through rehydration and the create result (a joiner
 misclassified as owner would unwind the other caller's streaming on its own
-failure; the concurrent-join row lands with TAM-F1). When
+failure; the concurrent-join row lands with TAM-F1). An owner token alone is
+still NOT sufficient once a joiner has JOINED and SUCCEEDED: two callers can
+share the same restored session, and if the owner later fails attach or
+kickoff while the joiner succeeds, owner cleanup must NOT unwind the shared
+streaming — use SHARED-OWNERSHIP / reference tracking so a restored worker's
+streaming stops only when NO successful concurrent caller retains it (the
+owner-fails-joiner-succeeds race row lands with TAM-F1). When
 `ensureNodeAgentAttached` or kickoff
 injection rejects after `createSubSession` (:5012–5042), today's catch
 releases only the model-pool reservation and leaves the registered streaming
@@ -540,7 +546,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-E2 | Wire `injectSubSessionMessageWithOrigin` (and its thin wrappers) to the E1 pipeline; inject lock stays class-owned — standalone injection only, its own wiring seam | wire | ≲50 | ≲60 | TAM-E1 |
 | TAM-E3 | Compose the extracted delivery stage group into the spawn flow's kickoff injection directly (spawn-flow stage-list edit) — a separate wiring seam and business path from TAM-E2; MUST land before TAM-E4 deletes the old cascade | wire | ≲50 | ≲60 | TAM-E1 |
 | TAM-E4 | Delete the old imperative `injectMessageIntoSession` cascade — removal-only, zero new logic; every caller is converted by then (TAM-E2 origin path, TAM-E3 spawn-flow kickoff, TAM-F2 post-approval arms) | delete | ≲190 | 0 | TAM-E2, TAM-E3, TAM-F2 |
-| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 delivery outcome with a THREE-WAY ownership result (CREATED / LIVE-REUSED / COLD-RESTORED) carried from the create-stage result; COMPOSES the B1 create stage group and the E1 delivery stage group directly (no runner nesting); the reuse-arm terminal gate runs BEFORE the reuse mutation sequence under the same lock; the fresh arm's post-create recheck covers every create outcome (CREATED skip terminates the just-created session, REUSED skip leaves the worker untouched); lands the atomic-ownership/rollback protocol TOGETHER WITH its tests (terminal-skip rows for both outcomes, after-recheck-before-delivery transition, post-create attach/inject failure compensation per ownership — CREATED stopped/unregistered, COLD-RESTORED unwound without deleting the durable session, LIVE-REUSED intact — cold-cache unwind, the terminal races) | build | ≲220 | ≲250 | TAM-B2, TAM-E1, TAM-PF (P46 outcome contract) |
+| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 delivery outcome with a THREE-WAY ownership result (CREATED / LIVE-REUSED / COLD-RESTORED) carried from the create-stage result; COMPOSES the B1 create stage group and the E1 delivery stage group directly (no runner nesting); the reuse-arm terminal gate runs BEFORE the reuse mutation sequence under the same lock; the fresh arm's post-create recheck covers every create outcome (CREATED skip terminates the just-created session, REUSED skip leaves the worker untouched); lands the atomic-ownership/rollback protocol TOGETHER WITH its tests (terminal-skip rows for both outcomes, after-recheck-before-delivery transition, post-create attach/inject failure compensation per ownership — CREATED stopped/unregistered, COLD-RESTORED unwound without deleting the durable session AND only while no successful concurrent joiner retains it, LIVE-REUSED intact — cold-cache unwind, the owner-fails-joiner-succeeds race, the terminal races) | build | ≲220 | ≲250 | TAM-B2, TAM-E1, TAM-PF (P46 outcome contract) |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
 | TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); introduces the status-guarded settlement/error primitive (risk 5) AND the atomic pending-row claim TOGETHER WITH their race-correctness tests (which cannot pass before they exist) | build+wire | ≲100 | ≲80 | TAM-PG |
 | TAM-S1 | `self-heal-node-agent` stagedRun, unwired (prologue gates via the FENCED repair helper + adoption admission composed in front of the existing heal stages; heal workspace routed through `resolveTaskWorkspace`; adoption at the manager-owned pre-heal boundary) | build | ≲140 | ≲120 | TAM-PS, TAM-D1 (fenced repair helper) |
