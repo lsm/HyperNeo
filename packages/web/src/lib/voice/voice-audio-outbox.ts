@@ -14,6 +14,10 @@ import { enqueueTranscript, isPermanentAppendRefusal } from './voice-transcript-
 const AUDIO_INTRINSIC_REFUSAL =
   /requires audio\/wav input|Audio data is (required|empty)|must be valid base64|exceeds the 10 MB/;
 
+export function isAudioIntrinsicVoiceRefusal(message: string): boolean {
+  return AUDIO_INTRINSIC_REFUSAL.test(message);
+}
+
 export function recordingFromEntry(entry: VoiceRecordEntry): VoiceRecording {
   return {
     audioBase64: entry.audioBase64,
@@ -156,7 +160,7 @@ export async function flushPendingVoiceAudio(): Promise<void> {
           }
         } else if (result.kind === 'transcribe-failed') {
           if (!result.dequeued) defer(entry.sessionId);
-          else if (AUDIO_INTRINSIC_REFUSAL.test(result.message)) {
+          else if (isAudioIntrinsicVoiceRefusal(result.message)) {
             await deleteVoiceRecord(entry.id);
           }
         }

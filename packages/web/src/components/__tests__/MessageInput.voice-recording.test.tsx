@@ -477,6 +477,17 @@ describe('MessageInput — recording UI', () => {
     expect(draft.value).toBe('');
   });
 
+  it('consumes the record after a successful insert even when durable persistence failed', async () => {
+    putVoiceRecord.mockResolvedValue(false);
+    const onSend = vi.fn(async () => {});
+    render(<MessageInput sessionId="s1" onSend={onSend} />);
+
+    fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('hello world', undefined, 'immediate'));
+    expect(deleteVoiceRecord).toHaveBeenCalledWith(expect.any(String));
+  });
+
   describe('stop-and-transcribe outcome branches', () => {
     it('hands the recording to the reconnect outbox when the hub is disconnected at stop', async () => {
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
@@ -794,6 +805,93 @@ describe('MessageInput — recording UI', () => {
       );
       expect(deleteVoiceRecord).not.toHaveBeenCalled();
       expect(draft.value).toBe('x'.repeat(100_000));
+    });
+
+    it('Resend keeps the recording when voice configuration refuses transcription', async () => {
+      transcribeRequest.mockRejectedValueOnce(new Error('Voice input is disabled'));
+      listVoiceRecords.mockResolvedValue([
+        {
+          id: 'r1',
+          sessionId: 's1',
+          audioBase64: 'aGk=',
+          mimeType: 'audio/wav',
+          peakLevel: 0.5,
+          createdAt: Date.now(),
+        },
+      ]);
+      render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+      await waitFor(() => expect(screen.getByTestId('pending-voice-audio-tray')).toBeTruthy());
+
+      fireEvent.click(screen.getByLabelText('Resend voice recording'));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Voice input is disabled'));
+      await waitFor(() =>
+        expect(toast.info).toHaveBeenCalledWith('Voice recording saved for resend')
+      );
+      expect(deleteVoiceRecord).not.toHaveBeenCalled();
+    });
+
+    it('Resend hands the record back to the outbox when disconnected', async () => {
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+      listVoiceRecords.mockResolvedValue([
+        {
+          id: 'r1',
+          sessionId: 's1',
+          audioBase64: 'aGk=',
+          mimeType: 'audio/wav',
+          peakLevel: 0.5,
+          createdAt: Date.now(),
+        },
+      ]);
+      render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+      await waitFor(() => expect(screen.getByTestId('pending-voice-audio-tray')).toBeTruthy());
+
+      fireEvent.click(screen.getByLabelText('Resend voice recording'));
+
+      await waitFor(() =>
+        expect(toast.info).toHaveBeenCalledWith(
+          'Voice recording kept — it will be sent when reconnected'
+        )
+      );
+      expect(transcribeRequest).not.toHaveBeenCalled();
+      expect(deleteVoiceRecord).not.toHaveBeenCalled();
+    });
+
+    it('disables the microphone while a resend is transcribing', async () => {
+      recorderState.isRecording = false;
+      let resolveTranscribe!: (value: { text: string }) => void;
+      transcribeRequest.mockReturnValueOnce(
+        new Promise<{ text: string }>((resolve) => {
+          resolveTranscribe = resolve;
+        })
+      );
+      listVoiceRecords.mockResolvedValue([
+        {
+          id: 'r1',
+          sessionId: 's1',
+          audioBase64: 'aGk=',
+          mimeType: 'audio/wav',
+          peakLevel: 0.5,
+          createdAt: Date.now(),
+        },
+      ]);
+      render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+      await waitFor(() => expect(screen.getByTestId('pending-voice-audio-tray')).toBeTruthy());
+
+      fireEvent.click(screen.getByLabelText('Resend voice recording'));
+      await waitFor(() => {
+        expect((screen.getByLabelText('Start voice input') as HTMLButtonElement).disabled).toBe(
+          true
+        );
+      });
+
+      resolveTranscribe({ text: 'hello world' });
+      await waitFor(() => expect(draft.value).toBe('hello world'));
+      await waitFor(() => {
+        expect((screen.getByLabelText('Start voice input') as HTMLButtonElement).disabled).toBe(
+          false
+        );
+      });
     });
 
     it('Delete removes the persisted record', async () => {

@@ -31,6 +31,7 @@ import { toast } from '../lib/toast.ts';
 import {
   beginInteractiveVoiceSubmit,
   endInteractiveVoiceSubmit,
+  isAudioIntrinsicVoiceRefusal,
   isVoiceAudioBusy,
   markVoiceAudioBusy,
   pendingVoiceAudioRecords,
@@ -96,6 +97,27 @@ const QUEUE_EVENT_REFRESH_DEBOUNCE_MS = 300;
 const QUEUE_FALLBACK_POLL_MS = 5000;
 
 const VOICE_DISCONNECTED_HANDOFF = 'Voice submit handed off to the reconnect outbox';
+
+function disconnectAwareDelay(ms: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let unsubscribe: (() => void) | null = null;
+    const settle = (failed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      unsubscribe?.();
+      if (failed) reject(new Error(VOICE_DISCONNECTED_HANDOFF));
+      else resolve();
+    };
+    const timer = setTimeout(() => settle(false), ms);
+    unsubscribe = connectionState.subscribe((state) => {
+      if (state !== 'connected') settle(true);
+    });
+    if (settled) unsubscribe();
+    if (!connectionManager.getHubIfConnected()) settle(true);
+  });
+}
 
 interface VoicePayloadSnapshot {
   before: string;
@@ -245,6 +267,7 @@ export default function MessageInput({
   } = useFileAttachments();
   const { handleInterrupt } = useInterrupt({ sessionId });
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [resendingVoiceRecordId, setResendingVoiceRecordId] = useState<string | null>(null);
   const [hasPendingAutoSend, setHasPendingAutoSend] = useState(false);
   const voiceRecorder = useVoiceRecorder(sessionId, {
     autoAdopt: !isTranscribing && !hasPendingAutoSend,
@@ -416,7 +439,7 @@ export default function MessageInput({
   );
 
   const startRecording = useCallback(async () => {
-    if (isTranscribing) return;
+    if (isTranscribing || resendingVoiceRecordId !== null) return;
     if (!voiceSupported) {
       toast.error('Voice input requires HTTPS or localhost browser access');
       return;
@@ -437,7 +460,7 @@ export default function MessageInput({
         toast.error(error instanceof Error ? error.message : 'Voice input failed to start');
       }
     }
-  }, [isTranscribing, voiceRecorder, voiceSupported, sessionId]);
+  }, [isTranscribing, resendingVoiceRecordId, voiceRecorder, voiceSupported, sessionId]);
 
   const pendingAutoSendRef = useRef<{ sessionId: string; mode: VoiceSubmitMode } | null>(null);
   const sessionIdRef = useRef(sessionId);
@@ -567,7 +590,9 @@ export default function MessageInput({
       }
       if (result.kind === 'transcribe-failed') {
         toast.error(result.message);
-        if (result.persisted && !result.dequeued) {
+        if (result.dequeued && isAudioIntrinsicVoiceRefusal(result.message)) {
+          await deleteVoiceRecord(result.recordId);
+        } else if (result.persisted || followUp.resendOf !== undefined) {
           toast.info('Voice recording saved for resend');
         }
         return;
@@ -586,7 +611,7 @@ export default function MessageInput({
           };
           setHasPendingAutoSend(true);
         }
-        if (result.persisted) await deleteVoiceRecord(result.recordId);
+        await deleteVoiceRecord(result.recordId);
         return;
       }
       if (outcome.kind === 'deliver-unmounted') {
@@ -598,8 +623,8 @@ export default function MessageInput({
         );
         if (delivered.ok) {
           toast.info(delivered.message);
-          if (result.persisted) await deleteVoiceRecord(result.recordId);
-        } else if (result.persisted && !result.dequeued) {
+          await deleteVoiceRecord(result.recordId);
+        } else if (result.persisted || followUp.resendOf !== undefined) {
           toast.error('Voice transcript could not be delivered — recording saved for resend');
         } else {
           toast.error(delivered.message || 'Voice transcript could not be delivered — it was lost');
@@ -659,30 +684,9 @@ export default function MessageInput({
           { sessionId: targetSessionId, mode },
           {
             stopRecording: async () => stoppedRecording,
-            deleteRecord: async (id) => {
-              if (sessionIdRef.current !== targetSessionId) return true;
-              return deleteVoiceRecord(id);
-            },
+            deleteRecord: async () => true,
             generateId: () => recordId,
-            delay: (ms) =>
-              new Promise<void>((resolve, reject) => {
-                let settled = false;
-                let unsubscribe: (() => void) | null = null;
-                const settle = (failed: boolean) => {
-                  if (settled) return;
-                  settled = true;
-                  clearTimeout(timer);
-                  unsubscribe?.();
-                  if (failed) reject(new Error(VOICE_DISCONNECTED_HANDOFF));
-                  else resolve();
-                };
-                const timer = setTimeout(() => settle(false), ms);
-                unsubscribe = connectionState.subscribe((state) => {
-                  if (state !== 'connected') settle(true);
-                });
-                if (settled) unsubscribe();
-                if (!connectionManager.getHubIfConnected()) settle(true);
-              }),
+            delay: disconnectAwareDelay,
             isMounted: () => mountedRef.current,
             currentSessionId: () => sessionIdRef.current,
           }
@@ -734,7 +738,6 @@ export default function MessageInput({
     }
   }, [voiceRecorder.durationLimitHit]);
 
-  const [resendingVoiceRecordId, setResendingVoiceRecordId] = useState<string | null>(null);
   const pendingVoiceEntries = pendingVoiceAudioRecords.value.filter(
     (entry) => entry.sessionId === sessionId
   );
@@ -758,11 +761,9 @@ export default function MessageInput({
           {
             stopRecording: async () => recording,
             putRecord: async () => true,
-            deleteRecord: async (id) => {
-              if (sessionIdRef.current !== entry.sessionId) return true;
-              return deleteVoiceRecord(id);
-            },
+            deleteRecord: async () => true,
             generateId: () => entry.id,
+            delay: disconnectAwareDelay,
             isMounted: () => mountedRef.current,
             currentSessionId: () => sessionIdRef.current,
           }
@@ -775,7 +776,11 @@ export default function MessageInput({
           resendOf: entry.id,
         });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Voice resend failed');
+        if (error instanceof Error && error.message === VOICE_DISCONNECTED_HANDOFF) {
+          toast.info('Voice recording kept — it will be sent when reconnected');
+        } else {
+          toast.error(error instanceof Error ? error.message : 'Voice resend failed');
+        }
       } finally {
         endInteractiveVoiceSubmit();
         unmarkVoiceAudioBusy(entry.id);
@@ -1425,7 +1430,11 @@ export default function MessageInput({
                     onClick={() => {
                       void handleVoiceClick();
                     }}
-                    disabled={(disabled && !voiceRecorder.isRecording) || isTranscribing}
+                    disabled={
+                      (disabled && !voiceRecorder.isRecording) ||
+                      isTranscribing ||
+                      resendingVoiceRecordId !== null
+                    }
                     title={
                       voiceSupported
                         ? 'Start voice input'
