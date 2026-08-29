@@ -461,7 +461,7 @@ export function EdgeRenderer({
           markerHeight="6"
           orient="auto-start-reverse"
         >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg)" />
         </marker>
         {channels.length > 0 && (
           <>
@@ -485,7 +485,7 @@ export function EdgeRenderer({
               markerHeight={CHANNEL_MARKER_SIZE}
               orient="auto-start-reverse"
             >
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="white" />
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--fg)" />
             </marker>
           </>
         )}
@@ -499,7 +499,7 @@ export function EdgeRenderer({
         const conditionType: WorkflowConditionType = transition.condition?.type ?? 'always';
         const color = EDGE_COLORS[conditionType];
         const isSelected = transition.id === selectedEdgeId;
-        const strokeColor = isSelected ? 'white' : color;
+        const strokeColor = isSelected ? 'var(--fg)' : color;
         const strokeWidth = isSelected ? SELECTED_STROKE_WIDTH : NORMAL_STROKE_WIDTH;
         const markerId = isSelected
           ? `${markerPrefix}-selected`
@@ -551,7 +551,7 @@ export function EdgeRenderer({
         const isCyclic = !!channel.isCyclic;
         const isSelected = channel.id != null && channel.id === selectedChannelId;
 
-        const strokeColor = isSelected ? 'white' : CHANNEL_EDGE_COLOR;
+        const strokeColor = isSelected ? 'var(--fg)' : CHANNEL_EDGE_COLOR;
         const strokeWidth = isSelected ? CHANNEL_SELECTED_STROKE_WIDTH : CHANNEL_STROKE_WIDTH;
         const strokeDasharray = isBidirectional ? undefined : CHANNEL_EDGE_DASH_ARRAY;
         const strokeOpacity = isSelected ? 1 : 0.85;
@@ -632,7 +632,7 @@ export function EdgeRenderer({
                   height={CHANNEL_GATE_BADGE_HEIGHT}
                   rx="10"
                   fill={CHANNEL_GATE_BADGE_BG}
-                  stroke={isSelected ? 'white' : CHANNEL_GATE_BADGE_BORDER}
+                  stroke={isSelected ? 'var(--fg)' : CHANNEL_GATE_BADGE_BORDER}
                   strokeWidth="1"
                 />
                 <text
@@ -642,7 +642,7 @@ export function EdgeRenderer({
                   fontSize="11"
                   fontWeight="600"
                   letterSpacing="0.06em"
-                  fill={isSelected ? 'white' : CHANNEL_LOOP_BADGE_COLOR}
+                  fill={isSelected ? 'var(--fg)' : CHANNEL_LOOP_BADGE_COLOR}
                 >
                   Loop
                 </text>

@@ -231,10 +231,10 @@ describe('EdgeRenderer — selected state', () => {
     expect(getByTestId('edge-t3').getAttribute('data-selected')).toBe('false');
   });
 
-  it('selected edge visible path has white stroke color', () => {
+  it('selected edge visible path uses the theme foreground stroke color', () => {
     const { getByTestId } = renderEdges({ selectedEdgeId: 't1' });
     const visible = getVisiblePath(getByTestId('edge-t1'));
-    expect(visible.getAttribute('data-stroke-color')).toBe('white');
+    expect(visible.getAttribute('data-stroke-color')).toBe('var(--fg)');
   });
 
   it('selected edge visible path has thicker stroke-width than normal', () => {
@@ -515,7 +515,7 @@ describe('EdgeRenderer — channel edge rendering', () => {
     expect(markerEnd).toContain('channel-end');
   });
 
-  it('selected channel uses the white selected arrowhead marker', () => {
+  it('selected channel uses the theme foreground selected arrowhead marker', () => {
     const channels: ResolvedWorkflowChannel[] = [
       {
         id: 'plan:review',
@@ -532,11 +532,11 @@ describe('EdgeRenderer — channel edge rendering', () => {
       'g[data-channel-edge="true"] path:not([stroke="transparent"])'
     );
     expect(visiblePath).not.toBeNull();
-    expect(visiblePath!.getAttribute('stroke')).toBe('white');
+    expect(visiblePath!.getAttribute('stroke')).toBe('var(--fg)');
     expect(visiblePath!.getAttribute('markerStart')).toContain('channel-selected');
     expect(visiblePath!.getAttribute('markerEnd')).toContain('channel-selected');
     const selectedMarkerPath = container.querySelector('marker[id*="channel-selected"] path');
-    expect(selectedMarkerPath?.getAttribute('fill')).toBe('white');
+    expect(selectedMarkerPath?.getAttribute('fill')).toBe('var(--fg)');
   });
 
   it('one-way ungated channel edges use dashed stroke style', () => {

@@ -19,10 +19,10 @@ const questionColors = {
     unselectedText: 'text-fg-soft',
   },
   submitted: {
-    bg: 'bg-green-950/20',
+    bg: 'bg-success/15',
     border: 'border-success/40',
     text: 'text-success-soft',
-    iconColor: 'text-success',
+    iconColor: 'text-success-soft',
   },
   cancelled: {
     bg: 'bg-surface/30',

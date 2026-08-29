@@ -323,7 +323,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
                 type="button"
                 disabled={actionLoading}
                 onClick={() => void runAction('resume')}
-                class="rounded-lg border border-green-800/40 bg-green-950/20 px-3 py-1.5 text-xs font-medium text-success-soft disabled:opacity-50"
+                class="rounded-lg border border-success/40 bg-success/15 px-3 py-1.5 text-xs font-medium text-success-soft disabled:opacity-50"
               >
                 Resume
               </button>

@@ -24,7 +24,7 @@ import {
 import { SyntheticMessageBlock } from '../../../sdk/SyntheticMessageBlock';
 import { DeliveryStateBadge } from '../../../ui/DeliveryStateBadge';
 import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions';
-import { getAgentColor } from '../space-task-thread-agent-colors';
+import { getAgentColor, getAgentTextColor } from '../space-task-thread-agent-colors';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import { pushOverlayHistory } from '../../../../lib/router';
 import { useVisibleTick } from '../../../../hooks/useVisibleTick';
@@ -1911,6 +1911,7 @@ function AgentTurnRow({
   overlayTaskReadonly?: boolean;
 }) {
   const color = getAgentColor(turn.agent);
+  const textColor = getAgentTextColor(turn.agent);
   const initial = agentInitial(turn.agent);
   const openSession = turn.sessionId
     ? () => {
@@ -1937,7 +1938,7 @@ function AgentTurnRow({
       </div>
       <div class="flex flex-col gap-0.5 min-w-0">
         <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
-          <span class="font-semibold leading-tight" style={{ color }}>
+          <span class="font-semibold leading-tight" style={{ color: textColor }}>
             {shortAgentName(turn.agent)}
           </span>
           {turn.state === 'active' ? (
@@ -2050,7 +2051,7 @@ function CompactBoundaryTurn({
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
 }) {
-  const color = getAgentColor(turn.agent);
+  const color = getAgentTextColor(turn.agent);
   const tokenDelta =
     typeof turn.postTokens === 'number' ? Math.max(0, turn.preTokens - turn.postTokens) : null;
   const tokenSummary = `${turn.preTokens.toLocaleString()} → ${turn.postTokens?.toLocaleString() ?? '—'} tokens`;
@@ -2135,7 +2136,7 @@ function SystemTurn({
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
 }) {
-  const color = getAgentColor(turn.agent);
+  const color = getAgentTextColor(turn.agent);
   const openSession = turn.sessionId
     ? () => {
         openTurnSessionOverlay({
@@ -2202,8 +2203,8 @@ function SyntheticMessageTurn({
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
 }) {
-  const fromColor = getAgentColor(turn.fromLabel);
-  const toColor = getAgentColor(turn.toLabel);
+  const fromColor = getAgentTextColor(turn.fromLabel);
+  const toColor = getAgentTextColor(turn.toLabel);
   const fromShort = shortAgentName(turn.fromLabel);
   const toShort = shortAgentName(turn.toLabel);
   const replacementFrameClass =

@@ -1,11 +1,11 @@
 {
   "allowlist": [],
   "areas": {
-    "components": 77,
+    "components": 76,
     "components/__tests__": 4,
     "components/sdk": 58,
     "components/settings": 11,
-    "components/space": 153,
+    "components/space": 151,
     "components/ui": 27,
     "hooks": 3,
     "islands": 21,

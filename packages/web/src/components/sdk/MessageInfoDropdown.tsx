@@ -47,7 +47,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
       {sessionInfo.cwd && (
         <div>
           <div class="text-xs font-medium text-info-soft mb-1">Working Directory</div>
-          <div class="font-mono text-xs text-info bg-info/15 rounded px-2 py-1 break-all">
+          <div class="font-mono text-xs text-info-soft bg-info/15 rounded px-2 py-1 break-all">
             {sessionInfo.cwd}
           </div>
         </div>
@@ -58,7 +58,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
           <div class="text-xs font-medium text-info-soft mb-1">Tools ({displayTools.length})</div>
           <div class="flex flex-wrap gap-1">
             {displayTools.map((tool: string) => (
-              <span key={tool} class="px-2 py-0.5 bg-info/15 text-info rounded text-xs">
+              <span key={tool} class="px-2 py-0.5 bg-info/15 text-info-soft rounded text-xs">
                 {tool}
               </span>
             ))}
@@ -95,7 +95,10 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
           </div>
           <div class="flex flex-wrap gap-1">
             {sessionInfo.slash_commands.map((cmd: string) => (
-              <span key={cmd} class="px-2 py-0.5 bg-info/15 text-info rounded text-xs font-mono">
+              <span
+                key={cmd}
+                class="px-2 py-0.5 bg-info/15 text-info-soft rounded text-xs font-mono"
+              >
                 /{cmd}
               </span>
             ))}
@@ -110,7 +113,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
           </div>
           <div class="flex flex-wrap gap-1">
             {sessionInfo.agents.map((agent: string) => (
-              <span key={agent} class="px-2 py-0.5 bg-info/15 text-info rounded text-xs">
+              <span key={agent} class="px-2 py-0.5 bg-info/15 text-info-soft rounded text-xs">
                 {agent}
               </span>
             ))}
