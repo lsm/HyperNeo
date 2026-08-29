@@ -2472,7 +2472,7 @@ describe('AcpQueryRunner', () => {
       await ctx.queryPromise;
     }, 5000);
 
-    test('timeout tears down the run in order and surfaces the startup-timeout abort', async () => {
+    test('timeout invokes the teardown sequence in order and surfaces the startup-timeout abort', async () => {
       process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '50';
       const firstClient = createMockClient();
       firstClient.canCloseSession.mockImplementation(() => true);
@@ -2499,11 +2499,13 @@ describe('AcpQueryRunner', () => {
       (ctx.queryObject as unknown as { close: () => void }).close = mock(() => {
         teardownOrder.push('queryObject.close');
       });
+      firstController?.signal.addEventListener('abort', () => teardownOrder.push('abort'));
 
       await new Promise((resolve) => setTimeout(resolve, 120));
 
       expect(firstController?.signal.aborted).toBe(true);
-      expect(teardownOrder.slice(0, 4)).toEqual([
+      expect(teardownOrder.slice(0, 5)).toEqual([
+        'abort',
         'cancel',
         'closeSession',
         'queryObject.close',
