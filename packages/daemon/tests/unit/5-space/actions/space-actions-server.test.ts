@@ -458,6 +458,7 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
   });
 
   test('rejects explicit run targets that belong to another space', async () => {
+    const events: DispatchTelemetryEvent[] = [];
     const server = makeServer({
       spaceConfig: {
         ...stubSpaceConfig,
@@ -468,6 +469,7 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
               : { id: runId, spaceId: SPACE_ID },
         },
       } as unknown as SpaceAgentToolsConfig,
+      dispatchDeps: { emitTelemetry: (event) => void events.push(event) },
     });
     const foreign = (await dispatch(server, {
       name: 'get_workflow_run',
@@ -478,6 +480,13 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
       reason: 'invalid_params',
       message: 'Workflow run foreign-run does not belong to space space-actions-server-test',
     });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      actionName: 'get_workflow_run',
+      outcome: 'denied',
+      reason: 'invalid_params',
+      spaceId: SPACE_ID,
+    });
     const local = (await dispatch(server, {
       name: 'get_workflow_run',
       params: { run_id: 'local-run' },
@@ -485,6 +494,7 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(local).not.toMatchObject({
       message: 'Workflow run local-run does not belong to space',
     });
+    expect(events).toHaveLength(2);
   });
 
   test('denies rate-limited dispatches through the configured budget', async () => {

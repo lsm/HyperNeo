@@ -9,7 +9,13 @@ import {
   GENERAL_HOT_ACTIONS,
   ROLE_HOT_ACTIONS,
 } from './description-generator.ts';
-import { runDispatchAction, type DispatchActionDeps } from './dispatcher-pipeline.ts';
+import {
+  emitDispatchTelemetry,
+  runDispatchAction,
+  type DispatchActionDeps,
+  type DispatchActionInput,
+  type DispatchActionOutcome,
+} from './dispatcher-pipeline.ts';
 import {
   createRateAdmission,
   emitActionDispatchedEvent,
@@ -194,7 +200,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   const description = buildCallActionDescription({
     role: label,
     spaceLevel: config.spaceLevel,
-    agentCeiling: resolveAgentLevel(),
+    agentCeiling: config.agentLevel,
     hotActions:
       config.role === 'workflow_worker' ? [...hotActions, ...WORKER_NODE_HOT_FILL] : hotActions,
     registry,
@@ -239,16 +245,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
     description,
     CallActionParamsSchema.shape,
     async (args) => {
-      const runId = explicitRunId(args.params);
-      const run = runId ? spaceConfig?.workflowRunRepo?.getRun(runId) : null;
-      if (run && run.spaceId !== config.spaceId) {
-        return jsonResult({
-          error: 'action_denied',
-          reason: 'invalid_params',
-          message: `Workflow run ${runId} does not belong to space ${config.spaceId}`,
-        });
-      }
-      const outcome = await runDispatchAction(deps, {
+      const dispatchInput: DispatchActionInput = {
         actionName: args.name,
         params: args.params ?? {},
         role: config.role,
@@ -259,7 +256,23 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
         sessionId: config.sessionId ?? config.nodeConfig?.mySessionId ?? spaceConfig?.mySessionId,
         spaceLevel: config.spaceLevel,
         agentLevel: resolveAgentLevel(),
-      });
+      };
+      const runId = explicitRunId(args.params);
+      const run = runId ? spaceConfig?.workflowRunRepo?.getRun(runId) : null;
+      if (run && run.spaceId !== config.spaceId) {
+        const denied: DispatchActionOutcome = {
+          action: 'denied',
+          reason: 'invalid_params',
+          message: `Workflow run ${runId} does not belong to space ${config.spaceId}`,
+        };
+        await emitDispatchTelemetry(deps, dispatchInput, deps.registry.get(args.name), denied);
+        return jsonResult({
+          error: 'action_denied',
+          reason: denied.reason,
+          message: denied.message,
+        });
+      }
+      const outcome = await runDispatchAction(deps, dispatchInput);
       if (outcome.action === 'dispatched') return outcome.result;
       if (outcome.action === 'denied') {
         return jsonResult({
