@@ -712,6 +712,12 @@ describe('Session RPC Handlers — models.list', () => {
             worktree: { branch: 'feature', worktreePath: '/wt', mainRepoPath: '/repo' },
           }),
         })),
+        getSessionFromDB: mock(() => ({
+          id: 'sess-1',
+          status: 'active',
+          context: { spaceId: 'space-1', roomId: 'room-1' },
+          worktree: { branch: 'feature', worktreePath: '/wt', mainRepoPath: '/repo' },
+        })),
         archiveSessionResources: archiveResourcesMock,
       } as unknown as SessionManager;
 

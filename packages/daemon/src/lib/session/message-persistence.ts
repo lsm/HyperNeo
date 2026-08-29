@@ -126,10 +126,6 @@ export class MessagePersistence {
       validateImageSizes(images);
     }
 
-    if (images && images.length > 0) {
-      validateImageSizes(images);
-    }
-
     const preSendDraft = persistedSession?.metadata?.inputDraft ?? '';
     const preSendPending = persistedSession?.metadata?.inputDraftVoicePending ?? '';
     const preSendComposed = preSendPending.trim()

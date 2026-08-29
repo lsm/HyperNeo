@@ -37,6 +37,7 @@ import {
   scanSDKSessionFiles,
 } from '../sdk-session-file-manager.ts';
 import type { SessionManager } from '../session-manager.ts';
+import { validateImageSizes } from '../session/message-persistence.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 
@@ -474,12 +475,10 @@ export function setupSessionHandlers(
       confirmed?: boolean;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
-    if (!agentSession) {
+    const session = sessionManager.getSessionFromDB(targetSessionId);
+    if (!session) {
       throw new Error('Session not found');
     }
-
-    const session = agentSession.getSessionData();
 
     const hadWorktree = !!session.worktree;
     const roomIdForArchive = session.context?.roomId;
@@ -552,6 +551,10 @@ export function setupSessionHandlers(
 
     if (deliveryMode !== 'immediate' && deliveryMode !== 'defer') {
       throw new Error('Invalid deliveryMode');
+    }
+
+    if (images && images.length > 0) {
+      validateImageSizes(images);
     }
 
     const agentSession = await sessionManager.getSessionAsync(targetSessionId);
