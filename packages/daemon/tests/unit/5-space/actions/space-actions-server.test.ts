@@ -612,6 +612,50 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries[0]).toMatchObject({ toolName: 'list_actions', spaceId: SPACE_ID });
   });
 
+  test('applies the coordinator agent ceiling like any identified agent', async () => {
+    const server = makeServer({
+      spaceLevel: 5,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        myAgentId: 'coordinator-1',
+        longHorizonAgentRepo: {
+          getById: () => ({ spaceId: SPACE_ID, autonomyLevel: 2 }),
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    const body = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: 'action_denied', reason: 'autonomy_denied' });
+  });
+
+  test('audits foreign-target denials', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        taskRepo: {
+          getTask: (taskId: string) =>
+            taskId === 'foreign-1' ? { id: taskId, spaceId: 'other-space' } : null,
+        },
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    const body = (await dispatch(server, {
+      name: 'update_task',
+      params: { task_id: 'foreign-1', status: 'open' },
+    })) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: 'action_denied', reason: 'invalid_params' });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ toolName: 'update_task', spaceId: SPACE_ID });
+  });
+
   test('exempts the audit-log reader from self-audit', async () => {
     const entries: CreateMcpAuditLogParams[] = [];
     const server = createSpaceActionsMcpServer({

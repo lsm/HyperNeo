@@ -332,27 +332,33 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
   if (ctx.deps.validateTargets) {
     const message = await ctx.deps.validateTargets(ctx.parsedParams, ctx.spaceId, ctx.action);
     if (message) {
+      writeAuditEntry(ctx);
       return { ...ctx, outcome: deniedOutcome('invalid_params', message) };
     }
   }
-  if (ctx.deps.auditLogRepo && !action.auditExempt && (ctx.isMutating || ctx.deps.auditReads)) {
-    try {
-      const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
-      for (const key of action.auditRedactKeys ?? []) {
-        delete summaryParams[key];
-      }
-      ctx.deps.auditLogRepo.createEntry({
-        agentName: ctx.agentName ?? null,
-        sessionId: ctx.sessionId ?? null,
-        toolName: action.name,
-        paramsSummary: JSON.stringify(summaryParams),
-        spaceId: ctx.spaceId,
-        taskId: ctx.taskId ?? null,
-        workflowRunId: ctx.workflowRunId ?? null,
-      });
-    } catch {}
-  }
+  writeAuditEntry(ctx);
   return ctx;
+}
+
+function writeAuditEntry(ctx: DispatchActionCtx): void {
+  if (!ctx.deps.auditLogRepo || ctx.action?.auditExempt) return;
+  if (!ctx.isMutating && !ctx.deps.auditReads) return;
+  const action = ctx.action!;
+  try {
+    const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
+    for (const key of action.auditRedactKeys ?? []) {
+      delete summaryParams[key];
+    }
+    ctx.deps.auditLogRepo.createEntry({
+      agentName: ctx.agentName ?? null,
+      sessionId: ctx.sessionId ?? null,
+      toolName: action.name,
+      paramsSummary: JSON.stringify(summaryParams),
+      spaceId: ctx.spaceId,
+      taskId: ctx.taskId ?? null,
+      workflowRunId: ctx.workflowRunId ?? null,
+    });
+  } catch {}
 }
 
 export async function executeAction(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
