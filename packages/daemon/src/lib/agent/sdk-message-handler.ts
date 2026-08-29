@@ -1084,6 +1084,10 @@ export class SDKMessageHandler {
         return;
       }
 
+      if (isTopLevelResult && isSDKResultMessage(message)) {
+        this.attributeInternalCompactionResult(message);
+      }
+
       const observesArmedClearResult = this.matchesArmedClearResult(message);
       const preRecoveryPlan = isSDKResultMessage(message)
         ? this.routeResultTurnEnd({
@@ -1194,10 +1198,6 @@ export class SDKMessageHandler {
         if (!this.isInvocationStale(invocationGeneration)) {
           this.applyTurnEndFlags(this.routeSessionStateTurnEnd(message.state).nextFlags);
         }
-      }
-
-      if (isTopLevelResult && isSDKResultSuccess(message)) {
-        this.attributeInternalCompactionResult(message);
       }
 
       let enforcedTurnEnd = false;
@@ -1465,9 +1465,10 @@ export class SDKMessageHandler {
   }
 
   private attributeInternalCompactionResult(message: SDKMessage): void {
-    if (!this.ctx.messageQueue.consumeInternalCompactionResultAttribution()) return;
     const result = message as SDKResultMessage;
-    if (result.num_turns !== 0 || !result.uuid) return;
+    const armed = this.ctx.messageQueue.consumeInternalCompactionResultAttribution();
+    if (result.num_turns !== 0 || !result.uuid || !isSDKResultSuccess(message)) return;
+    if (!armed && !this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) return;
     try {
       this.ctx.db
         .getSDKMessageRepo()
@@ -1900,7 +1901,11 @@ export class SDKMessageHandler {
           `compaction(s) for session ${session.id}`
       );
     }
+    const acknowledgesInternalCompaction = this.ctx.messageQueue.hasCompactionsAwaitingBoundary();
     this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+    if (acknowledgesInternalCompaction) {
+      this.ctx.messageQueue.armInternalCompactionResultAttribution();
+    }
     this.ctx.messageQueue.noteBoundaryCompleted();
     const boundaryInfo = contextTracker.getContextInfo();
     const boundaryCapacity =

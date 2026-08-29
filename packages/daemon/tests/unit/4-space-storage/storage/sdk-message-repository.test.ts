@@ -3745,7 +3745,7 @@ describe('SDKMessageRepository', () => {
     function insertTerminalResult(at: string, subtype: string, uuid?: string): void {
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
-         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`
       ).run(
         crypto.randomUUID(),
         'session-1',

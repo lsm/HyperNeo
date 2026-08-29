@@ -104,6 +104,7 @@ describe('SDKMessageHandler', () => {
   let hasCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
   let pruneSentPromptsSpy: ReturnType<typeof mock>;
   let acknowledgeCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
+  let armInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
   let consumeInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
   let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
   let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
@@ -216,6 +217,7 @@ describe('SDKMessageHandler', () => {
     hasCompactionsAwaitingBoundarySpy = mock(() => false);
     pruneSentPromptsSpy = mock(() => {});
     acknowledgeCompactionsAwaitingBoundarySpy = mock(() => {});
+    armInternalCompactionResultAttributionSpy = mock(() => {});
     consumeInternalCompactionResultAttributionSpy = mock(() => false);
     removePendingInternalCompactionsSpy = mock(() => 0);
     clearNonCompactionSentSinceBoundarySpy = mock(() => {});
@@ -238,6 +240,7 @@ describe('SDKMessageHandler', () => {
       isRunning: mock(() => true),
       pruneSentPrompts: pruneSentPromptsSpy,
       acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
+      armInternalCompactionResultAttribution: armInternalCompactionResultAttributionSpy,
       consumeInternalCompactionResultAttribution: consumeInternalCompactionResultAttributionSpy,
       removePendingInternalCompactions: removePendingInternalCompactionsSpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
@@ -3871,6 +3874,43 @@ describe('SDKMessageHandler', () => {
       releaseSetCompacting();
       await handled;
     });
+
+    it('arms result attribution when the boundary acknowledges a daemon-internal compaction', async () => {
+      mockContext.queryObject = null;
+      hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: {
+          trigger: 'manual',
+          pre_tokens: 50000,
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(armInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not arm result attribution for an SDK auto-compact boundary', async () => {
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: {
+          trigger: 'auto',
+          pre_tokens: 50000,
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(armInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('internal compaction turn result attribution', () => {
@@ -3926,6 +3966,36 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(makeSuccessResult(0));
 
       expect(stampSpy).not.toHaveBeenCalled();
+    });
+
+    it('stamps the boundary-less compact turn result while its compaction still awaits a boundary', async () => {
+      const stampSpy = mock(() => {});
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markResultInternalCompactionTurn: stampSpy,
+      })) as never;
+      hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+
+      await handler.handleMessage(makeSuccessResult(0));
+
+      expect(stampSpy).toHaveBeenCalledTimes(1);
+      expect(stampSpy).toHaveBeenCalledWith('test-session-id', 'compact-turn-result-uuid');
+    });
+
+    it('stamps before the sdk.message publication so a publication failure cannot strand an unstamped success', async () => {
+      const stampSpy = mock(() => {});
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markResultInternalCompactionTurn: stampSpy,
+      })) as never;
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') throw new Error('publication failed');
+      });
+
+      await expect(handler.handleMessage(makeSuccessResult(0))).rejects.toThrow(
+        'publication failed'
+      );
+
+      expect(stampSpy).toHaveBeenCalledTimes(1);
     });
   });
 

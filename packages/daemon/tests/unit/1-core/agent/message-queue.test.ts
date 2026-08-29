@@ -1019,7 +1019,7 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
-    it('arms result attribution only when a delivered internal compaction is acknowledged at its boundary', async () => {
+    it('acknowledging a delivered internal compaction does not by itself arm result attribution', async () => {
       const q = new MessageQueue();
       q.start();
 
@@ -1028,9 +1028,18 @@ describe('MessageQueue', () => {
       const entry = await generator.next();
       entry.value.onSent();
       await sent;
-      expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
 
       q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
+      q.stop();
+    });
+
+    it('explicitly armed result attribution is consumed exactly once', () => {
+      const q = new MessageQueue();
+      q.start();
+
+      q.armInternalCompactionResultAttribution();
       expect(q.consumeInternalCompactionResultAttribution()).toBe(true);
       expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
       q.stop();
@@ -1048,32 +1057,21 @@ describe('MessageQueue', () => {
     it('clears stale result attribution when a new internal compaction is sent', async () => {
       const q = new MessageQueue();
       q.start();
+      q.armInternalCompactionResultAttribution();
 
-      const first = q.enqueueWithId('compact-armed', '/compact', true, { durable: true });
-      const generator = q.messageGenerator(testSessionId);
-      const firstEntry = await generator.next();
-      firstEntry.value.onSent();
-      await first;
-      q.acknowledgeCompactionsAwaitingBoundary();
-
-      const second = q.enqueueWithId('compact-next', '/compact', true, { durable: true });
-      const secondEntry = await generator.next();
-      secondEntry.value.onSent();
-      await second;
-      expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
-      q.stop();
-    });
-
-    it('clears result attribution when the queue stops between boundary and result', async () => {
-      const q = new MessageQueue();
-      q.start();
-
-      const sent = q.enqueue('/compact', true, { durable: true });
+      const sent = q.enqueueWithId('compact-next', '/compact', true, { durable: true });
       const generator = q.messageGenerator(testSessionId);
       const entry = await generator.next();
       entry.value.onSent();
       await sent;
-      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
+      q.stop();
+    });
+
+    it('clears result attribution when the queue stops between boundary and result', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.armInternalCompactionResultAttribution();
 
       q.stop();
       expect(q.consumeInternalCompactionResultAttribution()).toBe(false);

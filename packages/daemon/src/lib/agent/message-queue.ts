@@ -202,7 +202,6 @@ export class MessageQueue {
   acknowledgeCompactionsAwaitingBoundary(): void {
     if (this.internalCompactionsAwaitingBoundary > 0) {
       this.internalCompactionsAwaitingBoundary -= 1;
-      this.internalCompactionResultAttributionArmed = true;
       const acknowledged = this.internalCompactionIdsAwaitingBoundary.values().next().value;
       if (acknowledged !== undefined) {
         this.internalCompactionIdsAwaitingBoundary.delete(acknowledged);
@@ -211,6 +210,10 @@ export class MessageQueue {
     this.removePendingInternalCompactions();
     this.recentSentPrompts.clear();
     this.wakeWaiters();
+  }
+
+  armInternalCompactionResultAttribution(): void {
+    this.internalCompactionResultAttributionArmed = true;
   }
 
   consumeInternalCompactionResultAttribution(): boolean {
