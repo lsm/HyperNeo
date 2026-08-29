@@ -1196,6 +1196,10 @@ export class SDKMessageHandler {
         }
       }
 
+      if (isTopLevelResult && isSDKResultSuccess(message)) {
+        this.attributeInternalCompactionResult(message);
+      }
+
       let enforcedTurnEnd = false;
       const settlePlan = isSDKResultMessage(message)
         ? this.routeResultTurnEnd(resultEventInput())
@@ -1457,6 +1461,23 @@ export class SDKMessageHandler {
         this.clearMessageInFlight = false;
         this.settleSuppressedResultWaiter('confirmed');
       }
+    }
+  }
+
+  private attributeInternalCompactionResult(message: SDKMessage): void {
+    if (!this.ctx.messageQueue.consumeInternalCompactionResultAttribution()) return;
+    const result = message as SDKResultMessage;
+    if (result.num_turns !== 0 || !result.uuid) return;
+    try {
+      this.ctx.db
+        .getSDKMessageRepo()
+        ?.markResultInternalCompactionTurn(this.ctx.session.id, result.uuid);
+      this.logger.info(
+        `attributed the 0-turn terminal success to the internal compaction turn for ` +
+          `session ${this.ctx.session.id}; it cannot satisfy a work delivery`
+      );
+    } catch (error) {
+      this.logger.warn('failed to mark the internal-compaction turn result:', error);
     }
   }
 

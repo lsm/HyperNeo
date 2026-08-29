@@ -104,6 +104,7 @@ describe('SDKMessageHandler', () => {
   let hasCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
   let pruneSentPromptsSpy: ReturnType<typeof mock>;
   let acknowledgeCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
+  let consumeInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
   let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
   let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
@@ -215,6 +216,7 @@ describe('SDKMessageHandler', () => {
     hasCompactionsAwaitingBoundarySpy = mock(() => false);
     pruneSentPromptsSpy = mock(() => {});
     acknowledgeCompactionsAwaitingBoundarySpy = mock(() => {});
+    consumeInternalCompactionResultAttributionSpy = mock(() => false);
     removePendingInternalCompactionsSpy = mock(() => 0);
     clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
@@ -236,6 +238,7 @@ describe('SDKMessageHandler', () => {
       isRunning: mock(() => true),
       pruneSentPrompts: pruneSentPromptsSpy,
       acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
+      consumeInternalCompactionResultAttribution: consumeInternalCompactionResultAttributionSpy,
       removePendingInternalCompactions: removePendingInternalCompactionsSpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
       noteBoundaryCompleted: mock(() => {}),
@@ -3867,6 +3870,62 @@ describe('SDKMessageHandler', () => {
 
       releaseSetCompacting();
       await handled;
+    });
+  });
+
+  describe('internal compaction turn result attribution', () => {
+    const makeSuccessResult = (numTurns: number): SDKMessage =>
+      ({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'compact-turn-result-uuid',
+        num_turns: numTurns,
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0,
+        modelUsage: {},
+      }) as unknown as SDKMessage;
+
+    it('stamps the 0-turn terminal success as the internal compaction turn when the boundary armed attribution', async () => {
+      const stampSpy = mock(() => {});
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markResultInternalCompactionTurn: stampSpy,
+      })) as never;
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+
+      await handler.handleMessage(makeSuccessResult(0));
+
+      expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+      expect(stampSpy).toHaveBeenCalledTimes(1);
+      expect(stampSpy).toHaveBeenCalledWith('test-session-id', 'compact-turn-result-uuid');
+    });
+
+    it('consumes the arming without stamping when the terminal success ran model turns', async () => {
+      const stampSpy = mock(() => {});
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markResultInternalCompactionTurn: stampSpy,
+      })) as never;
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+
+      await handler.handleMessage(makeSuccessResult(3));
+
+      expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+      expect(stampSpy).not.toHaveBeenCalled();
+    });
+
+    it('never stamps when no daemon-internal compaction boundary was acknowledged', async () => {
+      const stampSpy = mock(() => {});
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markResultInternalCompactionTurn: stampSpy,
+      })) as never;
+
+      await handler.handleMessage(makeSuccessResult(0));
+
+      expect(stampSpy).not.toHaveBeenCalled();
     });
   });
 

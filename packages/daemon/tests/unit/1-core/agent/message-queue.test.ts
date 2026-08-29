@@ -1019,6 +1019,66 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('arms result attribution only when a delivered internal compaction is acknowledged at its boundary', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sent = q.enqueue('/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const entry = await generator.next();
+      entry.value.onSent();
+      await sent;
+      expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
+
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.consumeInternalCompactionResultAttribution()).toBe(true);
+      expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
+      q.stop();
+    });
+
+    it('does not arm result attribution for a boundary with no internal compaction awaiting', () => {
+      const q = new MessageQueue();
+      q.start();
+
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
+      q.stop();
+    });
+
+    it('clears stale result attribution when a new internal compaction is sent', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const first = q.enqueueWithId('compact-armed', '/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const firstEntry = await generator.next();
+      firstEntry.value.onSent();
+      await first;
+      q.acknowledgeCompactionsAwaitingBoundary();
+
+      const second = q.enqueueWithId('compact-next', '/compact', true, { durable: true });
+      const secondEntry = await generator.next();
+      secondEntry.value.onSent();
+      await second;
+      expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
+      q.stop();
+    });
+
+    it('clears result attribution when the queue stops between boundary and result', async () => {
+      const q = new MessageQueue();
+      q.start();
+
+      const sent = q.enqueue('/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const entry = await generator.next();
+      entry.value.onSent();
+      await sent;
+      q.acknowledgeCompactionsAwaitingBoundary();
+
+      q.stop();
+      expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
+    });
+
     it('keeps a yielded internal compaction outstanding across a compact boundary', async () => {
       const q = new MessageQueue();
       q.start();

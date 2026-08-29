@@ -118,6 +118,7 @@ export const HAS_TERMINAL_RESULT_AFTER_SQL = `SELECT 1
                WHERE m.session_id = ? AND m.sdk_uuid = ?
                ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
             )
+            AND COALESCE(json_extract(r.sdk_message, '$.internal_compaction_turn'), 0) = 0
             AND NOT (
               COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1
               AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
@@ -1760,6 +1761,16 @@ export class SDKMessageRepository {
           WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
       )
       .run(billingTerminal ? 1 : 0, sessionId, sdkUuid);
+  }
+
+  markResultInternalCompactionTurn(sessionId: string, sdkUuid: string): void {
+    this.db
+      .prepare(
+        `UPDATE sdk_messages
+            SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)
+          WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
+      )
+      .run(sessionId, sdkUuid);
   }
 
   hasRecoveryInterceptedResultAfter(sessionId: string, uuid: string): boolean {

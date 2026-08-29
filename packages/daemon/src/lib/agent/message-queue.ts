@@ -132,6 +132,7 @@ export class MessageQueue {
   private internalCompactionDeliveryHolds: number = 0;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
+  private internalCompactionResultAttributionArmed: boolean = false;
   private nonCompactionSentSinceBoundary: boolean = false;
   private recentSentPrompts: Map<string, string | MessageContent[]> = new Map();
 
@@ -162,6 +163,7 @@ export class MessageQueue {
     if (this.isInternalCompaction(message)) {
       this.midTurnCompactionQueued = false;
       this.internalRestartFailed = false;
+      this.internalCompactionResultAttributionArmed = false;
       this.internalCompactionsAwaitingBoundary += 1;
       this.internalCompactionIdsAwaitingBoundary.add(message.id);
     } else {
@@ -200,6 +202,7 @@ export class MessageQueue {
   acknowledgeCompactionsAwaitingBoundary(): void {
     if (this.internalCompactionsAwaitingBoundary > 0) {
       this.internalCompactionsAwaitingBoundary -= 1;
+      this.internalCompactionResultAttributionArmed = true;
       const acknowledged = this.internalCompactionIdsAwaitingBoundary.values().next().value;
       if (acknowledged !== undefined) {
         this.internalCompactionIdsAwaitingBoundary.delete(acknowledged);
@@ -208,6 +211,12 @@ export class MessageQueue {
     this.removePendingInternalCompactions();
     this.recentSentPrompts.clear();
     this.wakeWaiters();
+  }
+
+  consumeInternalCompactionResultAttribution(): boolean {
+    const armed = this.internalCompactionResultAttributionArmed;
+    this.internalCompactionResultAttributionArmed = false;
+    return armed;
   }
 
   removePendingInternalCompactions(): number {
@@ -430,6 +439,7 @@ export class MessageQueue {
       [...this.claimed].some((message) => this.isInternalCompaction(message));
     this.internalCompactionsAwaitingBoundary = 0;
     this.internalCompactionIdsAwaitingBoundary.clear();
+    this.internalCompactionResultAttributionArmed = false;
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
     this.deliveryGate = null;
@@ -651,6 +661,7 @@ export class MessageQueue {
       [...this.yielded].some((message) => this.isInternalCompaction(message));
     this.internalCompactionsAwaitingBoundary = 0;
     this.internalCompactionIdsAwaitingBoundary.clear();
+    this.internalCompactionResultAttributionArmed = false;
     this.nonCompactionSentSinceBoundary = false;
     this.cancelInternalCompactionEntries(true, true);
     this.deliveryGate = null;

@@ -222,6 +222,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       hasYielded: mock(() => false),
       acknowledgeYielded: mock(() => false),
       setDeliveryGate: setDeliveryGateSpy,
+      consumeInternalCompactionResultAttribution: mock(() => false),
       isRunning: mock(() => true),
     } as unknown as MessageQueue;
 
