@@ -714,6 +714,7 @@ describe('SpaceRuntimeService', () => {
         setRuntimeSystemPrompt: mock(() => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
+        restart: mock(async () => {}),
         getSessionData: mock(() => ({ id: 'session-1', metadata: {}, config: {} }) as Session),
       } as unknown as AgentSession;
     }
@@ -1726,7 +1727,10 @@ describe('SpaceRuntimeService', () => {
           },
         })
       );
-      expect(existingSession.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+      expect(existingSession.resetQuery).toHaveBeenCalledWith({ restartQuery: false });
+      expect(existingSession.restart).toHaveBeenCalledWith(
+        expect.objectContaining({ beforeStart: expect.any(Function) })
+      );
       const updateCall = (existingSession.updateConfig as Mock).mock.calls[0]![0] as {
         systemPrompt: { append: string };
       };
