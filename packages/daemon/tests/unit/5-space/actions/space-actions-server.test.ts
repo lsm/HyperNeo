@@ -378,21 +378,28 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries[0].paramsSummary).not.toContain('description');
   });
 
-  test('derives a long-term-agent autonomy ceiling from its persisted record', async () => {
+  test('derives a long-term-agent autonomy ceiling fresh on each dispatch', async () => {
+    let persistedLevel = 1;
     const server = makeServer({
       role: 'long_term_agent',
       spaceLevel: 5,
       spaceConfig: {
         ...stubSpaceConfig,
         myAgentId: 'lh-agent-1',
-        longHorizonAgentRepo: { getById: () => ({ autonomyLevel: 1 }) },
+        longHorizonAgentRepo: { getById: () => ({ autonomyLevel: persistedLevel }) },
       } as unknown as SpaceAgentToolsConfig,
     });
-    const body = (await dispatch(server, {
+    const denied = (await dispatch(server, {
       name: 'update_session_state',
       params: { session_id: 'session-1', processing_state: 'idle' },
     })) as Record<string, unknown>;
-    expect(body).toMatchObject({ error: 'action_denied', reason: 'autonomy_denied' });
+    expect(denied).toMatchObject({ error: 'action_denied', reason: 'autonomy_denied' });
+    persistedLevel = 4;
+    const admitted = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(admitted).not.toMatchObject({ reason: 'autonomy_denied' });
   });
 
   test('excludes denied action names from the composed registry', () => {

@@ -169,17 +169,23 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
     ...metaEntries,
   ]);
 
-  const lhAgentLevel =
-    config.role === 'long_term_agent' && spaceConfig?.myAgentId && spaceConfig.longHorizonAgentRepo
-      ? (spaceConfig.longHorizonAgentRepo.getById(spaceConfig.myAgentId)?.autonomyLevel ?? null)
-      : null;
-  const agentLevel = config.agentLevel ?? lhAgentLevel;
+  const resolveAgentLevel = (): number | null => {
+    if (config.agentLevel != null) return config.agentLevel;
+    if (
+      config.role === 'long_term_agent' &&
+      spaceConfig?.myAgentId &&
+      spaceConfig.longHorizonAgentRepo
+    ) {
+      return spaceConfig.longHorizonAgentRepo.getById(spaceConfig.myAgentId)?.autonomyLevel ?? null;
+    }
+    return null;
+  };
 
   const { label, hotActions } = resolveRoleHotActionView(config.role, config.nodeRole);
   const description = buildCallActionDescription({
     role: label,
     spaceLevel: config.spaceLevel,
-    agentCeiling: agentLevel,
+    agentCeiling: resolveAgentLevel(),
     hotActions:
       config.role === 'workflow_worker' ? [...hotActions, ...WORKER_NODE_HOT_FILL] : hotActions,
     registry,
@@ -234,7 +240,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
         agentName: config.agentName ?? config.nodeConfig?.myAgentName ?? spaceConfig?.myAgentName,
         sessionId: config.sessionId ?? config.nodeConfig?.mySessionId ?? spaceConfig?.mySessionId,
         spaceLevel: config.spaceLevel,
-        agentLevel,
+        agentLevel: resolveAgentLevel(),
       });
       if (outcome.action === 'dispatched') return outcome.result;
       if (outcome.action === 'denied') {
