@@ -22,6 +22,7 @@ function openDatabase(): Promise<IDBDatabase | null> {
   if (!dbPromise) {
     dbPromise = new Promise<IDBDatabase | null>((resolve) => {
       let request: IDBOpenDBRequest;
+      let abandoned = false;
       try {
         if (!globalThis.indexedDB) {
           resolve(null);
@@ -40,6 +41,10 @@ function openDatabase(): Promise<IDBDatabase | null> {
       };
       request.onsuccess = () => {
         const db = request.result;
+        if (abandoned) {
+          db.close();
+          return;
+        }
         db.onversionchange = () => {
           db.close();
           dbPromise = null;
@@ -50,7 +55,10 @@ function openDatabase(): Promise<IDBDatabase | null> {
         resolve(db);
       };
       request.onerror = () => resolve(null);
-      request.onblocked = () => resolve(null);
+      request.onblocked = () => {
+        abandoned = true;
+        resolve(null);
+      };
     });
     void dbPromise.then((db) => {
       if (!db) dbPromise = null;

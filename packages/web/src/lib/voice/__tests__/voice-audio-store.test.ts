@@ -265,6 +265,36 @@ describe('voice audio record store', () => {
     expect(await getVoiceRecord('r1')).toBeNull();
   });
 
+  it('closes a connection whose blocked open later succeeds', async () => {
+    const factory = createFactory();
+    globalThis.indexedDB = factory;
+    const holder = await new Promise((resolve) => {
+      const request = factory.open('hyperneo-voice-audio', 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains('records')) {
+          request.result.createObjectStore('records', { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+    });
+    let abandonedDb = null;
+    const open = factory.open.bind(factory);
+    factory.open = (...args) => {
+      const bumped = args[1] === 1;
+      const request = bumped ? open('hyperneo-voice-audio', 2) : open(...args);
+      if (bumped)
+        request.addEventListener('success', () => {
+          abandonedDb = request.result;
+        });
+      return request;
+    };
+    expect(await getVoiceRecord('r1')).toBeNull();
+    holder.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(abandonedDb).not.toBeNull();
+    expect(() => abandonedDb.transaction('records')).toThrow();
+  });
+
   it('degrades to in-memory-only when opening the database fails', async () => {
     globalThis.indexedDB = createFailingOpenFactory();
     expect(await putVoiceRecord(makeEntry('r1', NOW))).toBe(false);
