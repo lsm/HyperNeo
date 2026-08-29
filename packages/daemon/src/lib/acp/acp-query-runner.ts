@@ -1000,11 +1000,6 @@ export class AcpQueryRunner {
             }
 
             messageCount++;
-            if (messageCount === 1 && shouldPersistInstructionsSent) {
-              if (!isAcpErrorResultMessage(acpMessage as SDKMessage)) {
-                this.persistAcpInstructionsSent();
-              }
-            }
             if (!promptMessageReceived) {
               if (
                 isAcpAgentStartupMessage(acpMessage as SDKMessage) ||
@@ -1013,6 +1008,9 @@ export class AcpQueryRunner {
                 promptMessageReceived = true;
                 startupWatchFirstMessageSeen = true;
                 receivedAcpMessageDuringRun = true;
+                if (shouldPersistInstructionsSent) {
+                  this.persistAcpInstructionsSent();
+                }
                 this.clearStartupTimer();
               } else if (isAcpErrorResultMessage(acpMessage as SDKMessage)) {
                 startupWatchSawErrorResult = true;

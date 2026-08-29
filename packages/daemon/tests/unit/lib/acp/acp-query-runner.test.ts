@@ -2940,6 +2940,44 @@ describe('AcpQueryRunner', () => {
       );
     }, 5000);
 
+    test('metadata before a startup failure does not mark instructions delivered', async () => {
+      const firstClient = createMockClient();
+      firstClient.canLoadSession.mockImplementation(() => true);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'available_commands_update', availableCommands: [] },
+        };
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { runner, ctx } = createRunnerFixture({
+        client: firstClient,
+        queryOptions: {
+          cwd: '/tmp/acp-session',
+          mcpServers: {},
+          systemPrompt: 'SYSTEM-PROMPT',
+        },
+      });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const acpRunner = new AcpQueryRunner(ctx, createClient);
+
+      await acpRunner.start();
+      await ctx.queryPromise;
+
+      const retryPrompt = secondClient.sendPrompt.mock.calls[0][0] as { text?: string }[];
+      expect(JSON.stringify(retryPrompt)).toContain('SYSTEM-PROMPT');
+      expect(secondClient.loadSession).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
     test('preserves instruction blocks across a pre-submission retry', async () => {
       const firstClient = createMockClient();
       firstClient.canLoadSession.mockImplementation(() => true);
