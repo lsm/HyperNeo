@@ -115,7 +115,8 @@ export class SessionManager {
       db,
       messageHub,
       internalEventBus,
-      referenceResolver
+      referenceResolver,
+      (sessionId) => this.getSessionAsync(sessionId)
     );
 
     this.setupEventSubscriptions();
