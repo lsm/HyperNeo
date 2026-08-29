@@ -10166,4 +10166,311 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       await extension.stop();
     }
   });
+
+  test('status webhook extracts commit SHA from nested commit.sha when top-level sha is absent', async () => {
+    const db = setupDb();
+    db.prepare(
+      `INSERT INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+    ).run();
+    const { service, received } = setupExternalEventService(db);
+    const fetchCalls: string[] = [];
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: statusFetchImpl(
+        [{ number: 7, state: 'open', head: { sha: 'abc123' } }],
+        fetchCalls
+      ),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = statusWebhookPayload({ sha: undefined, commit: { sha: 'abc123' } });
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.status_failure');
+    expect(received[0].payload.sha).toBe('abc123');
+    await extension.stop();
+  });
+
+  test('deployment_status webhook falls back to nested deployment_status.deployment when top-level deployment is missing', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const base = deploymentStatusPayload();
+    const payload = {
+      ...base,
+      deployment: undefined,
+      deployment_status: {
+        ...(base.deployment_status as Record<string, unknown>),
+        deployment: {
+          id: 321,
+          ref: DEPLOYMENT_REF,
+          sha: DEPLOYMENT_SHA,
+          environment: 'production',
+        },
+      },
+    };
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
+    await extension.stop();
+  });
+
+  test('deployment_status webhook is dropped before PR resolution when deployment ref and sha are both empty', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const fetchCalls: string[] = [];
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        fetchCalls.push(typeof url === 'string' ? url : url.toString());
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    const before = extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    expect(before.lastWebhookAt).toBeNull();
+
+    const base = deploymentStatusPayload();
+    const payload = {
+      ...base,
+      deployment: {
+        ...(base.deployment as Record<string, unknown>),
+        ref: '',
+        sha: '',
+      },
+    };
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'deployment_status', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ message: 'Event ignored' });
+    expect(received).toHaveLength(0);
+    expect(fetchCalls).toHaveLength(0);
+    const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+    expect(after.lastWebhookAt).toBeNull();
+    await extension.stop();
+  });
+
+  test('handleWebhook publishes matching events to every enabled space that shares the repository secret', async () => {
+    const db = setupDb();
+    db.prepare(
+      `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-2', 'space-2', 'Space 2', '/tmp', 'active', 1, 1)`
+    ).run();
+    db.prepare(
+      `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
+    ).run();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db);
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-2',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = payloadFor('issue_comment');
+    const raw = JSON.stringify(payload);
+    const response = await extension.routes[0].handle(
+      webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ spaces: 2 });
+    expect(received).toHaveLength(2);
+    expect(new Set(received.map((event) => event.spaceId)).size).toBe(2);
+    await extension.stop();
+  });
+
+  test('pollWatchedRepo reuses ETags and skips unchanged issue and review comment endpoints', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const requests: Array<{ path: string; ifNoneMatch?: string }> = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      const headers = init?.headers as Record<string, string> | undefined;
+      requests.push({ path, ifNoneMatch: headers?.['If-None-Match'] });
+      if (path.endsWith('/issues/comments')) {
+        if (headers?.['If-None-Match'] === 'W/"ic-etag"') {
+          return new Response(null, { status: 304 });
+        }
+        return pollingResponseWithHeaders([], { ETag: 'W/"ic-etag"' });
+      }
+      if (path.endsWith('/pulls/comments')) {
+        if (headers?.['If-None-Match'] === 'W/"rc-etag"') {
+          return new Response(null, { status: 304 });
+        }
+        return pollingResponseWithHeaders([], { ETag: 'W/"rc-etag"' });
+      }
+      if (path.endsWith('/pulls')) return pollingResponse([]);
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    const extension = new GitHubEventExtension(db, 'token', {
+      pollIntervalMs: 60_000,
+      fetchImpl,
+    });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    const firstRepo = extension.repo.listPollingRepos()[0];
+    const firstCount = await extension.pollWatchedRepo(firstRepo, fetchImpl);
+    expect(firstCount).toBe(0);
+    const firstIssue = requests.find((r) => r.path.endsWith('/issues/comments'));
+    expect(firstIssue?.ifNoneMatch).toBeUndefined();
+    const firstReview = requests.find((r) => r.path.endsWith('/pulls/comments'));
+    expect(firstReview?.ifNoneMatch).toBeUndefined();
+
+    const secondRepo = extension.repo.listPollingRepos()[0];
+    const secondCount = await extension.pollWatchedRepo(secondRepo, fetchImpl);
+    expect(secondCount).toBe(0);
+    const issueRequests = requests.filter((r) => r.path.endsWith('/issues/comments'));
+    const reviewRequests = requests.filter((r) => r.path.endsWith('/pulls/comments'));
+    expect(issueRequests[1]?.ifNoneMatch).toBe('W/"ic-etag"');
+    expect(reviewRequests[1]?.ifNoneMatch).toBe('W/"rc-etag"');
+    expect(received).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('pollOnce returns count 0 and stops the cycle when rate limited', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      calls.push(path);
+      if (path.endsWith('/issues/comments')) {
+        return new Response(JSON.stringify({ message: 'rate limit exceeded' }), {
+          status: 403,
+          headers: {
+            'X-RateLimit-Remaining': '0',
+            'X-RateLimit-Reset': String(Math.floor((Date.now() + 180_000) / 1000)),
+          },
+        });
+      }
+      throw new Error(`Unexpected call to ${path} after rate-limit break`);
+    }) as typeof fetch;
+
+    const extension = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000 });
+    const context = {
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+
+    const count = await extension.pollOnce(fetchImpl);
+    expect(count).toBe(0);
+    expect(calls.filter((p) => p.endsWith('/issues/comments')).length).toBe(1);
+    expect((extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil).toBeGreaterThan(
+      Date.now() + 60_000
+    );
+    expect(received).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('getNextPollDelayMs boundaries', async () => {
+    const db = setupDb();
+    const running = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000 });
+    expect(
+      (running as unknown as { getNextPollDelayMs: () => number | null }).getNextPollDelayMs()
+    ).toBe(60_000);
+
+    const ext = running as unknown as {
+      rateLimitedUntil: number;
+      rateLimitedFromRetryAfter: boolean;
+    };
+    ext.rateLimitedUntil = Date.now() + 30_000;
+    ext.rateLimitedFromRetryAfter = true;
+    expect(
+      (running as unknown as { getNextPollDelayMs: () => number | null }).getNextPollDelayMs()
+    ).toBe(60_000);
+
+    ext.rateLimitedFromRetryAfter = false;
+    ext.rateLimitedUntil = Date.now() + 120_000;
+    const fromReset = (
+      running as unknown as { getNextPollDelayMs: () => number | null }
+    ).getNextPollDelayMs() as number;
+    expect(fromReset).toBeGreaterThan(115_000);
+    expect(fromReset).toBeLessThan(125_000);
+
+    const disabled = new GitHubEventExtension(db, 'token', { pollIntervalMs: 0 });
+    expect(
+      (disabled as unknown as { getNextPollDelayMs: () => number | null }).getNextPollDelayMs()
+    ).toBeNull();
+    await running.stop();
+  });
 });
