@@ -85,6 +85,7 @@ function isAcpErrorResultMessage(message: SDKMessage): boolean {
 function isAcpProviderClassifiedError(message: string): boolean {
   const lower = message.toLowerCase();
   return (
+    assessLimitError({ rawText: message }).isLimit ||
     TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) => message.includes(substr)) ||
     message.includes('401') ||
     message.includes('403') ||

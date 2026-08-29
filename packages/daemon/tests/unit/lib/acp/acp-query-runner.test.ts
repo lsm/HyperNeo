@@ -2976,6 +2976,28 @@ describe('AcpQueryRunner', () => {
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
     }, 5000);
 
+    test('a pre-first-message text-only limit keeps its cooldown instead of the startup retry', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('Too Many Requests');
+      });
+      const { ctx, messageQueue } = createRunnerFixture({ client });
+      const runner2 = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+      ctx.onRateLimitExhausted = mock(async () => true);
+
+      await runner2.start();
+      await ctx.queryPromise;
+
+      expect(ctx.onRateLimitExhausted).toHaveBeenCalledTimes(1);
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
     test('a pre-first-message auth error surfaces as an auth failure, not a startup timeout', async () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (
