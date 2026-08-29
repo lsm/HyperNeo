@@ -2842,11 +2842,11 @@ describe('AcpQueryRunner', () => {
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     }, 5000);
 
-    test('ambient metadata does not disarm the watch: a hanging agent hits the backstop', async () => {
+    test('ambient metadata does not disarm the watch: a hanging agent hits the backstop and retries', async () => {
       process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '300';
-      const client = createMockClient();
-      const releasePrompt = holdPrompt(client);
-      client.sendPrompt = mock(async function* (
+      const firstClient = createMockClient();
+      let releaseAmbient: (() => void) | undefined;
+      firstClient.sendPrompt = mock(async function* (
         _prompt: unknown,
         callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
       ) {
@@ -2856,22 +2856,65 @@ describe('AcpQueryRunner', () => {
           sessionId: 'acp-session-1',
           update: { sessionUpdate: 'available_commands_update', availableCommands: [] },
         };
-        await new Promise<void>(() => {});
+        await new Promise<void>((resolve) => {
+          releaseAmbient = resolve;
+        });
       });
-      const { runner, ctx } = createRunnerFixture({ client });
+      firstClient.close.mockImplementation(() => {
+        releaseAmbient?.();
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { runner, ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const acpRunner = new AcpQueryRunner(ctx, createClient);
       const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
 
-      await runner.start();
+      await acpRunner.start();
       await waitFor(() => ctx.queryAbortController?.signal.aborted === true, 2000);
-      expect(client.cancel).toHaveBeenCalled();
+      expect(firstClient.cancel).toHaveBeenCalled();
       expect(
         loggerError.mock.calls.some(([message]) =>
           String(message).includes('ACP startup failure: inactivity backstop')
         )
       ).toBe(true);
 
-      releasePrompt();
       await ctx.queryPromise;
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('retries when the startup stream throws with an error result before any agent message', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('session/prompt failed');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { runner, ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const acpRunner = new AcpQueryRunner(ctx, createClient);
+
+      await acpRunner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
     }, 5000);
 
     test('a process exit after the first agent message does not trigger the startup kill', async () => {

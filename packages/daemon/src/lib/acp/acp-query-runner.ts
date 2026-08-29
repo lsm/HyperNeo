@@ -473,6 +473,7 @@ export class AcpQueryRunner {
     let acpProcessExit: SdkStartExitInfo | null = null;
     let startupWatchMessages: SDKMessage[] = [];
     let startupWatchHasFirstMessage: () => boolean = () => false;
+    let startupWatchFirstMessageSeen = false;
     let startStartupTimer: (hasFirstMessage: () => boolean) => void = () => {};
 
     const ownsStartupWatch = () =>
@@ -551,10 +552,8 @@ export class AcpQueryRunner {
           `ACP startup watch: no first agent message after ${outcome.inactivity.elapsedMs}ms; ` +
             `still waiting (inactivity backstop ${backstopMs}ms).`
         );
-        scheduleStartupWatchTick(Math.max(1, backstopMs - (Date.now() - queryStartTime)));
-        return;
       }
-      releaseSlot();
+      scheduleStartupWatchTick(Math.max(1, backstopMs - (Date.now() - queryStartTime)));
     };
 
     try {
@@ -673,6 +672,7 @@ export class AcpQueryRunner {
               startupTimeoutReached = false;
               queryStartTime = Date.now();
               startupWatchHasFirstMessage = hasFirstMessage;
+              startupWatchFirstMessageSeen = false;
               startupWatchMessages = [];
               scheduleStartupWatchTick(
                 Math.min(ACP_STARTUP_NUDGE_THRESHOLD_MS, getSdkStartInactivityBackstopMs())
@@ -762,7 +762,11 @@ export class AcpQueryRunner {
               onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
               onExit: (code, signal) => {
                 acpProcessExit = { code, signal };
-                if (!startupWatchHasFirstMessage() && ownsStartupWatch()) {
+                if (
+                  !startupWatchHasFirstMessage() &&
+                  this.ctx.startupTimeoutTimer !== null &&
+                  ownsStartupWatch()
+                ) {
                   this.clearStartupTimer();
                   killAcpStartupWatch(`agent process exited (code=${code}, signal=${signal})`);
                 }
@@ -955,7 +959,7 @@ export class AcpQueryRunner {
             adapter,
             abortController!.signal
           )) {
-            if (startupTimeoutReached && messageCount === 0) {
+            if (startupTimeoutReached) {
               throw new Error('ACP startup timeout - query aborted');
             }
 
@@ -969,6 +973,7 @@ export class AcpQueryRunner {
             if (!promptMessageReceived) {
               if (isAcpAgentStartupMessage(acpMessage as SDKMessage)) {
                 promptMessageReceived = true;
+                startupWatchFirstMessageSeen = true;
                 this.clearStartupTimer();
               } else {
                 startupWatchMessages.push(acpMessage as SDKMessage);
@@ -1038,7 +1043,7 @@ export class AcpQueryRunner {
             this.clearStartupTimer();
           }
 
-          if (startupTimeoutReached && messageCount === 0) {
+          if (startupTimeoutReached) {
             throw new Error('ACP startup timeout - query aborted');
           }
         } finally {
@@ -1057,8 +1062,12 @@ export class AcpQueryRunner {
       restoreMessageEnqueuedHandler?.();
       (terminalManager as AcpTerminalManager | null)?.dispose();
       terminalManager = null;
+      const startupFailedByErrorResult =
+        !startupWatchFirstMessageSeen &&
+        !TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) => String(error).includes(substr)) &&
+        startupWatchMessages.some(isAcpErrorResultMessage);
       const effectiveError =
-        startupTimeoutReached && !this.ctx.firstMessageReceived
+        startupTimeoutReached || startupFailedByErrorResult
           ? new Error('ACP startup timeout - query aborted')
           : error;
       await this.handleRunError(
