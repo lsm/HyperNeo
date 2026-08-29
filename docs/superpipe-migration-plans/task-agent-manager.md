@@ -81,7 +81,15 @@ and skips its CAS, leaving the new streaming worker UNBOUND while routing
 still references the ghost session — repeated retries stack orphan workers;
 TAM-B1 must add a status-and-session-guarded stale-binding resolution before
 the fresh arm (TAM-PB characterizes the failed-restoration fall-through as
-surviving behavior; the guarded resolution lands with B1). Reuse arm (rebind CAS with
+surviving behavior; the guarded resolution lands with B1). A SUCCESSFUL cold
+restoration can still fail BEFORE the create result exists: after
+`rehydrateSubSession` completes and starts the worker (:1124–1126),
+`updateConfig`, workspace reinjection, or `ensureRequiredMcpServersAttached`
+(:1202–1268) can reject before `createSubSession` returns (:1299) — F1's
+post-create cleanup can never observe such a failure, so the CREATE GROUP
+itself carries a provenance-aware unwind (with the concurrent-join ownership
+guard) that stops the newly restored worker without deleting its durable
+session. Reuse arm (rebind CAS with
 `SpawnSupersededError`, stale co-owner release cascade :1167–1197, config
 update, workspace migration under inject lock with node-agent-server
 capture/restore compensation :1250–1264), fresh arm (`AgentSession.fromInit`,
@@ -348,7 +356,13 @@ fine.
 
 `spawnPostApprovalSubSession` (:4827): slot match → live-reuse arm (terminal
 gate, run-ownership guard, workspace migration with capture/restore
-compensation, inject) vs fresh arm (TASK-OWNERSHIP RE-SNAPSHOT: re-read the
+compensation, inject) — this arm NEVER calls `createSubSession`
+(:4860–4912); it only checks ownership, migrates the workspace, and injects,
+so TAM-F1 composes B1's create stages in the NOMINAL FRESH ARM ONLY — running
+B1's reuse sequence (rebind, config replacement, completion-callback swap,
+stale co-owner clear) against an already-running worker would materially
+alter it (a change that must be its own allocated, tested slice if ever
+wanted) vs fresh arm (TASK-OWNERSHIP RE-SNAPSHOT: re-read the
 task and reject a changed `workflowRunId` (:4923–4927) BEFORE workspace
 resolution, pool reservation, or any creation side effect — pin in TAM-PF
 that it precedes all creation effects; omitting it spawns a worker from a
@@ -422,8 +436,12 @@ TAM-F compensates per outcome: a CREATED worker is stopped, unregistered, AND
 its execution binding CLEARED — the fresh arm bound the execution at
 :1347–1356, and stopping the session alone leaves the execution
 `in_progress` pointing at a dead worker, so CREATED cleanup includes a
-status-and-session-guarded execution unbind/transition (LIVE-REUSED and
-COLD-RESTORED keep their pre-existing binding);
+status-and-session-guarded execution unbind/transition. LIVE-REUSED and
+COLD-RESTORED keep their PRE-EXISTING binding — but a cold restore is not
+necessarily pre-existing: after rehydration, B1 selects an unbound same-node
+execution and CAS-binds it (:1133–1157), so the create result carries whether
+THIS attempt won that bind, and a COLD unwind rolls back ONLY that
+attempt-won binding while retaining the genuinely pre-existing one;
 a COLD-RESTORED worker (the restoration OWNER's attempt started its
 streaming via `rehydrateSubSession`) has its streaming and manager
 bookkeeping unwound
@@ -543,7 +561,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-PF | Pins for `spawnPostApprovalSubSession` restricted to SURVIVING current behavior: reuse/fresh arms, fresh-arm task-ownership re-snapshot preceding all creation effects (:4923–4927), cold-cache reuse via the nested create result, member-space self-heal hook installation — the terminal-recheck/skip/race contract lands with TAM-F1's protocol, never here | test-only | 0 | ≲90 | — |
 | TAM-PG | Pins for `deliverSpaceAgentPendingRow` restricted to SURVIVING current outcomes: settlement/error behavior AS IT BEHAVES TODAY, injector-rejection locality (later rows still delivered), near-expiry deferral cases — the status-safe race contract CANNOT land here (the primitive arrives with TAM-G) | test-only | 0 | ≲60 | — |
 | TAM-PS | Pins for `mcpSelfHeal`: admissions incl. multi-task owner resolution (non-first-owner case), displaced-session adoption, adoption-before-restart and heal ordering | test-only | 0 | ≲80 | — |
-| TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin); adds a CREATED-only compensation for STREAMING-STARTUP rejection — when `startStreamingQuery` rejects (:1389) the session is already registered/indexed (and, non-deferred, execution-bound), yet `createSubSession` throws BEFORE returning an ownership result, so neither the spawn flow (which records `attempt.sessionId` only after the awaited create returns, spawn-flow.ts:281) nor TAM-F1's post-create cleanup can see it. Cleanup is COMPLETE and ownership-safe: stop/clean the owned instance (it was persisted by `AgentSession.fromInit` and may have started queue/process/timer resources), remove ALL TaskAgentManager and SessionManager registrations, clear only a matching execution binding, AND delete the newly created durable session through the repository cleanup path — an incomplete cleanup leaks durable rows and suffixed-ID retries; TAM-PB pins both deferred- and normal-bind startup failures asserting no cached/indexed session, live resources, execution binding, or sessions row remains, and that a retry reuses the base session ID | build | ≲250 | ≲250 | TAM-PB |
+| TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin); adds a CREATED-only compensation for STREAMING-STARTUP rejection — when `startStreamingQuery` rejects (:1389) the session is already registered/indexed (and, non-deferred, execution-bound), yet `createSubSession` throws BEFORE returning an ownership result, so neither the spawn flow (which records `attempt.sessionId` only after the awaited create returns, spawn-flow.ts:281) nor TAM-F1's post-create cleanup can see it. Cleanup is COMPLETE and ownership-safe: stop/clean the owned instance (it was persisted by `AgentSession.fromInit` and may have started queue/process/timer resources), remove ALL TaskAgentManager and SessionManager registrations, clear only a matching execution binding, AND delete the newly created durable session through the repository cleanup path — an incomplete cleanup leaks durable rows and suffixed-ID retries; both deferred- and normal-bind STARTUP-FAILURE tests land WITH TAM-B1 (asserting no cached/indexed session, live resources, execution binding, or sessions row remains, and that a retry reuses the base session ID) — they cannot pass in the surviving-behavior pin slice | build | ≲250 | ≲250 | TAM-PB |
 | TAM-B3 | Split the spawn flow's `createSpawnedSession` dependency (a single `Promise<string>` seam, spawn-flow.ts :281) into preparation inputs + the create stage group, and compose those stages into the owning stage list — the interface CHANGE is the point: with the monolithic seam unchanged, B3 could only keep the imperative call or nest the B1 runner after B2. LANDS BEFORE TAM-B2 so no intermediate PR leaves every spawn nesting the B1 runner via the still-imperative `createSubSession`. The spawn-flow compensation is made OWNERSHIP-AWARE: it cancels only a CREATED session and leaves a COLD-RESTORED/LIVE-REUSED session (possibly retained elsewhere) intact | wire | ≲90 | ≲90 | TAM-B1, TAM-B0 |
 | TAM-B0 | Add RESTORATION-OWNER provenance WITHOUT changing the stable `rehydrateSubSession` return type (it stays `AgentSession | null` — after D2 it is live at five call sites and `createSubSession`/`getSubSessionByAgentName` consume it directly): a provenance-returning companion helper/stage wraps the existing call; extend the B1 create-stage result to carry the THREE-WAY ownership (CREATED / LIVE-REUSED / COLD-RESTORED) — landed as its own slice (after the rehydration rewire so it doesn't conflict, before B2/B3 and F1 which consume it), NOT hidden inside TAM-F1 | build | ≲80 | ≲120 | TAM-B1, TAM-D2 |
 | TAM-B2 | Delegate the `createSubSession` method body to the B1 pipeline (the last caller-side transition); the B1 create STAGE GROUP and its three-way created/reused/restored outcome are EXPORTED for direct composition (no runner nesting); the public `Promise<string>` return and both in-file caller signatures stay | wire | ≲70 | ≲60 | TAM-B1, TAM-B3, TAM-B0 |
