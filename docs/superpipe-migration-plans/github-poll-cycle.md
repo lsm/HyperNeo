@@ -60,9 +60,10 @@ pins header parsing and the cooldown/backoff path; the extracted helper modules
 | --- | --- | --- | --- | --- | --- |
 | C1 | `classifyPollResponseStatus` / `classifyPollResponseError` (two-phase) + `resolveRateLimitBackoff` | new `github-poll-response.ts` | ~70 | ~150 | No — plain pure fns |
 | C2 | `resolveEndpointWatermark`, `resolvePullsSeedNeed`, `resolvePullsBacklogCutoff`, `planEndpointPageAdvance` | new `github-poll-watermarks.ts` | ~85 | 0 | No — plain pure fns |
-| C3a | head-ref delta maintenance, tracked-PR reconcile | `github-pr-head-ref-index.ts` | ~75 | 0 | No — explicit-state mutator fns |
-| C3b | check-run pending→committed promotion | new `github-poll-cursor-gc.ts` | ~15 | 0 | No — returns the replacement pending record |
-| C3c | cursor GC prunes | `github-poll-cursor-gc.ts` | ~27 | 0 | No — in-place mutators |
+| C3a | initial head-ref index rebuild | `github-pr-head-ref-index.ts` | ~11 | 0 | No — explicit-state mutator fn |
+| C3b | pulls-scan delta maintenance, tracked-PR reconcile | `github-pr-head-ref-index.ts` | ~65 | 0 | No — explicit-state mutator fns |
+| C3c | check-run pending→committed promotion | new `github-poll-cursor-gc.ts` | ~15 | 0 | No — returns the replacement pending record |
+| C3d | cursor GC prunes | `github-poll-cursor-gc.ts` | ~27 | 0 | No — in-place mutators |
 | C4 | `resolveCheckRunSupersession` (pure plan w/ set updates), `resolveCheckRunLegacyOwner` | new `github-check-run-dedupe.ts` | ~45 | 0 | No — pure plan + pure fn |
 | C5a/b/c | merge-conflict / review / reaction transition plans (one module, three entry families) | new `github-poll-subscans.ts` | ~80 | 0 | No — pure plans returning cursor-state updates |
 | C6 | `planPollCursorCommit` | new `github-poll-cursor-commit.ts` | ~60 | 0 | No — pure plan, apply stays in class |
@@ -104,8 +105,11 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
   with exhausted-quota headers, :91–92), so a 304 is never `limited` — but a
   verbatim extraction must not silently unify the two orders: phase A takes
   an explicit `precedence: 'limited-first' | 'not-modified-first'` parameter
-  matching each site's current order, and GH-P1a pins both variants so the
-  latent difference is pinned, not erased.
+  matching each site's current order, and GH-E1a's unit tests pin both
+  variants with synthetic inputs — the divergence is unreachable through the
+  real fetch sites, so its parity oracle lives with the classifier build,
+  not in GH-P1a (which stays limited to behavior reachable through current
+  fetch sites).
 - **What stays imperative:** the per-site control flow differs legitimately
   (endpoint scan `continue`s on network error; check-run sets `headSucceeded`;
   reaction clears `reactionsFullyPolled`; review breaks its page loop). The
@@ -135,7 +139,7 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
   `+1` bump (:2508–2514), and the pending/committed endpoint watermark
   promotion. ~30 lines.
 
-### C3a — head-ref index maintenance and tracked-PR reconcile
+### C3a — initial head-ref index rebuild
 
 **These are not pure functions, and the extraction must not claim they are.**
 The existing primitives (`add/removePullRequestNumberByHeadRef`,
@@ -147,14 +151,21 @@ pure functions. The slice contract is "mutator extraction, zero behavior
 change"; if immutable purity is ever wanted, that is a redesign (plan + apply),
 not an extract.
 
+- Rebuild (:2284–2294, ~11 lines): reconstruct `pullRequestNumbersByHeadRef`
+  from `recentPullRequestHeadShas`/`recentPullRequestHeadRepos`. Its wiring
+  seam runs BEFORE the endpoint loop — distinct from the pulls-scan seam, so
+  it is its own slice.
+
+### C3b — pulls-scan index maintenance and tracked-PR reconcile
+
 - Delta maintenance during the pulls scan (:2421–2465, ~45 lines): closed-PR
   removal, head-SHA/repo change invalidation, `clearCheckRunEtagsForHead` +
-  head-watermark resets for newly tracked PRs; this extracts the *policy* that
-  sequences the primitives, including the initial rebuild (:2284–2294).
+  head-watermark resets for newly tracked PRs; this extracts the *policy*
+  that sequences the primitives. Same module and seam family as C3a.
 - Tracked-PR reconcile (:2466–2486, ~20 lines): fresh-open-first merge, drop
   closed, cap at `REACTION_POLL_PR_LIMIT`.
 
-### C3b — check-run pending→committed promotion
+### C3c — check-run pending→committed promotion
 
 - Promotion (:2758–2767): NOT an in-place mutation — after copying entries
   the source REASSIGNS `checkRunHeadPendingLastSeenAt = {}` (:2763; the
@@ -163,13 +174,13 @@ not an extract.
   place instead would change what a mid-scan failure persists before the
   final cursor write. Its wiring seam is inside the check-run scan.
 
-### C3c — cursor GC
+### C3d — cursor GC
 
 - GC (:3119–3145, ~27 lines): prune reaction/merge/review etags by
   tracked-PR set, head watermarks by tracked head set, check-run etags by
   `headRef:` prefix scan — in-place mutators over passed-in cursor
   structures. Its wiring seam is the cycle tail, separate from the scan.
-  Shares the C3b module; different seam and purpose, so a different slice.
+  Shares the C3c module; different seam and purpose, so a different slice.
 
 ### C4 — check-run supersession and legacy-owner dedupe
 
@@ -184,11 +195,17 @@ not an extract.
   republish duplicate IDs or superseded conclusions. ~15 lines.
 - `resolveCheckRunLegacyOwner` (:2694–2711): the pure half of legacy-PR dedupe —
   recorded owner ?? store-observed owner ?? first fan-out PR, and the
-  `legacyPrInFanOut` scoping decision. The `eventStore.getByDedupe` lookup
-  (:2697–2700) is a **synchronous** store effect — the call site does not
-  `await` it — and it stays at the call site unchanged so the extraction adds
-  no microtask boundary; the fan-out publish loop (:2710–2729) stays
-  imperative.
+  `legacyPrInFanOut` scoping decision. It returns the owner AND an optional
+  `recordObservedOwner` update: when the store lookup finds an existing
+  unscoped event whose key is not yet recorded, the source writes the
+  observed PR into `checkRunLegacyPrs` BEFORE fan-out resolution
+  (:2705–2707), and a resolver without that output would re-query the store
+  every cycle and lose the stable legacy owner in the cursor. The
+  `eventStore.getByDedupe` lookup (:2697–2700) is a **synchronous** store
+  effect — the call site does not `await` it — and it stays at the call site
+  unchanged so the extraction adds no microtask boundary; the fan-out
+  publish loop (:2710–2729, including its own `checkRunLegacyPrs` write at
+  :2724–2726) stays imperative.
 
 ### C5 — PR-scoped sub-scan transitions (three entry families, three slices)
 
@@ -206,13 +223,18 @@ or drop state transitions (same contract class as C4's supersession plan).
   (:2845–2848), NOT the PR `state`; an open PR with `mergeable: null` and
   `mergeable_state: 'dirty'` must NOT skip (name the helper input
   `mergeableState` so a literal implementation cannot suppress dirty-state
-  conflict events). Returns `{clearState} | {skip} | {conflicting,
-  sequence}`: a closed PR (`pullDetail.state !== 'open'`, :2841–2843) maps to
-  `clearState` and the caller applies `delete mergeConflictStates[prNumber]`
-  — without that arm a literal extraction retains stale conflict state for
-  closed PRs — and the caller applies the
-  `mergeConflictStates`/`mergeConflictSequences` writes for the transition
-  arms. ~20 lines.
+  conflict events). Returns `{clearState} | {stateWrite, transition}`:
+  `{clearState}` for a closed PR (`pullDetail.state !== 'open'`,
+  :2841–2843 — the caller applies `delete mergeConflictStates[prNumber]`;
+  without that arm a literal extraction retains stale conflict state for
+  closed PRs); otherwise the plan ALWAYS carries the `mergeConflictStates`
+  write (`stateWrite: conflicting` — the source writes the state on every
+  open-PR observation, :2851, including a first non-conflicting one that
+  then continues without a transition, :2852) plus `transition:
+  `{sequence} | null`` — `null` when `conflicting === (previous ?? false)`
+  (no sequence bump, no publish). Collapsing the no-transition observation
+  into a bare `skip` would lose the cursor write; collapsing it into the
+  transition arm would invent a publish. ~20 lines.
 - C5b review freshness + etag policy (:2875–2989 subset, :3001–3005):
   first-seen watermark seed, seen-id + watermark gate (note the stale path
   marks the id seen WITHOUT advancing the watermark, :2981–2984), single-page
@@ -278,18 +300,19 @@ GH-E1a lands additive and unwired per the playbook's build step.
 
 | Slice | Kind | Delivers | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| GH-P1a | pin | response-classification decision table (the 429-synthesis, secondary body-sniff, 304, low-remaining dimensions the fake-fetch suites cover only via whole cycles; BOTH 304-vs-limited precedence variants — see C1) | 0 | ≲200 | — |
+| GH-P1a | pin | response-classification decision table (the 429-synthesis, secondary body-sniff, 304, low-remaining dimensions the fake-fetch suites cover only via whole cycles — reachable behavior only; the synthetic 304-vs-limited precedence cases live in GH-E1a, see C1) | 0 | ≲200 | — |
 | GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × credentialStale × accessible × pollErrorMessage × prior-error presence/value × reactionsFullyPolled × reactionPolledAt × prior cursor.lastReactionPollAt × current token fingerprint × prior cursor.lastPollCredentialFingerprint` — the error fields are load-bearing fallbacks at :3154, :3161–3165, the reaction timestamp reads all three reaction axes at :3196–3198, and the credential fingerprint is written from the current token only when accessible (:3199–3201) — → committed/pending watermarks, error fields, reaction timestamp, credential fingerprint, write split) | 0 | ≲350 | — |
-| GH-E1a | build | C1 `github-poll-response.ts` two-phase classifiers + precedence + backoff, UNWIRED (cycle contract only; `githubFetch` keeps its own classification — open question 1) | ≲80 | ≲250 | GH-P1a |
+| GH-E1a | build | C1 `github-poll-response.ts` two-phase classifiers + precedence + backoff, UNWIRED, incl. synthetic 304-vs-limited decision tests as the precedence parity oracle (cycle contract only; `githubFetch` keeps its own classification — open question 1) | ≲80 | ≲250 | GH-P1a |
 | GH-E1b | wire | swap endpoint scan (limited-first precedence) | ≲40 net | ≲100 | GH-E1a |
 | GH-E1c | wire | swap check-run scan (limited-first) | ≲40 net | ≲100 | GH-E1b |
 | GH-E1d | wire | swap merge-conflict scan (not-modified-first) | ≲30 net | ≲100 | GH-E1c |
 | GH-E1e | wire | swap review scan (not-modified-first) | ≲30 net | ≲100 | GH-E1d |
 | GH-E1f | wire | swap reaction scan (not-modified-first) | ≲30 net | ≲100 | GH-E1e |
 | GH-E2 | extract | C2 watermark/seed/cutoff/page-advance helpers | ≲100 | ≲250 | — |
-| GH-E3a | extract | C3a head-ref delta policy + tracked-PR reconcile (mutator extraction) | ≲90 | ≲200 | GH-E2 |
-| GH-E3b | extract | C3b check-run promotion (returns replacement record) | ≲30 | ≲100 | GH-E3a |
-| GH-E3c | extract | C3c cursor GC prunes (same module, different seam) | ≲30 | ≲100 | GH-E3b |
+| GH-E3a | extract | C3a initial head-ref rebuild (pre-loop seam, mutator) | ≲30 | ≲100 | — |
+| GH-E3b | extract | C3b pulls-scan delta policy + tracked-PR reconcile (mutator extraction, same module) | ≲90 | ≲200 | GH-E3a |
+| GH-E3c | extract | C3c check-run promotion (returns replacement record) | ≲30 | ≲100 | GH-E3b |
+| GH-E3d | extract | C3d cursor GC prunes (same module, different seam) | ≲30 | ≲100 | GH-E3c |
 | GH-E4 | extract | C4 supersession + legacy-owner decisions | ≲80 | ≲200 | — |
 | GH-E5a | extract | C5a merge-conflict transition plan (first into `github-poll-subscans.ts`) | ≲40 | ≲120 | — |
 | GH-E5b | extract | C5b review freshness/etag plan (extends `github-poll-subscans.ts`) | ≲40 | ≲120 | GH-E5a |
@@ -305,8 +328,9 @@ green" (C3a: "mutator extraction, zero behavior change" — see the purity
 caveat there; GH-E1a: "additive dead code, no call-site changes"). Slice
 count is an output of measurement — C1 deletes duplication across five sites
 so its classifier is built once (E1a) and wired per site (E1b–f); C3 splits
-three ways because index maintenance, promotion, and GC are different
-purposes at different seams; C5's three sub-scans are three entry families
+four ways because the pre-loop rebuild, the pulls-scan maintenance, the
+in-scan promotion, and the tail GC are different purposes at different
+seams; C5's three sub-scans are three entry families
 (GH-E5a/b/c) growing one shared module across serially chained slices; no
 slice mixes clusters or modules.
 
