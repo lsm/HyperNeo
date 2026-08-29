@@ -1205,12 +1205,16 @@ export function setupSessionHandlers(
     });
 
     const rollbackToDeferred = async () => {
-      db.updateMessageStatus([message.dbId], 'deferred');
-      await internalEventBus.publish('messages.statusChanged', {
-        sessionId: targetSessionId,
-        messageIds: [message.dbId],
-        status: 'deferred',
-      });
+      const rolledBack = db
+        .getSDKMessageRepo()
+        .markDeliveryDeferredByUuid(targetSessionId, messageUuid);
+      if (rolledBack) {
+        await internalEventBus.publish('messages.statusChanged', {
+          sessionId: targetSessionId,
+          messageIds: [rolledBack],
+          status: 'deferred',
+        });
+      }
     };
 
     try {
