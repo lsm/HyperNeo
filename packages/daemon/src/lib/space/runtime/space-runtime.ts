@@ -4370,6 +4370,52 @@ export class SpaceRuntime {
     await this.recoverPendingDeliveries(pausedSpaceIds);
   }
 
+  private rehydrateDigestHandoffDebt(): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    const messages = this.getSdkMessageRepo();
+    const sessionRows = this.config.db
+      .prepare(
+        `SELECT DISTINCT session_id FROM sdk_messages
+         WHERE send_status = 'deferred' AND sdk_uuid LIKE ? || '%'`
+      )
+      .all(DETERMINISTIC_DIGEST_UUID_PREFIX) as Array<{ session_id: string }>;
+    for (const { session_id: sessionId } of sessionRows) {
+      const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+      if (!execution) continue;
+      for (const row of messages.listUserMessagesByUuidPrefix(
+        sessionId,
+        DETERMINISTIC_DIGEST_UUID_PREFIX
+      )) {
+        if (row.sendStatus !== 'deferred') continue;
+        const membership = (row as { externalEventIds?: unknown }).externalEventIds;
+        if (!Array.isArray(membership) || membership.length === 0) continue;
+        const eventIds = membership.filter(
+          (eventId): eventId is string => typeof eventId === 'string'
+        );
+        if (eventIds.length === 0) continue;
+        const rowTaskId = (row as { externalEventTaskId?: unknown }).externalEventTaskId as
+          | string
+          | undefined;
+        const allMembersDelivered = eventIds.every((eventId) =>
+          store
+            .listDeliveries(eventId)
+            .some(
+              (delivery) =>
+                delivery.workflowRunId === execution.workflowRunId &&
+                delivery.nodeId === execution.workflowNodeId &&
+                delivery.agentName === execution.agentName &&
+                (rowTaskId === undefined || delivery.taskId === rowTaskId) &&
+                delivery.state === 'delivered'
+            )
+        );
+        if (allMembersDelivered) {
+          this.digestHandoffDebt.add(`${sessionId}:${String(row.uuid)}`);
+        }
+      }
+    }
+  }
+
   private recoveryDone = false;
 
   async recoverStalledRunsForSpace(spaceId: string): Promise<void> {
