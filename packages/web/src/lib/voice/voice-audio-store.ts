@@ -184,6 +184,7 @@ function serializeMutation<T>(op: () => Promise<T>): Promise<T> {
 
 export function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
   return serializeMutation(async () => {
+    if (!isVoiceRecordEntry(entry)) return false;
     mirror.set(entry.id, entry);
     tombstones.delete(entry.id);
     const plan = await writeTx(() => {});

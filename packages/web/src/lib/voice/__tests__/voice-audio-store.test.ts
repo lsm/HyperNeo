@@ -88,6 +88,27 @@ async function readDurableIds(factory): Promise<string[]> {
   return rows.map((row) => row.id).sort();
 }
 
+async function seedDurableRows(factory, rows) {
+  const db = await new Promise((resolve) => {
+    const request = factory.open('hyperneo-voice-audio', 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains('records')) {
+        request.result.createObjectStore('records', { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+  });
+  await new Promise((resolve) => {
+    const tx = db.transaction('records', 'readwrite');
+    const store = tx.objectStore('records');
+    for (const row of rows) store.put(row);
+    tx.oncomplete = () => {
+      db.close();
+      resolve(null);
+    };
+  });
+}
+
 const NOW = Date.now();
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -251,10 +272,19 @@ describe('voice audio record store', () => {
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r2', 'r3', 'r4', 'r5', 'r6']);
   });
 
+  it('rejects a malformed entry before staging or writing it', async () => {
+    const factory = createFactory();
+    globalThis.indexedDB = factory;
+    expect(await putVoiceRecord({ ...makeEntry('nan', NOW), createdAt: Number.NaN })).toBe(false);
+    expect(await putVoiceRecord({ id: 'junk', sessionId: 's1', audioBase64: 'x' })).toBe(false);
+    expect(await listVoiceRecords()).toHaveLength(0);
+    expect(await readDurableIds(factory)).toEqual([]);
+  });
+
   it('lets a valid put replace a malformed durable row with the same id', async () => {
     const factory = createFactory();
     globalThis.indexedDB = factory;
-    await putVoiceRecord({ id: 'x', sessionId: 's1', audioBase64: 'junk' });
+    await seedDurableRows(factory, [{ id: 'x', sessionId: 's1', audioBase64: 'junk' }]);
     expect(await putVoiceRecord(makeEntry('x', NOW))).toBe(true);
     resetVoiceAudioStore();
     expect((await getVoiceRecord('x'))?.audioBase64).toBe('wav-bytes-x');
@@ -280,16 +310,18 @@ describe('voice audio record store', () => {
     const factory = createFactory();
     globalThis.indexedDB = factory;
     await putVoiceRecord(makeEntry('ok', NOW));
-    await putVoiceRecord({ id: 'junk', sessionId: 's1', audioBase64: 'x' });
-    await putVoiceRecord({
-      id: 'flag',
-      sessionId: 's1',
-      audioBase64: 'x',
-      mimeType: 'audio/wav',
-      peakLevel: 0.5,
-      createdAt: NOW,
-      hitDurationLimit: 'false',
-    });
+    await seedDurableRows(factory, [
+      { id: 'junk', sessionId: 's1', audioBase64: 'x' },
+      {
+        id: 'flag',
+        sessionId: 's1',
+        audioBase64: 'x',
+        mimeType: 'audio/wav',
+        peakLevel: 0.5,
+        createdAt: NOW,
+        hitDurationLimit: 'false',
+      },
+    ]);
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['ok']);
     await pruneVoiceRecords();
     expect(await readDurableIds(factory)).toEqual(['ok']);
