@@ -258,7 +258,9 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
         spaceLevel = await ctx.deps.getSpaceAutonomyLevel(ctx.spaceId);
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        return { ...ctx, outcome: failedOutcome(error) };
+        const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
+        writeAuditEntry(denialAuditCtx(next));
+        return next;
       }
     }
   }
@@ -270,7 +272,14 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
       required = await action.autonomyRequirement(ctx.parsedParams);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      return { ...ctx, spaceLevel, agentLevel, outcome: failedOutcome(error) };
+      const next: DispatchActionCtx = {
+        ...ctx,
+        spaceLevel,
+        agentLevel,
+        outcome: failedOutcome(error),
+      };
+      writeAuditEntry(denialAuditCtx(next));
+      return next;
     }
   } else {
     required = action.autonomyRequirement;
@@ -304,7 +313,9 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       required = await action.autonomyRequirement(ctx.parsedParams);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      return { ...ctx, outcome: failedOutcome(error) };
+      const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
+      writeAuditEntry(denialAuditCtx(next));
+      return next;
     }
     const spaceLevel = ctx.spaceLevel ?? 1;
     const agentLevel = ctx.agentLevel ?? null;
@@ -333,7 +344,9 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       ok = await ctx.deps.isWithinRateBudget();
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      return { ...ctx, outcome: failedOutcome(error) };
+      const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
+      writeAuditEntry(denialAuditCtx(next));
+      return next;
     }
     if (!ok) {
       const denied: DispatchActionCtx = {
@@ -375,10 +388,10 @@ function denialAuditCtx(ctx: DispatchActionCtx): DispatchActionCtx {
   return ctx;
 }
 
-function writeAuditEntry(ctx: DispatchActionCtx): void {
+function writeAuditEntry(ctx: DispatchActionCtx, forceExempt = false): void {
   if (!ctx.deps.auditLogRepo) return;
   const toolName = ctx.action?.name ?? ctx.actionName;
-  if (ctx.action?.auditExempt) return;
+  if (!forceExempt && ctx.action?.auditExempt) return;
   if (!ctx.isMutating && !ctx.deps.auditReads) return;
   try {
     const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
@@ -506,6 +519,9 @@ export async function runDispatchAction(
   try {
     const ctx = await run({ ...input, deps });
     const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
+    if (ctx.action?.auditExempt && outcome.action === 'dispatched') {
+      writeAuditEntry(ctx, true);
+    }
     await emitDispatchTelemetry(
       deps,
       { ...input, taskId: ctx.taskId, workflowRunId: ctx.workflowRunId },
