@@ -5,16 +5,28 @@ import {
 } from '@hyperneo/shared';
 import type { z } from 'zod';
 import {
+  AddForgeManualNoteSchema,
+  AddForgeMetricSnapshotSchema,
+  ApplyForgeRollupSchema,
   ApprovePendingCompletionSchema,
   ApproveTaskSchema,
   ArchiveTaskSchema,
+  AttachForgeTaskEvidenceSchema,
+  AttachForgeWorkflowRunEvidenceSchema,
   CancelTaskSchema,
   ChangePlanSchema,
+  CreateForgeEpisodeSchema,
+  CreateForgeScopeFromGoalSchema,
+  CreateForgeScopeSchema,
+  CreateForgeTaskProposalSchema,
   CreateGoalSchema,
   CreateScheduledTaskSchema,
   CreateStandaloneTaskSchema,
+  CreateTaskFromForgeProposalSchema,
   DeleteScheduledTaskSchema,
   GetExternalEventSchema,
+  GetForgeScopeSchema,
+  GetForgeTimelineSchema,
   GetGoalSchema,
   GetScheduledTaskSchema,
   GetSessionDetailSchema,
@@ -27,6 +39,12 @@ import {
   InactivityConfigSetSchema,
   InactivityRunNowSchema,
   InterruptSessionSchema,
+  ListForgeEvidenceSchema,
+  ListForgeLessonsSchema,
+  ListForgeMetricSnapshotsSchema,
+  ListForgeProposalsSchema,
+  ListForgeReviewBundleSchema,
+  ListForgeScopesSchema,
   ListGoalEventsSchema,
   ListGoalsSchema,
   ListGoalTasksSchema,
@@ -39,6 +57,7 @@ import {
   PauseScheduledTaskSchema,
   PublishTaskSchema,
   ReassignTaskSchema,
+  ResolveForgeScopeSchema,
   ResumeGoalSchema,
   ResumeScheduledTaskSchema,
   ReviewGoalOutcomeSchema,
@@ -47,6 +66,10 @@ import {
   SendSessionMessageSchema,
   SuggestWorkflowSchema,
   TriggerGoalTaskSchema,
+  UpdateForgeEpisodeSchema,
+  UpdateForgeLessonSchema,
+  UpdateForgeScopeSchema,
+  UpdateForgeTaskProposalSchema,
   UpdateGoalSchema,
   UpdateSessionStateSchema,
   UpdateTaskSchema,
@@ -693,10 +716,244 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     handler: (args) => handlers.review_goal_outcome(args),
   });
 
+  const forgeEntries: ActionDefinition[] = [
+    defineAction({
+      name: 'create_forge_scope',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Create a Forge scope, optionally linked to a recurring goal, with policy for judge guidance; returns the created scope.',
+      paramsDoc: 'kind, name, objective, goal_id?, parent_scope_id?, metric_definitions?, policy?',
+      paramsSchema: CreateForgeScopeSchema,
+      handler: (args) => handlers.create_forge_scope(args),
+    }),
+    defineAction({
+      name: 'create_forge_scope_from_goal',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Create a mission Forge scope linked to an existing goal, defaulting name/objective from the goal; returns the created scope.',
+      paramsDoc: 'goal_id, name?, objective?, metric_definitions?, policy?',
+      paramsSchema: CreateForgeScopeFromGoalSchema,
+      handler: (args) => handlers.create_forge_scope_from_goal(args),
+    }),
+    defineAction({
+      name: 'list_forge_scopes',
+      family: 'forge',
+      safetyClass: 'read',
+      description:
+        'List Forge scopes in this space, optionally filtered by linked goal or kind; returns scope records.',
+      paramsDoc: 'goal_id? (null = unlinked), kind?',
+      paramsSchema: ListForgeScopesSchema,
+      handler: (args) => handlers.list_forge_scopes(args),
+    }),
+    defineAction({
+      name: 'get_forge_scope',
+      family: 'forge',
+      safetyClass: 'read',
+      description:
+        'Get one Forge scope including linked goal, metric definitions, and policy; returns the full scope record.',
+      paramsDoc: 'scope_id',
+      paramsSchema: GetForgeScopeSchema,
+      handler: (args) => handlers.get_forge_scope(args),
+    }),
+    defineAction({
+      name: 'update_forge_scope',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Update a Forge scope — link/unlink a goal; prefer policy_patch to deep-merge policy fields without clobbering the rest; changes take effect immediately; returns the updated scope.',
+      paramsDoc:
+        'scope_id, plus goal_id?, kind?, name?, objective?, parent_scope_id?, metric_definitions?, policy?/policy_patch?, episode_judge_model?, episode_judge_provider?',
+      paramsSchema: UpdateForgeScopeSchema,
+      handler: (args) => handlers.update_forge_scope(args),
+    }),
+    defineAction({
+      name: 'get_forge_timeline',
+      family: 'forge',
+      safetyClass: 'read',
+      description:
+        'Get a scope overview/timeline with scope, evidence, and metric snapshots; returns the timeline bundle.',
+      paramsDoc: 'scope_id',
+      paramsSchema: GetForgeTimelineSchema,
+      handler: (args) => handlers.get_forge_timeline(args),
+    }),
+    defineAction({
+      name: 'add_forge_manual_note',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Attach a manual-note evidence item to a Forge scope; returns the evidence record.',
+      paramsDoc: 'scope_id, summary, metadata?, created_at?',
+      paramsSchema: AddForgeManualNoteSchema,
+      handler: (args) => handlers.add_forge_manual_note(args),
+    }),
+    defineAction({
+      name: 'attach_forge_task_evidence',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Attach a completed or relevant task as Forge evidence, resolving the scope from the task when scope_id is omitted; returns the evidence record.',
+      paramsDoc: 'task_id, scope_id?, summary?, metadata?',
+      paramsSchema: AttachForgeTaskEvidenceSchema,
+      handler: (args) => handlers.attach_forge_task_evidence(args),
+    }),
+    defineAction({
+      name: 'attach_forge_workflow_run_evidence',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        "Attach a workflow run as Forge evidence, resolving the scope via the run's first task when scope_id is omitted; returns the evidence record.",
+      paramsDoc: 'workflow_run_id, scope_id?, summary?, metadata?',
+      paramsSchema: AttachForgeWorkflowRunEvidenceSchema,
+      handler: (args) => handlers.attach_forge_workflow_run_evidence(args),
+    }),
+    defineAction({
+      name: 'add_forge_metric_snapshot',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Add a metric-snapshot evidence item to a Forge scope; returns the snapshot record.',
+      paramsDoc: 'scope_id, values, source, note?, captured_at?, summary?, metadata?',
+      paramsSchema: AddForgeMetricSnapshotSchema,
+      handler: (args) => handlers.add_forge_metric_snapshot(args),
+    }),
+    defineAction({
+      name: 'list_forge_evidence',
+      family: 'forge',
+      safetyClass: 'read',
+      description: 'List evidence refs for a Forge scope; returns evidence records.',
+      paramsDoc: 'scope_id',
+      paramsSchema: ListForgeEvidenceSchema,
+      handler: (args) => handlers.list_forge_evidence(args),
+    }),
+    defineAction({
+      name: 'list_forge_metric_snapshots',
+      family: 'forge',
+      safetyClass: 'read',
+      description: 'List metric snapshots for a Forge scope; returns snapshot records.',
+      paramsDoc: 'scope_id',
+      paramsSchema: ListForgeMetricSnapshotsSchema,
+      handler: (args) => handlers.list_forge_metric_snapshots(args),
+    }),
+    defineAction({
+      name: 'create_forge_episode',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Generate a draft Forge episode from selected evidence via the episode judge (LLM/model/auth errors are surfaced clearly); returns the draft episode.',
+      paramsDoc: 'scope_id, evidence_ids, time_window?, confirm_low_confidence?',
+      paramsSchema: CreateForgeEpisodeSchema,
+      handler: (args) => handlers.create_forge_episode(args),
+    }),
+    defineAction({
+      name: 'list_forge_review_bundle',
+      family: 'forge',
+      safetyClass: 'read',
+      description:
+        'List episodes, lessons, and task proposals for reviewing a Forge scope; returns the review bundle.',
+      paramsDoc: 'scope_id',
+      paramsSchema: ListForgeReviewBundleSchema,
+      handler: (args) => handlers.list_forge_review_bundle(args),
+    }),
+    defineAction({
+      name: 'list_forge_lessons',
+      family: 'forge',
+      safetyClass: 'read',
+      description:
+        'List Forge lessons for a scope, optionally filtered by status; returns lesson records.',
+      paramsDoc: 'scope_id, status? (candidate|active|dismissed)',
+      paramsSchema: ListForgeLessonsSchema,
+      handler: (args) => handlers.list_forge_lessons(args),
+    }),
+    defineAction({
+      name: 'list_forge_proposals',
+      family: 'forge',
+      safetyClass: 'read',
+      description:
+        'List Forge task proposals for a scope, optionally filtered by status; returns proposal records.',
+      paramsDoc: 'scope_id, status?',
+      paramsSchema: ListForgeProposalsSchema,
+      handler: (args) => handlers.list_forge_proposals(args),
+    }),
+    defineAction({
+      name: 'resolve_forge_scope',
+      family: 'forge',
+      safetyClass: 'read',
+      description:
+        'Resolve a Forge scope from a linked goal_id or task_id when scope_id is unknown; returns the scope.',
+      paramsDoc: 'goal_id? or task_id?',
+      paramsSchema: ResolveForgeScopeSchema,
+      handler: (args) => handlers.resolve_forge_scope(args),
+    }),
+    defineAction({
+      name: 'update_forge_episode',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Accept, dismiss, or edit a Forge episode draft — use accept/dismiss only after an explicit decision; returns the updated episode.',
+      paramsDoc: 'episode_id, status?, title?, outcome_summary?',
+      paramsSchema: UpdateForgeEpisodeSchema,
+      handler: (args) => handlers.update_forge_episode(args),
+    }),
+    defineAction({
+      name: 'update_forge_lesson',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Activate, dismiss, or edit a candidate lesson — activation requires an explicit tool call; returns the updated lesson.',
+      paramsDoc: 'lesson_id, status?, applies_to?, rule?, why?, confidence?',
+      paramsSchema: UpdateForgeLessonSchema,
+      handler: (args) => handlers.update_forge_lesson(args),
+    }),
+    defineAction({
+      name: 'create_forge_task_proposal',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Manually create a Forge task proposal for a scope; a later create_task_from_forge_proposal makes the real task; returns the proposal.',
+      paramsDoc: 'scope_id, title, description, reason, priority?, evidence_episode_ids?',
+      paramsSchema: CreateForgeTaskProposalSchema,
+      handler: (args) => handlers.create_forge_task_proposal(args),
+    }),
+    defineAction({
+      name: 'update_forge_task_proposal',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Edit, accept, or dismiss a Forge task proposal — creating the SpaceTask is separate and explicit; returns the updated proposal.',
+      paramsDoc: 'proposal_id, title?, description?, reason?, priority?, status?',
+      paramsSchema: UpdateForgeTaskProposalSchema,
+      handler: (args) => handlers.update_forge_task_proposal(args),
+    }),
+    defineAction({
+      name: 'create_task_from_forge_proposal',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Create a real SpaceTask from a Forge proposal, preserving linked goal and scope bindings, with optional dependencies; idempotent when the task already exists; returns the created task.',
+      paramsDoc: 'proposal_id, title?, description?, reason?, priority?, depends_on?',
+      paramsSchema: CreateTaskFromForgeProposalSchema,
+      handler: (args) => handlers.create_task_from_forge_proposal(args),
+    }),
+    defineAction({
+      name: 'apply_forge_rollup',
+      family: 'forge',
+      safetyClass: 'mutate',
+      description:
+        'Accept a Forge episode and roll its summary/progress/metrics/next steps into the linked recurring goal; returns the rollup result.',
+      paramsDoc: 'episode_id, goal_update {summary?, progress?, next_steps?, metrics?}',
+      paramsSchema: ApplyForgeRollupSchema,
+      handler: (args) => handlers.apply_forge_rollup(args),
+    }),
+  ];
+
   const entries = config.db
     ? [...sessionEntries, ...workflowEntries, ...taskEntries, ...partCEntries]
     : [...workflowEntries, ...taskEntries, ...partCEntries];
   if (config.goalService) entries.push(...goalEntries);
+  if (config.evolutionScopeService && config.evolutionEpisodeService)
+    entries.push(...forgeEntries);
   if (config.callerRole === 'long_term_agent' || config.callerRole === 'coordinator')
     entries.push(reviewGoalOutcomeEntry);
   return config.taskAgentManager
