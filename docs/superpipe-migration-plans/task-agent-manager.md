@@ -30,7 +30,7 @@ matches. No migration work remains there.
 | 3 | Spawn lifecycle wrapper + flow deps | 635–1098 (~464) | Already migrated at core; deps bag stays prose |
 | 4 | `createSubSession` reuse-vs-create | 1110–1407 (~298) | **Pipeline: `create-node-agent-sub-session`** |
 | 5 | Pending drain/flush (node + space agent) | 1409–1732 (~324) | Core migrated; `deliverSpaceAgentPendingRow` pipeline candidate |
-| 6 | Injection wrappers, terminal gate, locks | 1734–1915 (~182) | Terminal gate reusable; locks stay |
+| 6 | Injection wrappers, terminal gate, locks | 1734–1915 (~182) | Admissions compose into `deliver-injected-message` (cluster 15); inject lock stays |
 | 7 | Lookups, worker identity, provenance readers | 1917–2168 (~252) | Plain helpers (extract module, optional) |
 | 8 | Post-approval worker restore | 2170–2344 (~175) | **Pipeline: `restore-post-approval-worker`** |
 | 9 | Activation routing | 2346–2550 (~205) | Owned by `space-runtime-tools-goals.md` P48–P50 |
@@ -39,7 +39,7 @@ matches. No migration work remains there.
 | 12 | Completion callbacks + handlers | 3078–3196 (~119) | Stays (subscription state machine) |
 | 13 | Runtime contract + name aliases | 3198–3380 (~183) | Stays (prompt prose + pure leaves) |
 | 14 | Rehydration | 3382–3805 (~424) | **Pipeline: `rehydrate-sub-session`** |
-| 15 | `injectMessageIntoSession` delivery core | 3807–4047 (~241) | **Pipeline: `deliver-injected-message`** |
+| 15 | `injectMessageIntoSession` delivery core | 3807–4047 (~241) | **Pipeline: `deliver-injected-message` (with cluster 6)** |
 | 16 | Status publish, stop-preserve-DB, run helpers | 4049–4122 (~74) | Stays |
 | 17 | MCP attach / self-heal | 4124–4392 (~269) | Heal core migrated; prologue candidate |
 | 18 | `buildNodeAgentMcpServerForSession` | 4394–4826 (~433) | Stays (construction prose; no pipeline) |
@@ -75,13 +75,21 @@ restart would double-spawn the worker. Reuse arm (rebind CAS with
 `SpawnSupersededError`, stale co-owner release cascade :1167–1197, config
 update, workspace migration under inject lock with node-agent-server
 capture/restore compensation :1250–1264), fresh arm (`AgentSession.fromInit`,
-index/register, bind CAS with superseded compensation that deletes the
-never-streamed session row :1357–1371, stream). Callback re-registration
-(:1272–1277) stays manager-owned at the lifecycle boundary — the pipeline
-returns the reuse/create outcome and the manager swaps the callback. Both
+bind CAS with superseded compensation that deletes the never-streamed session
+row :1357–1371, stream). The `deferFreshExecutionBind` flag is LOAD-BEARING in
+the stage contract: the spawn-flow caller passes it (:968) so the method skips
+its inner execution CAS AND the trailing flush, leaving the outer guarded bind
+(`bindExecutionToSession` with `expectAgentSessionId`, :983–997) as the SOLE
+commit point — a pipeline that binds or flushes without carrying that gate
+binds prematurely, makes the outer CAS report `superseded`, and unwinds
+otherwise valid spawns (pin both arms under the flag). Index/registration
+(:1327–1333) stays manager-owned at the lifecycle boundary, like the callback
+re-registration (:1272–1277): the pipeline returns the reuse/create outcome
+and the manager swaps the callback and registers the session. Both
 arms end with a DETACHED `void flushPendingMessagesForTarget(...).catch`
-(:1286–1297, :1391–1402): a drain failure must never reject or compensate a
-successfully created/reused session. Fit: strong `stagedRun` — sync admission
+(:1286–1297, :1391–1402) — suppressed under `deferFreshExecutionBind` — so a
+drain failure must never reject or compensate a successfully created/reused
+session. Fit: strong `stagedRun` — sync admission
 gates, CAS effects, awaited
 workspace migration, two compensations. The bind step composes the repo
 primitive the spawn flow also wraps — `nodeExecutionRepo.casExecutionStatus`
@@ -105,14 +113,23 @@ is not.
 
 ### `restore-post-approval-worker` — cluster 8, ~175 lines
 
-`performPostApprovalWorkerRestore` (:2184): refusal gates (archived task/run,
-cooldown → throw), cached-or-`AgentSession.restore`, slot match (a finite
+`performPostApprovalWorkerRestore` (:2184): refusal gates — task
+`cancelled`/`archived` (:2192–2194) AND run `cancelled` (:2195–2196) return
+`null` before any space load or restore (pin all three rows; "archived
+task/run" alone underspecifies them), cooldown → throw — then cached-or-
+`AgentSession.restore`, slot match (a finite
 configuration selection — a pure stage, not a loop to preserve), optional
-slot-init overlay, MCP merge, `ensureNodeAgentAttached`, index/register (this
-path attaches ONLY the `onMissing*` hooks and slot-context reset — it
-registers NO completion callback today, and its identity query excludes
-node-execution-owned sessions; preserve that), stream + replay with
-unregister compensation (:2320–2331), detached flush. Fit: strong
+slot-init overlay, MCP merge, `ensureNodeAgentAttached`, `onMissing*` hooks +
+slot-context reset (this path attaches NO completion callback today, and its
+identity query excludes node-execution-owned sessions; preserve that),
+transcript sanitization IMMEDIATELY BEFORE `startStreamingQuery`
+(:2321–2323 — `sanitizeSDKSessionTranscriptForRehydration` normalizes
+malformed assistant usage counts; skipping it resumes against a broken
+transcript; pin the pre-stream ordering), stream + replay with unregister
+compensation (:2320–2331), detached flush. Index/registration
+(`agentSessionIndex` + `registerSession`, :2313–2318) stays manager-owned:
+the pipeline returns the restored-session outcome, the manager registers —
+same boundary as the callback swap. Fit: strong
 `stagedRun`. The workspace update here (:2246–2248) writes metadata only —
 NO node-agent capture/restore pair; preserve that asymmetry. The identity
 resolution half (:2070–2168) stays plain helpers (raw-SQL
@@ -139,10 +156,16 @@ ADMISSIBLE here and must stay so (pin it); conflating it with a generic
 "terminal task" gate would drop a done task's live execution during run
 restoration —, no space, cancelled run) → cached or
 `AgentSession.restore` → workspace resolve/update → init overlay → MCP merge →
-attach → index/register → stream + replay with bookkeeping compensation
-(:3675–3685) → detached flush. Completion-callback subscription stays
+attach → `onMissingWorkflowMcpServers` hook + `reattachSlotContextReset`
+(:3658–3661, BEFORE the stream starts — rehydration tests verify the
+self-heal callback is visible when streaming begins; pin that ordering) →
+transcript sanitization immediately before `startStreamingQuery`
+(:3673–3677, same pre-stream normalization as cluster 8) → stream + replay
+with bookkeeping compensation (:3675–3685) → detached flush. Index/
+registration (:3646–3652) and completion-callback subscription stay
 class-owned (cluster 12 classification): the pipeline declares the outcome,
-the manager attaches/detaches callbacks at the lifecycle boundary. The
+the manager registers the session and attaches/detaches callbacks at the
+lifecycle boundary. The
 `resolveNodeExecutionForSubSession` repair (:3759–3768) — an unconditional
 `updateSessionId` write when an `:exec:`-embedded execution lacks
 `agent_session_id` — runs AFTER the archived-session refusal (:3490) but
@@ -160,11 +183,19 @@ injects a kickoff without pending replay — a different ordering. Only two
 direct tail uses exist; a shared combinator needs a true third (ADR 0004
 ≈3-use rule).
 
-### `deliver-injected-message` — cluster 15, ~184 lines
+### `deliver-injected-message` — clusters 6 + 15, ~367 lines
 
-`injectMessageIntoSession` (:3849): the `decideInjectDelivery` decision
+The complete injection path spans BOTH the outer admissions of
+`injectSubSessionMessageWithOrigin` (:1779–1849 — terminal task/run refusal,
+target resolution via index/subSessions scan/rehydration, inject-lock
+acquisition, POST-LOCK terminal recheck, locked target re-snapshot) and the
+inner `injectMessageIntoSession` (:3849) arms. TAM-E composes the whole
+operation — one direct pipeline per business path — with the inject lock
+itself class-owned (`withSessionResetCoordination`); migrating only the inner
+method would split the path across an imperative gate cascade and the
+pipeline. Inside, the `decideInjectDelivery` decision
 (`noop`/`defer`/`clear_before_deliver`/`deliver_without_clear`) already exists;
-the complete path is still imperative — message assembly (pure transform),
+the arms are still imperative — message assembly (pure transform),
 `defer` arm (:3926–3942), clear-with-error-tolerance (:3943–3958 — the
 pre-clear `hasActiveDeliveryJob` RE-READ (:3943–3946) is an effect-time
 concurrency guard, not the decide-snapshot fact from :3917: TAM-E1 must
@@ -201,14 +232,24 @@ skip) — its CAS-loss compensation and deadline cleanup run ONLY for sessions
 the attempt created, and a skipped reuse routes to release/terminal handling.
 TAM-F therefore owns the richer outcome record (or is explicitly sequenced
 with P44/P46); preserving only today's `{ sessionId }` return leaves P46
-without its required contract. Pins exist
+without its required contract. The ownership flag MUST come from the NESTED
+create result, not the outer arm: after a daemon restart
+`findLiveSubSessionForAgent` returns `null` for an unindexed durable worker,
+the outer arm looks fresh, yet the nested `createSubSession` (:5012–5016 via
+:1123–1127) can rehydrate and return the EXISTING worker — labeling that
+worker CREATED lets P46's deadline/CAS-loss cleanup terminate a live reused
+worker (pin the cold-cache row in TAM-PF). Pins exist
 (`task-agent-manager-post-approval.test.ts`).
 
 ### `deliver-space-agent-pending-row` — cluster 5, ~71 lines
 
 `deliverSpaceAgentPendingRow` (:1611): staleness/expiry/attempt-cap gates,
 attempt record, inject with late-settlement callbacks, settle-or-reconcile
-arms. Fit: small pipeline; the late-settlement watcher arming (:1534–1586)
+arms — with the `deferExpiration([row.id])` EXTENSION POINTS carried
+(:1641 before injection, :1653 and :1672 after queued/failed outcomes): they
+keep a retention pass from expiring an in-flight or retryable row; TAM-G must
+keep all three and TAM-PG pins the near-expiry in-flight and retry cases. Fit:
+small pipeline; the late-settlement watcher arming (:1534–1586)
 stays in the class (handles/cancel are resources).
 
 ## Stays plain (ADR 0004 exclusions)
@@ -242,20 +283,20 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| TAM-PB | Pins for `createSubSession` reuse/fresh arms: cold-cache reuse via `rehydrateSubSession`, narrow compensation, same-status rebind, detached-flush rejection behavior | test-only | 0 | ≲120 | — |
-| TAM-PC | Pins for `restorePostApprovalWorkerSession` (incl. no-completion-callback) | test-only | 0 | ≲80 | — |
-| TAM-PD | Pins for `rehydrateSubSession`: refusal-gate ordering (archived row BEFORE the fenced repair), `done` admissibility | test-only | 0 | ≲100 | — |
-| TAM-PE | Pins for `injectMessageIntoSession` arms: cancellation passthrough ordering, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
-| TAM-PF | Pins for `spawnPostApprovalSubSession` reuse/fresh arms | test-only | 0 | ≲100 | — |
-| TAM-PG | Pins for `deliverSpaceAgentPendingRow` settlement/error races | test-only | 0 | ≲60 | — |
+| TAM-PB | Pins for `createSubSession` reuse/fresh arms: cold-cache reuse via `rehydrateSubSession`, narrow compensation, same-status rebind, `deferFreshExecutionBind` gate (both arms), detached-flush rejection behavior | test-only | 0 | ≲120 | — |
+| TAM-PC | Pins for `restorePostApprovalWorkerSession`: three refusal rows (task `cancelled`/`archived`, run `cancelled`), no-completion-callback, pre-stream sanitizer ordering | test-only | 0 | ≲80 | — |
+| TAM-PD | Pins for `rehydrateSubSession`: refusal-gate ordering (archived row BEFORE the fenced repair), `done` admissibility, hooks + sanitizer pre-stream ordering | test-only | 0 | ≲100 | — |
+| TAM-PE | Pins for the complete injection operation: outer admissions + post-lock terminal recheck, cancellation passthrough, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
+| TAM-PF | Pins for `spawnPostApprovalSubSession` reuse/fresh arms + the cold-cache ownership row (flag from the nested create result) | test-only | 0 | ≲100 | — |
+| TAM-PG | Pins for `deliverSpaceAgentPendingRow`: settlement/error races + near-expiry deferral cases | test-only | 0 | ≲60 | — |
 | TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin) | build | ≲250 | ≲250 | TAM-PB |
 | TAM-B2 | Delegate the `createSubSession` method body to the B1 pipeline (its only two callers — spawn-flow deps and post-approval, both in-file — stay unchanged) | wire | ≲50 | ≲60 | TAM-B1 |
 | TAM-C1 | `restore-post-approval-worker` stagedRun, unwired | build | ≲180 | ≲150 | TAM-PC |
 | TAM-C2 | Wire `restorePostApprovalWorkerSession` | wire | ≲40 | ≲50 | TAM-C1 |
 | TAM-D1 | `rehydrate-sub-session` stagedRun, unwired (fenced repair) | build | ≲220 | ≲200 | TAM-PD |
 | TAM-D2 | Wire `rehydrateSubSession` | wire | ≲40 | ≲50 | TAM-D1 |
-| TAM-E1 | `deliver-injected-message` pipeline composing `decideInjectDelivery`'s gates directly (coordinate boundary with agent-routing plan) | build | ≲170 | ≲180 | TAM-PE |
-| TAM-E2 | Wire `injectMessageIntoSession` | wire | ≲50 | ≲60 | TAM-E1 |
+| TAM-E1 | `deliver-injected-message` pipeline over the COMPLETE operation (outer admissions of `injectSubSessionMessageWithOrigin` + inner arms), composing `decideInjectDelivery`'s gates directly (coordinate boundary with agent-routing plan) | build | ≲230 | ≲180 | TAM-PE |
+| TAM-E2 | Wire `injectSubSessionMessageWithOrigin` (and its thin wrappers) to the E1 pipeline; inject lock stays class-owned | wire | ≲60 | ≲60 | TAM-E1 |
 | TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 CREATED/REUSED + DELIVERED/SKIPPED outcome | build | ≲200 | ≲180 | TAM-B2, TAM-PF (P46 outcome contract) |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
 | TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); requires the status-guarded settlement/error primitive (risk 5) | build+wire | ≲100 | ≲80 | TAM-PG |
