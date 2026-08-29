@@ -116,6 +116,7 @@ import {
 } from './requeue-pending-delivery-pipeline.ts';
 import {
   type RestoreIdleSessionsDeps,
+  type RestoreIdleSessionsOutcome,
   runRestoreIdleSessions,
 } from './restore-idle-sessions-pipeline.ts';
 import {
@@ -3832,10 +3833,10 @@ export class SpaceRuntime {
   private async restoreIdleSessionsOwningPendingDeliveries(
     pausedSpaceIds: Set<string>,
     workflowRunId?: string
-  ): Promise<void> {
+  ): Promise<RestoreIdleSessionsOutcome[]> {
     const store = this.config.externalEventStore;
     const tam = this.config.taskAgentManager;
-    if (!store || !tam || typeof tam.tryResumeNodeAgentSession !== 'function') return;
+    if (!store || !tam || typeof tam.tryResumeNodeAgentSession !== 'function') return [];
     const deps: RestoreIdleSessionsDeps = {
       listPendingDeliveries: (scope) =>
         store
@@ -3904,6 +3905,7 @@ export class SpaceRuntime {
         );
       }
     }
+    return outcomes;
   }
 
   private async recoverPendingDeliveries(
@@ -3912,8 +3914,18 @@ export class SpaceRuntime {
   ): Promise<void> {
     const generation = this.runtimeGeneration;
     try {
-      await this.restoreIdleSessionsOwningPendingDeliveries(pausedSpaceIds, workflowRunId);
-      if (this.isStopped || generation !== this.runtimeGeneration) return;
+      const outcomes = await this.restoreIdleSessionsOwningPendingDeliveries(
+        pausedSpaceIds,
+        workflowRunId
+      );
+      if (this.isStopped || generation !== this.runtimeGeneration) {
+        for (const outcome of outcomes) {
+          if (outcome.action === 'restored') {
+            this.config.taskAgentManager?.cancelBySessionId(outcome.sessionId);
+          }
+        }
+        return;
+      }
       this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
     } catch (err) {
       log.warn(
