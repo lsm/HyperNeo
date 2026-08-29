@@ -1843,9 +1843,17 @@ export class SpaceRuntime {
     const store = this.config.externalEventStore;
     if (!store) return null;
     const previous = this.renderPendingDigestQueues.get(sessionId) ?? Promise.resolve(null);
-    const next = previous.then(() => this.renderPendingDigestForSessionInternal(sessionId, taskId));
+    const next = previous
+      .catch(() => null)
+      .then(() => this.renderPendingDigestForSessionInternal(sessionId, taskId));
     this.renderPendingDigestQueues.set(sessionId, next);
-    return next;
+    try {
+      return await next;
+    } finally {
+      if (this.renderPendingDigestQueues.get(sessionId) === next) {
+        this.renderPendingDigestQueues.delete(sessionId);
+      }
+    }
   }
 
   private async renderPendingDigestForSessionInternal(
