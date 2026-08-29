@@ -1,8 +1,10 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const COPILOT_PACKAGE = '@github/copilot';
+const COPILOT_SDK_PACKAGE = '@github/copilot-sdk';
 
 function isMusl(): boolean {
   if (process.platform !== 'linux') return false;
@@ -37,52 +39,76 @@ let cachedCopilotCliPath: string | undefined;
 function resolveFromNodeModules(): string | undefined {
   const binaryName = getCopilotCliBinaryName();
   const platformPkg = getCopilotPlatformPackageName();
+  if (!platformPkg) return undefined;
 
-  if (platformPkg) {
-    try {
-      const resolved = import.meta.resolve?.(platformPkg);
-      if (resolved) {
-        const pkgPath = resolved.startsWith('file://') ? fileURLToPath(resolved) : resolved;
-        const binPath = join(dirname(pkgPath), binaryName);
-        if (existsSync(binPath)) return binPath;
-      }
-    } catch {}
-  }
+  try {
+    const resolved = import.meta.resolve?.(platformPkg);
+    if (resolved) {
+      const pkgPath = resolved.startsWith('file://') ? fileURLToPath(resolved) : resolved;
+      const binPath = join(dirname(pkgPath), binaryName);
+      if (existsSync(binPath)) return binPath;
+    }
+  } catch {}
 
-  if (platformPkg) {
-    try {
-      const copilotModulePath = import.meta.resolve?.(COPILOT_PACKAGE);
-      if (copilotModulePath) {
-        const copilotPath = copilotModulePath.startsWith('file://')
-          ? fileURLToPath(copilotModulePath)
-          : copilotModulePath;
-        const bunDir = dirname(dirname(dirname(dirname(dirname(copilotPath)))));
-        const hoistedPath = join(bunDir, 'node_modules', platformPkg, binaryName);
-        if (existsSync(hoistedPath)) return hoistedPath;
-      }
-    } catch {}
-  }
-
-  if (platformPkg) {
-    try {
-      let currentDir = dirname(fileURLToPath(import.meta.url));
-      for (let i = 0; i < 10; i++) {
-        const candidate = join(currentDir, 'node_modules', platformPkg, binaryName);
+  try {
+    const sdkUrl = import.meta.resolve?.(COPILOT_SDK_PACKAGE);
+    if (sdkUrl) {
+      const sdkPath = sdkUrl.startsWith('file://') ? fileURLToPath(sdkUrl) : sdkUrl;
+      const sdkReq = createRequire(sdkPath);
+      const searchPaths =
+        sdkReq.resolve.paths?.(platformPkg) ?? sdkReq.resolve.paths?.(COPILOT_PACKAGE) ?? [];
+      for (const base of searchPaths) {
+        const candidate = join(base, ...platformPkg.split('/'), binaryName);
         if (existsSync(candidate)) return candidate;
-        const bunCandidate = join(
-          currentDir,
+        const nested = join(
+          base,
+          '@github',
+          'copilot',
           'node_modules',
-          '.bun',
-          'node_modules',
-          platformPkg,
+          ...platformPkg.split('/'),
           binaryName
         );
-        if (existsSync(bunCandidate)) return bunCandidate;
-        const parentDir = dirname(currentDir);
-        if (parentDir === currentDir) break;
-        currentDir = parentDir;
+        if (existsSync(nested)) return nested;
       }
-    } catch {}
+    }
+  } catch {}
+
+  try {
+    const copilotUrl =
+      import.meta.resolve?.(`${COPILOT_PACKAGE}/sdk`) ?? import.meta.resolve?.(COPILOT_PACKAGE);
+    if (copilotUrl) {
+      const copilotPath = copilotUrl.startsWith('file://') ? fileURLToPath(copilotUrl) : copilotUrl;
+      const copilotReq = createRequire(copilotPath);
+      const searchPaths = copilotReq.resolve.paths?.(platformPkg) ?? [];
+      for (const base of searchPaths) {
+        const candidate = join(base, ...platformPkg.split('/'), binaryName);
+        if (existsSync(candidate)) return candidate;
+      }
+      const bunDir = dirname(dirname(dirname(dirname(dirname(copilotPath)))));
+      const hoistedPath = join(bunDir, 'node_modules', platformPkg, binaryName);
+      if (existsSync(hoistedPath)) return hoistedPath;
+    }
+  } catch {}
+
+  const startDirs = [dirname(fileURLToPath(import.meta.url)), process.cwd()];
+  for (const startDir of startDirs) {
+    let currentDir = startDir;
+    for (let i = 0; i < 10; i++) {
+      const candidate = join(currentDir, 'node_modules', platformPkg, binaryName);
+      if (existsSync(candidate)) return candidate;
+      const bunCandidate = join(
+        currentDir,
+        'node_modules',
+        '.bun',
+        'node_modules',
+        platformPkg,
+        binaryName
+      );
+      if (existsSync(bunCandidate)) return bunCandidate;
+      const parentDir = dirname(currentDir);
+      if (parentDir === currentDir) break;
+      currentDir = parentDir;
+    }
   }
 
   return undefined;
