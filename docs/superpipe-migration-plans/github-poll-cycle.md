@@ -80,10 +80,10 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
 ~190 lines of near-duplicate classification.
 
 - **Shape:** two phases, split at the body read. Phase A,
-  `classifyPollResponseStatus({ status, rateLimit })` → `primary-limited |
-  not-modified | needs-body | ok`, each arm carrying the rate-limit payload
-  to apply; phase B, `classifyPollResponseError({ status, rateLimit,
-  errorText })` → `secondary-limited | http-error`, run only for
+  `classifyPollResponseStatus({ status, rateLimit, precedence })` →
+  `primary-limited | not-modified | needs-body | ok`, each arm carrying the
+  rate-limit payload to apply; phase B, `classifyPollResponseError({ status,
+  rateLimit, errorText })` → `secondary-limited | http-error`, run only for
   `needs-body` after the caller's `await response.text()` — the body is read
   only past the primary-limited and 304 guards today (:2376 and siblings),
   and the extraction must not add an earlier `await` or a new failure mode
@@ -94,6 +94,17 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
   there is no `status`/`rateLimit`/`errorText` to classify — network
   failures are caught at the fetch boundary (:2341–2353 and siblings) and
   never reach the classifier.
+- **304-vs-limited precedence is site-specific and part of the contract.**
+  The endpoint and check-run scans evaluate `rateLimit.limited` before
+  `status === 304` (:2356 before :2370; :2590 before :2606); the
+  merge/review/reaction scans evaluate 304 first (:2794, :2917, :3044 before
+  their `limited` checks). Today the divergence is unobservable —
+  `parseRateLimitHeaders` derives `limited` from status only (429, or 403
+  with exhausted-quota headers, :91–92), so a 304 is never `limited` — but a
+  verbatim extraction must not silently unify the two orders: phase A takes
+  an explicit `precedence: 'limited-first' | 'not-modified-first'` parameter
+  matching each site's current order, and GH-P1a pins both variants so the
+  latent difference is pinned, not erased.
 - **What stays imperative:** the per-site control flow differs legitimately
   (endpoint scan `continue`s on network error; check-run sets `headSucceeded`;
   reaction clears `reactionsFullyPolled`; review breaks its page loop). The
@@ -239,7 +250,7 @@ equivalence pins are added.
 
 | Slice | Kind | Delivers | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| GH-P1a | pin | response-classification decision table (the 429-synthesis, secondary body-sniff, 304, low-remaining dimensions the fake-fetch suites cover only via whole cycles) | 0 | ≲200 | — |
+| GH-P1a | pin | response-classification decision table (the 429-synthesis, secondary body-sniff, 304, low-remaining dimensions the fake-fetch suites cover only via whole cycles; BOTH 304-vs-limited precedence variants — see C1) | 0 | ≲200 | — |
 | GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × credentialStale × accessible × pollErrorMessage × prior-error presence/value × reactionsFullyPolled × reactionPolledAt × prior cursor.lastReactionPollAt` — the error fields are load-bearing fallbacks at :3154, :3161–3165 and the reaction timestamp reads all three reaction axes at :3196–3198 — → committed/pending watermarks, error fields, reaction timestamp, write split) | 0 | ≲300 | — |
 | GH-E1 | extract | C1 two-phase poll-response classifiers + backoff helper, swapped at the 5 cycle sites ONLY — `githubFetch` keeps its own classification (see open question 1) | ≲120 net (−~150 dup) | ≲300 | GH-P1a |
 | GH-E2 | extract | C2 watermark/seed/cutoff/page-advance helpers | ≲100 | ≲250 | — |
