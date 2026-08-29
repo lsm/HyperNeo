@@ -284,7 +284,7 @@ describe('SessionManager', () => {
 
       const provider = {
         reattachMemberSpaceTools: mock(async () => {}),
-        reattachWorkflowMcpServers: mock(async (session: AgentSession) => {
+        provisionWorkflowSession: mock(async (session: AgentSession) => {
           session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
         }),
       };
@@ -292,7 +292,7 @@ describe('SessionManager', () => {
 
       const session = await sessionManager.getSessionAsync(mockSession.id);
 
-      expect(provider.reattachWorkflowMcpServers).toHaveBeenCalledWith(session, ['node-agent']);
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(session);
       expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
     });
 
@@ -310,7 +310,7 @@ describe('SessionManager', () => {
       let releaseProvisioning: (() => void) | undefined;
       const provider = {
         reattachMemberSpaceTools: mock(async () => {}),
-        reattachWorkflowMcpServers: mock(
+        provisionWorkflowSession: mock(
           () =>
             new Promise<void>((resolve) => {
               releaseProvisioning = resolve;
@@ -322,7 +322,7 @@ describe('SessionManager', () => {
       const first = sessionManager.getSessionAsync(mockSession.id);
       const second = sessionManager.getSessionAsync(mockSession.id);
       await Promise.resolve();
-      expect(provider.reattachWorkflowMcpServers).toHaveBeenCalledTimes(1);
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(1);
 
       releaseProvisioning!();
       await Promise.all([first, second]);

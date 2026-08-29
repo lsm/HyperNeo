@@ -1893,6 +1893,11 @@ export class SpaceRuntimeService {
     await this.taskAgentManager.mcpSelfHeal(session, missing);
   }
 
+  async provisionWorkflowSession(session: AgentSession): Promise<void> {
+    if (!this.taskAgentManager) return;
+    await this.taskAgentManager.provisionWorkflowSession(session);
+  }
+
   async setupSpaceAgentSession(
     space: Space,
     options: { replayPendingMessages?: boolean } = {}

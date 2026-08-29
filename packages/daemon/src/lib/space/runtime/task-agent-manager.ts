@@ -3419,6 +3419,24 @@ export class TaskAgentManager {
     }
   }
 
+  async provisionWorkflowSession(session: AgentSession): Promise<void> {
+    const sessionId = session.getSessionData().id;
+    const taskId = taskIdFromSubSessionIdentity(sessionId);
+    if (!taskId) return;
+
+    if (sessionId.includes(':post-approval:')) {
+      await this.restorePostApprovalWorkerSession(taskId, sessionId);
+      return;
+    }
+
+    const execution = this.resolveNodeExecutionForSubSession(sessionId);
+    if (!execution) return;
+    if (execution.status !== 'in_progress' && execution.status !== 'blocked') {
+      if (!this.hasQueuedRetryableHookAction(execution.workflowRunId, execution)) return;
+    }
+    await this.rehydrateSubSession(sessionId);
+  }
+
   private hasQueuedRetryableHookAction(workflowRunId: string, execution: NodeExecution): boolean {
     const task = this.config.taskRepo.listByWorkflowRun(workflowRunId)[0];
     if (!task || task.status === 'done' || task.status === 'cancelled') return false;
