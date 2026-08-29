@@ -466,6 +466,9 @@ export class SessionManager {
     const existing = this.workflowMcpProvisioning.get(sessionId);
     if (existing) {
       await existing;
+      if (!this.workflowMcpProvisioned.has(session)) {
+        await this.provisionWorkflowMcpServers(session);
+      }
       return;
     }
 
@@ -503,6 +506,10 @@ export class SessionManager {
     if (!session) return null;
     await this.provisionWorkflowMcpServers(session);
     return session;
+  }
+
+  async getSessionForControl(sessionId: string): Promise<AgentSession | null> {
+    return this.sessionCache.getAsync(sessionId);
   }
 
   registerSession(agentSession: AgentSession): void {

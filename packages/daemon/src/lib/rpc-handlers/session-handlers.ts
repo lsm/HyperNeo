@@ -943,7 +943,7 @@ export function setupSessionHandlers(
       restartQuery?: boolean;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1085,7 +1085,7 @@ export function setupSessionHandlers(
       throw new Error('sessionId and messageDbId are required');
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1119,7 +1119,7 @@ export function setupSessionHandlers(
       throw new Error('sessionId and messageDbId are required');
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
