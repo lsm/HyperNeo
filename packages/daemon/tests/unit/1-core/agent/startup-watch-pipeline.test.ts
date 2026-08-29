@@ -108,13 +108,13 @@ describe('classifyStartupWatch', () => {
   it('applies the explicit inactivityBackstopMs dep', () => {
     const ctx = classifyStartupWatch(
       watchCtx({
-        observation: observation({ inactivity: { elapsedMs: 250_000, lastActivityAt: 1 } }),
+        observation: observation({ inactivity: { elapsedMs: 350_000, lastActivityAt: 1 } }),
         deps: { inactivityBackstopMs: 300_000 },
       })
     );
     expect(ctx.classification).toEqual({
       outcome: 'backstop',
-      inactivity: { elapsedMs: 250_000, lastActivityAt: 1 },
+      inactivity: { elapsedMs: 350_000, lastActivityAt: 1 },
     });
   });
 
