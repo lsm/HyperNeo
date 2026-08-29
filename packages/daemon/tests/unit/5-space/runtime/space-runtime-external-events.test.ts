@@ -355,7 +355,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(longHorizonMessages).toHaveLength(1);
     expect(longHorizonMessages[0]!.agentId).toBe(agent.id);
-    expect(JSON.parse(longHorizonMessages[0]!.message).eventId).toBe(event.id);
+    expect(longHorizonMessages[0]!.message).toBe(eventStore.getById(event.id)?.event.render);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     const deliveries = eventStore.listDeliveries(event.id);
     expect(deliveries).toHaveLength(1);

@@ -1,4 +1,3 @@
-export { formatExternalEventEssence } from './event-essence.ts';
 export {
   ExternalEventExtensionConfigStore,
   ensureExternalEventExtensionConfigTables,
