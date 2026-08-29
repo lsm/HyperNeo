@@ -797,6 +797,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Attach a completed or relevant task as Forge evidence, resolving the scope from the task when scope_id is omitted; returns the evidence record.',
       paramsDoc: 'task_id, scope_id?, summary?, metadata?',
       paramsSchema: AttachForgeTaskEvidenceSchema,
+      auditRedactKeys: ['summary', 'metadata'],
       handler: (args) => handlers.attach_forge_task_evidence(args),
     }),
     defineAction({
@@ -807,6 +808,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         "Attach a workflow run as Forge evidence, resolving the scope via the run's first task when scope_id is omitted; returns the evidence record.",
       paramsDoc: 'workflow_run_id, scope_id?, summary?, metadata?',
       paramsSchema: AttachForgeWorkflowRunEvidenceSchema,
+      auditRedactKeys: ['summary', 'metadata'],
       handler: (args) => handlers.attach_forge_workflow_run_evidence(args),
     }),
     defineAction({
@@ -817,6 +819,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Add a metric-snapshot evidence item to a Forge scope; returns the snapshot record.',
       paramsDoc: 'scope_id, values, source, note?, captured_at?, summary?, metadata?',
       paramsSchema: AddForgeMetricSnapshotSchema,
+      auditRedactKeys: ['note', 'summary', 'metadata'],
       handler: (args) => handlers.add_forge_metric_snapshot(args),
     }),
     defineAction({
