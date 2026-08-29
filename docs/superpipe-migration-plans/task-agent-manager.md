@@ -99,9 +99,11 @@ is not.
 `performPostApprovalWorkerRestore` (:2184): refusal gates (archived task/run,
 cooldown → throw), cached-or-`AgentSession.restore`, slot match (a finite
 configuration selection — a pure stage, not a loop to preserve), optional
-slot-init overlay, MCP merge, `ensureNodeAgentAttached`, index/register with
-class-owned callback attachment at the lifecycle boundary, stream + replay
-with unregister compensation (:2320–2331), detached flush. Fit: strong
+slot-init overlay, MCP merge, `ensureNodeAgentAttached`, index/register (this
+path attaches ONLY the `onMissing*` hooks and slot-context reset — it
+registers NO completion callback today, and its identity query excludes
+node-execution-owned sessions; preserve that), stream + replay with
+unregister compensation (:2320–2331), detached flush. Fit: strong
 `stagedRun`. The workspace update here (:2246–2248) writes metadata only —
 NO node-agent capture/restore pair; preserve that asymmetry. The identity
 resolution half (:2070–2168) stays plain helpers (raw-SQL
@@ -127,22 +129,34 @@ execution, no parent task, terminal task, no space, cancelled run) → cached or
 attach → index/register → stream + replay with bookkeeping compensation
 (:3675–3685) → detached flush. Completion-callback subscription stays
 class-owned (cluster 12 classification): the pipeline declares the outcome,
-the manager attaches/detaches callbacks at the lifecycle boundary. Fit:
-strong `stagedRun`. The outer `rehydrateSubSessionsForRun` (:3382) loop and
-`rehydrateInFlight` dedup/restore lock (:3466) stay in the class (loop +
+the manager attaches/detaches callbacks at the lifecycle boundary. The
+`resolveNodeExecutionForSubSession` repair (:3759–3768) — an unconditional
+`updateSessionId` write when an `:exec:`-embedded execution lacks
+`agent_session_id` — runs BEFORE the refusal gates; TAM-D1 must fence it
+(expected-null CAS via `expectAgentSessionId: null`) or keep the repair
+manager-owned outside the pipeline, never carry the blind write into a stage.
+Fit: strong `stagedRun`. The outer `rehydrateSubSessionsForRun` (:3382) loop
+and `rehydrateInFlight` dedup/restore lock (:3466) stay in the class (loop +
 resource ownership, P6). Its tail (attach → register →
 stream+replay+compensate → flush) is shape-identical to cluster 8's — compose
-both directly; do NOT pre-extract a shared combinator until both exist
-(ADR 0004 ≈3-use rule; this is use 2 of the shape, with cluster 19 the 3rd).
+both directly. Cluster 19 is NOT a third tail use: its fresh arm registers
+and streams via `createSubSession` BEFORE `ensureNodeAgentAttached` and
+injects a kickoff without pending replay — a different ordering. Only two
+direct tail uses exist; a shared combinator needs a true third (ADR 0004
+≈3-use rule).
 
 ### `deliver-injected-message` — cluster 15, ~184 lines
 
 `injectMessageIntoSession` (:3849): the `decideInjectDelivery` decision
 (`noop`/`defer`/`clear_before_deliver`/`deliver_without_clear`) already exists;
 the complete path is still imperative — message assembly (pure transform),
-`defer` arm (:3926–3942), clear-with-error-tolerance (:3943–3958), the
+`defer` arm (:3926–3942), clear-with-error-tolerance (:3943–3958 —
+`ClearConversationCancelledError` is RETHROWN, never tolerated: cancellation
+must pass through so no message is delivered during a cancelled reset; only
+ordinary clear errors fall through to deliver), the
 not-busy backlog-replay pre-delivery block with flip-to-deferred fallback
-(:3964–4017), then `deliverInjectedMessage`. Fit: strong mixed pipeline
+(:3964–4017; structured replay FAILURES drive the flip — they are not
+swallowed), then `deliverInjectedMessage`. Fit: strong mixed pipeline
 composing `decideInjectDelivery`'s gate functions DIRECTLY as its decide stage
 group — never an invocation of the `decisionRun('message-inject-delivery')`
 runner as a nested sub-pipeline (one business path, one pipeline; the same
@@ -159,7 +173,15 @@ gate, run-ownership guard, workspace migration with capture/restore
 compensation, inject) vs fresh arm (model-pool reservation with release
 compensation, init + MCP merge, `createSubSession`, attach, inject, activate
 reservation). Fit: strong `stagedRun`; third instance of the reuse-vs-fresh
-shape (after `spawn-flow.ts` and cluster 4). Pins exist
+shape (after `spawn-flow.ts` and cluster 4). **Outcome contract (P46
+coordination):** the sibling plan's P46 `post-approval-route` pipeline
+consumes this spawner through a bounded spawn outcome that must distinguish
+CREATED vs REUSED sessions and KICKOFF DELIVERED vs SKIPPED (the terminal-gate
+skip) — its CAS-loss compensation and deadline cleanup run ONLY for sessions
+the attempt created, and a skipped reuse routes to release/terminal handling.
+TAM-F therefore owns the richer outcome record (or is explicitly sequenced
+with P44/P46); preserving only today's `{ sessionId }` return leaves P46
+without its required contract. Pins exist
 (`task-agent-manager-post-approval.test.ts`).
 
 ### `deliver-space-agent-pending-row` — cluster 5, ~71 lines
@@ -200,19 +222,32 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| TAM-P | Pins: characterization for clusters 4/8/14/15/19 arms, gap-measured against the existing suites in BOTH `5-space/runtime` (9 `task-agent-manager*` files plus the spawn/pending/injection brick suites) and `5-space/agent` (7 more, incl. spawn-admission/spawn-cas/spawn-flow, post-approval-*, cancel) | test-only | 0 | ≲400 | — |
-| TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin) | build | ≲250 | ≲250 | TAM-P |
+| TAM-PB | Pins for `createSubSession` reuse/fresh arms (incl. the narrow-compensation and same-status-rebind rows) | test-only | 0 | ≲120 | — |
+| TAM-PC | Pins for `restorePostApprovalWorkerSession` (incl. no-completion-callback) | test-only | 0 | ≲80 | — |
+| TAM-PD | Pins for `rehydrateSubSession` refusal gates + repair effect | test-only | 0 | ≲100 | — |
+| TAM-PE | Pins for `injectMessageIntoSession` arms (incl. cancellation passthrough ordering) | test-only | 0 | ≲120 | — |
+| TAM-PF | Pins for `spawnPostApprovalSubSession` reuse/fresh arms | test-only | 0 | ≲100 | — |
+| TAM-PG | Pins for `deliverSpaceAgentPendingRow` settlement/error races | test-only | 0 | ≲60 | — |
+| TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin) | build | ≲250 | ≲250 | TAM-PB |
 | TAM-B2 | Delegate the `createSubSession` method body to the B1 pipeline (its only two callers — spawn-flow deps and post-approval, both in-file — stay unchanged) | wire | ≲50 | ≲60 | TAM-B1 |
-| TAM-C1 | `restore-post-approval-worker` stagedRun, unwired | build | ≲180 | ≲150 | TAM-P |
+| TAM-C1 | `restore-post-approval-worker` stagedRun, unwired | build | ≲180 | ≲150 | TAM-PC |
 | TAM-C2 | Wire `restorePostApprovalWorkerSession` | wire | ≲40 | ≲50 | TAM-C1 |
-| TAM-D1 | `rehydrate-sub-session` stagedRun, unwired | build | ≲220 | ≲200 | TAM-P |
+| TAM-D1 | `rehydrate-sub-session` stagedRun, unwired (fenced repair) | build | ≲220 | ≲200 | TAM-PD |
 | TAM-D2 | Wire `rehydrateSubSession` | wire | ≲40 | ≲50 | TAM-D1 |
-| TAM-E1 | `deliver-injected-message` pipeline composing `decideInjectDelivery`'s gates directly (coordinate boundary with agent-routing plan) | build | ≲170 | ≲180 | TAM-P |
+| TAM-E1 | `deliver-injected-message` pipeline composing `decideInjectDelivery`'s gates directly (coordinate boundary with agent-routing plan) | build | ≲170 | ≲180 | TAM-PE |
 | TAM-E2 | Wire `injectMessageIntoSession` | wire | ≲50 | ≲60 | TAM-E1 |
-| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired | build | ≲200 | ≲180 | TAM-B2 (createSubSession contract settled) |
+| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 CREATED/REUSED + DELIVERED/SKIPPED outcome | build | ≲200 | ≲180 | TAM-B2, TAM-PF (P46 outcome contract) |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
-| TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap) | build+wire | ≲100 | ≲80 | TAM-P |
+| TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); requires the status-guarded settlement/error primitive (risk 5) | build+wire | ≲100 | ≲80 | TAM-PG |
 | TAM-H (optional, not superpipe) | Extract provenance/cooldown/durable-id readers + `resolveTerminalInjectionStatus` into `sub-session-identity.ts` plain helpers | extract | ≲120 | ≲60 | — |
+
+Pin slices are one per business path (one purpose, one PR): each build slice
+depends only on its own pins, so unrelated matrices never gate an
+implementation. Every pin slice gap-measures against the existing suites in
+BOTH `5-space/runtime` (9 `task-agent-manager*` files plus the
+spawn/pending/injection brick suites) and `5-space/agent` (7 more, incl.
+spawn-admission/spawn-cas/spawn-flow, post-approval-*, cancel) before
+writing new rows.
 
 Construction and integration do not share a PR: every build slice lands as
 additive dead code pinned by per-stage tests, and its wire slice is a
@@ -243,15 +278,24 @@ propose a combinator per ADR 0004's ≈3-use rule; never before.
    appears four times (clusters 4, 10, 17, 19; cluster 8's restore writes
    workspace metadata only, with no pair — preserve that asymmetry). Until a
    combinator is justified, each pipeline registers its own single
-   compensation; do not share mutable capture state across stages.
-5. **Blind-write hot spots** — stale co-owner release (cluster 4) and
-   completion/error status writes (cluster 12 handlers) use `update`/`getBy…`
-   read-modify-write; ADR 0004 bans carrying them into stages as-is. Each
-   slice that touches one must resolve it up front — a CAS guarding status AND
-   session ownership (`expectAgentSessionId`), or the effect stays in the
-   class — never silently preserving or altering the atomicity. Status-only
-   CAS is NOT sufficient where a binding is cleared: a same-status rebind by
-   another writer must not lose ownership.
+   compensation; do not share mutable capture state across stages. The
+   capture/restore is scoped to `reinjectNodeAgentMcpServer` failure ONLY — a
+   LATER attach/inject failure must NOT roll back the migrated workspace
+   (pinned for cluster 4: `ensureRequiredMcpServersAttached` rejects but the
+   new workspace remains); it is not a general stagedRun unwind.
+5. **Blind-write hot spots** — stale co-owner release (cluster 4), the
+   space-agent settlement/error writes (cluster 5: a late `onConsumed` can
+   settle a row while the injector failure path runs, and `recordDeliveryError`
+   writes unconditionally across statuses, smearing failure metadata onto a
+   delivered row), and completion/error status writes (cluster 12 handlers)
+   use `update`/`getBy…` read-modify-write; ADR 0004 bans carrying them into
+   stages as-is. Each slice that touches one must resolve it up front — a CAS
+   guarding status AND session/row ownership (`expectAgentSessionId`), or the
+   effect stays in the class — never silently preserving or altering the
+   atomicity. Status-only CAS is NOT sufficient where a binding is cleared: a
+   same-status rebind by another writer must not lose ownership. TAM-G in
+   particular needs a status-guarded settlement/error primitive (or those
+   effects stay outside the pipeline) before it lands.
 6. **Boundary with agent-routing.md** — `decideInjectDelivery`'s gates,
    `injection-delivery-steps.ts`, and the agent-layer delivery pipelines are
    owned by that plan; TAM-E1 embeds the gate functions directly — no nested
