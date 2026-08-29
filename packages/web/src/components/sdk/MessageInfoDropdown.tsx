@@ -26,14 +26,9 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
   const displayTools = isRoomSession ? ROOM_AGENT_TOOLS : (sessionInfo.tools ?? []);
 
   return (
-    <div class="w-80 max-h-[60vh] overflow-y-scroll bg-sky-50 dark:bg-sky-900/70 rounded-lg border border-sky-200 dark:border-sky-800 p-3 space-y-3 shadow-2xl backdrop-blur-sm">
-      <div class="flex items-center gap-2 pb-2 border-b border-sky-200 dark:border-sky-800">
-        <svg
-          class="w-4 h-4 text-sky-600 dark:text-sky-400"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
+    <div class="w-80 max-h-[60vh] overflow-y-scroll bg-sky-50 dark:bg-sky-900/70 rounded-lg border border-info/40 p-3 space-y-3 shadow-2xl backdrop-blur-sm">
+      <div class="flex items-center gap-2 pb-2 border-b border-info/40">
+        <svg class="w-4 h-4 text-info" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path
             stroke-linecap="round"
             stroke-linejoin="round"
@@ -42,8 +37,8 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
           />
         </svg>
         <div class="text-sm">
-          <span class="font-medium text-sky-900 dark:text-sky-100">Session Started</span>
-          <span class="text-sky-600 dark:text-sky-400 ml-2">
+          <span class="font-medium text-info-soft">Session Started</span>
+          <span class="text-info ml-2">
             {simplifiedModel} • {sessionInfo.permissionMode}
           </span>
         </div>
@@ -51,10 +46,8 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 
       {sessionInfo.cwd && (
         <div>
-          <div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
-            Working Directory
-          </div>
-          <div class="font-mono text-xs text-sky-700 dark:text-sky-300 bg-sky-100 dark:bg-sky-900/30 rounded px-2 py-1 break-all">
+          <div class="text-xs font-medium text-info-soft mb-1">Working Directory</div>
+          <div class="font-mono text-xs text-info bg-info/15 rounded px-2 py-1 break-all">
             {sessionInfo.cwd}
           </div>
         </div>
@@ -62,15 +55,10 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 
       {displayTools.length > 0 && (
         <div>
-          <div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
-            Tools ({displayTools.length})
-          </div>
+          <div class="text-xs font-medium text-info-soft mb-1">Tools ({displayTools.length})</div>
           <div class="flex flex-wrap gap-1">
             {displayTools.map((tool: string) => (
-              <span
-                key={tool}
-                class="px-2 py-0.5 bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 rounded text-xs"
-              >
+              <span key={tool} class="px-2 py-0.5 bg-info/15 text-info rounded text-xs">
                 {tool}
               </span>
             ))}
@@ -80,7 +68,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 
       {sessionInfo.mcp_servers && sessionInfo.mcp_servers.length > 0 && (
         <div>
-          <div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
+          <div class="text-xs font-medium text-info-soft mb-1">
             MCP Servers ({sessionInfo.mcp_servers.length})
           </div>
           <div class="space-y-1">
@@ -88,12 +76,12 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
               <div key={server.name} class="flex items-center gap-2">
                 <div
                   class={`w-1.5 h-1.5 rounded-full ${
-                    server.status === 'connected' ? 'bg-green-500' : 'bg-gray-500'
+                    server.status === 'connected' ? 'bg-success' : 'bg-fg-faint'
                   }`}
                   title={server.status}
                 />
-                <span class="text-xs text-sky-700 dark:text-sky-300">{server.name}</span>
-                <span class="text-xs text-sky-500 dark:text-sky-400">({server.status})</span>
+                <span class="text-xs text-info">{server.name}</span>
+                <span class="text-xs text-info">({server.status})</span>
               </div>
             ))}
           </div>
@@ -102,15 +90,12 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 
       {sessionInfo.slash_commands && sessionInfo.slash_commands.length > 0 && (
         <div>
-          <div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
+          <div class="text-xs font-medium text-info-soft mb-1">
             Slash Commands ({sessionInfo.slash_commands.length})
           </div>
           <div class="flex flex-wrap gap-1">
             {sessionInfo.slash_commands.map((cmd: string) => (
-              <span
-                key={cmd}
-                class="px-2 py-0.5 bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 rounded text-xs font-mono"
-              >
+              <span key={cmd} class="px-2 py-0.5 bg-info/15 text-info rounded text-xs font-mono">
                 /{cmd}
               </span>
             ))}
@@ -120,15 +105,12 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 
       {sessionInfo.agents && sessionInfo.agents.length > 0 && (
         <div>
-          <div class="text-xs font-medium text-sky-900 dark:text-sky-100 mb-1">
+          <div class="text-xs font-medium text-info-soft mb-1">
             Agents ({sessionInfo.agents.length})
           </div>
           <div class="flex flex-wrap gap-1">
             {sessionInfo.agents.map((agent: string) => (
-              <span
-                key={agent}
-                class="px-2 py-0.5 bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 rounded text-xs"
-              >
+              <span key={agent} class="px-2 py-0.5 bg-info/15 text-info rounded text-xs">
                 {agent}
               </span>
             ))}
@@ -136,7 +118,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
         </div>
       )}
 
-      <div class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-sky-600 dark:text-sky-400 pt-2 border-t border-sky-200 dark:border-sky-800">
+      <div class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-info pt-2 border-t border-info/40">
         <div>
           <span class="font-medium">API Key:</span> {sessionInfo.apiKeySource}
         </div>

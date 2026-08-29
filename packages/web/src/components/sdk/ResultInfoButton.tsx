@@ -8,7 +8,7 @@ interface Props {
 
 export function ResultInfoButton({ onClick, title = 'Run result', isError = false }: Props) {
   return (
-    <IconButton size="md" onClick={onClick} title={title} class={isError ? 'text-amber-400' : ''}>
+    <IconButton size="md" onClick={onClick} title={title} class={isError ? 'text-warning' : ''}>
       <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path
           strokeLinecap="round"

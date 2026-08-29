@@ -402,7 +402,7 @@ describe('SDKUserMessage', () => {
         expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
         const copiedButton = container.querySelector('button[title="Copied!"]');
         expect(copiedButton).toBeTruthy();
-        expect(copiedButton?.className).toContain('text-green-400');
+        expect(copiedButton?.className).toContain('text-success');
       });
     });
 

@@ -128,7 +128,7 @@ Line 3</local-command-stdout>`;
       const content = '<local-command-stdout>Output</local-command-stdout>';
       const { container } = render(<SlashCommandOutput content={content} />);
 
-      expect(container.querySelector('.bg-dark-800\\/60')).toBeTruthy();
+      expect(container.querySelector('.bg-surface-raised\\/60')).toBeTruthy();
     });
 
     it('should have border styling', () => {

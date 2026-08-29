@@ -13,11 +13,11 @@ const PREVIEW_LINE_COUNT = 6;
 const LINE_HEIGHT_PX = 20;
 
 const colors = {
-  bg: 'bg-amber-50 dark:bg-amber-900/20',
-  text: 'text-amber-900 dark:text-amber-100',
-  border: 'border-amber-200 dark:border-amber-800',
-  iconColor: 'text-amber-600 dark:text-amber-400',
-  lightText: 'text-amber-700 dark:text-amber-300',
+  bg: 'bg-warning/10',
+  text: 'text-warning-soft',
+  border: 'border-warning/40',
+  iconColor: 'text-warning',
+  lightText: 'text-warning',
 };
 
 export function ThinkingBlock({
@@ -83,7 +83,7 @@ export function ThinkingBlock({
       <div class={cn('relative border-t', colors.border)}>
         <div
           class={cn(
-            'p-3 bg-white dark:bg-gray-900',
+            'p-3 bg-surface',
             !compact && !isExpanded && needsTruncation && 'overflow-hidden'
           )}
           style={
@@ -112,14 +112,12 @@ export function ThinkingBlock({
         )}
 
         {!compact && needsTruncation && (
-          <div
-            class={cn('flex justify-center py-2 border-t bg-white dark:bg-gray-900', colors.border)}
-          >
+          <div class={cn('flex justify-center py-2 border-t bg-surface', colors.border)}>
             <button
               onClick={() => setIsExpanded(!isExpanded)}
               class={cn(
                 'flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors',
-                'hover:bg-amber-100 dark:hover:bg-amber-900/40',
+                'hover:bg-warning/15 dark:hover:bg-amber-900/40',
                 colors.text
               )}
             >

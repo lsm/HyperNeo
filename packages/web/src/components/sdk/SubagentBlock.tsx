@@ -169,35 +169,35 @@ function getSubagentColors(subagentType: string) {
   switch (subagentType.toLowerCase()) {
     case 'explore':
       return {
-        bg: 'bg-cyan-50 dark:bg-cyan-900/20',
-        border: 'border-cyan-200 dark:border-cyan-800',
-        text: 'text-cyan-700 dark:text-cyan-300',
-        badge: 'bg-cyan-100 dark:bg-cyan-800/50 text-cyan-700 dark:text-cyan-300',
-        icon: 'text-cyan-600 dark:text-cyan-400',
+        bg: 'bg-cat-cyan/10',
+        border: 'border-cat-cyan/40',
+        text: 'text-cat-cyan',
+        badge: 'bg-cyan-100 dark:bg-cyan-800/50 text-cat-cyan',
+        icon: 'text-cat-cyan',
       };
     case 'plan':
       return {
-        bg: 'bg-violet-50 dark:bg-violet-900/20',
-        border: 'border-violet-200 dark:border-violet-800',
-        text: 'text-violet-700 dark:text-violet-300',
-        badge: 'bg-violet-100 dark:bg-violet-800/50 text-violet-700 dark:text-violet-300',
-        icon: 'text-violet-600 dark:text-violet-400',
+        bg: 'bg-cat-violet/10',
+        border: 'border-cat-violet/40',
+        text: 'text-cat-violet',
+        badge: 'bg-violet-100 dark:bg-violet-800/50 text-cat-violet',
+        icon: 'text-cat-violet',
       };
     case 'claude-code-guide':
       return {
-        bg: 'bg-amber-50 dark:bg-amber-900/20',
-        border: 'border-amber-200 dark:border-amber-800',
-        text: 'text-amber-700 dark:text-amber-300',
-        badge: 'bg-amber-100 dark:bg-amber-800/50 text-amber-700 dark:text-amber-300',
-        icon: 'text-amber-600 dark:text-amber-400',
+        bg: 'bg-warning/10',
+        border: 'border-warning/40',
+        text: 'text-warning',
+        badge: 'bg-warning/15 dark:bg-amber-800/50 text-warning',
+        icon: 'text-warning',
       };
     default:
       return {
-        bg: 'bg-indigo-50 dark:bg-indigo-900/20',
-        border: 'border-indigo-200 dark:border-indigo-800',
-        text: 'text-indigo-700 dark:text-indigo-300',
-        badge: 'bg-indigo-100 dark:bg-indigo-800/50 text-indigo-700 dark:text-indigo-300',
-        icon: 'text-indigo-600 dark:text-indigo-400',
+        bg: 'bg-cat-indigo/10',
+        border: 'border-cat-indigo/40',
+        text: 'text-cat-indigo',
+        badge: 'bg-indigo-100 dark:bg-indigo-800/50 text-cat-indigo',
+        icon: 'text-cat-indigo',
       };
   }
 }
@@ -374,17 +374,12 @@ export function SubagentBlock({
 
         <div class="flex items-center gap-2 flex-shrink-0">
           {filteredNestedMessages.length > 0 && (
-            <span class="text-xs font-semibold px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+            <span class="text-xs font-semibold px-1.5 py-0.5 rounded-full bg-fill-strong text-fg-soft">
               {filteredNestedMessages.length}
             </span>
           )}
           {notificationIsSuccess && (
-            <svg
-              class="w-4 h-4 text-green-600 dark:text-green-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+            <svg class="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -394,12 +389,7 @@ export function SubagentBlock({
             </svg>
           )}
           {showErrorIcon && (
-            <svg
-              class="w-4 h-4 text-red-600 dark:text-red-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+            <svg class="w-4 h-4 text-danger" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -422,25 +412,25 @@ export function SubagentBlock({
       {isRunning && taskProgress && <TaskProgressLine progress={taskProgress} />}
 
       {isExpanded && (
-        <div class={cn('border-t bg-white dark:bg-gray-900', colors.border)}>
+        <div class={cn('border-t bg-surface', colors.border)}>
           {taskNotification && (taskNotification.summary || taskNotification.usage) && (
-            <div class="border-b border-gray-200 dark:border-gray-700 p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <div class="border-b border-line p-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
               {taskNotification.summary && (
                 <span
                   class={cn(
                     'font-medium',
                     notificationIsSuccess
-                      ? 'text-green-700 dark:text-green-300'
+                      ? 'text-success-soft'
                       : notificationIsError
-                        ? 'text-red-700 dark:text-red-300'
-                        : 'text-gray-600 dark:text-gray-300'
+                        ? 'text-danger-soft'
+                        : 'text-fg-soft'
                   )}
                 >
                   {taskNotification.summary}
                 </span>
               )}
               {taskNotification.usage && (
-                <span class="flex flex-wrap gap-x-4 gap-y-1 font-mono text-gray-500 dark:text-gray-400">
+                <span class="flex flex-wrap gap-x-4 gap-y-1 font-mono text-fg-muted">
                   <span>{taskNotification.usage.total_tokens.toLocaleString()} tokens</span>
                   <span>{taskNotification.usage.tool_uses} tool uses</span>
                   <span>{(taskNotification.usage.duration_ms / 1000).toFixed(1)}s</span>
@@ -448,16 +438,16 @@ export function SubagentBlock({
               )}
             </div>
           )}
-          <div class="border-b border-gray-200 dark:border-gray-700 p-3">
-            <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Input</div>
-            <div class="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">
+          <div class="border-b border-line p-3">
+            <div class="text-xs font-semibold text-fg-muted mb-2">Input</div>
+            <div class="text-sm bg-surface-raised p-3 rounded border border-line whitespace-pre-wrap break-words text-fg-soft">
               {input.prompt}
             </div>
           </div>
 
           {filteredNestedMessages.length > 0 && (
-            <div class="border-b border-gray-200 dark:border-gray-700 p-3">
-              <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+            <div class="border-b border-line p-3">
+              <div class="text-xs font-semibold text-fg-muted mb-2">
                 Messages ({filteredNestedMessages.length})
               </div>
               <div class="space-y-3">
@@ -479,20 +469,20 @@ export function SubagentBlock({
           )}
 
           <div class="p-3">
-            <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">Output</div>
+            <div class="text-xs font-semibold text-fg-muted mb-2">Output</div>
             {outputText ? (
               <div
                 class={cn(
-                  'bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700',
+                  'bg-surface-raised p-3 rounded border border-line',
                   'prose prose-sm dark:prose-invert max-w-full overflow-x-auto',
-                  'prose-pre:bg-gray-900 prose-pre:text-gray-100',
-                  isError && 'text-red-600 dark:text-red-400'
+                  'prose-pre:bg-surface prose-pre:text-fg',
+                  isError && 'text-danger'
                 )}
               >
                 <MarkdownRenderer content={outputText} />
               </div>
             ) : (
-              <div class="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 italic">
+              <div class="text-sm bg-surface-raised p-3 rounded border border-line text-fg-muted italic">
                 No output yet...
               </div>
             )}
@@ -532,13 +522,13 @@ function NestedMessageRenderer({
     return (
       <div
         class={`rounded-lg border px-2 py-1 ${
-          isRetracted ? 'border-rose-500/35 bg-rose-500/5' : 'border-amber-500/35 bg-amber-500/5'
+          isRetracted ? 'border-rose-500/35 bg-rose-500/5' : 'border-warning/35 bg-warning/5'
         }`}
         data-message-replacement-status={replacementStatus}
       >
         <div
           class={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${
-            isRetracted ? 'text-rose-300' : 'text-amber-300'
+            isRetracted ? 'text-cat-rose' : 'text-warning'
           }`}
         >
           {isRetracted ? 'Retracted by fallback' : 'Superseded by replacement'}
@@ -604,7 +594,7 @@ function NestedMessageRenderer({
         })}
 
         {textBlocks.length > 0 && (
-          <div class="bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 overflow-x-auto">
+          <div class="bg-surface-raised p-3 rounded border border-line overflow-x-auto">
             {textBlocks.map((block, idx) => (
               <div key={idx} class="prose prose-sm dark:prose-invert max-w-full">
                 <MarkdownRenderer content={(block as { text: string }).text} />
@@ -631,15 +621,12 @@ function NestedMessageRenderer({
       }
 
       return withReplacementStatus(
-        <div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800">
+        <div class="bg-accent/10 p-3 rounded border border-accent/40">
           {content.map((block, idx) => {
             const blockObj = block as unknown as Record<string, unknown>;
             if (blockObj.type === 'text' && typeof blockObj.text === 'string') {
               return (
-                <div
-                  key={idx}
-                  class="text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words"
-                >
+                <div key={idx} class="text-sm text-accent-soft whitespace-pre-wrap break-words">
                   {blockObj.text}
                 </div>
               );
@@ -652,7 +639,7 @@ function NestedMessageRenderer({
 
     if (typeof content === 'string') {
       return withReplacementStatus(
-        <div class="bg-blue-50 dark:bg-blue-900/20 p-3 rounded border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-100 whitespace-pre-wrap break-words">
+        <div class="bg-accent/10 p-3 rounded border border-accent/40 text-sm text-accent-soft whitespace-pre-wrap break-words">
           {content}
         </div>
       );
@@ -672,10 +659,8 @@ function NestedMessageRenderer({
       return withReplacementStatus(
         <div
           class={cn(
-            'bg-gray-50 dark:bg-gray-800 p-3 rounded border',
-            resultMessage.is_error
-              ? 'border-red-200 dark:border-red-800 text-red-600 dark:text-red-400'
-              : 'border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300'
+            'bg-surface-raised p-3 rounded border',
+            resultMessage.is_error ? 'border-danger/40 text-danger' : 'border-line text-fg-soft'
           )}
         >
           <div class="text-xs font-semibold mb-1">Result</div>
@@ -700,16 +685,16 @@ function NestedMessageRenderer({
       );
     }
     return withReplacementStatus(
-      <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs text-gray-600 dark:text-gray-300">
+      <div class="bg-surface-raised p-2 rounded text-xs text-fg-soft">
         System: {(systemMessage as { subtype?: string }).subtype ?? 'message'}
       </div>
     );
   }
 
   return withReplacementStatus(
-    <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs">
+    <div class="bg-surface-raised p-2 rounded text-xs">
       <details>
-        <summary class="cursor-pointer text-gray-500">Unknown message type: {message.type}</summary>
+        <summary class="cursor-pointer text-fg-faint">Unknown message type: {message.type}</summary>
         <pre class="mt-2 overflow-x-auto">{JSON.stringify(message, null, 2)}</pre>
       </details>
     </div>

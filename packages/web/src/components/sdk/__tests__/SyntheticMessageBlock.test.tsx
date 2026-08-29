@@ -97,7 +97,7 @@ describe('SyntheticMessageBlock', () => {
 
       const icon = container.querySelector('[data-testid="synthetic-icon"]');
       expect(icon).toBeTruthy();
-      expect(icon?.getAttribute('class')).toContain('text-amber-400');
+      expect(icon?.getAttribute('class')).toContain('text-warning');
     });
 
     it('should style the Synthetic label with the amber accent', () => {
@@ -107,7 +107,7 @@ describe('SyntheticMessageBlock', () => {
 
       const label = container.querySelector('[data-testid="synthetic-label"]');
       expect(label?.textContent).toBe('Synthetic');
-      expect(label?.getAttribute('class')).toContain('text-amber-400');
+      expect(label?.getAttribute('class')).toContain('text-warning');
     });
 
     it('should not show an agent route badge by default', () => {
@@ -296,7 +296,7 @@ describe('SyntheticMessageBlock', () => {
         <SyntheticMessageBlock content="Content" timestamp={timestamp} />
       );
 
-      const timeSpan = container.querySelector('.text-xs.text-gray-400');
+      const timeSpan = container.querySelector('.text-xs.text-fg-muted');
       expect(timeSpan).toBeTruthy();
     });
   });
@@ -341,7 +341,7 @@ describe('SyntheticMessageBlock', () => {
         expect(mockCopyToClipboard).toHaveBeenCalledWith('Content to copy');
         const copiedButton = container.querySelector('button[title="Copied!"]');
         expect(copiedButton).toBeTruthy();
-        expect(copiedButton?.className).toContain('text-green-400');
+        expect(copiedButton?.className).toContain('text-success');
       });
     });
 
@@ -519,8 +519,8 @@ describe('SyntheticMessageBlock', () => {
       );
 
       const card = container.querySelector('[data-testid="synthetic-card"]');
-      expect(card?.className).toContain('bg-dark-800/60');
-      expect(card?.className).toContain('border-amber-700/50');
+      expect(card?.className).toContain('bg-surface-raised/60');
+      expect(card?.className).toContain('border-warning/50');
     });
 
     it('should NOT use purple background or border on the card', () => {
@@ -529,8 +529,8 @@ describe('SyntheticMessageBlock', () => {
       );
 
       const card = container.querySelector('[data-testid="synthetic-card"]');
-      expect(card?.className).not.toContain('bg-purple-900');
-      expect(card?.className).not.toContain('border-purple-700');
+      expect(card?.className).not.toContain('bg-cat-purple');
+      expect(card?.className).not.toContain('border-cat-purple');
     });
 
     it('should have max-width constraint', () => {

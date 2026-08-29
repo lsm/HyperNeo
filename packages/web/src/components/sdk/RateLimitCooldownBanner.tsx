@@ -52,9 +52,9 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
   }, [sessionId]);
 
   return (
-    <div class="flex items-center gap-2 px-3 py-2 mb-2 rounded border bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-100">
+    <div class="flex items-center gap-2 px-3 py-2 mb-2 rounded border bg-warning/10 border-warning/40 text-warning-soft">
       <svg
-        class="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+        class="w-3.5 h-3.5 shrink-0 text-warning"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -69,7 +69,7 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
       <span class="text-xs flex-1">
         <span class="font-medium">Rate limit reached.</span> Auto-retry in{' '}
         <span class="font-mono font-medium">{formatCountdown(remaining)}</span>{' '}
-        <span class="text-amber-700/60 dark:text-amber-300/60">
+        <span class="text-warning/60">
           (attempt {retryCount}/{maxRetries})
         </span>
       </span>
@@ -78,7 +78,7 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
           type="button"
           onClick={handleRetryNow}
           disabled={retrying}
-          class="text-xs font-medium px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          class="text-xs font-medium px-2 py-0.5 rounded bg-warning hover:bg-warning text-accent-fg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {retrying ? 'Retrying…' : 'Retry Now'}
         </button>
@@ -86,7 +86,7 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
           type="button"
           onClick={handleCancel}
           disabled={cancelling}
-          class="text-xs font-medium px-2 py-0.5 rounded bg-transparent hover:bg-amber-100 dark:hover:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          class="text-xs font-medium px-2 py-0.5 rounded bg-transparent hover:bg-warning/15 dark:hover:bg-amber-900/30 text-warning border border-warning-soft disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {cancelling ? 'Cancelling…' : 'Cancel'}
         </button>

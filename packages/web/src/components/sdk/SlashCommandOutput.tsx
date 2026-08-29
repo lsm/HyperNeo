@@ -1,5 +1,4 @@
 import { cn } from '../../lib/utils.ts';
-import { borderColors } from '../../lib/design-tokens.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 
 interface SlashCommandOutputProps {
@@ -45,13 +44,13 @@ export function SlashCommandOutput({ content, className }: SlashCommandOutputPro
   return (
     <div class={cn('py-2', className)}>
       <div class="flex items-center gap-2 mb-2">
-        <TerminalIcon className="w-4 h-4 text-gray-400" />
-        <span class="text-xs font-medium text-gray-400">Command Output</span>
+        <TerminalIcon className="w-4 h-4 text-fg-muted" />
+        <span class="text-xs font-medium text-fg-muted">Command Output</span>
       </div>
 
       <div
         class={cn(
-          `bg-dark-800/60 border ${borderColors.ui.default} rounded-lg p-4`,
+          'bg-surface-raised/60 border border-line rounded-lg p-4',
           'prose prose-invert max-w-full overflow-x-auto'
         )}
       >

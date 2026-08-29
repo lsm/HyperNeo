@@ -78,7 +78,7 @@ describe('AuthStatusCard', () => {
 
     it('should show error in red color', () => {
       const { container } = render(<AuthStatusCard isAuthenticating={false} error="Failed" />);
-      const errorDiv = container.querySelector('.text-red-600');
+      const errorDiv = container.querySelector('.text-danger');
       expect(errorDiv).toBeTruthy();
     });
 
@@ -134,13 +134,13 @@ describe('AuthStatusCard', () => {
   describe('Styling', () => {
     it('should have blue background color', () => {
       const { container } = render(<AuthStatusCard isAuthenticating={false} />);
-      const card = container.querySelector('.bg-blue-50');
+      const card = container.querySelector('.bg-accent\\/10');
       expect(card).toBeTruthy();
     });
 
     it('should have blue border color', () => {
       const { container } = render(<AuthStatusCard isAuthenticating={false} />);
-      const card = container.querySelector('.border-blue-200');
+      const card = container.querySelector('.border-accent\\/40');
       expect(card).toBeTruthy();
     });
 

@@ -196,7 +196,7 @@ describe('ToolProgressCard', () => {
   describe('Tool Colors', () => {
     it('should have blue colors for file tools', () => {
       const { container } = render(<ToolProgressCard {...defaultProps} />);
-      const card = container.querySelector('.bg-blue-50');
+      const card = container.querySelector('.bg-accent\\/10');
       expect(card).toBeTruthy();
     });
 
@@ -204,7 +204,7 @@ describe('ToolProgressCard', () => {
       const { container } = render(
         <ToolProgressCard toolName="Grep" elapsedTime={1} toolUseId="grep-123" />
       );
-      const card = container.querySelector('.bg-purple-50');
+      const card = container.querySelector('[class*="bg-cat-purple"]');
       expect(card).toBeTruthy();
     });
 
@@ -212,7 +212,7 @@ describe('ToolProgressCard', () => {
       const { container } = render(
         <ToolProgressCard toolName="Bash" elapsedTime={1} toolUseId="bash-123" />
       );
-      const card = container.querySelector('.bg-gray-50');
+      const card = container.querySelector('.bg-surface-raised');
       expect(card).toBeTruthy();
     });
 
@@ -220,7 +220,7 @@ describe('ToolProgressCard', () => {
       const { container } = render(
         <ToolProgressCard toolName="WebFetch" elapsedTime={1} toolUseId="web-123" />
       );
-      const card = container.querySelector('.bg-green-50');
+      const card = container.querySelector('.bg-success\\/10');
       expect(card).toBeTruthy();
     });
   });

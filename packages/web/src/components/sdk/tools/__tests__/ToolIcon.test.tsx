@@ -231,37 +231,37 @@ describe('ToolIcon', () => {
     it('should have blue color for file tools', () => {
       const { container } = render(<ToolIcon toolName="Read" />);
       const svg = container.querySelector('svg');
-      expect(svg?.className).toContain('text-blue');
+      expect(svg?.className).toContain('text-accent');
     });
 
     it('should have purple color for search tools', () => {
       const { container } = render(<ToolIcon toolName="Grep" />);
       const svg = container.querySelector('svg');
-      expect(svg?.className).toContain('text-purple');
+      expect(svg?.className).toContain('text-cat-purple');
     });
 
     it('should have gray color for terminal tools', () => {
       const { container } = render(<ToolIcon toolName="Bash" />);
       const svg = container.querySelector('svg');
-      expect(svg?.className).toContain('text-gray');
+      expect(svg?.className).toContain('text-fg-muted');
     });
 
     it('should have green color for web tools', () => {
       const { container } = render(<ToolIcon toolName="WebFetch" />);
       const svg = container.querySelector('svg');
-      expect(svg?.className).toContain('text-green');
+      expect(svg?.className).toContain('text-success');
     });
 
     it('should have amber color for todo tools', () => {
       const { container } = render(<ToolIcon toolName="TodoWrite" />);
       const svg = container.querySelector('svg');
-      expect(svg?.className).toContain('text-amber');
+      expect(svg?.className).toContain('text-warning');
     });
 
     it('should have pink color for MCP tools', () => {
       const { container } = render(<ToolIcon toolName="mcp__test__tool" />);
       const svg = container.querySelector('svg');
-      expect(svg?.className).toContain('text-pink');
+      expect(svg?.className).toContain('text-cat-pink');
     });
   });
 

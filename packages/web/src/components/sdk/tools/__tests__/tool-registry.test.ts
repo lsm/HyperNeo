@@ -252,7 +252,7 @@ describe('tool-registry', () => {
       it('should have custom colors for Thinking tool', () => {
         const config = getToolConfig('Thinking');
         expect(config.colors).toBeDefined();
-        expect(config.colors?.bg).toContain('amber');
+        expect(config.colors?.bg).toContain('warning');
       });
 
       it('should count characters for Thinking summary', () => {
@@ -310,63 +310,63 @@ describe('tool-registry', () => {
   describe('getCategoryColors', () => {
     it('should return blue colors for file category', () => {
       const colors = getCategoryColors('file');
-      expect(colors.bg).toBe('bg-blue-50 dark:bg-blue-900/20');
-      expect(colors.text).toBe('text-blue-900 dark:text-blue-100');
-      expect(colors.iconColor).toBe('text-blue-600 dark:text-blue-400');
-      expect(colors.lightText).toBe('text-blue-700 dark:text-blue-300');
+      expect(colors.bg).toBe('bg-accent/10');
+      expect(colors.text).toBe('text-accent-soft');
+      expect(colors.iconColor).toBe('text-accent');
+      expect(colors.lightText).toBe('text-accent');
     });
 
     it('should return purple colors for search category', () => {
       const colors = getCategoryColors('search');
-      expect(colors.bg).toBe('bg-purple-50 dark:bg-purple-900/20');
-      expect(colors.iconColor).toBe('text-purple-600 dark:text-purple-400');
+      expect(colors.bg).toBe('bg-cat-purple/10');
+      expect(colors.iconColor).toBe('text-cat-purple');
     });
 
     it('should return gray colors for terminal category', () => {
       const colors = getCategoryColors('terminal');
-      expect(colors.bg).toBe('bg-gray-50 dark:bg-gray-900/20');
-      expect(colors.iconColor).toBe('text-gray-600 dark:text-gray-400');
+      expect(colors.bg).toBe('bg-surface-raised');
+      expect(colors.iconColor).toBe('text-fg-muted');
     });
 
     it('should return indigo colors for agent category', () => {
       const colors = getCategoryColors('agent');
-      expect(colors.bg).toBe('bg-indigo-50 dark:bg-indigo-900/20');
-      expect(colors.iconColor).toBe('text-indigo-600 dark:text-indigo-400');
+      expect(colors.bg).toBe('bg-cat-indigo/10');
+      expect(colors.iconColor).toBe('text-cat-indigo');
     });
 
     it('should return green colors for web category', () => {
       const colors = getCategoryColors('web');
-      expect(colors.bg).toBe('bg-green-50 dark:bg-green-900/20');
-      expect(colors.iconColor).toBe('text-green-600 dark:text-green-400');
+      expect(colors.bg).toBe('bg-success/10');
+      expect(colors.iconColor).toBe('text-success');
     });
 
     it('should return amber colors for todo category', () => {
       const colors = getCategoryColors('todo');
-      expect(colors.bg).toBe('bg-amber-50 dark:bg-amber-900/20');
-      expect(colors.iconColor).toBe('text-amber-600 dark:text-amber-400');
+      expect(colors.bg).toBe('bg-warning/10');
+      expect(colors.iconColor).toBe('text-warning');
     });
 
     it('should return pink colors for mcp category', () => {
       const colors = getCategoryColors('mcp');
-      expect(colors.bg).toBe('bg-pink-50 dark:bg-pink-900/20');
-      expect(colors.iconColor).toBe('text-pink-600 dark:text-pink-400');
+      expect(colors.bg).toBe('bg-cat-pink/10');
+      expect(colors.iconColor).toBe('text-cat-pink');
     });
 
     it('should return cyan colors for system category', () => {
       const colors = getCategoryColors('system');
-      expect(colors.bg).toBe('bg-cyan-50 dark:bg-cyan-900/20');
-      expect(colors.iconColor).toBe('text-cyan-600 dark:text-cyan-400');
+      expect(colors.bg).toBe('bg-cat-cyan/10');
+      expect(colors.iconColor).toBe('text-cat-cyan');
     });
 
     it('should return gray colors for unknown category', () => {
       const colors = getCategoryColors('unknown');
-      expect(colors.bg).toBe('bg-gray-50 dark:bg-gray-900/20');
-      expect(colors.iconColor).toBe('text-gray-600 dark:text-gray-400');
+      expect(colors.bg).toBe('bg-surface-raised');
+      expect(colors.iconColor).toBe('text-fg-muted');
     });
 
     it('should return gray colors for any unrecognized category', () => {
       const colors = getCategoryColors('nonexistent' as ToolCategory);
-      expect(colors.bg).toBe('bg-gray-50 dark:bg-gray-900/20');
+      expect(colors.bg).toBe('bg-surface-raised');
     });
   });
 
@@ -449,9 +449,9 @@ describe('tool-registry', () => {
         expect(typeof colors.iconColor).toBe('string');
         expect(typeof colors.lightText).toBe('string');
 
-        expect(colors.bg).toContain('dark:');
-        expect(colors.text).toContain('dark:');
-        expect(colors.iconColor).toContain('dark:');
+        expect(colors.bg).toMatch(/^bg-/);
+        expect(colors.text).toMatch(/^text-/);
+        expect(colors.iconColor).toMatch(/^text-/);
       });
     });
   });

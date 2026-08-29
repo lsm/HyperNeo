@@ -88,13 +88,13 @@ function ReplacementStatusFrame({
   return (
     <div
       class={`my-1 rounded-lg border px-2 py-1 ${
-        isRetracted ? 'border-rose-500/45 bg-rose-500/5' : 'border-amber-500/45 bg-amber-500/5'
+        isRetracted ? 'border-rose-500/45 bg-rose-500/5' : 'border-warning/45 bg-warning/5'
       }`}
       data-message-replacement-status={status}
     >
       <div
         class={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${
-          isRetracted ? 'text-rose-500 dark:text-rose-300' : 'text-amber-600 dark:text-amber-300'
+          isRetracted ? 'text-cat-rose' : 'text-warning'
         }`}
       >
         {isRetracted ? 'Retracted by fallback' : 'Superseded by replacement'}
@@ -139,7 +139,7 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
     <div class="py-1 px-2">
       <button
         onClick={() => setExpanded(!expanded)}
-        class="flex items-center gap-2 text-[10px] text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+        class="flex items-center gap-2 text-[10px] text-fg-faint hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
       >
         <svg
           class={`w-3 h-3 transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}
@@ -160,25 +160,21 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
       </button>
 
       {expanded && (
-        <div class="mt-1.5 ml-5 space-y-1.5 text-[10px] text-gray-500">
+        <div class="mt-1.5 ml-5 space-y-1.5 text-[10px] text-fg-faint">
           {message.cwd && (
             <div>
-              <span class="font-semibold text-gray-600 dark:text-gray-400">cwd: </span>
+              <span class="font-semibold text-fg-muted">cwd: </span>
               <span class="font-mono">{message.cwd}</span>
             </div>
           )}
 
           {message.mcp_servers && message.mcp_servers.length > 0 && (
             <div>
-              <span class="font-semibold text-gray-600 dark:text-gray-400">MCP Servers: </span>
+              <span class="font-semibold text-fg-muted">MCP Servers: </span>
               {message.mcp_servers.map((server: { name: string; status: string }) => (
                 <span key={server.name} class="font-mono">
                   {server.name}
-                  <span
-                    class={
-                      server.status === 'connected' ? 'text-green-600 dark:text-green-400' : ''
-                    }
-                  >
+                  <span class={server.status === 'connected' ? 'text-success' : ''}>
                     ({server.status})
                   </span>{' '}
                 </span>
@@ -188,18 +184,14 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
 
           {message.tools && message.tools.length > 0 && (
             <div>
-              <span class="font-semibold text-gray-600 dark:text-gray-400">
-                Tools ({message.tools.length}):{' '}
-              </span>
+              <span class="font-semibold text-fg-muted">Tools ({message.tools.length}): </span>
               <span class="font-mono">{message.tools.join(', ')}</span>
             </div>
           )}
 
           {message.agents && message.agents.length > 0 && (
             <div>
-              <span class="font-semibold text-gray-600 dark:text-gray-400">
-                Agents ({message.agents.length}):{' '}
-              </span>
+              <span class="font-semibold text-fg-muted">Agents ({message.agents.length}): </span>
               <span class="font-mono">{message.agents.join(', ')}</span>
             </div>
           )}
@@ -355,12 +347,10 @@ function SDKMessageRendererImpl({
     renderedMessage = <SDKToolUseSummaryMessage message={sdkMessage} />;
   } else {
     renderedMessage = (
-      <div class="p-3 bg-gray-100 dark:bg-gray-800 rounded">
-        <div class="text-xs text-gray-600 dark:text-gray-400 mb-1">
-          Unknown message type: {sdkMessage.type}
-        </div>
+      <div class="p-3 bg-surface-raised rounded">
+        <div class="text-xs text-fg-muted mb-1">Unknown message type: {sdkMessage.type}</div>
         <details>
-          <summary class="text-xs cursor-pointer text-gray-500">Show raw data</summary>
+          <summary class="text-xs cursor-pointer text-fg-faint">Show raw data</summary>
           <pre class="text-xs mt-2 overflow-x-auto">{JSON.stringify(sdkMessage, null, 2)}</pre>
         </details>
       </div>

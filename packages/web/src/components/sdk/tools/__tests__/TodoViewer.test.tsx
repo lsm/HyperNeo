@@ -72,7 +72,7 @@ describe('TodoViewer', () => {
           ]}
         />
       );
-      const badge = container.querySelector('.bg-blue-100');
+      const badge = container.querySelector('.bg-accent\\/15');
       expect(badge?.textContent).toContain('In Progress');
     });
 
@@ -89,7 +89,7 @@ describe('TodoViewer', () => {
       const { container } = render(
         <TodoViewer todos={[{ content: 'Done', status: 'completed', activeForm: '' }]} />
       );
-      const greenIcon = container.querySelector('.text-green-600');
+      const greenIcon = container.querySelector('.text-success');
       expect(greenIcon).toBeTruthy();
     });
 
@@ -97,7 +97,7 @@ describe('TodoViewer', () => {
       const { container } = render(
         <TodoViewer todos={[{ content: 'Working', status: 'in_progress', activeForm: '' }]} />
       );
-      const blueSpinner = container.querySelector('.text-blue-600');
+      const blueSpinner = container.querySelector('.text-accent');
       expect(blueSpinner).toBeTruthy();
       expect(blueSpinner?.className).toContain('animate-spin');
     });
@@ -106,7 +106,7 @@ describe('TodoViewer', () => {
       const { container } = render(
         <TodoViewer todos={[{ content: 'Waiting', status: 'pending', activeForm: '' }]} />
       );
-      const grayIcon = container.querySelector('.text-gray-400');
+      const grayIcon = container.querySelector('.text-fg-faint');
       expect(grayIcon).toBeTruthy();
     });
   });
@@ -172,7 +172,7 @@ describe('TodoViewer', () => {
       const { container } = render(
         <TodoViewer todos={[{ content: 'Done', status: 'completed', activeForm: '' }]} />
       );
-      const greenBg = container.querySelector('.bg-green-50\\/50');
+      const greenBg = container.querySelector('[class*="bg-success/10"]');
       expect(greenBg).toBeTruthy();
     });
 
@@ -180,7 +180,7 @@ describe('TodoViewer', () => {
       const { container } = render(
         <TodoViewer todos={[{ content: 'Working', status: 'in_progress', activeForm: '' }]} />
       );
-      const blueBg = container.querySelector('.bg-blue-50\\/50');
+      const blueBg = container.querySelector('[class*="bg-accent/10"]');
       expect(blueBg).toBeTruthy();
     });
 
@@ -188,7 +188,7 @@ describe('TodoViewer', () => {
       const { container } = render(
         <TodoViewer todos={[{ content: 'Pending', status: 'pending', activeForm: '' }]} />
       );
-      const whiteBg = container.querySelector('.bg-white');
+      const whiteBg = container.querySelector('.bg-surface');
       expect(whiteBg).toBeTruthy();
     });
   });
@@ -288,7 +288,7 @@ describe('TodoViewer', () => {
         <TodoViewer todos={[{ content: 'Done', status: 'completed', activeForm: '' }]} />
       );
       const footer = container.querySelector('.border-t');
-      const greenDot = footer?.querySelector('.bg-green-600');
+      const greenDot = footer?.querySelector('.bg-success');
       expect(greenDot).toBeTruthy();
     });
 
@@ -297,7 +297,7 @@ describe('TodoViewer', () => {
         <TodoViewer todos={[{ content: 'Working', status: 'in_progress', activeForm: '' }]} />
       );
       const footer = container.querySelector('.border-t');
-      const blueDot = footer?.querySelector('.bg-blue-600');
+      const blueDot = footer?.querySelector('.bg-accent-hover');
       expect(blueDot).toBeTruthy();
     });
 
@@ -306,7 +306,7 @@ describe('TodoViewer', () => {
         <TodoViewer todos={[{ content: 'Waiting', status: 'pending', activeForm: '' }]} />
       );
       const footer = container.querySelector('.border-t');
-      const grayDot = footer?.querySelector('.bg-gray-400');
+      const grayDot = footer?.querySelector('.bg-fg-muted');
       expect(grayDot).toBeTruthy();
     });
   });

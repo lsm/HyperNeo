@@ -89,11 +89,11 @@ vi.mock('../../../ui/ConfirmModal.tsx', () => ({
 vi.mock('../tool-utils.ts', () => ({
   getToolDisplayName: (name: string) => name,
   getToolColors: () => ({
-    bg: 'bg-blue-50',
-    border: 'border-blue-200',
-    text: 'text-blue-600',
-    lightText: 'text-blue-400',
-    iconColor: 'text-blue-500',
+    bg: 'bg-accent/10',
+    border: 'border-accent/40',
+    text: 'text-accent',
+    lightText: 'text-accent',
+    iconColor: 'text-accent',
   }),
   getOutputDisplayText: (output: unknown) =>
     typeof output === 'string' ? output : JSON.stringify(output, null, 2),
@@ -358,7 +358,7 @@ describe('ToolResultCard Component', () => {
       );
 
       const header = document.querySelector('button')!;
-      const xSvg = header.querySelector('svg.text-red-600');
+      const xSvg = header.querySelector('svg.text-danger');
       expect(xSvg).toBeTruthy();
     });
   });
@@ -1050,26 +1050,26 @@ old2`;
 });
 
 const TOOL_COLORS = {
-  file: { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-600' },
+  file: { bg: 'bg-accent/10', border: 'border-accent/40', text: 'text-accent' },
   search: {
-    bg: 'bg-purple-50',
+    bg: 'bg-cat-purple/10',
     border: 'border-purple-200',
     text: 'text-purple-600',
   },
   command: {
-    bg: 'bg-green-50',
+    bg: 'bg-success/10',
     border: 'border-green-200',
-    text: 'text-green-600',
+    text: 'text-success',
   },
   thinking: {
-    bg: 'bg-amber-50',
-    border: 'border-amber-200',
-    text: 'text-amber-600',
+    bg: 'bg-warning/10',
+    border: 'border-warning',
+    text: 'text-warning',
   },
   system: {
-    bg: 'bg-gray-50',
+    bg: 'bg-surface-raised',
     border: 'border-gray-200',
-    text: 'text-gray-600',
+    text: 'text-fg-faint',
   },
 };
 
@@ -1193,22 +1193,22 @@ describe('ToolResultCard Logic', () => {
   describe('Tool Colors', () => {
     it('should return blue colors for file tools', () => {
       const category = getToolCategory('Read');
-      expect(TOOL_COLORS[category].bg).toBe('bg-blue-50');
+      expect(TOOL_COLORS[category].bg).toBe('bg-accent/10');
     });
 
     it('should return purple colors for search tools', () => {
       const category = getToolCategory('Grep');
-      expect(TOOL_COLORS[category].bg).toBe('bg-purple-50');
+      expect(TOOL_COLORS[category].bg).toBe('bg-cat-purple/10');
     });
 
     it('should return green colors for command tools', () => {
       const category = getToolCategory('Bash');
-      expect(TOOL_COLORS[category].bg).toBe('bg-green-50');
+      expect(TOOL_COLORS[category].bg).toBe('bg-success/10');
     });
 
     it('should return amber colors for thinking tools', () => {
       const category = getToolCategory('Thinking');
-      expect(TOOL_COLORS[category].bg).toBe('bg-amber-50');
+      expect(TOOL_COLORS[category].bg).toBe('bg-warning/10');
     });
   });
 

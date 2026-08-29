@@ -228,7 +228,7 @@ describe('SDKSystemMessage', () => {
       const message = createInitMessage();
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.querySelector('.bg-indigo-50, .dark\\:bg-indigo-900\\/20')).toBeTruthy();
+      expect(container.querySelector('[class*="bg-cat-indigo/10"]')).toBeTruthy();
     });
   });
 
@@ -273,7 +273,7 @@ describe('SDKSystemMessage', () => {
       const message = createCompactBoundaryMessage('auto');
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.querySelector('.bg-yellow-50, .dark\\:bg-yellow-900\\/20')).toBeTruthy();
+      expect(container.querySelector('[class*="bg-warning/10"]')).toBeTruthy();
     });
   });
 
@@ -296,7 +296,7 @@ describe('SDKSystemMessage', () => {
       const message = createStatusMessage('compacting');
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.querySelector('.text-yellow-600, .text-yellow-400')).toBeTruthy();
+      expect(container.querySelector('.text-warning')).toBeTruthy();
     });
   });
 
@@ -342,7 +342,7 @@ describe('SDKSystemMessage', () => {
       fireEvent.click(button);
 
       expect(container.textContent).toContain('Validation failed');
-      expect(container.querySelector('.text-red-700, .text-red-300')).toBeTruthy();
+      expect(container.querySelector('.text-danger-soft')).toBeTruthy();
     });
 
     it('should expand to show exit code', () => {
@@ -359,14 +359,14 @@ describe('SDKSystemMessage', () => {
       const message = createHookResponseMessage();
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.querySelector('.bg-slate-50, .dark\\:bg-slate-900\\/30')).toBeTruthy();
+      expect(container.querySelector('.bg-surface-raised')).toBeTruthy();
     });
 
     it('should show error indicator for non-zero exit code', () => {
       const message = createHookResponseWithError();
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      const errorSvg = container.querySelector('.text-red-500');
+      const errorSvg = container.querySelector('.text-danger');
       expect(errorSvg).toBeTruthy();
     });
 
@@ -519,7 +519,7 @@ describe('SDKSystemMessage', () => {
 
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.querySelector('.border-rose-200, .border-rose-800')).toBeTruthy();
+      expect(container.querySelector('[class*="border-cat-rose/40"]')).toBeTruthy();
     });
   });
 
@@ -583,7 +583,7 @@ describe('SDKSystemMessage', () => {
       } as Extract<SDKMessage, { type: 'system' }>;
 
       const { container: completedContainer } = render(<SDKSystemMessage message={completed} />);
-      expect(completedContainer.querySelector('.border-green-200, .border-green-800')).toBeTruthy();
+      expect(completedContainer.querySelector('[class*="border-success/40"]')).toBeTruthy();
 
       const failed = {
         type: 'system',
@@ -597,7 +597,7 @@ describe('SDKSystemMessage', () => {
       } as Extract<SDKMessage, { type: 'system' }>;
 
       const { container: failedContainer } = render(<SDKSystemMessage message={failed} />);
-      expect(failedContainer.querySelector('.border-red-200, .border-red-800')).toBeTruthy();
+      expect(failedContainer.querySelector('[class*="border-danger/40"]')).toBeTruthy();
     });
   });
 
@@ -657,7 +657,7 @@ describe('SDKSystemMessage', () => {
 
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.querySelector('.border-violet-200, .border-violet-800')).toBeTruthy();
+      expect(container.querySelector('[class*="border-cat-violet/40"]')).toBeTruthy();
     });
   });
 
@@ -704,7 +704,7 @@ describe('SDKSystemMessage', () => {
 
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.querySelector('.border-slate-200, .border-slate-700')).toBeTruthy();
+      expect(container.querySelector('.border-line')).toBeTruthy();
     });
   });
 
@@ -737,7 +737,7 @@ describe('SDKSystemMessage', () => {
       } as Extract<SDKMessage, { type: 'system' }>;
 
       const { container: lowContainer } = render(<SDKSystemMessage message={low} />);
-      expect(lowContainer.querySelector('.border-blue-200, .border-blue-800')).toBeTruthy();
+      expect(lowContainer.querySelector('[class*="border-accent/40"]')).toBeTruthy();
 
       const high = {
         type: 'system',
@@ -750,7 +750,7 @@ describe('SDKSystemMessage', () => {
       } as Extract<SDKMessage, { type: 'system' }>;
 
       const { container: highContainer } = render(<SDKSystemMessage message={high} />);
-      expect(highContainer.querySelector('.border-orange-200, .border-orange-800')).toBeTruthy();
+      expect(highContainer.querySelector('.border-warning-soft')).toBeTruthy();
     });
 
     it('should use custom color when provided', () => {
@@ -760,7 +760,7 @@ describe('SDKSystemMessage', () => {
         key: 'custom',
         text: 'Custom color',
         priority: 'medium' as const,
-        color: 'border-purple-200 bg-purple-50 text-purple-900',
+        color: 'border-purple-200 bg-cat-purple/10 text-purple-900',
         uuid: createUUID(),
         session_id: 'test-session',
       } as Extract<SDKMessage, { type: 'system' }>;
@@ -826,7 +826,7 @@ describe('SDKSystemMessage', () => {
 
       const { container } = render(<SDKSystemMessage message={message} />);
 
-      expect(container.querySelector('.border-red-200, .border-red-800')).toBeTruthy();
+      expect(container.querySelector('[class*="border-danger/40"]')).toBeTruthy();
     });
   });
 
@@ -906,7 +906,7 @@ describe('SDKSystemMessage', () => {
       } as Extract<SDKMessage, { type: 'system' }>;
 
       const { container: completedContainer } = render(<SDKSystemMessage message={completed} />);
-      expect(completedContainer.querySelector('.border-green-200, .border-green-800')).toBeTruthy();
+      expect(completedContainer.querySelector('[class*="border-success/40"]')).toBeTruthy();
 
       const failed = {
         type: 'system',
@@ -919,7 +919,7 @@ describe('SDKSystemMessage', () => {
       } as Extract<SDKMessage, { type: 'system' }>;
 
       const { container: failedContainer } = render(<SDKSystemMessage message={failed} />);
-      expect(failedContainer.querySelector('.border-red-200, .border-red-800')).toBeTruthy();
+      expect(failedContainer.querySelector('[class*="border-danger/40"]')).toBeTruthy();
     });
   });
 

@@ -143,13 +143,13 @@ describe('ResultInfoDropdown', () => {
       const { container } = render(<ResultInfoDropdown result={createSuccessResult()} />);
       const wrapper = container.querySelector('[data-testid="result-info-dropdown"]');
       expect(wrapper?.className).toMatch(/emerald/);
-      expect(wrapper?.className).not.toMatch(/amber/);
+      expect(wrapper?.className).not.toMatch(/warning/);
     });
 
     it('uses amber accent for error subtypes', () => {
       const { container } = render(<ResultInfoDropdown result={createErrorResult()} />);
       const wrapper = container.querySelector('[data-testid="result-info-dropdown"]');
-      expect(wrapper?.className).toMatch(/amber/);
+      expect(wrapper?.className).toMatch(/warning/);
       expect(wrapper?.className).not.toMatch(/emerald/);
     });
   });

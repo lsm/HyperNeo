@@ -193,42 +193,42 @@ describe('SubagentBlock', () => {
       const input = createAgentInput('Explore', 'Explore codebase', 'Find relevant files');
       const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
 
-      expect(container.querySelector('.bg-cyan-50, .dark\\:bg-cyan-900\\/20')).toBeTruthy();
+      expect(container.querySelector('.bg-cat-cyan\\/10')).toBeTruthy();
     });
 
     it('should render Plan type with violet color scheme', () => {
       const input = createAgentInput('Plan', 'Create plan', 'Design solution');
       const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
 
-      expect(container.querySelector('.bg-violet-50, .dark\\:bg-violet-900\\/20')).toBeTruthy();
+      expect(container.querySelector('.bg-cat-violet\\/10')).toBeTruthy();
     });
 
     it('should render claude-code-guide type with amber color scheme', () => {
       const input = createAgentInput('claude-code-guide', 'Get guidance', 'How to do X');
       const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
 
-      expect(container.querySelector('.bg-amber-50, .dark\\:bg-amber-900\\/20')).toBeTruthy();
+      expect(container.querySelector('.bg-warning\\/10')).toBeTruthy();
     });
 
     it('should render general-purpose type with indigo color scheme', () => {
       const input = createAgentInput('general-purpose', 'General task', 'Do something');
       const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
 
-      expect(container.querySelector('.bg-indigo-50, .dark\\:bg-indigo-900\\/20')).toBeTruthy();
+      expect(container.querySelector('.bg-cat-indigo\\/10')).toBeTruthy();
     });
 
     it('should render unknown type with default indigo color scheme', () => {
       const input = createAgentInput('custom-type', 'Custom task', 'Custom prompt');
       const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
 
-      expect(container.querySelector('.bg-indigo-50, .dark\\:bg-indigo-900\\/20')).toBeTruthy();
+      expect(container.querySelector('.bg-cat-indigo\\/10')).toBeTruthy();
     });
 
     it('should render general-purpose fallback when subagent_type is undefined', () => {
       const input: AgentInput = { description: 'Unnamed task', prompt: 'Do something' };
       const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
 
-      expect(container.querySelector('.bg-indigo-50, .dark\\:bg-indigo-900\\/20')).toBeTruthy();
+      expect(container.querySelector('.bg-cat-indigo\\/10')).toBeTruthy();
       expect(container.textContent).toContain('general-purpose');
     });
   });
@@ -646,7 +646,7 @@ describe('SubagentBlock', () => {
         <SubagentBlock input={input} isError={true} toolId="toolu_task123" />
       );
 
-      const svg = container.querySelector('svg.text-red-600, svg.text-red-400');
+      const svg = container.querySelector('svg.text-danger');
       expect(svg).toBeTruthy();
     });
 
@@ -661,7 +661,7 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      expect(container.querySelector('.text-red-600, .text-red-400')).toBeTruthy();
+      expect(container.querySelector('.text-danger')).toBeTruthy();
     });
   });
 
@@ -866,9 +866,7 @@ describe('SubagentBlock', () => {
       const button = container.querySelector('button')!;
       fireEvent.click(button);
 
-      expect(
-        container.querySelector('.border-red-200, .dark\\:border-red-800, .text-red-600')
-      ).toBeTruthy();
+      expect(container.querySelector('.border-danger\\/40, .text-danger')).toBeTruthy();
     });
 
     it('should skip system init messages', () => {

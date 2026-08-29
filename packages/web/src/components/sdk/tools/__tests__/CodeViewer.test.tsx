@@ -76,7 +76,7 @@ describe('CodeViewer', () => {
       const { container } = render(
         <CodeViewer code="const x = 1;" filePath="/path/to/file.js" showHeader={true} />
       );
-      const languageBadge = container.querySelector('.bg-gray-200');
+      const languageBadge = container.querySelector('.bg-fill-strong');
       expect(languageBadge?.textContent).toContain('javascript');
     });
 
@@ -84,7 +84,7 @@ describe('CodeViewer', () => {
       const { container } = render(
         <CodeViewer code="x = 1" filePath="/path/to/file.py" showHeader={true} />
       );
-      const languageBadge = container.querySelector('.bg-gray-200');
+      const languageBadge = container.querySelector('.bg-fill-strong');
       expect(languageBadge?.textContent).toContain('python');
     });
 
@@ -92,7 +92,7 @@ describe('CodeViewer', () => {
       const { container } = render(
         <CodeViewer code='{"key": "value"}' filePath="/path/to/config.json" showHeader={true} />
       );
-      const languageBadge = container.querySelector('.bg-gray-200');
+      const languageBadge = container.querySelector('.bg-fill-strong');
       expect(languageBadge?.textContent).toContain('json');
     });
 
@@ -104,7 +104,7 @@ describe('CodeViewer', () => {
           showHeader={true}
         />
       );
-      const languageBadge = container.querySelector('.bg-gray-200');
+      const languageBadge = container.querySelector('.bg-fill-strong');
       expect(languageBadge?.textContent).toContain('css');
     });
 
@@ -112,7 +112,7 @@ describe('CodeViewer', () => {
       const { container } = render(
         <CodeViewer code="# Heading" filePath="/path/to/README.md" showHeader={true} />
       );
-      const languageBadge = container.querySelector('.bg-gray-200');
+      const languageBadge = container.querySelector('.bg-fill-strong');
       expect(languageBadge?.textContent).toContain('markdown');
     });
 
@@ -124,7 +124,7 @@ describe('CodeViewer', () => {
           showHeader={true}
         />
       );
-      const languageBadge = container.querySelector('.bg-gray-200');
+      const languageBadge = container.querySelector('.bg-fill-strong');
       expect(languageBadge?.textContent).toContain('bash');
     });
   });
@@ -139,7 +139,7 @@ describe('CodeViewer', () => {
           showHeader={true}
         />
       );
-      const languageBadge = container.querySelector('.bg-gray-200');
+      const languageBadge = container.querySelector('.bg-fill-strong');
       expect(languageBadge?.textContent).toContain('javascript');
     });
   });

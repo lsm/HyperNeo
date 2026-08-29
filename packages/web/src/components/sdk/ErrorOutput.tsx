@@ -77,16 +77,16 @@ export function ErrorOutput({ content, className }: ErrorOutputProps) {
   return (
     <div class={cn('py-2', className)}>
       <div class="flex items-center gap-2 mb-2">
-        <ErrorIcon className="w-4 h-4 text-red-400" />
-        <span class="text-xs font-medium text-red-400">
+        <ErrorIcon className="w-4 h-4 text-danger" />
+        <span class="text-xs font-medium text-danger">
           {statusCode ? `API Error (${statusCode})` : 'Error'}
         </span>
       </div>
 
       <div
         class={cn(
-          'bg-red-950/40 border border-red-700/50 rounded-lg p-4',
-          'text-sm text-red-200 whitespace-pre-wrap break-words'
+          'bg-danger/40 border border-danger/50 rounded-lg p-4',
+          'text-sm text-danger-soft whitespace-pre-wrap break-words'
         )}
       >
         {message}

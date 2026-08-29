@@ -94,12 +94,12 @@ export function SyntheticMessageBlock({
 
   const card = (
     <div
-      class="border border-amber-700/50 rounded-lg overflow-hidden bg-dark-800/60"
+      class="border border-warning/50 rounded-lg overflow-hidden bg-surface-raised/60"
       data-testid="synthetic-card"
     >
-      <div class="flex items-center gap-2 px-3 py-2 border-b border-amber-700/50 flex-wrap">
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-warning/50 flex-wrap">
         <svg
-          class="w-4 h-4 flex-shrink-0 text-amber-400"
+          class="w-4 h-4 flex-shrink-0 text-warning"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -113,23 +113,23 @@ export function SyntheticMessageBlock({
             d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"
           />
         </svg>
-        <span class="text-sm font-semibold text-amber-400" data-testid="synthetic-label">
+        <span class="text-sm font-semibold text-warning" data-testid="synthetic-label">
           Synthetic
         </span>
         {showRouteBadge && (
           <>
-            <span class="text-gray-600 text-xs" aria-hidden="true">
+            <span class="text-fg-faint text-xs" aria-hidden="true">
               ·
             </span>
             <span
-              class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-medium px-1.5 py-px rounded bg-dark-800"
+              class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-medium px-1.5 py-px rounded bg-surface-raised"
               data-testid="synthetic-route-badge"
               aria-label={`From ${fromAgent} agent to ${toAgent} agent`}
             >
               <span style={fromColor ? { color: fromColor } : undefined}>
                 {fromShort ?? fromAgent}
               </span>
-              <span class="text-gray-600" aria-hidden="true">
+              <span class="text-fg-faint" aria-hidden="true">
                 →
               </span>
               <span style={toColor ? { color: toColor } : undefined}>{toShort ?? toAgent}</span>
@@ -146,9 +146,9 @@ export function SyntheticMessageBlock({
         >
           <div ref={contentRef} class="space-y-2" data-testid="synthetic-body">
             {empty ? (
-              <p class="text-xs text-gray-500 italic">{emptyMessageLabel}</p>
+              <p class="text-xs text-fg-faint italic">{emptyMessageLabel}</p>
             ) : renderAsPlainText && typeof content === 'string' ? (
-              <p class="text-sm text-gray-200 leading-relaxed whitespace-pre-wrap break-words">
+              <p class="text-sm text-fg-soft leading-relaxed whitespace-pre-wrap break-words">
                 {content}
               </p>
             ) : (
@@ -157,32 +157,32 @@ export function SyntheticMessageBlock({
                   {block.type === 'text' && (
                     <MarkdownRenderer
                       content={block.text as string}
-                      class="text-sm leading-relaxed text-gray-200 [&_h1]:!text-amber-400 [&_h2]:!text-amber-400 [&_h3]:!text-amber-400 [&_h4]:!text-amber-400 [&_h5]:!text-amber-400 [&_h6]:!text-amber-400"
+                      class="text-sm leading-relaxed text-fg-soft [&_h1]:!text-amber-400 [&_h2]:!text-amber-400 [&_h3]:!text-amber-400 [&_h4]:!text-amber-400 [&_h5]:!text-amber-400 [&_h6]:!text-amber-400"
                     />
                   )}
                   {block.type === 'image' && (
                     <div class="space-y-1">
-                      <div class="text-xs text-amber-400">Image:</div>
-                      <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
+                      <div class="text-xs text-warning">Image:</div>
+                      <div class="font-mono text-xs text-fg-soft bg-surface-raised/50 p-2 rounded overflow-x-auto">
                         {JSON.stringify(block, null, 2)}
                       </div>
                     </div>
                   )}
                   {block.type === 'tool_use' && (
                     <div class="space-y-1">
-                      <div class="text-xs text-amber-400">Tool Use: {block.name as string}</div>
-                      <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
+                      <div class="text-xs text-warning">Tool Use: {block.name as string}</div>
+                      <div class="font-mono text-xs text-fg-soft bg-surface-raised/50 p-2 rounded overflow-x-auto">
                         {JSON.stringify(block.input, null, 2)}
                       </div>
                     </div>
                   )}
                   {block.type === 'tool_result' && (
                     <div class="space-y-1">
-                      <div class="text-xs text-amber-400">
+                      <div class="text-xs text-warning">
                         Tool Result: {(block.tool_use_id as string).slice(0, 12)}
                         ...
                       </div>
-                      <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded max-h-48 overflow-auto">
+                      <div class="font-mono text-xs text-fg-soft bg-surface-raised/50 p-2 rounded max-h-48 overflow-auto">
                         {block.content !== undefined && block.content !== null
                           ? typeof block.content === 'string'
                             ? block.content
@@ -193,8 +193,8 @@ export function SyntheticMessageBlock({
                   )}
                   {!['text', 'image', 'tool_use', 'tool_result'].includes(block.type as string) && (
                     <div class="space-y-1">
-                      <div class="text-xs text-amber-400">{block.type as string}:</div>
-                      <div class="font-mono text-xs text-gray-300 bg-gray-800/50 p-2 rounded overflow-x-auto">
+                      <div class="text-xs text-warning">{block.type as string}:</div>
+                      <div class="font-mono text-xs text-fg-soft bg-surface-raised/50 p-2 rounded overflow-x-auto">
                         {JSON.stringify(block, null, 2)}
                       </div>
                     </div>
@@ -213,11 +213,11 @@ export function SyntheticMessageBlock({
         )}
 
         {needsCollapse && (
-          <div class="flex justify-center py-2 border-t border-amber-700/50 bg-dark-800/60">
+          <div class="flex justify-center py-2 border-t border-warning/50 bg-surface-raised/60">
             <button
               type="button"
               onClick={() => setIsExpanded(!isExpanded)}
-              class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors hover:bg-amber-900/30 text-amber-300"
+              class="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-colors hover:bg-warning/30 text-warning"
               data-testid="synthetic-toggle"
             >
               {isExpanded ? (
