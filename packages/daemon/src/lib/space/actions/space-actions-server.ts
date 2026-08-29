@@ -291,6 +291,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
         workflowRunId: config.workflowRunId ?? config.nodeConfig?.workflowRunId ?? undefined,
         agentName: config.agentName ?? config.nodeConfig?.myAgentName ?? spaceConfig?.myAgentName,
         sessionId: config.sessionId ?? config.nodeConfig?.mySessionId ?? spaceConfig?.mySessionId,
+        spaceLevel: deps.getSpaceAutonomyLevel ? null : config.spaceLevel,
         agentLevel: resolveAgentLevel(),
       };
       const outcome = await runDispatchAction(deps, dispatchInput);

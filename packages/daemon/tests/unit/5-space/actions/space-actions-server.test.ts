@@ -985,6 +985,26 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(events[0]).toMatchObject({ outcome: 'denied' });
   });
 
+  test('uses the configured space level when no live resolver exists', async () => {
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      spaceId: SPACE_ID,
+      spaceLevel: 4,
+      nodeConfig: {
+        ...stubNodeConfig,
+        onArchiveTask: async () => ({ content: [{ type: 'text', text: '{}' }] }),
+        taskRepo: {
+          getTask: () => null,
+        },
+      } as unknown as NodeAgentToolsConfig,
+    });
+    const body = (await dispatch(server, {
+      name: 'archive_task',
+      params: { task_id: 'task-1' },
+    })) as Record<string, unknown>;
+    expect(body).not.toMatchObject({ reason: 'autonomy_denied' });
+  });
+
   test('audits malformed mutating calls even with read auditing off', async () => {
     const entries: CreateMcpAuditLogParams[] = [];
     const server = makeServer({
