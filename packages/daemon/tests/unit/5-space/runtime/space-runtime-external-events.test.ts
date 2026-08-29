@@ -3005,7 +3005,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
     });
 
-    test('an interrupted target session is skipped until the interrupt clears', async () => {
+    test('an interrupted target session defers to a probe that delivers once the interrupt clears', async () => {
       const { event, executionId } = await runWithPendingDelivery();
       bindLiveSession(executionId, 'session-interrupt-recovery');
       tam.interrupting.add('session-interrupt-recovery');
@@ -3018,8 +3018,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
       tam.interrupting.delete('session-interrupt-recovery');
       tam.processingStates.set('session-interrupt-recovery', 'idle');
-      runtime.onSpaceResumed(SPACE_ID);
-      await wait(300);
+      await wait(1500);
       expect(digestRowCount('session-interrupt-recovery')).toBe(1);
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
     });

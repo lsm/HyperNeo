@@ -3912,7 +3912,10 @@ export class SpaceRuntime {
     }
     const resolved = this.resolveSubscriptionTarget(target);
     if (!resolved.sessionId || !this.isTargetSessionLive(resolved.sessionId)) return;
-    if (this.isTargetSessionInterrupted(resolved.sessionId)) return;
+    if (this.isTargetSessionInterrupted(resolved.sessionId)) {
+      this.scheduleInterruptProbeForSession(resolved.sessionId, delivery.taskId);
+      return;
+    }
     this.scheduleDigestPullForSession(resolved.sessionId, delivery.taskId);
   }
 
