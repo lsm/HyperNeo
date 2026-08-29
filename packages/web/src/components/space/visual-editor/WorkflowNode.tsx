@@ -359,7 +359,7 @@ export function WorkflowNode({
 
         <p
           data-testid="step-name"
-          class="text-sm font-medium text-accent-fg truncate"
+          class="text-sm font-medium text-fg truncate"
           style={{ maxWidth: 180 }}
         >
           {step.name || '(unnamed)'}

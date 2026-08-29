@@ -473,7 +473,7 @@ export function CommandPalette() {
       <DialogBackdrop class="fixed inset-0 bg-black/35 backdrop-blur-xl transition-opacity data-[closed]:opacity-0 data-[enter]:duration-200 data-[enter]:ease-out data-[leave]:duration-150 data-[leave]:ease-in" />
 
       <div class="fixed inset-0 z-10 overflow-y-auto px-3 pt-[12vh] sm:px-6">
-        <DialogPanel class="mx-auto w-full max-w-2xl transform overflow-hidden rounded-[28px] border border-line bg-[#252527]/80 shadow-[0_28px_90px_rgba(0,0,0,0.55)] ring-1 ring-line/5 backdrop-blur-2xl transition-all data-[closed]:scale-[0.98] data-[closed]:opacity-0 data-[enter]:duration-200 data-[enter]:ease-out data-[leave]:duration-150 data-[leave]:ease-in">
+        <DialogPanel class="mx-auto w-full max-w-2xl transform overflow-hidden rounded-[28px] border border-line bg-surface-raised/80 shadow-[0_28px_90px_rgba(0,0,0,0.55)] ring-1 ring-line/5 backdrop-blur-2xl transition-all data-[closed]:scale-[0.98] data-[closed]:opacity-0 data-[enter]:duration-200 data-[enter]:ease-out data-[leave]:duration-150 data-[leave]:ease-in">
           <div class="border-b border-line px-4 pt-3">
             <div class="mb-2 flex items-center justify-between">
               <div class="text-xs font-medium text-fg-muted">{title}</div>

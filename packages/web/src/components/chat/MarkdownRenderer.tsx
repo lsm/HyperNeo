@@ -1000,7 +1000,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     return () => {
       mermaidCancelled = true;
     };
-  }, [html]);
+  }, [html, theme]);
 
   return (
     <div class="group relative">

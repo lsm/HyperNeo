@@ -46,7 +46,7 @@ export function Tooltip({ content, children, position = 'top', delay = 500 }: To
       {isVisible && (
         <div
           class={cn(
-            'absolute z-50 px-3 py-1.5 text-xs text-accent-fg bg-surface-raised rounded-md shadow-lg border border-line-strong whitespace-nowrap pointer-events-none animate-fadeIn',
+            'absolute z-50 px-3 py-1.5 text-xs text-fg bg-surface-raised rounded-md shadow-lg border border-line-strong whitespace-nowrap pointer-events-none animate-fadeIn',
             positions[position]
           )}
           role="tooltip"
@@ -54,7 +54,7 @@ export function Tooltip({ content, children, position = 'top', delay = 500 }: To
           {content}
           <div
             class={cn(
-              'absolute w-0 h-0 border-4 border-transparent border-t-dark-800',
+              'absolute w-0 h-0 border-4 border-transparent border-t-surface-raised',
               arrowPositions[position]
             )}
           />

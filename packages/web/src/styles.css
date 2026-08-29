@@ -5,6 +5,16 @@
   --color-app-sidebar: #242123;
   --color-app-content: #151517;
 
+  /* Legacy dark-N aliases retained for unprefixed variant positions
+     (from-dark-900, ring-offset-dark-900, border-t-dark-800, etc.) —
+     delete once the last such utility is migrated. */
+  --color-dark-950: #0a0a0b;
+  --color-dark-900: #111113;
+  --color-dark-850: #18181b;
+  --color-dark-800: #1f1f23;
+  --color-dark-700: #2a2a30;
+  --color-dark-600: #3a3a42;
+
   /* Transition durations — registers Tailwind utilities */
   --duration-250: 250ms;
   --duration-instant: 0ms;

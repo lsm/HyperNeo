@@ -12,16 +12,17 @@
 			// Mirrors packages/web/src/lib/theme.ts — keep the logic in sync.
 			(function () {
 				var media = window.matchMedia("(prefers-color-scheme: dark)");
-				var apply = function () {
-					var stored = null;
-					try {
-						stored = localStorage.getItem("theme");
-					} catch (e) {}
-					document.documentElement.dataset.theme =
-						stored === "light" || stored === "dark" ? stored : media.matches ? "dark" : "light";
-				};
-				apply();
-				media.addEventListener("change", apply);
+				var explicit = null;
+				try {
+					var stored = localStorage.getItem("theme");
+					if (stored === "light" || stored === "dark") explicit = stored;
+				} catch (e) {}
+				document.documentElement.dataset.theme =
+					explicit || (media.matches ? "dark" : "light");
+				media.addEventListener("change", function () {
+					if (explicit) return;
+					document.documentElement.dataset.theme = media.matches ? "dark" : "light";
+				});
 			})();
 		</script>
 	</head>

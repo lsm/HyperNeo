@@ -398,7 +398,7 @@ describe('Tooltip', () => {
 
       await waitFor(() => {
         const tooltip = screen.queryByRole('tooltip');
-        expect(tooltip?.classList.contains('text-accent-fg')).toBe(true);
+        expect(tooltip?.classList.contains('text-fg')).toBe(true);
       });
     });
 
@@ -432,7 +432,7 @@ describe('Tooltip', () => {
 
       await waitFor(() => {
         const tooltip = screen.queryByRole('tooltip');
-        const arrow = tooltip?.querySelector('.border-t-dark-800');
+        const arrow = tooltip?.querySelector('.border-t-surface-raised');
         expect(arrow).toBeTruthy();
       });
     });
