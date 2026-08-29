@@ -171,12 +171,14 @@ describe('reevaluate-context-budget pipeline', () => {
     const enqueue = mock(async () => 'compact-id');
     const removePendingInternalCompactions = mock(() => 0);
     const clearEpoch = { value: 0 };
+    const userInterruptEpoch = { value: 0 };
     const messageQueue = {
       enqueue,
       removePendingInternalCompactions,
       hasOutstandingInternalCompaction: mock(() => false),
       isRunning: mock(() => false),
       getClearEpoch: () => clearEpoch.value,
+      getUserInterruptEpoch: () => userInterruptEpoch.value,
     };
     const contextTracker = {
       getContextInfo: () => liveTrackerInfo.current,
@@ -200,7 +202,14 @@ describe('reevaluate-context-budget pipeline', () => {
       resumePendingWork: mock(() => {}),
       clearPendingResume: mock(() => {}),
     };
-    return { input, enqueue, removePendingInternalCompactions, liveTrackerInfo, clearEpoch };
+    return {
+      input,
+      enqueue,
+      removePendingInternalCompactions,
+      liveTrackerInfo,
+      clearEpoch,
+      userInterruptEpoch,
+    };
   }
 
   it('enqueues a dormant compaction through the enforcement pipeline on a stopped queue', async () => {
@@ -257,6 +266,18 @@ describe('reevaluate-context-budget pipeline', () => {
         return { id: 'switched-model', contextWindow: 1_000_000 };
       }
     );
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(removePendingInternalCompactions).not.toHaveBeenCalled();
+  });
+
+  it('aborts when an empty-queue interrupt bumps the user-interrupt epoch during resolution', async () => {
+    const { input, enqueue, removePendingInternalCompactions, userInterruptEpoch } =
+      reevaluationHarness(async () => {
+        userInterruptEpoch.value += 1;
+        return { id: 'switched-model', contextWindow: 1_000_000 };
+      });
     const outcome = await runContextBudgetReevaluation(input);
     expect(outcome.compactionEnqueued).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();

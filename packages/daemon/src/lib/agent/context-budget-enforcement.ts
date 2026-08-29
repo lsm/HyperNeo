@@ -143,6 +143,7 @@ export interface ContextBudgetReevaluationCtx {
   fenceModel: string;
   fenceProvider: string | undefined;
   queueClearEpochAtStart: number;
+  userInterruptEpochAtStart: number;
   supersededQueued: boolean;
   modelInfo: ModelInfo | null;
   compactionEnqueued: boolean;
@@ -153,6 +154,7 @@ export type ContextBudgetReevaluationInput = Omit<
   | 'fenceModel'
   | 'fenceProvider'
   | 'queueClearEpochAtStart'
+  | 'userInterruptEpochAtStart'
   | 'supersededQueued'
   | 'modelInfo'
   | 'compactionEnqueued'
@@ -225,7 +227,8 @@ const runReevaluateContextBudget = (
       ctx.session.config.provider !== ctx.fenceProvider,
     modelInfoUnresolved: (ctx: ContextBudgetReevaluationCtx) => ctx.modelInfo === null,
     queueClearedDuringEvaluation: (ctx: ContextBudgetReevaluationCtx) =>
-      ctx.messageQueue.getClearEpoch() !== ctx.queueClearEpochAtStart,
+      ctx.messageQueue.getClearEpoch() !== ctx.queueClearEpochAtStart ||
+      ctx.messageQueue.getUserInterruptEpoch() !== ctx.userInterruptEpochAtStart,
     resumeSettledElsewhere: (ctx: ContextBudgetReevaluationCtx) =>
       ctx.compactionEnqueued || ctx.messageQueue.hasOutstandingInternalCompaction(),
   })('reevaluate-context-budget') as PipelineAPI
@@ -249,6 +252,7 @@ export function runContextBudgetReevaluation(
     fenceModel: input.session.config.model,
     fenceProvider: input.session.config.provider,
     queueClearEpochAtStart: input.messageQueue.getClearEpoch(),
+    userInterruptEpochAtStart: input.messageQueue.getUserInterruptEpoch(),
     supersededQueued: false,
     modelInfo: null,
     compactionEnqueued: false,

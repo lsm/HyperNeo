@@ -1182,6 +1182,19 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('an empty-queue interrupt advances the user-interrupt epoch without a clear', () => {
+      const q = new MessageQueue();
+      q.start();
+      const clearEpochBefore = q.getClearEpoch();
+      const interruptEpochBefore = q.getUserInterruptEpoch();
+
+      q.noteUserInterrupt();
+
+      expect(q.getClearEpoch()).toBe(clearEpochBefore);
+      expect(q.getUserInterruptEpoch()).toBe(interruptEpochBefore + 1);
+      q.stop();
+    });
+
     it('a queue restart clears outstanding compaction state so prompts are not held', async () => {
       const q = new MessageQueue();
       q.start();

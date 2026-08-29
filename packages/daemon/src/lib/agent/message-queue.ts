@@ -462,6 +462,10 @@ export class MessageQueue {
     }
   }
 
+  getUserInterruptEpoch(): number {
+    return this.userInterruptEpoch;
+  }
+
   getClearEpoch(): number {
     return this.clearEpoch;
   }
