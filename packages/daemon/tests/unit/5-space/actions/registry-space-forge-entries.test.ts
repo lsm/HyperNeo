@@ -299,6 +299,9 @@ describe('createSpaceRegistryEntries — forge autonomy', () => {
       expect(byName.get('apply_forge_rollup')?.autonomyRequirement).toBe(
         SESSION_WRITE_AUTONOMY_LEVEL
       );
+      expect(byName.get('create_task_from_forge_proposal')?.autonomyRequirement).toBe(
+        SESSION_WRITE_AUTONOMY_LEVEL
+      );
       for (const entry of byName.values()) {
         if (entry.family !== 'forge') continue;
         if (
@@ -306,6 +309,7 @@ describe('createSpaceRegistryEntries — forge autonomy', () => {
             'update_forge_episode',
             'update_forge_lesson',
             'update_forge_task_proposal',
+            'create_task_from_forge_proposal',
             'apply_forge_rollup',
           ].includes(entry.name)
         ) {
@@ -378,6 +382,19 @@ describe('createSpaceRegistryEntries — forge handler wiring', () => {
 
       const lessons = await call('list_forge_lessons', { scope_id: scopeId });
       const lessonId = ((lessons.lessons as Array<{ id: string }>) ?? [])[0]?.id;
+
+      const lessonResolver = byName.get('update_forge_lesson')?.autonomyRequirement;
+      expect(typeof lessonResolver).toBe('function');
+      if (typeof lessonResolver === 'function' && lessonId) {
+        expect(await lessonResolver({ lesson_id: lessonId, rule: 'Candidate edit' })).toBe(1);
+        expect(await lessonResolver({ lesson_id: lessonId, status: 'active' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+        await call('update_forge_lesson', { lesson_id: lessonId, status: 'active' });
+        expect(await lessonResolver({ lesson_id: lessonId, rule: 'Live-guidance edit' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+      }
 
       const proposal = await call('create_forge_task_proposal', {
         scope_id: scopeId,

@@ -100,9 +100,9 @@ const DESTRUCTIVE_ACTION_AUTONOMY_LEVEL = SESSION_WRITE_AUTONOMY_LEVEL;
 const HUMAN_ONLY_AUTONOMY_LEVEL = 5;
 
 const forgeTerminalStatusAutonomy =
-  (terminalStatuses: readonly string[]) =>
+  (committingStatuses: readonly string[]) =>
   async (params: { status?: string }): Promise<number> =>
-    params.status !== undefined && terminalStatuses.includes(params.status)
+    params.status !== undefined && committingStatuses.includes(params.status)
       ? DESTRUCTIVE_ACTION_AUTONOMY_LEVEL
       : 1;
 
@@ -174,6 +174,12 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       return HUMAN_ONLY_AUTONOMY_LEVEL;
     }
     return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+  };
+
+  const forgeLessonUpdateAutonomy = async (params: z.infer<typeof UpdateForgeLessonSchema>) => {
+    const lesson = config.evolutionEpisodeService?.getLesson(params.lesson_id);
+    if (lesson?.status === 'active') return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    return forgeTerminalStatusAutonomy(['active', 'dismissed'])(params);
   };
 
   const sessionEntries: ActionDefinition[] = [
@@ -829,7 +835,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Add a metric-snapshot evidence item to a Forge scope; returns the snapshot record.',
       paramsDoc: 'scope_id, values, source, note?, captured_at?, summary?, metadata?',
       paramsSchema: AddForgeMetricSnapshotSchema,
-      auditRedactKeys: ['note', 'summary', 'metadata'],
+      auditRedactKeys: ['note', 'summary', 'metadata', 'values'],
       handler: (args) => handlers.add_forge_metric_snapshot(args),
     }),
     defineAction({
@@ -921,7 +927,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       paramsDoc: 'lesson_id, status?, applies_to?, rule?, why?, confidence?',
       paramsSchema: UpdateForgeLessonSchema,
       auditRedactKeys: ['rule', 'why'],
-      autonomyRequirement: forgeTerminalStatusAutonomy(['active', 'dismissed']),
+      autonomyRequirement: forgeLessonUpdateAutonomy,
       handler: (args) => handlers.update_forge_lesson(args),
     }),
     defineAction({
@@ -955,6 +961,8 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Create a real SpaceTask from a Forge proposal, preserving linked goal and scope bindings, with optional dependencies; idempotent when the task already exists; returns the created task.',
       paramsDoc: 'proposal_id, title?, description?, reason?, priority?, depends_on?',
       paramsSchema: CreateTaskFromForgeProposalSchema,
+      auditRedactKeys: ['title', 'description', 'reason'],
+      autonomyRequirement: DESTRUCTIVE_ACTION_AUTONOMY_LEVEL,
       handler: (args) => handlers.create_task_from_forge_proposal(args),
     }),
     defineAction({
