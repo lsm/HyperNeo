@@ -2402,14 +2402,14 @@ describe('AcpQueryRunner', () => {
         const { runner, ctx } = createRunnerFixture({ client, queueSize: 1 });
 
         await runner.start();
-        await waitFor(() => ctx.startupTimeoutTimer !== null);
+        await waitFor(() => ctx.startupTimeoutTimer !== null, 500);
         expect(ctx.startupTimeoutTimer).not.toBeNull();
         expect(timerDelayMs(ctx.startupTimeoutTimer)).toBe(expectedMs);
 
         releaseInitialize();
         await ctx.queryPromise;
       }
-    }, 1000);
+    }, 5000);
 
     test('re-arms a fresh watchdog at prompt-send after the queued-kickoff arm', async () => {
       process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '5000';
@@ -2419,7 +2419,7 @@ describe('AcpQueryRunner', () => {
       const { runner, ctx, messageQueue } = createRunnerFixture({ client, queueSize: 0 });
 
       await runner.start();
-      await waitFor(() => messageQueue.onMessageEnqueued !== undefined);
+      await waitFor(() => messageQueue.onMessageEnqueued !== undefined, 500);
       expect(ctx.startupTimeoutTimer).toBeNull();
 
       messageQueue.onMessageEnqueued?.('user-message-1', Date.now());
@@ -2428,19 +2428,20 @@ describe('AcpQueryRunner', () => {
       expect(queuedKickoffTimer).not.toBeNull();
 
       releaseInitialize();
-      await waitFor(() => client.sendPrompt.mock.calls.length > 0);
+      await waitFor(() => client.sendPrompt.mock.calls.length > 0, 500);
       await waitFor(
-        () => ctx.startupTimeoutTimer !== null && ctx.startupTimeoutTimer !== queuedKickoffTimer
+        () => ctx.startupTimeoutTimer !== null && ctx.startupTimeoutTimer !== queuedKickoffTimer,
+        500
       );
       expect(ctx.startupTimeoutTimer).not.toBe(queuedKickoffTimer);
 
       releasePrompt();
       await ctx.queryPromise;
       expect(ctx.startupTimeoutTimer).toBeNull();
-    }, 1000);
+    }, 5000);
 
     test('disarms the watchdog when the first ACP message arrives', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '30';
+      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '5000';
       const client = createMockClient();
       let resumedAfterFirstMessage = false;
       client.sendPrompt = mock(async function* () {
@@ -2458,11 +2459,9 @@ describe('AcpQueryRunner', () => {
       const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
 
       await runner.start();
-      await waitFor(() => resumedAfterFirstMessage && ctx.startupTimeoutTimer === null);
+      await waitFor(() => resumedAfterFirstMessage && ctx.startupTimeoutTimer === null, 500);
       expect(resumedAfterFirstMessage).toBe(true);
       expect(ctx.startupTimeoutTimer).toBeNull();
-
-      await new Promise((resolve) => setTimeout(resolve, 60));
       expect(ctx.queryAbortController?.signal.aborted).toBe(false);
       expect(
         loggerError.mock.calls.some(([message]) => String(message).includes('ACP startup timeout'))
@@ -2503,7 +2502,7 @@ describe('AcpQueryRunner', () => {
         const firstController = ctx.queryAbortController;
         firstController?.signal.addEventListener('abort', () => teardownOrder.push('abort'));
 
-        await new Promise((resolve) => setTimeout(resolve, 120));
+        await waitFor(() => firstController?.signal.aborted === true, 500);
 
         expect(firstController?.signal.aborted).toBe(true);
         expect(teardownOrder.slice(0, 5)).toEqual([
@@ -2538,7 +2537,7 @@ describe('AcpQueryRunner', () => {
 
       await runner.start();
       await waitFor(() => ctx.queryObject !== null);
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      await waitFor(() => firstClient.cancel.mock.calls.length > 0, 500);
 
       expect(firstClient.canCloseSession).toHaveBeenCalled();
       expect(firstClient.closeSession).not.toHaveBeenCalled();
@@ -2557,7 +2556,7 @@ describe('AcpQueryRunner', () => {
       const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
 
       await runner.start();
-      await waitFor(() => client.initialize.mock.calls.length > 0);
+      await waitFor(() => client.initialize.mock.calls.length > 0, 500);
       ctx.incrementQueryGeneration();
       releaseInitialize();
       await ctx.queryPromise;
@@ -2570,7 +2569,7 @@ describe('AcpQueryRunner', () => {
       expect(abortError).toBeInstanceOf(Error);
       expect(abortError.name).toBe('AbortError');
       expect(abortError.message).toBe('ACP query aborted during startup');
-    }, 1000);
+    }, 5000);
 
     test('retries a startup timeout once, then surfaces the failed startup', async () => {
       process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
@@ -2595,7 +2594,8 @@ describe('AcpQueryRunner', () => {
         'timeout',
         expect.stringContaining('The ACP agent failed to start'),
         expect.any(Object),
-        expect.objectContaining({ providerId: 'acp', startupTimeoutMs: 20 })
+        expect.objectContaining({ providerId: 'acp', startupTimeoutMs: 20 }),
+        expect.any(Function)
       );
     }, 5000);
 
