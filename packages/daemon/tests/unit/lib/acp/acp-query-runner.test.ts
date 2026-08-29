@@ -2954,6 +2954,55 @@ describe('AcpQueryRunner', () => {
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
     }, 5000);
 
+    test('a pre-first-message rate limit keeps its cooldown instead of the startup retry', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('429 Too Many Requests');
+      });
+      const { ctx, messageQueue } = createRunnerFixture({ client });
+      const runner2 = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+      ctx.onRateLimitExhausted = mock(async () => true);
+
+      await runner2.start();
+      await ctx.queryPromise;
+
+      expect(ctx.onRateLimitExhausted).toHaveBeenCalledTimes(1);
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a pre-first-message auth error surfaces as an auth failure, not a startup timeout', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('401 Unauthorized');
+      });
+      const { ctx } = createRunnerFixture({ client });
+      const runner2 = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+      await runner2.start();
+      await ctx.queryPromise;
+
+      expect(ctx.errorManager.handleError).toHaveBeenCalledWith(
+        'session-1',
+        expect.any(Error),
+        'provider_auth_error',
+        undefined,
+        expect.any(Object),
+        expect.objectContaining({ providerId: 'acp' }),
+        expect.any(Function)
+      );
+    }, 5000);
+
     test('a process exit after the first agent message does not trigger the startup kill', async () => {
       const client = createMockClient();
       let releasePrompt: (() => void) | undefined;

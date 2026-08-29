@@ -82,6 +82,27 @@ function isAcpErrorResultMessage(message: SDKMessage): boolean {
   return message.type === 'result' && (message as { is_error?: boolean }).is_error === true;
 }
 
+function isAcpProviderClassifiedError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) => message.includes(substr)) ||
+    message.includes('401') ||
+    message.includes('403') ||
+    lower.includes('unauthorized') ||
+    lower.includes('not authenticated') ||
+    message.includes('ECONNREFUSED') ||
+    message.includes('ENOTFOUND') ||
+    message.includes('EHOSTUNREACH') ||
+    lower.includes('service unavailable') ||
+    message.includes('503') ||
+    message.includes('502') ||
+    message.includes('429') ||
+    lower.includes('rate limit') ||
+    lower.includes('timeout') ||
+    lower.includes('permission')
+  );
+}
+
 function getAcpContextWindow(): number {
   const provider = getProviderRegistry().get('acp');
   return provider instanceof AcpProvider
@@ -1064,7 +1085,7 @@ export class AcpQueryRunner {
       terminalManager = null;
       const startupFailedByErrorResult =
         !startupWatchFirstMessageSeen &&
-        !TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) => String(error).includes(substr)) &&
+        !isAcpProviderClassifiedError(String(error)) &&
         startupWatchMessages.some(isAcpErrorResultMessage);
       const effectiveError =
         startupTimeoutReached || startupFailedByErrorResult
