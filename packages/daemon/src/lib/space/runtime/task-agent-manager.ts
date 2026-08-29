@@ -2468,6 +2468,7 @@ export class TaskAgentManager {
       );
       return [];
     }
+    this.config.spaceRuntimeService.requeuePendingDeliveriesForRun(workflowRunId);
     return [{ agentName, sessionId }];
   }
 

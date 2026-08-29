@@ -207,10 +207,10 @@ describe('SpaceRuntime external event subscriptions', () => {
 
   function createWorkflow(
     nodeId = 'code',
-    options: { eventInterests?: Array<{ topic: string }> } = {}
+    options: { eventInterests?: Array<{ topic: string }>; spaceId?: string } = {}
   ): SpaceWorkflow {
     return workflowManager.createWorkflow({
-      spaceId: SPACE_ID,
+      spaceId: options.spaceId ?? SPACE_ID,
       name: `Workflow ${Math.random()}`,
       description: '',
       nodes: [
@@ -3003,6 +3003,73 @@ describe('SpaceRuntime external event subscriptions', () => {
 
       expect(digestRowCount('session-inflight-recovery')).toBe(0);
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+    });
+
+    test('a delivery under a live immediate-tier dispatch is not expired by a recovery pass', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-immediate-recovery');
+      const deliveryKey = eventStore.listDeliveries(event.id)[0]!.deliveryKey;
+      const immediateInFlight = (runtime as unknown as { immediateDispatchesInFlight: Set<string> })
+        .immediateDispatchesInFlight;
+      immediateInFlight.add(deliveryKey);
+
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 300_001;
+      try {
+        runtime.onSpaceResumed(SPACE_ID);
+      } finally {
+        Date.now = originalNow;
+      }
+      await wait(200);
+
+      expect(digestRowCount('session-immediate-recovery')).toBe(0);
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      expect(delivery.state).toBe('pending');
+      expect(delivery.failureReason).toBeNull();
+    });
+
+    test('a space resume only re-arms deliveries for runs of the resumed space', async () => {
+      const OTHER_SPACE_ID = `${SPACE_ID}-other`;
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(OTHER_SPACE_ID, OTHER_SPACE_ID, '/tmp/runtime-events-other', 'Other', now, now);
+      const otherWorkflow = createWorkflow('code-other', { spaceId: OTHER_SPACE_ID });
+      const { run: otherRun, tasks: otherTasks } = await runtime.startWorkflowRun(
+        OTHER_SPACE_ID,
+        otherWorkflow.id,
+        'Other Run'
+      );
+      const otherTask = otherTasks[0]!;
+      runtime.registerSubscription(
+        otherRun.id,
+        otherTask.id,
+        'code-other',
+        'coder',
+        'github/*/*/pull_request/*.review_*'
+      );
+      const otherExecution = nodeExecutionRepo.listByNode(otherRun.id, 'code-other')[0]!;
+      nodeExecutionRepo.update(otherExecution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+      const otherEvent = makeEvent({ spaceId: OTHER_SPACE_ID });
+      await eventService.publish(otherEvent);
+      expect(eventStore.listDeliveries(otherEvent.id)[0]!.state).toBe('pending');
+      bindLiveSession(otherExecution.id, 'session-other-space', { status: 'idle' });
+
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-resumed-space');
+
+      runtime.onSpaceResumed(SPACE_ID);
+      await wait(300);
+
+      expect(digestRowCount('session-resumed-space')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+      expect(digestRowCount('session-other-space')).toBe(0);
+      expect(eventStore.listDeliveries(otherEvent.id)[0]!.state).toBe('pending');
     });
 
     test('an interrupted target session defers to a probe that delivers once the interrupt clears', async () => {

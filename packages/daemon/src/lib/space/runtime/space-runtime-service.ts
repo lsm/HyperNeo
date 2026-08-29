@@ -1275,6 +1275,10 @@ export class SpaceRuntimeService {
     return this.runtime.reconcilePersistedDigestRowsForSession(sessionId, taskId);
   }
 
+  requeuePendingDeliveriesForRun(workflowRunId: string): void {
+    this.runtime.requeuePendingDeliveriesForRun(workflowRunId);
+  }
+
   unregisterSubscription(
     workflowRunId: string,
     taskId: string,

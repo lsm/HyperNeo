@@ -3810,6 +3810,10 @@ export class SpaceRuntime {
     return true;
   }
 
+  requeuePendingDeliveriesForRun(workflowRunId: string): void {
+    this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, workflowRunId);
+  }
+
   private requeuePersistedPendingDeliveries(
     pausedSpaceIds: Set<string> = new Set(),
     workflowRunId?: string
@@ -3883,7 +3887,12 @@ export class SpaceRuntime {
   ): void {
     const store = this.config.externalEventStore;
     if (!store) return;
-    if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) return;
+    if (
+      this.externalEventDeliveriesInFlight.has(delivery.deliveryKey) ||
+      this.immediateDispatchesInFlight.has(delivery.deliveryKey)
+    ) {
+      return;
+    }
     if (
       isQueuedExternalEventExpired(eventRecord.createdAt, Date.now(), EXTERNAL_EVENT_QUEUE_TTL_MS)
     ) {
@@ -3945,7 +3954,9 @@ export class SpaceRuntime {
       }
     }
 
-    this.requeuePersistedPendingDeliveries(this.pausedSpaceIds);
+    for (const run of this.config.workflowRunRepo.listBySpace(spaceId)) {
+      this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, run.id);
+    }
     this.redispatchRetainedExternalEvents();
   }
 
