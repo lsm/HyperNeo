@@ -2,7 +2,6 @@ import type { MessageContent, Session } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database.ts';
-import { isExternalEventDeliveryV2Enabled } from '../external-events/external-event-service.ts';
 import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestOutcome,
@@ -38,7 +37,6 @@ export interface QueryModeHandlerContext {
     sessionId: string,
     taskId?: string
   ): Promise<RenderPendingDigestOutcome | null>;
-  reconcilePersistedDigestRows?(sessionId: string, taskId?: string): boolean;
 
   ensureQueryStarted(): Promise<void>;
 }
@@ -61,51 +59,34 @@ export class QueryModeHandler {
 
     const runFlush = async (): Promise<number> => {
       let excludeDigestRows = false;
-      if (isExternalEventDeliveryV2Enabled()) {
-        try {
-          const outcome = await this.ctx.renderPendingDigest?.(session.id, session.context?.taskId);
-          if (outcome && (outcome.action === 'failed' || outcome.action === 'held')) {
-            if (
-              outcome.action === 'failed' &&
-              (outcome.stage === 'digestCleanup' || outcome.stage === 'digestSupersede')
-            ) {
-              logger.warn(
-                `turn-end digest ${outcome.stage} failed for session ${session.id} — ` +
-                  `excluding digest rows from this flush so stale or duplicate digests are not delivered`
-              );
-              excludeDigestRows = true;
-            } else {
-              logger.warn(
-                `turn-end digest pull for session ${session.id} did not deliver ` +
-                  `(action=${outcome.action}${
-                    outcome.action === 'failed'
-                      ? `, stage=${outcome.stage}`
-                      : `, reason=${outcome.reason}`
-                  }) — flushing without the digest`
-              );
-            }
-          }
-        } catch (error) {
-          logger.warn(
-            `turn-end digest pull failed for session ${session.id}: ` +
-              `${error instanceof Error ? error.message : String(error)} — flushing without the digest`
-          );
-        }
-      } else if (this.ctx.reconcilePersistedDigestRows) {
-        try {
-          if (!this.ctx.reconcilePersistedDigestRows(session.id, session.context?.taskId)) {
+      try {
+        const outcome = await this.ctx.renderPendingDigest?.(session.id, session.context?.taskId);
+        if (outcome && (outcome.action === 'failed' || outcome.action === 'held')) {
+          if (
+            outcome.action === 'failed' &&
+            (outcome.stage === 'digestCleanup' || outcome.stage === 'digestSupersede')
+          ) {
+            logger.warn(
+              `turn-end digest ${outcome.stage} failed for session ${session.id} — ` +
+                `excluding digest rows from this flush so stale or duplicate digests are not delivered`
+            );
             excludeDigestRows = true;
+          } else {
+            logger.warn(
+              `turn-end digest pull for session ${session.id} did not deliver ` +
+                `(action=${outcome.action}${
+                  outcome.action === 'failed'
+                    ? `, stage=${outcome.stage}`
+                    : `, reason=${outcome.reason}`
+                }) — flushing without the digest`
+            );
           }
-        } catch (error) {
-          logger.warn(
-            `flag-off digest reconcile failed for session ${session.id}: ` +
-              `${error instanceof Error ? error.message : String(error)} — excluding digest rows ` +
-              `from this flush so the digest and the original events are not both delivered`
-          );
-          excludeDigestRows = true;
         }
-      } else {
-        excludeDigestRows = true;
+      } catch (error) {
+        logger.warn(
+          `turn-end digest pull failed for session ${session.id}: ` +
+            `${error instanceof Error ? error.message : String(error)} — flushing without the digest`
+        );
       }
 
       const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
