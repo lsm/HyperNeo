@@ -10,11 +10,15 @@ function msg(fields: Record<string, unknown>): SDKMessage {
   return fields as unknown as SDKMessage;
 }
 
+function statusBlip(): SDKMessage {
+  return msg({ type: 'system', subtype: 'status', status: 'connected' });
+}
+
 function observe(overrides: Partial<SdkStartObservation> = {}): SdkStartObservation {
   return {
     processExit: null,
     streamClosed: false,
-    firstMessage: null,
+    messages: [],
     inactivity: null,
     ...overrides,
   };
@@ -25,8 +29,8 @@ describe('classifySdkStartOutcome', () => {
     expect(classifySdkStartOutcome(observe())).toEqual({ outcome: 'alive', progress: false });
   });
 
-  it('classifies a meaningful first message as alive with progress', () => {
-    for (const firstMessage of [
+  it('classifies a meaningful message anywhere in the window as progress', () => {
+    for (const meaningful of [
       msg({ type: 'assistant' }),
       msg({ type: 'user' }),
       msg({ type: 'user', isReplay: true }),
@@ -35,32 +39,47 @@ describe('classifySdkStartOutcome', () => {
       msg({ type: 'stream_event' }),
       msg({ type: 'system', subtype: 'init' }),
     ]) {
-      expect(classifySdkStartOutcome(observe({ firstMessage }))).toEqual({
+      expect(classifySdkStartOutcome(observe({ messages: [meaningful] }))).toEqual({
+        outcome: 'alive',
+        progress: true,
+      });
+      expect(classifySdkStartOutcome(observe({ messages: [statusBlip(), meaningful] }))).toEqual({
         outcome: 'alive',
         progress: true,
       });
     }
   });
 
-  it('treats ambient first messages as non-progress via the shared classifier', () => {
-    for (const firstMessage of [
-      msg({ type: 'system', subtype: 'status', status: 'connected' }),
-      msg({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10 }),
-      msg({ type: 'auth_status' }),
-    ]) {
-      expect(classifySdkStartOutcome(observe({ firstMessage }))).toEqual({
-        outcome: 'alive',
-        progress: false,
-      });
-    }
-  });
-
-  it('progress outranks terminal events: a live start is not retroactively dead', () => {
+  it('treats ambient-only messages as non-progress via the shared classifier', () => {
     expect(
       classifySdkStartOutcome(
         observe({
-          firstMessage: msg({ type: 'assistant' }),
+          messages: [
+            statusBlip(),
+            msg({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10 }),
+            msg({ type: 'auth_status' }),
+          ],
+        })
+      )
+    ).toEqual({ outcome: 'alive', progress: false });
+  });
+
+  it('ambient-first, meaningful-second outranks every terminal event', () => {
+    expect(
+      classifySdkStartOutcome(
+        observe({
+          messages: [statusBlip(), msg({ type: 'assistant' })],
           processExit: { code: 1, signal: null },
+          streamClosed: true,
+          inactivity: { elapsedMs: 900_000, lastActivityAt: 123 },
+        }),
+        { inactivityBackstopMs: 600_000 }
+      )
+    ).toEqual({ outcome: 'alive', progress: true });
+    expect(
+      classifySdkStartOutcome(
+        observe({
+          messages: [statusBlip(), msg({ type: 'system', subtype: 'init' })],
           streamClosed: true,
         })
       )
@@ -68,16 +87,14 @@ describe('classifySdkStartOutcome', () => {
     expect(
       classifySdkStartOutcome(
         observe({
-          firstMessage: msg({ type: 'system', subtype: 'init' }),
-          streamClosed: true,
-          inactivity: { elapsedMs: 900_000, lastActivityAt: 123 },
-        }),
-        { inactivityBackstopMs: 600_000 }
+          messages: [statusBlip(), msg({ type: 'result', subtype: 'success' })],
+          processExit: { code: null, signal: 'SIGKILL' },
+        })
       )
     ).toEqual({ outcome: 'alive', progress: true });
   });
 
-  it('classifies a process exit before progress as dead with exit info', () => {
+  it('classifies a process exit without progress as dead with exit info', () => {
     expect(classifySdkStartOutcome(observe({ processExit: { code: 1, signal: null } }))).toEqual({
       outcome: 'dead',
       reason: 'process_exit',
@@ -87,7 +104,7 @@ describe('classifySdkStartOutcome', () => {
       classifySdkStartOutcome(
         observe({
           processExit: { code: null, signal: 'SIGKILL' },
-          firstMessage: msg({ type: 'system', subtype: 'status', status: 'connected' }),
+          messages: [statusBlip()],
         })
       )
     ).toEqual({
@@ -114,7 +131,7 @@ describe('classifySdkStartOutcome', () => {
     });
   });
 
-  it('classifies a stream close before progress as dead', () => {
+  it('classifies a stream close without progress as dead', () => {
     expect(classifySdkStartOutcome(observe({ streamClosed: true }))).toEqual({
       outcome: 'dead',
       reason: 'stream_closed',
@@ -123,7 +140,7 @@ describe('classifySdkStartOutcome', () => {
       classifySdkStartOutcome(
         observe({
           streamClosed: true,
-          firstMessage: msg({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10 }),
+          messages: [msg({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10 })],
         })
       )
     ).toEqual({ outcome: 'dead', reason: 'stream_closed' });
@@ -171,16 +188,12 @@ describe('classifySdkStartOutcome', () => {
     ).toEqual({ outcome: 'alive', progress: false });
   });
 
-  it('an ambient first message does not block an elapsed backstop', () => {
+  it('ambient-only messages do not block an elapsed backstop', () => {
     const inactivity = { elapsedMs: 700_000, lastActivityAt: null };
     expect(
-      classifySdkStartOutcome(
-        observe({
-          firstMessage: msg({ type: 'system', subtype: 'status', status: 'connected' }),
-          inactivity,
-        }),
-        { inactivityBackstopMs: 600_000 }
-      )
+      classifySdkStartOutcome(observe({ messages: [statusBlip()], inactivity }), {
+        inactivityBackstopMs: 600_000,
+      })
     ).toEqual({ outcome: 'backstop', inactivity });
   });
 });

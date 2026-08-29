@@ -15,7 +15,7 @@ export type SdkStartInactivity = {
 export type SdkStartObservation = {
   processExit: SdkStartExitInfo | null;
   streamClosed: boolean;
-  firstMessage: SDKMessage | null;
+  messages: SDKMessage[];
   inactivity: SdkStartInactivity | null;
 };
 
@@ -33,10 +33,7 @@ export function classifySdkStartOutcome(
   observation: SdkStartObservation,
   config: SdkStartClassifyConfig = {}
 ): SdkStartClassification {
-  if (
-    observation.firstMessage !== null &&
-    isMeaningfulSdkStartupProgress(observation.firstMessage)
-  ) {
+  if (observation.messages.some(isMeaningfulSdkStartupProgress)) {
     return { outcome: 'alive', progress: true };
   }
   if (observation.processExit !== null) {
