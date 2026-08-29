@@ -685,7 +685,7 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(yielded).toHaveLength(2);
     expect(yielded[0].internal).toBe(true);
     expect(yielded[1].internal).toBe(false);
-    expect(setProcessingSpy).toHaveBeenCalledTimes(1);
+    expect(setProcessingSpy).toHaveBeenCalledTimes(2);
     const replay = (runner as unknown as { _lastConsumedUserMessage: { content: unknown } | null })
       ._lastConsumedUserMessage;
     expect(replay?.content).toEqual([{ type: 'text', text: 'fix the bug' }]);

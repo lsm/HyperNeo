@@ -14,7 +14,7 @@ import { NATIVE_CONTEXT_WINDOW_PROVIDER_IDS } from './query-options-builder.js';
 export interface ContextBudgetEnforcementCtx {
   sessionId: string;
   providerId: string | undefined;
-  reason: 'event-tick' | 'turn-end' | 'compact-boundary';
+  reason: 'event-tick' | 'turn-end' | 'compact-boundary' | 'model-switch';
   contextInfo: ContextInfo;
   fallbackContextWindow: number | undefined;
   clearedDeadCompaction: boolean;
@@ -97,7 +97,8 @@ const runEnforceContextBudget = (
     deadCompactionCleared: (ctx: ContextBudgetEnforcementCtx) => ctx.clearedDeadCompaction,
     userQuestionOutstanding: (ctx: ContextBudgetEnforcementCtx) =>
       ctx.stateManager.getState().status === 'waiting_for_input',
-    queueShutDown: (ctx: ContextBudgetEnforcementCtx) => !ctx.messageQueue.isRunning(),
+    queueShutDown: (ctx: ContextBudgetEnforcementCtx) =>
+      !ctx.messageQueue.isRunning() && ctx.reason !== 'model-switch',
     compactionOutstanding: (ctx: ContextBudgetEnforcementCtx) =>
       ctx.messageQueue.hasOutstandingInternalCompaction(),
     budgetRequiresNoCompaction: (ctx: ContextBudgetEnforcementCtx) =>

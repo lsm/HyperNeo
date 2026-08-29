@@ -1126,6 +1126,40 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('revokeAllInternalCompactions clears queued and delivered compaction bookkeeping', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueue('/compact', true, { durable: true });
+      void q.enqueueWithId('compact-queued', '/compact', true, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      result.value.onSent();
+      await sent;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      expect(q.hasQueuedInternalCompaction()).toBe(true);
+
+      const revoked = q.revokeAllInternalCompactions();
+
+      expect(revoked).toBe(2);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      expect(q.hasOutstandingInternalCompaction()).toBe(false);
+      q.stop();
+    });
+
+    it('revokeAllInternalCompactions leaves non-compaction messages queued', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const userMessage = q.enqueueWithId('user-msg', 'finish the deploy', false);
+      expect(q.hasQueuedMessages()).toBe(true);
+
+      expect(q.revokeAllInternalCompactions()).toBe(0);
+
+      expect(q.hasQueuedMessages()).toBe(true);
+      q.stop();
+      q.clear();
+      await userMessage.catch(() => {});
+    });
+
     it('a queue restart clears outstanding compaction state so prompts are not held', async () => {
       const q = new MessageQueue();
       q.start();

@@ -53,6 +53,7 @@ export interface ModelSwitchHandlerContext {
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
   readonly disposeAcpSessions?: typeof disposeAcpSessions;
+  reevaluateContextBudgetAfterModelSwitch?(opts?: { supersededQueued?: boolean }): Promise<void>;
 }
 
 export interface ModelSwitchResult {
@@ -242,6 +243,8 @@ export class ModelSwitchHandler {
 
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
 
+        await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
+
         if (clearAcpSessionId && previousAcpSessionId) {
           await this.disposePreviousAcpSession(
             previousAcpSessionId,
@@ -284,8 +287,11 @@ export class ModelSwitchHandler {
 
         if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
           await this.ctx.queryObject.setModel(resolvedModel);
+          await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         } else {
-          await lifecycleManager.restart();
+          await lifecycleManager.restart({
+            beforeStart: () => this.ctx.reevaluateContextBudgetAfterModelSwitch?.(),
+          });
           if (clearAcpSessionId && previousAcpSessionId) {
             await this.disposePreviousAcpSession(
               previousAcpSessionId,

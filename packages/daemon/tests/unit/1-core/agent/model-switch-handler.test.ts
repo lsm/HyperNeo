@@ -628,6 +628,39 @@ describe('ModelSwitchHandler', () => {
       });
     });
 
+    describe('context budget re-evaluation', () => {
+      it('re-evaluates the context budget after an idle switch', async () => {
+        const reevaluateSpy = mock(async () => {});
+        handler = createHandler({
+          queryObject: null,
+          reevaluateContextBudgetAfterModelSwitch: reevaluateSpy,
+        });
+
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(true);
+        expect(reevaluateSpy).toHaveBeenCalledTimes(1);
+        expect(restartSpy).not.toHaveBeenCalled();
+      });
+
+      it('re-evaluates the context budget from the restart beforeStart hook', async () => {
+        const reevaluateSpy = mock(async () => {});
+        handler = createHandler({ reevaluateContextBudgetAfterModelSwitch: reevaluateSpy });
+
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(true);
+        expect(restartSpy).toHaveBeenCalledTimes(1);
+        const options = restartSpy.mock.calls[0][0] as { beforeStart?: () => Promise<void> };
+        expect(typeof options?.beforeStart).toBe('function');
+        expect(reevaluateSpy).not.toHaveBeenCalled();
+
+        await options.beforeStart?.();
+
+        expect(reevaluateSpy).toHaveBeenCalledTimes(1);
+      });
+    });
+
     describe('validation', () => {
       it('should reject invalid model', async () => {
         handler = createHandler();

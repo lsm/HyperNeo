@@ -22,6 +22,7 @@ function enforcementHarness(overrides?: {
   compactionOutstanding?: boolean;
   queueRunning?: boolean;
   processingStatus?: string;
+  reason?: 'event-tick' | 'turn-end' | 'compact-boundary' | 'model-switch';
 }) {
   const contextInfo = {
     totalUsed: overrides?.totalUsed ?? 950_000,
@@ -54,7 +55,7 @@ function enforcementHarness(overrides?: {
   const input: ContextBudgetEnforcementInput = {
     sessionId: 'enforcement-session',
     providerId: 'providerId' in (overrides ?? {}) ? overrides?.providerId : 'openrouter',
-    reason: 'turn-end',
+    reason: overrides?.reason ?? 'turn-end',
     contextInfo,
     fallbackContextWindow: 262_144,
     clearedDeadCompaction: overrides?.clearedDeadCompaction ?? false,
@@ -122,6 +123,13 @@ describe('enforce-context-budget pipeline', () => {
     expect(outcome.compactionEnqueued).toBe(true);
     expect(markCompactionTriggered).toHaveBeenCalledWith(900_000);
     expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('enqueues a dormant /compact on a stopped queue for model-switch re-evaluation', () => {
+    const { input, enqueue } = enforcementHarness({ queueRunning: false, reason: 'model-switch' });
+    const outcome = enforceContextBudget(input);
+    expect(outcome.compactionEnqueued).toBe(true);
+    expect(enqueue).toHaveBeenCalledWith('/compact', true, { durable: true, prepend: true });
   });
 
   it.each([

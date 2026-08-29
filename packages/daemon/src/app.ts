@@ -751,6 +751,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       { subscriberName: 'github-polling-settings' }
     );
 
+    internalEventBus.subscribe(
+      'providers.changed',
+      () => {
+        for (const agentSession of sessionManager?.getCachedSessions() ?? []) {
+          void agentSession.reevaluateContextBudgetAfterModelSwitch().catch(() => {});
+        }
+      },
+      { subscriberName: 'providers-changed-context-budget' }
+    );
+
     startupTimer.start('external event extensions');
     for (const extension of extensionManager.getAll()) {
       const globalConfig = await extensionContext.config.getGlobalConfig(extension.sourceId);
