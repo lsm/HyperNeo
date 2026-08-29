@@ -128,7 +128,12 @@ otherwise launch before the create group returns and keep injecting/settling
 pending rows while F1 stops/unregisters/deletes the session on a later
 attach/kickoff failure (no compensation can wait for or cancel that work) —
 F1 runs the flush only after a successful post-approval commit, with a
-pending-row failure test. Like the delivery stage group, the CREATE stage group is EXPORTED
+pending-row failure test. The flush commit point is P46's `record-dispatched-session`
+CAS, which runs AFTER F1 returns its spawn outcome: if that CAS loses or a
+later route stage fails, P46 terminates the CREATED session while the flush
+may already be injecting/settling rows — F1 exposes a CONTINUATION/stage for
+P46 to invoke the flush ONLY after the dispatch CAS succeeds, or the flush is
+awaited/cancelled before any post-F1 cleanup. Like the delivery stage group, the CREATE stage group is EXPORTED
 for direct composition: the owning spawn pipelines compose the create stages
 directly — `spawn-post-approval-worker` via TAM-F1, and the spawn flow's
 `createSpawnedSession` dep via TAM-B3 (that slice owns the spawn-flow
@@ -516,7 +521,14 @@ body ignores before injecting — a lost claim HALTS before injection (no
 double delivery); the late-settlement-between-snapshot-and-claim row lands
 with TAM-G's primitive. Fit:
 small pipeline; the late-settlement watcher arming (:1534–1586)
-stays in the class (handles/cancel are resources).
+stays in the class (handles/cancel are resources), BUT its own settlement
+sequence — `getById(...).status === 'pending'` followed by a blind
+`markDelivered` (:1553–1555) — must be REWIRED to consume G1's status-guarded
+settlement: the watcher can otherwise read `pending`, have G1's injector-error
+path mark the row failed, and then overwrite that as delivered (or smear a
+delivered row when only the pipeline uses the primitive). A dedicated wiring
+seam slice allocates this (watcher → G1), with the read-pending/error-path/
+watcher-overwrites interleaving pinned.
 
 ### `self-heal-node-agent` — cluster 17, ~142 lines
 
@@ -613,7 +625,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-F0-W3 | Wire the TASK-STOP status writer (`parkStoppedWorkflowTask` :2998–3006) to honor the TAM-F0 fence | wire | ≲25 | ≲25 | TAM-F0 |
 | TAM-F0-W4 | Wire the RUN-CANCEL status writer (`cancelWorkflowRun` :3142) to honor the TAM-F0 fence | wire | ≲25 | ≲25 | TAM-F0 |
 | TAM-F0-W5 | Wire the WORKFLOW-TERMINAL status writer to honor the TAM-F0 fence | wire | ≲30 | ≲30 | TAM-F0 |
-| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 delivery outcome with a THREE-WAY ownership result (CREATED / LIVE-REUSED / COLD-RESTORED) carried from the create-stage result; COMPOSES the B1 create stage group and the E1 delivery stage group directly (no runner nesting); the reuse-arm terminal gate runs BEFORE the reuse mutation sequence under the same lock (fenced by TAM-F0); the fresh arm's post-create recheck covers every create outcome (CREATED skip terminates the just-created session AND deletes its durable row, REUSED skip leaves the worker untouched); lands the atomic-ownership/rollback protocol TOGETHER WITH its tests (terminal-skip rows for both outcomes, after-recheck-before-delivery transition, post-create attach/inject failure compensation per ownership — CREATED stopped/unregistered + durable-row deleted, COLD-RESTORED unwound without deleting the durable session AND only while no successful concurrent joiner retains it, LIVE-REUSED intact — cold-cache unwind, the owner-fails-joiner-succeeds race, the terminal races) | build | ≲220 | ≲250 | TAM-B0, TAM-B2, TAM-E1, TAM-F0, TAM-F0-W1, TAM-F0-W2, TAM-F0-W3, TAM-F0-W4, TAM-F0-W5, TAM-LH, TAM-PF (P46 outcome contract). F1 must RELEASE the TAM-LH injection handle AND the TAM-F0 terminal fence before EVERY completed outcome (success or terminal-skip — completed halts do not unwind compensations, and a skip before the E1 delivery group would otherwise leave both held and block later injections/status transitions); pin a subsequent lock/fence waiter |
+| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 delivery outcome with a THREE-WAY ownership result (CREATED / LIVE-REUSED / COLD-RESTORED) carried from the create-stage result; COMPOSES the B1 create stage group and the E1 delivery stage group directly (no runner nesting); the reuse-arm terminal gate runs BEFORE the reuse mutation sequence under the same lock (fenced by TAM-F0); the fresh arm's post-create recheck covers every create outcome (CREATED skip terminates the just-created session AND deletes its durable row, REUSED skip leaves the worker untouched); lands the atomic-ownership/rollback protocol TOGETHER WITH its tests (terminal-skip rows for both outcomes, after-recheck-before-delivery transition, post-create attach/inject failure compensation per ownership — CREATED stopped/unregistered + durable-row deleted, COLD-RESTORED unwound without deleting the durable session AND only while no successful concurrent joiner retains it, LIVE-REUSED intact — cold-cache unwind, the owner-fails-joiner-succeeds race, the terminal races) | build | ≲220 | ≲250 | TAM-B0, TAM-B1 (create stage group composed directly — F1 never calls the public B2 wrapper, so B2 stays on its caller-side track), TAM-E1, TAM-F0, TAM-F0-W1, TAM-F0-W2, TAM-F0-W3, TAM-F0-W4, TAM-F0-W5, TAM-LH, TAM-PF (P46 outcome contract). F1 must RELEASE the TAM-LH injection handle AND the TAM-F0 terminal fence before EVERY completed outcome (success or terminal-skip — completed halts do not unwind compensations, and a skip before the E1 delivery group would otherwise leave both held and block later injections/status transitions); pin a subsequent lock/fence waiter |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
 | TAM-G1 | Status-guarded settlement/error repository primitive (risk 5) — additive, with its race-correctness tests | build | ≲60 | ≲80 | TAM-PG |
 | TAM-G2 | Atomic pending-row claim repository primitive — additive, with its lost-claim race test | build | ≲50 | ≲60 | TAM-PG |
