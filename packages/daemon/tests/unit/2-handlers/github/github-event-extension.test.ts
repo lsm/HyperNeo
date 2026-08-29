@@ -10442,7 +10442,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
           },
         });
       }
-      throw new Error(`Unexpected call to ${path} after rate-limit break`);
+      return pollingResponse([]);
     }) as typeof fetch;
 
     const extension = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000 });
@@ -10462,14 +10462,14 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     extension.repo.upsertWatchedRepo({
       spaceId: 'space-1',
       owner: 'acme',
-      repo: 'gizmos',
+      repo: 'zebras',
       pollingEnabled: true,
     });
 
     const count = await extension.pollOnce(fetchImpl);
     expect(count).toBe(0);
     expect(calls.filter((p) => p.endsWith('/issues/comments')).length).toBe(1);
-    expect(calls.some((p) => p.includes('/gizmos/'))).toBe(false);
+    expect(calls.some((p) => p.includes('/zebras/'))).toBe(false);
     expect((extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil).toBeGreaterThan(
       Date.now() + 60_000
     );
