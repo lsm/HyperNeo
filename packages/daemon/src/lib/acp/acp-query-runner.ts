@@ -493,7 +493,7 @@ export class AcpQueryRunner {
     let command: string;
     let args: string[];
     let acpProcessExit: SdkStartExitInfo | null = null;
-    let startupWatchMessages: SDKMessage[] = [];
+    let startupWatchSawErrorResult = false;
     let startupWatchHasFirstMessage: () => boolean = () => false;
     let startupWatchFirstMessageSeen = false;
     let startStartupTimer: (hasFirstMessage: () => boolean) => void = () => {};
@@ -551,7 +551,7 @@ export class AcpQueryRunner {
         {
           processExit: acpProcessExit,
           streamClosed: false,
-          messages: startupWatchMessages.filter(isAcpAgentStartupMessage),
+          messages: [],
           inactivity: { elapsedMs: Date.now() - queryStartTime, lastActivityAt: null },
         }
       );
@@ -695,7 +695,7 @@ export class AcpQueryRunner {
               queryStartTime = Date.now();
               startupWatchHasFirstMessage = hasFirstMessage;
               startupWatchFirstMessageSeen = false;
-              startupWatchMessages = [];
+              startupWatchSawErrorResult = false;
               scheduleStartupWatchTick(
                 Math.min(ACP_STARTUP_NUDGE_THRESHOLD_MS, getSdkStartInactivityBackstopMs())
               );
@@ -907,7 +907,7 @@ export class AcpQueryRunner {
           receivedAcpMessageDuringRun = false;
           startupWatchFirstMessageSeen = false;
           startupWatchHasFirstMessage = () => false;
-          startupWatchMessages = [];
+          startupWatchSawErrorResult = false;
           if (!attemptOwnsRun()) {
             requeueYieldedPrompt(message);
             break;
@@ -995,8 +995,8 @@ export class AcpQueryRunner {
                 startupWatchFirstMessageSeen = true;
                 receivedAcpMessageDuringRun = true;
                 this.clearStartupTimer();
-              } else {
-                startupWatchMessages.push(acpMessage as SDKMessage);
+              } else if (isAcpErrorResultMessage(acpMessage as SDKMessage)) {
+                startupWatchSawErrorResult = true;
               }
             }
             this.ctx.firstMessageReceived = true;
@@ -1036,17 +1036,13 @@ export class AcpQueryRunner {
             }
           }
 
-          if (
-            !promptMessageReceived &&
-            ownsStartupWatch() &&
-            (messageCount === 0 || startupWatchMessages.some(isAcpErrorResultMessage))
-          ) {
+          if (!promptMessageReceived && messageCount === 0 && ownsStartupWatch()) {
             const outcome = await runStartupWatch(
               { nudgeThresholdMs: ACP_STARTUP_NUDGE_THRESHOLD_MS },
               {
                 processExit: acpProcessExit,
                 streamClosed: true,
-                messages: startupWatchMessages.filter(isAcpAgentStartupMessage),
+                messages: [],
                 inactivity: { elapsedMs: Date.now() - queryStartTime, lastActivityAt: null },
               }
             );
@@ -1084,8 +1080,8 @@ export class AcpQueryRunner {
       terminalManager = null;
       const startupFailedByErrorResult =
         !startupWatchFirstMessageSeen &&
-        !isAcpProviderClassifiedError(String(error)) &&
-        (acpProcessExit !== null || startupWatchMessages.some(isAcpErrorResultMessage));
+        (acpProcessExit !== null ||
+          (!isAcpProviderClassifiedError(String(error)) && startupWatchSawErrorResult));
       const effectiveError =
         startupTimeoutReached || startupFailedByErrorResult
           ? new Error('ACP startup timeout - query aborted')

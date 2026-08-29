@@ -2789,27 +2789,59 @@ describe('AcpQueryRunner', () => {
       }
     }, 5000);
 
-    test('retries immediately when the agent stream ends before any agent message', async () => {
-      const firstClient = createMockClient();
-      firstClient.sendPrompt = mock(async function* (
+    test('a valid refusal stop reason is a terminal turn, not a startup failure', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
         _prompt: unknown,
         callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
       });
-      firstClient.getLastPromptStopReason = mock(() => 'refusal');
-      const secondClient = createMockClient();
-      secondClient.canLoadSession.mockImplementation(() => true);
-      const clients = [firstClient, secondClient];
-      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
-      const createClient = mock(() => clients.shift() as unknown as AcpClient);
-      const runner = new AcpQueryRunner(ctx, createClient);
+      client.getLastPromptStopReason = mock(() => 'refusal');
+      const { runner, ctx, messageQueue } = createRunnerFixture({ client });
 
       await runner.start();
       await ctx.queryPromise;
 
-      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(client.sendPrompt).toHaveBeenCalledTimes(1);
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      expect(ctx.db.updateSession).not.toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+    }, 5000);
+
+    test('a transient error followed by a process exit clears the dead session and retries', async () => {
+      const firstClient = createMockClient();
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        constructorOptions[0]?.onExit?.(1, null);
+        throw new Error('TypeError: fetch failed');
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(ctx.db.updateSession).toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+      expect(secondClient.createSession).toHaveBeenCalled();
       expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
         { type: 'text', text: 'hello' },
       ]);
