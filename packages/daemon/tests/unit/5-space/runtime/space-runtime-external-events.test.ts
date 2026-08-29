@@ -1695,7 +1695,7 @@ describe('SpaceRuntime external event subscriptions', () => {
         'session-cross-task-drop',
         secondTask.id
       );
-      expect(outcome).toEqual({ action: 'skip', reason: 'no_pending_events' });
+      expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
       expect(eventStore.listDeliveries(event.id)[0]!.taskId).toBe(task.id);
 
       const rows = db
@@ -2716,7 +2716,13 @@ describe('SpaceRuntime external event subscriptions', () => {
       await stopPromise;
       spaceManager.listSpaces = originalListSpaces;
 
-      expect(outcome?.action).toBe('delivered');
+      expect(outcome).toBeNull();
+      expect(deferredDigestUuids(sessionId)).toContain('digest-restart-owed');
+      expect(eventStore.listDeliveries('evt-restart-new')[0]?.state).toBe('pending');
+
+      await runtime.executeTick();
+      const postRace = await runtime.renderPendingDigestForSession(sessionId, task.id);
+      expect(postRace?.action).toBe('delivered');
       expect(deferredDigestUuids(sessionId)).toContain('digest-restart-owed');
       expect(eventStore.listDeliveries('evt-restart-new')[0]?.state).toBe('delivered');
       await runtime.stop();
@@ -3026,6 +3032,94 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-reuse-owed')).toBe(
         true
       );
+    });
+
+    test('flag on: a warm-start recovery failure fails the reconciliation gate', async () => {
+      await runtime.executeTick();
+      await runtime.stop();
+      const internals = runtime as unknown as {
+        restoreIdleSessionsOwningPendingDeliveries: (
+          paused: Set<string>,
+          workflowRunId?: string
+        ) => Promise<Array<{ action: string; sessionId: string }>>;
+        currentReconciliation: { failed: boolean } | null;
+      };
+      const originalRestore = internals.restoreIdleSessionsOwningPendingDeliveries.bind(runtime);
+      internals.restoreIdleSessionsOwningPendingDeliveries = async () => {
+        throw new Error('restore exploded');
+      };
+
+      runtime.start();
+      const gate = internals.currentReconciliation;
+      const deadline = Date.now() + 2000;
+      while (!gate?.failed && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(gate?.failed).toBe(true);
+      expect(await runtime.renderPendingDigestForSession('session-restore-failed')).toBeNull();
+
+      internals.restoreIdleSessionsOwningPendingDeliveries = originalRestore;
+      await runtime.executeTick();
+      expect(await runtime.renderPendingDigestForSession('session-restore-recovered')).toEqual({
+        action: 'skip',
+        reason: 'no_execution',
+      });
+      await runtime.stop();
+    });
+
+    test('flag on: mixed-coverage digest rows across executions do not become handoff debt', async () => {
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { run, task } = await startRunWithSubscription(topic);
+      const firstExecution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      const sessionId = `space:${SPACE_ID}:task:${task.id}:exec:${firstExecution.id}`;
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+      nodeExecutionRepo.update(firstExecution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      await eventService.publish(makeEvent({ id: 'evt-mixed-1', topic }));
+      await eventService.publish(makeEvent({ id: 'evt-mixed-2', topic }));
+      const first = eventStore.listDeliveries('evt-mixed-1')[0]!;
+      eventStore.markDeliveryDelivered('evt-mixed-1', first.deliveryKey);
+      eventStore.registerExpectedDelivery('evt-mixed-2', 'delivery-mixed-second', {
+        workflowRunId: run.id,
+        taskId: task.id,
+        nodeId: 'review',
+        agentName: 'reviewer',
+      });
+      const second = eventStore
+        .listDeliveries('evt-mixed-2')
+        .find((delivery) => delivery.deliveryKey === 'delivery-mixed-second')!;
+      eventStore.markDeliveryDelivered('evt-mixed-2', second.deliveryKey);
+      saveDeferredDigestWithTask(
+        sessionId,
+        'digest-mixed-coverage',
+        ['evt-mixed-1', 'evt-mixed-2'],
+        task.id
+      );
+      nodeExecutionRepo.update(firstExecution.id, { agentSessionId: null });
+      nodeExecutionRepo.create({
+        workflowRunId: run.id,
+        workflowNodeId: 'review',
+        agentName: 'reviewer',
+        agentSessionId: sessionId,
+        status: 'in_progress',
+      });
+
+      const runtimeInternals = runtime as unknown as {
+        rehydrateDigestHandoffDebt: () => void;
+        digestHandoffDebt: Map<string, Set<string>>;
+      };
+      runtimeInternals.rehydrateDigestHandoffDebt();
+      expect(
+        runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-mixed-coverage')
+      ).toBeUndefined();
     });
   });
 

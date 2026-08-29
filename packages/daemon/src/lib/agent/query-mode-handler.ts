@@ -58,8 +58,11 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, logger } = this.ctx;
 
     const runFlush = async (): Promise<number> => {
-      type DigestRowFilter = ((uuid: string) => boolean) | null;
+      type DigestRowFilter = ((row: { uuid: string; taskId?: string }) => boolean) | null;
       let digestRowFilter: DigestRowFilter = null;
+      const admittedTaskId = session.context?.taskId;
+      const taskScoped = (row: { uuid: string; taskId?: string }): boolean =>
+        admittedTaskId === undefined || (row.taskId !== undefined && row.taskId === admittedTaskId);
       try {
         const renderDigest = this.ctx.renderPendingDigest;
         const outcome = renderDigest
@@ -73,7 +76,7 @@ export class QueryModeHandler {
             );
           }
         } else if (outcome.action === 'delivered') {
-          digestRowFilter = (uuid) => uuid === outcome.uuid;
+          digestRowFilter = (row) => row.uuid === outcome.uuid;
         } else if (outcome.action === 'skip') {
           if (outcome.heldDigestInFlight) {
             logger.warn(
@@ -92,7 +95,7 @@ export class QueryModeHandler {
                 `(reason=${outcome.reason}) — flushing without the digest`
             );
           } else {
-            digestRowFilter = () => true;
+            digestRowFilter = taskScoped;
           }
         } else {
           logger.warn(
@@ -110,7 +113,6 @@ export class QueryModeHandler {
             `${error instanceof Error ? error.message : String(error)} — flushing without the digest`
         );
       }
-
       const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
       const backlogBase = options?.excludeMessageUuid
         ? allDeferred.filter((m) => m.uuid !== options.excludeMessageUuid)
@@ -118,7 +120,11 @@ export class QueryModeHandler {
       const backlog = backlogBase.filter((m) => {
         const uuid = String(m.uuid);
         if (!uuid.startsWith(DETERMINISTIC_DIGEST_UUID_PREFIX)) return true;
-        return digestRowFilter !== null && digestRowFilter(uuid);
+        const rowTaskId = (m as { externalEventTaskId?: unknown }).externalEventTaskId;
+        return (
+          digestRowFilter !== null &&
+          digestRowFilter({ uuid, taskId: typeof rowTaskId === 'string' ? rowTaskId : undefined })
+        );
       });
 
       if (backlog.length === 0) {

@@ -1724,6 +1724,7 @@ export class SpaceRuntime {
   }
 
   private scheduleDigestPullForSession(sessionId: string, taskId?: string): void {
+<<<<<<< HEAD
     if (this.isStopped || !sessionId) return;
     const state = this.digestPullTriggers.get(sessionId) ?? {
       count: 0,
@@ -1734,6 +1735,25 @@ export class SpaceRuntime {
     state.count += 1;
     state.probe = false;
     state.taskId = state.taskId ?? taskId;
+=======
+    if (!isExternalEventDeliveryV2Enabled() || this.isStopped || !sessionId) return;
+    const existing = this.digestPullTriggers.get(sessionId);
+    const state: DigestPullTriggerState = existing
+      ? {
+          ...existing,
+          count: existing.count + 1,
+          probe: false,
+          taskId: existing.taskId ?? taskId,
+        }
+      : {
+          count: 1,
+          taskId,
+          probe: false,
+          idleTimer: null,
+          safetyTimer: null,
+          countTimer: null,
+        };
+>>>>>>> 214a12ca24 (fix(daemon): harden cold reconciliation, raced restarts, and debt ownership)
     this.digestPullTriggers.set(sessionId, state);
     if (state.idleTimer) {
       clearTimeout(state.idleTimer);
@@ -2054,6 +2074,9 @@ export class SpaceRuntime {
     };
     try {
       const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
+      if (this.isStopped || (generation !== undefined && this.runtimeGeneration !== generation)) {
+        return null;
+      }
       if (outcome.action === 'delivered') {
         try {
           this.supersedeObsoleteDigestRows(
@@ -3486,7 +3509,7 @@ export class SpaceRuntime {
       return;
     }
     try {
-      await this.recoverPendingDeliveries(pausedSpaceIds);
+      await this.recoverPendingDeliveriesStrict(pausedSpaceIds);
       if (gate.generation !== this.runtimeGeneration || this.isStopped) {
         this.settleReconciliation(gate, false);
         return;
@@ -3542,9 +3565,13 @@ export class SpaceRuntime {
     const staleSupersedeRetryCounts = Array.from(this.digestSupersedeRetryCounts.entries());
     const stalePullTriggers = Array.from(this.digestPullTriggers.entries());
     const staleRateLimits = Array.from(this.externalEventRateLimits.entries());
-    const pendingRenders = Array.from(this.renderPendingDigestQueues.values());
-    this.renderPendingDigestQueues.clear();
-    await Promise.all(pendingRenders.map((render) => render.catch(() => null)));
+    const pendingRenders = Array.from(this.renderPendingDigestQueues.entries());
+    await Promise.all(pendingRenders.map(([, render]) => render.catch(() => null)));
+    for (const [sessionId, render] of pendingRenders) {
+      if (this.renderPendingDigestQueues.get(sessionId) === render) {
+        this.renderPendingDigestQueues.delete(sessionId);
+      }
+    }
     for (const [key, timer] of staleSupersedeRetryTimers) {
       if (this.digestSupersedeRetryTimers.get(key) === timer) {
         clearTimeout(timer);
@@ -3623,6 +3650,15 @@ export class SpaceRuntime {
         this.config.taskRepo.clearAllSpawnReservations();
         await this.rehydrateExecutors();
         await this.recoverStalledRuns();
+        if (generation !== this.runtimeGeneration || this.isStopped) {
+          const stale = this.currentReconciliation;
+          if (stale && !stale.settled) {
+            this.settleReconciliation(stale, true);
+          }
+          rehydratedGateSettled = true;
+          return;
+        }
+        this.rehydrateDigestHandoffDebt();
         this.rehydrated = true;
         this.acceptingExternalEvents = true;
         const pending = this.currentReconciliation;
@@ -4117,25 +4153,32 @@ export class SpaceRuntime {
     return outcomes;
   }
 
-  private async recoverPendingDeliveries(
+  private async recoverPendingDeliveriesStrict(
     pausedSpaceIds: Set<string> = new Set(),
     workflowRunId?: string
   ): Promise<void> {
     const generation = this.runtimeGeneration;
-    try {
-      const outcomes = await this.restoreIdleSessionsOwningPendingDeliveries(
-        pausedSpaceIds,
-        workflowRunId
-      );
-      if (this.isStopped || generation !== this.runtimeGeneration) {
-        for (const outcome of outcomes) {
-          if (outcome.action === 'restored') {
-            this.config.taskAgentManager?.cancelBySessionId(outcome.sessionId);
-          }
+    const outcomes = await this.restoreIdleSessionsOwningPendingDeliveries(
+      pausedSpaceIds,
+      workflowRunId
+    );
+    if (this.isStopped || generation !== this.runtimeGeneration) {
+      for (const outcome of outcomes) {
+        if (outcome.action === 'restored') {
+          this.config.taskAgentManager?.cancelBySessionId(outcome.sessionId);
         }
-        return;
       }
-      this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
+      return;
+    }
+    this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
+  }
+
+  private async recoverPendingDeliveries(
+    pausedSpaceIds: Set<string> = new Set(),
+    workflowRunId?: string
+  ): Promise<void> {
+    try {
+      await this.recoverPendingDeliveriesStrict(pausedSpaceIds, workflowRunId);
     } catch (err) {
       log.warn(
         `SpaceRuntime: pending-delivery recovery failed for ${workflowRunId ?? 'all runs'}: ${formatCommandError(err)}`
@@ -4578,20 +4621,19 @@ export class SpaceRuntime {
       const rowTaskId =
         (message.externalEventTaskId as string | undefined) ?? raw.task_id ?? undefined;
       if (rowTaskId === undefined) continue;
-      const allMembersDelivered = eventIds.every((eventId) =>
-        store
-          .listDeliveries(eventId)
-          .some(
-            (delivery) =>
-              delivery.taskId === rowTaskId &&
-              delivery.state === 'delivered' &&
-              owningExecutions.some(
-                (execution) =>
-                  delivery.workflowRunId === execution.workflowRunId &&
-                  delivery.nodeId === execution.workflowNodeId &&
-                  delivery.agentName === execution.agentName
-              )
-          )
+      const allMembersDelivered = owningExecutions.some((execution) =>
+        eventIds.every((eventId) =>
+          store
+            .listDeliveries(eventId)
+            .some(
+              (delivery) =>
+                delivery.taskId === rowTaskId &&
+                delivery.workflowRunId === execution.workflowRunId &&
+                delivery.nodeId === execution.workflowNodeId &&
+                delivery.agentName === execution.agentName &&
+                delivery.state === 'delivered'
+            )
+        )
       );
       if (allMembersDelivered) {
         this.addDigestHandoffDebt(sessionId, String(message.uuid));
