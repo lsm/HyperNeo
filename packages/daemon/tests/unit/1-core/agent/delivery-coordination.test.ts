@@ -86,6 +86,18 @@ describe('withSessionResetCoordination', () => {
     expect(sessionResetCoordinationLocks.size).toBe(0);
   });
 
+  it('bails out of reclaim when a successor registered after the timed-out waiter', async () => {
+    void withSessionResetCoordination('s', () => new Promise<string>(() => {}));
+    await tick();
+
+    const first = withSessionResetCoordination('s', async () => 'first');
+    const second = withSessionResetCoordination('s', async () => 'second');
+    jest.setSystemTime(T0 + 1_000);
+    await expect(first).rejects.toBeInstanceOf(SessionCoordinationStallError);
+    await expect(second).resolves.toBe('second');
+    expect(sessionResetCoordinationLocks.size).toBe(0);
+  });
+
   it('does not let timed-out waiters reset the leak clock', async () => {
     void withSessionResetCoordination('s', () => new Promise<string>(() => {}));
     await tick();

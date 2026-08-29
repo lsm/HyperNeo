@@ -505,8 +505,10 @@ type CoordinationCtx = {
   fn: () => Promise<unknown>;
   signal?: AbortSignal;
   prev: Promise<unknown>;
+  registeredTail: Promise<unknown>;
   release: () => void;
   armedAt: number;
+  observedArmedAt: number | null;
   acquired: boolean;
   timedOut: boolean;
   holderAgeMs: number;
@@ -515,6 +517,7 @@ type CoordinationCtx = {
 
 function armCoordinationTail(sessionId: string): {
   prev: Promise<unknown>;
+  tail: Promise<unknown>;
   release: () => void;
 } {
   const prev = sessionResetCoordinationLocks.get(sessionId) ?? Promise.resolve();
@@ -526,6 +529,7 @@ function armCoordinationTail(sessionId: string): {
   sessionResetCoordinationLocks.set(sessionId, tail);
   return {
     prev,
+    tail,
     release: () => {
       releaseHeld();
       if (sessionResetCoordinationLocks.get(sessionId) === tail) {
@@ -533,6 +537,10 @@ function armCoordinationTail(sessionId: string): {
       }
     },
   };
+}
+
+function currentHolderArmedAt(sessionId: string): number | null {
+  return sessionResetCoordinationHolderArmedAt.get(sessionId) ?? null;
 }
 
 async function awaitCoordinationSlotStage(ctx: CoordinationCtx): Promise<CoordinationCtx> {
@@ -549,9 +557,9 @@ async function awaitCoordinationSlotStage(ctx: CoordinationCtx): Promise<Coordin
     ]);
     if (winner === 'deadline') {
       ctx.timedOut = true;
-      const armedAt = sessionResetCoordinationHolderArmedAt.get(ctx.sessionId);
-      ctx.holderAgeMs =
-        armedAt === undefined ? getCoordinationLeakCeilingMs() : Date.now() - armedAt;
+      const armedAt = currentHolderArmedAt(ctx.sessionId);
+      ctx.observedArmedAt = armedAt;
+      ctx.holderAgeMs = armedAt === null ? getCoordinationLeakCeilingMs() : Date.now() - armedAt;
       return ctx;
     }
     throwIfDeliveryAborted(ctx.signal);
@@ -567,6 +575,8 @@ async function awaitCoordinationSlotStage(ctx: CoordinationCtx): Promise<Coordin
 
 async function reclaimLeakedCoordinationStage(ctx: CoordinationCtx): Promise<CoordinationCtx> {
   if (!ctx.timedOut || ctx.holderAgeMs < getCoordinationLeakCeilingMs()) return ctx;
+  if (sessionResetCoordinationLocks.get(ctx.sessionId) !== ctx.registeredTail) return ctx;
+  if (currentHolderArmedAt(ctx.sessionId) !== ctx.observedArmedAt) return ctx;
   COORDINATION_LOG.error(
     `delivery-coordination: holder for session ${ctx.sessionId} exceeded ` +
       `${getCoordinationLeakCeilingMs()}ms (age ${ctx.holderAgeMs}ms); reclaiming the slot`
@@ -575,7 +585,13 @@ async function reclaimLeakedCoordinationStage(ctx: CoordinationCtx): Promise<Coo
   sessionResetCoordinationHolderArmedAt.delete(ctx.sessionId);
   const armed = armCoordinationTail(ctx.sessionId);
   ctx.prev = armed.prev;
-  ctx.release = armed.release;
+  ctx.registeredTail = armed.tail;
+  ctx.release = () => {
+    armed.release();
+    if (sessionResetCoordinationHolderArmedAt.get(ctx.sessionId) === ctx.armedAt) {
+      sessionResetCoordinationHolderArmedAt.delete(ctx.sessionId);
+    }
+  };
   ctx.acquired = true;
   ctx.timedOut = false;
   ctx.armedAt = Date.now();
@@ -622,6 +638,7 @@ export async function withSessionResetCoordination<T>(
     fn,
     signal,
     prev: armed.prev,
+    registeredTail: armed.tail,
     release: () => {
       armed.release();
       if (sessionResetCoordinationHolderArmedAt.get(sessionId) === ctx.armedAt) {
@@ -629,6 +646,7 @@ export async function withSessionResetCoordination<T>(
       }
     },
     armedAt: 0,
+    observedArmedAt: null,
     acquired: false,
     timedOut: false,
     holderAgeMs: 0,
