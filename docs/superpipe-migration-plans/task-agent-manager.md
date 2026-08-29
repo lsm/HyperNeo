@@ -74,7 +74,14 @@ for the agent (skip when `freshSessionOnly`). Reuse admission includes the
 COLD-CACHE branch — a prior `agentSessionId` absent from `agentSessionIndex`
 awaits `rehydrateSubSession` and reuses the durable session when restoration
 succeeds (:1124–1127); treating "not indexed" as "fresh" after a daemon
-restart would double-spawn the worker. Reuse arm (rebind CAS with
+restart would double-spawn the worker. A FAILED cold restoration (rehydrate
+returns null — durable session missing or archived) falls through to the
+fresh arm, but the fresh bind (:1343–1376) then sees the OLD non-null binding
+and skips its CAS, leaving the new streaming worker UNBOUND while routing
+still references the ghost session — repeated retries stack orphan workers;
+TAM-B1 must add a status-and-session-guarded stale-binding resolution before
+the fresh arm (TAM-PB characterizes the failed-restoration fall-through as
+surviving behavior; the guarded resolution lands with B1). Reuse arm (rebind CAS with
 `SpawnSupersededError`, stale co-owner release cascade :1167–1197, config
 update, workspace migration under inject lock with node-agent-server
 capture/restore compensation :1250–1264), fresh arm (`AgentSession.fromInit`,
@@ -272,16 +279,24 @@ rehydration-before-lock ordering). The terminal admission is ORIGIN-SENSITIVE: `
 (:1858–1873) rejects a `done` task ONLY when `origin === 'system'` — human
 and task injections remain admissible on a done task while runtime-recovery
 injections are rejected; carry `origin` into BOTH the pre-lock and post-lock
-predicates and pin both done-task rows in TAM-PE. The admissions call
+predicates and pin both done-task rows in TAM-PE. The admission must also
+resolve the OWNING task: with no taskId supplied it inspects
+`listByWorkflowRunIncludingArchived(...)[0]` (:1864–1867), which in a
+multi-task run is the WRONG task — a cancelled first task rejects delivery to
+an active worker and vice versa; TAM-E1 resolves the owning task from the
+session identity/ownership map for both predicates (the corrected
+opposite-status multi-task rows land with E1; TAM-PE may characterize the
+current `[0]`-based behavior as surviving). The admissions call
 `resolveNodeExecutionForSubSession` twice
 (:1779 pre-lock, :1814 post-lock) — the same unconditional binding repair as
 cluster 14 — so TAM-E1 must use the FENCED repair (the guarded primitive
 shared with TAM-D1) or sequence after the slice that lands it; never carry
 the blind write into the admissions stages. Beyond the origin path, the inner
 delivery cascade has three more callers: spawn-flow's `injectKickoffMessage`
-dep (:1091) and both post-approval arms (:4912, :5041) — TAM-E2 composes the
+dep (:1091) and both post-approval arms (:4912, :5041) — TAM-E3 composes the
 extracted delivery stage group into the spawn flow directly (spawn-flow owns
-its kickoff injection as part of its own business path), and TAM-F1/F2
+its kickoff injection as part of its own business path, a separate wiring
+seam from TAM-E2), and TAM-F1/F2
 compose the same stage group into their pipelines (dependency TAM-E1); no
 call site may keep invoking the old imperative cascade, and no owning
 pipeline nests the TAM-E runner. Inside, the `decideInjectDelivery` decision
@@ -461,7 +476,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| TAM-PB | Pins for `createSubSession` reuse/fresh arms restricted to SURVIVING behavior: cold-cache reuse via `rehydrateSubSession`, narrow compensation, `deferFreshExecutionBind` scope (fresh-arm bind + both arms' flush suppressed; reuse CAS unaffected), fresh-arm registration-before-stream ordering, fresh-arm hook ordering before stream, detached-flush rejection — the session-owner guards' race rows land with TAM-B1's primitive, never here | test-only | 0 | ≲110 | — |
+| TAM-PB | Pins for `createSubSession` reuse/fresh arms restricted to SURVIVING behavior: cold-cache reuse via `rehydrateSubSession` (successful AND failed — the fall-through to fresh creation), narrow compensation, `deferFreshExecutionBind` scope (fresh-arm bind + both arms' flush suppressed; reuse CAS unaffected), fresh-arm registration-before-stream ordering, fresh-arm hook ordering before stream, detached-flush rejection — the session-owner guards' and stale-binding-resolution rows land with TAM-B1's primitive, never here | test-only | 0 | ≲110 | — |
 | TAM-PC | Pins for `restorePostApprovalWorkerSession`: refusal rows (missing task, detached task, task `cancelled`/`archived`, run `cancelled`, missing space), cooldown THROW outcome + pre-restore ordering, no-completion-callback, pre-stream registration + sanitizer ordering, cached-session ownership (register/compensate only when this operation created the session), concurrent-restore in-lock re-gather | test-only | 0 | ≲90 | — |
 | TAM-PD | Pins for `rehydrateSubSession` restricted to SURVIVING behavior: refusal-gate ordering (archived row BEFORE the repair, which is unconditional today), `done` admissibility, multi-task owner-resolution identity row, system-prompt-only overlay, current workspace-fallback characterization, hooks + sanitizer pre-stream ordering — the fenced-repair and `resolveTaskWorkspace` routing land with TAM-D1, never here | test-only | 0 | ≲100 | — |
 | TAM-PE | Pins for the complete injection operation: origin-sensitive done admission (done + system rejected, done + human admissible) in BOTH pre-lock and post-lock predicates, outer admissions + post-lock terminal recheck, cancellation passthrough, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
@@ -476,7 +491,8 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-D1 | `rehydrate-sub-session` stagedRun, unwired (fenced repair, `resolveTaskWorkspace` routing, system-prompt-only overlay) | build | ≲220 | ≲200 | TAM-PD |
 | TAM-D2 | Wire `rehydrateSubSession` | wire | ≲40 | ≲50 | TAM-D1 |
 | TAM-E1 | `deliver-injected-message` pipeline over the COMPLETE operation (outer admissions + inner arms), composing `decideInjectDelivery`'s gates directly; requires the FENCED repair helper (shared with TAM-D1 — sequence after the slice that lands it); delivery stage group exported for direct composition by owning pipelines | build | ≲230 | ≲180 | TAM-PE, TAM-D1 (fenced repair helper) |
-| TAM-E2 | Wire `injectSubSessionMessageWithOrigin` (and its thin wrappers) to the E1 pipeline, and compose the extracted delivery stage group into spawn-flow's kickoff injection directly; inject lock stays class-owned | wire | ≲70 | ≲70 | TAM-E1 |
+| TAM-E2 | Wire `injectSubSessionMessageWithOrigin` (and its thin wrappers) to the E1 pipeline; inject lock stays class-owned — standalone injection only, its own wiring seam | wire | ≲50 | ≲60 | TAM-E1 |
+| TAM-E3 | Compose the extracted delivery stage group into the spawn flow's kickoff injection directly (spawn-flow stage-list edit) — a separate wiring seam and business path from TAM-E2, ordered before the old imperative delivery cascade is deleted | wire | ≲50 | ≲60 | TAM-E1 |
 | TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 delivery outcome with a THREE-WAY ownership result (CREATED / LIVE-REUSED / COLD-RESTORED) carried from the create-stage result; COMPOSES the B1 create stage group and the E1 delivery stage group directly (no runner nesting); the reuse-arm terminal gate runs BEFORE the reuse mutation sequence under the same lock; the fresh arm's post-create recheck covers every create outcome (CREATED skip terminates the just-created session, REUSED skip leaves the worker untouched); lands the atomic-ownership/rollback protocol TOGETHER WITH its tests (terminal-skip rows for both outcomes, after-recheck-before-delivery transition, post-create attach/inject failure compensation per ownership — CREATED stopped/unregistered, COLD-RESTORED unwound without deleting the durable session, LIVE-REUSED intact — cold-cache unwind, the terminal races) | build | ≲220 | ≲250 | TAM-B2, TAM-E1, TAM-PF (P46 outcome contract) |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
 | TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); introduces the status-guarded settlement/error primitive (risk 5) TOGETHER WITH its race-correctness tests (which cannot pass before it exists) | build+wire | ≲100 | ≲80 | TAM-PG |
