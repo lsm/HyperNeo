@@ -13,6 +13,7 @@ import {
 } from '../../../../src/lib/space/actions/space-actions-server.ts';
 import type { NodeAgentToolsConfig } from '../../../../src/lib/space/tools/node-agent-tools.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import type { CreateMcpAuditLogParams } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 
 const SPACE_ID = 'space-actions-server-test';
 const stubSpaceConfig = { spaceId: SPACE_ID } as unknown as SpaceAgentToolsConfig;
@@ -141,6 +142,57 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(await dispatch(server, { name: 'describe_action', params: { name: 'nope' } })).toEqual({
       error: 'Unknown action: nope',
     });
+  });
+
+  test('writes exactly one audit record for a mutating dispatch by default', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceLevel: 4,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    const body = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: 'action_failed' });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ toolName: 'update_session_state', spaceId: SPACE_ID });
+  });
+
+  test('prefers an explicit dispatchDeps audit repo over the config default', async () => {
+    const configEntries: CreateMcpAuditLogParams[] = [];
+    const depEntries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceLevel: 4,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => void configEntries.push(entry),
+        },
+      } as unknown as SpaceAgentToolsConfig,
+      dispatchDeps: {
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            depEntries.push(entry);
+            return null as never;
+          },
+        },
+      },
+    });
+    await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    });
+    expect(configEntries).toHaveLength(0);
+    expect(depEntries).toHaveLength(1);
   });
 
   test('denies rate-limited dispatches through the configured budget', async () => {

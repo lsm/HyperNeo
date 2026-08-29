@@ -136,6 +136,10 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
 
   const deps: DispatchActionDeps = {
     ...config.dispatchDeps,
+    auditLogRepo:
+      config.dispatchDeps?.auditLogRepo ??
+      config.nodeConfig?.auditLogRepo ??
+      config.spaceConfig?.auditLogRepo,
     registry,
     emitTelemetry: config.dispatchDeps?.emitTelemetry ?? emitActionDispatchedEvent,
     isWithinRateBudget:
