@@ -10306,7 +10306,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
   test('handleWebhook publishes matching events to every enabled space that shares the repository secret', async () => {
     const db = setupDb();
     db.prepare(
-      `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-2', 'space-2', 'Space 2', '/tmp', 'active', 1, 1)`
+      `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-2', 'space-2', 'Space 2', '/tmp-2', 'active', 1, 1)`
     ).run();
     db.prepare(
       `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-1', 'space-1', 'Space', '/tmp', 'active', 1, 1)`
