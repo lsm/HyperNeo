@@ -116,4 +116,30 @@ describe('withSessionResetCoordination', () => {
     await expect(withSessionResetCoordination('s', async () => 'ok')).resolves.toBe('ok');
     expect(sessionResetCoordinationLocks.size).toBe(0);
   });
+
+  it('aborts a registered waiter mid-wait without running it or blocking reclaim', async () => {
+    void withSessionResetCoordination('s', () => new Promise<string>(() => {}));
+    await tick();
+
+    const controller = new AbortController();
+    let ran = false;
+    const aborted = withSessionResetCoordination(
+      's',
+      async () => {
+        ran = true;
+        return 'x';
+      },
+      controller.signal
+    );
+    await tick();
+    controller.abort();
+    await expect(aborted).rejects.toMatchObject({ name: 'AbortError' });
+    expect(ran).toBe(false);
+
+    jest.setSystemTime(T0 + 1_000);
+    await expect(withSessionResetCoordination('s', async () => 'reclaimed')).resolves.toBe(
+      'reclaimed'
+    );
+    expect(sessionResetCoordinationLocks.size).toBe(0);
+  });
 });

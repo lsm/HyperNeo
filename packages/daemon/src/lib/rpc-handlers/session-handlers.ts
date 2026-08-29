@@ -1,4 +1,6 @@
 import type {
+  CreateSessionRequest,
+  HyperNeoActionMessage,
   ImageContent,
   ListRuntimeMcpServersRequest,
   ListRuntimeMcpServersResponse,
@@ -7,17 +9,25 @@ import type {
   MessageHub,
   MessageImage,
   ModelInfo,
+  RuntimeMcpServerEntry,
   Session,
   SessionMetadata,
-  HyperNeoActionMessage,
-  RuntimeMcpServerEntry,
+  UpdateSessionRequest,
 } from '@hyperneo/shared';
-import { normalizeThinkingLevel } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { composeDraftWhole, generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager.ts';
-import type { CreateSessionRequest, UpdateSessionRequest } from '@hyperneo/shared';
+import {
+  composeDraftWhole,
+  generateUUID,
+  matchesDraftOrComposition,
+  normalizeThinkingLevel,
+} from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
+import {
+  deliverAndMarkQueued,
+  isMessageDeliveryV2Enabled,
+  withSessionResetCoordination,
+} from '../agent/message-delivery.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
 import {
   clearModelsCache,
   hasRefreshBeenAttemptedFor,
@@ -26,19 +36,14 @@ import {
 } from '../model-service.js';
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
 import {
-  deliverAndMarkQueued,
-  isMessageDeliveryV2Enabled,
-  withSessionResetCoordination,
-} from '../agent/message-delivery.ts';
-import {
   archiveSDKSessionFiles,
   deleteSDKSessionFiles,
-  scanSDKSessionFiles,
   identifyOrphanedSDKFiles,
+  scanSDKSessionFiles,
 } from '../sdk-session-file-manager.ts';
+import type { SessionManager } from '../session-manager.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { Logger } from '../logger.ts';
 
 const log = new Logger('session-handlers');
 
@@ -1199,20 +1204,34 @@ export function setupSessionHandlers(
       status: 'enqueued',
     });
 
-    if (isMessageDeliveryV2Enabled()) {
-      await withSessionResetCoordination(targetSessionId, async () =>
-        deliverAndMarkQueued({
-          jobQueue: db.getJobQueueRepo(),
-          stateManager: agentSession.stateManager,
-          sessionId: targetSessionId,
-          messageUuid,
-          origin: 'chat',
-        })
-      );
-    } else {
-      await withSessionResetCoordination(targetSessionId, async () => {
-        await agentSession.startQueryAndEnqueue(messageUuid, replayContent);
+    const rollbackToDeferred = async () => {
+      db.updateMessageStatus([message.dbId], 'deferred');
+      await internalEventBus.publish('messages.statusChanged', {
+        sessionId: targetSessionId,
+        messageIds: [message.dbId],
+        status: 'deferred',
       });
+    };
+
+    try {
+      if (isMessageDeliveryV2Enabled()) {
+        await withSessionResetCoordination(targetSessionId, async () =>
+          deliverAndMarkQueued({
+            jobQueue: db.getJobQueueRepo(),
+            stateManager: agentSession.stateManager,
+            sessionId: targetSessionId,
+            messageUuid,
+            origin: 'chat',
+          })
+        );
+      } else {
+        await withSessionResetCoordination(targetSessionId, async () => {
+          await agentSession.startQueryAndEnqueue(messageUuid, replayContent);
+        });
+      }
+    } catch (err) {
+      await rollbackToDeferred();
+      throw err;
     }
 
     return {
