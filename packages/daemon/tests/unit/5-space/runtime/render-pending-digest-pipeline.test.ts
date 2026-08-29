@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { buildSyntheticExternalEventMessage } from '../../../../src/lib/external-events/deferred-event-digest';
@@ -10,6 +11,7 @@ import {
   admitTurnEnd,
   aggregateRender,
   buildMessage,
+  capDigestBatch,
   claimPending,
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   loadPending,
@@ -18,6 +20,7 @@ import {
   reconcileDurable,
   resolveTarget,
   runRenderPendingDigest,
+  TURN_END_DIGEST_MESSAGE_BYTE_CAP,
   TURN_END_DIGEST_PENDING_ROW_CAP,
   type RenderPendingDigestCtx,
   type RenderPendingDigestDeps,
@@ -259,6 +262,47 @@ function digestMembershipRow(
   return { ...row, externalEventIds: eventIds, sendStatus } as SDKUserMessage & {
     sendStatus?: string;
   };
+}
+
+function seedSizedComments(h: Harness, eventIds: string[]): void {
+  for (const [index, eventId] of eventIds.entries()) {
+    h.rows.push(pendingRow(eventId));
+    h.records.set(eventId, {
+      event: {
+        id: eventId,
+        spaceId: 'space-digest',
+        source: 'github',
+        topic: TOPICS.comment,
+        dedupeKey: `dedupe-${eventId}`,
+        occurredAt: BASE_AT + index * 1000,
+        ingestedAt: BASE_AT,
+        summary: 'fixture',
+        payload: { ...PAYLOADS.comment, commentId: String(1000 + index) },
+      },
+      state: 'published',
+      createdAt: BASE_AT,
+      updatedAt: BASE_AT,
+    });
+  }
+}
+
+function messageBytesFor(h: Harness, eventIds: string[]): number {
+  const rows = h.rows.filter((row) => eventIds.includes(row.eventId));
+  const ctx = buildMessage(
+    aggregateRender(orderAndDedupe(loadPending(ctxOf(h, { pendingRows: rows, target: TARGET }))))
+  );
+  return Buffer.byteLength(JSON.stringify(ctx.digestMessage), 'utf8');
+}
+
+function cappedEssences(
+  h: Harness,
+  overrides: Partial<RenderPendingDigestCtx> = {}
+): RenderPendingDigestCtx {
+  return capDigestBatch({
+    ...ctxOf(h, { target: TARGET }),
+    ...loadPending(ctxOf(h, { pendingRows: h.rows })),
+    ...overrides,
+  });
 }
 
 function ctxOf(
@@ -608,6 +652,51 @@ describe('render-pending-digest pipeline', () => {
     expect(ctx.digestText).toContain('External events while you were working (2 events, PR #42):');
     expect(ctx.digestText).toContain('CI check "build-linux"');
     expect(ctx.digestText).toContain('Review comment');
+  });
+
+  it('capDigestBatch keeps a fitting set unchanged at the default cap', () => {
+    const h = harness();
+    seedSizedComments(h, ['ev-a', 'ev-b', 'ev-c']);
+    h.deps.digestMessageByteCap = TURN_END_DIGEST_MESSAGE_BYTE_CAP;
+    const ctx = cappedEssences(h);
+    expect(ctx.essences?.map((essence) => essence.eventId)).toEqual(['ev-a', 'ev-b', 'ev-c']);
+  });
+
+  it('capDigestBatch fits exactly at the cap boundary and splits one event past it', () => {
+    const h = harness();
+    seedSizedComments(h, ['ev-a', 'ev-b', 'ev-c']);
+    const pairBytes = messageBytesFor(h, ['ev-a', 'ev-b']);
+    h.deps.digestMessageByteCap = pairBytes;
+    const atCap = cappedEssences(h);
+    expect(atCap.essences?.map((essence) => essence.eventId)).toEqual(['ev-a', 'ev-b']);
+    h.deps.digestMessageByteCap = pairBytes - 1;
+    const underCap = cappedEssences(h);
+    expect(underCap.essences?.map((essence) => essence.eventId)).toEqual(['ev-a']);
+  });
+
+  it('capDigestBatch splits oldest-first by occurrence, not by eventId order', () => {
+    const h = harness();
+    seedSizedComments(h, ['ev-d', 'ev-c', 'ev-b', 'ev-a']);
+    h.deps.digestMessageByteCap = messageBytesFor(h, ['ev-d', 'ev-c']);
+    const ctx = cappedEssences(h);
+    expect(ctx.essences?.map((essence) => essence.eventId)).toEqual(['ev-d', 'ev-c']);
+  });
+
+  it('capDigestBatch emits an over-cap single event as its own batch', () => {
+    const h = harness();
+    seedSizedComments(h, ['ev-d', 'ev-c', 'ev-b', 'ev-a']);
+    h.deps.digestMessageByteCap = 1;
+    const ctx = cappedEssences(h);
+    expect(ctx.essences?.map((essence) => essence.eventId)).toEqual(['ev-d']);
+  });
+
+  it('capDigestBatch leaves a replayable set uncapped', () => {
+    const h = harness();
+    seedSizedComments(h, ['ev-a', 'ev-b', 'ev-c']);
+    h.deps.digestMessageByteCap = 1;
+    const essences = loadPending(ctxOf(h, { pendingRows: h.rows })).essences!;
+    const ctx = capDigestBatch(ctxOf(h, { target: TARGET, essences, replayable: true }));
+    expect(ctx.essences).toBe(essences);
   });
 
   it('buildMessage derives a deterministic uuid and embeds the membership', () => {
@@ -1122,5 +1211,66 @@ describe('render-pending-digest pipeline', () => {
       { eventId: 'ev-b', deliveryKey: 'delivery-ev-b' },
     ]);
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
+  it('end to end: an over-cap backlog drains across renders as N under-cap digests', async () => {
+    const h = harness();
+    seedSizedComments(h, ['ev-a', 'ev-b', 'ev-c', 'ev-d']);
+    h.deps.digestMessageByteCap = messageBytesFor(h, ['ev-a', 'ev-b']);
+    const input = { sessionId: SESSION_ID, taskId: TARGET.taskId };
+    const first = await runRenderPendingDigest(h.deps, input);
+    expect(first.action).toBe('delivered');
+    if (first.action !== 'delivered') return;
+    expect(first.eventIds).toEqual(['ev-a', 'ev-b']);
+    expect(first.text).toContain('(2 events, PR #42):');
+    expect(Buffer.byteLength(JSON.stringify(h.saved[0]), 'utf8')).toBeLessThanOrEqual(
+      h.deps.digestMessageByteCap!
+    );
+    expect(h.marks).toEqual([
+      { eventId: 'ev-a', deliveryKey: 'delivery-ev-a' },
+      { eventId: 'ev-b', deliveryKey: 'delivery-ev-b' },
+    ]);
+    h.rows.splice(0, 2);
+    const second = await runRenderPendingDigest(h.deps, input);
+    expect(second.action).toBe('delivered');
+    if (second.action !== 'delivered') return;
+    expect(second.eventIds).toEqual(['ev-c', 'ev-d']);
+    expect(second.uuid).not.toBe(first.uuid);
+    expect(Buffer.byteLength(JSON.stringify(h.saved[1]), 'utf8')).toBeLessThanOrEqual(
+      h.deps.digestMessageByteCap!
+    );
+    expect(h.marks).toHaveLength(4);
+    expect(h.saved).toHaveLength(2);
+    expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
+  it('end to end: a held capped batch retries its own digest, then the remainder drains', async () => {
+    const h = harness({ appendDigest: async () => false });
+    seedSizedComments(h, ['ev-a', 'ev-b', 'ev-c']);
+    h.deps.digestMessageByteCap = messageBytesFor(h, ['ev-a', 'ev-b']);
+    const input = { sessionId: SESSION_ID, taskId: TARGET.taskId };
+    const held = await runRenderPendingDigest(h.deps, input);
+    expect(held).toMatchObject({ action: 'held', reason: 'mailbox_rejected' });
+    expect(h.marks).toEqual([]);
+    expect((h.saved[0] as { externalEventIds?: string[] }).externalEventIds).toEqual([
+      'ev-a',
+      'ev-b',
+    ]);
+    h.deps.appendDigest = async (_sessionId, message) => {
+      h.appended.push(message);
+      return true;
+    };
+    const retried = await runRenderPendingDigest(h.deps, input);
+    expect(retried.action).toBe('delivered');
+    if (retried.action !== 'delivered') return;
+    expect(retried.replayed).toBe(true);
+    expect(retried.eventIds).toEqual(['ev-a', 'ev-b']);
+    h.rows.splice(0, 2);
+    const remainder = await runRenderPendingDigest(h.deps, input);
+    expect(remainder.action).toBe('delivered');
+    if (remainder.action !== 'delivered') return;
+    expect(remainder.eventIds).toEqual(['ev-c']);
+    expect(h.marks).toHaveLength(3);
+    expect(h.saved).toHaveLength(2);
   });
 });

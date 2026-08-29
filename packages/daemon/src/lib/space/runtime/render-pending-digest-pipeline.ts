@@ -1,9 +1,11 @@
+import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   buildExternalEventDigestMessage,
   buildSyntheticExternalEventMessage,
+  orderEssencesByOccurrence,
   type ExternalEventEssenceEntry,
 } from '../../external-events/deferred-event-digest.ts';
 import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
@@ -86,6 +88,7 @@ export interface RenderPendingDigestDeps {
     target: RenderPendingDigestTarget,
     marks: RenderPendingDigestLedgerMark[]
   ): void;
+  digestMessageByteCap?: number;
 }
 
 export interface RenderPendingDigestInput {
@@ -162,6 +165,13 @@ export interface RenderPendingDigestCtx extends RenderPendingDigestInput {
 export const TURN_END_DIGEST_PENDING_ROW_CAP = 200;
 
 export const TURN_END_DIGEST_SCAN_ROW_CAP = TURN_END_DIGEST_PENDING_ROW_CAP * 4;
+
+const PROVIDER_REQUEST_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
+
+const DIGEST_ENVELOPE_ALLOWANCE_BYTES = 1024 * 1024;
+
+export const TURN_END_DIGEST_MESSAGE_BYTE_CAP =
+  PROVIDER_REQUEST_BODY_LIMIT_BYTES - DIGEST_ENVELOPE_ALLOWANCE_BYTES;
 
 function eventRecordEssence(record: ExternalEventRecord): ExternalEventEssenceEntry | null {
   return essenceEntryFromExternalEvent(record.event);
@@ -442,6 +452,49 @@ function syntheticMessageText(message: SDKUserMessage): string {
   return '';
 }
 
+function buildFreshDigestMessage(
+  sessionId: string,
+  taskId: string | undefined,
+  essences: ExternalEventEssenceEntry[],
+  text: string
+): { digestUuid: string; digestMessage: SDKUserMessage } {
+  const eventIds = essences.map((essence) => essence.eventId).sort();
+  const digestUuid = deterministicDigestUuid(eventIds);
+  const digestMessage = {
+    ...buildSyntheticExternalEventMessage(sessionId, text, digestUuid),
+    externalEventIds: eventIds,
+    externalEventTaskId: taskId,
+  } as SDKUserMessage;
+  return { digestUuid, digestMessage };
+}
+
+export function capDigestBatch(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
+  if (ctx.replayable) return ctx;
+  const cap = ctx.deps.digestMessageByteCap ?? TURN_END_DIGEST_MESSAGE_BYTE_CAP;
+  const ordered = orderEssencesByOccurrence(ctx.essences ?? []);
+  const batchFits = (batch: ExternalEventEssenceEntry[]): boolean => {
+    const text = buildExternalEventDigestMessage(batch);
+    const { digestMessage } = buildFreshDigestMessage(
+      ctx.sessionId,
+      ctx.target?.taskId,
+      batch,
+      text
+    );
+    return Buffer.byteLength(JSON.stringify(digestMessage), 'utf8') <= cap;
+  };
+  if (ordered.length <= 1 || batchFits(ordered)) return ctx;
+  let lo = 1;
+  let hi = ordered.length - 1;
+  while (lo < hi) {
+    const mid = lo + Math.ceil((hi - lo) / 2);
+    if (batchFits(ordered.slice(0, mid))) lo = mid;
+    else hi = mid - 1;
+  }
+  let size = lo;
+  while (size > 1 && !batchFits(ordered.slice(0, size))) size--;
+  return { ...ctx, essences: ordered.slice(0, size) };
+}
+
 export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
   if (ctx.replayable && ctx.replayDigestMessage && ctx.replayEventIds) {
     const current = (ctx.essences ?? []).map((essence) => essence.eventId).sort();
@@ -455,13 +508,12 @@ export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
       };
     }
   }
-  const eventIds = (ctx.essences ?? []).map((essence) => essence.eventId).sort();
-  const digestUuid = deterministicDigestUuid(eventIds);
-  const digestMessage = {
-    ...buildSyntheticExternalEventMessage(ctx.sessionId, ctx.digestText ?? '', digestUuid),
-    externalEventIds: eventIds,
-    externalEventTaskId: ctx.target?.taskId,
-  } as SDKUserMessage;
+  const { digestUuid, digestMessage } = buildFreshDigestMessage(
+    ctx.sessionId,
+    ctx.target?.taskId,
+    ctx.essences ?? [],
+    ctx.digestText ?? ''
+  );
   return { ...ctx, digestUuid, digestMessage };
 }
 
@@ -582,6 +634,7 @@ const run = (
   .pipe('!hasOutcome', 'ctx')
   .pipe(orderAndDedupe, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
+  .pipe(capDigestBatch, 'ctx', 'ctx')
   .pipe(aggregateRender, 'ctx', 'ctx')
   .pipe(buildMessage, 'ctx', 'ctx')
   .pipe(persistAndAppend, 'ctx', 'ctx')
