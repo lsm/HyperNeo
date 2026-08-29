@@ -55,6 +55,7 @@
     "packages/daemon/src/lib/agent/loop-detector-hook.ts": ["exports"],
     "packages/daemon/src/lib/agent/message-queue-timeout-policy.ts": ["exports"],
     "packages/daemon/src/lib/agent/reconciler-sweep.ts": ["exports"],
+    "packages/daemon/src/lib/agent/sdk-start-terminal.ts": ["exports"],
     "packages/daemon/src/lib/agent/turn-end-pipeline.ts": ["exports"],
     "packages/daemon/src/lib/agent/usage-accounting.ts": ["exports"],
     "packages/daemon/src/lib/credentials/credential-identity.ts": ["exports"],
