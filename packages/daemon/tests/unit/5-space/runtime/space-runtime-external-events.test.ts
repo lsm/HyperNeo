@@ -2979,6 +2979,118 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
     });
 
+    test('a space resume restores parked idle sessions before re-arming their deliveries', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-resume-parked', { status: 'idle' });
+      tam.alive.delete('session-resume-parked');
+      tam.tryResumeNodeAgentSession = async () => {
+        tam.alive.add('session-resume-parked');
+      };
+
+      await runtime.onSpaceResumed(SPACE_ID);
+      await wait(300);
+
+      expect(digestRowCount('session-resume-parked')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('startup rehydrate restores idle sessions owning pending deliveries', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-startup-parked', { status: 'idle' });
+      tam.alive.delete('session-startup-parked');
+      tam.rehydrate = async () => {};
+      tam.tryResumeNodeAgentSession = async () => {
+        tam.alive.add('session-startup-parked');
+      };
+
+      const runtime2 = new SpaceRuntime({
+        db,
+        spaceManager,
+        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        internalEventBus: bus,
+        commandBus: (runtime as unknown as { config: { commandBus: unknown } }).config
+          .commandBus as never,
+        externalEventStore: eventStore,
+        taskAgentManager: tam as never,
+      });
+      await runtime2.rehydrateExecutors();
+      await wait(300);
+
+      expect(digestRowCount('session-startup-parked')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('a reopen does not resurrect a cancelled execution that kept its session id', async () => {
+      const { task, event, executionId } = await runWithPendingDelivery({
+        taskStatus: 'stopped',
+      });
+      bindLiveSession(executionId, 'session-reopen-live', { status: 'cancelled' });
+      tam.alive.delete('session-reopen-live');
+      let resumeCalls = 0;
+      tam.tryResumeNodeAgentSession = async () => {
+        resumeCalls += 1;
+        tam.alive.add('session-reopen-live');
+      };
+
+      const reopened = await runtime.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'open',
+      });
+      expect(reopened?.status).toBe('open');
+      await wait(200);
+
+      expect(resumeCalls).toBe(0);
+      expect(digestRowCount('session-reopen-live')).toBe(0);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+    });
+
+    test('an expired long-horizon delivery is failed on resume instead of re-dispatched', async () => {
+      const repo = new SpaceLongHorizonAgentRepository(db);
+      const agent = repo.create({
+        id: 'lh-agent-resume-ttl',
+        spaceId: SPACE_ID,
+        handle: 'resume-ttl',
+        displayName: 'Resume TTL',
+      });
+      const subscription = repo.createSubscription({
+        spaceId: SPACE_ID,
+        agentId: agent.id,
+        source: 'github',
+        topic: DEFAULT_TOPIC,
+      });
+      const event = makeEvent({ id: 'evt-lh-resume-ttl' });
+      eventStore.store(event);
+      const deliveryKey = `lh:${subscription.id}:${event.id}`;
+      eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+        workflowRunId: `long_horizon:${SPACE_ID}`,
+        taskId: subscription.id,
+        nodeId: agent.id,
+        agentName: agent.id,
+      });
+      eventStore.markDeliveryFailed(event.id, deliveryKey, {
+        terminal: false,
+        reason: 'long-horizon agent unavailable',
+      });
+
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 300_001;
+      try {
+        await runtime.onSpaceResumed(SPACE_ID);
+      } finally {
+        Date.now = originalNow;
+      }
+      await wait(100);
+
+      expect(longHorizonMessages).toHaveLength(0);
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      expect(delivery.state).toBe('failed');
+      expect(delivery.failureReason).toBe('ttl_expired');
+      expect(eventStore.getById(event.id)?.state).toBe('failed');
+    });
+
     test('cancelling a stopped task leaves its persisted pending deliveries inert', async () => {
       const { run, task, event } = await runWithPendingDelivery({ taskStatus: 'stopped' });
       bindLiveSession(
@@ -3004,7 +3116,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const originalNow = Date.now;
       Date.now = () => originalNow() + 300_001;
       try {
-        runtime.onSpaceResumed(SPACE_ID);
+        await runtime.onSpaceResumed(SPACE_ID);
       } finally {
         Date.now = originalNow;
       }
@@ -3043,7 +3155,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const originalNow = Date.now;
       Date.now = () => originalNow() + 300_001;
       try {
-        runtime.onSpaceResumed(SPACE_ID);
+        await runtime.onSpaceResumed(SPACE_ID);
       } finally {
         Date.now = originalNow;
       }
