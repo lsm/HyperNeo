@@ -12,24 +12,25 @@ import { composeDraftWhole } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import {
+  isMessageDeliveryV2Enabled,
+  SessionCoordinationStallError,
+  withSessionResetCoordination,
+} from '../agent/message-delivery.ts';
+import { persistAndEnqueueDelivery } from '../agent/message-delivery-outbox.ts';
 import {
   buildReferenceContext,
   prependContextToMessage,
 } from '../agent/reference-context-builder.ts';
-import {
-  isMessageDeliveryV2Enabled,
-  withSessionResetCoordination,
-} from '../agent/message-delivery.ts';
-import { persistAndEnqueueDelivery } from '../agent/message-delivery-outbox.ts';
 import { expandBuiltInCommand } from '../built-in-commands.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import type { SessionCache } from './session-cache.ts';
 import {
-  ReferenceResolver,
   type PreprocessedMessage,
+  ReferenceResolver,
   type ResolutionContext,
 } from './reference-resolver.ts';
+import type { SessionCache } from './session-cache.ts';
 
 type MessageImageInput = MessageImage | ImageContent;
 
@@ -272,9 +273,27 @@ export class MessagePersistence {
         );
 
       if (shouldDispatchToQuery && !useV2Delivery) {
-        await withSessionResetCoordination(sessionId, async () => {
-          await agentSession.startQueryAndEnqueue(messageId, messageContent);
-        });
+        try {
+          await withSessionResetCoordination(sessionId, async () => {
+            await agentSession.startQueryAndEnqueue(messageId, messageContent);
+          });
+        } catch (err) {
+          if (err instanceof SessionCoordinationStallError) {
+            const flipped = this.db
+              .getSDKMessageRepo?.()
+              ?.markDeliveryFailedByUuid?.(sessionId, messageId);
+            if (flipped) {
+              await this.internalEventBus
+                .publish('messages.statusChanged', {
+                  sessionId,
+                  messageIds: [flipped],
+                  status: 'failed',
+                })
+                .catch(() => {});
+            }
+          }
+          throw err;
+        }
       }
       if (shouldDispatchToQuery) {
         await this.internalEventBus

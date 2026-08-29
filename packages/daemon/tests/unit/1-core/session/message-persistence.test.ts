@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
-import type { Database } from '../../../../src/storage/database';
+import { SessionCoordinationStallError } from '../../../../src/lib/agent/message-delivery';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import {
   MAX_IMAGE_BASE64_SIZE,
@@ -8,6 +8,7 @@ import {
   validateImageSizes,
 } from '../../../../src/lib/session/message-persistence';
 import type { SessionCache } from '../../../../src/lib/session/session-cache';
+import type { Database } from '../../../../src/storage/database';
 
 describe('MessagePersistence', () => {
   let mockSessionCache: SessionCache;
@@ -382,6 +383,44 @@ describe('MessagePersistence', () => {
         sendStatus: 'enqueued',
         deliveryMode: 'immediate',
         skipQueryStart: true,
+      })
+    );
+  });
+
+  it('opt-out legacy dispatch rolls the enqueued row back to failed on coordination stall', async () => {
+    const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+    const markDeliveryFailedByUuidSpy = mock(() => 'db-msg-1');
+    mockDb.getSDKMessageRepo = mock(() => ({
+      markDeliveryFailedByUuid: markDeliveryFailedByUuidSpy,
+    }));
+    mockAgentSession.startQueryAndEnqueue = mock(
+      () =>
+        new Promise((_resolve, reject) => {
+          reject(new SessionCoordinationStallError('test-session-id', 8_000, 9_000));
+        })
+    );
+
+    try {
+      await expect(
+        persistence.persist({
+          sessionId: 'test-session-id',
+          messageId: 'msg-legacy-stall',
+          content: 'stalled dispatch',
+        })
+      ).rejects.toBeInstanceOf(SessionCoordinationStallError);
+    } finally {
+      if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+    }
+
+    expect(markDeliveryFailedByUuidSpy).toHaveBeenCalledWith('test-session-id', 'msg-legacy-stall');
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'messages.statusChanged',
+      expect.objectContaining({
+        sessionId: 'test-session-id',
+        messageIds: ['db-msg-1'],
+        status: 'failed',
       })
     );
   });
