@@ -35,7 +35,7 @@ import {
 } from './github-pr-head-ref-index.ts';
 import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state.ts';
 import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields.ts';
-import { decideSelfEchoFilter, resolveFilteredLogins } from './github-self-echo.ts';
+import { decideSelfEchoGate, resolveFilteredLogins } from './github-self-echo.ts';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
@@ -597,7 +597,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     hub.onRequest('space.github.getTokenStatus', async () => {
       await assertRpcConfigEnabled(context, this.sourceId);
-      return await this.getTokenStatus();
+      return await this.resolveTokenStatus(true);
     });
 
     hub.onRequest('space.github.health', async (data) => {
@@ -747,9 +747,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (!repo.enabled) continue;
       const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
       if (spaceConfig && !spaceConfig.enabled) continue;
-      await this.publishEvent(repo.spaceId, normalized, this.context);
+      if (await this.publishEvent(repo.spaceId, normalized, this.context)) published++;
       this.repo.markWebhookReceived(repo.id);
-      published++;
     }
 
     return Response.json({ message: 'Webhook received', deliveryId, spaces: published });
@@ -859,8 +858,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 prNumber,
               });
         if (!normalized) continue;
-        await this.publishEvent(watched.spaceId, normalized, this.context);
-        published++;
+        if (await this.publishEvent(watched.spaceId, normalized, this.context)) published++;
       }
       this.repo.markWebhookReceived(watched.id);
     }
@@ -949,8 +947,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           sender: root.sender,
         });
         if (!normalized) continue;
-        await this.publishEvent(watched.spaceId, normalized, this.context);
-        published++;
+        if (await this.publishEvent(watched.spaceId, normalized, this.context)) published++;
       }
       this.repo.markWebhookReceived(watched.id);
     }
@@ -1360,6 +1357,17 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     return null;
   }
 
+  private selfEchoLoginRefresh: Promise<void> | null = null;
+
+  private triggerSelfEchoLoginRefresh(): void {
+    if (this.selfEchoLoginRefresh) return;
+    this.selfEchoLoginRefresh = this.resolveTokenStatus(false)
+      .then(() => undefined)
+      .finally(() => {
+        this.selfEchoLoginRefresh = null;
+      });
+  }
+
   private async resolveTokenStatus(lightweight: boolean): Promise<GitHubTokenStatus> {
     if (lightweight) {
       const cached = this.cachedTokenStatus();
@@ -1759,17 +1767,19 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     spaceId: string,
     event: import('./github-normalizer.ts').NormalizedGitHubEvent,
     context: ExternalEventExtensionContext
-  ): Promise<void> {
+  ): Promise<boolean> {
     const spaceConfig = await context.config.getSpaceConfig(spaceId, this.sourceId);
     const filterCurrentUser =
       (spaceConfig?.settings as { filterCurrentUser?: boolean } | undefined)?.filterCurrentUser !==
       false;
-    const tokenLogin = this.cachedTokenStatus()?.login ?? '';
+    const tokenStatus = this.cachedTokenStatus();
+    if (!tokenStatus) this.triggerSelfEchoLoginRefresh();
+    const tokenLogin = tokenStatus?.login ?? '';
     if (
-      decideSelfEchoFilter({
+      decideSelfEchoGate({
         initiatorLogin: event.actor,
         filteredLogins: resolveFilteredLogins({ filterCurrentUser, tokenLogin }),
-        enabled: filterCurrentUser,
+        filterCurrentUser,
       }) === 'drop'
     ) {
       log.debug('GitHub self-echo event dropped before publish', {
@@ -1779,9 +1789,10 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         actor: event.actor,
         filteredLogin: tokenLogin,
       });
-      return;
+      return false;
     }
     await context.publisher.publish(toExternalEvent(spaceId, event));
+    return true;
   }
 
   private async persistSpaceConfig(
@@ -2537,10 +2548,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       for (const row of rows) {
         const event = normalizeGitHubPollingRow(watched, row, endpoint.key);
         if (event) {
-          await this.publishEvent(watched.spaceId, event, this.context);
+          if (await this.publishEvent(watched.spaceId, event, this.context)) count++;
           endpointPending = Math.max(endpointPending, event.occurredAt);
           watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
-          count++;
         }
       }
       processedPages[endpoint.key] = pullsBacklogClearedByCutoff
@@ -2766,12 +2776,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                   prScopedDedupe,
                 });
                 if (!event) continue;
-                await this.publishEvent(watched.spaceId, event, this.context);
+                if (await this.publishEvent(watched.spaceId, event, this.context)) count++;
                 if (!prScopedDedupe && !(checkRunLegacyKey in checkRunLegacyPrs)) {
                   checkRunLegacyPrs[checkRunLegacyKey] = checkRunPrNumber;
                 }
                 watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
-                count++;
               }
             }
             if (reachedOldRows) {
@@ -2909,8 +2918,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         deliveryId: `poll:merge_conflict:${prNumber}`,
       });
       if (mergeConflictEvent) {
-        await this.publishEvent(watched.spaceId, mergeConflictEvent, this.context);
-        count++;
+        if (await this.publishEvent(watched.spaceId, mergeConflictEvent, this.context)) count++;
       }
       if (
         Number.isFinite(mergeRateLimit.remaining) &&
@@ -3028,10 +3036,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             seenReviewIds[reviewId] = true;
             continue;
           }
-          await this.publishEvent(watched.spaceId, event, this.context);
+          if (await this.publishEvent(watched.spaceId, event, this.context)) count++;
           seenReviewIds[reviewId] = true;
           reviewLastSeenAt[prNumber] = Math.max(reviewLastSeenAt[prNumber] ?? 0, event.occurredAt);
-          count++;
         }
         if (reviews.length < 100) {
           reviewScanComplete = true;
@@ -3147,9 +3154,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           seenReactionIds[reactionId] = true;
           continue;
         }
-        await this.publishEvent(watched.spaceId, event, this.context);
+        if (await this.publishEvent(watched.spaceId, event, this.context)) count++;
         seenReactionIds[reactionId] = true;
-        count++;
       }
       if (
         Number.isFinite(reactionRateLimit.remaining) &&

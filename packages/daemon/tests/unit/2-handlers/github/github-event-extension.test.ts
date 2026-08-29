@@ -10574,7 +10574,7 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
         spaceId: string,
         event: NormalizedGitHubEvent,
         context: ExternalEventExtensionContext
-      ): Promise<void>;
+      ): Promise<boolean>;
     };
     return { published, ext, context };
   }
@@ -10585,7 +10585,7 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     const res = await extension.routes[0].handle(
       webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
     );
-    return res.status;
+    return (await res.json()) as { spaces: number };
   }
 
   test("webhook: the token's own comment is dropped as self-echo while other logins still publish", async () => {
@@ -10607,9 +10607,9 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     });
     expect(await resolveOwnLogin(extension)).toBe('octocat');
 
-    expect(await deliverWebhookComment(extension, 'octocat')).toBe(200);
+    expect((await deliverWebhookComment(extension, 'octocat')).spaces).toBe(0);
     expect(received).toHaveLength(0);
-    expect(await deliverWebhookComment(extension, 'unrelated-user')).toBe(200);
+    expect((await deliverWebhookComment(extension, 'unrelated-user')).spaces).toBe(1);
     expect(received).toHaveLength(1);
     expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.comment_created');
     expect(received[0].payload.actor).toBe('unrelated-user');
@@ -10697,7 +10697,7 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
-  test('publishEvent admits the token login while the token-status cache is cold and never fetches /user', async () => {
+  test('publishEvent admits while the token-status cache is cold and triggers a background identity refresh', async () => {
     const db = setupDb();
     let userCalls = 0;
     const extension = new GitHubEventExtension(db, 'token', {
@@ -10710,11 +10710,15 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
       }) as typeof fetch,
     });
     const { published, ext, context } = publishCapture(extension);
+    const refreshAware = extension as unknown as {
+      selfEchoLoginRefresh: Promise<void> | null;
+    };
 
     await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
 
     expect(published.map((event) => event.payload.actor)).toEqual(['octocat']);
-    expect(userCalls).toBe(0);
+    await refreshAware.selfEchoLoginRefresh;
+    expect(userCalls).toBe(1);
     await extension.stop();
   });
 
@@ -10787,5 +10791,32 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     );
     expect(afterDisable.settings.filterCurrentUser).toBe(false);
     await extension.stop();
+  });
+
+  test('getTokenStatus RPC warms the self-echo cache so own-login events are filtered without a health request', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const config = new StaticExternalEventExtensionConfigStore({ globallyEnabled: true });
+    const context = {
+      publisher: { publish: async () => {} },
+      config,
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      const status = await clientHub.request<{ login?: string }>('space.github.getTokenStatus', {});
+      expect(status.login).toBe('octocat');
+
+      const { published, ext, context: publishContext } = publishCapture(extension);
+      await ext.publishEvent('space-1', selfCommentEvent('octocat'), publishContext);
+      expect(published).toHaveLength(0);
+    } finally {
+      await extension.stop();
+    }
   });
 });
