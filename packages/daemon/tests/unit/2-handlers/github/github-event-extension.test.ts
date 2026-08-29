@@ -12,10 +12,12 @@ import { syncGitHubPollingCapability } from '../../../../src/app';
 import {
   mapEventType,
   normalizeGitHubWebhook,
+  type NormalizedGitHubEvent,
   toExternalEvent,
 } from '../../../../src/lib/external-events/github/github-normalizer';
 import type {
   ExternalEventExtensionConfigStore,
+  ExternalEventExtensionContext,
   SpaceExternalEventSourceConfig,
 } from '../../../../src/lib/external-events/types';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
@@ -10165,5 +10167,162 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     } finally {
       await extension.stop();
     }
+  });
+});
+
+describe('GitHub self-echo pins (GE-P1)', () => {
+  function selfCommentPayload(login: string): Record<string, unknown> {
+    return {
+      action: 'created',
+      repository: baseRepo,
+      sender: { login, type: 'User' },
+      issue: { number: 7, title: 'PR', pull_request: { url: 'api' } },
+      comment: {
+        id: 101,
+        body: 'agent-posted update',
+        html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-101',
+        user: { login, type: 'User' },
+        created_at: '2026-01-01T00:00:00Z',
+      },
+    };
+  }
+
+  test("webhook: a comment authored by the token's own login round-trips into the space", async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+
+    const payload = selfCommentPayload('octocat');
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.comment_created');
+    expect(received[0].payload.actor).toBe('octocat');
+    expect(db.prepare('SELECT COUNT(*) AS c FROM space_external_events').get()).toEqual({ c: 1 });
+    await extension.stop();
+  });
+
+  test("poll: an issue-comment row authored by the token's own login round-trips into the space", async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token');
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      pollingEnabled: true,
+    });
+    const echoRow = {
+      id: 101,
+      html_url: 'https://github.com/acme/widgets/pull/7#issuecomment-101',
+      body: 'agent-posted update',
+      user: { login: 'octocat', type: 'User' },
+      updated_at: '2026-08-01T00:00:00Z',
+      issue: { number: 7, pull_request: { url: 'api' } },
+    };
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/issues/comments')) return pollingResponse([echoRow]);
+      return pollingResponse([]);
+    }) as typeof fetch;
+
+    try {
+      await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
+      expect(received).toHaveLength(1);
+      expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.comment_polled');
+      expect(received[0].payload.actor).toBe('octocat');
+    } finally {
+      await extension.stop();
+    }
+  });
+
+  test('publishEvent passes events from arbitrary actors through unfiltered', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token');
+    const published: ExternalEvent[] = [];
+    const context: ExternalEventExtensionContext = {
+      publisher: {
+        publish: async (event: ExternalEvent) => {
+          published.push(event);
+        },
+      },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    };
+    const ext = extension as unknown as {
+      publishEvent(
+        spaceId: string,
+        event: NormalizedGitHubEvent,
+        context: ExternalEventExtensionContext
+      ): Promise<void>;
+    };
+
+    for (const login of ['octocat', 'unrelated-user']) {
+      const normalized = normalizeGitHubWebhook(
+        'issue_comment',
+        `delivery-${login}`,
+        selfCommentPayload(login)
+      )!;
+      await ext.publishEvent('space-1', normalized, context);
+    }
+
+    expect(published.map((event) => event.payload.actor)).toEqual(['octocat', 'unrelated-user']);
+    expect(published.map((event) => event.topic)).toEqual([
+      'github/acme/widgets/pull_request/7.comment_created',
+      'github/acme/widgets/pull_request/7.comment_created',
+    ]);
+    await extension.stop();
+  });
+
+  test('getTokenStatus resolves the credential login from /user and caches it for five minutes', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const ext = extension as unknown as {
+      resolveTokenStatus(lightweight: boolean): Promise<{ login?: string; error?: string }>;
+      lastTokenStatusAt: number;
+    };
+
+    const first = await ext.resolveTokenStatus(false);
+    expect(first.error).toBeUndefined();
+    expect(first.login).toBe('octocat');
+    expect(userCalls).toBe(1);
+
+    const cached = await ext.resolveTokenStatus(true);
+    expect(cached.login).toBe('octocat');
+    expect(userCalls).toBe(1);
+
+    ext.lastTokenStatusAt = Date.now() - 6 * 60 * 1000;
+    const revalidated = await ext.resolveTokenStatus(true);
+    expect(revalidated.login).toBe('octocat');
+    expect(userCalls).toBe(2);
+    await extension.stop();
   });
 });
