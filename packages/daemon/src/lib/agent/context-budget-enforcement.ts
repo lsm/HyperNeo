@@ -151,13 +151,7 @@ export interface ContextBudgetReevaluationCtx {
 
 export type ContextBudgetReevaluationInput = Omit<
   ContextBudgetReevaluationCtx,
-  | 'fenceModel'
-  | 'fenceProvider'
-  | 'queueClearEpochAtStart'
-  | 'userInterruptEpochAtStart'
-  | 'supersededQueued'
-  | 'modelInfo'
-  | 'compactionEnqueued'
+  'fenceModel' | 'fenceProvider' | 'supersededQueued' | 'modelInfo' | 'compactionEnqueued'
 >;
 
 export function revokeSupersededCompactions(
@@ -251,8 +245,6 @@ export function runContextBudgetReevaluation(
     ...input,
     fenceModel: input.session.config.model,
     fenceProvider: input.session.config.provider,
-    queueClearEpochAtStart: input.messageQueue.getClearEpoch(),
-    userInterruptEpochAtStart: input.messageQueue.getUserInterruptEpoch(),
     supersededQueued: false,
     modelInfo: null,
     compactionEnqueued: false,

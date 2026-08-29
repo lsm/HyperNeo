@@ -1548,6 +1548,8 @@ export class AgentSession
 
   async reevaluateContextBudgetAfterModelSwitch(): Promise<void> {
     this.messageQueue.holdInternalCompactionDelivery();
+    const queueClearEpochAtStart = this.messageQueue.getClearEpoch();
+    const userInterruptEpochAtStart = this.messageQueue.getUserInterruptEpoch();
     const decision = this.contextBudgetReevaluationQueue.then(async () => {
       const trackerInfo = this.contextTracker.getContextInfo();
       if (!trackerInfo || trackerInfo.totalUsed <= 0) return null;
@@ -1562,6 +1564,8 @@ export class AgentSession
         logger: this.logger,
         resumePendingWork: () => this.resumePendingWorkAfterCompaction(),
         clearPendingResume: () => this.clearPendingResumeAfterCompaction(),
+        queueClearEpochAtStart,
+        userInterruptEpochAtStart,
       });
     });
     this.contextBudgetReevaluationQueue = decision.then(
@@ -1581,17 +1585,26 @@ export class AgentSession
   }
 
   private async resolveSessionModelInfoWithRetry(): Promise<ModelInfo | null> {
-    let modelInfo = await this.resolveSessionCatalogModelInfo();
-    if (!modelInfo) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, 150);
-        if (typeof timer.unref === 'function') {
-          timer.unref();
-        }
-      });
-      modelInfo = await this.resolveSessionCatalogModelInfo();
-    }
-    return modelInfo;
+    const deadline = new Promise<ModelInfo | null>((resolve) => {
+      const timer = setTimeout(() => resolve(null), 4_000);
+      if (typeof timer.unref === 'function') {
+        timer.unref();
+      }
+    });
+    const attempt = async (): Promise<ModelInfo | null> => {
+      let modelInfo = await this.resolveSessionCatalogModelInfo();
+      if (!modelInfo) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 150);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        });
+        modelInfo = await this.resolveSessionCatalogModelInfo();
+      }
+      return modelInfo;
+    };
+    return Promise.race([attempt(), deadline]);
   }
 
   private async resolveSessionCatalogModelInfo(): Promise<ModelInfo | null> {

@@ -201,6 +201,8 @@ describe('reevaluate-context-budget pipeline', () => {
       logger: new Logger('reevaluation-test'),
       resumePendingWork: mock(() => {}),
       clearPendingResume: mock(() => {}),
+      queueClearEpochAtStart: messageQueue.getClearEpoch(),
+      userInterruptEpochAtStart: messageQueue.getUserInterruptEpoch(),
     };
     return {
       input,
