@@ -50,8 +50,6 @@ const POLICY_VALUE_FIELDS = [
   'strictRequiredStatusChecksPolicy',
 ] as const;
 
-const DIGEST_SNIPPET_MAX_CHARS = 160;
-
 function validEpochMs(ms: number): number {
   if (!Number.isFinite(ms)) return Number.NaN;
   if (Number.isNaN(new Date(ms).getTime())) return Number.NaN;
@@ -83,27 +81,16 @@ function digestTimestamp(entry: ExternalEventEssenceEntry, includeDate = false):
   return `${includeDate ? `${iso.slice(5, 10)} ` : ''}${iso.slice(11, 16)} UTC`;
 }
 
-function digestSnippet(
-  body: string | undefined,
-  maxChars = DIGEST_SNIPPET_MAX_CHARS
-): string | null {
+function digestSnippet(body: string | undefined): string | null {
   if (!body) return null;
   const flattened = body.replace(/\s+/g, ' ').trim();
   if (flattened.length === 0) return null;
-  if (!Number.isFinite(maxChars)) return flattened;
-  return flattened.length > maxChars ? `${flattened.slice(0, maxChars)}…` : flattened;
+  return flattened;
 }
 
 function digestLinkSuffix(entry: ExternalEventEssenceEntry): string {
   const url = entry.externalUrl ?? entry.prUrl;
   return url ? ` — ${url}` : '';
-}
-
-function digestDetailSuffix(entry: ExternalEventEssenceEntry): string {
-  const parts: string[] = [];
-  if (entry.commentId) parts.push(`commentId: ${entry.commentId}`);
-  parts.push(`latest eventId: ${entry.eventId}`);
-  return ` (${parts.join('; ')})`;
 }
 
 function essenceScopeLabel(entry: ExternalEventEssenceEntry): string {
@@ -185,7 +172,6 @@ function digestActionLabel(entry: ExternalEventEssenceEntry): string {
 }
 
 interface DigestRenderOptions {
-  snippetMaxChars?: number;
   renderAllReviewBodies?: boolean;
 }
 
@@ -199,7 +185,6 @@ export function renderEventBlock(
   entry: ExternalEventEssenceEntry,
   options: RenderEventBlockOptions = {}
 ): string {
-  const snippetMaxChars = options.snippetMaxChars ?? DIGEST_SNIPPET_MAX_CHARS;
   const includeDate = options.includeDate ?? false;
   const events = options.events ?? [entry];
   const latest = entry;
@@ -224,7 +209,7 @@ export function renderEventBlock(
       return (
         `- CI check "${latest.checkName ?? 'unknown check'}": ` +
         `${countText}, latest ${digestTimestamp(latest, includeDate)}${mostlyCancelled}` +
-        `${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
+        `${digestLinkSuffix(latest)}`
       );
     }
     case 'review': {
@@ -234,10 +219,10 @@ export function renderEventBlock(
             const location = event.path
               ? ` on ${event.path}${typeof event.line === 'number' ? `:L${event.line}` : ''}`
               : '';
-            const snippet = digestSnippet(event.body, snippetMaxChars);
+            const snippet = digestSnippet(event.body);
             return (
               `- Review comment by ${event.actor ?? 'unknown'} at ${digestTimestamp(event, includeDate)}${location}` +
-              `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(event)}${digestDetailSuffix(event)}`
+              `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(event)}`
             );
           })
           .join('\n');
@@ -245,19 +230,19 @@ export function renderEventBlock(
       const location = latest.path
         ? ` on ${latest.path}${typeof latest.line === 'number' ? `:L${latest.line}` : ''}`
         : '';
-      const snippet = digestSnippet(latest.body, snippetMaxChars);
+      const snippet = digestSnippet(latest.body);
       return (
         `- Review comment${count > 1 ? 's' : ''}${digestActionLabel(latest)}${location}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
-        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
+        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}`
       );
     }
     case 'pr_comment': {
-      const snippet = digestSnippet(latest.body, snippetMaxChars);
+      const snippet = digestSnippet(latest.body);
       return (
         `- PR comment${count > 1 ? 's' : ''}${digestActionLabel(latest)}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
-        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
+        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}`
       );
     }
     case 'state': {
@@ -266,14 +251,14 @@ export function renderEventBlock(
         `- ${essenceScopeLabel(latest)} state: ${latest.state ?? 'updated'}` +
         `${markers ? ` (${markers})` : ''} ` +
         `(latest poll ${digestTimestamp(latest, includeDate)}, ×${count} polls folded)` +
-        `${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
+        `${digestLinkSuffix(latest)}`
       );
     }
     case 'reaction':
       return (
         `- Reactions on ${essenceScopeLabel(latest)}: ×${count}, ` +
         `latest ${latest.body ?? 'reaction'} by ${latest.actor ?? 'unknown'} at ` +
-        `${digestTimestamp(latest, includeDate)}${digestLinkSuffix(latest)}${digestDetailSuffix(latest)}`
+        `${digestTimestamp(latest, includeDate)}${digestLinkSuffix(latest)}`
       );
     case 'other': {
       const parts = [`${latest.topic}: ×${count} (latest ${digestTimestamp(latest, includeDate)})`];
@@ -285,7 +270,7 @@ export function renderEventBlock(
         parts.push(`state: ${latest.state}${markers ? ` (${markers})` : ''}`);
       }
       if (latest.environment) parts.push(`environment: ${latest.environment}`);
-      const snippet = digestSnippet(latest.description ?? latest.body, snippetMaxChars);
+      const snippet = digestSnippet(latest.description ?? latest.body);
       if (snippet) parts.push(`"${snippet}"`);
       const structured = [latest.changedFields, latest.requiredStatusChecks]
         .filter((field): field is object => !!field)
@@ -303,7 +288,7 @@ export function renderEventBlock(
       }
       const url = latest.externalUrl ?? latest.prUrl;
       if (url) parts.push(url);
-      return `- ${parts.join(' — ')}${digestDetailSuffix(latest)}`;
+      return `- ${parts.join(' — ')}`;
     }
   }
 }
@@ -346,7 +331,6 @@ export function buildExternalEventDigestMessage(
   options?: {
     droppedEventCount?: number;
     title?: string;
-    snippetMaxChars?: number;
     renderAllReviewBodies?: boolean;
   }
 ): string {
