@@ -2998,6 +2998,70 @@ describe('AcpQueryRunner', () => {
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
     }, 5000);
 
+    test('a startup retry clears the new session after only an error result, resuming via createSession', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('session/prompt failed');
+      });
+      const secondClient = createMockClient();
+      const clients = [firstClient, secondClient];
+      const { runner, ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const acpRunner = new AcpQueryRunner(ctx, createClient);
+
+      await acpRunner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
+        acpSessionId: undefined,
+        metadata: expect.objectContaining({
+          acpInstructionsSent: undefined,
+          acpContextUsageEstimate: undefined,
+        }),
+      });
+      expect(secondClient.createSession).toHaveBeenCalled();
+      expect(secondClient.loadSession).not.toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a legal terminal result disarms the watch before the result handler runs', async () => {
+      const client = createMockClient();
+      let releaseResult: (() => void) | undefined;
+      const { runner, ctx, constructorOptions } = createRunnerFixture({
+        client,
+        onSDKMessage: async (message) => {
+          if (message.type === 'result') {
+            await new Promise<void>((resolve) => {
+              releaseResult = resolve;
+            });
+          }
+        },
+      });
+
+      await runner.start();
+      await waitFor(() => releaseResult !== undefined && ctx.startupTimeoutTimer === null, 500);
+      constructorOptions[0].onExit?.(0, null);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(ctx.queryAbortController?.signal.aborted).toBe(false);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(client.close).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+      releaseResult?.();
+      await ctx.queryPromise;
+    }, 5000);
+
     test('a pre-first-message auth error surfaces as an auth failure, not a startup timeout', async () => {
       const client = createMockClient();
       client.sendPrompt = mock(async function* (

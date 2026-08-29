@@ -987,15 +987,17 @@ export class AcpQueryRunner {
 
             messageCount++;
             if (messageCount === 1) {
-              receivedAcpMessageDuringRun = true;
               if (shouldPersistInstructionsSent) {
                 this.persistAcpInstructionsSent();
               }
             }
             if (!promptMessageReceived) {
-              if (isAcpAgentStartupMessage(acpMessage as SDKMessage)) {
+              const isLegalTerminal =
+                acpMessage.type === 'result' && !isAcpErrorResultMessage(acpMessage as SDKMessage);
+              if (isAcpAgentStartupMessage(acpMessage as SDKMessage) || isLegalTerminal) {
                 promptMessageReceived = true;
                 startupWatchFirstMessageSeen = true;
+                receivedAcpMessageDuringRun = true;
                 this.clearStartupTimer();
               } else {
                 startupWatchMessages.push(acpMessage as SDKMessage);
