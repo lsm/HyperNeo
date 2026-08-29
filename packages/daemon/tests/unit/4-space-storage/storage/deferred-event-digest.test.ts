@@ -171,18 +171,18 @@ describe('buildExternalEventDigestMessage', () => {
     expect(lines[2]).toBe(
       '- Review comments on packages/daemon/src/lib/agent/query-mode-handler.ts:L88: ×3, ' +
         `latest by codex[bot] at 16:20 UTC — "latest review body" — ` +
-        `${PR_URL}#rc-3`
+        `${PR_URL}#rc-3 (latest eventId: rc-3)`
     );
     expect(lines[3]).toBe(
       `- Review comment on packages/web/src/app.tsx:L12: ×1, ` +
         `latest by codex[bot] at 16:25 UTC — "standalone review" — ` +
-        `${PR_URL}#rc-4`
+        `${PR_URL}#rc-4 (latest eventId: rc-4)`
     );
     for (let i = 0; i < 5; i++) {
       const body = i === 4 ? 'latest pr comment' : `pr comment ${i + 1}`;
       expect(lines[4 + i]).toBe(
         `- PR comment: ×1, latest by marcliu at 15:${30 + i} UTC — "${body}" — ` +
-          `${PR_URL}#pc-${i + 1}`
+          `${PR_URL}#pc-${i + 1} (latest eventId: pc-${i + 1})`
       );
     }
     expect(lines[9]).toBe(

@@ -58,7 +58,8 @@ describe('renderEventBlock', () => {
   it('folds review threads by default and lists each body when renderAllReviewBodies is set', () => {
     expect(renderEventBlock(REVIEWS[2]!, { count: REVIEWS.length, events: REVIEWS })).toBe(
       '- Review comments on packages/daemon/src/lib/agent/query-mode-handler.ts:L88: ×3, ' +
-        `latest by codex[bot] at 16:00 UTC — "latest review body" — ${PR_URL}`
+        `latest by codex[bot] at 16:00 UTC — "latest review body" — ${PR_URL}` +
+        ' (latest eventId: rt-3)'
     );
     expect(
       renderEventBlock(REVIEWS[2]!, {
@@ -69,13 +70,13 @@ describe('renderEventBlock', () => {
     ).toBe(
       '- Review comment by codex[bot] at 15:50 UTC ' +
         'on packages/daemon/src/lib/agent/query-mode-handler.ts:L88 ' +
-        `— "review body 1" — ${PR_URL}\n` +
+        `— "review body 1" — ${PR_URL} (latest eventId: rt-1)\n` +
         '- Review comment by codex[bot] at 15:55 UTC ' +
         'on packages/daemon/src/lib/agent/query-mode-handler.ts:L88 ' +
-        `— "review body 2" — ${PR_URL}\n` +
+        `— "review body 2" — ${PR_URL} (latest eventId: rt-2)\n` +
         '- Review comment by codex[bot] at 16:00 UTC ' +
         'on packages/daemon/src/lib/agent/query-mode-handler.ts:L88 ' +
-        `— "latest review body" — ${PR_URL}`
+        `— "latest review body" — ${PR_URL} (latest eventId: rt-3)`
     );
   });
 
@@ -91,7 +92,10 @@ describe('renderEventBlock', () => {
         occurredAt: at(15, 30),
         prUrl: PR_URL,
       })
-    ).toBe(`- PR comment: ×1, latest by marcliu at 15:30 UTC — "pr comment 1" — ${PR_URL}`);
+    ).toBe(
+      `- PR comment: ×1, latest by marcliu at 15:30 UTC — "pr comment 1" — ${PR_URL}` +
+        ' (latest eventId: pc-1)'
+    );
   });
 
   it('renders state markers and poll folds', () => {

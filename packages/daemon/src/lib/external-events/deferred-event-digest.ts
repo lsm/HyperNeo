@@ -93,6 +93,10 @@ function digestLinkSuffix(entry: ExternalEventEssenceEntry): string {
   return url ? ` — ${url}` : '';
 }
 
+function digestEventIdSuffix(entry: ExternalEventEssenceEntry): string {
+  return ` (latest eventId: ${entry.eventId})`;
+}
+
 function essenceScopeLabel(entry: ExternalEventEssenceEntry): string {
   if (typeof entry.prNumber === 'number') return `PR #${entry.prNumber}`;
   if (entry.repo) return entry.repo;
@@ -222,7 +226,7 @@ export function renderEventBlock(
             const snippet = digestSnippet(event.body);
             return (
               `- Review comment by ${event.actor ?? 'unknown'} at ${digestTimestamp(event, includeDate)}${location}` +
-              `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(event)}`
+              `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(event)}${digestEventIdSuffix(event)}`
             );
           })
           .join('\n');
@@ -234,7 +238,7 @@ export function renderEventBlock(
       return (
         `- Review comment${count > 1 ? 's' : ''}${digestActionLabel(latest)}${location}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
-        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}`
+        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}${digestEventIdSuffix(latest)}`
       );
     }
     case 'pr_comment': {
@@ -242,7 +246,7 @@ export function renderEventBlock(
       return (
         `- PR comment${count > 1 ? 's' : ''}${digestActionLabel(latest)}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
-        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}`
+        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}${digestEventIdSuffix(latest)}`
       );
     }
     case 'state': {
