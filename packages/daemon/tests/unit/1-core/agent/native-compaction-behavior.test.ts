@@ -205,6 +205,7 @@ function driveCompactionRefresh(opts: {
   contextWindow: number;
   totalUsed: number;
   sdkMaxTokens?: number;
+  sdkAutoCompactThreshold?: number;
   compactingActive?: boolean;
 }): CompactionRefreshHarness {
   const session: Session = {
@@ -311,6 +312,9 @@ function driveCompactionRefresh(opts: {
     mcpTools: [],
     agents: [],
     isAutoCompactEnabled: true,
+    ...(opts.sdkAutoCompactThreshold !== undefined
+      ? { autoCompactThreshold: opts.sdkAutoCompactThreshold }
+      : {}),
     apiUsage: null,
   }));
 
@@ -728,6 +732,45 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
     expect(harness.markCompactionTriggeredSpy).toHaveBeenCalledTimes(1);
     expect(harness.enqueueSpy).toHaveBeenCalledWith('/compact', true, {
+      durable: true,
+      prepend: true,
+    });
+  });
+
+  it('a context-heavy custom turn stays below the armed threshold and skips the backstop', async () => {
+    const TEST_PROVIDER = 'test-armed-provider';
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'armed-model',
+              name: 'Armed Model',
+              provider: TEST_PROVIDER,
+              contextWindow: 200_000,
+              autoCompactPercent: 70,
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const harness = driveCompactionRefresh({
+      provider: TEST_PROVIDER,
+      model: 'armed-model',
+      contextWindow: 200_000,
+      totalUsed: 139_999,
+      sdkMaxTokens: 200_000,
+      sdkAutoCompactThreshold: 140_000,
+    });
+    await harness.handler.handleMessage(resultMessage());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.getContextUsageSpy).toHaveBeenCalledTimes(1);
+    expect(harness.shouldCompactAtSpy).not.toHaveBeenCalled();
+    expect(harness.markCompactionTriggeredSpy).not.toHaveBeenCalled();
+    expect(harness.enqueueSpy).not.toHaveBeenCalledWith('/compact', true, {
       durable: true,
       prepend: true,
     });
