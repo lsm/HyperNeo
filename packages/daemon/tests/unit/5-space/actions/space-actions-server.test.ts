@@ -796,6 +796,70 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries[0].taskId).toBe('task-9');
   });
 
+  test('retains numerically resolved targets in early-denial audits', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        taskRepo: {
+          getTaskByNumber: (_spaceId: string, taskNumber: number) =>
+            taskNumber === 42
+              ? { id: 'task-42', spaceId: SPACE_ID, workflowRunId: 'run-42' }
+              : null,
+          getTask: (taskId: string) =>
+            taskId === 'task-42'
+              ? { id: taskId, spaceId: SPACE_ID, workflowRunId: 'run-42' }
+              : null,
+        },
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+      dispatchDeps: { isWithinRateBudget: () => false },
+    });
+    await dispatch(server, {
+      name: 'send_message_to_task',
+      params: { task_number: 42, message: 'ping' },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ toolName: 'send_message_to_task', taskId: 'task-42' });
+  });
+
+  test('audits target-validator failures before leaving the pipeline', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      spaceId: SPACE_ID,
+      workflowRunRepo: {
+        getRun: () => {
+          throw new Error('repo down');
+        },
+      },
+      nodeConfig: {
+        ...stubNodeConfig,
+        externalEventStore: {},
+        myAgentName: 'coder-9',
+        mySessionId: 'session-9',
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as NodeAgentToolsConfig,
+    });
+    const body = (await dispatch(server, {
+      name: 'list_deliveries',
+      params: { workflowRunId: 'run-x' },
+    })) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: 'action_failed', message: 'repo down' });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ toolName: 'list_deliveries' });
+  });
+
   test('audits malformed mutating calls even with read auditing off', async () => {
     const entries: CreateMcpAuditLogParams[] = [];
     const server = makeServer({

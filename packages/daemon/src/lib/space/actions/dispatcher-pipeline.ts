@@ -361,9 +361,17 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
     }
   }
   if (ctx.deps.validateTargets) {
-    const message = await ctx.deps.validateTargets(ctx.parsedParams, ctx.spaceId, ctx.action);
+    let message: string | undefined;
+    try {
+      message = await ctx.deps.validateTargets(ctx.parsedParams, ctx.spaceId, ctx.action);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
+      writeAuditEntry(denialAuditCtx(next));
+      return next;
+    }
     if (message) {
-      writeAuditEntry(ctx);
+      writeAuditEntry(denialAuditCtx(ctx));
       return { ...ctx, outcome: deniedOutcome('invalid_params', message) };
     }
   }
@@ -371,21 +379,20 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
   return ctx;
 }
 
-function hasExplicitTarget(ctx: DispatchActionCtx): boolean {
-  if (typeof ctx.parsedParams !== 'object' || ctx.parsedParams === null) return false;
+function denialAuditCtx(ctx: DispatchActionCtx): DispatchActionCtx {
+  if (typeof ctx.parsedParams !== 'object' || ctx.parsedParams === null) return ctx;
   const record = ctx.parsedParams as Record<string, unknown>;
-  return (
-    (typeof record.task_id === 'string' && record.task_id.length > 0) ||
-    typeof record.task_number === 'number' ||
+  const explicitTaskId =
+    typeof record.task_id === 'string' && record.task_id.length > 0 ? record.task_id : undefined;
+  const numericResolved = typeof record.task_number === 'number';
+  const runTargetPresent =
     (typeof record.run_id === 'string' && record.run_id.length > 0) ||
     (typeof record.workflow_run_id === 'string' && record.workflow_run_id.length > 0) ||
-    (typeof record.workflowRunId === 'string' && record.workflowRunId.length > 0)
-  );
-}
-
-function denialAuditCtx(ctx: DispatchActionCtx): DispatchActionCtx {
-  if (hasExplicitTarget(ctx)) return { ...ctx, taskId: undefined, workflowRunId: undefined };
-  return ctx;
+    (typeof record.workflowRunId === 'string' && record.workflowRunId.length > 0);
+  const retainTask = !explicitTaskId || numericResolved || explicitTaskId === ctx.contextualTaskId;
+  const taskId = retainTask ? ctx.taskId : undefined;
+  const workflowRunId = runTargetPresent ? undefined : ctx.workflowRunId;
+  return { ...ctx, taskId, workflowRunId };
 }
 
 function writeAuditEntry(ctx: DispatchActionCtx, forceExempt = false): void {
