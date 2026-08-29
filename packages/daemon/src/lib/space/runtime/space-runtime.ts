@@ -3816,7 +3816,7 @@ export class SpaceRuntime {
 
   private async restoreParkedNodeSessionsAndRequeue(workflowRunId: string): Promise<void> {
     const tam = this.config.taskAgentManager;
-    if (tam) {
+    if (tam && typeof tam.tryResumeNodeAgentSession === 'function') {
       await Promise.all(
         this.config.nodeExecutionRepo
           .listByWorkflowRun(workflowRunId)
@@ -3825,17 +3825,15 @@ export class SpaceRuntime {
               !!execution.agentSessionId && !this.isTargetSessionLive(execution.agentSessionId)
           )
           .map((execution) =>
-            tam
-              .tryResumeNodeAgentSession(
-                workflowRunId,
-                execution.agentName,
-                execution.workflowNodeId ?? undefined
-              )
-              .catch((err: unknown) => {
-                log.warn(
-                  `SpaceRuntime: failed to restore parked node-agent session ${execution.agentSessionId} for run ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
-                );
-              })
+            tam.tryResumeNodeAgentSession!(
+              workflowRunId,
+              execution.agentName,
+              execution.workflowNodeId ?? undefined
+            ).catch((err: unknown) => {
+              log.warn(
+                `SpaceRuntime: failed to restore parked node-agent session ${execution.agentSessionId} for run ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+              );
+            })
           )
       );
     }
