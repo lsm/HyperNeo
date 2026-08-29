@@ -484,10 +484,8 @@ export class AcpQueryRunner {
       startupTimeoutReached = true;
       const elapsed = Date.now() - queryStartTime;
       logger.error(
-        `ACP startup failure: ${detail} after ${elapsed}ms without a first agent message. ` +
-          `Command: ${command}, workspace: ${cwd} ` +
-          `(Hint: set HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS to extend the backstop, ` +
-          `currently ${getSdkStartInactivityBackstopMs()}ms)`
+        `ACP startup failure: ${detail} after ${elapsed}ms without a first agent message; ` +
+          `backstop ${getSdkStartInactivityBackstopMs()}ms, command: ${command}, workspace: ${cwd}`
       );
       abortController?.abort();
       try {
@@ -1033,6 +1031,10 @@ export class AcpQueryRunner {
               );
               throw new Error('ACP startup timeout - query aborted');
             }
+          }
+
+          if (attemptOwnsRun()) {
+            this.clearStartupTimer();
           }
 
           if (startupTimeoutReached && messageCount === 0) {
