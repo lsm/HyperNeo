@@ -48,8 +48,6 @@ Dual support is guarded in two places:
 cd packages/daemon && bun test ./tests/online/deno/session-loop.test.ts
 ```
 
-- Known gap: the native folder-picker dialog (`dialog.pickFolder`) still spawns through `Bun.spawn` directly (`packages/daemon/src/lib/rpc-handlers/dialog-handlers.ts`), so under Deno the handler catches the resulting error and returns `null` — folder picking in the workspace/Space creation UIs silently no-ops. The `runtime-spawn` seam covers the space runtime and SDK subprocesses; porting the dialog handlers onto it is future work.
-
 ## Why dual support is cheap: the runtime seams
 
 The daemon avoids runtime-specific APIs at the seams, so each runtime plugs in a backend:
@@ -58,7 +56,7 @@ The daemon avoids runtime-specific APIs at the seams, so each runtime plugs in a
 | --- | --- | --- |
 | `packages/daemon/src/storage/sqlite-compat.ts` | `bun:sqlite` | `node:sqlite` (Deno ships it since 2.2) |
 | `packages/daemon/src/lib/runtime-server/` | `Bun.serve` | `node:http` + `ws` (provider bridges, CLI server) |
-| `packages/daemon/src/lib/runtime-spawn/` | `Bun.spawn` | `node:child_process` (space runtime, SDK subprocesses) |
+| `packages/daemon/src/lib/runtime-spawn/` | `Bun.spawn` | `node:child_process` (space runtime, SDK subprocesses, dialog handlers) |
 | `packages/daemon/src/lib/runtime-hash.ts` | pure-TS wyhash (both runtimes) | same — stable cross-runtime worktree identity |
 
 `SQLITE_BUSY` detection and the `sleepSync` fallback work identically under both runtimes (Bun surfaces the `SQLITE_BUSY` code; Deno surfaces the `database is locked` message — both are matched).
@@ -72,5 +70,4 @@ The daemon avoids runtime-specific APIs at the seams, so each runtime plugs in a
 ## Future work
 
 - `deno check` type coverage in CI (the `bun-types` vs Deno types gap is real and untested).
-- Port the remaining direct `Bun.spawn` call sites — the dialog folder picker above — onto `runtime-spawn`.
 - Flip `deno-boot-smoke` from `continue-on-error` to a required check once it has been green for a sustained stretch.
