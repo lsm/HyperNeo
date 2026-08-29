@@ -217,4 +217,11 @@ describe('reevaluate-context-budget pipeline', () => {
     expect(outcome.compactionEnqueued).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
   });
+
+  it('defers instead of deciding against stale capacity when the catalog is unresolved', async () => {
+    const { input, enqueue } = reevaluationHarness(async () => null);
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
 });

@@ -154,4 +154,18 @@ describe('AgentSession model-switch context budget re-evaluation', () => {
 
     expect(enqueueSpy).not.toHaveBeenCalled();
   });
+
+  it('overlapping same-model re-evaluations enqueue exactly one compaction', async () => {
+    cacheModelsWithWindow(1_000_000);
+    const session = createAgentSession('switched-model');
+    session.contextTracker.restoreFromMetadata(restoreTrackerInfo(950_000, 2_000_000));
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueue');
+
+    await Promise.all([
+      session.reevaluateContextBudgetAfterModelSwitch(),
+      session.reevaluateContextBudgetAfterModelSwitch(),
+    ]);
+
+    expect(enqueueSpy).toHaveBeenCalledTimes(1);
+  });
 });

@@ -754,26 +754,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     internalEventBus.subscribe(
       'providers.changed',
       () => {
-        void (async () => {
-          try {
-            const { refreshModels } = await import('./lib/model-service.ts');
-            await refreshModels();
-          } catch (error) {
+        for (const agentSession of sessionManager?.getCachedSessions() ?? []) {
+          agentSession.reevaluateContextBudgetAfterModelSwitch().catch((error) => {
             logError(
-              '[Daemon] Provider catalog refresh before budget re-evaluation failed:',
+              `[Daemon] Context budget re-evaluation failed for session ` +
+                `${agentSession.getSessionData().id}:`,
               error
             );
-          }
-          for (const agentSession of sessionManager?.getCachedSessions() ?? []) {
-            agentSession.reevaluateContextBudgetAfterModelSwitch().catch((error) => {
-              logError(
-                `[Daemon] Context budget re-evaluation failed for session ` +
-                  `${agentSession.getSessionData().id}:`,
-                error
-              );
-            });
-          }
-        })();
+          });
+        }
       },
       { subscriberName: 'providers-changed-context-budget' }
     );

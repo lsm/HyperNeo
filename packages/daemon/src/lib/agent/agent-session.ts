@@ -137,7 +137,11 @@ import {
   isSDKSessionStateChangedMessage,
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
-import { getSessionModelInfo, resolveModelAlias } from '../model-service.ts';
+import {
+  ensureScopedProviderCatalogModels,
+  getSessionModelInfo,
+  resolveModelAlias,
+} from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
 import { getProviderService } from '../provider-service.ts';
 import {
@@ -560,6 +564,7 @@ export class AgentSession
 
     if (session.metadata?.lastContextInfo) {
       this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);
+      void this.reevaluateContextBudgetAfterModelSwitch();
     }
     this.stateManager.restoreFromDatabase();
 
@@ -1562,7 +1567,7 @@ export class AgentSession
   }
 
   private async resolveSessionModelInfoWithRetry(): Promise<ModelInfo | null> {
-    let modelInfo = await getSessionModelInfo(this.session);
+    let modelInfo = await this.resolveSessionCatalogModelInfo();
     if (!modelInfo) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 150);
@@ -1570,9 +1575,22 @@ export class AgentSession
           timer.unref();
         }
       });
-      modelInfo = await getSessionModelInfo(this.session);
+      modelInfo = await this.resolveSessionCatalogModelInfo();
     }
     return modelInfo;
+  }
+
+  private async resolveSessionCatalogModelInfo(): Promise<ModelInfo | null> {
+    const providerId = this.session.config.provider;
+    const providerConfig = this.session.config.providerConfig;
+    if (
+      providerId &&
+      (providerConfig?.apiKey || providerConfig?.baseUrl || providerConfig?.region)
+    ) {
+      await ensureScopedProviderCatalogModels(this.session.id, providerId, providerConfig);
+      return getSessionModelInfo(this.session, this.session.id);
+    }
+    return getSessionModelInfo(this.session);
   }
 
   async midTurnContextBudgetCheck(): Promise<void> {

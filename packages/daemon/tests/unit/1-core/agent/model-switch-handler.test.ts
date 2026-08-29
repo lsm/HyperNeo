@@ -659,6 +659,21 @@ describe('ModelSwitchHandler', () => {
 
         expect(reevaluateSpy).toHaveBeenCalledTimes(1);
       });
+
+      it('re-evaluates the restored model when a restart fails after the switch', async () => {
+        const reevaluateSpy = mock(async () => {});
+        restartSpy.mockImplementation(async (options?: { beforeStart?: () => Promise<void> }) => {
+          await options?.beforeStart?.();
+          throw new Error('startStreamingQuery failed');
+        });
+        handler = createHandler({ reevaluateContextBudgetAfterModelSwitch: reevaluateSpy });
+
+        const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+        expect(result.success).toBe(false);
+        expect(mockSession.config.model).toBe('default');
+        expect(reevaluateSpy).toHaveBeenCalledTimes(2);
+      });
     });
 
     describe('validation', () => {

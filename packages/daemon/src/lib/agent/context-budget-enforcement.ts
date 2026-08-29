@@ -215,6 +215,7 @@ const runReevaluateContextBudget = (
     modelFenceChanged: (ctx: ContextBudgetReevaluationCtx) =>
       ctx.session.config.model !== ctx.fenceModel ||
       ctx.session.config.provider !== ctx.fenceProvider,
+    modelInfoUnresolved: (ctx: ContextBudgetReevaluationCtx) => ctx.modelInfo === null,
     resumeSettledElsewhere: (ctx: ContextBudgetReevaluationCtx) =>
       ctx.compactionEnqueued || ctx.messageQueue.hasOutstandingInternalCompaction(),
   })('reevaluate-context-budget') as PipelineAPI
@@ -223,6 +224,7 @@ const runReevaluateContextBudget = (
   .pipe(revokeSupersededCompactions, 'ctx', 'ctx')
   .pipe(resolveReevaluationModelInfo, 'ctx', 'ctx')
   .pipe('!modelFenceChanged', 'ctx')
+  .pipe('!modelInfoUnresolved', 'ctx')
   .pipe(runReevaluationEnforcement, 'ctx', 'ctx')
   .pipe('!resumeSettledElsewhere', 'ctx')
   .pipe(settlePendingResumeAfterReevaluation, 'ctx', 'ctx')

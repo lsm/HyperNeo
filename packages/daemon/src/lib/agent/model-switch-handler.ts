@@ -339,6 +339,7 @@ export class ModelSwitchHandler {
         metadata: previousMetadata,
       });
       contextTracker.setModel(previousModel);
+      await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
       await internalEventBus.publish('session.updated', {
         sessionId: session.id,
         source: 'model-switch-rollback',
