@@ -778,7 +778,9 @@ export default function MessageInput({
         });
       } catch (error) {
         if (error instanceof Error && error.message === VOICE_DISCONNECTED_HANDOFF) {
-          toast.info('Voice recording kept — it will be sent when reconnected');
+          toast.info(
+            'Voice recording kept — transcript will be restored to the draft when reconnected'
+          );
         } else {
           toast.error(error instanceof Error ? error.message : 'Voice resend failed');
         }

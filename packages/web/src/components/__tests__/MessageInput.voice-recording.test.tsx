@@ -851,7 +851,7 @@ describe('MessageInput — recording UI', () => {
 
       await waitFor(() =>
         expect(toast.info).toHaveBeenCalledWith(
-          'Voice recording kept — it will be sent when reconnected'
+          'Voice recording kept — transcript will be restored to the draft when reconnected'
         )
       );
       expect(transcribeRequest).not.toHaveBeenCalled();
