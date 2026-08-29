@@ -3121,6 +3121,50 @@ describe('SpaceRuntime external event subscriptions', () => {
         runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-mixed-coverage')
       ).toBeUndefined();
     });
+
+    test('flag on: a render committed before a stop overlap still hands off its digest', async () => {
+      const sessionId = 'session-stopped-handoff';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      await startLiveSession(sessionId, topic);
+
+      const repo = (
+        runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
+      ).getSdkMessageRepo();
+      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
+        .saveUserMessage as (...args: unknown[]) => string;
+      let saveStarted = false;
+      let unblockSave: ((value: string) => void) | null = null;
+      const saveBlocker = new Promise<string>((resolve) => {
+        unblockSave = resolve;
+      });
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+        ...args: unknown[]
+      ) => {
+        saveStarted = true;
+        return saveBlocker.then(() => originalSave.apply(repo, args)) as unknown as string;
+      };
+
+      await eventService.publish(makeEvent({ id: 'evt-stop-handoff', topic }));
+      const deadline = Date.now() + 2000;
+      while (!saveStarted && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(saveStarted).toBe(true);
+
+      const stopPromise = runtime.stop();
+      unblockSave!('db-stop-handoff');
+      await stopPromise;
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
+        originalSave;
+
+      const row = db
+        .prepare(
+          `SELECT send_status FROM sdk_messages WHERE session_id = ? AND sdk_uuid LIKE 'digest-%'`
+        )
+        .get(sessionId) as { send_status: string };
+      expect(row?.send_status).toBe('enqueued');
+      expect(eventStore.listDeliveries('evt-stop-handoff')[0]?.state).toBe('delivered');
+    });
   });
 
   describe('surviving delivery invariants after the V1 deletion', () => {

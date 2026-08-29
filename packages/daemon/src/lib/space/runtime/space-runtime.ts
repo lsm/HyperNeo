@@ -2074,8 +2074,13 @@ export class SpaceRuntime {
     };
     try {
       const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
-      if (this.isStopped || (generation !== undefined && this.runtimeGeneration !== generation)) {
+      const staleLifetime =
+        this.isStopped || (generation !== undefined && this.runtimeGeneration !== generation);
+      if (staleLifetime && outcome.action !== 'delivered') {
         return null;
+      }
+      if (staleLifetime) {
+        return outcome;
       }
       if (outcome.action === 'delivered') {
         try {
