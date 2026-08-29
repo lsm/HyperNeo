@@ -2437,6 +2437,18 @@ export class TaskAgentManager {
       run,
       execution
     );
+    spawnPromise.then(
+      () => {
+        try {
+          this.config.spaceRuntimeService.requeuePendingDeliveriesForRun(workflowRunId);
+        } catch (err) {
+          log.warn(
+            `TaskAgentManager.activateTargetSessionsForMessage: pending-delivery requeue failed for run ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      },
+      () => {}
+    );
     const timeoutMs = 30_000;
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<null>((resolve) => {

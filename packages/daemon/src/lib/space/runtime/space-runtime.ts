@@ -58,7 +58,11 @@ import {
 } from '../../external-events/queue-health-metrics.ts';
 import { TopicTrie } from '../../external-events/topic-trie.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
-import type { ExternalEvent } from '../../external-events/types.ts';
+import type {
+  ExternalEvent,
+  ExternalEventDeliveryRecord,
+  ExternalEventRecord,
+} from '../../external-events/types.ts';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
 import type {
   DaemonInternalEventMap,
@@ -98,6 +102,7 @@ import {
   DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
   evaluateRequeueTaskLifecycle,
   isPublishedExternalEventExpired,
+  isQueuedExternalEventExpired,
   isWorkflowTargetOwnedBySpace,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
@@ -106,6 +111,15 @@ import {
   deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
 } from './immediate-event-delivery-pipeline.ts';
+import {
+  type RequeuePendingDeliveryDeps,
+  runRequeuePendingDelivery,
+} from './requeue-pending-delivery-pipeline.ts';
+import {
+  type RestoreIdleSessionsDeps,
+  type RestoreIdleSessionsOutcome,
+  runRestoreIdleSessions,
+} from './restore-idle-sessions-pipeline.ts';
 import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestDeps,
@@ -704,9 +718,13 @@ export class SpaceRuntime {
     this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
-    this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
-      this.onSpaceResumed(spaceId)
-    );
+    this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) => {
+      void this.onSpaceResumed(spaceId).catch((err: unknown) => {
+        log.warn(
+          `SpaceRuntime: space resume handling failed for ${spaceId}: ${formatCommandError(err)}`
+        );
+      });
+    });
     this.unsubscribeSpacePaused = this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
       this.pausedSpaceIds.add(spaceId);
     });
@@ -2941,6 +2959,8 @@ export class SpaceRuntime {
             reason
           );
         }
+      } else if (previous.status === 'stopped') {
+        await this.recoverPendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
       }
       return updated;
     }
@@ -3259,8 +3279,14 @@ export class SpaceRuntime {
 
     const generation = this.runtimeGeneration;
     this.subscribeSdkToolUseCreated();
-    this.unsubscribeSpaceResumed ??= this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
-      this.onSpaceResumed(spaceId)
+    this.unsubscribeSpaceResumed ??= this.config.spaceManager.onSpaceResumedRegister?.(
+      (spaceId) => {
+        void this.onSpaceResumed(spaceId).catch((err: unknown) => {
+          log.warn(
+            `SpaceRuntime: space resume handling failed for ${spaceId}: ${formatCommandError(err)}`
+          );
+        });
+      }
     );
     this.unsubscribeSpacePaused ??= this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
       this.pausedSpaceIds.add(spaceId);
@@ -3296,7 +3322,8 @@ export class SpaceRuntime {
           );
         }
         if (generation !== this.runtimeGeneration) return;
-        this.requeuePersistedPendingDeliveries(pausedSpaceIds);
+        await this.recoverPendingDeliveries(pausedSpaceIds);
+        if (generation !== this.runtimeGeneration) return;
         this.subscribeExternalEventPublished();
         this.reconciliationDone = true;
         this.redispatchRetainedExternalEvents();
@@ -3757,6 +3784,7 @@ export class SpaceRuntime {
         );
       }
     }
+    await this.recoverPendingDeliveries(this.pausedSpaceIds, recovered.run.id);
     await this.safeOnWorkflowRunUpdated(
       spaceId,
       this.config.workflowRunRepo.getRun(recovered.run.id)!
@@ -3801,15 +3829,153 @@ export class SpaceRuntime {
     return true;
   }
 
-  private requeuePersistedPendingDeliveries(_pausedSpaceIds: Set<string> = new Set()): void {
+  private async restoreIdleSessionsOwningPendingDeliveries(
+    pausedSpaceIds: Set<string>,
+    workflowRunId?: string
+  ): Promise<RestoreIdleSessionsOutcome[]> {
+    const store = this.config.externalEventStore;
+    const tam = this.config.taskAgentManager;
+    if (!store || !tam || typeof tam.tryResumeNodeAgentSession !== 'function') return [];
+    const deps: RestoreIdleSessionsDeps = {
+      listPendingDeliveries: (scope) =>
+        store
+          .listPendingDeliveries(scope)
+          .filter((delivery) => !longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId)),
+      getEventRecord: (eventId) => store.getById(eventId),
+      isDeliveryInFlight: (deliveryKey) =>
+        this.externalEventDeliveriesInFlight.has(deliveryKey) ||
+        this.immediateDispatchesInFlight.has(deliveryKey),
+      isDeliveryExpired: (createdAt, now) =>
+        isQueuedExternalEventExpired(createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS),
+      getRunSpaceId: (runId) => {
+        const run = this.config.workflowRunRepo.getRun(runId);
+        if (!run) return undefined;
+        if (pausedSpaceIds.has(run.spaceId) || this.pausedSpaceIds.has(run.spaceId))
+          return undefined;
+        return run.spaceId;
+      },
+      isSpacePaused: (spaceId) => this.pausedSpaceIds.has(spaceId),
+      getSpaceState: async (spaceId) => {
+        const space = await this.config.spaceManager.getSpace(spaceId).catch(() => null);
+        return space ? { paused: !!space.paused, stopped: !!space.stopped } : null;
+      },
+      isTargetStillSubscribed: (target, topic) => this.isTargetStillSubscribed(target, topic),
+      isTaskAdmissible: (taskId) => {
+        const task = this.config.taskRepo.getTask(taskId);
+        if (!task) return false;
+        if (
+          task.status === 'rate_limited' ||
+          task.status === 'usage_limited' ||
+          task.status === 'stopped'
+        ) {
+          return false;
+        }
+        return !evaluateRequeueTaskLifecycle(task, { topic: '', source: '' });
+      },
+      findIdleExecutionWithDeadSession: (target) => {
+        const execution = this.config.nodeExecutionRepo
+          .listByNode(target.workflowRunId, target.nodeId)
+          .find(
+            (candidate) =>
+              candidate.agentName === target.agentName &&
+              candidate.status === 'idle' &&
+              !!candidate.agentSessionId &&
+              !this.isTargetSessionLive(candidate.agentSessionId)
+          );
+        return execution?.agentSessionId
+          ? { executionId: execution.id, agentSessionId: execution.agentSessionId }
+          : undefined;
+      },
+      restoreSession: (target) =>
+        tam.tryResumeNodeAgentSession!(target.workflowRunId, target.agentName, target.nodeId),
+      isExecutionRestorable: (execution) => {
+        const fresh = this.config.nodeExecutionRepo.getById(execution.executionId);
+        return (
+          !!fresh && fresh.status === 'idle' && fresh.agentSessionId === execution.agentSessionId
+        );
+      },
+      cancelSession: (sessionId) => tam.cancelBySessionId(sessionId),
+    };
+    const outcomes = await runRestoreIdleSessions(deps, workflowRunId);
+    for (const outcome of outcomes) {
+      if (outcome.action === 'skipped_inactivation') {
+        log.warn(
+          `SpaceRuntime: tore down restored node-agent session ${outcome.sessionId} because its space, task, or execution went inactive during restoration`
+        );
+      }
+    }
+    return outcomes;
+  }
+
+  private async recoverPendingDeliveries(
+    pausedSpaceIds: Set<string> = new Set(),
+    workflowRunId?: string
+  ): Promise<void> {
+    const generation = this.runtimeGeneration;
+    try {
+      const outcomes = await this.restoreIdleSessionsOwningPendingDeliveries(
+        pausedSpaceIds,
+        workflowRunId
+      );
+      if (this.isStopped || generation !== this.runtimeGeneration) {
+        for (const outcome of outcomes) {
+          if (outcome.action === 'restored') {
+            this.config.taskAgentManager?.cancelBySessionId(outcome.sessionId);
+          }
+        }
+        return;
+      }
+      this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: pending-delivery recovery failed for ${workflowRunId ?? 'all runs'}: ${formatCommandError(err)}`
+      );
+    }
+  }
+
+  requeuePendingDeliveriesForRun(workflowRunId: string): void {
+    void this.recoverPendingDeliveries(this.pausedSpaceIds, workflowRunId);
+  }
+
+  private tryRequeuePendingDeliveries(
+    pausedSpaceIds: Set<string> = new Set(),
+    workflowRunId?: string
+  ): void {
+    try {
+      this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: pending-delivery requeue failed for ${workflowRunId ?? 'all runs'}: ${formatCommandError(err)}`
+      );
+    }
+  }
+
+  private requeuePersistedPendingDeliveries(
+    pausedSpaceIds: Set<string> = new Set(),
+    workflowRunId?: string
+  ): void {
     const store = this.config.externalEventStore;
     if (!store) return;
 
-    for (const delivery of store.listPendingDeliveries()) {
+    for (const delivery of store.listPendingDeliveries(workflowRunId)) {
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
       const longHorizonSpaceId = longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId);
-      if (!longHorizonSpaceId) continue;
+      if (!longHorizonSpaceId) {
+        this.requeueWorkflowPendingDelivery(delivery, eventRecord, pausedSpaceIds);
+        continue;
+      }
+      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
+      if (
+        isQueuedExternalEventExpired(eventRecord.createdAt, Date.now(), EXTERNAL_EVENT_QUEUE_TTL_MS)
+      ) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'ttl_expired',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        continue;
+      }
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
       const subscription = this.config.longHorizonAgentRepo?.getSubscription(delivery.taskId);
       const agent = subscription
@@ -3857,11 +4023,45 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         continue;
       }
+      if (this.pausedSpaceIds.has(longHorizonSpaceId)) continue;
       void this.deliverToLongHorizonAgent(target, eventPayload, delivery.deliveryKey);
     }
   }
 
-  onSpaceResumed(spaceId: string): void {
+  private requeueWorkflowPendingDelivery(
+    delivery: ExternalEventDeliveryRecord,
+    eventRecord: ExternalEventRecord,
+    pausedSpaceIds: Set<string>
+  ): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    const deps: RequeuePendingDeliveryDeps = {
+      isDeliveryInFlight: (deliveryKey) =>
+        this.externalEventDeliveriesInFlight.has(deliveryKey) ||
+        this.immediateDispatchesInFlight.has(deliveryKey),
+      isDeliveryExpired: (createdAt, now) =>
+        isQueuedExternalEventExpired(createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS),
+      failDeliveryTerminal: (failed, reason) => {
+        store.markDeliveryFailed(failed.eventId, failed.deliveryKey, { terminal: true, reason });
+        store.markEventFailedIfAllDeliveriesTerminal(failed.eventId);
+      },
+      isTargetSpacePaused: (workflowRunId) => {
+        const run = this.config.workflowRunRepo.getRun(workflowRunId);
+        return !run || pausedSpaceIds.has(run.spaceId) || this.pausedSpaceIds.has(run.spaceId);
+      },
+      isTargetStillSubscribed: (target, topic) => this.isTargetStillSubscribed(target, topic),
+      resolveTargetSession: (target) => this.resolveSubscriptionTarget(target).sessionId,
+      isSessionLive: (sessionId) => this.isTargetSessionLive(sessionId),
+      isSessionInterrupted: (sessionId) => this.isTargetSessionInterrupted(sessionId),
+      scheduleDigestPull: (sessionId, taskId) =>
+        this.scheduleDigestPullForSession(sessionId, taskId),
+      scheduleInterruptProbe: (sessionId, taskId) =>
+        this.scheduleInterruptProbeForSession(sessionId, taskId),
+    };
+    runRequeuePendingDelivery(deps, { delivery, eventRecord });
+  }
+
+  async onSpaceResumed(spaceId: string): Promise<void> {
     this.pausedSpaceIds.delete(spaceId);
     try {
       this.config.goalService?.retryQueuedRunsForSpace(spaceId);
@@ -3871,9 +4071,8 @@ export class SpaceRuntime {
       );
     }
 
-    const reactiveRuns = this.config.workflowRunRepo
-      .listBySpace(spaceId)
-      .filter((run) => this.isRunInterestRebuildEligible(run));
+    const resumedRuns = this.config.workflowRunRepo.listBySpace(spaceId);
+    const reactiveRuns = resumedRuns.filter((run) => this.isRunInterestRebuildEligible(run));
     for (const run of reactiveRuns) {
       const staticWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (staticWorkflow) {
@@ -3886,7 +4085,16 @@ export class SpaceRuntime {
         }
       }
     }
-
+    const tasksByRun = new Map<string, SpaceTask[]>();
+    for (const run of resumedRuns) {
+      tasksByRun.set(run.id, this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id));
+    }
+    this.rehydrateWorkflowSubscriptions(spaceId, resumedRuns, tasksByRun);
+    this.rehydrateLongHorizonSubscriptions(spaceId);
+    this.tryRequeuePendingDeliveries(this.pausedSpaceIds, `long_horizon:${spaceId}`);
+    for (const run of resumedRuns) {
+      await this.recoverPendingDeliveries(this.pausedSpaceIds, run.id);
+    }
     this.redispatchRetainedExternalEvents();
   }
 
@@ -4105,11 +4313,10 @@ export class SpaceRuntime {
       }
     }
 
-    this.requeuePersistedPendingDeliveries(pausedSpaceIds);
-
     if (this.config.taskAgentManager) {
       await this.config.taskAgentManager.rehydrate();
     }
+    await this.recoverPendingDeliveries(pausedSpaceIds);
   }
 
   private recoveryDone = false;
@@ -5728,6 +5935,7 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
+          this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
           const restartNotice = this.consumeAgentRestartNotice(runId, execution);
           if (restartNotice) {
             void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
@@ -6083,6 +6291,7 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
+          this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
           await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
           recordBlockedFlushFailure(targetAgentName, rowsForTarget);
           for (const row of pending) {
