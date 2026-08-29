@@ -1065,9 +1065,26 @@ export class SDKMessageHandler {
     }
 
     try {
+      let attributedResultUuid: string | null = null;
       let deferredSuccessfully: boolean;
       try {
-        deferredSuccessfully = this.withDbChangeBatch(() => db.saveSDKMessage(session.id, message));
+        deferredSuccessfully = this.withDbChangeBatch(() => {
+          const saved = db.saveSDKMessage(session.id, message);
+          if (
+            saved &&
+            isTopLevelResult &&
+            isSDKResultMessage(message) &&
+            !this.isInvocationStale(invocationGeneration)
+          ) {
+            attributedResultUuid = this.resolveInternalCompactionResultStamp(message);
+            if (attributedResultUuid) {
+              this.ctx.db
+                .getSDKMessageRepo()
+                ?.markResultInternalCompactionTurn(session.id, attributedResultUuid);
+            }
+          }
+          return saved;
+        });
       } catch (error) {
         releaseTurnEndGate?.();
         releaseTurnEndGate = null;
@@ -1078,7 +1095,11 @@ export class SDKMessageHandler {
         this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
         releaseTurnEndGate?.();
         releaseTurnEndGate = null;
-        if (isTopLevelResult && isSDKResultMessage(message)) {
+        if (
+          isTopLevelResult &&
+          isSDKResultMessage(message) &&
+          !this.isInvocationStale(invocationGeneration)
+        ) {
           this.ctx.messageQueue.consumeInternalCompactionResultAttribution();
         }
         if (this.matchesArmedClearResult(message)) {
@@ -1087,8 +1108,11 @@ export class SDKMessageHandler {
         return;
       }
 
-      if (isTopLevelResult && isSDKResultMessage(message)) {
-        this.attributeInternalCompactionResult(message);
+      if (attributedResultUuid) {
+        this.logger.info(
+          `attributed the 0-turn terminal success to the internal compaction turn for ` +
+            `session ${session.id}; it cannot satisfy a work delivery`
+        );
       }
 
       const observesArmedClearResult = this.matchesArmedClearResult(message);
@@ -1467,23 +1491,13 @@ export class SDKMessageHandler {
     }
   }
 
-  private attributeInternalCompactionResult(message: SDKMessage): void {
+  private resolveInternalCompactionResultStamp(message: SDKMessage): string | null {
     const result = message as SDKResultMessage;
     const armed = this.ctx.messageQueue.consumeInternalCompactionResultAttribution();
-    if (result.num_turns !== 0 || !result.uuid || !isSDKResultSuccess(message)) return;
-    if (result.is_error === true) return;
-    if (!armed && !this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) return;
-    try {
-      this.ctx.db
-        .getSDKMessageRepo()
-        ?.markResultInternalCompactionTurn(this.ctx.session.id, result.uuid);
-      this.logger.info(
-        `attributed the 0-turn terminal success to the internal compaction turn for ` +
-          `session ${this.ctx.session.id}; it cannot satisfy a work delivery`
-      );
-    } catch (error) {
-      this.logger.warn('failed to mark the internal-compaction turn result:', error);
-    }
+    if (result.num_turns !== 0 || !result.uuid || !isSDKResultSuccess(message)) return null;
+    if (result.is_error === true) return null;
+    if (!armed && !this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) return null;
+    return result.uuid;
   }
 
   private assessResultLimitError(

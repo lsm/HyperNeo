@@ -4028,6 +4028,38 @@ describe('SDKMessageHandler', () => {
       expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
       expect(stampSpy).not.toHaveBeenCalled();
     });
+
+    it('ignores stale-generation results so a superseded query cannot consume the arming', async () => {
+      const stampSpy = mock(() => {});
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markResultInternalCompactionTurn: stampSpy,
+      })) as never;
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+      (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+
+      await handler.handleMessage(makeSuccessResult(0), 3);
+
+      expect(consumeInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
+      expect(stampSpy).not.toHaveBeenCalled();
+    });
+
+    it('stamps inside the same DB batch as the result save', async () => {
+      const order: string[] = [];
+      (mockDb as unknown as Record<string, unknown>).beginTransaction = mock(() =>
+        order.push('begin')
+      );
+      (mockDb as unknown as Record<string, unknown>).commitTransaction = mock(() =>
+        order.push('commit')
+      );
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markResultInternalCompactionTurn: mock(() => order.push('stamp')),
+      })) as never;
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+
+      await handler.handleMessage(makeSuccessResult(0));
+
+      expect(order).toEqual(['begin', 'stamp', 'commit']);
+    });
   });
 
   describe('circuit breaker integration', () => {
