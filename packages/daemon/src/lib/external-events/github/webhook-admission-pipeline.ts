@@ -26,7 +26,7 @@ export interface WebhookAdmissionInput {
   signature: string | null;
   eventType: string | null;
   deliveryId: string | null;
-  raw: string;
+  readRaw(): Promise<string>;
 }
 
 export interface WebhookAdmissionContext {
@@ -57,6 +57,7 @@ export interface WebhookAdmissionCtx {
   signature: string;
   eventType: string;
   deliveryId: string;
+  raw: string;
   matchedRepos: GitHubWatchedRepo[];
   payload: unknown;
   kind: WebhookKind | null;
@@ -116,17 +117,18 @@ export function admitHeadersStage(ctx: WebhookAdmissionCtx): WebhookAdmissionCtx
 }
 
 export async function matchSignaturesStage(ctx: WebhookAdmissionCtx): Promise<WebhookAdmissionCtx> {
+  const raw = await ctx.input.readRaw();
   const matchedRepos: GitHubWatchedRepo[] = [];
   for (const repo of ctx.deps.listWebhookValidationRepos()) {
     if (
       repo.webhookSecret &&
-      (await ctx.deps.verifySignature(ctx.input.raw, ctx.signature, repo.webhookSecret))
+      (await ctx.deps.verifySignature(raw, ctx.signature, repo.webhookSecret))
     ) {
       matchedRepos.push(repo);
     }
   }
   if (matchedRepos.length === 0) return deny(ctx, { reason: 'invalid_signature' });
-  return { ...ctx, matchedRepos };
+  return { ...ctx, raw, matchedRepos };
 }
 
 export function gateCapabilityStage(ctx: WebhookAdmissionCtx): WebhookAdmissionCtx {
@@ -139,7 +141,7 @@ export function gateCapabilityStage(ctx: WebhookAdmissionCtx): WebhookAdmissionC
 
 export function parsePayloadStage(ctx: WebhookAdmissionCtx): WebhookAdmissionCtx {
   try {
-    return { ...ctx, payload: JSON.parse(ctx.input.raw) };
+    return { ...ctx, payload: JSON.parse(ctx.raw) };
   } catch {
     return deny(ctx, { reason: 'invalid_json' });
   }
@@ -337,6 +339,7 @@ export async function runGithubWebhookAdmission(
     signature: '',
     eventType: '',
     deliveryId: '',
+    raw: '',
     matchedRepos: [],
     payload: undefined,
     kind: null,

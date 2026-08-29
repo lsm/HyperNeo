@@ -127,7 +127,7 @@ function admissionInput(payload: unknown, overrides: Record<string, unknown> = {
     signature: 'sha256=secret-a',
     eventType: 'issue_comment',
     deliveryId: 'delivery-1',
-    raw: JSON.stringify(payload),
+    readRaw: async () => JSON.stringify(payload),
     ...overrides,
   };
 }
@@ -152,6 +152,21 @@ describe('github webhook admission precedence', () => {
       admissionInput(issueCommentPayload, { eventType: null })
     );
     expect(noEvent).toEqual({ status: 400, body: { error: 'Missing GitHub event headers' } });
+  });
+
+  it('admits headers before reading the request body', async () => {
+    const { deps } = makeHarness();
+    let rawReads = 0;
+    const input = admissionInput(issueCommentPayload, {
+      signature: null,
+      readRaw: async () => {
+        rawReads++;
+        return JSON.stringify(issueCommentPayload);
+      },
+    });
+    const response = await runGithubWebhookAdmission(deps, input);
+    expect(response).toEqual({ status: 401, body: { error: 'Missing signature header' } });
+    expect(rawReads).toBe(0);
   });
 
   it('validates signatures before the capability gate rejects', async () => {
@@ -186,7 +201,7 @@ describe('github webhook admission precedence', () => {
     const { deps } = makeHarness();
     const response = await runGithubWebhookAdmission(
       deps,
-      admissionInput(issueCommentPayload, { raw: 'not json' })
+      admissionInput(issueCommentPayload, { readRaw: async () => 'not json' })
     );
     expect(response).toEqual({ status: 400, body: { error: 'Invalid JSON payload' } });
   });
@@ -409,13 +424,19 @@ describe('deployment webhook path', () => {
 function stageCtx(partial: Partial<WebhookAdmissionCtx>): WebhookAdmissionCtx {
   const { deps } = makeHarness();
   return {
-    input: { signature: 'sha256=secret-a', eventType: 'status', deliveryId: 'delivery-1', raw: '' },
+    input: {
+      signature: 'sha256=secret-a',
+      eventType: 'status',
+      deliveryId: 'delivery-1',
+      readRaw: async () => '',
+    },
     deps: { ...deps, verifySignature: async () => false },
     context: null,
     globalConfig: null,
     signature: 'sha256=secret-a',
     eventType: 'status',
     deliveryId: 'delivery-1',
+    raw: '',
     matchedRepos: [],
     payload: undefined,
     kind: 'status',
@@ -460,14 +481,24 @@ describe('matchSignaturesStage', () => {
           listWebhookValidationRepos: () => repos,
           verifySignature: verify,
         },
-        input: { signature: 'sha256=secret-a', eventType: 'status', deliveryId: 'd', raw: 'body' },
+        input: {
+          signature: 'sha256=secret-a',
+          eventType: 'status',
+          deliveryId: 'd',
+          readRaw: async () => 'body',
+        },
       })
     );
     expect(matched.matchedRepos.map((r) => r.id)).toEqual(['w1']);
     const denied = await matchSignaturesStage(
       stageCtx({
         deps: { ...stageCtx({}).deps, listWebhookValidationRepos: () => repos },
-        input: { signature: 'sha256=secret-a', eventType: 'status', deliveryId: 'd', raw: 'body' },
+        input: {
+          signature: 'sha256=secret-a',
+          eventType: 'status',
+          deliveryId: 'd',
+          readRaw: async () => 'body',
+        },
       })
     );
     expect(denied.response).toEqual({ status: 401, body: { error: 'Invalid signature' } });
