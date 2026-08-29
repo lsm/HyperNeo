@@ -631,17 +631,17 @@ export function SpaceExternalEventsSettings({
   return (
     <section class="space-y-4" data-testid="space-external-events-settings">
       <div>
-        <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+        <h3 class="text-xs font-semibold text-fg-muted uppercase tracking-wider">
           External event sources
         </h3>
-        <p class="mt-1 text-xs text-gray-400">
+        <p class="mt-1 text-xs text-fg-muted">
           Enable source extensions globally, then choose which repositories can trigger work in this
           space.
         </p>
       </div>
 
       {loading ? (
-        <div class="flex items-center gap-2 py-2 text-xs text-gray-400">
+        <div class="flex items-center gap-2 py-2 text-xs text-fg-muted">
           <Spinner size="sm" />
           Loading external event sources…
         </div>
@@ -649,7 +649,7 @@ export function SpaceExternalEventsSettings({
         <div class="space-y-4">
           <div class="space-y-2">
             {extensions.length === 0 ? (
-              <div class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3 text-sm text-gray-400">
+              <div class="rounded-lg border border-line bg-surface-raised px-3 py-3 text-sm text-fg-muted">
                 No external event extensions registered.
               </div>
             ) : (
@@ -697,19 +697,16 @@ export function SpaceExternalEventsSettings({
             />
           )}
 
-          <div class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3">
+          <div class="rounded-lg border border-line bg-surface-raised px-3 py-3">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div class="text-sm font-medium text-gray-200">GitHub repositories</div>
-                <p class="mt-0.5 text-xs text-gray-400">
+                <div class="text-sm font-medium text-fg-soft">GitHub repositories</div>
+                <p class="mt-0.5 text-xs text-fg-muted">
                   Watch pull request and review activity for this space.
                 </p>
               </div>
               <label
-                class={cn(
-                  'flex items-center gap-2 text-xs text-gray-300',
-                  disabled && 'opacity-60'
-                )}
+                class={cn('flex items-center gap-2 text-xs text-fg-soft', disabled && 'opacity-60')}
               >
                 <input
                   type="checkbox"
@@ -718,19 +715,19 @@ export function SpaceExternalEventsSettings({
                     disabled || !githubControlsEnabled || busy === 'space:github' || panelBusy
                   }
                   onChange={() => setSpaceEnabled(!githubSpaceEnabled)}
-                  class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                  class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
                 />
                 Enabled for this space
               </label>
             </div>
 
-            <div class="mt-3 rounded-lg border border-white/10 bg-dark-850 px-3 py-2">
-              <div class="text-[11px] uppercase tracking-wider text-gray-400">Webhook endpoint</div>
+            <div class="mt-3 rounded-lg border border-line bg-surface-overlay px-3 py-2">
+              <div class="text-[11px] uppercase tracking-wider text-fg-muted">Webhook endpoint</div>
               <div class="mt-1 flex items-center gap-2">
-                <code class="min-w-0 flex-1 truncate text-xs text-gray-300">{webhookUrl}</code>
+                <code class="min-w-0 flex-1 truncate text-xs text-fg-soft">{webhookUrl}</code>
                 <CopyButton text={webhookUrl} label="Copy webhook URL" />
               </div>
-              <p class="mt-1 text-xs text-gray-400">
+              <p class="mt-1 text-xs text-fg-muted">
                 Use a public HTTPS tunnel for local development. Configure GitHub webhooks for
                 pull_request, issue_comment, pull_request_review, pull_request_review_comment,
                 pull_request_review_thread, check_run, and check_suite events.
@@ -747,7 +744,7 @@ export function SpaceExternalEventsSettings({
                 onInput={(event) => setRepoInput((event.target as HTMLInputElement).value)}
                 placeholder="owner/repository"
                 disabled={disabled || !githubControlsEnabled || panelBusy}
-                class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                class="rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
               />
               <input
                 type="password"
@@ -755,7 +752,7 @@ export function SpaceExternalEventsSettings({
                 onInput={(event) => setWebhookSecret((event.target as HTMLInputElement).value)}
                 placeholder="Webhook secret (optional)"
                 disabled={disabled || !githubControlsEnabled || panelBusy}
-                class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                class="rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
               />
               <Button
                 type="submit"
@@ -782,11 +779,11 @@ export function SpaceExternalEventsSettings({
                 Auto-configure
               </Button>
             </form>
-            {formError && <p class="mt-2 text-xs text-red-300">{formError}</p>}
+            {formError && <p class="mt-2 text-xs text-danger-soft">{formError}</p>}
 
             <div class="mt-3 space-y-2">
               {repos.length === 0 ? (
-                <p class="rounded-lg border border-dashed border-dark-600 px-3 py-3 text-sm text-gray-400">
+                <p class="rounded-lg border border-dashed border-line-strong px-3 py-3 text-sm text-fg-muted">
                   No repositories watched yet.
                 </p>
               ) : (
@@ -860,11 +857,11 @@ function DeliveryLogSection({
   onSelect,
 }: DeliveryLogSectionProps) {
   return (
-    <div class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3">
+    <div class="rounded-lg border border-line bg-surface-raised px-3 py-3">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div class="text-sm font-medium text-gray-200">Event delivery log</div>
-          <p class="mt-0.5 text-xs text-gray-400">
+          <div class="text-sm font-medium text-fg-soft">Event delivery log</div>
+          <p class="mt-0.5 text-xs text-fg-muted">
             Inspect external events, matched agents, delivery state, and payloads.
           </p>
         </div>
@@ -879,7 +876,7 @@ function DeliveryLogSection({
           onChange={(event) =>
             onStatusChange((event.target as HTMLSelectElement).value as typeof status)
           }
-          class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
+          class="rounded-lg border border-line bg-surface-overlay px-3 py-2 text-xs text-fg focus:border-accent focus:outline-none"
           aria-label="Delivery status"
         >
           {DELIVERY_STATUSES.map((deliveryStatus) => (
@@ -896,16 +893,16 @@ function DeliveryLogSection({
             if (event.key === 'Enter') void onApplyAgentFilter();
           }}
           placeholder="filter agent"
-          class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+          class="rounded-lg border border-line bg-surface-overlay px-3 py-2 text-xs text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
         />
         <Button type="button" size="sm" onClick={onApplyAgentFilter}>
           Apply
         </Button>
       </div>
 
-      <div class="mt-3 overflow-x-auto rounded-lg border border-dark-600">
-        <table class="min-w-full divide-y divide-dark-600 text-left text-xs">
-          <thead class="bg-dark-850 text-gray-400">
+      <div class="mt-3 overflow-x-auto rounded-lg border border-line-strong">
+        <table class="min-w-full divide-y divide-line-strong text-left text-xs">
+          <thead class="bg-surface-overlay text-fg-muted">
             <tr>
               <th class="px-3 py-2 font-medium">Event</th>
               <th class="px-3 py-2 font-medium">Target</th>
@@ -913,10 +910,10 @@ function DeliveryLogSection({
               <th class="px-3 py-2 font-medium">Updated</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-dark-700">
+          <tbody class="divide-y divide-line">
             {loading ? (
               <tr>
-                <td colSpan={4} class="px-3 py-4 text-gray-400">
+                <td colSpan={4} class="px-3 py-4 text-fg-muted">
                   <span class="inline-flex items-center gap-2">
                     <Spinner size="sm" /> Loading deliveries…
                   </span>
@@ -924,7 +921,7 @@ function DeliveryLogSection({
               </tr>
             ) : deliveries.length === 0 ? (
               <tr>
-                <td colSpan={4} class="px-3 py-4 text-gray-400">
+                <td colSpan={4} class="px-3 py-4 text-fg-muted">
                   No event deliveries recorded yet.
                 </td>
               </tr>
@@ -960,35 +957,35 @@ function DeliveryRow({
 }) {
   return (
     <tr
-      class={cn('cursor-pointer hover:bg-white/5', selected && 'bg-blue-500/10')}
+      class={cn('cursor-pointer hover:bg-fill-soft', selected && 'bg-accent/10')}
       onClick={onSelect}
     >
       <td class="max-w-[24rem] px-3 py-2">
-        <div class="truncate font-mono text-gray-200">{delivery.event.topic}</div>
-        <div class="mt-0.5 truncate text-gray-400">{delivery.event.summary || 'No summary'}</div>
+        <div class="truncate font-mono text-fg-soft">{delivery.event.topic}</div>
+        <div class="mt-0.5 truncate text-fg-muted">{delivery.event.summary || 'No summary'}</div>
       </td>
-      <td class="px-3 py-2 text-gray-300">
+      <td class="px-3 py-2 text-fg-soft">
         <div>{delivery.agentName}</div>
-        <div class="mt-0.5 font-mono text-[11px] text-gray-500">{delivery.workflowRunId}</div>
+        <div class="mt-0.5 font-mono text-[11px] text-fg-faint">{delivery.workflowRunId}</div>
       </td>
       <td class="px-3 py-2">
         <span
           class={cn(
             'rounded-full px-2 py-0.5 text-[11px]',
-            delivery.state === 'delivered' && 'bg-green-500/10 text-green-300',
-            delivery.state === 'pending' && 'bg-yellow-500/10 text-yellow-300',
-            delivery.state === 'failed' && 'bg-red-500/10 text-red-300'
+            delivery.state === 'delivered' && 'bg-success/10 text-success-soft',
+            delivery.state === 'pending' && 'bg-warning/10 text-warning-soft',
+            delivery.state === 'failed' && 'bg-danger/10 text-danger-soft'
           )}
         >
           {delivery.state}
         </span>
         {delivery.failureReason && (
-          <div class="mt-1 max-w-[16rem] truncate text-[11px] text-red-300">
+          <div class="mt-1 max-w-[16rem] truncate text-[11px] text-danger-soft">
             {delivery.failureReason}
           </div>
         )}
       </td>
-      <td class="px-3 py-2 text-gray-400">{formatTimestamp(delivery.updatedAt)}</td>
+      <td class="px-3 py-2 text-fg-muted">{formatTimestamp(delivery.updatedAt)}</td>
     </tr>
   );
 }
@@ -1001,13 +998,13 @@ function DeliveryDetail({
   onClose: () => void;
 }) {
   return (
-    <div class="mt-3 rounded-lg border border-dark-600 bg-dark-850 px-3 py-3">
+    <div class="mt-3 rounded-lg border border-line-strong bg-surface-overlay px-3 py-3">
       <div class="flex items-start justify-between gap-3">
         <div>
-          <div class="text-sm font-medium text-gray-200">Event detail</div>
-          <div class="mt-1 font-mono text-xs text-gray-400">{delivery.event.id}</div>
+          <div class="text-sm font-medium text-fg-soft">Event detail</div>
+          <div class="mt-1 font-mono text-xs text-fg-muted">{delivery.event.id}</div>
         </div>
-        <button type="button" onClick={onClose} class="text-xs text-gray-400 hover:text-gray-200">
+        <button type="button" onClick={onClose} class="text-xs text-fg-muted hover:text-fg-soft">
           Close
         </button>
       </div>
@@ -1026,13 +1023,13 @@ function DeliveryDetail({
         <DetailItem label="Updated" value={formatTimestamp(delivery.updatedAt)} />
       </dl>
       {delivery.failureReason && (
-        <div class="mt-3 rounded border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+        <div class="mt-3 rounded border border-danger/20 bg-danger/10 px-3 py-2 text-xs text-danger-soft">
           {delivery.failureReason}
         </div>
       )}
       <div class="mt-3">
-        <div class="mb-1 text-[11px] uppercase tracking-wider text-gray-400">Payload</div>
-        <pre class="max-h-72 overflow-auto rounded-lg border border-white/10 bg-black/30 p-3 text-xs text-gray-300">
+        <div class="mb-1 text-[11px] uppercase tracking-wider text-fg-muted">Payload</div>
+        <pre class="max-h-72 overflow-auto rounded-lg border border-line bg-scrim p-3 text-xs text-fg-soft">
           {formatJson(delivery.event.payload)}
         </pre>
       </div>
@@ -1043,8 +1040,8 @@ function DeliveryDetail({
 function DetailItem({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt class="text-[11px] uppercase tracking-wider text-gray-500">{label}</dt>
-      <dd class="mt-0.5 break-all text-gray-300">{value}</dd>
+      <dt class="text-[11px] uppercase tracking-wider text-fg-faint">{label}</dt>
+      <dd class="mt-0.5 break-all text-fg-soft">{value}</dd>
     </div>
   );
 }
@@ -1060,7 +1057,7 @@ function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
   return (
     <label
       class={cn(
-        'flex items-start gap-3 rounded-lg border border-dark-700 bg-dark-800 px-3 py-2.5',
+        'flex items-start gap-3 rounded-lg border border-line bg-surface-raised px-3 py-2.5',
         disabled && 'opacity-60'
       )}
     >
@@ -1069,17 +1066,17 @@ function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
         checked={extension.config.globallyEnabled}
         disabled={disabled}
         onChange={() => onToggle(!extension.config.globallyEnabled)}
-        class="mt-0.5 h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+        class="mt-0.5 h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
       />
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-2">
-          <span class="text-sm font-medium text-gray-200 capitalize">{extension.source}</span>
+          <span class="text-sm font-medium text-fg-soft capitalize">{extension.source}</span>
           <span
             class={cn(
               'rounded-full px-2 py-0.5 text-[11px]',
               extension.status === 'started'
-                ? 'bg-green-500/10 text-green-300'
-                : 'bg-gray-500/10 text-gray-400'
+                ? 'bg-success/10 text-success-soft'
+                : 'bg-fg-faint/10 text-fg-muted'
             )}
           >
             {extension.status}
@@ -1089,13 +1086,13 @@ function ExtensionCard({ extension, disabled, onToggle }: ExtensionCardProps) {
           {capabilities.map((capability) => (
             <span
               key={capability}
-              class="rounded bg-white/5 px-1.5 py-0.5 text-[11px] text-gray-400"
+              class="rounded bg-fill-soft px-1.5 py-0.5 text-[11px] text-fg-muted"
             >
               {capability}
             </span>
           ))}
           {capabilities.length === 0 && (
-            <span class="text-xs text-gray-400">No capabilities enabled</span>
+            <span class="text-xs text-fg-muted">No capabilities enabled</span>
           )}
         </div>
       </div>
@@ -1129,16 +1126,16 @@ function GitHubRepoRow({
   return (
     <div
       class={cn(
-        'rounded-lg border border-dark-600 bg-dark-850 px-3 py-2.5',
+        'rounded-lg border border-line-strong bg-surface-overlay px-3 py-2.5',
         disabled && 'opacity-60'
       )}
     >
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0">
-          <div class="truncate font-mono text-sm text-gray-200">
+          <div class="truncate font-mono text-sm text-fg-soft">
             {repo.owner}/{repo.repo}
           </div>
-          <div class="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-400">
+          <div class="mt-1 flex flex-wrap gap-2 text-[11px] text-fg-muted">
             <span>secret {repo.webhookSecret ? 'configured' : 'missing'}</span>
             <WebhookStatus repo={repo} />
             <span>last webhook {formatTimestamp(repo.lastWebhookAt)}</span>
@@ -1172,40 +1169,40 @@ function GitHubRepoRow({
             type="button"
             onClick={onRemove}
             disabled={disabled}
-            class="text-xs text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-red-900"
+            class="text-xs text-danger hover:text-danger-soft disabled:cursor-not-allowed disabled:text-danger"
           >
             Remove
           </button>
         </div>
       </div>
       <div class="mt-3 flex flex-wrap gap-4">
-        <label class="flex items-center gap-2 text-xs text-gray-300">
+        <label class="flex items-center gap-2 text-xs text-fg-soft">
           <input
             type="checkbox"
             checked={repo.enabled}
             disabled={disabled}
             onChange={() => onUpdate({ enabled: !repo.enabled })}
-            class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+            class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
           />
           Enabled
         </label>
-        <label class="flex items-center gap-2 text-xs text-gray-300">
+        <label class="flex items-center gap-2 text-xs text-fg-soft">
           <input
             type="checkbox"
             checked={repo.webhookEnabled}
             disabled={disabled}
             onChange={() => onUpdate({ webhookEnabled: !repo.webhookEnabled })}
-            class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+            class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
           />
           Webhooks
         </label>
-        <label class="flex items-center gap-2 text-xs text-gray-300">
+        <label class="flex items-center gap-2 text-xs text-fg-soft">
           <input
             type="checkbox"
             checked={repo.pollingEnabled}
             disabled={disabled || !pollingEnabled}
             onChange={() => onUpdate({ pollingEnabled: !repo.pollingEnabled })}
-            class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+            class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
           />
           Polling
         </label>
@@ -1219,10 +1216,10 @@ function WebhookStatus({ repo }: { repo: GitHubWatchedRepo }) {
     return <span>webhook manual</span>;
   }
   if (repo.webhookActive === true) {
-    return <span class="text-green-300">webhook active</span>;
+    return <span class="text-success-soft">webhook active</span>;
   }
   if (repo.webhookActive === false) {
-    return <span class="text-red-300">webhook inactive</span>;
+    return <span class="text-danger-soft">webhook inactive</span>;
   }
   return <span>webhook status unknown</span>;
 }
@@ -1264,18 +1261,18 @@ function GitHubConnectionCard({
   const showInput = !connected || tokenInvalid || replaceMode;
   return (
     <div
-      class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3 space-y-3"
+      class="rounded-lg border border-line bg-surface-raised px-3 py-3 space-y-3"
       data-testid="github-connection-card"
     >
       <div>
-        <div class="text-sm font-medium text-gray-200">GitHub connection</div>
-        <p class="mt-0.5 text-xs text-gray-400">
+        <div class="text-sm font-medium text-fg-soft">GitHub connection</div>
+        <p class="mt-0.5 text-xs text-fg-muted">
           Store a daemon-wide personal access token in the keychain for webhook auto-configure and
           authenticated polling. The token is shared by every space using the GitHub extension.
-          Recommended scopes: <code class="text-gray-300">repo</code>,{' '}
-          <code class="text-gray-300">admin:repo_hook</code>. Supported prefixes:{' '}
-          <code class="text-gray-300">ghp_</code>, <code class="text-gray-300">github_pat_</code>,{' '}
-          <code class="text-gray-300">gho_</code>.
+          Recommended scopes: <code class="text-fg-soft">repo</code>,{' '}
+          <code class="text-fg-soft">admin:repo_hook</code>. Supported prefixes:{' '}
+          <code class="text-fg-soft">ghp_</code>, <code class="text-fg-soft">github_pat_</code>,{' '}
+          <code class="text-fg-soft">gho_</code>.
         </p>
       </div>
 
@@ -1287,21 +1284,21 @@ function GitHubConnectionCard({
           <span
             class={cn(
               'inline-flex items-center gap-1 rounded-full px-2 py-0.5',
-              connected ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'
+              connected ? 'bg-success/10 text-success-soft' : 'bg-danger/10 text-danger-soft'
             )}
           >
             {connected ? 'Connected' : 'Token invalid'}
           </span>
           {tokenStatus?.login && (
-            <span class="text-gray-300">
+            <span class="text-fg-soft">
               as <span class="font-mono">{tokenStatus.login}</span>
             </span>
           )}
           {tokenStatus?.source === 'env' && (
-            <span class="text-gray-500">(token from GITHUB_TOKEN env var)</span>
+            <span class="text-fg-faint">(token from GITHUB_TOKEN env var)</span>
           )}
           {tokenInvalid && (
-            <span class="text-red-300" data-testid="github-token-invalid-error">
+            <span class="text-danger-soft" data-testid="github-token-invalid-error">
               {tokenStatus?.error}
             </span>
           )}
@@ -1311,7 +1308,7 @@ function GitHubConnectionCard({
                 type="button"
                 onClick={() => setReplaceMode(true)}
                 disabled={tokenWriteDisabled}
-                class="text-gray-300 hover:text-gray-100 disabled:cursor-not-allowed disabled:text-gray-600"
+                class="text-fg-soft hover:text-fg disabled:cursor-not-allowed disabled:text-fg-faint"
               >
                 {connected
                   ? tokenStatus?.source === 'env'
@@ -1324,7 +1321,7 @@ function GitHubConnectionCard({
               type="button"
               onClick={onClearToken}
               disabled={tokenWriteDisabled || tokenStatus?.source === 'env'}
-              class="text-red-400 hover:text-red-300 disabled:cursor-not-allowed disabled:text-red-900"
+              class="text-danger hover:text-danger-soft disabled:cursor-not-allowed disabled:text-danger"
             >
               Disconnect
             </button>
@@ -1340,7 +1337,7 @@ function GitHubConnectionCard({
             onInput={(event) => onTokenInputChange((event.target as HTMLInputElement).value)}
             placeholder="ghp_…"
             disabled={tokenWriteDisabled}
-            class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            class="w-full rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
             aria-label="GitHub personal access token"
           />
           <div class="flex flex-wrap items-center gap-2">
@@ -1357,37 +1354,37 @@ function GitHubConnectionCard({
                 type="button"
                 onClick={() => setReplaceMode(false)}
                 disabled={tokenWriteDisabled}
-                class="text-xs text-gray-400 hover:text-gray-200"
+                class="text-xs text-fg-muted hover:text-fg-soft"
               >
                 Cancel
               </button>
             )}
           </div>
           {!tokenStatus && !tokenStatusError && (
-            <p class="text-xs text-gray-500">Checking token status…</p>
+            <p class="text-xs text-fg-faint">Checking token status…</p>
           )}
           {tokenStatusError && (
-            <p class="text-xs text-red-300" data-testid="github-token-status-error">
+            <p class="text-xs text-danger-soft" data-testid="github-token-status-error">
               Could not load token status: {tokenStatusError}
             </p>
           )}
         </div>
       )}
 
-      <label class="flex flex-col gap-1 text-xs text-gray-300">
+      <label class="flex flex-col gap-1 text-xs text-fg-soft">
         <span class="flex items-center gap-2">
           <input
             type="checkbox"
             checked={pollingEnabled}
             disabled={pollingDisabled}
             onChange={() => onTogglePolling(!pollingEnabled)}
-            class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+            class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
             aria-label="Enable GitHub polling for this space"
           />
           Polling for this space (daemon-wide capability)
         </span>
         {pollingCapabilityDisabled && (
-          <span class="ml-6 text-gray-500">
+          <span class="ml-6 text-fg-faint">
             Polling capability is currently off daemon-wide — toggle to enable it.
           </span>
         )}

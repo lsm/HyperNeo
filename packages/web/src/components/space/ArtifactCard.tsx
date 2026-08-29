@@ -11,7 +11,7 @@ import type {
 import { isArtifactShape, normalizeLinkData, resolveLegacyShape } from '@hyperneo/shared';
 
 const cardBase =
-  'flex items-start gap-2 px-3 py-2 rounded bg-dark-700/50 border border-dark-600 w-full';
+  'flex items-start gap-2 px-3 py-2 rounded bg-fill-strong/50 border border-line-strong w-full';
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -49,30 +49,30 @@ interface LinkKindMeta {
 function linkKindMeta(kind: string): LinkKindMeta {
   switch (kind) {
     case 'pr':
-      return { label: 'Pull Request', color: 'text-purple-400', fork: true };
+      return { label: 'Pull Request', color: 'text-cat-purple', fork: true };
     case 'issue':
-      return { label: 'Issue', color: 'text-blue-400', fork: true };
+      return { label: 'Issue', color: 'text-accent', fork: true };
     case 'preview':
-      return { label: 'Preview', color: 'text-green-400', fork: false };
+      return { label: 'Preview', color: 'text-success', fork: false };
     case 'doc':
-      return { label: 'Doc', color: 'text-gray-300', fork: false };
+      return { label: 'Doc', color: 'text-fg-soft', fork: false };
     case 'post':
-      return { label: 'Post', color: 'text-gray-300', fork: false };
+      return { label: 'Post', color: 'text-fg-soft', fork: false };
     default:
-      return { label: kind ? capitalize(kind) : 'Link', color: 'text-blue-400', fork: false };
+      return { label: kind ? capitalize(kind) : 'Link', color: 'text-accent', fork: false };
   }
 }
 
 function stateColor(state: string): string {
   switch (state) {
     case 'open':
-      return 'text-green-400';
+      return 'text-success';
     case 'merged':
-      return 'text-purple-400';
+      return 'text-cat-purple';
     case 'closed':
-      return 'text-red-400';
+      return 'text-danger';
     default:
-      return 'text-gray-400';
+      return 'text-fg-muted';
   }
 }
 
@@ -150,14 +150,14 @@ function LinkCard({ artifact }: { artifact: WorkflowRunArtifact }) {
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            class="text-xs text-blue-400 hover:text-blue-300 truncate block"
+            class="text-xs text-accent hover:text-accent-soft truncate block"
           >
             {label}
           </a>
         ) : (
-          <span class="text-xs text-gray-300 truncate block">{label}</span>
+          <span class="text-xs text-fg-soft truncate block">{label}</span>
         )}
-        {showHost && <p class="text-xs text-gray-400 font-mono mt-0.5 truncate">{hostname}</p>}
+        {showHost && <p class="text-xs text-fg-muted font-mono mt-0.5 truncate">{hostname}</p>}
       </div>
       {state && (
         <span class={`text-xs font-medium flex-shrink-0 ${stateColor(state)}`}>{state}</span>
@@ -181,13 +181,13 @@ function CommitSetCard({ artifact }: { artifact: WorkflowRunArtifact }) {
 
   return (
     <div
-      class="rounded border border-dark-600 bg-dark-700/50 overflow-hidden w-full"
+      class="rounded border border-line-strong bg-fill-strong/50 overflow-hidden w-full"
       data-testid="artifact-card-commit-set"
     >
-      <div class="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-dark-700">
+      <div class="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-line">
         <div class="flex items-center gap-1.5 min-w-0">
           <svg
-            class="w-3.5 h-3.5 text-gray-400 flex-shrink-0"
+            class="w-3.5 h-3.5 text-fg-muted flex-shrink-0"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -195,19 +195,19 @@ function CommitSetCard({ artifact }: { artifact: WorkflowRunArtifact }) {
             <circle cx="12" cy="12" r="3" stroke-width={2} />
             <path stroke-linecap="round" stroke-width={2} d="M12 3v6m0 6v6M3 12h6m6 0h6" />
           </svg>
-          <span class="text-xs text-gray-300 flex-shrink-0">
+          <span class="text-xs text-fg-soft flex-shrink-0">
             {commits.length} commit{commits.length === 1 ? '' : 's'}
           </span>
           {(branch || head) && (
-            <span class="text-xs text-gray-400 font-mono truncate">
+            <span class="text-xs text-fg-muted font-mono truncate">
               {branch}
               {head && ` @ ${head.slice(0, 7)}`}
             </span>
           )}
         </div>
         <div class="flex items-center gap-1 text-xs font-mono flex-shrink-0">
-          {additions != null && <span class="text-green-400">+{additions}</span>}
-          {deletions != null && <span class="text-red-400">-{deletions}</span>}
+          {additions != null && <span class="text-success">+{additions}</span>}
+          {deletions != null && <span class="text-danger">-{deletions}</span>}
         </div>
       </div>
       {shown.length > 0 && (
@@ -217,13 +217,13 @@ function CommitSetCard({ artifact }: { artifact: WorkflowRunArtifact }) {
             const message = str(c.message);
             return (
               <div key={i} class="flex items-center gap-2 text-xs min-w-0">
-                {sha && <span class="font-mono text-gray-400 flex-shrink-0">{sha}</span>}
-                <span class="text-gray-300 truncate">{message}</span>
+                {sha && <span class="font-mono text-fg-muted flex-shrink-0">{sha}</span>}
+                <span class="text-fg-soft truncate">{message}</span>
               </div>
             );
           })}
           {commits.length > shown.length && (
-            <p class="text-xs text-gray-400">+{commits.length - shown.length} more</p>
+            <p class="text-xs text-fg-muted">+{commits.length - shown.length} more</p>
           )}
         </div>
       )}
@@ -240,14 +240,14 @@ function checkStatusMeta(status: string): CheckStatusMeta {
   switch (status) {
     case 'pass':
     case 'passed':
-      return { bg: 'bg-green-500/15', color: 'text-green-400' };
+      return { bg: 'bg-success/15', color: 'text-success' };
     case 'fail':
     case 'failed':
-      return { bg: 'bg-red-500/15', color: 'text-red-400' };
+      return { bg: 'bg-danger/15', color: 'text-danger' };
     case 'running':
-      return { bg: 'bg-blue-500/15', color: 'text-blue-400' };
+      return { bg: 'bg-accent/15', color: 'text-accent' };
     default:
-      return { bg: 'bg-dark-600', color: 'text-gray-400' };
+      return { bg: 'bg-line-strong', color: 'text-fg-muted' };
   }
 }
 
@@ -267,15 +267,15 @@ function CheckCard({ artifact }: { artifact: WorkflowRunArtifact }) {
         {status || 'unknown'}
       </span>
       <div class="flex-1 min-w-0">
-        <span class="text-xs text-gray-300">{name}</span>
-        {counts && <span class="text-xs text-gray-400 ml-2">{counts}</span>}
+        <span class="text-xs text-fg-soft">{name}</span>
+        {counts && <span class="text-xs text-fg-muted ml-2">{counts}</span>}
       </div>
       {href && (
         <a
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          class="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0"
+          class="text-xs text-accent hover:text-accent-soft flex-shrink-0"
         >
           view
         </a>
@@ -296,7 +296,7 @@ function MetricCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   return (
     <div class={cardBase} data-testid="artifact-card-metric">
       <svg
-        class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5"
+        class="w-3.5 h-3.5 text-fg-muted flex-shrink-0 mt-0.5"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -309,15 +309,15 @@ function MetricCard({ artifact }: { artifact: WorkflowRunArtifact }) {
         />
       </svg>
       <div class="flex-1 min-w-0 text-xs flex items-baseline gap-1.5 flex-wrap">
-        <span class="text-gray-400 font-mono">{name}</span>
+        <span class="text-fg-muted font-mono">{name}</span>
         {hasValue && (
-          <span class="text-gray-100 font-medium">
+          <span class="text-fg font-medium">
             {String(value)}
-            {unit && <span class="text-gray-400 font-normal ml-0.5">{unit}</span>}
+            {unit && <span class="text-fg-muted font-normal ml-0.5">{unit}</span>}
           </span>
         )}
         {hasTarget && (
-          <span class="text-gray-400">
+          <span class="text-fg-muted">
             → {String(target)}
             {unit}
           </span>
@@ -336,14 +336,14 @@ function decisionMeta(recommendation: string): DecisionMeta {
   switch (recommendation) {
     case 'approve':
     case 'approved':
-      return { bg: 'bg-green-500/15', color: 'text-green-400' };
+      return { bg: 'bg-success/15', color: 'text-success' };
     case 'request_changes':
-      return { bg: 'bg-amber-500/15', color: 'text-amber-400' };
+      return { bg: 'bg-warning/15', color: 'text-warning' };
     case 'reject':
     case 'rejected':
-      return { bg: 'bg-red-500/15', color: 'text-red-400' };
+      return { bg: 'bg-danger/15', color: 'text-danger' };
     default:
-      return { bg: 'bg-dark-600', color: 'text-gray-400' };
+      return { bg: 'bg-line-strong', color: 'text-fg-muted' };
   }
 }
 
@@ -372,15 +372,15 @@ function DecisionCard({ artifact }: { artifact: WorkflowRunArtifact }) {
         {recommendation || 'decision'}
       </span>
       <div class="flex-1 min-w-0">
-        {summary && <span class="text-xs text-gray-300">{summary}</span>}
-        {counts && <span class="text-xs text-gray-400 ml-2">{counts}</span>}
+        {summary && <span class="text-xs text-fg-soft">{summary}</span>}
+        {counts && <span class="text-xs text-fg-muted ml-2">{counts}</span>}
       </div>
       {picked && (
         <a
           href={picked.href}
           target="_blank"
           rel="noopener noreferrer"
-          class="text-xs text-blue-400 hover:text-blue-300 flex-shrink-0"
+          class="text-xs text-accent hover:text-accent-soft flex-shrink-0"
         >
           {picked.label}
         </a>
@@ -397,7 +397,7 @@ function NoteCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   return (
     <div class={cardBase} data-testid="artifact-card-note">
       <svg
-        class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5"
+        class="w-3.5 h-3.5 text-fg-muted flex-shrink-0 mt-0.5"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -409,10 +409,10 @@ function NoteCard({ artifact }: { artifact: WorkflowRunArtifact }) {
           d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
         />
       </svg>
-      <p class="flex-1 min-w-0 text-xs text-gray-300 whitespace-pre-wrap break-words leading-relaxed">
+      <p class="flex-1 min-w-0 text-xs text-fg-soft whitespace-pre-wrap break-words leading-relaxed">
         {text}
       </p>
-      {ts && <span class="text-xs text-gray-400 font-mono flex-shrink-0">{ts}</span>}
+      {ts && <span class="text-xs text-fg-muted font-mono flex-shrink-0">{ts}</span>}
     </div>
   );
 }
@@ -422,7 +422,7 @@ function GenericCard({ artifact }: { artifact: WorkflowRunArtifact }) {
   return (
     <div class={cardBase} data-testid="artifact-card-generic">
       <svg
-        class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5"
+        class="w-3.5 h-3.5 text-fg-muted flex-shrink-0 mt-0.5"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -436,9 +436,9 @@ function GenericCard({ artifact }: { artifact: WorkflowRunArtifact }) {
       </svg>
       <div class="flex-1 min-w-0">
         {artifact.artifactKey && artifact.artifactKey !== 'default' && (
-          <p class="text-xs text-gray-400 font-mono truncate">{artifact.artifactKey}</p>
+          <p class="text-xs text-fg-muted font-mono truncate">{artifact.artifactKey}</p>
         )}
-        <p class="text-xs text-gray-400">
+        <p class="text-xs text-fg-muted">
           {artifact.artifactType || 'artifact'} · {keyCount} field{keyCount === 1 ? '' : 's'}
         </p>
       </div>

@@ -26,12 +26,12 @@ interface ToneClasses {
 }
 
 const TONE_CLASSES: Record<InlineStatusBannerTone, ToneClasses> = {
-  amber: { text: 'text-amber-400/90', meta: 'text-amber-400/60' },
-  blue: { text: 'text-sky-300', meta: 'text-sky-300/60' },
-  green: { text: 'text-green-300', meta: 'text-green-400/60' },
-  purple: { text: 'text-purple-300', meta: 'text-purple-400/60' },
-  red: { text: 'text-red-300', meta: 'text-red-400/60' },
-  gray: { text: 'text-gray-300', meta: 'text-gray-400/60' },
+  amber: { text: 'text-warning/90', meta: 'text-warning/60' },
+  blue: { text: 'text-info-soft', meta: 'text-info-soft/60' },
+  green: { text: 'text-success-soft', meta: 'text-success/60' },
+  purple: { text: 'text-cat-purple', meta: 'text-cat-purple/60' },
+  red: { text: 'text-danger-soft', meta: 'text-danger/60' },
+  gray: { text: 'text-fg-soft', meta: 'text-fg-muted/60' },
 };
 
 const ACTION_VARIANT_CLASSES: Record<
@@ -39,28 +39,28 @@ const ACTION_VARIANT_CLASSES: Record<
   Record<InlineStatusBannerTone, string>
 > = {
   primary: {
-    amber: 'bg-amber-900/40 text-amber-200 border border-amber-700/50 hover:bg-amber-800/50',
-    blue: 'bg-sky-900/40 text-sky-200 border border-sky-700/50 hover:bg-sky-800/50',
-    green: 'bg-green-900/40 text-green-200 border border-green-700/50 hover:bg-green-800/50',
-    purple: 'bg-purple-900/40 text-purple-200 border border-purple-700/50 hover:bg-purple-800/50',
-    red: 'bg-red-900/40 text-red-200 border border-red-700/50 hover:bg-red-800/50',
-    gray: 'bg-gray-800/60 text-gray-200 border border-gray-700/50 hover:bg-gray-800/80',
+    amber: 'bg-warning/40 text-warning-soft border border-warning/50 hover:bg-amber-800/50',
+    blue: 'bg-sky-900/40 text-info-soft border border-sky-700/50 hover:bg-sky-800/50',
+    green: 'bg-success/40 text-success-soft border border-success/50 hover:bg-green-800/50',
+    purple: 'bg-cat-purple/40 text-cat-purple border border-cat-purple/50 hover:bg-purple-800/50',
+    red: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
+    gray: 'bg-surface-raised/60 text-fg-soft border border-line/50 hover:bg-surface-raised/80',
   },
   secondary: {
-    amber: 'bg-dark-700 text-amber-300 hover:bg-dark-600',
-    blue: 'bg-dark-700 text-sky-300 hover:bg-dark-600',
-    green: 'bg-dark-700 text-green-300 hover:bg-dark-600',
-    purple: 'bg-dark-700 text-purple-300 hover:bg-dark-600',
-    red: 'bg-dark-700 text-red-300 hover:bg-dark-600',
-    gray: 'bg-dark-700 text-gray-300 hover:bg-dark-600',
+    amber: 'bg-fill-strong text-warning hover:bg-line-strong',
+    blue: 'bg-fill-strong text-info-soft hover:bg-line-strong',
+    green: 'bg-fill-strong text-success-soft hover:bg-line-strong',
+    purple: 'bg-fill-strong text-cat-purple hover:bg-line-strong',
+    red: 'bg-fill-strong text-danger-soft hover:bg-line-strong',
+    gray: 'bg-fill-strong text-fg-soft hover:bg-line-strong',
   },
   danger: {
-    amber: 'bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50',
-    blue: 'bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50',
-    green: 'bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50',
-    purple: 'bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50',
-    red: 'bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50',
-    gray: 'bg-red-900/40 text-red-300 border border-red-700/50 hover:bg-red-800/50',
+    amber: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
+    blue: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
+    green: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
+    purple: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
+    red: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
+    gray: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
   },
 };
 

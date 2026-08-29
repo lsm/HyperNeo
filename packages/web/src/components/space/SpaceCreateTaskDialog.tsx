@@ -246,51 +246,48 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
     <Modal isOpen={isOpen} onClose={handleClose} title="Create Task" size="md">
       <form onSubmit={handleSubmit} class="space-y-4">
         {error && (
-          <div class="bg-red-900/20 border border-red-800 rounded-lg px-4 py-3 text-red-400 text-sm">
+          <div class="bg-danger/20 border border-danger rounded-lg px-4 py-3 text-danger text-sm">
             {error}
           </div>
         )}
 
         <div>
-          <label class="block text-sm font-medium text-gray-200 mb-1.5">
+          <label class="block text-sm font-medium text-fg-soft mb-1.5">
             Title
-            <span class="text-red-400 ml-1">*</span>
+            <span class="text-danger ml-1">*</span>
           </label>
           <input
             type="text"
             value={title}
             onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
             placeholder="e.g., Implement authentication module"
-            class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
-							placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm"
+            class="w-full bg-surface-raised border border-line-strong rounded-lg px-4 py-2.5 text-fg placeholder-gray-600 focus:outline-none focus:border-accent text-sm"
             autoFocus
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1.5">
+          <label class="block text-sm font-medium text-fg-soft mb-1.5">
             Description
-            <span class="text-gray-400 text-xs ml-2">(optional)</span>
+            <span class="text-fg-muted text-xs ml-2">(optional)</span>
           </label>
           <textarea
             value={description}
             onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
             placeholder="Describe what this task should accomplish..."
             rows={3}
-            class="w-full bg-dark-800 border border-dark-700 rounded-lg px-4 py-2.5 text-gray-100
-							placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none text-sm"
+            class="w-full bg-surface-raised border border-line rounded-lg px-4 py-2.5 text-fg placeholder-gray-500 focus:outline-none focus:border-accent resize-none text-sm"
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1.5">Priority</label>
+          <label class="block text-sm font-medium text-fg-soft mb-1.5">Priority</label>
           <select
             value={priority}
             onChange={(e) =>
               setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
             }
-            class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
-							focus:outline-none focus:border-blue-500 text-sm"
+            class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-fg focus:outline-none focus:border-accent text-sm"
           >
             {PRIORITY_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -302,13 +299,12 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 
         {workspaces && workspaces.length > 0 && !scheduleEnabled && (
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-1.5">Workspace</label>
+            <label class="block text-sm font-medium text-fg-soft mb-1.5">Workspace</label>
             <select
               value={workspacePath ?? undefined}
               onChange={(e) => setWorkspacePath((e.target as HTMLSelectElement).value)}
               data-testid="task-workspace-select"
-              class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-gray-100
-								focus:outline-none focus:border-blue-500 text-sm"
+              class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-fg focus:outline-none focus:border-accent text-sm"
             >
               {workspaces.map((workspace) => (
                 <option key={workspace.id} value={workspace.path}>
@@ -320,30 +316,30 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
           </div>
         )}
 
-        <div class="border-t border-dark-700 pt-4">
+        <div class="border-t border-line pt-4">
           <label class="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
               checked={scheduleEnabled}
               onChange={(e) => setScheduleEnabled((e.target as HTMLInputElement).checked)}
-              class="w-4 h-4 rounded border-dark-600 bg-dark-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-dark-900"
+              class="w-4 h-4 rounded border-line-strong bg-surface-raised text-accent focus:ring-accent focus:ring-offset-dark-900"
             />
-            <span class="text-sm font-medium text-gray-200">Schedule this task</span>
+            <span class="text-sm font-medium text-fg-soft">Schedule this task</span>
           </label>
         </div>
 
         {scheduleEnabled && (
-          <div class="space-y-4 rounded-lg border border-dark-700 bg-dark-800/50 p-4">
+          <div class="space-y-4 rounded-lg border border-line bg-surface-raised/50 p-4">
             <div>
-              <label class="block text-sm font-medium text-gray-300 mb-1.5">Trigger</label>
+              <label class="block text-sm font-medium text-fg-soft mb-1.5">Trigger</label>
               <div class="flex gap-3">
                 {TRIGGER_OPTIONS.map((opt) => (
                   <label
                     key={opt.value}
                     class={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
                       triggerType === opt.value
-                        ? 'border-blue-500 bg-blue-900/20 text-blue-300'
-                        : 'border-dark-600 text-gray-400 hover:border-dark-500'
+                        ? 'border-accent bg-accent/20 text-accent-soft'
+                        : 'border-line-strong text-fg-muted hover:border-line-strong'
                     }`}
                   >
                     <input
@@ -367,9 +363,9 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 
             {triggerType === 'at' && (
               <div>
-                <label class="block text-sm font-medium text-gray-300 mb-1.5">
+                <label class="block text-sm font-medium text-fg-soft mb-1.5">
                   Run at
-                  <span class="text-red-400 ml-1">*</span>
+                  <span class="text-danger ml-1">*</span>
                 </label>
                 <input
                   type="datetime-local"
@@ -378,8 +374,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
                     const val = (e.target as HTMLInputElement).value;
                     setRunAt(val ? new Date(val).getTime() : null);
                   }}
-                  class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
-										focus:outline-none focus:border-blue-500 text-sm"
+                  class="w-full bg-surface-raised border border-line-strong rounded-lg px-4 py-2.5 text-fg focus:outline-none focus:border-accent text-sm"
                 />
               </div>
             )}
@@ -387,9 +382,9 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
             {triggerType === 'cron' && (
               <div class="space-y-3">
                 <div>
-                  <label class="block text-sm font-medium text-gray-300 mb-1.5">
+                  <label class="block text-sm font-medium text-fg-soft mb-1.5">
                     Cron expression
-                    <span class="text-red-400 ml-1">*</span>
+                    <span class="text-danger ml-1">*</span>
                   </label>
                   <div class="flex gap-2 flex-wrap mb-2">
                     {CRON_PRESETS.map((preset) => (
@@ -399,8 +394,8 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
                         onClick={() => setCronExpression(preset.value)}
                         class={`px-2.5 py-1 text-xs rounded border transition-colors ${
                           cronExpression === preset.value
-                            ? 'border-blue-500 bg-blue-900/20 text-blue-300'
-                            : 'border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
+                            ? 'border-accent bg-accent/20 text-accent-soft'
+                            : 'border-line-strong text-fg-muted hover:border-line-strong hover:text-fg-soft'
                         }`}
                       >
                         {preset.label}
@@ -412,15 +407,14 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
                     value={cronExpression}
                     onInput={(e) => setCronExpression((e.target as HTMLInputElement).value)}
                     placeholder="0 9 * * 1"
-                    class={`w-full bg-dark-800 border rounded-lg px-4 py-2.5 text-gray-100
-											placeholder-gray-600 focus:outline-none focus:border-blue-500 text-sm ${
-                        cronExpression && !isValidCronExpression(cronExpression)
-                          ? 'border-red-700 focus:border-red-500'
-                          : 'border-dark-600'
-                      }`}
+                    class={`w-full bg-surface-raised border rounded-lg px-4 py-2.5 text-fg placeholder-gray-600 focus:outline-none focus:border-accent text-sm ${
+                      cronExpression && !isValidCronExpression(cronExpression)
+                        ? 'border-danger focus:border-danger'
+                        : 'border-line-strong'
+                    }`}
                   />
                   {cronExpression && !isValidCronExpression(cronExpression) && (
-                    <p class="mt-1 text-xs text-red-400">Invalid cron expression</p>
+                    <p class="mt-1 text-xs text-danger">Invalid cron expression</p>
                   )}
                 </div>
               </div>
@@ -428,12 +422,11 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
 
             {triggerType === 'cron' && (
               <div>
-                <label class="block text-sm font-medium text-gray-300 mb-1.5">Timezone</label>
+                <label class="block text-sm font-medium text-fg-soft mb-1.5">Timezone</label>
                 <select
                   value={timezone}
                   onChange={(e) => setTimezone((e.target as HTMLSelectElement).value)}
-                  class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-gray-100
-										focus:outline-none focus:border-blue-500 text-sm"
+                  class="w-full bg-surface-raised border border-line-strong rounded-lg px-3 py-2 text-fg focus:outline-none focus:border-accent text-sm"
                 >
                   {COMMON_TIMEZONES.map((tz) => (
                     <option key={tz} value={tz}>
@@ -445,7 +438,7 @@ export function SpaceCreateTaskDialog({ isOpen, onClose, onCreated }: SpaceCreat
             )}
 
             {preview && (
-              <div class="text-xs text-gray-400 bg-dark-900/50 rounded px-3 py-2 border border-dark-700">
+              <div class="text-xs text-fg-muted bg-surface/50 rounded px-3 py-2 border border-line">
                 {preview}
               </div>
             )}

@@ -230,9 +230,9 @@ function deriveStatus(snapshot: GitHubHealthSnapshot): HealthStatus {
 }
 
 const STATUS_STYLES: Record<HealthStatus, { label: string; class: string }> = {
-  healthy: { label: 'Healthy', class: 'bg-green-500/10 text-green-300' },
-  degraded: { label: 'Degraded', class: 'bg-yellow-500/10 text-yellow-300' },
-  down: { label: 'Down', class: 'bg-red-500/10 text-red-300' },
+  healthy: { label: 'Healthy', class: 'bg-success/10 text-success-soft' },
+  degraded: { label: 'Degraded', class: 'bg-warning/10 text-warning-soft' },
+  down: { label: 'Down', class: 'bg-danger/10 text-danger-soft' },
 };
 
 export function GitHubHealthPanel({
@@ -461,12 +461,12 @@ export function GitHubHealthPanel({
 
   return (
     <div
-      class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3"
+      class="rounded-lg border border-line bg-surface-raised px-3 py-3"
       data-testid="github-health-panel"
     >
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="flex items-center gap-2">
-          <div class="text-sm font-medium text-gray-200">GitHub integration health</div>
+          <div class="text-sm font-medium text-fg-soft">GitHub integration health</div>
           {status && (
             <span
               class={cn('rounded-full px-2 py-0.5 text-[11px]', STATUS_STYLES[status].class)}
@@ -546,11 +546,11 @@ export function GitHubHealthPanel({
       </div>
 
       {loading && !snapshot ? (
-        <div class="mt-3 flex items-center gap-2 py-2 text-xs text-gray-400">
+        <div class="mt-3 flex items-center gap-2 py-2 text-xs text-fg-muted">
           <Spinner size="sm" /> Loading integration health…
         </div>
       ) : error ? (
-        <p class="mt-3 text-xs text-red-300">Failed to load health: {error}</p>
+        <p class="mt-3 text-xs text-danger-soft">Failed to load health: {error}</p>
       ) : snapshot ? (
         <div class="mt-3 space-y-3">
           <dl class="grid gap-2 text-xs md:grid-cols-2" data-testid="github-health-metrics">
@@ -570,9 +570,9 @@ export function GitHubHealthPanel({
               <ReactionStatus snapshot={snapshot} />
             </Metric>
             <Metric label="Recent delivery errors">
-              <span class="text-gray-200">{snapshot.recentErrorTotal}</span>
+              <span class="text-fg-soft">{snapshot.recentErrorTotal}</span>
               {snapshot.recentErrors.length > 0 && (
-                <span class="ml-2 text-gray-500">
+                <span class="ml-2 text-fg-faint">
                   latest {formatTimestamp(snapshot.recentErrors[0].updatedAt)}
                 </span>
               )}
@@ -582,7 +582,7 @@ export function GitHubHealthPanel({
           <EventTypeBreakdown snapshot={snapshot} />
 
           {(snapshot.webhook.errors.length > 0 || snapshot.recentErrors.length > 0) && (
-            <div class="space-y-2 rounded-lg border border-white/10 bg-dark-850 px-3 py-2">
+            <div class="space-y-2 rounded-lg border border-line bg-surface-overlay px-3 py-2">
               {snapshot.webhook.errors.length > 0 && (
                 <ErrorList
                   heading="Webhook errors"
@@ -616,9 +616,9 @@ export function GitHubHealthPanel({
 
 function Metric({ label, children }: { label: string; children: ComponentChildren }) {
   return (
-    <div class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2">
-      <dt class="text-[11px] uppercase tracking-wider text-gray-500">{label}</dt>
-      <dd class="mt-1 text-gray-200">{children}</dd>
+    <div class="rounded-lg border border-line bg-surface-overlay px-3 py-2">
+      <dt class="text-[11px] uppercase tracking-wider text-fg-faint">{label}</dt>
+      <dd class="mt-1 text-fg-soft">{children}</dd>
     </div>
   );
 }
@@ -628,17 +628,17 @@ function TokenStatusBadge({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
   if (!token.configured) {
     return (
       <span>
-        <span class="text-red-300">Not configured</span>
-        {token.error && <div class="text-red-300">{token.error}</div>}
+        <span class="text-danger-soft">Not configured</span>
+        {token.error && <div class="text-danger-soft">{token.error}</div>}
       </span>
     );
   }
   const sourceLabel = token.source === 'keychain' ? 'keychain' : 'env var';
   return (
     <span>
-      <span class="text-gray-200">{token.login ?? 'configured'}</span>{' '}
-      <span class="text-gray-500">({sourceLabel})</span>
-      {token.error && <div class="text-red-300">{token.error}</div>}
+      <span class="text-fg-soft">{token.login ?? 'configured'}</span>{' '}
+      <span class="text-fg-faint">({sourceLabel})</span>
+      {token.error && <div class="text-danger-soft">{token.error}</div>}
     </span>
   );
 }
@@ -646,15 +646,15 @@ function TokenStatusBadge({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
 function PollingStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
   const { polling } = snapshot;
   if (!polling.globallyEnabled || polling.intervalMs <= 0) {
-    return <span class="text-gray-400">Disabled</span>;
+    return <span class="text-fg-muted">Disabled</span>;
   }
   return (
     <span>
-      <span class="text-gray-200">{formatInterval(polling.intervalMs)}</span>{' '}
-      <span class="text-gray-500">
+      <span class="text-fg-soft">{formatInterval(polling.intervalMs)}</span>{' '}
+      <span class="text-fg-faint">
         {polling.active ? 'active' : 'idle'}, {polling.pollingRepoCount} repo(s)
       </span>
-      <div class="text-gray-500">last poll {formatTimestamp(polling.lastPollAt)}</div>
+      <div class="text-fg-faint">last poll {formatTimestamp(polling.lastPollAt)}</div>
     </span>
   );
 }
@@ -664,20 +664,20 @@ function RateLimitStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
   if (rateLimit.limited) {
     return (
       <span>
-        <span class="text-yellow-300">Cooling down</span>{' '}
-        <span class="text-gray-500">resets in {relativeFromNow(rateLimit.until)}</span>
+        <span class="text-warning-soft">Cooling down</span>{' '}
+        <span class="text-fg-faint">resets in {relativeFromNow(rateLimit.until)}</span>
       </span>
     );
   }
   if (rateLimit.remaining === null) {
-    return <span class="text-gray-400">Unknown (no poll yet)</span>;
+    return <span class="text-fg-muted">Unknown (no poll yet)</span>;
   }
   return (
     <span>
-      <span class="text-gray-200">{rateLimit.remaining.toLocaleString()}</span>{' '}
-      <span class="text-gray-500">remaining</span>
+      <span class="text-fg-soft">{rateLimit.remaining.toLocaleString()}</span>{' '}
+      <span class="text-fg-faint">remaining</span>
       {rateLimit.resetAt && (
-        <div class="text-gray-500">resets in {relativeFromNow(rateLimit.resetAt)}</div>
+        <div class="text-fg-faint">resets in {relativeFromNow(rateLimit.resetAt)}</div>
       )}
     </span>
   );
@@ -685,12 +685,12 @@ function RateLimitStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
 
 function WebhookStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
   const { webhook } = snapshot;
-  if (webhook.total === 0) return <span class="text-gray-400">No repositories</span>;
+  if (webhook.total === 0) return <span class="text-fg-muted">No repositories</span>;
   if (!webhook.deliveryEnabled) {
     return (
       <span>
-        <span class="text-gray-400">Delivery disabled</span>
-        <div class="text-gray-500">
+        <span class="text-fg-muted">Delivery disabled</span>
+        <div class="text-fg-faint">
           {webhook.active > 0
             ? `${webhook.active} hook(s) registered but not accepting events`
             : 'No active hooks'}
@@ -700,10 +700,10 @@ function WebhookStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
   }
   return (
     <span>
-      <span class="text-green-300">{webhook.active} active</span>
-      {webhook.inactive > 0 && <span class="text-red-300"> · {webhook.inactive} inactive</span>}
-      {webhook.unknown > 0 && <span class="text-gray-500"> · {webhook.unknown} unchecked</span>}
-      <div class="text-gray-500">
+      <span class="text-success-soft">{webhook.active} active</span>
+      {webhook.inactive > 0 && <span class="text-danger-soft"> · {webhook.inactive} inactive</span>}
+      {webhook.unknown > 0 && <span class="text-fg-faint"> · {webhook.unknown} unchecked</span>}
+      <div class="text-fg-faint">
         last webhook {formatTimestamp(webhook.lastWebhookAt)}
         {webhook.lastCheckedAt ? ` · checked ${relativeAgo(webhook.lastCheckedAt)}` : ''}
       </div>
@@ -714,13 +714,13 @@ function WebhookStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
 function ReactionStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
   const { reactions } = snapshot;
   if (reactions.trackedPullRequests === 0) {
-    return <span class="text-gray-400">No PRs tracked</span>;
+    return <span class="text-fg-muted">No PRs tracked</span>;
   }
   return (
     <span>
-      <span class="text-gray-200">{reactions.trackedPullRequests} PR(s)</span>{' '}
-      <span class="text-gray-500">tracked</span>
-      <div class="text-gray-500">last activity {formatTimestamp(reactions.lastActivityAt)}</div>
+      <span class="text-fg-soft">{reactions.trackedPullRequests} PR(s)</span>{' '}
+      <span class="text-fg-faint">tracked</span>
+      <div class="text-fg-faint">last activity {formatTimestamp(reactions.lastActivityAt)}</div>
     </span>
   );
 }
@@ -728,10 +728,10 @@ function ReactionStatus({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
 function EventTypeBreakdown({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
   return (
     <div
-      class="rounded-lg border border-white/10 bg-dark-850 px-3 py-2"
+      class="rounded-lg border border-line bg-surface-overlay px-3 py-2"
       data-testid="github-health-event-types"
     >
-      <div class="text-[11px] uppercase tracking-wider text-gray-500">Recent events</div>
+      <div class="text-[11px] uppercase tracking-wider text-fg-faint">Recent events</div>
       <dl class="mt-2 grid gap-x-4 gap-y-1.5 text-xs sm:grid-cols-2 lg:grid-cols-3">
         {snapshot.eventTypes.map((entry) => (
           <div
@@ -739,17 +739,17 @@ function EventTypeBreakdown({ snapshot }: { snapshot: GitHubHealthSnapshot }) {
             class="flex items-baseline justify-between gap-2"
             data-testid={`github-health-event-type-${entry.type}`}
           >
-            <dt class="truncate text-gray-300" title={entry.label}>
+            <dt class="truncate text-fg-soft" title={entry.label}>
               {entry.label}
             </dt>
-            <dd class="shrink-0 text-gray-500">
+            <dd class="shrink-0 text-fg-faint">
               {entry.count > 0 ? (
                 <>
-                  <span class="text-gray-200">{entry.count.toLocaleString()}</span> ·{' '}
+                  <span class="text-fg-soft">{entry.count.toLocaleString()}</span> ·{' '}
                   {relativeAgo(entry.lastAt as number)}
                 </>
               ) : (
-                <span class="text-gray-600">0</span>
+                <span class="text-fg-faint">0</span>
               )}
             </dd>
           </div>
@@ -770,16 +770,16 @@ interface ErrorListRow {
 function ErrorList({ heading, rows }: { heading: string; rows: ErrorListRow[] }) {
   return (
     <div>
-      <div class="text-[11px] uppercase tracking-wider text-gray-500">{heading}</div>
+      <div class="text-[11px] uppercase tracking-wider text-fg-faint">{heading}</div>
       <ul class="mt-1 space-y-1">
         {rows.map((row) => (
           <li key={row.key} class="text-xs">
-            <div class="truncate font-mono text-gray-300">{row.primary}</div>
-            <div class="truncate text-red-300">
+            <div class="truncate font-mono text-fg-soft">{row.primary}</div>
+            <div class="truncate text-danger-soft">
               {row.detail ?? 'unknown error'}
-              {row.agent && <span class="text-gray-500"> · {row.agent}</span>}
+              {row.agent && <span class="text-fg-faint"> · {row.agent}</span>}
             </div>
-            {row.at && <div class="text-[11px] text-gray-500">{formatTimestamp(row.at)}</div>}
+            {row.at && <div class="text-[11px] text-fg-faint">{formatTimestamp(row.at)}</div>}
           </li>
         ))}
       </ul>

@@ -50,10 +50,10 @@ export function AutonomyWorkflowSummary({
 
   return (
     <div class={cn('space-y-1', className)} data-testid="autonomy-workflow-summary">
-      <div class={cn('flex items-center gap-2', textSize, 'text-gray-400')}>
+      <div class={cn('flex items-center gap-2', textSize, 'text-fg-muted')}>
         <span data-testid="autonomy-workflow-summary-count">
           Level {level}:{' '}
-          <span class="text-gray-200 font-medium tabular-nums">
+          <span class="text-fg-soft font-medium tabular-nums">
             {autonomous} of {total}
           </span>{' '}
           {total === 1 ? 'workflow auto-closes' : 'workflows auto-close'} without review
@@ -63,7 +63,7 @@ export function AutonomyWorkflowSummary({
             type="button"
             onClick={() => setExpanded((prev) => !prev)}
             data-testid="autonomy-workflow-summary-toggle"
-            class="text-gray-400 hover:text-gray-300 transition-colors"
+            class="text-fg-muted hover:text-fg-soft transition-colors"
             aria-expanded={expanded}
           >
             {expanded ? 'Hide details' : 'Show details'}
@@ -73,12 +73,12 @@ export function AutonomyWorkflowSummary({
 
       {expanded && hasDetails && (
         <ul
-          class={cn('space-y-1 pl-2 border-l border-dark-700', textSize, 'text-gray-400')}
+          class={cn('space-y-1 pl-2 border-l border-line', textSize, 'text-fg-muted')}
           data-testid="autonomy-workflow-summary-details"
         >
           {blocking.map((wf) => (
             <li key={wf.workflowId} class="leading-snug">
-              <span class="text-gray-300">{wf.workflowName}</span>
+              <span class="text-fg-soft">{wf.workflowName}</span>
               <> — requires level {wf.requiredLevel} or higher</>
             </li>
           ))}

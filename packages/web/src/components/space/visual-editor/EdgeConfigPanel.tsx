@@ -65,13 +65,13 @@ export function EdgeConfigPanel({
   return (
     <div
       data-testid="edge-config-panel"
-      class="flex flex-col gap-3 p-4 bg-dark-850 border border-dark-700 rounded-lg text-sm text-white"
+      class="flex flex-col gap-3 p-4 bg-surface-overlay border border-line rounded-lg text-sm text-accent-fg"
     >
       <div class="flex items-center justify-between">
-        <span class="font-semibold text-white text-sm">Transition</span>
+        <span class="font-semibold text-accent-fg text-sm">Transition</span>
         <button
           data-testid="close-button"
-          class="text-gray-400 hover:text-white transition-colors"
+          class="text-fg-muted hover:text-accent-fg transition-colors"
           onClick={onClose}
           aria-label="Close"
         >
@@ -81,19 +81,19 @@ export function EdgeConfigPanel({
 
       <div class="flex flex-col gap-1">
         <div class="flex items-center gap-2 text-xs">
-          <span class="text-gray-400 w-10 shrink-0">From</span>
+          <span class="text-fg-muted w-10 shrink-0">From</span>
           <span
             data-testid="from-step-name"
-            class="font-mono bg-dark-700 rounded px-2 py-0.5 text-gray-200 truncate"
+            class="font-mono bg-fill-strong rounded px-2 py-0.5 text-fg-soft truncate"
           >
             {fromStepName}
           </span>
         </div>
         <div class="flex items-center gap-2 text-xs">
-          <span class="text-gray-400 w-10 shrink-0">To</span>
+          <span class="text-fg-muted w-10 shrink-0">To</span>
           <span
             data-testid="to-step-name"
-            class="font-mono bg-dark-700 rounded px-2 py-0.5 text-gray-200 truncate"
+            class="font-mono bg-fill-strong rounded px-2 py-0.5 text-fg-soft truncate"
           >
             {toStepName}
           </span>
@@ -101,13 +101,13 @@ export function EdgeConfigPanel({
       </div>
 
       <div class="flex flex-col gap-1">
-        <label class="text-xs text-gray-400 font-medium" for="condition-type-select">
+        <label class="text-xs text-fg-muted font-medium" for="condition-type-select">
           Condition
         </label>
         <select
           id="condition-type-select"
           data-testid="condition-type-select"
-          class="bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-blue-500"
+          class="bg-fill-strong border border-line-strong rounded px-2 py-1 text-sm text-accent-fg focus:outline-none focus:border-accent"
           value={condition.type}
           onChange={handleTypeChange}
         >
@@ -121,14 +121,14 @@ export function EdgeConfigPanel({
 
       {(condition.type === 'condition' || condition.type === 'task_result') && (
         <div class="flex flex-col gap-1">
-          <label class="text-xs text-gray-400 font-medium" for="condition-expression">
+          <label class="text-xs text-fg-muted font-medium" for="condition-expression">
             {condition.type === 'task_result' ? 'Match value' : 'Expression'}
           </label>
           <input
             id="condition-expression"
             data-testid="condition-expression"
             type="text"
-            class="bg-dark-700 border border-dark-600 rounded px-2 py-1 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+            class="bg-fill-strong border border-line-strong rounded px-2 py-1 text-sm text-accent-fg font-mono focus:outline-none focus:border-accent"
             placeholder={
               condition.type === 'task_result' ? 'e.g. passed, failed' : 'e.g. test -f output.txt'
             }
@@ -140,7 +140,7 @@ export function EdgeConfigPanel({
 
       <button
         data-testid="delete-transition-button"
-        class="mt-1 w-full rounded px-2 py-1.5 text-xs font-medium text-red-400 border border-red-800 hover:bg-red-900/30 transition-colors"
+        class="mt-1 w-full rounded px-2 py-1.5 text-xs font-medium text-danger border border-danger hover:bg-danger/30 transition-colors"
         onClick={handleDelete}
       >
         Delete transition

@@ -50,8 +50,8 @@ const PRIORITY_LABELS: Record<SpaceTaskPriority, string> = {
 function DetailRow({ label, children }: { label: string; children: ComponentChildren }) {
   return (
     <div class="flex items-start justify-between gap-3 text-sm">
-      <span class="text-gray-400">{label}</span>
-      <span class="min-w-0 text-right text-gray-200">{children}</span>
+      <span class="text-fg-muted">{label}</span>
+      <span class="min-w-0 text-right text-fg-soft">{children}</span>
     </div>
   );
 }
@@ -134,7 +134,7 @@ export function TaskAuxiliaryPanel({
     return (
       <InspectPanel
         emptyState={
-          <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-400">
+          <div class="flex h-full items-center justify-center p-6 text-center text-sm text-fg-muted">
             Task not found
           </div>
         }
@@ -198,7 +198,7 @@ export function TaskAuxiliaryPanel({
 
   const badges = (
     <div class="mt-2 flex flex-wrap items-center gap-2">
-      <InspectBadge class="min-w-16 justify-center border-dark-600 bg-dark-800/60 font-mono text-gray-300 tabular-nums">
+      <InspectBadge class="min-w-16 justify-center border-line-strong bg-surface-raised/60 font-mono text-fg-soft tabular-nums">
         #{task.taskNumber}
       </InspectBadge>
       <StatusBadge
@@ -227,7 +227,7 @@ export function TaskAuxiliaryPanel({
         trigger={
           <button
             type="button"
-            class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-dark-800 hover:text-gray-200"
+            class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
             data-testid="task-actions-menu-trigger"
             aria-label="Task Actions"
             title="Task Actions"
@@ -252,12 +252,12 @@ export function TaskAuxiliaryPanel({
         disabled={savingDescription || descriptionPending}
         rows={4}
         placeholder="Add a description…"
-        class="w-full resize-none rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+        class="w-full resize-none rounded border border-line-strong bg-surface px-2 py-1.5 text-sm text-fg-soft placeholder-gray-600 focus:border-accent focus:outline-none disabled:opacity-50"
       />
       {descriptionPending && (
-        <p class="mt-1 text-[11px] text-gray-400">Loading full description…</p>
+        <p class="mt-1 text-[11px] text-fg-muted">Loading full description…</p>
       )}
-      {savingDescription && <p class="mt-1 text-[11px] text-gray-400">Saving…</p>}
+      {savingDescription && <p class="mt-1 text-[11px] text-fg-muted">Saving…</p>}
     </SectionCard>
   );
 
@@ -274,7 +274,7 @@ export function TaskAuxiliaryPanel({
               currentSpaceGoalIdSignal.value = goal.id;
               navigateToSpaceGoals(routeSpaceId);
             }}
-            class="truncate text-blue-300 hover:text-blue-200"
+            class="truncate text-accent-soft hover:text-accent-soft"
           >
             {goal.title}
           </button>
@@ -288,7 +288,7 @@ export function TaskAuxiliaryPanel({
               currentSpaceScopeIdSignal.value = task.evolutionScopeId!;
               navigateToSpaceEvolve(routeSpaceId);
             }}
-            class="truncate text-blue-300 hover:text-blue-200"
+            class="truncate text-accent-soft hover:text-accent-soft"
           >
             {scopeName ?? task.evolutionScopeId}
           </button>
@@ -304,13 +304,13 @@ export function TaskAuxiliaryPanel({
         <DetailRow label="Executed workflow">{executedWorkflow.name}</DetailRow>
       )}
       <div>
-        <label class="mb-1 block text-xs text-gray-400">Workflow</label>
+        <label class="mb-1 block text-xs text-fg-muted">Workflow</label>
         <select
           value={task.preferredWorkflowId ?? ''}
           disabled={savingWorkflow}
           onChange={(e) => handleWorkflowChange((e.target as HTMLSelectElement).value || null)}
           data-testid="task-workflow-select"
-          class="w-full rounded border border-dark-600 bg-dark-900 px-2 py-1.5 text-xs text-gray-200 disabled:opacity-50"
+          class="w-full rounded border border-line-strong bg-surface px-2 py-1.5 text-xs text-fg-soft disabled:opacity-50"
         >
           <option value="">Auto-select</option>
           {spaceStore.workflows.value.map((wf) => (
@@ -319,20 +319,20 @@ export function TaskAuxiliaryPanel({
             </option>
           ))}
         </select>
-        {savingWorkflow && <p class="mt-1 text-[11px] text-gray-400">Saving…</p>}
+        {savingWorkflow && <p class="mt-1 text-[11px] text-fg-muted">Saving…</p>}
       </div>
       {task.dependsOn.length > 0 && (
         <div>
-          <div class="mb-1 text-xs text-gray-400">Depends on</div>
+          <div class="mb-1 text-xs text-fg-muted">Depends on</div>
           <div class="space-y-2">
             {task.dependsOn.map((depId) => {
               const dep = spaceStore.tasks.value.find((t) => t.id === depId);
               return (
                 <div key={depId} class="flex items-center gap-2 text-sm">
-                  <span class="flex-shrink-0 font-mono text-[11px] text-gray-400">
+                  <span class="flex-shrink-0 font-mono text-[11px] text-fg-muted">
                     #{dep?.taskNumber ?? '—'}
                   </span>
-                  <span class="min-w-0 truncate text-gray-300">{dep?.title ?? depId}</span>
+                  <span class="min-w-0 truncate text-fg-soft">{dep?.title ?? depId}</span>
                   {dep ? (
                     <StatusBadge
                       tone={getTaskStatusConfig(dep.status).tone}
@@ -352,17 +352,17 @@ export function TaskAuxiliaryPanel({
 
   const resultSection = resolvedTask?.result && (
     <SectionCard title="Result summary">
-      <p class="whitespace-pre-wrap text-sm text-gray-300">{resolvedTask.result}</p>
+      <p class="whitespace-pre-wrap text-sm text-fg-soft">{resolvedTask.result}</p>
     </SectionCard>
   );
 
   const panelHeader = (
-    <div class="relative flex h-[88px] items-center bg-dark-900/30 px-4">
+    <div class="relative flex h-[88px] items-center bg-surface/30 px-4">
       {onClose && (
         <button
           type="button"
           onClick={onClose}
-          class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-dark-800 hover:text-gray-200"
+          class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
           aria-label="Back"
           data-testid="task-back-button"
         >
@@ -378,14 +378,12 @@ export function TaskAuxiliaryPanel({
       )}
       <div class={cn('min-w-0 flex-1', onClose ? 'pl-3' : 'pr-12')}>
         <div class="flex min-w-0 items-center gap-2">
-          <h2 class="min-w-0 truncate text-base font-semibold leading-6 text-gray-100">
-            {task.title}
-          </h2>
+          <h2 class="min-w-0 truncate text-base font-semibold leading-6 text-fg">{task.title}</h2>
           {actionsMenu}
         </div>
         {badges}
       </div>
-      <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-dark-700" />
+      <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-fill-strong" />
     </div>
   );
 
@@ -394,7 +392,7 @@ export function TaskAuxiliaryPanel({
       <div ref={scrollRef} class="min-h-0 flex-1 overflow-y-auto">
         <div class="space-y-4 px-4 py-4">
           {transitionError && (
-            <div class="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+            <div class="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger-soft">
               {transitionError}
             </div>
           )}
@@ -402,10 +400,10 @@ export function TaskAuxiliaryPanel({
           {detailsSection}
           {resultSection}
           <section
-            class="overflow-hidden rounded-xl border border-white/10 bg-dark-900/50"
+            class="overflow-hidden rounded-xl border border-line bg-surface/50"
             data-testid="task-timeline-section"
           >
-            <h3 class="px-4 pt-4 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            <h3 class="px-4 pt-4 text-xs font-semibold uppercase tracking-wide text-fg-muted">
               Timeline
             </h3>
             <div class="h-96">
@@ -414,7 +412,7 @@ export function TaskAuxiliaryPanel({
           </section>
           {task.workflowRunId && (
             <section
-              class="h-96 overflow-hidden rounded-xl border border-white/10 bg-dark-900/50"
+              class="h-96 overflow-hidden rounded-xl border border-line bg-surface/50"
               data-testid="task-artifacts-section"
             >
               <TaskArtifactsPanel

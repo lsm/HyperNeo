@@ -43,19 +43,19 @@ function AgentCard({
   const status = agent.status ?? 'active';
 
   return (
-    <div class="group border-b border-white/10 py-3 last:border-b-0">
+    <div class="group border-b border-line py-3 last:border-b-0">
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0 flex-1">
           <div class="flex min-w-0 flex-wrap items-center gap-2">
-            <span class="truncate text-sm font-medium text-gray-100">{agent.name}</span>
+            <span class="truncate text-sm font-medium text-fg">{agent.name}</span>
             {status !== 'active' && (
-              <span class="inline-flex flex-shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-400">
+              <span class="inline-flex flex-shrink-0 rounded bg-fill-soft px-1.5 py-0.5 text-xs text-fg-muted">
                 {status}
               </span>
             )}
             {updateAvailable && (
               <span
-                class="inline-flex flex-shrink-0 items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-300"
+                class="inline-flex flex-shrink-0 items-center gap-1 rounded bg-warning/10 px-1.5 py-0.5 text-xs text-warning"
                 title={
                   orphaned
                     ? `This agent lost preset tracking. Re-attach it to the "${agent.name}" preset to bring it back in sync.`
@@ -67,7 +67,7 @@ function AgentCard({
             )}
             {customized && (
               <span
-                class="inline-flex flex-shrink-0 items-center rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-400"
+                class="inline-flex flex-shrink-0 items-center rounded bg-fill-soft px-1.5 py-0.5 text-xs text-fg-muted"
                 title={
                   updateAvailable
                     ? 'This agent has local edits on top of its template — review the diff before applying the update.'
@@ -78,17 +78,17 @@ function AgentCard({
               </span>
             )}
           </div>
-          {agent.handle && <p class="mt-0.5 text-xs text-gray-600 font-mono">{agent.handle}</p>}
+          {agent.handle && <p class="mt-0.5 text-xs text-fg-faint font-mono">{agent.handle}</p>}
           {agent.description && (
-            <p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-500">{agent.description}</p>
+            <p class="mt-1 line-clamp-2 text-xs leading-5 text-fg-faint">{agent.description}</p>
           )}
-          <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-gray-600">
-            <span class="font-mono text-gray-500">{agent.model || 'Default model'}</span>
+          <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-fg-faint">
+            <span class="font-mono text-fg-faint">{agent.model || 'Default model'}</span>
             {agent.thinkingLevel && <span>{agent.thinkingLevel}</span>}
             {settingSources.length > 0 && <span>{settingSources.join(', ')}</span>}
             {toolCount > 0 && <span>{toolCount} tools</span>}
             {agent.tools?.slice(0, 3).map((tool) => (
-              <span key={tool} class="rounded border border-white/10 px-1.5 py-0.5 text-gray-500">
+              <span key={tool} class="rounded border border-line px-1.5 py-0.5 text-fg-faint">
                 {tool}
               </span>
             ))}
@@ -101,7 +101,7 @@ function AgentCard({
                 <button
                   type="button"
                   onClick={() => onShowDiff(agent)}
-                  class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200"
+                  class="rounded-md px-2 py-1 text-xs text-warning transition-colors hover:bg-fill-soft hover:text-warning-soft"
                   title="This agent has local edits. Review the diff before applying the template update."
                 >
                   Review diff
@@ -111,7 +111,7 @@ function AgentCard({
                   <button
                     type="button"
                     onClick={() => onShowDiff(agent)}
-                    class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200"
+                    class="rounded-md px-2 py-1 text-xs text-warning transition-colors hover:bg-fill-soft hover:text-warning-soft"
                     title="Preview what the template update would change"
                   >
                     Diff
@@ -120,7 +120,7 @@ function AgentCard({
                     type="button"
                     onClick={() => onSync(agent)}
                     disabled={syncing}
-                    class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200 disabled:opacity-50"
+                    class="rounded-md px-2 py-1 text-xs text-warning transition-colors hover:bg-fill-soft hover:text-warning-soft disabled:opacity-50"
                     title={
                       orphaned
                         ? 'Re-link this agent to its preset (its fields already match)'
@@ -136,7 +136,7 @@ function AgentCard({
           <button
             type="button"
             onClick={() => onEdit(agent)}
-            class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-300"
+            class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg-soft"
             aria-label={`Edit ${agent.name}`}
           >
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -151,7 +151,7 @@ function AgentCard({
           <button
             type="button"
             onClick={() => onDelete(agent)}
-            class="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-red-400"
+            class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger"
             aria-label={`Delete ${agent.name}`}
           >
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -179,7 +179,7 @@ function PlusIcon() {
 
 function AgentIcon() {
   return (
-    <svg class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <svg class="w-5 h-5 text-fg-faint" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path
         stroke-linecap="round"
         stroke-linejoin="round"
@@ -336,7 +336,7 @@ export function SpaceWorkerAgentList() {
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center">
-          <span class="text-xs text-gray-600 animate-pulse">Loading agents...</span>
+          <span class="text-xs text-fg-faint animate-pulse">Loading agents...</span>
         </div>
       </div>
     );
@@ -344,14 +344,14 @@ export function SpaceWorkerAgentList() {
 
   return (
     <div class="flex h-full min-h-0 flex-col">
-      <div class="mb-3 flex flex-shrink-0 items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-3">
+      <div class="mb-3 flex flex-shrink-0 items-center justify-between gap-3 rounded-lg border border-line bg-fill-soft px-3 py-3">
         <div class="flex min-w-0 items-start gap-3">
-          <div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-blue-400/70" />
+          <div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-accent-soft/70" />
           <div class="min-w-0">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
+            <p class="text-xs font-semibold uppercase tracking-wider text-fg-soft">
               Worker Agents · {sortedAgents.length} configured
             </p>
-            <p class="mt-1 text-xs text-gray-500">
+            <p class="mt-1 text-xs text-fg-faint">
               Reusable worker agent types available to workflows in this space. Edit their model,
               tools, setting sources, and standing instructions.
             </p>
@@ -364,11 +364,11 @@ export function SpaceWorkerAgentList() {
 
       {sortedAgents.length === 0 ? (
         <div class="flex flex-1 flex-col items-center justify-center py-12 text-center">
-          <div class="w-10 h-10 rounded-full bg-dark-800 flex items-center justify-center mb-3">
+          <div class="w-10 h-10 rounded-full bg-surface-raised flex items-center justify-center mb-3">
             <AgentIcon />
           </div>
-          <p class="text-sm text-gray-400 font-medium">No worker agents configured.</p>
-          <p class="text-xs text-gray-600 mt-1">
+          <p class="text-sm text-fg-muted font-medium">No worker agents configured.</p>
+          <p class="text-xs text-fg-faint mt-1">
             Create a worker agent or seed one from a built-in template.
           </p>
           <div class="mt-4">

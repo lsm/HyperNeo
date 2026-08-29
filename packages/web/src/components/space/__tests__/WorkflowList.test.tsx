@@ -153,7 +153,7 @@ describe('WorkflowList', () => {
   it('renders mini step dots (one per step)', () => {
     const props = { ...defaultProps, workflows: [makeWorkflow()] };
     const { container } = render(<WorkflowList {...props} />);
-    const dots = container.querySelectorAll('.bg-blue-400, .bg-blue-500');
+    const dots = container.querySelectorAll('.bg-accent-soft, .bg-accent');
     expect(dots.length).toBeGreaterThanOrEqual(2);
   });
 

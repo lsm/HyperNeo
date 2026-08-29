@@ -88,7 +88,7 @@ export function PendingPostApprovalBanner({
         dataAttrs={{ 'data-task-id': task.id }}
       />
       {error ? (
-        <p class="mx-4 -mt-1 mb-2 text-xs text-red-400" data-testid="pending-post-approval-error">
+        <p class="mx-4 -mt-1 mb-2 text-xs text-danger" data-testid="pending-post-approval-error">
           {error}
         </p>
       ) : null}

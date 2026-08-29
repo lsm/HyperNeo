@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
-import { borderColors } from '../../lib/design-tokens.ts';
 
 export interface MentionAutocompleteProps {
   agents: Array<{ id: string; name: string }>;
@@ -56,7 +55,7 @@ export default function MentionAutocomplete({
       ref={listRef}
       data-testid="mention-autocomplete"
       class={cn(
-        `absolute z-50 bg-dark-800 border ${borderColors.ui.default} rounded-lg shadow-xl`,
+        `absolute z-50 bg-surface-raised border border-line rounded-lg shadow-xl`,
         'overflow-hidden max-h-64 overflow-y-auto',
         'animate-slideIn'
       )}
@@ -68,10 +67,10 @@ export default function MentionAutocomplete({
         maxWidth: isMobile ? '100%' : '320px',
       }}
     >
-      <div class={`px-3 py-2 border-b ${borderColors.ui.default} bg-dark-850/50`}>
+      <div class={`px-3 py-2 border-b border-line bg-surface-overlay/50`}>
         <div class="flex items-center gap-2">
-          <span class="text-blue-400 font-mono text-sm font-semibold">@</span>
-          <span class="text-xs font-medium text-gray-400">Mention Agent</span>
+          <span class="text-accent font-mono text-sm font-semibold">@</span>
+          <span class="text-xs font-medium text-fg-muted">Mention Agent</span>
         </div>
       </div>
 
@@ -86,23 +85,23 @@ export default function MentionAutocomplete({
             class={cn(
               'w-full px-3 text-left transition-colors flex items-center gap-2',
               isMobile ? 'py-3' : 'py-2',
-              'hover:bg-dark-700/50 active:bg-dark-700/70',
-              index === selectedIndex && 'bg-blue-500/20 border-l-2 border-blue-500'
+              'hover:bg-fill-strong/50 active:bg-fill-strong/70',
+              index === selectedIndex && 'bg-accent/20 border-l-2 border-accent'
             )}
           >
-            <span class="text-blue-400 font-mono text-sm">@{agent.name}</span>
+            <span class="text-accent font-mono text-sm">@{agent.name}</span>
           </button>
         ))}
       </div>
 
-      <div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
+      <div class={`px-3 py-2 border-t border-line bg-surface-overlay/50`}>
         {isMobile ? (
-          <p class="text-xs text-gray-400">Tap to select</p>
+          <p class="text-xs text-fg-muted">Tap to select</p>
         ) : (
-          <p class="text-xs text-gray-400">
-            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">↑↓</kbd> navigate{' '}
-            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Enter</kbd> select{' '}
-            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Esc</kbd> close
+          <p class="text-xs text-fg-muted">
+            <kbd class="px-1.5 py-0.5 bg-fill-strong rounded text-fg-muted">↑↓</kbd> navigate{' '}
+            <kbd class="px-1.5 py-0.5 bg-fill-strong rounded text-fg-muted">Enter</kbd> select{' '}
+            <kbd class="px-1.5 py-0.5 bg-fill-strong rounded text-fg-muted">Esc</kbd> close
           </p>
         )}
       </div>

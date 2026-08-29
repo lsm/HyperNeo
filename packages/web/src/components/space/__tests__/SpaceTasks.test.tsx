@@ -458,8 +458,8 @@ describe('SpaceTasks', () => {
 
     expect(getByText(/In Progress \(1\)/)).toBeTruthy();
     expect(getByText(/Stopped \(1\)/)).toBeTruthy();
-    expect(groupDot(getByText(/In Progress \(1\)/))?.className).toContain('bg-amber-300/80');
-    expect(groupDot(getByText(/Stopped \(1\)/))?.className).toContain('bg-gray-400/80');
+    expect(groupDot(getByText(/In Progress \(1\)/))?.className).toContain('bg-warning/80');
+    expect(groupDot(getByText(/Stopped \(1\)/))?.className).toContain('bg-fg-muted/80');
   });
 
   describe('Dependency badges', () => {
@@ -479,8 +479,8 @@ describe('SpaceTasks', () => {
       expect(badges).toHaveLength(1);
       expect(badges[0].textContent).toContain('#1');
       expect(badges[0].getAttribute('data-dep-status')).toBe('open');
-      expect(badges[0].className).toContain('text-gray-300');
-      expect(badges[0].className).not.toContain('text-green-300');
+      expect(badges[0].className).toContain('text-fg-soft');
+      expect(badges[0].className).not.toContain('text-success-soft');
     });
 
     it('renders a green badge when the dependency is done', async () => {
@@ -492,7 +492,7 @@ describe('SpaceTasks', () => {
       const badges = await findAllByTestId('task-dependency-badge');
       expect(badges).toHaveLength(1);
       expect(badges[0].getAttribute('data-dep-status')).toBe('done');
-      expect(badges[0].className).toContain('text-green-300');
+      expect(badges[0].className).toContain('text-success-soft');
     });
 
     it('renders a missing-dep badge with ⚠ when the dep id is not found', async () => {
@@ -590,7 +590,7 @@ describe('SpaceTasks', () => {
       );
       let badges = await findAllByTestId('task-dependency-badge');
       expect(badges[0].getAttribute('data-dep-status')).toBe('in_progress');
-      expect(badges[0].className).toContain('text-gray-300');
+      expect(badges[0].className).toContain('text-fg-soft');
 
       mockTasks.value = [
         makeTask('t1', 'done', { taskNumber: 1 }),
@@ -601,7 +601,7 @@ describe('SpaceTasks', () => {
         badges = getAllByTestId('task-dependency-badge');
         expect(badges[0].getAttribute('data-dep-status')).toBe('done');
       });
-      expect(badges[0].className).toContain('text-green-300');
+      expect(badges[0].className).toContain('text-success-soft');
     });
   });
 

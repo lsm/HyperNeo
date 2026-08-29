@@ -95,8 +95,8 @@ function isTemplateDataObject(value: unknown): value is Record<string, unknown> 
 
 function modeButtonClass(active: boolean): string {
   return active
-    ? 'border-blue-500 bg-blue-500/10 text-blue-200'
-    : 'border-dark-600 bg-dark-800 text-gray-400 hover:border-dark-500 hover:text-gray-200';
+    ? 'border-accent bg-accent/10 text-accent-soft'
+    : 'border-line-strong bg-surface-raised text-fg-muted hover:border-line-strong hover:text-fg-soft';
 }
 
 export function HookEditorPanel({
@@ -244,8 +244,8 @@ export function HookEditorPanel({
       data-testid="hook-editor-panel"
       class={
         embedded
-          ? 'flex-1 overflow-y-auto px-4 py-4 space-y-3 text-sm text-white'
-          : 'flex flex-col gap-3 p-4 bg-dark-850 border border-dark-700 rounded-lg text-sm text-white max-h-full overflow-y-auto'
+          ? 'flex-1 overflow-y-auto px-4 py-4 space-y-3 text-sm text-accent-fg'
+          : 'flex flex-col gap-3 p-4 bg-surface-overlay border border-line rounded-lg text-sm text-accent-fg max-h-full overflow-y-auto'
       }
     >
       {!embedded && (
@@ -254,17 +254,17 @@ export function HookEditorPanel({
             type="button"
             data-testid="hook-editor-back"
             onClick={onBack}
-            class="text-gray-400 hover:text-white transition-colors text-xs"
+            class="text-fg-muted hover:text-accent-fg transition-colors text-xs"
             aria-label="Back"
           >
             &larr;
           </button>
-          <span class="font-semibold text-white text-sm">Hook Editor</span>
+          <span class="font-semibold text-accent-fg text-sm">Hook Editor</span>
         </div>
       )}
 
       <div class="flex items-center justify-between">
-        <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Enabled</label>
+        <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">Enabled</label>
         <button
           type="button"
           data-testid="hook-editor-enabled"
@@ -272,7 +272,7 @@ export function HookEditorPanel({
           aria-checked={hook.enabled}
           onClick={() => updateHook({ enabled: !hook.enabled })}
           class={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-            hook.enabled ? 'bg-blue-500' : 'bg-dark-600'
+            hook.enabled ? 'bg-accent' : 'bg-line-strong'
           }`}
         >
           <span
@@ -302,39 +302,39 @@ export function HookEditorPanel({
       {expandedSection === 'basic' && (
         <div class="space-y-3" data-testid="hook-editor-basic-section">
           <div class="space-y-1">
-            <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Hook ID</label>
-            <div class="text-xs font-mono bg-dark-800 rounded px-2 py-1.5 text-gray-400 border border-dark-700 truncate">
+            <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">Hook ID</label>
+            <div class="text-xs font-mono bg-surface-raised rounded px-2 py-1.5 text-fg-muted border border-line truncate">
               {hook.id}
             </div>
           </div>
 
           <div class="space-y-1">
-            <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Label</label>
+            <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">Label</label>
             <input
               type="text"
               data-testid="hook-editor-label"
               value={hook.label ?? ''}
               placeholder="Human-readable label"
               onInput={(e) => updateHook({ label: (e.currentTarget as HTMLInputElement).value })}
-              class={`w-full text-xs bg-dark-800 border rounded px-2 py-1.5 text-gray-200 focus:outline-none placeholder-gray-700 ${
+              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft focus:outline-none placeholder-gray-700${
                 labelError
-                  ? 'border-red-500 focus:border-red-500'
-                  : 'border-dark-600 focus:border-blue-500'
+                  ? 'border-danger focus:border-danger'
+                  : 'border-line-strong focus:border-accent'
               }`}
             />
-            {labelError && <p class="text-[10px] text-red-400">{labelError}</p>}
+            {labelError && <p class="text-[10px] text-danger">{labelError}</p>}
           </div>
 
           <div class="space-y-1">
-            <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Source Node</label>
+            <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">Source Node</label>
             <select
               data-testid="hook-editor-source-node"
               value={hook.sourceNode}
               onChange={(e) => updateSourceNode(e.currentTarget.value)}
-              class={`w-full text-xs bg-dark-800 border rounded px-2 py-1 text-gray-200 focus:outline-none ${
+              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1 text-fg-soft focus:outline-none${
                 sourceNodeError
-                  ? 'border-red-500 focus:border-red-500'
-                  : 'border-dark-600 focus:border-blue-500'
+                  ? 'border-danger focus:border-danger'
+                  : 'border-line-strong focus:border-accent'
               }`}
             >
               {nodeNames.map((name) => (
@@ -343,12 +343,12 @@ export function HookEditorPanel({
                 </option>
               ))}
             </select>
-            {sourceNodeError && <p class="text-[10px] text-red-400">{sourceNodeError}</p>}
+            {sourceNodeError && <p class="text-[10px] text-danger">{sourceNodeError}</p>}
           </div>
 
           <div class="space-y-1">
-            <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
-              Target Node <span class="text-gray-500">(optional)</span>
+            <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">
+              Target Node <span class="text-fg-faint">(optional)</span>
             </label>
             <select
               data-testid="hook-editor-target-node"
@@ -359,7 +359,7 @@ export function HookEditorPanel({
                   targetNode: e.currentTarget.value || undefined,
                 })
               }
-              class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+              class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent disabled:opacity-50"
             >
               <option value="">— Any target —</option>
               {nodeNames.map((name) => (
@@ -371,15 +371,15 @@ export function HookEditorPanel({
           </div>
 
           <div class="space-y-1">
-            <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">MCP Method</label>
+            <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">MCP Method</label>
             <select
               data-testid="hook-editor-method"
               value={hook.method}
               onChange={(e) => updateMethod(e.currentTarget.value as WorkflowHookMcpMethod)}
-              class={`w-full text-xs bg-dark-800 border rounded px-2 py-1 text-gray-200 focus:outline-none ${
+              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1 text-fg-soft focus:outline-none${
                 methodError
-                  ? 'border-red-500 focus:border-red-500'
-                  : 'border-dark-600 focus:border-blue-500'
+                  ? 'border-danger focus:border-danger'
+                  : 'border-line-strong focus:border-accent'
               }`}
             >
               {MCP_METHODS.map((m) => (
@@ -388,12 +388,12 @@ export function HookEditorPanel({
                 </option>
               ))}
             </select>
-            {methodError && <p class="text-[10px] text-red-400">{methodError}</p>}
+            {methodError && <p class="text-[10px] text-danger">{methodError}</p>}
           </div>
 
           <div class="space-y-1">
-            <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
-              Template Data <span class="text-gray-500">(JSON)</span>
+            <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">
+              Template Data <span class="text-fg-faint">(JSON)</span>
             </label>
             <textarea
               data-testid="hook-editor-template-data"
@@ -401,18 +401,18 @@ export function HookEditorPanel({
               placeholder='{"key": "value"}'
               rows={4}
               onInput={(e) => updateTemplateData(e.currentTarget.value)}
-              class={`w-full text-xs bg-dark-800 border rounded px-2 py-1.5 text-gray-200 font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed ${
+              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed${
                 templateDataError
-                  ? 'border-red-500 focus:border-red-500'
-                  : 'border-dark-600 focus:border-blue-500'
+                  ? 'border-danger focus:border-danger'
+                  : 'border-line-strong focus:border-accent'
               }`}
             />
-            {templateDataError && <p class="text-[10px] text-red-400">{templateDataError}</p>}
+            {templateDataError && <p class="text-[10px] text-danger">{templateDataError}</p>}
           </div>
 
           <div class="grid grid-cols-2 gap-2">
             <div class="space-y-1">
-              <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
+              <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">
                 Classification
               </label>
               <select
@@ -423,14 +423,14 @@ export function HookEditorPanel({
                     classification: e.currentTarget.value as 'validation' | 'side_effect',
                   })
                 }
-                class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500"
+                class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent"
               >
                 <option value="validation">validation</option>
                 <option value="side_effect">side_effect</option>
               </select>
             </div>
             <div class="space-y-1">
-              <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Order</label>
+              <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">Order</label>
               <input
                 type="number"
                 data-testid="hook-editor-order"
@@ -441,12 +441,12 @@ export function HookEditorPanel({
                   if (isNaN(val)) return;
                   updateHook({ order: Math.max(0, val) });
                 }}
-                class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+                class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1 text-fg-soft font-mono focus:outline-none focus:border-accent"
               />
             </div>
           </div>
 
-          <p class="rounded border border-amber-700/50 bg-amber-900/10 px-2 py-1.5 text-[11px] text-amber-200">
+          <p class="rounded border border-warning/50 bg-warning/10 px-2 py-1.5 text-[11px] text-warning-soft">
             Human-only hooks are not supported yet, so this editor only creates agent-triggered
             hooks.
           </p>
@@ -490,7 +490,7 @@ export function HookEditorPanel({
 
           {validatorKind === 'built_in' && (
             <div class="space-y-1">
-              <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">Validator</label>
+              <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">Validator</label>
               <select
                 data-testid="hook-editor-built-in-id"
                 value={builtInId}
@@ -500,10 +500,10 @@ export function HookEditorPanel({
                     id: e.currentTarget.value as WorkflowHookValidatorId,
                   })
                 }
-                class={`w-full text-xs bg-dark-800 border rounded px-2 py-1 text-gray-200 focus:outline-none opacity-60 ${
+                class={`w-full text-xs bg-surface-raised border rounded px-2 py-1 text-fg-soft focus:outline-none opacity-60${
                   builtInIdError
-                    ? 'border-red-500 focus:border-red-500'
-                    : 'border-dark-600 focus:border-blue-500'
+                    ? 'border-danger focus:border-danger'
+                    : 'border-line-strong focus:border-accent'
                 }`}
               >
                 {BUILT_IN_VALIDATORS.map((id) => (
@@ -513,49 +513,49 @@ export function HookEditorPanel({
                 ))}
               </select>
               {!builtInIdError && builtInId && (
-                <p class="text-[10px] text-gray-400" data-testid="hook-editor-validator-copy">
+                <p class="text-[10px] text-fg-muted" data-testid="hook-editor-validator-copy">
                   {BUILT_IN_VALIDATOR_COPY[builtInId as WorkflowHookValidatorId]}
                 </p>
               )}
-              {builtInIdError && <p class="text-[10px] text-red-400">{builtInIdError}</p>}
+              {builtInIdError && <p class="text-[10px] text-danger">{builtInIdError}</p>}
             </div>
           )}
 
           {validatorKind === 'script' && (
-            <div class="space-y-2 pl-1 border-l-2 border-blue-500/30">
+            <div class="space-y-2 pl-1 border-l-2 border-accent/30">
               <div class="space-y-0.5">
-                <label class="text-[10px] uppercase tracking-wider text-gray-400">
+                <label class="text-[10px] uppercase tracking-wider text-fg-muted">
                   Interpreter
                 </label>
                 <select
                   data-testid="hook-editor-script-interpreter"
                   value="bash"
                   disabled
-                  class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none opacity-60"
+                  class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1 text-fg-soft focus:outline-none opacity-60"
                 >
                   <option value="bash">bash</option>
                 </select>
               </div>
 
               <div class="space-y-0.5">
-                <label class="text-[10px] uppercase tracking-wider text-gray-400">Source</label>
+                <label class="text-[10px] uppercase tracking-wider text-fg-muted">Source</label>
                 <textarea
                   data-testid="hook-editor-script-source"
                   value={scriptSource}
                   placeholder="# Enter your script here..."
                   rows={6}
                   onInput={(e) => updateValidator({ source: e.currentTarget.value })}
-                  class={`w-full text-xs bg-dark-800 border rounded px-2 py-1.5 text-gray-200 font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed ${
+                  class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed${
                     scriptSourceError
-                      ? 'border-red-500 focus:border-red-500'
-                      : 'border-dark-600 focus:border-blue-500'
+                      ? 'border-danger focus:border-danger'
+                      : 'border-line-strong focus:border-accent'
                   }`}
                 />
-                {scriptSourceError && <p class="text-[10px] text-red-400">{scriptSourceError}</p>}
+                {scriptSourceError && <p class="text-[10px] text-danger">{scriptSourceError}</p>}
               </div>
 
               <div class="space-y-0.5">
-                <label class="text-[10px] uppercase tracking-wider text-gray-400">
+                <label class="text-[10px] uppercase tracking-wider text-fg-muted">
                   Timeout (ms)
                 </label>
                 <input
@@ -571,12 +571,12 @@ export function HookEditorPanel({
                       timeoutMs: Math.max(1000, Math.min(SCRIPT_TIMEOUT_MAX, val)),
                     });
                   }}
-                  class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+                  class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1 text-fg-soft font-mono focus:outline-none focus:border-accent"
                 />
               </div>
 
               <div class="space-y-1">
-                <label class="text-[10px] uppercase tracking-wider text-gray-400">
+                <label class="text-[10px] uppercase tracking-wider text-fg-muted">
                   External Lookups
                 </label>
                 <div class="flex flex-wrap gap-2">
@@ -587,9 +587,9 @@ export function HookEditorPanel({
                         data-testid={`hook-editor-external-lookup-${lookup}`}
                         checked={scriptExternalLookups.includes(lookup)}
                         onChange={() => toggleExternalLookup(lookup)}
-                        class="rounded border-dark-600 text-blue-500 focus:ring-blue-500"
+                        class="rounded border-line-strong text-accent focus:ring-accent"
                       />
-                      <span class="text-xs text-gray-400">{lookup}</span>
+                      <span class="text-xs text-fg-muted">{lookup}</span>
                     </label>
                   ))}
                 </div>
@@ -602,15 +602,15 @@ export function HookEditorPanel({
       {expandedSection === 'callers' && (
         <div class="space-y-3" data-testid="hook-editor-callers-section">
           {(hook.authorizedCallers ?? []).length === 0 && (
-            <p class="text-xs text-gray-400 italic">
+            <p class="text-xs text-fg-muted italic">
               No authorized callers — hook will fail closed.
             </p>
           )}
 
           {(hook.authorizedCallers ?? []).map((caller, i) => (
-            <div key={i} class="border border-dark-600 rounded bg-dark-800 p-2 space-y-2">
+            <div key={i} class="border border-line-strong rounded bg-surface-raised p-2 space-y-2">
               <div class="space-y-1">
-                <label class="text-[10px] uppercase tracking-wider text-gray-400">
+                <label class="text-[10px] uppercase tracking-wider text-fg-muted">
                   Source Node
                 </label>
                 <select
@@ -620,18 +620,18 @@ export function HookEditorPanel({
                   onChange={(e) =>
                     updateAuthorizedCaller(i, { ...caller, sourceNode: e.currentTarget.value })
                   }
-                  class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 focus:outline-none focus:border-blue-500 opacity-60"
+                  class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent opacity-60"
                 >
                   <option value={hook.sourceNode}>{hook.sourceNode}</option>
                 </select>
-                <p class="text-[10px] text-gray-500">
+                <p class="text-[10px] text-fg-faint">
                   Caller source follows the hook source so this hook can match at runtime.
                 </p>
               </div>
 
               <div class="space-y-1">
-                <label class="text-[10px] uppercase tracking-wider text-gray-400">
-                  Agent Slots <span class="text-gray-500">(comma-separated, empty = any)</span>
+                <label class="text-[10px] uppercase tracking-wider text-fg-muted">
+                  Agent Slots <span class="text-fg-faint">(comma-separated, empty = any)</span>
                 </label>
                 <input
                   type="text"
@@ -651,9 +651,9 @@ export function HookEditorPanel({
                       agentSlots: slots.length > 0 ? slots : undefined,
                     });
                   }}
-                  class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500 placeholder-gray-700 disabled:opacity-50"
+                  class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft font-mono focus:outline-none focus:border-accent placeholder-gray-700 disabled:opacity-50"
                 />
-                <p class="text-[10px] text-gray-500">
+                <p class="text-[10px] text-fg-faint">
                   Slot filters are not supported in this editor yet; empty means any slot.
                 </p>
               </div>
@@ -663,7 +663,7 @@ export function HookEditorPanel({
                 data-testid={`hook-editor-caller-delete-${i}`}
                 onClick={() => removeAuthorizedCaller(i)}
                 disabled={(hook.authorizedCallers ?? []).length <= 1}
-                class="w-full rounded px-2 py-1 text-xs text-red-400 border border-red-800 hover:bg-red-900/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                class="w-full rounded px-2 py-1 text-xs text-danger border border-danger hover:bg-danger/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {(hook.authorizedCallers ?? []).length <= 1
                   ? 'At least one caller required'
@@ -676,7 +676,7 @@ export function HookEditorPanel({
             type="button"
             data-testid="hook-editor-add-caller"
             onClick={addAuthorizedCaller}
-            class="w-full rounded border border-dashed border-dark-500 px-2 py-1.5 text-xs text-gray-400 hover:border-blue-500 hover:text-blue-300 transition-colors"
+            class="w-full rounded border border-dashed border-line-strong px-2 py-1.5 text-xs text-fg-muted hover:border-accent hover:text-accent-soft transition-colors"
           >
             + Add Caller
           </button>
@@ -686,12 +686,12 @@ export function HookEditorPanel({
       {expandedSection === 'retry' && (
         <div class="space-y-3" data-testid="hook-editor-retry-section">
           <div class="space-y-2">
-            <label class="text-[11px] uppercase tracking-[0.12em] text-gray-400">
+            <label class="text-[11px] uppercase tracking-[0.12em] text-fg-muted">
               Retry Settings
             </label>
             {isPrReadyValidator ? (
               <p
-                class="rounded border border-blue-700/50 bg-blue-900/10 px-2 py-1.5 text-[11px] text-blue-200"
+                class="rounded border border-accent/50 bg-accent/10 px-2 py-1.5 text-[11px] text-accent-soft"
                 data-testid="hook-editor-pr-ready-retry-note"
               >
                 PR-ready hooks retry on transient GitHub states without a visible attempt cap. Retry
@@ -700,7 +700,7 @@ export function HookEditorPanel({
             ) : (
               <div class="grid grid-cols-3 gap-2">
                 <div class="space-y-0.5">
-                  <label class="text-[10px] text-gray-400">Max attempts</label>
+                  <label class="text-[10px] text-fg-muted">Max attempts</label>
                   <input
                     type="number"
                     data-testid="hook-editor-retry-max-attempts"
@@ -714,11 +714,11 @@ export function HookEditorPanel({
                         maxAttempts: Math.max(isCodexApprovalValidator ? 0 : 1, Math.min(20, val)),
                       });
                     }}
-                    class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+                    class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1 text-fg-soft font-mono focus:outline-none focus:border-accent"
                   />
                 </div>
                 <div class="space-y-0.5">
-                  <label class="text-[10px] text-gray-400">Delay (ms)</label>
+                  <label class="text-[10px] text-fg-muted">Delay (ms)</label>
                   <input
                     type="number"
                     data-testid="hook-editor-retry-delay"
@@ -730,11 +730,11 @@ export function HookEditorPanel({
                       if (isNaN(val)) return;
                       updateRetry({ delayMs: Math.max(0, val) });
                     }}
-                    class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+                    class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1 text-fg-soft font-mono focus:outline-none focus:border-accent"
                   />
                 </div>
                 <div class="space-y-0.5">
-                  <label class="text-[10px] text-gray-400">Backoff</label>
+                  <label class="text-[10px] text-fg-muted">Backoff</label>
                   <input
                     type="number"
                     data-testid="hook-editor-retry-backoff"
@@ -747,7 +747,7 @@ export function HookEditorPanel({
                       if (isNaN(val)) return;
                       updateRetry({ backoffMultiplier: Math.max(1, Math.min(10, val)) });
                     }}
-                    class="w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+                    class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1 text-fg-soft font-mono focus:outline-none focus:border-accent"
                   />
                 </div>
               </div>
@@ -755,7 +755,7 @@ export function HookEditorPanel({
           </div>
 
           <p
-            class="rounded border border-amber-700/50 bg-amber-900/10 px-2 py-1.5 text-[11px] text-amber-200"
+            class="rounded border border-warning/50 bg-warning/10 px-2 py-1.5 text-[11px] text-warning-soft"
             data-testid="hook-editor-poll-unsupported"
           >
             Polling hooks are not supported yet, so poll settings are not saved by this editor.

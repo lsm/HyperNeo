@@ -59,7 +59,7 @@ describe('HookEditorPanel', () => {
     const { getByTestId } = render(
       <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
     );
-    expect(getByTestId('hook-editor-label').className).toContain('border-red-500');
+    expect(getByTestId('hook-editor-label').className).toContain('border-danger');
   });
 
   it('updates source node and matching callers on select change', () => {
@@ -155,7 +155,7 @@ describe('HookEditorPanel', () => {
       <HookEditorPanel hook={hook} onChange={onChange} onBack={onBack} nodeNames={nodeNames} />
     );
     fireEvent.click(getByTestId('hook-editor-section-validator'));
-    expect(getByTestId('hook-editor-script-source').className).toContain('border-red-500');
+    expect(getByTestId('hook-editor-script-source').className).toContain('border-danger');
   });
 
   it('keeps invalid template JSON draft editable without updating hook', () => {

@@ -41,7 +41,7 @@ export function ScopeDetailPanel({ spaceId, scopeId }: ScopeDetailPanelProps) {
     return (
       <InspectPanel
         emptyState={
-          <div class="flex h-full items-center justify-center p-6 text-sm text-gray-400">
+          <div class="flex h-full items-center justify-center p-6 text-sm text-fg-muted">
             Loading…
           </div>
         }
@@ -53,7 +53,7 @@ export function ScopeDetailPanel({ spaceId, scopeId }: ScopeDetailPanelProps) {
     return (
       <InspectPanel
         emptyState={
-          <div class="flex h-full items-center justify-center p-6 text-center text-sm text-gray-400">
+          <div class="flex h-full items-center justify-center p-6 text-center text-sm text-fg-muted">
             {error ?? 'This scope is no longer available.'}
           </div>
         }

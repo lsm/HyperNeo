@@ -126,7 +126,7 @@ describe('WorkflowNode rendering', () => {
     const { getByTestId } = render(<WorkflowNode {...makeProps({ isSelected: true })} />);
     const node = getByTestId('workflow-node-step-local-1');
     expect(node.className).toContain('ring-2');
-    expect(node.className).toContain('ring-blue-500');
+    expect(node.className).toContain('ring-accent');
   });
 
   it('does not apply ring class when not selected', () => {
@@ -137,7 +137,7 @@ describe('WorkflowNode rendering', () => {
 
   it('applies green border class for start node', () => {
     const { getByTestId } = render(<WorkflowNode {...makeProps({ isStartNode: true })} />);
-    expect(getByTestId('workflow-node-step-local-1').className).toContain('border-green-500');
+    expect(getByTestId('workflow-node-step-local-1').className).toContain('border-success');
   });
 
   it('positions node using absolute style from position prop', () => {

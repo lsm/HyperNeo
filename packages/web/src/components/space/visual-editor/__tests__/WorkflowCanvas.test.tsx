@@ -94,7 +94,7 @@ describe('WorkflowCanvas — selection', () => {
     const { getByTestId } = renderCanvas();
     fireEvent.click(getByTestId('workflow-node-step-1'));
     expect(getByTestId('workflow-node-step-1').className).toContain('ring-2');
-    expect(getByTestId('workflow-node-step-1').className).toContain('ring-blue-500');
+    expect(getByTestId('workflow-node-step-1').className).toContain('ring-accent');
   });
 
   it('clicking a node calls onNodeSelect with the stepId', () => {
@@ -243,11 +243,11 @@ describe('WorkflowNode — isSelected prop via WorkflowCanvas', () => {
     expect(getByTestId('workflow-node-step-1').className).not.toContain('ring-2');
   });
 
-  it('selected node has ring-2 and ring-blue-500 classes', () => {
+  it('selected node has ring-2 and ring-accent classes', () => {
     const { getByTestId } = renderCanvas();
     fireEvent.click(getByTestId('workflow-node-step-1'));
     expect(getByTestId('workflow-node-step-1').className).toContain('ring-2');
-    expect(getByTestId('workflow-node-step-1').className).toContain('ring-blue-500');
+    expect(getByTestId('workflow-node-step-1').className).toContain('ring-accent');
     expect(getByTestId('workflow-node-step-2').className).not.toContain('ring-2');
   });
 });

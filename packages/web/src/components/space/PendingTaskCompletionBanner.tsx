@@ -120,8 +120,8 @@ export function PendingTaskCompletionBanner({
         <div class="space-y-4" data-testid="pending-task-completion-approve-modal-content">
           {reportedSummary && (
             <div class="text-xs" data-testid="pending-task-completion-reported-summary">
-              <p class="text-gray-400 mb-1">Agent's reported outcome:</p>
-              <p class="p-2 bg-dark-900/60 border border-dark-700 rounded text-[11px] text-gray-300 whitespace-pre-wrap">
+              <p class="text-fg-muted mb-1">Agent's reported outcome:</p>
+              <p class="p-2 bg-surface/60 border border-line rounded text-[11px] text-fg-soft whitespace-pre-wrap">
                 {reportedSummary}
               </p>
             </div>
@@ -129,15 +129,15 @@ export function PendingTaskCompletionBanner({
 
           {agentReason && (
             <div class="text-xs" data-testid="pending-task-completion-agent-reason">
-              <p class="text-gray-400 mb-1">Agent rationale:</p>
-              <p class="p-2 bg-dark-900/60 border border-dark-700 rounded text-[11px] text-gray-300 whitespace-pre-wrap">
+              <p class="text-fg-muted mb-1">Agent rationale:</p>
+              <p class="p-2 bg-surface/60 border border-line rounded text-[11px] text-fg-soft whitespace-pre-wrap">
                 {agentReason}
               </p>
             </div>
           )}
 
           <div>
-            <label class="block text-[11px] text-gray-400 mb-1" for="approve-reason-input">
+            <label class="block text-[11px] text-fg-muted mb-1" for="approve-reason-input">
               Approval note (optional — recorded on the task)
             </label>
             <textarea
@@ -145,14 +145,14 @@ export function PendingTaskCompletionBanner({
               data-testid="pending-task-completion-approve-reason"
               value={approveReason}
               onInput={(e) => setApproveReason((e.target as HTMLTextAreaElement).value)}
-              class="w-full rounded border border-dark-600 bg-dark-800 px-2 py-1 text-[11px] text-gray-200 focus:border-amber-500 focus:outline-none"
+              class="w-full rounded border border-line-strong bg-surface-raised px-2 py-1 text-[11px] text-fg-soft focus:border-warning focus:outline-none"
               rows={2}
               disabled={busy}
             />
           </div>
 
           {error && (
-            <p class="text-xs text-red-400" data-testid="pending-task-completion-error">
+            <p class="text-xs text-danger" data-testid="pending-task-completion-error">
               {error}
             </p>
           )}
@@ -168,7 +168,7 @@ export function PendingTaskCompletionBanner({
                 }
               }}
               disabled={busy}
-              class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-accent-fg bg-surface-raised hover:bg-fill-strong rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancel
             </button>
@@ -177,7 +177,7 @@ export function PendingTaskCompletionBanner({
               onClick={() => void onApprove()}
               disabled={busy}
               data-testid="pending-task-completion-approve-confirm"
-              class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-green-600 hover:bg-green-700 text-white disabled:bg-green-600/50 disabled:cursor-not-allowed"
+              class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-success hover:bg-success text-accent-fg disabled:bg-success/50 disabled:cursor-not-allowed"
             >
               {busy ? 'Processing...' : 'Approve'}
             </button>
@@ -199,15 +199,15 @@ export function PendingTaskCompletionBanner({
         data-testid="pending-task-completion-reject-modal"
       >
         <div class="space-y-4" data-testid="pending-task-completion-reject-modal-content">
-          <p class="text-gray-300 text-sm leading-relaxed">
+          <p class="text-fg-soft text-sm leading-relaxed">
             The task will be reopened (status: in_progress) so the end-node agent can revise and
             re-submit. The pending-completion request will be cleared.
           </p>
 
           {reportedSummary && (
             <div class="text-xs">
-              <p class="text-gray-400 mb-1">Agent's reported outcome:</p>
-              <p class="p-2 bg-dark-900/60 border border-dark-700 rounded text-[11px] text-gray-300 whitespace-pre-wrap">
+              <p class="text-fg-muted mb-1">Agent's reported outcome:</p>
+              <p class="p-2 bg-surface/60 border border-line rounded text-[11px] text-fg-soft whitespace-pre-wrap">
                 {reportedSummary}
               </p>
             </div>
@@ -215,8 +215,8 @@ export function PendingTaskCompletionBanner({
 
           {agentReason && (
             <div class="text-xs">
-              <p class="text-gray-400 mb-1">Agent rationale:</p>
-              <p class="p-2 bg-dark-900/60 border border-dark-700 rounded text-[11px] text-gray-300 whitespace-pre-wrap">
+              <p class="text-fg-muted mb-1">Agent rationale:</p>
+              <p class="p-2 bg-surface/60 border border-line rounded text-[11px] text-fg-soft whitespace-pre-wrap">
                 {agentReason}
               </p>
             </div>
@@ -224,7 +224,7 @@ export function PendingTaskCompletionBanner({
 
           <div>
             <label
-              class="block text-xs text-gray-400 mb-1"
+              class="block text-xs text-fg-muted mb-1"
               for="task-completion-reject-reason-input"
             >
               Reason (optional — shared with the agent as feedback)
@@ -234,14 +234,14 @@ export function PendingTaskCompletionBanner({
               data-testid="pending-task-completion-reject-reason"
               value={rejectReason}
               onInput={(e) => setRejectReason((e.target as HTMLTextAreaElement).value)}
-              class="w-full rounded border border-dark-600 bg-dark-800 px-2 py-1 text-sm text-gray-200 focus:border-red-500 focus:outline-none"
+              class="w-full rounded border border-line-strong bg-surface-raised px-2 py-1 text-sm text-fg-soft focus:border-danger focus:outline-none"
               rows={3}
               disabled={busy}
             />
           </div>
 
           {error && (
-            <p class="text-xs text-red-400" data-testid="pending-task-completion-error">
+            <p class="text-xs text-danger" data-testid="pending-task-completion-error">
               {error}
             </p>
           )}
@@ -257,7 +257,7 @@ export function PendingTaskCompletionBanner({
                 }
               }}
               disabled={busy}
-              class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-accent-fg bg-surface-raised hover:bg-fill-strong rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Keep Pending
             </button>
@@ -266,7 +266,7 @@ export function PendingTaskCompletionBanner({
               onClick={() => void onRejectConfirm()}
               disabled={busy}
               data-testid="pending-task-completion-reject-confirm"
-              class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50 disabled:cursor-not-allowed"
+              class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-danger hover:bg-danger text-accent-fg disabled:bg-danger/50 disabled:cursor-not-allowed"
             >
               {busy ? 'Processing...' : 'Send back to agent'}
             </button>

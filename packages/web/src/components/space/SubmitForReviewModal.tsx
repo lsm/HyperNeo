@@ -37,14 +37,14 @@ export function SubmitForReviewModal({
       size="md"
     >
       <div class="space-y-4" data-testid="submit-for-review-modal-content">
-        <p class="text-gray-300 text-sm leading-relaxed">
+        <p class="text-fg-soft text-sm leading-relaxed">
           The task will be moved to <span class="font-mono">review</span>. A reviewer will approve
           or send it back via the pending-approval banner — the same flow used by the agent{' '}
           <span class="font-mono">submit_for_approval</span> tool.
         </p>
 
         <div>
-          <label class="block text-[11px] text-gray-400 mb-1" for="submit-for-review-reason-input">
+          <label class="block text-[11px] text-fg-muted mb-1" for="submit-for-review-reason-input">
             Reason (optional — visible in the approval banner)
           </label>
           <textarea
@@ -52,7 +52,7 @@ export function SubmitForReviewModal({
             data-testid="submit-for-review-reason"
             value={reason}
             onInput={(e) => setReason((e.target as HTMLTextAreaElement).value)}
-            class="w-full rounded border border-dark-600 bg-dark-800 px-2 py-1 text-[11px] text-gray-200 focus:border-amber-500 focus:outline-none"
+            class="w-full rounded border border-line-strong bg-surface-raised px-2 py-1 text-[11px] text-fg-soft focus:border-warning focus:outline-none"
             rows={3}
             disabled={busy}
             placeholder="What should the reviewer look at?"
@@ -60,7 +60,7 @@ export function SubmitForReviewModal({
         </div>
 
         {error && (
-          <p class="text-xs text-red-400" role="alert" data-testid="submit-for-review-error">
+          <p class="text-xs text-danger" role="alert" data-testid="submit-for-review-error">
             {error}
           </p>
         )}
@@ -72,7 +72,7 @@ export function SubmitForReviewModal({
               if (!busy) onCancel();
             }}
             disabled={busy}
-            class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-accent-fg bg-surface-raised hover:bg-fill-strong rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Cancel
           </button>
@@ -81,7 +81,7 @@ export function SubmitForReviewModal({
             onClick={handleConfirm}
             disabled={busy}
             data-testid="submit-for-review-confirm"
-            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-amber-600 hover:bg-amber-700 text-white disabled:bg-amber-600/50 disabled:cursor-not-allowed"
+            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-warning hover:bg-warning text-accent-fg disabled:bg-warning/50 disabled:cursor-not-allowed"
           >
             {busy ? 'Submitting...' : 'Submit for Review'}
           </button>

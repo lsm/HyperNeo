@@ -176,8 +176,8 @@ export function AgentOverlayChat({
           <div
             ref={panelRef}
             class={cn(
-              'relative flex flex-col h-full w-full max-w-2xl bg-dark-900 shadow-2xl',
-              'border-l border-dark-700',
+              'relative flex flex-col h-full w-full max-w-2xl bg-surface shadow-2xl',
+              'border-l border-line',
               'animate-slideInRight'
             )}
           >

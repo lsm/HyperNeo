@@ -60,10 +60,10 @@ function LineNumberedTextarea({
   const displayLines = Math.max(lineCount, rows);
 
   return (
-    <div class="relative flex border border-dark-600 rounded-lg overflow-hidden bg-dark-800 focus-within:border-blue-500 transition-colors">
+    <div class="relative flex border border-line-strong rounded-lg overflow-hidden bg-surface-raised focus-within:border-accent transition-colors">
       <div
         aria-hidden="true"
-        class="flex flex-col items-end px-2 py-2 select-none text-gray-400 text-xs font-mono bg-dark-850 border-r border-dark-700 flex-shrink-0"
+        class="flex flex-col items-end px-2 py-2 select-none text-fg-muted text-xs font-mono bg-surface-overlay border-r border-line flex-shrink-0"
         style="min-width: 2.5rem; line-height: 1.375rem;"
       >
         {Array.from({ length: displayLines }, (_, i) => (
@@ -78,7 +78,7 @@ function LineNumberedTextarea({
         placeholder={placeholder}
         rows={rows}
         spellcheck={false}
-        class="flex-1 bg-transparent py-2 px-3 text-gray-100 font-mono text-xs resize-none focus:outline-none"
+        class="flex-1 bg-transparent py-2 px-3 text-fg font-mono text-xs resize-none focus:outline-none"
         style="line-height: 1.375rem;"
       />
     </div>
@@ -348,15 +348,15 @@ export function SpaceAgentEditor({
     <Modal isOpen onClose={onCancel} title={title} size="lg">
       <form onSubmit={handleSubmit} class="space-y-5">
         {saveError && (
-          <div class="bg-red-900/20 border border-red-800 rounded-lg px-4 py-3 text-red-400 text-sm">
+          <div class="bg-danger/20 border border-danger rounded-lg px-4 py-3 text-danger text-sm">
             {saveError}
           </div>
         )}
 
         {isPromotion && promotionDraft && (
-          <div class="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-100">
+          <div class="rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-accent-soft">
             <p class="font-medium">Review generated long-horizon profile before creating agent.</p>
-            <p class="mt-1 text-xs text-blue-200/80">
+            <p class="mt-1 text-xs text-accent-soft/80">
               Draft uses recent renderable messages from "{promotionDraft.sourceSessionTitle}" as
               standing context instead of copying raw chat history.
             </p>
@@ -364,7 +364,7 @@ export function SpaceAgentEditor({
         )}
 
         <div>
-          <label class="block text-sm font-medium text-gray-200 mb-1.5" for="agent-template-select">
+          <label class="block text-sm font-medium text-fg-soft mb-1.5" for="agent-template-select">
             From Template
           </label>
           <select
@@ -376,7 +376,7 @@ export function SpaceAgentEditor({
               const template = builtInTemplates.find((item) => item.name === templateName);
               if (template) applyTemplate(template);
             }}
-            class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500"
+            class="w-full bg-surface-raised border border-line-strong rounded-lg px-4 py-2.5 text-fg focus:outline-none focus:border-accent"
           >
             <option value="">Select a built-in template...</option>
             {builtInTemplates.map((template) => (
@@ -386,7 +386,7 @@ export function SpaceAgentEditor({
             ))}
           </select>
           {builtInTemplates.length === 0 && (
-            <p class="mt-1 text-xs text-gray-400">
+            <p class="mt-1 text-xs text-fg-muted">
               No built-in templates are available for this space.
             </p>
           )}
@@ -397,13 +397,13 @@ export function SpaceAgentEditor({
             <button
               type="button"
               onClick={resetToPreset}
-              class="text-xs text-blue-400 hover:text-blue-300"
+              class="text-xs text-accent hover:text-accent-soft"
               title={`Replace this agent's description, tools, and custom prompt with the current ${matchingPreset.name} preset and re-link it to preset tracking.`}
             >
               Reset to {matchingPreset.name} default
             </button>
             {(!agent?.templateName || !agent?.templateHash) && (
-              <span class="text-xs text-amber-300/80">
+              <span class="text-xs text-warning/80">
                 Not linked to preset tracking — reset re-attaches it.
               </span>
             )}
@@ -411,9 +411,9 @@ export function SpaceAgentEditor({
         )}
 
         <div>
-          <label class="block text-sm font-medium text-gray-200 mb-1.5">
+          <label class="block text-sm font-medium text-fg-soft mb-1.5">
             Name
-            <span class="text-red-400 ml-1">*</span>
+            <span class="text-danger ml-1">*</span>
           </label>
           <input
             type="text"
@@ -423,32 +423,32 @@ export function SpaceAgentEditor({
               if (errors['name']) setErrors((prev) => ({ ...prev, name: '' }));
             }}
             placeholder="e.g., Senior Coder"
-            class={`w-full bg-dark-800 border rounded-lg px-4 py-2.5 text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500 ${
-              errors['name'] ? 'border-red-700' : 'border-dark-600'
+            class={`w-full bg-surface-raised border rounded-lg px-4 py-2.5 text-fg placeholder-gray-600 focus:outline-none focus:border-accent ${
+              errors['name'] ? 'border-danger' : 'border-line-strong'
             }`}
             autoFocus
           />
-          {errors['name'] && <p class="mt-1 text-xs text-red-400">{errors['name']}</p>}
+          {errors['name'] && <p class="mt-1 text-xs text-danger">{errors['name']}</p>}
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1.5">
+          <label class="block text-sm font-medium text-fg-soft mb-1.5">
             Description
-            <span class="text-gray-400 text-xs ml-2">(optional)</span>
+            <span class="text-fg-muted text-xs ml-2">(optional)</span>
           </label>
           <input
             type="text"
             value={description}
             onInput={(e) => setDescription((e.target as HTMLInputElement).value)}
             placeholder="Briefly describe this agent's specialization..."
-            class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+            class="w-full bg-surface-raised border border-line-strong rounded-lg px-4 py-2.5 text-fg placeholder-gray-600 focus:outline-none focus:border-accent"
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1.5">
+          <label class="block text-sm font-medium text-fg-soft mb-1.5">
             Model
-            <span class="text-gray-400 text-xs ml-2">(optional)</span>
+            <span class="text-fg-muted text-xs ml-2">(optional)</span>
           </label>
           <div class="flex gap-1.5 mb-2">
             <button
@@ -457,8 +457,8 @@ export function SpaceAgentEditor({
               onClick={() => setModelMode('single')}
               class={`text-xs px-2.5 py-1 rounded border transition-colors ${
                 modelMode === 'single'
-                  ? 'border-blue-600 bg-blue-900/20 text-blue-300'
-                  : 'border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
+                  ? 'border-accent-hover bg-accent/20 text-accent-soft'
+                  : 'border-line-strong text-fg-muted hover:border-line-strong hover:text-fg-soft'
               }`}
             >
               Single model
@@ -474,8 +474,8 @@ export function SpaceAgentEditor({
               }}
               class={`text-xs px-2.5 py-1 rounded border transition-colors ${
                 modelMode === 'pool'
-                  ? 'border-blue-600 bg-blue-900/20 text-blue-300'
-                  : 'border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
+                  ? 'border-accent-hover bg-accent/20 text-accent-soft'
+                  : 'border-line-strong text-fg-muted hover:border-line-strong hover:text-fg-soft'
               }`}
             >
               Model pool
@@ -492,12 +492,12 @@ export function SpaceAgentEditor({
                   if (errors['model']) setErrors((prev) => ({ ...prev, model: '' }));
                 }}
                 testId="space-agent-model-select"
-                className={`w-full bg-dark-800 border rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500 font-mono text-sm ${
-                  errors['model'] ? 'border-red-700' : 'border-dark-600'
+                className={`w-full bg-surface-raised border rounded-lg px-4 py-2.5 text-fg focus:outline-none focus:border-accent font-mono text-sm${
+                  errors['model'] ? 'border-danger' : 'border-line-strong'
                 }`}
               />
-              {errors['model'] && <p class="mt-1 text-xs text-red-400">{errors['model']}</p>}
-              <p class="mt-1.5 text-xs text-gray-500 leading-snug">
+              {errors['model'] && <p class="mt-1 text-xs text-danger">{errors['model']}</p>}
+              <p class="mt-1.5 text-xs text-fg-faint leading-snug">
                 Leave empty to use the space default model.
               </p>
             </>
@@ -510,13 +510,13 @@ export function SpaceAgentEditor({
                   onClick={() =>
                     setModelPool((prev) => [...prev, { model: '', maxConcurrent: 1, weight: 100 }])
                   }
-                  class="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                  class="text-xs text-accent hover:text-accent-soft transition-colors"
                 >
                   + Add model
                 </button>
               </div>
               {modelPool.length === 0 ? (
-                <p class="text-xs text-gray-500 leading-snug">
+                <p class="text-xs text-fg-faint leading-snug">
                   No pool models — this agent uses the space default until one is added.
                 </p>
               ) : (
@@ -524,7 +524,7 @@ export function SpaceAgentEditor({
                   {modelPool.map((entry, index) => (
                     <div
                       key={index}
-                      class="flex items-center gap-2 rounded-lg border border-dark-600 bg-dark-800 px-3 py-2"
+                      class="flex items-center gap-2 rounded-lg border border-line-strong bg-surface-raised px-3 py-2"
                       data-testid="pool-entry"
                     >
                       <WorkflowModelSelect
@@ -544,9 +544,9 @@ export function SpaceAgentEditor({
                           )
                         }
                         testId="pool-entry-model-select"
-                        className="flex-1 min-w-0 bg-dark-900 border border-dark-600 rounded px-2.5 py-1.5 text-gray-100 focus:outline-none focus:border-blue-500 font-mono text-sm"
+                        className="flex-1 min-w-0 bg-surface border border-line-strong rounded px-2.5 py-1.5 text-fg focus:outline-none focus:border-accent font-mono text-sm"
                       />
-                      <label class="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
+                      <label class="flex items-center gap-1 text-xs text-fg-muted flex-shrink-0">
                         Max
                         <input
                           type="number"
@@ -565,10 +565,10 @@ export function SpaceAgentEditor({
                               );
                             }
                           }}
-                          class="w-16 appearance-none bg-dark-900 border border-dark-600 rounded px-2 py-1 text-gray-100 font-mono text-sm focus:outline-none focus:border-blue-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          class="w-16 appearance-none bg-surface border border-line-strong rounded px-2 py-1 text-fg font-mono text-sm focus:outline-none focus:border-accent [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                         />
                       </label>
-                      <label class="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
+                      <label class="flex items-center gap-1 text-xs text-fg-muted flex-shrink-0">
                         Wt
                         <input
                           type="number"
@@ -586,14 +586,14 @@ export function SpaceAgentEditor({
                               );
                             }
                           }}
-                          class="w-16 appearance-none bg-dark-900 border border-dark-600 rounded px-2 py-1 text-gray-100 font-mono text-sm focus:outline-none focus:border-blue-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          class="w-16 appearance-none bg-surface border border-line-strong rounded px-2 py-1 text-fg font-mono text-sm focus:outline-none focus:border-accent [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                         />
                       </label>
                       <button
                         type="button"
                         data-testid="pool-entry-remove-button"
                         onClick={() => setModelPool((prev) => prev.filter((_, i) => i !== index))}
-                        class="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0"
+                        class="text-fg-muted hover:text-danger transition-colors flex-shrink-0"
                         title="Remove pool entry"
                       >
                         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -607,7 +607,7 @@ export function SpaceAgentEditor({
                       </button>
                     </div>
                   ))}
-                  <p class="text-xs text-gray-500 leading-snug">
+                  <p class="text-xs text-fg-faint leading-snug">
                     Max is the per-model concurrency cap for this agent in the workspace (1 or
                     more). Weight is 1–100 and controls this model&rsquo;s share of the remaining
                     capacity (higher = preferred). Each spawn picks by remaining capacity × weight;
@@ -621,16 +621,16 @@ export function SpaceAgentEditor({
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1.5">
+          <label class="block text-sm font-medium text-fg-soft mb-1.5">
             Thinking Level
-            <span class="text-gray-400 text-xs ml-2">(optional override)</span>
+            <span class="text-fg-muted text-xs ml-2">(optional override)</span>
           </label>
           <select
             value={thinkingLevel}
             onChange={(e) =>
               setThinkingLevel((e.target as HTMLSelectElement).value as '' | ThinkingLevel)
             }
-            class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500"
+            class="w-full bg-surface-raised border border-line-strong rounded-lg px-4 py-2.5 text-fg focus:outline-none focus:border-accent"
           >
             {THINKING_LEVEL_OPTIONS.map((option) => (
               <option key={option.value || 'default'} value={option.value}>
@@ -641,26 +641,26 @@ export function SpaceAgentEditor({
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1.5">
+          <label class="block text-sm font-medium text-fg-soft mb-1.5">
             Setting Sources
-            <span class="text-gray-400 text-xs ml-2">(optional)</span>
+            <span class="text-fg-muted text-xs ml-2">(optional)</span>
           </label>
           {isEdit && agent?.settingSources !== undefined && !clearSettingSources && (
             <button
               type="button"
               onClick={() => setClearSettingSources(true)}
-              class="text-xs text-blue-400 hover:text-blue-300 mb-1.5"
+              class="text-xs text-accent hover:text-accent-soft mb-1.5"
             >
               Clear override — use inherited defaults
             </button>
           )}
           {clearSettingSources && (
             <div class="flex items-center gap-2 mb-1.5">
-              <span class="text-xs text-gray-400">Will revert to inherited defaults on save.</span>
+              <span class="text-xs text-fg-muted">Will revert to inherited defaults on save.</span>
               <button
                 type="button"
                 onClick={() => setClearSettingSources(false)}
-                class="text-xs text-blue-400 hover:text-blue-300"
+                class="text-xs text-accent hover:text-accent-soft"
               >
                 Cancel
               </button>
@@ -677,10 +677,10 @@ export function SpaceAgentEditor({
                   );
                 }}
                 disabled={clearSettingSources}
-                class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                class="w-4 h-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
               />
-              <span class="text-sm text-gray-200">User settings</span>
-              <span class="text-xs text-gray-400">(~/.claude/settings.json)</span>
+              <span class="text-sm text-fg-soft">User settings</span>
+              <span class="text-xs text-fg-muted">(~/.claude/settings.json)</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer">
               <input
@@ -694,10 +694,10 @@ export function SpaceAgentEditor({
                   );
                 }}
                 disabled={clearSettingSources}
-                class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                class="w-4 h-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
               />
-              <span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
-              <span class="text-xs text-gray-400">(.claude/settings.json)</span>
+              <span class="text-sm text-fg-soft">Project settings + CLAUDE.md</span>
+              <span class="text-xs text-fg-muted">(.claude/settings.json)</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer">
               <input
@@ -709,19 +709,19 @@ export function SpaceAgentEditor({
                   );
                 }}
                 disabled={clearSettingSources}
-                class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                class="w-4 h-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
               />
-              <span class="text-sm text-gray-200">Local settings</span>
-              <span class="text-xs text-gray-400">(.claude/settings.local.json)</span>
+              <span class="text-sm text-fg-soft">Local settings</span>
+              <span class="text-xs text-fg-muted">(.claude/settings.local.json)</span>
             </label>
           </div>
         </div>
 
         <div>
           <div class="flex items-center justify-between mb-2">
-            <label class="block text-sm font-medium text-gray-200">
+            <label class="block text-sm font-medium text-fg-soft">
               Tools
-              {!toolsOverridden && <span class="text-gray-400 text-xs ml-2">(inherited)</span>}
+              {!toolsOverridden && <span class="text-fg-muted text-xs ml-2">(inherited)</span>}
             </label>
             <div class="flex gap-1.5">
               {TOOL_PRESET_BUTTONS.map((preset) => {
@@ -740,8 +740,8 @@ export function SpaceAgentEditor({
                     }}
                     class={`text-xs px-2.5 py-1 rounded border transition-colors ${
                       active
-                        ? 'border-blue-600 bg-blue-900/20 text-blue-300'
-                        : 'border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
+                        ? 'border-accent-hover bg-accent/20 text-accent-soft'
+                        : 'border-line-strong text-fg-muted hover:border-line-strong hover:text-fg-soft'
                     }`}
                   >
                     {preset}
@@ -751,9 +751,9 @@ export function SpaceAgentEditor({
             </div>
           </div>
 
-          <div class="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 mb-3 text-sm text-blue-100">
+          <div class="rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 mb-3 text-sm text-accent-soft">
             <p class="font-medium">SDK defaults are always inherited.</p>
-            <p class="mt-1 text-xs text-blue-200/80">
+            <p class="mt-1 text-xs text-accent-soft/80">
               {toolsOverridden && tools.length > 0
                 ? 'Checked tools are explicit profile entries. Bash, Write, Edit, MultiEdit, and NotebookEdit are denied when unchecked; other unchecked SDK tools remain inherited.'
                 : 'This agent inherits all SDK built-in tools. No explicit overrides are set.'}
@@ -761,7 +761,7 @@ export function SpaceAgentEditor({
           </div>
 
           {toolsOverridden && tools.length > 0 && (
-            <p class="mb-2 text-xs text-gray-500">
+            <p class="mb-2 text-xs text-fg-faint">
               Checked = explicit profile entry; unchecked usually still inherited.
             </p>
           )}
@@ -777,12 +777,12 @@ export function SpaceAgentEditor({
                   key={tool}
                   class={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs transition-colors ${
                     inherited
-                      ? 'border-dark-600 bg-dark-800/40 text-gray-500 cursor-not-allowed'
+                      ? 'border-line-strong bg-surface-raised/40 text-fg-faint cursor-not-allowed'
                       : checked
-                        ? 'border-blue-700/60 bg-blue-900/15 text-blue-200 cursor-pointer'
+                        ? 'border-accent/60 bg-accent/15 text-accent-soft cursor-pointer'
                         : denied
-                          ? 'border-red-700/60 bg-red-900/15 text-red-200 hover:border-red-600 cursor-pointer'
-                          : 'border-dark-700 text-gray-400 hover:border-dark-600 hover:text-gray-300 cursor-pointer'
+                          ? 'border-danger/60 bg-danger/15 text-danger-soft hover:border-red-600 cursor-pointer'
+                          : 'border-line text-fg-muted hover:border-line-strong hover:text-fg-soft cursor-pointer'
                   }`}
                 >
                   <input
@@ -795,24 +795,28 @@ export function SpaceAgentEditor({
                   <span
                     class={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center ${
                       inherited
-                        ? 'bg-dark-600 border-dark-500'
+                        ? 'bg-line-strong border-line-strong'
                         : checked
-                          ? 'bg-blue-600 border-blue-600'
+                          ? 'bg-accent-hover border-accent-hover'
                           : denied
-                            ? 'border-red-500'
-                            : 'border-dark-500'
+                            ? 'border-danger'
+                            : 'border-line-strong'
                     }`}
                   >
                     {checked && (
-                      <svg class="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 12 12">
+                      <svg
+                        class="w-2.5 h-2.5 text-accent-fg"
+                        fill="currentColor"
+                        viewBox="0 0 12 12"
+                      >
                         <path d="M10 3L5 8.5 2 5.5l-1 1L5 10.5l6-7-1-1z" />
                       </svg>
                     )}
-                    {denied && <span class="text-[10px] leading-none text-red-300">×</span>}
+                    {denied && <span class="text-[10px] leading-none text-danger-soft">×</span>}
                   </span>
                   <span>{tool}</span>
                   {denied && (
-                    <span class="ml-auto text-[10px] uppercase tracking-wide text-red-300">
+                    <span class="ml-auto text-[10px] uppercase tracking-wide text-danger-soft">
                       Denied
                     </span>
                   )}
@@ -820,18 +824,18 @@ export function SpaceAgentEditor({
               );
             })}
           </div>
-          {errors['tools'] && <p class="mt-1.5 text-xs text-red-400">{errors['tools']}</p>}
+          {errors['tools'] && <p class="mt-1.5 text-xs text-danger">{errors['tools']}</p>}
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-2">
+          <label class="block text-sm font-medium text-fg-soft mb-2">
             {isPromotion ? 'Long-Horizon Profile' : 'Custom Prompt'}
-            <span class="text-gray-400 text-xs ml-2">
+            <span class="text-fg-muted text-xs ml-2">
               (optional — appended after HyperNeo contract)
             </span>
           </label>
           {isPromotion && (
-            <p class="mb-2 text-xs text-gray-400">
+            <p class="mb-2 text-xs text-fg-muted">
               Edit responsibility, standing instructions, autonomy, managed goals/scopes, reminders,
               event subscriptions, and standing context here.
             </p>

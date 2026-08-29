@@ -163,7 +163,7 @@ function SpaceWorkspacePickerDialog({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Create session" size="md">
-      <p class="mb-3 text-sm text-gray-400">Choose a workspace for the new session.</p>
+      <p class="mb-3 text-sm text-fg-muted">Choose a workspace for the new session.</p>
       <div class="space-y-2" data-testid="space-workspace-options">
         {workspaces.map((workspace) => (
           <button
@@ -172,33 +172,33 @@ function SpaceWorkspacePickerDialog({
             onClick={() => onCreate(workspace.path, mode)}
             data-testid="space-workspace-option"
             class={cn(
-              'flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70',
+              'flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70',
               workspace.isPrimary
-                ? 'border-blue-800/40 bg-blue-950/20 hover:bg-blue-950/30'
-                : 'border-dark-600 bg-dark-850 hover:border-dark-500 hover:bg-white/[0.04]'
+                ? 'border-accent/40 bg-accent/20 hover:bg-accent/30'
+                : 'border-line-strong bg-surface-overlay hover:border-line-strong hover:bg-fill-soft'
             )}
           >
             <span class="min-w-0 flex-1">
               <span class="flex items-center gap-2">
-                <span class="truncate text-sm font-medium text-gray-200">
+                <span class="truncate text-sm font-medium text-fg-soft">
                   {workspaceLabel(workspace)}
                 </span>
                 {workspace.isPrimary && (
                   <span
-                    class="flex-shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300"
+                    class="flex-shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-soft"
                     data-testid="space-workspace-primary"
                   >
                     Primary
                   </span>
                 )}
               </span>
-              <span class="block truncate font-mono text-xs text-gray-400">{workspace.path}</span>
+              <span class="block truncate font-mono text-xs text-fg-muted">{workspace.path}</span>
             </span>
           </button>
         ))}
       </div>
       <div class="mt-4 flex items-center justify-between gap-3" data-testid="space-workspace-mode">
-        <span class="text-xs text-gray-400">Session mode</span>
+        <span class="text-xs text-fg-muted">Session mode</span>
         <div class="flex items-center gap-2">
           <Button
             variant={mode === 'worktree' ? 'primary' : 'secondary'}

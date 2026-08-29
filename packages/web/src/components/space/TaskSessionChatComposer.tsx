@@ -51,10 +51,10 @@ export function TaskCanvasToggleButton({
       type="button"
       onClick={onClick}
       class={cn(
-        'inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-sky-400/60 active:scale-95',
+        'inline-flex h-8 w-8 items-center justify-center rounded-full border shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-info/60 active:scale-95',
         active
-          ? 'border-sky-400/40 bg-sky-500/15 text-sky-200 ring-1 ring-sky-400/30'
-          : 'border-dark-600 bg-dark-850/90 text-gray-400 hover:border-sky-500/40 hover:bg-sky-500/10 hover:text-sky-200',
+          ? 'border-sky-400/40 bg-sky-500/15 text-info-soft ring-1 ring-info/30'
+          : 'border-line-strong bg-surface-overlay/90 text-fg-muted hover:border-sky-500/40 hover:bg-sky-500/10 hover:text-info-soft',
         className
       )}
       data-testid="canvas-toggle"
@@ -144,7 +144,7 @@ export function TaskSessionChatComposer({
         <button
           type="button"
           class={cn(
-            'group inline-flex h-9 w-9 items-center justify-center rounded-full border border-dark-900/30 text-sm font-bold text-dark-950 shadow-sm ring-1 ring-white/10 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-400/70 active:scale-95',
+            'group inline-flex h-9 w-9 items-center justify-center rounded-full border border-surface/30 text-sm font-bold text-bg shadow-sm ring-1 ring-line/10 transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-accent/70 active:scale-95',
             isNotStarted && 'ring-amber-400/40'
           )}
           style={{ backgroundColor: selectedTargetColor }}
@@ -159,10 +159,10 @@ export function TaskSessionChatComposer({
         </button>
         {targetMenuOpen && (
           <div
-            class="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-lg border border-dark-700 bg-dark-850 shadow-xl shadow-black/30"
+            class="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-lg border border-line bg-surface-overlay shadow-xl shadow-black/30"
             data-testid="task-composer-target-menu"
           >
-            <div class="border-b border-dark-700 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+            <div class="border-b border-line px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-fg-muted">
               Send Message To
             </div>
             <div class="max-h-72 overflow-y-auto py-1">
@@ -171,8 +171,8 @@ export function TaskSessionChatComposer({
                   key={target.id}
                   type="button"
                   class={cn(
-                    'flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-dark-700/70',
-                    target.id === selectedTarget?.id && 'bg-blue-500/15 text-blue-100'
+                    'flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-fill-strong/70',
+                    target.id === selectedTarget?.id && 'bg-accent/15 text-accent-soft'
                   )}
                   onClick={() => {
                     onTargetSelect(target.id);
@@ -181,13 +181,13 @@ export function TaskSessionChatComposer({
                   data-testid="task-composer-target-option"
                 >
                   <span class="min-w-0">
-                    <span class="block truncate text-gray-100">{target.label}</span>
-                    <span class="block truncate text-xs text-gray-400">
+                    <span class="block truncate text-fg">{target.label}</span>
+                    <span class="block truncate text-xs text-fg-muted">
                       {`${target.nodeName ?? 'Workflow'}${target.state ? ` · ${target.state}` : ''}`}
                     </span>
                   </span>
                   {target.id === selectedTarget?.id && (
-                    <span class="text-xs font-medium text-blue-300">Selected</span>
+                    <span class="text-xs font-medium text-accent-soft">Selected</span>
                   )}
                 </button>
               ))}
@@ -201,9 +201,9 @@ export function TaskSessionChatComposer({
     <div ref={onComposerRef} class="relative z-10" data-testid="task-session-chat-composer">
       {isNotStarted && (
         <div class="px-3 pb-1">
-          <div class="flex items-center gap-1.5 rounded border border-amber-500/20 bg-amber-500/10 px-2 py-1">
+          <div class="flex items-center gap-1.5 rounded border border-warning/20 bg-warning/10 px-2 py-1">
             <svg
-              class="w-3 h-3 text-amber-400 flex-shrink-0"
+              class="w-3 h-3 text-warning flex-shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -215,7 +215,7 @@ export function TaskSessionChatComposer({
                 d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
               />
             </svg>
-            <span class="text-[11px] text-amber-300">
+            <span class="text-[11px] text-warning">
               {selectedTarget?.label} hasn't started yet — model and thinking pre-configuration will
               apply when the session spawns.
             </span>

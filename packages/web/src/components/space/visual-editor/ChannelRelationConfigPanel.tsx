@@ -47,13 +47,13 @@ export function ChannelRelationConfigPanel({
           : 'flex-1 overflow-y-auto px-4 py-4 space-y-3'
       }
     >
-      <p class="text-xs text-gray-400">{description}</p>
+      <p class="text-xs text-fg-muted">{description}</p>
       {canConvertToBidirectional && (
         <button
           type="button"
           data-testid="convert-channel-relation-button"
           onClick={onConvertToBidirectional}
-          class="w-full rounded border border-blue-600 bg-blue-600/10 px-3 py-2 text-xs font-medium text-blue-200 hover:bg-blue-600/20 transition-colors"
+          class="w-full rounded border border-accent-hover bg-accent-hover/10 px-3 py-2 text-xs font-medium text-accent-soft hover:bg-accent-hover/20 transition-colors"
         >
           Convert to bidirectional
         </button>
@@ -62,7 +62,7 @@ export function ChannelRelationConfigPanel({
       {forwardLinks.length > 0 ? (
         <div class="space-y-3">
           {reverseLinks.length > 0 && (
-            <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-fg-muted">
               Forward links
             </p>
           )}
@@ -82,7 +82,7 @@ export function ChannelRelationConfigPanel({
 
       {reverseLinks.length > 0 && (
         <div class="space-y-3">
-          <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-fg-muted">
             Reverse links
           </p>
           {reverseLinks.map(({ index, channel, shouldBeCyclic }) => (
@@ -100,7 +100,7 @@ export function ChannelRelationConfigPanel({
       )}
 
       {forwardLinks.length === 0 && reverseLinks.length === 0 && (
-        <p class="text-xs text-gray-400">No editable channel links found for this relation.</p>
+        <p class="text-xs text-fg-muted">No editable channel links found for this relation.</p>
       )}
     </div>
   );
@@ -121,16 +121,16 @@ export function ChannelRelationConfigPanel({
         flexDirection: 'column',
         zIndex: 20,
       }}
-      class="bg-dark-900 border-l border-dark-700 shadow-xl animate-slideInRight"
+      class="bg-surface border-l border-line shadow-xl animate-slideInRight"
     >
-      <div class="flex items-start justify-between gap-3 px-4 py-3 border-b border-dark-700 flex-shrink-0">
+      <div class="flex items-start justify-between gap-3 px-4 py-3 border-b border-line flex-shrink-0">
         <div class="min-w-0 flex items-start gap-2">
           {onBack && (
             <button
               type="button"
               data-testid="channel-relation-back-button"
               onClick={onBack}
-              class="mt-0.5 p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+              class="mt-0.5 p-1 rounded text-fg-muted hover:text-fg-soft hover:bg-fill-strong transition-colors flex-shrink-0"
               title="Back"
             >
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -144,14 +144,14 @@ export function ChannelRelationConfigPanel({
             </button>
           )}
           <div class="min-w-0">
-            <h3 class="text-sm font-semibold text-gray-100 truncate">{title}</h3>
-            <p class="mt-1 text-xs text-gray-400">{description}</p>
+            <h3 class="text-sm font-semibold text-fg truncate">{title}</h3>
+            <p class="mt-1 text-xs text-fg-muted">{description}</p>
           </div>
         </div>
         <button
           data-testid="channel-relation-close-button"
           onClick={onClose}
-          class="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors flex-shrink-0"
+          class="p-1 rounded text-fg-muted hover:text-fg-soft hover:bg-fill-strong transition-colors flex-shrink-0"
           title="Close panel"
         >
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

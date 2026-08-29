@@ -404,7 +404,7 @@ describe('SpaceAgentEditor', () => {
     if (writeCb) fireEvent.click(writeCb.closest('label')!);
 
     const customButton = getByText('Custom');
-    expect(customButton.className).toContain('blue');
+    expect(customButton.className).toContain('accent');
   });
 
   it('switches active preset indicator to "Inherited" when the last tool is unchecked', () => {
@@ -422,7 +422,7 @@ describe('SpaceAgentEditor', () => {
     }
 
     const inheritButton = getByText('Inherit defaults');
-    expect(inheritButton.className).toContain('blue');
+    expect(inheritButton.className).toContain('accent');
   });
 
   it('shows all tools as checked and disabled in inherited mode', () => {

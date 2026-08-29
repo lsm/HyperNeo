@@ -257,19 +257,15 @@ export function WorkflowNode({
     onPortMouseLeave?.(stepId, 'input');
   }, [onPortMouseLeave, stepId]);
 
-  const borderClass = isStartNode
-    ? 'border-green-500'
-    : isSelected
-      ? 'border-blue-500'
-      : 'border-gray-700';
+  const borderClass = isStartNode ? 'border-success' : isSelected ? 'border-accent' : 'border-line';
 
-  const bgClass = 'bg-gray-800';
+  const bgClass = 'bg-surface-raised';
 
   const inputPortBg = isDropTarget ? '#22c55e' : '#6b7280';
   const inputPortBorder = isDropTarget ? '#16a34a' : '#374151';
   const inputPortScale = isDropTarget ? 'scale(1.4)' : '';
 
-  const ringClass = isSelected ? 'ring-2 ring-blue-500' : '';
+  const ringClass = isSelected ? 'ring-2 ring-accent' : '';
   const hasActiveExecution = nodeTaskStates?.some((s) => s.status === 'in_progress') ?? false;
   const pulseClass = hasActiveExecution ? 'animate-pulse' : '';
   const activeAnchorSideSet = new Set(activeAnchorSides);
@@ -328,7 +324,7 @@ export function WorkflowNode({
         <div class="flex items-center justify-between mb-1">
           <span
             data-testid="step-badge"
-            class="text-xs font-mono bg-gray-700 text-gray-300 rounded px-1.5 py-0.5"
+            class="text-xs font-mono bg-fill-strong text-fg-soft rounded px-1.5 py-0.5"
           >
             {stepIndex + 1}
           </span>
@@ -336,7 +332,7 @@ export function WorkflowNode({
             {isStartNode && (
               <span
                 data-testid="start-badge"
-                class="text-xs font-bold text-green-400 uppercase tracking-wider"
+                class="text-xs font-bold text-success uppercase tracking-wider"
               >
                 START
               </span>
@@ -344,7 +340,7 @@ export function WorkflowNode({
             {isEndNode && (
               <span
                 data-testid="end-badge"
-                class="text-xs font-bold text-purple-400 uppercase tracking-wider"
+                class="text-xs font-bold text-cat-purple uppercase tracking-wider"
               >
                 END
               </span>
@@ -353,7 +349,7 @@ export function WorkflowNode({
               <span
                 data-testid="post-approval-badge"
                 title="Post-approval instruction configured"
-                class="rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-300"
+                class="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent-soft"
               >
                 Post
               </span>
@@ -363,7 +359,7 @@ export function WorkflowNode({
 
         <p
           data-testid="step-name"
-          class="text-sm font-medium text-white truncate"
+          class="text-sm font-medium text-accent-fg truncate"
           style={{ maxWidth: 180 }}
         >
           {step.name || '(unnamed)'}
@@ -377,14 +373,14 @@ export function WorkflowNode({
               return (
                 <span
                   key={sa.name}
-                  class={`text-xs rounded px-1.5 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-amber-900/40 text-amber-300' : 'bg-gray-700 text-gray-300'}`}
+                  class={`text-xs rounded px-1.5 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-warning/40 text-warning' : 'bg-fill-strong text-fg-soft'}`}
                   title={hasOverrides ? `${sa.name} (has overrides)` : sa.name}
                 >
                   {sa.name}
                   {hasOverrides && !taskState && (
                     <span
                       data-testid="override-indicator"
-                      class="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"
+                      class="w-1.5 h-1.5 rounded-full bg-warning flex-shrink-0"
                     />
                   )}
                   {taskState && <AgentStatusIcon state={taskState} />}
@@ -395,7 +391,7 @@ export function WorkflowNode({
         ) : (
           <div
             data-testid="agent-name"
-            class="flex items-center gap-1 text-xs text-gray-400 truncate mt-0.5"
+            class="flex items-center gap-1 text-xs text-fg-muted truncate mt-0.5"
           >
             <span class="truncate">{agentName}</span>
             {taskStateByAgent.get(null) && <AgentStatusIcon state={taskStateByAgent.get(null)!} />}

@@ -993,15 +993,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   }
 
   return (
-    <div
-      data-testid="visual-workflow-editor"
-      class="flex h-full flex-col overflow-hidden bg-dark-950"
-    >
-      <div class="flex-shrink-0 border-b border-white/10 bg-dark-900/95">
+    <div data-testid="visual-workflow-editor" class="flex h-full flex-col overflow-hidden bg-bg">
+      <div class="flex-shrink-0 border-b border-line bg-surface/95">
         <div class="flex h-[52px] items-center gap-2 px-3 sm:px-4">
           <button
             onClick={onCancel}
-            class="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200"
+            class="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft"
             title="Back"
             data-testid="back-button"
           >
@@ -1016,28 +1013,28 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           </button>
           <div class="min-w-0 flex-1">
             <div class="flex min-w-0 items-center gap-2">
-              <h1 class="truncate text-sm font-semibold text-gray-100">
+              <h1 class="truncate text-sm font-semibold text-fg">
                 {isEditing ? 'Edit Workflow' : 'New Workflow'}
               </h1>
-              <span class="hidden rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-400 sm:inline-flex">
+              <span class="hidden rounded-full bg-fill-soft px-2 py-0.5 text-xs text-fg-muted sm:inline-flex">
                 {regularNodes.length} {regularNodes.length === 1 ? 'node' : 'nodes'}
               </span>
               {disabled && (
-                <span class="hidden rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-300 sm:inline-flex">
+                <span class="hidden rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger-soft sm:inline-flex">
                   Disabled
                 </span>
               )}
             </div>
           </div>
-          <div class="flex items-center gap-1 rounded-lg border border-dark-700 bg-dark-800/75 p-1 shadow-lg shadow-black/10 backdrop-blur-sm">
+          <div class="flex items-center gap-1 rounded-lg border border-line bg-surface-raised/75 p-1 shadow-lg shadow-black/10 backdrop-blur-sm">
             <button
               type="button"
               onClick={() => setEditorView('canvas')}
               class={[
                 'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
                 editorView === 'canvas'
-                  ? 'text-gray-100 bg-dark-700/70 shadow-sm'
-                  : 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40',
+                  ? 'text-fg bg-fill-strong/70 shadow-sm'
+                  : 'text-fg-soft/80 hover:text-fg hover:bg-fill-strong/40',
               ].join(' ')}
               data-testid="workflow-canvas-toggle"
               aria-pressed={editorView === 'canvas'}
@@ -1050,8 +1047,8 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
               class={[
                 'px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap',
                 editorView === 'settings'
-                  ? 'text-gray-100 bg-dark-700/70 shadow-sm'
-                  : 'text-gray-300/80 hover:text-gray-100 hover:bg-dark-700/40',
+                  ? 'text-fg bg-fill-strong/70 shadow-sm'
+                  : 'text-fg-soft/80 hover:text-fg hover:bg-fill-strong/40',
               ].join(' ')}
               data-testid="workflow-settings-toggle"
               aria-pressed={editorView === 'settings'}
@@ -1061,7 +1058,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           </div>
           <button
             onClick={onCancel}
-            class="hidden rounded-lg px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200 sm:inline-flex"
+            class="hidden rounded-lg px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft sm:inline-flex"
             data-testid="cancel-button"
           >
             Cancel
@@ -1070,7 +1067,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
             onClick={handleSave}
             disabled={saving}
             data-testid="save-button"
-            class="whitespace-nowrap rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+            class="whitespace-nowrap rounded-lg bg-accent-hover px-3 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent disabled:opacity-50"
           >
             {saving ? 'Saving…' : isEditing ? 'Save Changes' : 'Create Workflow'}
           </button>
@@ -1078,41 +1075,41 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
       </div>
 
       {error && (
-        <div class="px-4 py-2 bg-red-900/20 border-b border-red-800/40 flex-shrink-0">
-          <p class="text-xs text-red-300">{error}</p>
+        <div class="px-4 py-2 bg-danger/20 border-b border-danger/40 flex-shrink-0">
+          <p class="text-xs text-danger-soft">{error}</p>
         </div>
       )}
 
       <div
         class={[
-          'scrollbar-dark min-h-0 flex-1 overflow-y-auto bg-dark-950 px-4 py-4 pr-3',
+          'scrollbar-dark min-h-0 flex-1 overflow-y-auto bg-bg px-4 py-4 pr-3',
           editorView === 'settings' ? '' : 'hidden',
         ].join(' ')}
         data-testid="workflow-settings-view"
       >
         <div class="mx-auto min-h-[calc(100%+1px)] max-w-5xl space-y-4">
-          <section class="grid gap-4 rounded-lg border border-white/10 bg-white/[0.025] p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6">
+          <section class="grid gap-4 rounded-lg border border-line bg-fill-soft p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6">
             <div>
-              <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Basics</h2>
-              <p class="mt-1 text-xs leading-5 text-gray-400">
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-fg-muted">Basics</h2>
+              <p class="mt-1 text-xs leading-5 text-fg-muted">
                 Name this workflow and decide whether new tasks may use it.
               </p>
             </div>
             <div class="grid gap-4">
               <div>
-                <label class="mb-1 block text-xs font-medium text-gray-400">Name</label>
+                <label class="mb-1 block text-xs font-medium text-fg-muted">Name</label>
                 <input
                   type="text"
                   value={name}
                   onInput={(e) => setName((e.currentTarget as HTMLInputElement).value)}
                   placeholder="Workflow name…"
                   data-testid="workflow-name-input"
-                  class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                  class="w-full rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg-soft placeholder-gray-600 focus:border-accent focus:outline-none"
                 />
               </div>
               <div>
-                <label class="mb-1 block text-xs font-medium text-gray-400">
-                  Description <span class="text-gray-400">(optional)</span>
+                <label class="mb-1 block text-xs font-medium text-fg-muted">
+                  Description <span class="text-fg-muted">(optional)</span>
                 </label>
                 <input
                   type="text"
@@ -1120,10 +1117,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
                   onInput={(e) => setDescription((e.currentTarget as HTMLInputElement).value)}
                   placeholder="Description (optional)"
                   data-testid="workflow-description-input"
-                  class="w-full rounded-lg border border-white/10 bg-dark-850 px-3 py-2 text-sm text-gray-400 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                  class="w-full rounded-lg border border-line bg-surface-overlay px-3 py-2 text-sm text-fg-muted placeholder-gray-600 focus:border-accent focus:outline-none"
                 />
               </div>
-              <label class="flex w-fit items-center gap-2 rounded-lg px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-white/5 cursor-pointer select-none">
+              <label class="flex w-fit items-center gap-2 rounded-lg px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-soft cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={disabled}
@@ -1131,24 +1128,24 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
                   onChange={(e) => setDisabled((e.currentTarget as HTMLInputElement).checked)}
                   class="w-3 h-3 rounded accent-blue-500"
                 />
-                <span class={disabled ? 'text-red-300 font-medium' : ''}>Disable workflow</span>
+                <span class={disabled ? 'text-danger-soft font-medium' : ''}>Disable workflow</span>
               </label>
             </div>
           </section>
 
-          <section class="grid gap-4 rounded-lg border border-white/10 bg-white/[0.025] p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6">
+          <section class="grid gap-4 rounded-lg border border-line bg-fill-soft p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6">
             <div>
-              <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Runtime</h2>
-              <p class="mt-1 text-xs leading-5 text-gray-400">
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-fg-muted">Runtime</h2>
+              <p class="mt-1 text-xs leading-5 text-fg-muted">
                 Control completion authority and optional routing after approval.
               </p>
             </div>
             <div class="space-y-5">
               <div>
-                <label class="mb-2 block text-xs font-medium text-gray-400">
+                <label class="mb-2 block text-xs font-medium text-fg-muted">
                   Completion autonomy
                 </label>
-                <div class="flex flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-dark-850 p-1.5">
+                <div class="flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-surface-overlay p-1.5">
                   {AUTONOMY_LEVELS.map(({ level, label, description }) => (
                     <button
                       key={level}
@@ -1159,16 +1156,16 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
                       class={[
                         'flex h-8 items-center gap-1 rounded-md px-2.5 text-xs transition-colors',
                         completionAutonomyLevel === level
-                          ? 'bg-blue-500/10 text-blue-200'
-                          : 'text-gray-400 hover:bg-white/5 hover:text-gray-300',
+                          ? 'bg-accent/10 text-accent-soft'
+                          : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft',
                       ].join(' ')}
                     >
                       <span
                         class={[
                           'flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold',
                           completionAutonomyLevel === level
-                            ? 'bg-blue-500/20 text-blue-300'
-                            : 'bg-white/5 text-gray-400',
+                            ? 'bg-accent/20 text-accent-soft'
+                            : 'bg-fill-soft text-fg-muted',
                         ].join(' ')}
                       >
                         {level}
@@ -1181,24 +1178,24 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
             </div>
           </section>
 
-          <section class="grid gap-4 rounded-lg border border-white/10 bg-white/[0.025] p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6">
+          <section class="grid gap-4 rounded-lg border border-line bg-fill-soft p-4 lg:grid-cols-[180px_minmax(0,1fr)] lg:gap-6">
             <div>
-              <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Tags</h2>
-              <p class="mt-1 text-xs leading-5 text-gray-400">
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-fg-muted">Tags</h2>
+              <p class="mt-1 text-xs leading-5 text-fg-muted">
                 Use short labels to organize workflows.
               </p>
             </div>
-            <div class="flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-dark-850 px-2 py-2">
+            <div class="flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border border-line bg-surface-overlay px-2 py-2">
               {tags.map((tag) => (
                 <span
                   key={tag}
-                  class="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-xs text-gray-300"
+                  class="flex items-center gap-1 rounded-full border border-line bg-fill-soft px-2 py-0.5 text-xs text-fg-soft"
                 >
                   {tag}
                   <button
                     type="button"
                     onClick={() => removeTag(tag)}
-                    class="text-gray-400 transition-colors hover:text-red-400"
+                    class="text-fg-muted transition-colors hover:text-danger"
                     aria-label={`Remove tag ${tag}`}
                   >
                     ×
@@ -1217,7 +1214,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
                     setTagInput('');
                   }
                 }}
-                class="min-w-[8rem] flex-1 bg-transparent px-1 py-1 text-xs text-gray-300 outline-none placeholder-gray-700"
+                class="min-w-[8rem] flex-1 bg-transparent px-1 py-1 text-xs text-fg-soft outline-none placeholder-gray-700"
               />
             </div>
           </section>
@@ -1226,19 +1223,19 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
       <div
         class={[
-          'flex-1 relative overflow-hidden bg-dark-950',
+          'flex-1 relative overflow-hidden bg-bg',
           editorView === 'canvas' ? '' : 'hidden',
         ].join(' ')}
         data-testid="workflow-canvas-view"
       >
         <div
-          class="absolute top-4 left-4 z-10 flex items-center gap-1.5 rounded-xl border border-white/10 bg-dark-900/90 p-1.5 shadow-2xl shadow-black/30 backdrop-blur"
+          class="absolute top-4 left-4 z-10 flex items-center gap-1.5 rounded-xl border border-line bg-surface/90 p-1.5 shadow-2xl shadow-black/30 backdrop-blur"
           style={{ pointerEvents: 'auto' }}
         >
           <button
             onClick={addStep}
             data-testid="add-step-button"
-            class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
+            class="flex items-center gap-1.5 rounded-lg border border-line bg-fill-soft px-3 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:border-line-strong hover:bg-fill hover:text-accent-fg"
           >
             <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -1256,7 +1253,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
               <button
                 onClick={() => setShowTemplates((v) => !v)}
                 data-testid="template-picker-button"
-                class="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
+                class="flex items-center gap-1.5 rounded-lg border border-line bg-fill-soft px-3 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:border-line-strong hover:bg-fill hover:text-accent-fg"
               >
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
@@ -1283,9 +1280,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
               </button>
 
               {showTemplates && (
-                <div class="absolute top-full left-0 mt-2 w-72 overflow-hidden rounded-xl border border-white/10 bg-dark-850 shadow-2xl shadow-black/40">
+                <div class="absolute top-full left-0 mt-2 w-72 overflow-hidden rounded-xl border border-line bg-surface-overlay shadow-2xl shadow-black/40">
                   {availableTemplates.length === 0 && (
-                    <div class="px-3 py-2.5 text-xs text-gray-400 border-b border-white/10">
+                    <div class="px-3 py-2.5 text-xs text-fg-muted border-b border-line">
                       No built-in templates available for this space.
                     </div>
                   )}
@@ -1295,10 +1292,10 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
                       onClick={() => handleTemplateSelection(t)}
                       data-testid="template-option"
                       data-template-label={t.label}
-                      class="w-full border-b border-white/10 px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-white/5"
+                      class="w-full border-b border-line px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-fill-soft"
                     >
-                      <div class="text-xs font-medium text-gray-200">{t.label}</div>
-                      <div class="text-xs text-gray-400 mt-0.5">{t.description}</div>
+                      <div class="text-xs font-medium text-fg-soft">{t.label}</div>
+                      <div class="text-xs text-fg-muted mt-0.5">{t.description}</div>
                     </button>
                   ))}
                 </div>
@@ -1309,9 +1306,9 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
 
         {regularNodes.length === 0 && (
           <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div class="rounded-xl border border-white/10 bg-dark-900/80 px-6 py-5 text-center shadow-2xl shadow-black/30 backdrop-blur">
-              <p class="text-sm font-medium text-gray-300">Start the workflow canvas</p>
-              <p class="text-xs text-gray-400 mt-1">Add a node or apply a template.</p>
+            <div class="rounded-xl border border-line bg-surface/80 px-6 py-5 text-center shadow-2xl shadow-black/30 backdrop-blur">
+              <p class="text-sm font-medium text-fg-soft">Start the workflow canvas</p>
+              <p class="text-xs text-fg-muted mt-1">Add a node or apply a template.</p>
             </div>
           </div>
         )}
@@ -1426,7 +1423,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           confirmButtonVariant="warning"
           confirmTestId="confirm-template-apply-button"
         >
-          <p class="text-xs text-gray-400">Current canvas changes will be discarded.</p>
+          <p class="text-xs text-fg-muted">Current canvas changes will be discarded.</p>
         </ConfirmModal>
       </div>
     </div>

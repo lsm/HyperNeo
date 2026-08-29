@@ -1,7 +1,6 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk/sdk.d.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { copyToClipboard } from '../../../lib/utils';
-import { messageSpacing } from '../../../lib/design-tokens';
 import { Dropdown } from '../../ui/Dropdown';
 import { IconButton } from '../../ui/IconButton';
 import { Tooltip } from '../../ui/Tooltip';
@@ -59,13 +58,9 @@ export function SpaceTaskThreadMessageActions({
   const resultIsError = resultInfo !== undefined && resultInfo.subtype !== 'success';
 
   return (
-    <div
-      class={`flex items-center ${messageSpacing.actions.gap} ${messageSpacing.actions.marginTop} ${messageSpacing.actions.padding} ${
-        align === 'right' ? 'justify-end' : ''
-      }`}
-    >
+    <div class={`flex items-center gap-2 mt-2 px-1 ${align === 'right' ? 'justify-end' : ''}`}>
       <Tooltip content={formatFullTime(timestamp)} position={align === 'right' ? 'left' : 'right'}>
-        <span class="text-xs text-gray-400">{formatTime(timestamp)}</span>
+        <span class="text-xs text-fg-muted">{formatTime(timestamp)}</span>
       </Tooltip>
 
       {sessionInit && (
@@ -90,7 +85,7 @@ export function SpaceTaskThreadMessageActions({
         size="md"
         onClick={onCopy}
         title={copied ? 'Copied!' : 'Copy message'}
-        class={copied ? 'text-green-400' : ''}
+        class={copied ? 'text-success' : ''}
       >
         {copied ? (
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

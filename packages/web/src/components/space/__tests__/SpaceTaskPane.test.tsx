@@ -1791,7 +1791,7 @@ describe('SpaceTaskPane — activity members actions', () => {
     ]);
     const { getByTestId, container } = render(<SpaceTaskPane taskId="task-1" />);
     fireEvent.click(getByTestId('task-actions-menu-trigger'));
-    const dividers = container.querySelectorAll('.h-px.bg-dark-700');
+    const dividers = container.querySelectorAll('.h-px.bg-fill-strong');
     expect(dividers.length).toBeGreaterThan(0);
   });
 

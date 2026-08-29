@@ -21,7 +21,6 @@ import { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 import { useSpaceWorkspaceChoice } from './SpaceWorkspacePicker';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { AutonomyWorkflowSummary } from './AutonomyWorkflowSummary';
-import { FLAT_SURFACE, GLASS_SURFACE } from './glass-workspace';
 
 function StatCard({
   label,
@@ -41,15 +40,15 @@ function StatCard({
       aria-label={`${label} tasks: ${count}`}
       class={cn(
         'flex flex-col items-center gap-1 rounded-xl border px-5 py-4 transition-all duration-200',
-        GLASS_SURFACE,
+        'glass-surface',
         onClick
-          ? 'cursor-pointer hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70'
+          ? 'cursor-pointer hover:-translate-y-0.5 hover:border-line-strong hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70'
           : 'cursor-default',
         color
       )}
     >
       <span class="text-2xl font-bold tabular-nums">{count}</span>
-      <span class="text-xs text-gray-400 font-medium uppercase tracking-wider">{label}</span>
+      <span class="text-xs text-fg-muted font-medium uppercase tracking-wider">{label}</span>
     </button>
   );
 }
@@ -61,19 +60,19 @@ const RUNTIME_STYLES: Record<
   running: {
     bg: 'bg-green-950/30',
     border: 'border-green-800/40',
-    dot: 'bg-green-400',
+    dot: 'bg-success',
     label: 'Running',
   },
   paused: {
     bg: 'bg-yellow-950/30',
     border: 'border-yellow-800/40',
-    dot: 'bg-yellow-400',
+    dot: 'bg-warning',
     label: 'Paused',
   },
   stopped: {
-    bg: 'bg-dark-850',
-    border: 'border-dark-600',
-    dot: 'bg-gray-500',
+    bg: 'bg-surface-overlay',
+    border: 'border-line-strong',
+    dot: 'bg-fg-faint',
     label: 'Stopped',
   },
 };
@@ -99,7 +98,7 @@ function RuntimeControlBar({
     <div
       class={cn(
         'flex items-center justify-between rounded-xl border px-4 py-3 transition-colors sm:px-5',
-        GLASS_SURFACE,
+        'glass-surface',
         style.border
       )}
     >
@@ -116,8 +115,8 @@ function RuntimeControlBar({
           )}
         </div>
         <div>
-          <span class="text-sm font-semibold text-gray-100">{style.label}</span>
-          {actionLoading && <span class="ml-2 text-xs text-gray-400 italic">Processing...</span>}
+          <span class="text-sm font-semibold text-fg">{style.label}</span>
+          {actionLoading && <span class="ml-2 text-xs text-fg-muted italic">Processing...</span>}
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -126,14 +125,14 @@ function RuntimeControlBar({
             <button
               onClick={onPause}
               disabled={actionLoading}
-              class="px-3 py-1.5 text-xs font-medium text-yellow-300 bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-700/40 rounded-lg transition-colors disabled:opacity-40"
+              class="px-3 py-1.5 text-xs font-medium text-warning-soft bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-700/40 rounded-lg transition-colors disabled:opacity-40"
             >
               Pause
             </button>
             <button
               onClick={onStop}
               disabled={actionLoading}
-              class="px-3 py-1.5 text-xs font-medium text-red-300 bg-red-900/20 hover:bg-red-900/40 border border-red-700/40 rounded-lg transition-colors disabled:opacity-40"
+              class="px-3 py-1.5 text-xs font-medium text-danger-soft bg-danger/20 hover:bg-danger/40 border border-danger/40 rounded-lg transition-colors disabled:opacity-40"
             >
               Stop
             </button>
@@ -144,14 +143,14 @@ function RuntimeControlBar({
             <button
               onClick={onResume}
               disabled={actionLoading}
-              class="px-3 py-1.5 text-xs font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
+              class="px-3 py-1.5 text-xs font-medium text-success-soft bg-success/30 hover:bg-success/50 border border-success/40 rounded-lg transition-colors disabled:opacity-40"
             >
               Resume
             </button>
             <button
               onClick={onStop}
               disabled={actionLoading}
-              class="px-3 py-1.5 text-xs font-medium text-red-300 bg-red-900/20 hover:bg-red-900/40 border border-red-700/40 rounded-lg transition-colors disabled:opacity-40"
+              class="px-3 py-1.5 text-xs font-medium text-danger-soft bg-danger/20 hover:bg-danger/40 border border-danger/40 rounded-lg transition-colors disabled:opacity-40"
             >
               Stop
             </button>
@@ -161,7 +160,7 @@ function RuntimeControlBar({
           <button
             onClick={onStart}
             disabled={actionLoading}
-            class="px-3 py-1.5 text-xs font-medium text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/40 rounded-lg transition-colors disabled:opacity-40"
+            class="px-3 py-1.5 text-xs font-medium text-success-soft bg-success/30 hover:bg-success/50 border border-success/40 rounded-lg transition-colors disabled:opacity-40"
           >
             Start
           </button>
@@ -181,10 +180,10 @@ function AutonomyLevelBar({
   onChange: (level: SpaceAutonomyLevel) => void;
 }) {
   return (
-    <div class={cn('min-h-[5.25rem] rounded-xl border px-4 py-3.5', GLASS_SURFACE)}>
+    <div class={cn('min-h-[5.25rem] rounded-xl border px-4 py-3.5', 'glass-surface')}>
       <div class="mb-2 flex items-center justify-between">
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Autonomy</span>
-        <span class="text-xs text-gray-400">{AUTONOMY_LABELS[level]}</span>
+        <span class="text-xs font-semibold text-fg-muted uppercase tracking-wider">Autonomy</span>
+        <span class="text-xs text-fg-muted">{AUTONOMY_LABELS[level]}</span>
       </div>
       <div class="flex gap-1.5">
         {([1, 2, 3, 4, 5] as SpaceAutonomyLevel[]).map((l) => (
@@ -196,14 +195,14 @@ function AutonomyLevelBar({
             title={`Level ${l}: ${AUTONOMY_LABELS[l]}`}
             aria-label={AUTONOMY_LABELS[l]}
             class={cn(
-              'flex-1 rounded-full transition-colors py-1 focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:outline-none',
+              'flex-1 rounded-full transition-colors py-1 focus-visible:ring-2 focus-visible:ring-accent focus-visible:outline-none',
               l <= level
                 ? l <= 2
-                  ? 'bg-blue-500'
+                  ? 'bg-accent'
                   : l <= 4
-                    ? 'bg-amber-500'
-                    : 'bg-red-500'
-                : 'bg-dark-600 hover:bg-dark-500'
+                    ? 'bg-warning'
+                    : 'bg-danger'
+                : 'bg-line-strong hover:bg-fill-strong'
             )}
           />
         ))}
@@ -215,12 +214,12 @@ function AutonomyLevelBar({
 
 function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: number) => void }) {
   return (
-    <div class={cn('min-h-[5.25rem] rounded-xl border px-4 py-3.5', GLASS_SURFACE)}>
+    <div class={cn('min-h-[5.25rem] rounded-xl border px-4 py-3.5', 'glass-surface')}>
       <div class="mb-2 flex items-center justify-between">
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+        <span class="text-xs font-semibold text-fg-muted uppercase tracking-wider">
           Concurrency
         </span>
-        <span class="text-xs text-gray-400">
+        <span class="text-xs text-fg-muted">
           {limit} task{limit !== 1 ? 's' : ''}
         </span>
       </div>
@@ -232,20 +231,20 @@ function ConcurrencyBar({ limit, onChange }: { limit: number; onChange: (n: numb
         value={limit}
         data-testid="concurrency-slider"
         onChange={(e) => onChange(Number((e.target as HTMLInputElement).value))}
-        class="w-full h-2 rounded-full appearance-none cursor-pointer bg-dark-700 accent-blue-500"
+        class="w-full h-2 rounded-full appearance-none cursor-pointer bg-fill-strong accent-blue-500"
       />
     </div>
   );
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  in_progress: 'bg-blue-400/80 ring-blue-300/20',
-  open: 'bg-gray-400/65 ring-gray-300/15',
-  blocked: 'bg-amber-400/80 ring-amber-300/20',
-  review: 'bg-purple-400/80 ring-purple-300/20',
-  done: 'bg-green-400/75 ring-green-300/20',
-  cancelled: 'bg-gray-500/60 ring-gray-400/15',
-  archived: 'bg-gray-500/60 ring-gray-400/15',
+  in_progress: 'bg-accent-soft/80 ring-blue-300/20',
+  open: 'bg-fg-muted/65 ring-gray-300/15',
+  blocked: 'bg-warning/80 ring-warning/20',
+  review: 'bg-cat-purple/80 ring-cat-purple/20',
+  done: 'bg-success/75 ring-green-300/20',
+  cancelled: 'bg-fg-faint/60 ring-fg-muted/15',
+  archived: 'bg-fg-faint/60 ring-fg-muted/15',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -263,7 +262,7 @@ function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => vo
     <button
       type="button"
       onClick={onClick}
-      class="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-white/[0.055] focus-visible:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/60"
+      class="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-fill-soft focus-visible:bg-fill-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60"
     >
       <span
         class={cn(
@@ -273,11 +272,11 @@ function RecentTaskItem({ task, onClick }: { task: SpaceTask; onClick?: () => vo
         aria-hidden="true"
       />
       <span class="sr-only">{STATUS_LABELS[task.status] ?? task.status}: </span>
-      <span class="min-w-0 flex-1 truncate text-sm font-medium text-gray-100">{task.title}</span>
-      <span class="flex-none font-mono text-[11px] font-medium text-gray-500">
+      <span class="min-w-0 flex-1 truncate text-sm font-medium text-fg">{task.title}</span>
+      <span class="flex-none font-mono text-[11px] font-medium text-fg-faint">
         #{task.taskNumber}
       </span>
-      <span class="flex-none text-xs tabular-nums text-gray-400">
+      <span class="flex-none text-xs tabular-nums text-fg-muted">
         {getRelativeTime(task.updatedAt)}
       </span>
     </button>
@@ -396,8 +395,8 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
     return (
       <div class="flex h-full items-center justify-center">
         <div class="text-center">
-          <div class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
-          <p class="text-sm text-gray-400">Loading space...</p>
+          <div class="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          <p class="text-sm text-fg-muted">Loading space...</p>
         </div>
       </div>
     );
@@ -406,7 +405,7 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
   if (!space) {
     return (
       <div class="flex h-full items-center justify-center">
-        <p class="text-sm text-gray-400">Space not found</p>
+        <p class="text-sm text-fg-muted">Space not found</p>
       </div>
     );
   }
@@ -438,19 +437,19 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           <StatCard
             label="Active"
             count={activeTasks.length}
-            color="border-blue-800/30 text-blue-400"
+            color="border-accent/30 text-accent"
             onClick={() => navigateToSpaceTasks(routeSpaceId, 'active')}
           />
           <StatCard
             label="Review"
             count={reviewTasks.length}
-            color="border-purple-800/30 text-purple-400"
+            color="border-purple-800/30 text-cat-purple"
             onClick={() => navigateToSpaceTasks(routeSpaceId, 'action')}
           />
           <StatCard
             label="Done"
             count={doneTasks.length}
-            color="border-green-800/30 text-green-400"
+            color="border-green-800/30 text-success"
             onClick={() => navigateToSpaceTasks(routeSpaceId, 'completed')}
           />
         </div>
@@ -471,20 +470,20 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
           <section
             class={cn(
               'h-full overflow-hidden rounded-2xl border',
-              FLAT_SURFACE,
+              'flat-surface',
               recentSessions.length === 0 && 'xl:col-span-2'
             )}
             data-testid="overview-recent-tasks"
           >
-            <div class="flex items-center justify-between border-b border-white/15 bg-white/[0.025] px-4 py-3.5 sm:px-5">
+            <div class="flex items-center justify-between border-b border-line bg-fill-soft px-4 py-3.5 sm:px-5">
               <div>
-                <h3 class="text-base font-semibold tracking-tight text-gray-50">Recent Tasks</h3>
-                <p class="mt-0.5 text-[11px] text-gray-500">Latest work across this Space</p>
+                <h3 class="text-base font-semibold tracking-tight text-fg">Recent Tasks</h3>
+                <p class="mt-0.5 text-[11px] text-fg-faint">Latest work across this Space</p>
               </div>
               <button
                 type="button"
                 onClick={() => setShowCreateTask(true)}
-                class="text-xs font-medium text-blue-300/85 underline-offset-4 transition-colors hover:text-blue-200 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70"
+                class="text-xs font-medium text-accent-soft/85 underline-offset-4 transition-colors hover:text-accent-soft hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
               >
                 Create Task
               </button>
@@ -492,7 +491,7 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
             {recentTasks.length === 0 ? (
               <div class="flex flex-col items-center justify-center px-4 py-10 text-center">
                 <svg
-                  class="mb-3 h-9 w-9 text-gray-500"
+                  class="mb-3 h-9 w-9 text-fg-faint"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -504,11 +503,11 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
                     d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
                   />
                 </svg>
-                <p class="text-sm font-medium text-gray-200">No tasks yet</p>
-                <p class="mt-1 text-xs text-gray-400">Create a task to get started</p>
+                <p class="text-sm font-medium text-fg-soft">No tasks yet</p>
+                <p class="mt-1 text-xs text-fg-muted">Create a task to get started</p>
               </div>
             ) : (
-              <div class="divide-y divide-white/[0.08]">
+              <div class="divide-y divide-line">
                 {recentTasks.map((task) => (
                   <RecentTaskItem
                     key={task.id}
@@ -522,15 +521,13 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
 
           {recentSessions.length > 0 && (
             <section
-              class={cn('h-full overflow-hidden rounded-2xl border', FLAT_SURFACE)}
+              class={cn('h-full overflow-hidden rounded-2xl border', 'flat-surface')}
               data-testid="overview-recent-sessions"
             >
-              <div class="flex items-center justify-between border-b border-white/15 bg-white/[0.025] px-4 py-3.5 sm:px-5">
+              <div class="flex items-center justify-between border-b border-line bg-fill-soft px-4 py-3.5 sm:px-5">
                 <div>
-                  <h3 class="text-base font-semibold tracking-tight text-gray-50">
-                    Recent Sessions
-                  </h3>
-                  <p class="mt-0.5 text-[11px] text-gray-500">Continue recent conversations</p>
+                  <h3 class="text-base font-semibold tracking-tight text-fg">Recent Sessions</h3>
+                  <p class="mt-0.5 text-[11px] text-fg-faint">Continue recent conversations</p>
                 </div>
                 <button
                   type="button"
@@ -540,12 +537,12 @@ export function SpaceOverview({ spaceId, navigationSpaceId, onSelectTask }: Spac
                         void handleNewSession(workspacePath, worktreeMode)
                     )
                   }
-                  class="text-xs font-medium text-indigo-300/85 underline-offset-4 transition-colors hover:text-indigo-200 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                  class="text-xs font-medium text-cat-indigo/85 underline-offset-4 transition-colors hover:text-cat-indigo hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cat-indigo/70"
                 >
                   New Session
                 </button>
               </div>
-              <div class="divide-y divide-white/[0.08]">
+              <div class="divide-y divide-line">
                 {recentSessions.map((session) => (
                   <RecentSessionRow
                     key={session.id}
@@ -582,13 +579,13 @@ function RecentSessionRow({
   return (
     <button
       type="button"
-      class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.055] focus-visible:bg-white/[0.055] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400/60"
+      class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-fill-soft focus-visible:bg-fill-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cat-indigo/60"
       onClick={onOpen}
     >
-      <span class="min-w-0 flex-1 truncate text-sm font-medium text-gray-100">
+      <span class="min-w-0 flex-1 truncate text-sm font-medium text-fg">
         {session.title || 'Untitled Session'}
       </span>
-      <span class="flex-none text-xs tabular-nums text-gray-400">
+      <span class="flex-none text-xs tabular-nums text-fg-muted">
         {getRelativeTime(session.lastActiveAt)}
       </span>
     </button>

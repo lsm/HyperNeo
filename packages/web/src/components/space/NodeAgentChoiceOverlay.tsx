@@ -21,7 +21,7 @@ export function NodeAgentChoiceOverlay({
     <Modal isOpen={isOpen} onClose={onClose} title={nodeName} size="sm" showCloseButton>
       <div class="p-4" data-testid="node-agent-choice-overlay">
         {isEmpty ? (
-          <p class="text-sm text-gray-300" data-testid="node-agent-empty-state">
+          <p class="text-sm text-fg-soft" data-testid="node-agent-empty-state">
             This node has no agents to open.
           </p>
         ) : (
@@ -37,11 +37,11 @@ export function NodeAgentChoiceOverlay({
                 <button
                   type="button"
                   data-testid={`node-agent-choice-${choice.kind}-${choice.agentName}`}
-                  class="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-gray-200 transition-colors hover:bg-dark-800"
+                  class="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-fg-soft transition-colors hover:bg-surface-raised"
                   onClick={() => onSelect(choice)}
                 >
                   <span class="truncate">{choice.label}</span>
-                  <span class="ml-2 shrink-0 text-[11px] font-medium uppercase tracking-wide text-gray-500">
+                  <span class="ml-2 shrink-0 text-[11px] font-medium uppercase tracking-wide text-fg-faint">
                     {choice.kind === 'live' ? 'Active' : 'Not started'}
                   </span>
                 </button>
