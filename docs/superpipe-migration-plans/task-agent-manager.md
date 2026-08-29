@@ -41,7 +41,7 @@ matches. No migration work remains there.
 | 14 | Rehydration | 3382–3805 (~424) | **Pipeline: `rehydrate-sub-session`** |
 | 15 | `injectMessageIntoSession` delivery core | 3807–4047 (~241) | **Pipeline: `deliver-injected-message` (with cluster 6)** |
 | 16 | Status publish, stop-preserve-DB, run helpers | 4049–4122 (~74) | Stays |
-| 17 | MCP attach / self-heal | 4124–4392 (~269) | Heal core migrated; prologue candidate |
+| 17 | MCP attach / self-heal | 4124–4392 (~269) | **Pipeline: `self-heal-node-agent`** (imperative prologue + staged heal tail) |
 | 18 | `buildNodeAgentMcpServerForSession` | 4394–4826 (~433) | Stays (construction prose; no pipeline) |
 | 19 | `spawnPostApprovalSubSession` | 4827–5065 (~239) | **Pipeline: `spawn-post-approval-worker`** |
 
@@ -59,8 +59,11 @@ matches. No migration work remains there.
   `decideInjectDelivery` `decisionRun` (agent-layer
   `message-delivery-pipeline.ts`) and settles rows through
   `injection-delivery-steps.ts`.
-- `syncLiveSessionWorkspace` (:2595) and the heal core of `mcpSelfHeal`
-  (:4252–4325) are inline `stagedRun`s — the in-file idiom to copy.
+- `syncLiveSessionWorkspace` (:2595) and the heal TAIL of `mcpSelfHeal`
+  (:4252–4325) are inline `stagedRun`s — the in-file idiom to copy. The
+  self-heal PROLOGUE (:4191–4250 — execution/task/space gate cascade and the
+  displaced-session adoption branch) is still imperative and is a pipeline
+  candidate below (`self-heal-node-agent`).
 
 ## Pipeline candidates (business paths)
 
@@ -133,7 +136,18 @@ transcript sanitization IMMEDIATELY BEFORE `startStreamingQuery`
 (:2321–2323 — `sanitizeSDKSessionTranscriptForRehydration` normalizes
 malformed assistant usage counts; skipping it resumes against a broken
 transcript; pin the pre-stream ordering), stream + replay with unregister
-compensation (:2320–2331), detached flush. Index/registration
+compensation (:2320–2331), detached flush. Registration AND its failure
+compensation are CONDITIONED on `createdNow = !cached` (:2231–2233): a
+cached-but-unindexed worker skips `registerSession` (:2318) and, on
+stream/replay failure, removes only the manager indexes WITHOUT
+`unregisterSession` (:2324–2329) — the pipeline must preserve that
+conditioning or a restore failure evicts a globally-owned cached session
+(pin a cached-session row in TAM-PC). Two admission facts also precede the
+gates: the PUBLIC index check (:2177) and the IN-LOCK index re-gather
+(:2190) — two concurrent restorers of the same uncached worker both miss the
+public check and queue on `withSessionRestoreLock`, and the second returns
+the first's session from the in-lock recheck; carry the re-gather into
+TAM-C and pin two concurrent callers. Index/registration
 (`agentSessionIndex` + `registerSession`, :2313–2318) stays manager-owned and
 must stay at its PRE-STREAM position — the pipeline reaches a registration
 BOUNDARY where the manager indexes/registers before `startStreamingQuery`
@@ -162,7 +176,14 @@ so the ladder below carries no activation slice.
 ### `rehydrate-sub-session` — cluster 14, ~215 lines
 
 `performSubSessionRehydrate` (:3486): six refusal gates (archived row, no
-execution, no parent task, task-status rejection limited to
+execution, no parent task — the parent-task selection is NOT a generic
+"first row of the run": :3507–3526 first matches task IDs derived from the
+sub-session identity (`taskIdFromSubSessionIdentity`) and the in-memory
+ownership map (`findParentTaskIdForSubSession`), CONSTRAINS those matches by
+the space ID encoded in the session id, and only then falls back — carry that
+owner-resolution algorithm into a stage and pin a multi-task identity row in
+TAM-PD, or a multi-task run rehydrates the worker under another task's
+workspace/prompt/lifecycle — task-status rejection limited to
 `cancelled`/`archived`/`stopped` (:3537–3545) — `done` is deliberately
 ADMISSIBLE here and must stay so (pin it); conflating it with a generic
 "terminal task" gate would drop a done task's live execution during run
@@ -295,6 +316,18 @@ keep all three and TAM-PG pins the near-expiry in-flight and retry cases. Fit:
 small pipeline; the late-settlement watcher arming (:1534–1586)
 stays in the class (handles/cancel are resources).
 
+### `self-heal-node-agent` — cluster 17, ~142 lines
+
+`mcpSelfHeal` (:4185) splits today across an imperative prologue and a staged
+tail: resolve execution → parent task → space gates (:4191–4222), the
+displaced-session adoption branch (:4225–4250), then the inline
+`self-heal-workspace` `stagedRun` (:4252–4325). One direct pipeline composes
+the whole operation — prologue gates and adoption as admission/effect stages
+in front of the existing heal stages — with the index mutation, completion
+callback, and displaced-session interrupt/unregister lifecycle effects kept
+at their class-owned boundary (the pipeline declares the adoption outcome;
+the manager executes the lifecycle). Fit: `stagedRun`.
+
 ## Stays plain (ADR 0004 exclusions)
 
 - **Per-event subscriber bodies** (cluster 2): rate-limit pause/resume
@@ -327,8 +360,8 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
 | TAM-PB | Pins for `createSubSession` reuse/fresh arms: cold-cache reuse via `rehydrateSubSession`, narrow compensation, same-status rebind, `deferFreshExecutionBind` scope (fresh-arm bind + both arms' flush suppressed; reuse CAS unaffected), fresh-arm hook ordering before stream, detached-flush rejection behavior | test-only | 0 | ≲120 | — |
-| TAM-PC | Pins for `restorePostApprovalWorkerSession`: three refusal rows (task `cancelled`/`archived`, run `cancelled`), cooldown THROW outcome + pre-restore ordering, no-completion-callback, pre-stream registration + sanitizer ordering | test-only | 0 | ≲80 | — |
-| TAM-PD | Pins for `rehydrateSubSession`: refusal-gate ordering (archived row BEFORE the fenced repair), `done` admissibility, system-prompt-only overlay, `resolveTaskWorkspace` routing (task-bound secondary workspace), hooks + sanitizer pre-stream ordering | test-only | 0 | ≲100 | — |
+| TAM-PC | Pins for `restorePostApprovalWorkerSession`: three refusal rows (task `cancelled`/`archived`, run `cancelled`), cooldown THROW outcome + pre-restore ordering, no-completion-callback, pre-stream registration + sanitizer ordering, cached-session ownership (register/compensate only when this operation created the session), concurrent-restore in-lock re-gather | test-only | 0 | ≲90 | — |
+| TAM-PD | Pins for `rehydrateSubSession`: refusal-gate ordering (archived row BEFORE the fenced repair), `done` admissibility, multi-task owner-resolution identity row, system-prompt-only overlay, `resolveTaskWorkspace` routing (task-bound secondary workspace), hooks + sanitizer pre-stream ordering | test-only | 0 | ≲110 | — |
 | TAM-PE | Pins for the complete injection operation: outer admissions + post-lock terminal recheck, cancellation passthrough, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
 | TAM-PF | Pins for `spawnPostApprovalSubSession` reuse/fresh arms + the cold-cache ownership row (flag from the nested create result) + terminal-transition rows for BOTH outcomes (under-lock post-create recheck → KICKOFF SKIPPED; CREATED skip also terminates the just-created session) | test-only | 0 | ≲100 | — |
 | TAM-PG | Pins for `deliverSpaceAgentPendingRow`: settlement/error races + near-expiry deferral cases | test-only | 0 | ≲60 | — |
@@ -343,6 +376,8 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 CREATED/REUSED + DELIVERED/SKIPPED outcome (ownership from the nested create result; under-lock post-create terminal recheck covering EVERY create outcome — CREATED skip terminates the just-created session, REUSED skip leaves the worker) and composing the delivery stage group for its injections | build | ≲220 | ≲180 | TAM-B2, TAM-E1, TAM-PF (P46 outcome contract) |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
 | TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); requires the status-guarded settlement/error primitive (risk 5) | build+wire | ≲100 | ≲80 | TAM-PG |
+| TAM-S1 | `self-heal-node-agent` stagedRun, unwired (prologue gates + adoption admission composed in front of the existing heal stages) | build | ≲140 | ≲120 | — |
+| TAM-S2 | Wire `mcpSelfHeal` to the S1 pipeline; index/callback/displaced-session lifecycle effects stay class-owned | wire | ≲40 | ≲50 | TAM-S1 |
 | TAM-H (optional, not superpipe) | Extract provenance/cooldown/durable-id readers + `resolveTerminalInjectionStatus` into `sub-session-identity.ts` plain helpers | extract | ≲120 | ≲60 | — |
 
 Pin slices are one per business path (one purpose, one PR): each build slice
