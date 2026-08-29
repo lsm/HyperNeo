@@ -384,7 +384,9 @@ function denialAuditCtx(ctx: DispatchActionCtx): DispatchActionCtx {
   const record = ctx.parsedParams as Record<string, unknown>;
   const explicitTaskId =
     typeof record.task_id === 'string' && record.task_id.length > 0 ? record.task_id : undefined;
-  const numericResolved = typeof record.task_number === 'number';
+  const numericResolved =
+    typeof record.task_number === 'number' &&
+    (ctx.action?.taskIdPreference === 'task_number' || !explicitTaskId);
   const runTargetPresent =
     (typeof record.run_id === 'string' && record.run_id.length > 0) ||
     (typeof record.workflow_run_id === 'string' && record.workflow_run_id.length > 0) ||
