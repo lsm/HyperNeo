@@ -3084,6 +3084,38 @@ describe('AcpQueryRunner', () => {
       );
     }, 5000);
 
+    test('a process exit with an unrelated numeric substring still routes through the startup retry', async () => {
+      const firstClient = createMockClient();
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        constructorOptions[0]?.onExit?.(1, null);
+        throw new Error('failed to connect to port 14010');
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
     test('a rate limit with a process exit keeps its cooldown, not a startup retry', async () => {
       const firstClient = createMockClient();
       const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });

@@ -122,11 +122,10 @@ function isAcpAuthOrLimitError(message: string): boolean {
   const lower = message.toLowerCase();
   return (
     assessLimitError({ rawText: message }).isLimit ||
-    message.includes('401') ||
-    message.includes('403') ||
+    /\b401\b/.test(message) ||
+    /\b403\b/.test(message) ||
     lower.includes('unauthorized') ||
     lower.includes('not authenticated') ||
-    message.includes('429') ||
     lower.includes('rate limit')
   );
 }
