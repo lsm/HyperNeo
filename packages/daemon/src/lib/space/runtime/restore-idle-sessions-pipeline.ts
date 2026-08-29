@@ -37,6 +37,7 @@ export interface RestoreIdleSessionsDeps {
 export type RestoreIdleSessionsOutcome =
   | { action: 'restored'; sessionId: string }
   | { action: 'skipped_inactivation'; sessionId: string }
+  | { action: 'adopted_by_new_owner'; sessionId: string }
   | { action: 'failed' };
 
 export interface RestoreIdleSessionsCtx {
@@ -104,17 +105,14 @@ export async function restoreWithRevalidation(
       outcomes.push({ action: 'failed' });
       continue;
     }
+    if (!ctx.deps.isExecutionRestorable(execution)) {
+      outcomes.push({ action: 'adopted_by_new_owner', sessionId: execution.agentSessionId });
+      continue;
+    }
     const spaceId = ctx.deps.getRunSpaceId(target.workflowRunId);
     const spaceState = spaceId ? await ctx.deps.getSpaceState(spaceId).catch(() => null) : null;
     const taskAdmissible = ctx.deps.isTaskAdmissible(target.taskId);
-    const executionRestorable = ctx.deps.isExecutionRestorable(execution);
-    if (
-      !spaceState ||
-      spaceState.paused ||
-      spaceState.stopped ||
-      !taskAdmissible ||
-      !executionRestorable
-    ) {
+    if (!spaceState || spaceState.paused || spaceState.stopped || !taskAdmissible) {
       ctx.deps.cancelSession(execution.agentSessionId);
       outcomes.push({ action: 'skipped_inactivation', sessionId: execution.agentSessionId });
       continue;

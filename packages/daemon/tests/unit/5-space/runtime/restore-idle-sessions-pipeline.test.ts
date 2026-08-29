@@ -97,7 +97,9 @@ function makeDeps(state: Partial<DepsState> = {}): RestoreIdleSessionsDeps {
           : full.taskStatus;
       return (
         !!status &&
-        !['cancelled', 'archived', 'done', 'rate_limited', 'usage_limited'].includes(status)
+        !['cancelled', 'archived', 'done', 'stopped', 'rate_limited', 'usage_limited'].includes(
+          status
+        )
       );
     },
     findIdleExecutionWithDeadSession: () =>
@@ -150,16 +152,21 @@ describe('runRestoreIdleSessions', () => {
     expect(outcomes).toEqual([{ action: 'skipped_inactivation', sessionId: 'session-1' }]);
   });
 
-  test('tears down a restored session whose task or execution went inactive mid-restore', async () => {
+  test('tears down a restored session whose task or space went inactive mid-restore', async () => {
     const cancelledTask = makeDeps({ taskStatusAfterRestore: 'cancelled' });
     expect(await runRestoreIdleSessions(cancelledTask)).toEqual([
       { action: 'skipped_inactivation', sessionId: 'session-1' },
     ]);
 
-    const repurposedExecution = makeDeps({ executionRestorableAfter: false });
-    expect(await runRestoreIdleSessions(repurposedExecution)).toEqual([
+    const stoppedTask = makeDeps({ taskStatusAfterRestore: 'stopped' });
+    expect(await runRestoreIdleSessions(stoppedTask)).toEqual([
       { action: 'skipped_inactivation', sessionId: 'session-1' },
     ]);
+  });
+
+  test('leaves a repurposed session intact when its execution was rebound mid-restore', async () => {
+    const outcomes = await runRestoreIdleSessions(makeDeps({ executionRestorableAfter: false }));
+    expect(outcomes).toEqual([{ action: 'adopted_by_new_owner', sessionId: 'session-1' }]);
   });
 
   test('records a failed outcome when restoration throws', async () => {

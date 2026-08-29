@@ -3862,7 +3862,13 @@ export class SpaceRuntime {
       isTaskAdmissible: (taskId) => {
         const task = this.config.taskRepo.getTask(taskId);
         if (!task) return false;
-        if (task.status === 'rate_limited' || task.status === 'usage_limited') return false;
+        if (
+          task.status === 'rate_limited' ||
+          task.status === 'usage_limited' ||
+          task.status === 'stopped'
+        ) {
+          return false;
+        }
         return !evaluateRequeueTaskLifecycle(task, { topic: '', source: '' });
       },
       findIdleExecutionWithDeadSession: (target) => {
