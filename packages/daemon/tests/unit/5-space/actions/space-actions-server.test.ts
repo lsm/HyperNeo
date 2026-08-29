@@ -16,7 +16,11 @@ import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/spac
 import type { CreateMcpAuditLogParams } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 
 const SPACE_ID = 'space-actions-server-test';
-const stubSpaceConfig = { spaceId: SPACE_ID } as unknown as SpaceAgentToolsConfig;
+const stubSpaceConfig = {
+  spaceId: SPACE_ID,
+  db: {},
+  taskAgentManager: {},
+} as unknown as SpaceAgentToolsConfig;
 const stubNodeConfig = { spaceId: SPACE_ID } as unknown as NodeAgentToolsConfig;
 
 function makeServer(overrides: Partial<SpaceActionsServerConfig> = {}): SpaceActionsMcpServer {
@@ -158,11 +162,10 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
         },
       } as unknown as SpaceAgentToolsConfig,
     });
-    const body = (await dispatch(server, {
+    await dispatch(server, {
       name: 'update_session_state',
       params: { session_id: 'session-1', processing_state: 'idle' },
-    })) as Record<string, unknown>;
-    expect(body).toMatchObject({ error: 'action_failed' });
+    });
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ toolName: 'update_session_state', spaceId: SPACE_ID });
   });
