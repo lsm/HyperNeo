@@ -245,6 +245,17 @@ import {
   taskNotificationRequeryDelayMs,
 } from './task-notification-requery.ts';
 
+let pendingGlobalCatalogPopulation: Promise<void> | null = null;
+
+function populateGlobalCatalogSingleFlight(): Promise<void> {
+  pendingGlobalCatalogPopulation ??= initializeModels()
+    .catch(() => {})
+    .finally(() => {
+      pendingGlobalCatalogPopulation = null;
+    });
+  return pendingGlobalCatalogPopulation;
+}
+
 export class AgentSession
   implements
     RewindHandlerContext,
@@ -1593,7 +1604,7 @@ export class AgentSession
     }
     const cached = await getSessionModelInfo(this.session);
     if (cached) return cached;
-    await initializeModels().catch(() => {});
+    await populateGlobalCatalogSingleFlight();
     return getSessionModelInfo(this.session);
   }
 
