@@ -129,7 +129,7 @@ export function QueueHealthSummary(): preact.JSX.Element {
       </div>
 
       {error ? (
-        <div class="mt-3 rounded-lg border border-red-900/60 bg-danger/40 px-3 py-2 text-xs text-danger-soft">
+        <div class="mt-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger-soft">
           Failed to load queue health: {error}
         </div>
       ) : null}

@@ -5,10 +5,10 @@
     "components/__tests__": 4,
     "components/sdk": 61,
     "components/settings": 11,
-    "components/space": 155,
+    "components/space": 154,
     "components/ui": 27,
     "hooks": 3,
-    "islands": 24,
+    "islands": 22,
     "lib": 9
   }
 }

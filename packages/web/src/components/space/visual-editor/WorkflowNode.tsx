@@ -373,7 +373,7 @@ export function WorkflowNode({
               return (
                 <span
                   key={sa.name}
-                  class={`text-xs rounded px-1.5 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-warning/40 text-warning' : 'bg-fill-strong text-fg-soft'}`}
+                  class={`text-xs rounded px-1.5 py-0.5 flex items-center gap-0.5 ${hasOverrides ? 'bg-warning/15 text-warning' : 'bg-fill-strong text-fg-soft'}`}
                   title={hasOverrides ? `${sa.name} (has overrides)` : sa.name}
                 >
                   {sa.name}

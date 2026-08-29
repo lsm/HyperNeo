@@ -41,7 +41,7 @@ const SETTINGS_SECTIONS: Array<{
     id: 'appearance',
     label: 'Appearance',
     icon: 'palette',
-    accent: 'text-fuchsia-300 bg-fuchsia-500/15',
+    accent: 'text-cat-purple bg-cat-purple/15',
   },
   { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-info-soft bg-sky-500/15' },
   { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },

@@ -26,7 +26,7 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
             <div class="text-xs text-accent-fg text-center truncate w-full px-1">
               {attachment.name}
             </div>
-            <div class="text-xs text-fg-soft">{formatFileSize(attachment.size)}</div>
+            <div class="text-xs text-accent-fg opacity-80">{formatFileSize(attachment.size)}</div>
           </div>
 
           <button

@@ -343,7 +343,7 @@ function TaskDependencyBadges({
         const interactive = !isMissing && !!onSelectDependency;
 
         const colorClasses = isDone
-          ? `text-success-soft bg-success/40 border-success/60${interactive ? ' hover:bg-success/60' : ''}`
+          ? `text-success-soft bg-success/15 border-success/40${interactive ? ' hover:bg-success/25' : ''}`
           : `text-fg-soft bg-fill-strong border-line-strong ${interactive ? 'hover:bg-line-strong' : ''}`;
 
         return (

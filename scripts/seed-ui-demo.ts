@@ -173,7 +173,10 @@ const RAW_WORKSPACE = '/tmp/hyperneo-ui-demo-ws';
 if (!existsSync(RAW_WORKSPACE)) {
   mkdirSync(RAW_WORKSPACE, { recursive: true });
   execSync('git init -q', { cwd: RAW_WORKSPACE });
-  execSync('git commit -q --allow-empty -m init', { cwd: RAW_WORKSPACE });
+  execSync(
+    'git -c user.name="HyperNeo UI Demo" -c user.email="ui-demo@hyperneo.invalid" commit -q --allow-empty -m init',
+    { cwd: RAW_WORKSPACE }
+  );
 }
 const WORKSPACE = realpathSync(RAW_WORKSPACE);
 

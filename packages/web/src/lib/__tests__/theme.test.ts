@@ -99,6 +99,27 @@ describe('theme', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
   });
 
+  it('applies theme changes from another tab via the storage event', async () => {
+    stubMatchMedia(true);
+    localStorage.setItem('theme', 'light');
+    const theme = await importTheme();
+    expect(document.documentElement.dataset.theme).toBe('light');
+    localStorage.setItem('theme', 'dark');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'theme', newValue: 'dark' }));
+    expect(theme.themeSetting.value).toBe('dark');
+    expect(theme.resolvedTheme.value).toBe('dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
+  it('ignores storage events for other keys', async () => {
+    stubMatchMedia(true);
+    const theme = await importTheme();
+    localStorage.setItem('theme', 'dark');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'other', newValue: 'dark' }));
+    expect(theme.themeSetting.value).toBe('system');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
   it('follows OS changes under the system setting', async () => {
     const media = stubMatchMedia(false);
     const theme = await importTheme();

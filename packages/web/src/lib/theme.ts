@@ -48,6 +48,15 @@ darkMedia.addEventListener('change', () => {
   applyToDocument(resolvedTheme.value);
 });
 
+window.addEventListener('storage', (event) => {
+  if (event.key !== THEME_STORAGE_KEY) return;
+  const setting = readStoredSetting();
+  if (setting === themeSetting.value) return;
+  themeSetting.value = setting;
+  resolvedTheme.value = resolveTheme(setting);
+  applyToDocument(resolvedTheme.value);
+});
+
 applyToDocument(resolvedTheme.value);
 
 window.__hyperneoThemeReady = true;
