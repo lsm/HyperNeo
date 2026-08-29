@@ -2523,6 +2523,140 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.listDeliveries('evt-coalesce-a')[0]?.state).toBe('delivered');
       expect(eventStore.listDeliveries('evt-coalesce-b')[0]?.state).toBe('delivered');
     });
+
+    function saveDeferredDigestWithTask(
+      sessionId: string,
+      uuid: string,
+      eventIds: string[],
+      taskId: string
+    ): void {
+      const messages = new SDKMessageRepository(db);
+      const row = {
+        type: 'user',
+        uuid,
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'owed digest text' }] },
+        externalEventIds: eventIds,
+        externalEventTaskId: taskId,
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage(sessionId, row, 'deferred', 'system');
+    }
+
+    function deferredDigestUuids(sessionId: string): string[] {
+      return (
+        db
+          .prepare(
+            `SELECT sdk_uuid FROM sdk_messages WHERE session_id = ?
+             AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+          )
+          .all(sessionId) as Array<{ sdk_uuid: string }>
+      ).map((row) => row.sdk_uuid);
+    }
+
+    test('flag on: a render during cold-start rehydration waits for handoff-debt restoration', async () => {
+      const sessionId = 'session-cold-gate';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { task } = await startLiveSession(sessionId, topic);
+
+      await eventService.publish(makeEvent({ id: 'evt-cold-owed', topic }));
+      const owedDelivery = eventStore.listDeliveries('evt-cold-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-cold-owed', deliveryKey: owedDelivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-cold-owed', ['evt-cold-owed'], task.id);
+      await eventService.publish(makeEvent({ id: 'evt-cold-new', topic }));
+
+      await runtime.stop();
+      const runtimeInternals = runtime as unknown as {
+        digestHandoffDebt: Map<string, Set<string>>;
+      };
+      runtimeInternals.digestHandoffDebt.clear();
+
+      const originalListSpaces = spaceManager.listSpaces.bind(spaceManager);
+      let releaseListSpaces: (() => void) | null = null;
+      const listSpacesBlocked = new Promise<void>((resolve) => {
+        releaseListSpaces = resolve;
+      });
+      spaceManager.listSpaces = async (
+        ...args: Parameters<typeof originalListSpaces>
+      ): ReturnType<typeof originalListSpaces> => {
+        await listSpacesBlocked;
+        return originalListSpaces(...args);
+      };
+
+      runtime.start();
+      const renderPromise = runtime.renderPendingDigestForSession(sessionId, task.id);
+      await wait(50);
+
+      expect(deferredDigestUuids(sessionId)).toContain('digest-cold-owed');
+      expect(eventStore.listDeliveries('evt-cold-new')[0]?.state).toBe('pending');
+
+      releaseListSpaces!();
+      const outcome = await renderPromise;
+      spaceManager.listSpaces = originalListSpaces;
+
+      expect(outcome?.action).toBe('delivered');
+      expect(deferredDigestUuids(sessionId)).toContain('digest-cold-owed');
+      expect(eventStore.listDeliveries('evt-cold-new')[0]?.state).toBe('delivered');
+      await runtime.stop();
+    });
+
+    test('flag on: a failed rehydration settles waiting renders instead of hanging them', async () => {
+      const originalRehydrate = tam.rehydrate.bind(tam);
+      tam.rehydrate = async () => {
+        throw new Error('rehydrate exploded');
+      };
+      runtime.start();
+
+      const gate = (runtime as unknown as { currentReconciliation: { failed: boolean } | null })
+        .currentReconciliation;
+      const deadline = Date.now() + 2000;
+      while (!gate?.failed && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(gate?.failed).toBe(true);
+
+      expect(await runtime.renderPendingDigestForSession('session-rehydrate-failed')).toBeNull();
+
+      tam.rehydrate = originalRehydrate;
+      await runtime.executeTick();
+      expect(await runtime.renderPendingDigestForSession('session-rehydrate-recovered')).toEqual({
+        action: 'skip',
+        reason: 'no_execution',
+      });
+      await runtime.stop();
+    });
+
+    test('flag on: handoff debt for colon-delimited session ids survives pruning', async () => {
+      const sessionId = `space:${SPACE_ID}:task:task-colon:exec:exec-colon`;
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { task } = await startRunWithSubscription(topic);
+      await eventService.publish(makeEvent({ id: 'evt-colon-owed', topic }));
+      const delivery = eventStore.listDeliveries('evt-colon-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-colon-owed', deliveryKey: delivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-colon-owed', ['evt-colon-owed'], task.id);
+
+      const runtimeInternals = runtime as unknown as {
+        rehydrateDigestHandoffDebt: () => void;
+        pruneDigestHandoffDebt: () => void;
+        digestHandoffDebt: Map<string, Set<string>>;
+      };
+      runtimeInternals.rehydrateDigestHandoffDebt();
+      expect(runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-colon-owed')).toBe(
+        true
+      );
+
+      runtimeInternals.pruneDigestHandoffDebt();
+      expect(runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-colon-owed')).toBe(
+        true
+      );
+      expect(deferredDigestUuids(sessionId)).toContain('digest-colon-owed');
+    });
   });
 
   describe('surviving delivery invariants after the V1 deletion', () => {

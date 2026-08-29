@@ -383,6 +383,14 @@ interface TerminalErrorContinueState {
   failedInjectionCount: number;
 }
 
+interface ReconciliationGate {
+  generation: number;
+  settled: boolean;
+  failed: boolean;
+  resolvers: Array<() => void>;
+  promise: Promise<void>;
+}
+
 const NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS = 60 * 1000;
 const NON_TERMINAL_IDLE_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
 const SILENT_STALL_ATTENTION_LOG_COOLDOWN_MS = 5 * 60 * 1000;
@@ -673,7 +681,7 @@ export class SpaceRuntime {
   private readonly turnEndDigestRetryCounts = new Map<string, number>();
   private readonly digestHandoffRetryTimers = new Map<string, Timer>();
   private readonly digestHandoffRetryCounts = new Map<string, number>();
-  private readonly digestHandoffDebt = new Set<string>();
+  private readonly digestHandoffDebt = new Map<string, Set<string>>();
   private readonly digestSupersedeRetryTimers = new Map<string, Timer>();
   private readonly digestSupersedeRetryCounts = new Map<string, number>();
   private readonly renderPendingDigestQueues = new Map<
@@ -693,19 +701,58 @@ export class SpaceRuntime {
   private unsubscribeSpaceStopped?: () => void;
   private acceptingExternalEvents = false;
   private runtimeGeneration = 0;
-  private reconciliationDone = true;
-  private reconciliationResolvers: Array<() => void> = [];
-  private reconciliationPromise: Promise<void> | null = null;
+  private currentReconciliation: ReconciliationGate | null = null;
   private isStopped = false;
 
-  private resolveReconciliation(): void {
-    this.reconciliationDone = true;
-    for (const resolve of this.reconciliationResolvers) {
-      resolve();
-    }
-    this.reconciliationResolvers = [];
-    this.reconciliationPromise = null;
+  private createReconciliationGate(generation: number): ReconciliationGate {
+    const resolvers: Array<() => void> = [];
+    const promise = new Promise<void>((resolve) => resolvers.push(resolve));
+    return { generation, settled: false, failed: false, resolvers, promise };
   }
+
+  private settleReconciliation(gate: ReconciliationGate, failed: boolean): void {
+    if (gate.settled) return;
+    gate.settled = true;
+    gate.failed = failed;
+    for (const resolve of gate.resolvers) resolve();
+    if (!failed && this.currentReconciliation === gate) {
+      this.currentReconciliation = null;
+    }
+  }
+
+  private settleCurrentReconciliation(failed: boolean): void {
+    if (this.currentReconciliation) {
+      this.settleReconciliation(this.currentReconciliation, failed);
+    }
+  }
+
+  private ensureReconciliationGate(): ReconciliationGate {
+    if (this.currentReconciliation && !this.currentReconciliation.settled) {
+      return this.currentReconciliation;
+    }
+    const generation = this.runtimeGeneration;
+    const gate = this.createReconciliationGate(generation);
+    this.currentReconciliation = gate;
+    return gate;
+  }
+
+  private addDigestHandoffDebt(sessionId: string, uuid: string): void {
+    const uuids = this.digestHandoffDebt.get(sessionId) ?? new Set<string>();
+    uuids.add(uuid);
+    this.digestHandoffDebt.set(sessionId, uuids);
+  }
+
+  private deleteDigestHandoffDebt(sessionId: string, uuid: string): void {
+    const uuids = this.digestHandoffDebt.get(sessionId);
+    if (!uuids) return;
+    uuids.delete(uuid);
+    if (uuids.size === 0) this.digestHandoffDebt.delete(sessionId);
+  }
+
+  private hasDigestHandoffDebt(sessionId: string, uuid: string): boolean {
+    return this.digestHandoffDebt.get(sessionId)?.has(uuid) ?? false;
+  }
+
   private pausedSpaceIds = new Set<string>();
   private externalEventHandlingDepth = 0;
   private retainedEventRedispatchPending = false;
@@ -1616,7 +1663,7 @@ export class SpaceRuntime {
       const role = deliverMessage(this.getJobQueueRepo(), sessionId, messageUuid, {
         origin: 'space_inject',
       });
-      this.digestHandoffDebt.delete(`${sessionId}:${messageUuid}`);
+      this.deleteDigestHandoffDebt(sessionId, messageUuid);
       if (role !== 'turn') return;
       const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
       if (session?.stateManager) {
@@ -1642,7 +1689,7 @@ export class SpaceRuntime {
     const attempts = (this.digestHandoffRetryCounts.get(key) ?? 0) + 1;
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
       this.digestHandoffRetryCounts.delete(key);
-      this.digestHandoffDebt.add(key);
+      this.addDigestHandoffDebt(sessionId, messageUuid);
       return;
     }
     this.digestHandoffRetryCounts.set(key, attempts);
@@ -1747,8 +1794,9 @@ export class SpaceRuntime {
     )) {
       const status = row.sendStatus;
       if (!status || status === 'consumed' || status === 'failed') continue;
-      const handoffKey = `${sessionId}:${String(row.uuid)}`;
-      if (this.digestHandoffDebt.has(handoffKey)) continue;
+      const uuid = String(row.uuid);
+      if (this.hasDigestHandoffDebt(sessionId, uuid)) continue;
+      const handoffKey = `${sessionId}:${uuid}`;
       if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
       return true;
     }
@@ -1852,10 +1900,12 @@ export class SpaceRuntime {
     taskId?: string
   ): Promise<RenderPendingDigestOutcome | null> {
     if (this.isStopped) return null;
-    if (this.reconciliationPromise && !this.reconciliationDone) {
-      await this.reconciliationPromise;
+    const gate = this.currentReconciliation;
+    if (gate && !gate.settled) {
+      await gate.promise;
     }
     if (this.isStopped) return null;
+    if (gate?.failed) return null;
     const store = this.config.externalEventStore;
     if (!store) return null;
     const generation = this.runtimeGeneration;
@@ -1877,7 +1927,9 @@ export class SpaceRuntime {
 =======
   reconcilePersistedDigestRowsForSession(sessionId: string, _taskId?: string): boolean {
     if (this.isStopped) return false;
-    if (this.reconciliationPromise && !this.reconciliationDone) return false;
+    const gate = this.currentReconciliation;
+    if (gate && !gate.settled) return false;
+    if (gate?.failed) return false;
     const store = this.config.externalEventStore;
     if (!store) return false;
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
@@ -1990,7 +2042,7 @@ export class SpaceRuntime {
       deleteDigestMessage: (targetSessionId, dbId) => {
         const row = messages.getMessageByStatusAndDbId(targetSessionId, 'deferred', dbId);
         if (row && typeof row.uuid === 'string') {
-          this.digestHandoffDebt.delete(`${targetSessionId}:${row.uuid}`);
+          this.deleteDigestHandoffDebt(targetSessionId, row.uuid);
         }
         messages.deletePendingUserMessage(targetSessionId, dbId, 'deferred');
       },
@@ -2109,8 +2161,9 @@ export class SpaceRuntime {
       .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
       .filter((row) => row.sendStatus === 'deferred');
     for (const row of rows) {
-      const handoffKey = `${sessionId}:${String(row.uuid)}`;
-      if (this.digestHandoffDebt.has(handoffKey)) continue;
+      const uuid = String(row.uuid);
+      if (this.hasDigestHandoffDebt(sessionId, uuid)) continue;
+      const handoffKey = `${sessionId}:${uuid}`;
       if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
       const membership = (row as { externalEventIds?: unknown }).externalEventIds;
       if (!Array.isArray(membership) || membership.length === 0) continue;
@@ -2162,9 +2215,10 @@ export class SpaceRuntime {
           (deliveredUuid === null || String(row.uuid) !== deliveredUuid)
       );
     for (const row of rows) {
-      const handoffKey = `${sessionId}:${String(row.uuid)}`;
+      const uuid = String(row.uuid);
+      const handoffKey = `${sessionId}:${uuid}`;
       if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
-      if (this.digestHandoffDebt.has(handoffKey)) continue;
+      if (this.hasDigestHandoffDebt(sessionId, uuid)) continue;
       const membership = (row as { externalEventIds?: unknown }).externalEventIds;
       if (!Array.isArray(membership) || membership.length === 0) continue;
       const eventIds = membership.filter(
@@ -3369,7 +3423,7 @@ export class SpaceRuntime {
     if (this.tickTimer !== null) return;
     this.isStopped = false;
 
-    const generation = this.runtimeGeneration;
+    const gate = this.ensureReconciliationGate();
     this.subscribeSdkToolUseCreated();
     this.unsubscribeSpaceResumed ??= this.config.spaceManager.onSpaceResumedRegister?.(
       (spaceId) => {
@@ -3396,11 +3450,8 @@ export class SpaceRuntime {
       });
     }, interval);
     if (this.rehydrated) {
-      this.reconciliationDone = false;
-      this.reconciliationPromise = new Promise<void>((resolve) => {
-        this.reconciliationResolvers.push(resolve);
-      });
       void (async () => {
+        if (this.isStopped || gate.settled) return;
         const pausedSpaceIds = new Set<string>();
         try {
           for (const space of await this.config.spaceManager.listSpaces(false)) {
@@ -3416,22 +3467,27 @@ export class SpaceRuntime {
             `SpaceRuntime: start() could not list spaces for paused-deferral: ${formatCommandError(err)}`
           );
         }
-        if (generation !== this.runtimeGeneration) {
-          this.resolveReconciliation();
+        if (gate.generation !== this.runtimeGeneration || this.isStopped) {
+          this.settleReconciliation(gate, false);
           return;
         }
-        await this.recoverPendingDeliveries(pausedSpaceIds);
-        if (generation !== this.runtimeGeneration) {
-          this.resolveReconciliation();
-          return;
+        try {
+          await this.recoverPendingDeliveries(pausedSpaceIds);
+          if (gate.generation !== this.runtimeGeneration || this.isStopped) {
+            this.settleReconciliation(gate, false);
+            return;
+          }
+          this.rehydrateDigestHandoffDebt();
+          this.subscribeExternalEventPublished();
+          this.settleReconciliation(gate, false);
+          this.redispatchRetainedExternalEvents();
+          this.executeTick().catch((err: unknown) => {
+            log.error('SpaceRuntime: initial tick failed:', err);
+          });
+        } catch (err) {
+          log.error(`SpaceRuntime: start() warm reconciliation failed: ${formatCommandError(err)}`);
+          this.settleReconciliation(gate, true);
         }
-        this.subscribeExternalEventPublished();
-        this.reconciliationDone = true;
-        this.resolveReconciliation();
-        this.redispatchRetainedExternalEvents();
-        this.executeTick().catch((err: unknown) => {
-          log.error('SpaceRuntime: initial tick failed:', err);
-        });
       })();
     } else {
       this.subscribeExternalEventPublished();
@@ -3445,7 +3501,11 @@ export class SpaceRuntime {
   async stop(): Promise<void> {
     this.runtimeGeneration += 1;
     this.isStopped = true;
-    this.resolveReconciliation();
+    if (this.tickTimer !== null) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
+    }
+    this.settleCurrentReconciliation(false);
     this.retainedEventRedispatchPending = false;
     this.unsubscribeExternalEventPublished?.();
     this.unsubscribeExternalEventPublished = undefined;
@@ -3493,10 +3553,6 @@ export class SpaceRuntime {
     }
     this.externalEventRateLimits.clear();
     this.acceptingExternalEvents = false;
-    if (this.tickTimer !== null) {
-      clearInterval(this.tickTimer);
-      this.tickTimer = null;
-    }
     if (this.tickInFlight) {
       const MAX_TICK_DRAIN_MS = 30_000;
       const start = Date.now();
@@ -3520,8 +3576,16 @@ export class SpaceRuntime {
   }
 
   async executeTick(): Promise<void> {
-    if (this.tickInFlight || !this.reconciliationDone) return;
+    if (this.isStopped) return;
+    if (this.tickInFlight) return;
+    let gate: ReconciliationGate | null = null;
+    if (!this.rehydrated) {
+      gate = this.ensureReconciliationGate();
+    } else if (this.currentReconciliation && !this.currentReconciliation.settled) {
+      return;
+    }
     this.tickInFlight = true;
+    let failed = false;
     try {
       if (hasSqlExec(this.config.db)) {
         this.toolContinuationRepo.markExpired();
@@ -3552,8 +3616,14 @@ export class SpaceRuntime {
 
       this.pruneExpiredCycleEvents();
       this.pruneDigestHandoffDebt();
+    } catch (error) {
+      failed = true;
+      throw error;
     } finally {
       this.tickInFlight = false;
+      if (gate && !gate.settled) {
+        this.settleReconciliation(gate, failed);
+      }
     }
   }
 
@@ -4428,18 +4498,14 @@ export class SpaceRuntime {
   }
 
   private pruneDigestHandoffDebt(): void {
-    for (const key of Array.from(this.digestHandoffDebt)) {
-      const separator = key.indexOf(':');
-      if (separator < 0) {
-        this.digestHandoffDebt.delete(key);
-        continue;
+    for (const [sessionId, uuids] of Array.from(this.digestHandoffDebt)) {
+      for (const uuid of Array.from(uuids)) {
+        const content = this.getSdkMessageRepo().getDeliveryContent(sessionId, uuid);
+        if (!content || (content.sendStatus !== 'deferred' && content.sendStatus !== 'enqueued')) {
+          uuids.delete(uuid);
+        }
       }
-      const sessionId = key.slice(0, separator);
-      const uuid = key.slice(separator + 1);
-      const content = this.getSdkMessageRepo().getDeliveryContent(sessionId, uuid);
-      if (!content || (content.sendStatus !== 'deferred' && content.sendStatus !== 'enqueued')) {
-        this.digestHandoffDebt.delete(key);
-      }
+      if (uuids.size === 0) this.digestHandoffDebt.delete(sessionId);
     }
   }
 
@@ -4484,7 +4550,7 @@ export class SpaceRuntime {
           .some((delivery) => delivery.taskId === rowTaskId && delivery.state === 'delivered')
       );
       if (allMembersDelivered) {
-        this.digestHandoffDebt.add(`${sessionId}:${String(message.uuid)}`);
+        this.addDigestHandoffDebt(sessionId, String(message.uuid));
       }
     }
   }
