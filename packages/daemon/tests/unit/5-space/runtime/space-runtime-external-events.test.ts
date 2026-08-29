@@ -3165,6 +3165,33 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(row?.send_status).toBe('enqueued');
       expect(eventStore.listDeliveries('evt-stop-handoff')[0]?.state).toBe('delivered');
     });
+
+    test('flag on: rate-limit state entries are replaced rather than mutated', () => {
+      const internals = runtime as unknown as {
+        consumeImmediateTierRateBudget: (target: {
+          workflowRunId: string;
+          nodeId: string;
+          agentName: string;
+          taskId: string;
+        }) => boolean;
+        externalEventRateLimits: Map<string, { timestamps: number[]; cleanupTimer: unknown }>;
+      };
+      const target = {
+        workflowRunId: 'run-rate-limit',
+        nodeId: 'node-rate-limit',
+        agentName: 'agent-rate-limit',
+        taskId: 'task-rate-limit',
+      };
+      internals.consumeImmediateTierRateBudget(target);
+      const key = [...internals.externalEventRateLimits.keys()][0]!;
+      const first = internals.externalEventRateLimits.get(key)!;
+      expect(first.timestamps).toHaveLength(1);
+
+      internals.consumeImmediateTierRateBudget(target);
+      const second = internals.externalEventRateLimits.get(key)!;
+      expect(second).not.toBe(first);
+      expect(second.timestamps).toHaveLength(2);
+    });
   });
 
   describe('surviving delivery invariants after the V1 deletion', () => {

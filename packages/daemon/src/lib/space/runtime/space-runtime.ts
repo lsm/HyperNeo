@@ -1724,19 +1724,7 @@ export class SpaceRuntime {
   }
 
   private scheduleDigestPullForSession(sessionId: string, taskId?: string): void {
-<<<<<<< HEAD
     if (this.isStopped || !sessionId) return;
-    const state = this.digestPullTriggers.get(sessionId) ?? {
-      count: 0,
-      idleTimer: null,
-      safetyTimer: null,
-      countTimer: null,
-    };
-    state.count += 1;
-    state.probe = false;
-    state.taskId = state.taskId ?? taskId;
-=======
-    if (!isExternalEventDeliveryV2Enabled() || this.isStopped || !sessionId) return;
     const existing = this.digestPullTriggers.get(sessionId);
     const state: DigestPullTriggerState = existing
       ? {
@@ -1753,7 +1741,6 @@ export class SpaceRuntime {
           safetyTimer: null,
           countTimer: null,
         };
->>>>>>> 214a12ca24 (fix(daemon): harden cold reconciliation, raced restarts, and debt ownership)
     this.digestPullTriggers.set(sessionId, state);
     if (state.idleTimer) {
       clearTimeout(state.idleTimer);
@@ -1921,12 +1908,13 @@ export class SpaceRuntime {
     const rateLimitKey = this.buildRateLimitKey(target);
     const state = this.getExternalEventRateLimitState(rateLimitKey);
     const now = Date.now();
-    state.timestamps = state.timestamps.filter(
+    const timestamps = state.timestamps.filter(
       (timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
     );
-    state.timestamps.push(now);
+    timestamps.push(now);
+    this.externalEventRateLimits.set(rateLimitKey, { timestamps, cleanupTimer: null });
     this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
-    return state.timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN;
+    return timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN;
   }
 
   async renderPendingDigestForSession(
@@ -2550,7 +2538,12 @@ export class SpaceRuntime {
     if (existing) {
       if (existing.cleanupTimer) {
         clearTimeout(existing.cleanupTimer);
-        existing.cleanupTimer = null;
+        const cleared: ExternalEventRateLimitState = {
+          timestamps: existing.timestamps,
+          cleanupTimer: null,
+        };
+        this.externalEventRateLimits.set(rateLimitKey, cleared);
+        return cleared;
       }
       return existing;
     }
@@ -2566,31 +2559,35 @@ export class SpaceRuntime {
     const state = this.externalEventRateLimits.get(rateLimitKey);
     if (!state || state.cleanupTimer) return;
     const now = Date.now();
-    state.timestamps = state.timestamps.filter(
+    const timestamps = state.timestamps.filter(
       (timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
     );
-    if (state.timestamps.length === 0) {
+    if (timestamps.length === 0) {
       this.externalEventRateLimits.delete(rateLimitKey);
       return;
     }
-    const oldest = Math.min(...state.timestamps);
-    state.cleanupTimer = setTimeout(
+    const oldest = Math.min(...timestamps);
+    const cleanupTimer = setTimeout(
       () => {
         const current = this.externalEventRateLimits.get(rateLimitKey);
         if (!current) return;
-        current.cleanupTimer = null;
         const cleanupNow = Date.now();
-        current.timestamps = current.timestamps.filter(
+        const remaining = current.timestamps.filter(
           (timestamp) => cleanupNow - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
         );
-        if (current.timestamps.length === 0) {
+        if (remaining.length === 0) {
           this.externalEventRateLimits.delete(rateLimitKey);
-        } else {
-          this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
+          return;
         }
+        this.externalEventRateLimits.set(rateLimitKey, {
+          timestamps: remaining,
+          cleanupTimer: null,
+        });
+        this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
       },
       Math.max(0, EXTERNAL_EVENT_RATE_WINDOW_MS - (now - oldest) + 1)
     );
+    this.externalEventRateLimits.set(rateLimitKey, { timestamps, cleanupTimer });
   }
 
   private buildRateLimitKey(target: WorkflowSubscriptionTarget): string {
