@@ -193,7 +193,9 @@ const runVoiceSubmitPipeline = (
   ctx: VoiceSubmitCtx
 ) => Promise<VoiceSubmitFinishedCtx | VoiceSubmitHaltedCtx | VoiceSubmitSilentCtx>;
 
-async function requestVoiceTranscription(recording: VoiceRecording): Promise<{ text?: string }> {
+export async function requestVoiceTranscription(
+  recording: VoiceRecording
+): Promise<{ text?: string }> {
   const hub = connectionManager.getHubIfConnected();
   if (!hub) throw new Error('Not connected');
   return hub.request<{ text?: string }>('voice.transcribe', recording, {

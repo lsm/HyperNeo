@@ -20,6 +20,7 @@ import {
   useReferenceAutocomplete,
   useVoiceRecorder,
   type RegisterFileDropTarget,
+  type VoiceRecording,
 } from '../hooks';
 
 import { getMessagesBottomPaddingPx } from '../lib/layout-metrics.ts';
@@ -27,14 +28,30 @@ import { connectionManager } from '../lib/connection-manager';
 import type { SessionStore } from '../lib/session-store.ts';
 import { connectionState, globalSettings, isAgentWorking } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
-import { AttachmentPreview } from './AttachmentPreview.tsx';
-import { InputActionsMenu } from './InputActionsMenu.tsx';
-import { InputTextarea } from './InputTextarea.tsx';
-import { VoiceWaveform } from './voice/VoiceWaveform.tsx';
+import {
+  isVoiceAudioBusy,
+  markVoiceAudioBusy,
+  pendingVoiceAudioRecords,
+  recordingFromEntry,
+  refreshPendingVoiceAudio,
+  unmarkVoiceAudioBusy,
+} from '../lib/voice/voice-audio-outbox.ts';
+import {
+  deleteVoiceRecord,
+  putVoiceRecord,
+  type VoiceRecordEntry,
+} from '../lib/voice/voice-audio-store.ts';
+import { runVoiceSubmit, type VoiceSubmitResult } from '../lib/voice/voice-submit-pipeline.ts';
+import type { VoiceSubmitMode } from '../lib/voice/voice-submit-routing.ts';
 import {
   enqueueTranscript,
   isPermanentAppendRefusal,
 } from '../lib/voice/voice-transcript-outbox.ts';
+import { AttachmentPreview } from './AttachmentPreview.tsx';
+import { InputActionsMenu } from './InputActionsMenu.tsx';
+import { InputTextarea } from './InputTextarea.tsx';
+import { VoiceWaveform } from './voice/VoiceWaveform.tsx';
+import { PendingVoiceAudioTray } from './voice/PendingVoiceAudioTray.tsx';
 import { QueuePreviewTray, type QueuePreviewMessage } from './QueuePreviewTray.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
 
@@ -75,6 +92,22 @@ const COMPOSER_CHAR_LIMIT = 100000;
 const QUEUE_FETCH_LIMIT = 1000;
 const QUEUE_EVENT_REFRESH_DEBOUNCE_MS = 300;
 const QUEUE_FALLBACK_POLL_MS = 5000;
+
+interface VoicePayloadSnapshot {
+  before: string;
+  after: string;
+  full: string;
+  images?: MessageImage[];
+  send: MessageInputProps['onSend'];
+}
+
+interface VoiceSubmitFollowUp {
+  targetSessionId: string;
+  mode: VoiceSubmitMode;
+  recording: VoiceRecording | null;
+  payload: VoicePayloadSnapshot;
+  resendOf?: string;
+}
 
 function buildTranscriptInsertion(
   before: string,
@@ -396,7 +429,7 @@ export default function MessageInput({
     }
   }, [isTranscribing, voiceRecorder, voiceSupported, sessionId]);
 
-  const pendingAutoSendRef = useRef<{ sessionId: string; mode: 'send' | 'queue' } | null>(null);
+  const pendingAutoSendRef = useRef<{ sessionId: string; mode: VoiceSubmitMode } | null>(null);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
   const recordingSessionRef = useRef<string | null>(null);
@@ -497,79 +530,148 @@ export default function MessageInput({
     []
   );
 
+  const interpretVoiceSubmit = useCallback(
+    async (result: VoiceSubmitResult, followUp: VoiceSubmitFollowUp): Promise<void> => {
+      const saveForResend = async (recordId: string): Promise<boolean> => {
+        if (!followUp.recording) return false;
+        return putVoiceRecord({
+          id: recordId,
+          sessionId: followUp.targetSessionId,
+          audioBase64: followUp.recording.audioBase64,
+          mimeType: followUp.recording.mimeType,
+          hitDurationLimit: followUp.recording.hitDurationLimit,
+          peakLevel: followUp.recording.peakLevel,
+          createdAt: Date.now(),
+        });
+      };
+      if (result.kind === 'silent-recording') {
+        if (followUp.resendOf !== undefined) {
+          toast.error('No microphone signal detected — check your mic or input device');
+        } else {
+          const saved = await saveForResend(generateUUID());
+          toast.error(
+            saved
+              ? 'No microphone signal detected — recording saved for resend'
+              : 'No microphone signal detected — check your mic or input device'
+          );
+        }
+        return;
+      }
+      if (result.kind === 'transcribe-failed') {
+        toast.error(result.message);
+        if (result.persisted && !result.dequeued) {
+          toast.info('Voice recording saved for resend');
+        }
+        return;
+      }
+      const outcome = result.outcome;
+      if (outcome.kind === 'insert') {
+        insertTranscript(outcome.transcript);
+        if (outcome.autoSend) {
+          pendingAutoSendRef.current = {
+            sessionId: followUp.targetSessionId,
+            mode: followUp.mode,
+          };
+          setHasPendingAutoSend(true);
+        }
+        if (result.persisted) await deleteVoiceRecord(result.recordId);
+        return;
+      }
+      if (outcome.kind === 'deliver-unmounted') {
+        const delivered = await deliverUnmountedTranscript(
+          followUp.targetSessionId,
+          outcome.transcript,
+          outcome.mode,
+          followUp.payload
+        );
+        if (delivered.ok) {
+          toast.info(delivered.message);
+          if (result.persisted) await deleteVoiceRecord(result.recordId);
+        } else if (result.persisted && !result.dequeued) {
+          toast.error('Voice transcript could not be delivered — recording saved for resend');
+        } else {
+          toast.error(delivered.message || 'Voice transcript could not be delivered — it was lost');
+        }
+        return;
+      }
+      if (outcome.kind === 'discard-with-reason') {
+        if (sessionIdRef.current !== followUp.targetSessionId) {
+          const saved = await saveForResend(result.recordId);
+          if (outcome.reason) {
+            toast.info(
+              saved
+                ? 'Recording target changed — recording saved for resend'
+                : 'Recording target changed — transcript discarded'
+            );
+          }
+        } else if (outcome.reason) {
+          toast.info(outcome.reason);
+        }
+        return;
+      }
+      toast.info(outcome.reason);
+    },
+    [insertTranscript, deliverUnmountedTranscript]
+  );
+
+  const captureVoicePayload = useCallback((): VoicePayloadSnapshot => {
+    const snapshotContent = textareaInputRef.current?.value ?? contentRef.current;
+    const snapshotStart = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
+    const snapshotEnd =
+      textareaInputRef.current?.selectionEnd ??
+      Math.max(snapshotStart, lastSelectionEndRef.current);
+    return {
+      before: snapshotContent.slice(0, snapshotStart),
+      after: snapshotContent.slice(snapshotEnd),
+      full: snapshotContent,
+      images: getImagesForSend(),
+      send: onSend,
+    };
+  }, [getImagesForSend, onSend]);
+
   const stopAndTranscribe = useCallback(
-    async (mode: 'stay' | 'send' | 'queue' = 'stay') => {
+    async (mode: VoiceSubmitMode = 'stay') => {
       if (isTranscribing) return;
       if (!voiceRecorder.isRecording && !voiceRecorder.durationLimitHit) return;
       const targetSessionId = recordingSessionRef.current ?? sessionId;
-      const snapshotContent = textareaInputRef.current?.value ?? contentRef.current;
-      const snapshotStart = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
-      const snapshotEnd =
-        textareaInputRef.current?.selectionEnd ??
-        Math.max(snapshotStart, lastSelectionEndRef.current);
-      const payloadSnapshot = {
-        before: snapshotContent.slice(0, snapshotStart),
-        after: snapshotContent.slice(snapshotEnd),
-        full: snapshotContent,
-        images: getImagesForSend(),
-        send: onSend,
-      };
+      const payload = captureVoicePayload();
+      const recordId = generateUUID();
+      let recording: VoiceRecording | null = null;
       setIsTranscribing(true);
+      markVoiceAudioBusy(recordId);
       try {
-        const recording = await voiceRecorder.stop();
-        if (recording.hitDurationLimit) {
-          toast.info('Voice recording stopped at 5 minutes — transcribing…');
-        }
-        if (recording.peakLevel !== undefined && recording.peakLevel < 0.001) {
-          toast.error('No microphone signal detected — check your mic or input device');
-          return;
-        }
-        const hub = connectionManager.getHubIfConnected();
-        if (!hub) throw new Error('Not connected');
-        const result = (await hub.request('voice.transcribe', recording, { timeout: 125_000 })) as {
-          text?: string;
-        };
-        const transcript = result.text?.trim() ?? '';
-        if (sessionIdRef.current !== targetSessionId) {
-          if (transcript) toast.info('Recording target changed — transcript discarded');
-        } else if (transcript && mountedRef.current) {
-          insertTranscript(transcript);
-          if (mode !== 'stay') {
-            pendingAutoSendRef.current = { sessionId: targetSessionId, mode };
-            setHasPendingAutoSend(true);
+        const result = await runVoiceSubmit(
+          { sessionId: targetSessionId, mode },
+          {
+            stopRecording: async () => {
+              recording = await voiceRecorder.stop();
+              if (recording.hitDurationLimit) {
+                toast.info('Voice recording stopped at 5 minutes — transcribing…');
+              }
+              return recording;
+            },
+            generateId: () => recordId,
+            isMounted: () => mountedRef.current,
+            currentSessionId: () => sessionIdRef.current,
           }
-        } else if (transcript) {
-          const delivered = await deliverUnmountedTranscript(
-            targetSessionId,
-            transcript,
-            mode,
-            payloadSnapshot
-          );
-          if (delivered.ok) toast.info(delivered.message);
-          else
-            toast.error(
-              delivered.message || 'Voice transcript could not be delivered — it was lost'
-            );
-        } else if (mountedRef.current) {
-          toast.info('No speech detected in that recording');
-        }
+        );
+        await interpretVoiceSubmit(result, {
+          targetSessionId,
+          mode,
+          recording,
+          payload,
+        });
       } catch (error) {
         await voiceRecorder.cancel();
         toast.error(error instanceof Error ? error.message : 'Voice transcription failed');
       } finally {
+        unmarkVoiceAudioBusy(recordId);
         recordingSessionRef.current = null;
         setIsTranscribing(false);
+        void refreshPendingVoiceAudio();
       }
     },
-    [
-      insertTranscript,
-      deliverUnmountedTranscript,
-      getImagesForSend,
-      isTranscribing,
-      onSend,
-      voiceRecorder,
-      sessionId,
-    ]
+    [captureVoicePayload, interpretVoiceSubmit, isTranscribing, voiceRecorder, sessionId]
   );
 
   const cancelRecording = useCallback(() => {
@@ -592,6 +694,56 @@ export default function MessageInput({
       limitHandledRef.current = false;
     }
   }, [voiceRecorder.durationLimitHit]);
+
+  const [resendingVoiceRecordId, setResendingVoiceRecordId] = useState<string | null>(null);
+  const pendingVoiceEntries = pendingVoiceAudioRecords.value.filter(
+    (entry) => entry.sessionId === sessionId && !isVoiceAudioBusy(entry.id)
+  );
+
+  useEffect(() => {
+    void refreshPendingVoiceAudio();
+  }, []);
+
+  const handleVoiceAudioResend = useCallback(
+    async (entry: VoiceRecordEntry) => {
+      if (resendingVoiceRecordId !== null || isTranscribing) return;
+      const payload = captureVoicePayload();
+      const recording = recordingFromEntry(entry);
+      setResendingVoiceRecordId(entry.id);
+      markVoiceAudioBusy(entry.id);
+      try {
+        const result = await runVoiceSubmit(
+          { sessionId: entry.sessionId },
+          {
+            stopRecording: async () => recording,
+            putRecord: async () => true,
+            generateId: () => entry.id,
+            isMounted: () => mountedRef.current,
+            currentSessionId: () => sessionIdRef.current,
+          }
+        );
+        await interpretVoiceSubmit(result, {
+          targetSessionId: entry.sessionId,
+          mode: 'stay',
+          recording,
+          payload,
+          resendOf: entry.id,
+        });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Voice resend failed');
+      } finally {
+        unmarkVoiceAudioBusy(entry.id);
+        setResendingVoiceRecordId(null);
+        void refreshPendingVoiceAudio();
+      }
+    },
+    [captureVoicePayload, interpretVoiceSubmit, isTranscribing, resendingVoiceRecordId]
+  );
+
+  const handleVoiceAudioDelete = useCallback(async (entry: VoiceRecordEntry) => {
+    await deleteVoiceRecord(entry.id);
+    await refreshPendingVoiceAudio();
+  }, []);
 
   const agentWorking = isProcessing ?? isAgentWorking.value;
   const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuePreviewMessage[]>([]);
@@ -1014,6 +1166,20 @@ export default function MessageInput({
               }}
               onRemoveMessage={(queued) => {
                 void handleRemoveQueuedMessage(queued);
+              }}
+            />
+          )}
+
+          {pendingVoiceEntries.length > 0 && !disabled && (
+            <PendingVoiceAudioTray
+              records={pendingVoiceEntries}
+              resendingId={resendingVoiceRecordId}
+              className="mb-2 sm:ml-[58px]"
+              onResend={(entry) => {
+                void handleVoiceAudioResend(entry);
+              }}
+              onDelete={(entry) => {
+                void handleVoiceAudioDelete(entry);
               }}
             />
           )}
