@@ -74,11 +74,16 @@ capture/restore compensation :1250–1264, callback re-register, flush), fresh
 arm (`AgentSession.fromInit`, index/register, bind CAS with superseded
 compensation that deletes the never-streamed session row :1357–1371, stream,
 flush). Fit: strong `stagedRun` — sync admission gates, CAS effects, awaited
-workspace migration, two compensations. The rebind-CAS shape duplicates
-`spawn-flow.ts` `rebindLiveExecution`; compose the same repo primitive, not a
-new combinator. Risk: the stale co-owner cascade preserves
-`blocked/cancelled/waiting_rebind/pending` rows via blind `update` — keep the
-per-status branch order byte-for-byte in the extract.
+workspace migration, two compensations. The bind step composes the repo
+primitive the spawn flow also wraps — `nodeExecutionRepo.casExecutionStatus`
+with expected statuses derived from `SPAWN_BINDABLE_EXECUTION_STATUSES` — NOT
+`rebindLiveExecution`/`bindExecutionToSession`, which are private
+`buildSpawnExecutionFlowDeps` closures, not an exported API; the
+expected-status derivation duplicated here (:1145–1157, :1344–1356) may become
+a small plain helper inside the build slice, not a combinator. Risk: the stale
+co-owner cascade preserves `blocked/cancelled/waiting_rebind/pending` rows
+via blind `update` — keep the per-status branch order byte-for-byte in the
+extract.
 
 ### `restore-post-approval-worker` — cluster 8, ~175 lines
 
@@ -179,19 +184,28 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
 | TAM-P | Pins: characterization for clusters 4/8/9/14/15/19 arms not covered by the 24 existing `5-space/runtime` TAM suites (gap-measure first) | test-only | 0 | ≲400 | — |
-| TAM-A | `activate-agent-for-message` stagedRun, build + wire (single call-site family: RPC handlers + `AgentMessageRouter`) | build+wire | ≲200 | ≲150 | TAM-P |
+| TAM-A1 | `activate-agent-for-message` stagedRun, unwired (decision stage group + timeout/requeue effect stages) | build | ≲180 | ≲150 | TAM-P |
+| TAM-A2 | Wire `activateTargetSessionsForMessage` (RPC handlers + `AgentMessageRouter` call sites) | wire | ≲40 | ≲50 | TAM-A1 |
 | TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations) | build | ≲250 | ≲250 | TAM-P |
-| TAM-B2 | Wire `createSubSession` call sites (spawn deps, post-approval, RPC) to the pipeline | wire | ≲80 | ≲60 | TAM-B1 |
-| TAM-C | `restore-post-approval-worker` stagedRun, build + wire | build+wire | ≲200 | ≲150 | TAM-P |
-| TAM-D | `rehydrate-sub-session` stagedRun, build + wire | build+wire | ≲240 | ≲200 | TAM-P |
-| TAM-E | `deliver-injected-message` pipeline over `decideInjectDelivery`, build + wire (coordinate boundary with agent-routing plan) | build+wire | ≲200 | ≲180 | TAM-P |
-| TAM-F | `spawn-post-approval-worker` stagedRun, build + wire | build+wire | ≲220 | ≲180 | TAM-B2 (createSubSession contract settled) |
-| TAM-G | `deliver-space-agent-pending-row` pipeline | build+wire | ≲100 | ≲80 | TAM-P |
+| TAM-B2 | Wire `createSubSession` call sites (spawn deps, post-approval, RPC) | wire | ≲80 | ≲60 | TAM-B1 |
+| TAM-C1 | `restore-post-approval-worker` stagedRun, unwired | build | ≲180 | ≲150 | TAM-P |
+| TAM-C2 | Wire `restorePostApprovalWorkerSession` | wire | ≲40 | ≲50 | TAM-C1 |
+| TAM-D1 | `rehydrate-sub-session` stagedRun, unwired | build | ≲220 | ≲200 | TAM-P |
+| TAM-D2 | Wire `rehydrateSubSession` | wire | ≲40 | ≲50 | TAM-D1 |
+| TAM-E1 | `deliver-injected-message` pipeline over `decideInjectDelivery`, unwired (coordinate boundary with agent-routing plan) | build | ≲170 | ≲180 | TAM-P |
+| TAM-E2 | Wire `injectMessageIntoSession` | wire | ≲50 | ≲60 | TAM-E1 |
+| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired | build | ≲200 | ≲180 | TAM-B2 (createSubSession contract settled) |
+| TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
+| TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap) | build+wire | ≲100 | ≲80 | TAM-P |
 | TAM-H (optional, not superpipe) | Extract provenance/cooldown/durable-id readers + `resolveTerminalInjectionStatus` into `sub-session-identity.ts` plain helpers | extract | ≲120 | ≲60 | — |
 
-After TAM-B2/D/F land, the reuse-vs-fresh stagedRun shape has 3 direct uses
-(spawn-flow, create, post-approval) + 2 close cousins (rehydrate, restore) — a
-follow-up MAY propose a combinator per ADR 0004's ≈3-use rule; never before.
+Construction and integration do not share a PR: every build slice lands as
+additive dead code pinned by per-stage tests, and its wire slice is a
+single-family call-site swap; TAM-G is the one combined slice and stays within
+the trivial build+wire exception. After TAM-B2/D2/F2 land, the reuse-vs-fresh
+stagedRun shape has 3 direct uses (spawn-flow, create, post-approval) + 2
+close cousins (rehydrate, restore) — a follow-up MAY propose a combinator per
+ADR 0004's ≈3-use rule; never before.
 
 ## Cross-cutting ADR-0004 risks
 
