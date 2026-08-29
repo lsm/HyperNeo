@@ -192,7 +192,8 @@ describe('Dialog RPC Handlers', () => {
         const result = await handler({}, {});
 
         expect(result).toEqual({ path: '/home/user/workspace' });
-        const zenityCall = spawnMock.mock.calls.find(([args]) => args[0] === 'zenity');
+        const calls = spawnMock.mock.calls as unknown as Array<[string[], unknown?]>;
+        const zenityCall = calls.find(([args]) => args[0] === 'zenity');
         expect(zenityCall).toBeDefined();
         expect(zenityCall![0]).toContain('--directory');
       });
@@ -213,7 +214,8 @@ describe('Dialog RPC Handlers', () => {
         const result = await handler({}, {});
 
         expect(result).toEqual({ path: '/home/user/workspace' });
-        const kdialogCall = spawnMock.mock.calls.find(([args]) => args[0] === 'kdialog');
+        const calls = spawnMock.mock.calls as unknown as Array<[string[], unknown?]>;
+        const kdialogCall = calls.find(([args]) => args[0] === 'kdialog');
         expect(kdialogCall).toBeDefined();
       });
 

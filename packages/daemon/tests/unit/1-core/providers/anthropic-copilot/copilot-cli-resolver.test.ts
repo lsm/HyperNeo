@@ -44,20 +44,23 @@ describe('copilot-cli-resolver', () => {
   });
 
   it('respects COPILOT_CLI_PATH if set to a valid existing binary', () => {
-    const binary = resolveCopilotCliPath();
-    if (binary) {
-      process.env.COPILOT_CLI_PATH = binary;
-      _resetForTesting();
-      expect(resolveCopilotCliPath()).toBe(binary);
-    }
+    process.env.COPILOT_CLI_PATH = process.execPath;
+    _resetForTesting();
+    expect(resolveCopilotCliPath()).toBe(process.execPath);
   });
 
-  it('resolves native copilot binary if installed in node_modules', () => {
+  it('ignores COPILOT_CLI_PATH when pointing to non-existent path', () => {
+    process.env.COPILOT_CLI_PATH = '/tmp/nonexistent-copilot-binary-12345';
+    _resetForTesting();
+    const resolved = resolveCopilotCliPath();
+    expect(resolved).not.toBe('/tmp/nonexistent-copilot-binary-12345');
+  });
+
+  it('resolves native copilot binary in node_modules environment', () => {
     const binary = resolveCopilotCliPath();
-    if (binary) {
-      expect(binary.endsWith('.js')).toBe(false);
-      expect(typeof binary).toBe('string');
-      expect(binary.length).toBeGreaterThan(0);
-    }
+    expect(binary).toBeDefined();
+    expect(typeof binary).toBe('string');
+    expect(binary!.length).toBeGreaterThan(0);
+    expect(binary!.endsWith('.js')).toBe(false);
   });
 });
