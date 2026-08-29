@@ -133,11 +133,10 @@ function planDoom(rows: unknown[]): DoomPlan {
     }
   }
   const pending: VoiceRecordEntry[] = [];
-  const durableIds = new Set(rows.map((row) => (row as { id?: unknown } | null)?.id));
   for (const entry of mirror.values()) {
     if (!isVoiceRecordEntry(entry)) continue;
     valid.set(entry.id, entry);
-    if (!durableIds.has(entry.id)) pending.push(entry);
+    pending.push(entry);
   }
   const merged = [...valid.values()].sort((a, b) => a.createdAt - b.createdAt);
   const now = Date.now();
@@ -187,9 +186,7 @@ export function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
   return serializeMutation(async () => {
     mirror.set(entry.id, entry);
     tombstones.delete(entry.id);
-    const plan = await writeTx((store, doomed) => {
-      if (!doomed.ids.has(entry.id)) store.put(entry);
-    });
+    const plan = await writeTx(() => {});
     if (!plan) return false;
     for (const id of plan.ids) mirror.delete(id);
     for (const key of plan.keys) {

@@ -191,6 +191,18 @@ describe('voice audio record store', () => {
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['x', 'y']);
   });
 
+  it('persists the newest copy when an overwrite aborts', async () => {
+    const factory = createFactory({ abortReadWriteAt: 2 });
+    globalThis.indexedDB = factory;
+    await putVoiceRecord(makeEntry('x', NOW));
+    const revised = makeEntry('x', NOW);
+    revised.audioBase64 = 'wav-bytes-revised';
+    expect(await putVoiceRecord(revised)).toBe(false);
+    await putVoiceRecord(makeEntry('y', NOW + 1));
+    resetVoiceAudioStore();
+    expect((await getVoiceRecord('x'))?.audioBase64).toBe('wav-bytes-revised');
+  });
+
   it('deletes a record from both the mirror and durable storage', async () => {
     await putVoiceRecord(makeEntry('r1', NOW));
     await deleteVoiceRecord('r1');
