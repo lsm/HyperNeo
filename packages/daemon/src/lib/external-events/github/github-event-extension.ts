@@ -1773,7 +1773,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       (spaceConfig?.settings as { filterCurrentUser?: boolean } | undefined)?.filterCurrentUser !==
       false;
     const tokenStatus = this.cachedTokenStatus();
-    if (!tokenStatus) this.triggerSelfEchoLoginRefresh();
+    if (filterCurrentUser && !tokenStatus) this.triggerSelfEchoLoginRefresh();
     const tokenLogin = tokenStatus?.login ?? '';
     if (
       decideSelfEchoGate({

@@ -10579,13 +10579,32 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     return { published, ext, context };
   }
 
-  async function deliverWebhookComment(extension: GitHubEventExtension, login: string) {
-    const payload = selfCommentPayload(login);
+  async function deliverWebhook(
+    extension: GitHubEventExtension,
+    eventType: string,
+    payload: Record<string, unknown>
+  ) {
     const raw = JSON.stringify(payload);
     const res = await extension.routes[0].handle(
-      webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
+      webhookRequest(payload, eventType, await createSignature(raw, 'secret'))
     );
     return (await res.json()) as { spaces: number };
+  }
+
+  function prWebhookPayload(senderLogin: string, authorLogin: string): Record<string, unknown> {
+    return {
+      action: 'synchronize',
+      repository: baseRepo,
+      sender: { login: senderLogin, type: 'User' },
+      pull_request: {
+        id: 77,
+        number: 7,
+        body: 'pr body',
+        html_url: 'https://github.com/acme/widgets/pull/7',
+        user: { login: authorLogin, type: 'User' },
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    };
   }
 
   test("webhook: the token's own comment is dropped as self-echo while other logins still publish", async () => {
@@ -10607,13 +10626,52 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     });
     expect(await resolveOwnLogin(extension)).toBe('octocat');
 
-    expect((await deliverWebhookComment(extension, 'octocat')).spaces).toBe(0);
+    expect(
+      (await deliverWebhook(extension, 'issue_comment', selfCommentPayload('octocat'))).spaces
+    ).toBe(0);
     expect(received).toHaveLength(0);
-    expect((await deliverWebhookComment(extension, 'unrelated-user')).spaces).toBe(1);
+    expect(
+      (await deliverWebhook(extension, 'issue_comment', selfCommentPayload('unrelated-user')))
+        .spaces
+    ).toBe(1);
     expect(received).toHaveLength(1);
     expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.comment_created');
     expect(received[0].payload.actor).toBe('unrelated-user');
     expect(db.prepare('SELECT COUNT(*) AS c FROM space_external_events').get()).toEqual({ c: 1 });
+    await extension.stop();
+  });
+
+  test('webhook: pull_request filtering compares the causal sender, not the PR author', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    expect(
+      (await deliverWebhook(extension, 'pull_request', prWebhookPayload('collaborator', 'octocat')))
+        .spaces
+    ).toBe(1);
+    expect(received).toHaveLength(1);
+    expect(received[0].payload.actor).toBe('collaborator');
+
+    expect(
+      (await deliverWebhook(extension, 'pull_request', prWebhookPayload('octocat', 'collaborator')))
+        .spaces
+    ).toBe(0);
+    expect(received).toHaveLength(1);
     await extension.stop();
   });
 
@@ -10676,10 +10734,17 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
-  test("publishEvent admits the token's own login when filterCurrentUser is disabled", async () => {
+  test("publishEvent admits the token's own login when filterCurrentUser is disabled and never refreshes the identity", async () => {
     const db = setupDb();
+    let userCalls = 0;
     const extension = new GitHubEventExtension(db, 'token', {
-      fetchImpl: selfUserFetch('octocat'),
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
     });
     const config = new StaticExternalEventExtensionConfigStore({ globallyEnabled: true });
     config.spaceConfigs.set('space-1:github', {
@@ -10694,6 +10759,7 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
 
     expect(published.map((event) => event.payload.actor)).toEqual(['octocat']);
+    expect(userCalls).toBe(1);
     await extension.stop();
   });
 

@@ -315,7 +315,7 @@ export function normalizeGitHubWebhook(
     };
   } else {
     const pr = asObject(root.pull_request);
-    actor = userFrom(pr.user ?? root.sender);
+    actor = userFrom(root.sender ?? pr.user);
     prNumber = getNumber(pr.number);
     body = getString(pr.body);
     externalId = `pull_request:${getNumber(pr.id) || prNumber}:${action}:${deliveryId}`;
