@@ -448,7 +448,13 @@ error, defers expiration, maybe fails the row, schedules reconciliation, and
 RETURNS NORMALLY so the drain continues with later rows — TAM-G models it as
 a settled error/reconciliation arm that completes successfully, never a
 propagated stage error that aborts the whole drain and starves every later
-message; TAM-PG retains the later-row-delivered characterization. Fit:
+message; TAM-PG retains the later-row-delivered characterization. The
+attempt record becomes an ATOMIC PENDING-ROW CLAIM: a late settlement
+between the `getById` gate and `recordDeliveryAttempt` makes the conditional
+update affect zero rows and return the delivered record, which the current
+body ignores before injecting — a lost claim HALTS before injection (no
+double delivery); the late-settlement-between-snapshot-and-claim row lands
+with TAM-G's primitive. Fit:
 small pipeline; the late-settlement watcher arming (:1534–1586)
 stays in the class (handles/cancel are resources).
 
@@ -536,7 +542,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-E4 | Delete the old imperative `injectMessageIntoSession` cascade — removal-only, zero new logic; every caller is converted by then (TAM-E2 origin path, TAM-E3 spawn-flow kickoff, TAM-F2 post-approval arms) | delete | ≲190 | 0 | TAM-E2, TAM-E3, TAM-F2 |
 | TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 delivery outcome with a THREE-WAY ownership result (CREATED / LIVE-REUSED / COLD-RESTORED) carried from the create-stage result; COMPOSES the B1 create stage group and the E1 delivery stage group directly (no runner nesting); the reuse-arm terminal gate runs BEFORE the reuse mutation sequence under the same lock; the fresh arm's post-create recheck covers every create outcome (CREATED skip terminates the just-created session, REUSED skip leaves the worker untouched); lands the atomic-ownership/rollback protocol TOGETHER WITH its tests (terminal-skip rows for both outcomes, after-recheck-before-delivery transition, post-create attach/inject failure compensation per ownership — CREATED stopped/unregistered, COLD-RESTORED unwound without deleting the durable session, LIVE-REUSED intact — cold-cache unwind, the terminal races) | build | ≲220 | ≲250 | TAM-B2, TAM-E1, TAM-PF (P46 outcome contract) |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
-| TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); introduces the status-guarded settlement/error primitive (risk 5) TOGETHER WITH its race-correctness tests (which cannot pass before it exists) | build+wire | ≲100 | ≲80 | TAM-PG |
+| TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); introduces the status-guarded settlement/error primitive (risk 5) AND the atomic pending-row claim TOGETHER WITH their race-correctness tests (which cannot pass before they exist) | build+wire | ≲100 | ≲80 | TAM-PG |
 | TAM-S1 | `self-heal-node-agent` stagedRun, unwired (prologue gates via the FENCED repair helper + adoption admission composed in front of the existing heal stages; heal workspace routed through `resolveTaskWorkspace`; adoption at the manager-owned pre-heal boundary) | build | ≲140 | ≲120 | TAM-PS, TAM-D1 (fenced repair helper) |
 | TAM-S2 | Wire `mcpSelfHeal` to the S1 pipeline; index/callback/displaced-session lifecycle effects stay class-owned | wire | ≲40 | ≲50 | TAM-S1 |
 | TAM-H (optional, not superpipe) | Extract provenance/cooldown/durable-id readers + `resolveTerminalInjectionStatus` into `sub-session-identity.ts` plain helpers | extract | ≲120 | ≲60 | — |
