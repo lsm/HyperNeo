@@ -60,7 +60,8 @@ pins header parsing and the cooldown/backoff path; the extracted helper modules
 | --- | --- | --- | --- | --- | --- |
 | C1 | `classifyGitHubPollResponse` + `resolveRateLimitBackoff` | new `github-poll-response.ts` | ~70 | ~150 | No — plain pure fn |
 | C2 | `resolveEndpointWatermark`, `resolvePullsSeedNeed`, `resolvePullsBacklogCutoff`, `planEndpointPageAdvance` | new `github-poll-watermarks.ts` | ~85 | 0 | No — plain pure fns |
-| C3 | head-ref delta maintenance, tracked-PR reconcile, cursor GC | `github-pr-head-ref-index.ts` + new `github-poll-cursor-gc.ts` | ~105 | 0 | No — plain pure fns |
+| C3a | head-ref delta maintenance, tracked-PR reconcile | `github-pr-head-ref-index.ts` | ~75 | 0 | No — explicit-state mutator fns |
+| C3b | cursor GC, check-run pending→committed promotion | new `github-poll-cursor-gc.ts` | ~40 | 0 | No — explicit-state mutator fns |
 | C4 | `resolveCheckRunSupersession`, `resolveCheckRunLegacyOwner` | new `github-check-run-dedupe.ts` | ~45 | 0 | No — plain pure fns |
 | C5 | `resolveMergeConflictTransition`, review freshness/etag policy, reaction freshness policy | new `github-poll-subscans.ts` | ~80 | 0 | No — plain pure fns |
 | C6 | `planPollCursorCommit` | new `github-poll-cursor-commit.ts` | ~60 | 0 | No — pure plan, apply stays in class |
@@ -100,8 +101,7 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
 - `resolveEndpointWatermark` (:2315–2325): seed-lookback decision
   (`saved === 0 && committed === 0 && comment endpoint` → `now −
   COMMENT_ENDPOINT_INITIAL_LOOKBACK_MS`), else saved, else committed. ~15 lines.
-- `resolvePullsSeedNeed` (:2327–2332): `pullsSeedInProgress || no tracked PRs ||
-  (PRs tracked && no head SHAs)`. ~8 lines. This flag also suppresses the
+- `resolvePullsSeedNeed` (:2327–2332): `endpoint === 'pulls' && (pullsSeedInProgress || no tracked PRs || (PRs tracked && no head SHAs))` — the endpoint discriminator is part of the helper contract, not the caller's; without it an empty tracked-PR list would force seed mode (and suppress `since`/page-1 etag) for the comment endpoints too. ~8 lines. This flag also suppresses the
   `since` param (:2333) and the page-1 etag (:2338) — the extraction must keep
   both `!pullsNeedsSeed` uses verbatim.
 - `resolvePullsBacklogCutoff` (:2403–2420): first-row-below-watermark cutoff
@@ -112,20 +112,34 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
   `+1` bump (:2508–2514), and the pending/committed endpoint watermark
   promotion. ~30 lines.
 
-### C3 — head-ref index, tracked-PR reconcile, cursor GC
+### C3a — head-ref index maintenance and tracked-PR reconcile
+
+**These are not pure functions, and the extraction must not claim they are.**
+The existing primitives (`add/removePullRequestNumberByHeadRef`,
+github-pr-head-ref-index.ts) mutate their input `Map`, `clearCheckRunEtagsForHead`
+mutates the etags record in place, and the sequences delete from cursor
+records — a verbatim move produces deterministic, class-state-free, I/O-free
+**mutators over explicitly-passed cursor/index structures**, not immutable
+pure functions. The slice contract is "mutator extraction, zero behavior
+change"; if immutable purity is ever wanted, that is a redesign (plan + apply),
+not an extract.
 
 - Delta maintenance during the pulls scan (:2421–2465, ~45 lines): closed-PR
   removal, head-SHA/repo change invalidation, `clearCheckRunEtagsForHead` +
-  head-watermark resets for newly tracked PRs. The index primitives
-  (`add/removePullRequestNumberByHeadRef`) are already extracted pure
-  (github-pr-head-ref-index.ts); this extracts the *policy* that sequences
-  them, including the initial rebuild (:2284–2294).
+  head-watermark resets for newly tracked PRs; this extracts the *policy* that
+  sequences the primitives, including the initial rebuild (:2284–2294).
 - Tracked-PR reconcile (:2466–2486, ~20 lines): fresh-open-first merge, drop
   closed, cap at `REACTION_POLL_PR_LIMIT`.
+
+### C3b — cursor GC and check-run promotion
+
+Same mutator shape (prunes keys in place on passed-in cursor structures); its
+own module because it is a different purpose from index maintenance:
+
 - Cursor GC (:3119–3145, ~27 lines): prune reaction/merge/review etags by
   tracked-PR set, head watermarks by tracked head set, check-run etags by
-  `headRef:` prefix scan. Also the check-run pending→committed promotion
-  (:2758–2767).
+  `headRef:` prefix scan.
+- Check-run pending→committed promotion (:2758–2767).
 
 ### C4 — check-run supersession and legacy-owner dedupe
 
@@ -134,9 +148,11 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
   stays eligible for later same-key rows. ~15 lines.
 - `resolveCheckRunLegacyOwner` (:2694–2711): the pure half of legacy-PR dedupe —
   recorded owner ?? store-observed owner ?? first fan-out PR, and the
-  `legacyPrInFanOut` scoping decision. The `eventStore.getByDedupe` lookup is
-  an awaited effect and stays at the call site; the fan-out publish loop
-  (:2710–2729) stays imperative.
+  `legacyPrInFanOut` scoping decision. The `eventStore.getByDedupe` lookup
+  (:2697–2700) is a **synchronous** store effect — the call site does not
+  `await` it — and it stays at the call site unchanged so the extraction adds
+  no microtask boundary; the fan-out publish loop (:2710–2729) stays
+  imperative.
 
 ### C5 — PR-scoped sub-scan transitions
 
@@ -147,9 +163,9 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
   seed, seen-id + watermark gate, single-page etag commit
   (`complete && singlePage && pendingEtag`) vs delete (:3001–3005). ~25 lines.
 - Reaction freshness (:3094–3107): positive filter + seen-ids +
-  committed-watermark stale suppression; plus the `lastReactionPollAt` commit
-  rule (:3196–3198, `reactionsFullyPolled ? polledAt ?? cursor : cursor`).
-  ~20 lines.
+  committed-watermark stale suppression. ~20 lines. C5's outputs stop at the
+  scan flags (`reactionPolledAt`, `reactionsFullyPolled`); the
+  `lastReactionPollAt` commit rule (:3196–3198) belongs to C6, not here.
 
 ### C6 — cursor commit policy (`planPollCursorCommit`)
 
@@ -161,6 +177,9 @@ testable only by driving whole fake-fetch cycles:
   (:3147–3165);
 - `partialScan || hasBacklog || pullsCheckRunDeferred` → committed vs pending
   `lastSeenAt` (:3166–3172);
+- `lastReactionPollAt` commit rule (:3196–3198, `reactionsFullyPolled ?
+  reactionPolledAt ?? cursor : cursor`) — owned HERE, in C6, as part of the
+  payload assembly; C5 only produces the scan flags this rule reads;
 - `lastPollCredentialFingerprint` only when accessible (:3199–3201);
 - the write split (:3203–3207): `updatePollCursor` (stamps `last_poll_at`,
   github-repository.ts:478) only when accessible, else `updatePollCursorJson`
@@ -201,10 +220,11 @@ equivalence pins are added.
 | Slice | Kind | Delivers | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
 | GH-P1a | pin | response-classification decision table (the 429-synthesis, secondary body-sniff, 304, low-remaining dimensions the fake-fetch suites cover only via whole cycles) | 0 | ≲200 | — |
-| GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × stale × accessible × pollErrorMessage` → committed/pending watermarks, error fields, write split) | 0 | ≲250 | — |
+| GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × credentialStale × accessible × pollErrorMessage × prior-error presence/value` — `cursor.lastPollError`/`lastPartialPollError` are load-bearing fallbacks at :3154, :3161–3165 — → committed/pending watermarks, error fields, reaction timestamp, write split) | 0 | ≲300 | — |
 | GH-E1 | extract | C1 `classifyGitHubPollResponse` + backoff helper, swapped at the 5 cycle sites (`githubFetch` optional 6th) | ≲120 net (−~150 dup) | ≲300 | GH-P1a |
 | GH-E2 | extract | C2 watermark/seed/cutoff/page-advance helpers | ≲100 | ≲250 | — |
-| GH-E3 | extract | C3 head-ref policy, tracked-PR reconcile, cursor GC | ≲110 | ≲200 | GH-E2 |
+| GH-E3a | extract | C3a head-ref delta policy + tracked-PR reconcile (mutator extraction) | ≲90 | ≲200 | GH-E2 |
+| GH-E3b | extract | C3b cursor GC + check-run promotion (mutator extraction) | ≲50 | ≲150 | GH-E3a |
 | GH-E4 | extract | C4 supersession + legacy-owner decisions | ≲80 | ≲200 | — |
 | GH-E5 | extract | C5 merge/review/reaction transition helpers (one module; split if review prefers) | ≲90 | ≲250 | — |
 | GH-E6 | extract | C6 `planPollCursorCommit` + write-split decision | ≲90 | ≲300 (decision table) | GH-P1b, GH-E2 |
@@ -212,9 +232,12 @@ equivalence pins are added.
 Each slice: one module + its call-site swaps; may not touch the loops'
 control flow, the class state methods, or the scheduler. Merge contract per
 slice: "verbatim-move extraction, zero behavior change, existing fake-fetch
-suites green". Slice count is an output of measurement — C1 is separately
-sliced from C2–C6 because it deletes duplication across five sites while the
-others are single-cluster moves; no slice mixes clusters.
+suites green" (C3a/C3b: "mutator extraction, zero behavior change" — see the
+purity caveat there). Slice count is an output of measurement — C1 is
+separately sliced from C2–C6 because it deletes duplication across five sites
+while the others are single-cluster moves; C3 splits into C3a/C3b because
+index maintenance and cursor GC are different purposes landing in different
+modules; no slice mixes clusters or modules.
 
 ## Risks and caveats
 
@@ -228,7 +251,8 @@ others are single-cluster moves; no slice mixes clusters.
   etag suppression, seed progress :2505–2506); the helper must return the flag,
   not a boolean per use.
 - **Legacy-owner dedupe reads the store** (C4): the pure function takes the
-  observed owner as an input; do not move the `getByDedupe` effect inside it.
+  observed owner as an input; do not move the synchronous `getByDedupe`
+  effect inside it or add an `await` at the call site.
 - **`Date.now()` density**: watermarks, backoff, reaction timestamps, and the
   commit policy all read the clock; extracted helpers take `now` as a
   parameter (the module already has `credentialFingerprint`-style pure
