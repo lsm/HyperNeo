@@ -2348,13 +2348,15 @@ export class TaskAgentManager {
       }
       throw err;
     }
-    void this.flushPendingMessagesForTarget(task.workflowRunId, agentName, sessionId).catch(
-      (err) => {
-        log.warn(
-          `restorePostApprovalWorkerSession: flushPendingMessagesForTarget failed for ${agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    );
+    if (options.startQuery !== false) {
+      void this.flushPendingMessagesForTarget(task.workflowRunId, agentName, sessionId).catch(
+        (err) => {
+          log.warn(
+            `restorePostApprovalWorkerSession: flushPendingMessagesForTarget failed for ${agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      );
+    }
 
     log.info(
       `TaskAgentManager.restorePostApprovalWorkerSession: restored worker ${sessionId} (agent ${agentName}${agentId ? `/${agentId}` : ''}) for task ${taskId}`
@@ -3831,13 +3833,17 @@ export class TaskAgentManager {
       throw err;
     }
 
-    void this.flushPendingMessagesForTarget(workflowRunId, execution.agentName, subSessionId).catch(
-      (err) => {
+    if (options.startQuery !== false) {
+      void this.flushPendingMessagesForTarget(
+        workflowRunId,
+        execution.agentName,
+        subSessionId
+      ).catch((err) => {
         log.warn(
           `TaskAgentManager.rehydrateSubSession: flushPendingMessagesForTarget failed for ${execution.agentName} (session ${subSessionId}): ${err instanceof Error ? err.message : String(err)}`
         );
-      }
-    );
+      });
+    }
 
     log.info(
       `TaskAgentManager.rehydrateSubSession: rehydrated sub-session ${subSessionId} for task ${taskId} (node ${execution.workflowNodeId})`

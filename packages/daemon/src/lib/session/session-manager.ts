@@ -272,11 +272,16 @@ export class SessionManager {
       });
       this.sessionCache.set(sessionId, freshSession);
 
-      await this.emitSessionReset({
-        sessionId,
-        session: sessionForFreshInstance,
-        restartQuery: options.restartQuery,
-      });
+      let resetError: unknown;
+      try {
+        await this.emitSessionReset({
+          sessionId,
+          session: sessionForFreshInstance,
+          restartQuery: options.restartQuery,
+        });
+      } catch (error) {
+        resetError = error;
+      }
 
       try {
         await agentSession.cleanup();
@@ -286,6 +291,8 @@ export class SessionManager {
           error
         );
       }
+
+      if (resetError) throw resetError;
 
       if (options.restartQuery) {
         await freshSession.replayPendingMessagesForImmediateMode();
