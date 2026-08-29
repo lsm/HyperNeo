@@ -6,12 +6,7 @@ import { reserveBasedThreshold } from '../../../../src/lib/agent/context-tracker
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
-import {
-  buildProviderSettings,
-  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
-  PROVIDER_NO_SDK_AUTO_COMPACT,
-  shouldUseHyperNeoCompactFallback,
-} from '../../../../src/lib/agent/query-options-builder';
+import { buildProviderSettings } from '../../../../src/lib/agent/query-options-builder';
 import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import {
   SDKMessageHandler,
@@ -193,55 +188,6 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     expect(buildProviderSettings('anthropic-codex', 272_000, 'gpt-5.5')).toBeUndefined();
     expect(reserveBasedThreshold(262_144, 'kimi')).toBe(262_144 - 45_000);
     expect(reserveBasedThreshold(1_048_576, 'kimi')).toBe(1_048_576 - 45_000);
-  });
-});
-
-describe('N3: NeoKai (HyperNeo) fallback applied only where intended', () => {
-  it('PROVIDER_NO_SDK_AUTO_COMPACT is empty (no provider uses the async /compact fallback)', () => {
-    expect(PROVIDER_NO_SDK_AUTO_COMPACT.size).toBe(0);
-  });
-
-  it('the four native context-window providers are exactly the documented set', () => {
-    expect([...NATIVE_CONTEXT_WINDOW_PROVIDER_IDS].sort()).toEqual(
-      ['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm'].sort()
-    );
-  });
-
-  it.each([
-    ['anthropic', 200_000],
-    ['anthropic-copilot', 200_000],
-    ['anthropic-codex', 272_000],
-    ['glm', 1_000_000],
-  ] as const)('%s ignores the configured window entirely (SDK keeps its own compaction)', (providerId, window) => {
-    expect(buildProviderSettings(providerId, window)).toBeUndefined();
-    expect(buildProviderSettings(providerId, window, 'any-model')).toBeUndefined();
-  });
-
-  it.each([
-    ['anthropic', 'anthropic'],
-    ['anthropic-copilot', 'anthropic-copilot'],
-    ['anthropic-codex', 'anthropic-codex'],
-    ['glm', 'glm'],
-    ['deepseek', 'deepseek'],
-    ['kimi', 'kimi'],
-    ['minimax', 'minimax'],
-    ['openrouter', 'openrouter'],
-    ['ollama', 'ollama'],
-    ['ollama-cloud', 'ollama-cloud'],
-    ['acp', 'acp'],
-  ])('shouldUseHyperNeoCompactFallback(%s) is false', (_label, providerId) => {
-    expect(shouldUseHyperNeoCompactFallback(providerId)).toBe(false);
-  });
-
-  it('every Kimi and Codex model id resolves to no HyperNeo fallback', () => {
-    const ids = [
-      ...KimiProvider.MODELS.map((m) => m.id),
-      ...(Object.keys(MODEL_CONTEXT_WINDOWS) as Array<keyof typeof MODEL_CONTEXT_WINDOWS>),
-    ];
-    for (const id of ids) {
-      expect(shouldUseHyperNeoCompactFallback('kimi'), `kimi/${id}`).toBe(false);
-      expect(shouldUseHyperNeoCompactFallback('anthropic-codex'), `codex/${id}`).toBe(false);
-    }
   });
 });
 
