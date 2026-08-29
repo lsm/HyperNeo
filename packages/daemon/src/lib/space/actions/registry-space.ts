@@ -349,6 +349,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Create a one-shot reminder delivered to a long-horizon agent at a timestamp; returns the created reminder.',
       paramsDoc: 'agent_id, message, remind_at (ms since epoch)',
       paramsSchema: CreateAgentReminderSchema,
+      auditRedactKeys: ['message'],
       handler: (args) => handlers.create_agent_reminder(args),
     }),
     defineAction({
