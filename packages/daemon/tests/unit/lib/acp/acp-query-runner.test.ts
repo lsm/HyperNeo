@@ -21,6 +21,7 @@ import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-
 import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
 import type { AcpClient, AcpClientOptions } from '../../../../src/lib/acp/acp-client';
+import { AcpQueryAdapter } from '../../../../src/lib/acp/acp-query-adapter';
 import { getAcpCommandIdentityDigest } from '../../../../src/lib/acp/acp-command';
 import {
   AcpQueryRunner,
@@ -2492,33 +2493,37 @@ describe('AcpQueryRunner', () => {
         releasePrompt();
       });
       const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
-
-      await runner.start();
-      const firstController = ctx.queryAbortController;
-      firstController?.signal.addEventListener('abort', () => teardownOrder.push('abort'));
-      await waitFor(() => ctx.queryObject !== null);
-      (ctx.queryObject as unknown as { close: () => void }).close = mock(() => {
+      const originalAdapterClose = AcpQueryAdapter.prototype.close;
+      AcpQueryAdapter.prototype.close = function () {
         teardownOrder.push('queryObject.close');
-      });
+      };
 
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      try {
+        await runner.start();
+        const firstController = ctx.queryAbortController;
+        firstController?.signal.addEventListener('abort', () => teardownOrder.push('abort'));
 
-      expect(firstController?.signal.aborted).toBe(true);
-      expect(teardownOrder.slice(0, 5)).toEqual([
-        'abort',
-        'cancel',
-        'closeSession',
-        'queryObject.close',
-        'client.close',
-      ]);
-      const timeoutError = loggerError.mock.calls.find(
-        ([label]) => label === 'ACP query error:'
-      )?.[1] as Error;
-      expect(timeoutError).toBeInstanceOf(Error);
-      expect(timeoutError.message).toBe('ACP startup timeout - query aborted');
+        await new Promise((resolve) => setTimeout(resolve, 120));
 
-      await ctx.queryPromise;
-      expect(secondClient.sendPrompt).toHaveBeenCalled();
+        expect(firstController?.signal.aborted).toBe(true);
+        expect(teardownOrder.slice(0, 5)).toEqual([
+          'abort',
+          'cancel',
+          'closeSession',
+          'queryObject.close',
+          'client.close',
+        ]);
+        const timeoutError = loggerError.mock.calls.find(
+          ([label]) => label === 'ACP query error:'
+        )?.[1] as Error;
+        expect(timeoutError).toBeInstanceOf(Error);
+        expect(timeoutError.message).toBe('ACP startup timeout - query aborted');
+
+        await ctx.queryPromise;
+        expect(secondClient.sendPrompt).toHaveBeenCalled();
+      } finally {
+        AcpQueryAdapter.prototype.close = originalAdapterClose;
+      }
     }, 5000);
 
     test('skips session/close on timeout when the agent cannot close sessions', async () => {
@@ -2552,7 +2557,7 @@ describe('AcpQueryRunner', () => {
       const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
 
       await runner.start();
-      await waitFor(() => ctx.queryAbortController !== null);
+      await waitFor(() => client.initialize.mock.calls.length > 0);
       ctx.incrementQueryGeneration();
       releaseInitialize();
       await ctx.queryPromise;
