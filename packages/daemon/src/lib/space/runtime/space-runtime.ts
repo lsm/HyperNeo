@@ -57,7 +57,11 @@ import {
 } from '../../external-events/queue-health-metrics.ts';
 import { TopicTrie } from '../../external-events/topic-trie.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
-import type { ExternalEvent } from '../../external-events/types.ts';
+import type {
+  ExternalEvent,
+  ExternalEventDeliveryRecord,
+  ExternalEventRecord,
+} from '../../external-events/types.ts';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
 import type {
   DaemonInternalEventMap,
@@ -97,6 +101,7 @@ import {
   DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
   evaluateRequeueTaskLifecycle,
   isPublishedExternalEventExpired,
+  isQueuedExternalEventExpired,
   isWorkflowTargetOwnedBySpace,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
@@ -2942,6 +2947,8 @@ export class SpaceRuntime {
             reason
           );
         }
+      } else if (previous.status === 'stopped') {
+        this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
       }
       return updated;
     }
@@ -3738,6 +3745,7 @@ export class SpaceRuntime {
     if (recoveredWorkflow) {
       this.registerRunInterestsFromWorkflow(recovered.run, recoveredWorkflow);
     }
+    this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, recovered.run.id);
     for (const sessionId of liveSessionIds) {
       const tam = this.config.taskAgentManager;
       const resumeOutcome: 'retried' | 'respawned' | 'noop' =
@@ -3802,15 +3810,21 @@ export class SpaceRuntime {
     return true;
   }
 
-  private requeuePersistedPendingDeliveries(_pausedSpaceIds: Set<string> = new Set()): void {
+  private requeuePersistedPendingDeliveries(
+    pausedSpaceIds: Set<string> = new Set(),
+    workflowRunId?: string
+  ): void {
     const store = this.config.externalEventStore;
     if (!store) return;
 
-    for (const delivery of store.listPendingDeliveries()) {
+    for (const delivery of store.listPendingDeliveries(workflowRunId)) {
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
       const longHorizonSpaceId = longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId);
-      if (!longHorizonSpaceId) continue;
+      if (!longHorizonSpaceId) {
+        this.requeueWorkflowPendingDelivery(delivery, eventRecord, pausedSpaceIds);
+        continue;
+      }
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
       const subscription = this.config.longHorizonAgentRepo?.getSubscription(delivery.taskId);
       const agent = subscription
@@ -3862,6 +3876,46 @@ export class SpaceRuntime {
     }
   }
 
+  private requeueWorkflowPendingDelivery(
+    delivery: ExternalEventDeliveryRecord,
+    eventRecord: ExternalEventRecord,
+    pausedSpaceIds: Set<string>
+  ): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) return;
+    if (
+      isQueuedExternalEventExpired(eventRecord.createdAt, Date.now(), EXTERNAL_EVENT_QUEUE_TTL_MS)
+    ) {
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+        terminal: true,
+        reason: 'ttl_expired',
+      });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+      return;
+    }
+    const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
+    if (!run || pausedSpaceIds.has(run.spaceId) || this.pausedSpaceIds.has(run.spaceId)) return;
+    const target: WorkflowSubscriptionTarget = {
+      workflowRunId: delivery.workflowRunId,
+      taskId: delivery.taskId,
+      nodeId: delivery.nodeId,
+      agentName: delivery.agentName,
+    };
+    if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
+      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+        terminal: true,
+        reason: 'subscription_no_longer_active',
+      });
+      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+      return;
+    }
+    const resolved = this.resolveSubscriptionTarget(target);
+    if (!resolved.sessionId || !this.isTargetSessionLive(resolved.sessionId)) return;
+    if (this.isTargetSessionInterrupted(resolved.sessionId)) return;
+    this.scheduleDigestPullForSession(resolved.sessionId, delivery.taskId);
+  }
+
   onSpaceResumed(spaceId: string): void {
     this.pausedSpaceIds.delete(spaceId);
     try {
@@ -3888,6 +3942,7 @@ export class SpaceRuntime {
       }
     }
 
+    this.requeuePersistedPendingDeliveries(this.pausedSpaceIds);
     this.redispatchRetainedExternalEvents();
   }
 
@@ -5729,6 +5784,7 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
+          this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, runId);
           const restartNotice = this.consumeAgentRestartNotice(runId, execution);
           if (restartNotice) {
             void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
@@ -6084,6 +6140,7 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
+          this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, runId);
           await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
           recordBlockedFlushFailure(targetAgentName, rowsForTarget);
           for (const row of pending) {

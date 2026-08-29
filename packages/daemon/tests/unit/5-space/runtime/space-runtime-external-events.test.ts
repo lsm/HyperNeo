@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type {
+  NodeExecutionStatus,
+  SpaceTask,
+  SpaceTaskStatus,
+  SpaceWorkflow,
+} from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
@@ -99,6 +104,7 @@ class MockTaskAgentManager {
   activationResult: Array<{ agentName: string; sessionId: string }> = [];
   activationError: Error | null = null;
   onActivate: (() => void) | null = null;
+  onSpawn: ((executionId: string, sessionId: string) => void) | null = null;
 
   isSessionAlive(sessionId: string): boolean {
     return this.alive.has(sessionId);
@@ -175,6 +181,7 @@ class MockTaskAgentManager {
     const sessionId = `session-${execution.id}`;
     this.spawned.push(sessionId);
     this.alive.add(sessionId);
+    this.onSpawn?.(execution.id, sessionId);
     return sessionId;
   }
 }
@@ -2765,6 +2772,295 @@ describe('SpaceRuntime external event subscriptions', () => {
 
       await runtime2.stop();
       expect(resumeHookCount()).toBe(before);
+    });
+  });
+
+  describe('events delivery v2 recovery-point digest requeue', () => {
+    const previousEnv: Record<string, string | undefined> = {};
+
+    function setEnv(name: string, value: string): void {
+      previousEnv[name] = process.env[name];
+      process.env[name] = value;
+    }
+
+    function restoreEnv(): void {
+      for (const [name, value] of Object.entries(previousEnv)) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
+    }
+
+    function wait(ms: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function digestRowCount(sessionId: string): number {
+      return (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = ? AND sdk_uuid LIKE 'digest-%'`
+          )
+          .get(sessionId) as { n: number }
+      ).n;
+    }
+
+    function seedSessionRow(sessionId: string): void {
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+    }
+
+    function bindLiveSession(
+      executionId: string,
+      sessionId: string,
+      options: { status?: NodeExecutionStatus } = {}
+    ): void {
+      nodeExecutionRepo.update(executionId, {
+        status: options.status ?? 'in_progress',
+        agentSessionId: sessionId,
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      seedSessionRow(sessionId);
+      tam.alive.add(sessionId);
+      tam.processingStates.set(sessionId, 'idle');
+    }
+
+    async function runWithPendingDelivery(options: { taskStatus?: SpaceTaskStatus } = {}): Promise<{
+      run: Awaited<ReturnType<typeof runtime.startWorkflowRun>>['run'];
+      task: SpaceTask;
+      executionId: string;
+      event: ExternalEvent;
+    }> {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+      if (options.taskStatus) {
+        taskRepo.updateTask(task.id, { status: options.taskStatus });
+      }
+      const event = makeEvent({
+        topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+      });
+      await eventService.publish(event);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+      return { run, task, executionId: execution.id, event };
+    }
+
+    beforeEach(() => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2', '1');
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS', '50');
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '100');
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_SAFETY_MS', '10000');
+      db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
+				id TEXT PRIMARY KEY,
+				queue TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+				payload TEXT NOT NULL DEFAULT '{}',
+				result TEXT,
+				error TEXT,
+				priority INTEGER NOT NULL DEFAULT 0,
+				max_retries INTEGER NOT NULL DEFAULT 3,
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				run_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				heartbeat_at INTEGER,
+				completed_at INTEGER
+			)`);
+    });
+
+    afterEach(() => {
+      restoreEnv();
+    });
+
+    test('startup rehydrate re-arms a persisted pending delivery as a digest pull', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-rehydrate-recovery');
+
+      const runtime2 = new SpaceRuntime({
+        db,
+        spaceManager,
+        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        internalEventBus: bus,
+        commandBus: (runtime as unknown as { config: { commandBus: unknown } }).config
+          .commandBus as never,
+        externalEventStore: eventStore,
+        taskAgentManager: tam as never,
+      });
+      await runtime2.rehydrateExecutors();
+      await wait(300);
+
+      expect(digestRowCount('session-rehydrate-recovery')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+      expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    });
+
+    test('onSpaceResumed re-arms a persisted pending delivery as a digest pull', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-resume-recovery');
+
+      runtime.onSpaceResumed(SPACE_ID);
+      await wait(300);
+
+      expect(digestRowCount('session-resume-recovery')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('recoverWorkflowBackedTask re-arms persisted pending deliveries on resume', async () => {
+      const { task, event, executionId } = await runWithPendingDelivery({
+        taskStatus: 'stopped',
+      });
+      bindLiveSession(executionId, 'session-recover-recovery');
+
+      const recovered = await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+      expect(recovered.task.status).toBe('in_progress');
+      await wait(300);
+
+      expect(digestRowCount('session-recover-recovery')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('reopening a stopped task re-arms its persisted pending deliveries', async () => {
+      const { task, event, executionId } = await runWithPendingDelivery({
+        taskStatus: 'stopped',
+      });
+      bindLiveSession(executionId, 'session-reopen-recovery', { status: 'idle' });
+
+      const reopened = await runtime.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'open',
+      });
+      expect(reopened?.status).toBe('open');
+      await wait(300);
+
+      expect(digestRowCount('session-reopen-recovery')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('cancelling a stopped task leaves its persisted pending deliveries inert', async () => {
+      const { run, task, event } = await runWithPendingDelivery({ taskStatus: 'stopped' });
+      bindLiveSession(
+        nodeExecutionRepo.listByNode(run.id, 'code')[0]!.id,
+        'session-cancel-recovery'
+      );
+
+      const cancelled = await runtime.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'cancelled',
+      });
+      expect(cancelled?.status).toBe('cancelled');
+      await wait(200);
+
+      expect(digestRowCount('session-cancel-recovery')).toBe(0);
+      expect(eventStore.listPendingDeliveries(run.id)).toHaveLength(1);
+      expect(eventStore.listPendingDeliveries(run.id)[0]!.eventId).toBe(event.id);
+    });
+
+    test('an expired pending delivery is failed on requeue instead of re-armed', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-ttl-recovery');
+
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 300_001;
+      try {
+        runtime.onSpaceResumed(SPACE_ID);
+      } finally {
+        Date.now = originalNow;
+      }
+      await wait(200);
+
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      expect(delivery.state).toBe('failed');
+      expect(delivery.failureReason).toBe('ttl_expired');
+      expect(eventStore.getById(event.id)?.state).toBe('failed');
+      expect(digestRowCount('session-ttl-recovery')).toBe(0);
+    });
+
+    test('a delivery already in flight is not re-armed a second time', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-inflight-recovery');
+      const deliveryKey = eventStore.listDeliveries(event.id)[0]!.deliveryKey;
+      const inFlight = (runtime as unknown as { externalEventDeliveriesInFlight: Set<string> })
+        .externalEventDeliveriesInFlight;
+      inFlight.add(deliveryKey);
+
+      runtime.onSpaceResumed(SPACE_ID);
+      await wait(200);
+
+      expect(digestRowCount('session-inflight-recovery')).toBe(0);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+    });
+
+    test('an interrupted target session is skipped until the interrupt clears', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-interrupt-recovery');
+      tam.interrupting.add('session-interrupt-recovery');
+      tam.processingStates.set('session-interrupt-recovery', 'interrupted');
+
+      runtime.onSpaceResumed(SPACE_ID);
+      await wait(200);
+      expect(digestRowCount('session-interrupt-recovery')).toBe(0);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+      tam.interrupting.delete('session-interrupt-recovery');
+      tam.processingStates.set('session-interrupt-recovery', 'idle');
+      runtime.onSpaceResumed(SPACE_ID);
+      await wait(300);
+      expect(digestRowCount('session-interrupt-recovery')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('a freshly spawned node agent pulls the deliveries accrued while it was down', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'pending',
+        agentSessionId: null,
+        startedAt: null,
+        completedAt: null,
+      });
+      const event = makeEvent({
+        topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+      });
+      await eventService.publish(event);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+      const spawnedSessionId = `session-${execution.id}`;
+      seedSessionRow(spawnedSessionId);
+      tam.alive.add(spawnedSessionId);
+      tam.processingStates.set(spawnedSessionId, 'idle');
+      tam.onSpawn = (executionId, sessionId) => {
+        nodeExecutionRepo.update(executionId, {
+          status: 'in_progress',
+          agentSessionId: sessionId,
+          startedAt: Date.now(),
+          completedAt: null,
+        });
+      };
+
+      await runtime.executeTick();
+      expect(tam.spawned).toContain(spawnedSessionId);
+      await wait(300);
+
+      expect(digestRowCount(spawnedSessionId)).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+      expect(taskRepo.getTask(task.id)?.status).not.toBe('cancelled');
     });
   });
 });
