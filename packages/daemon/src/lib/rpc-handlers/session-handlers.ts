@@ -1331,6 +1331,7 @@ export function setupSessionHandlers(
     );
 
     try {
+      await sessionManager.getSessionAsync(targetSessionId);
       await agentSession.restart();
       if (agentSession.getSessionData().config.queryMode !== 'manual') {
         await agentSession.replayPendingMessagesForImmediateMode();
