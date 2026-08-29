@@ -44,10 +44,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import { renderEventBlock } from '../../external-events/deferred-event-digest.ts';
 import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
-import {
-  type ExternalEventPublishedPayload,
-  isExternalEventDeliveryV2Enabled,
-} from '../../external-events/external-event-service.ts';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern.ts';
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
@@ -1469,9 +1466,7 @@ export class SpaceRuntime {
       await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
     }
 
-    const immediateRecord = isExternalEventDeliveryV2Enabled()
-      ? store.getById(payload.eventId)
-      : null;
+    const immediateRecord = store.getById(payload.eventId);
     const routeImmediateTier = immediateRecord?.event.urgency === 'immediate';
 
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
@@ -1580,7 +1575,7 @@ export class SpaceRuntime {
     this.turnEndDigestRetryCounts.set(sessionId, attempts);
     const timer = setTimeout(() => {
       this.turnEndDigestRetryTimers.delete(sessionId);
-      if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+      if (this.isStopped) return;
       if (!this.isTargetSessionLive(sessionId)) {
         this.turnEndDigestRetryCounts.delete(sessionId);
         return;
@@ -1639,7 +1634,7 @@ export class SpaceRuntime {
     this.digestHandoffRetryCounts.set(key, attempts);
     const timer = setTimeout(() => {
       this.digestHandoffRetryTimers.delete(key);
-      if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+      if (this.isStopped) return;
       if (!this.isTargetSessionLive(sessionId)) {
         this.digestHandoffRetryCounts.delete(key);
         return;
@@ -1650,7 +1645,7 @@ export class SpaceRuntime {
   }
 
   private scheduleInterruptProbeForSession(sessionId: string, taskId?: string): void {
-    if (!isExternalEventDeliveryV2Enabled() || this.isStopped || !sessionId) return;
+    if (this.isStopped || !sessionId) return;
     if (this.digestPullTriggers.has(sessionId)) return;
     const idleMs = parsePositiveIntegerEnv(
       'HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS',
@@ -1667,7 +1662,7 @@ export class SpaceRuntime {
   }
 
   private scheduleDigestPullForSession(sessionId: string, taskId?: string): void {
-    if (!isExternalEventDeliveryV2Enabled() || this.isStopped || !sessionId) return;
+    if (this.isStopped || !sessionId) return;
     const state = this.digestPullTriggers.get(sessionId) ?? {
       count: 0,
       idleTimer: null,
@@ -1712,11 +1707,7 @@ export class SpaceRuntime {
       clearTimeout(state.idleTimer);
       state.idleTimer = null;
     }
-    if (
-      (state.count === 0 && !state.probe) ||
-      !isExternalEventDeliveryV2Enabled() ||
-      this.isStopped
-    ) {
+    if ((state.count === 0 && !state.probe) || this.isStopped) {
       this.clearDigestPullState(sessionId);
       return;
     }
@@ -1790,7 +1781,7 @@ export class SpaceRuntime {
     const state = this.digestPullTriggers.get(sessionId);
     if (!state) return;
     this.clearDigestPullState(sessionId);
-    if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+    if (this.isStopped) return;
     if (!this.isTargetSessionLive(sessionId)) return;
     void this.renderPendingDigestScopesForSession(sessionId, state.taskId)
       .then((outcomes) => {
@@ -1843,15 +1834,6 @@ export class SpaceRuntime {
     } finally {
       this.renderPendingDigestsInFlight.delete(sessionId);
     }
-  }
-
-  reconcilePersistedDigestRowsForSession(sessionId: string, _taskId?: string): boolean {
-    const store = this.config.externalEventStore;
-    if (!store) return false;
-    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
-    if (!execution) return false;
-    this.dropUncoveredDeferredDigestRows(sessionId, store);
-    return true;
   }
 
   private async renderPendingDigestForSessionInternal(
@@ -2013,7 +1995,7 @@ export class SpaceRuntime {
     this.digestSupersedeRetryCounts.set(key, attempts);
     const timer = setTimeout(() => {
       this.digestSupersedeRetryTimers.delete(key);
-      if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+      if (this.isStopped) return;
       try {
         this.supersedeObsoleteDigestRows(sessionId, store, deliveredUuid, deliveredEventIds);
       } catch (error) {

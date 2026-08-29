@@ -208,7 +208,6 @@ describe('SpaceRuntime external event subscriptions', () => {
   let tam: MockTaskAgentManager;
   let bus: ReturnType<typeof createDaemonInternalEventBus>;
   let spaceManager: SpaceManager;
-  let previousExternalEventV2: string | undefined;
 
   function createWorkflow(
     nodeId = 'code',
@@ -271,8 +270,6 @@ describe('SpaceRuntime external event subscriptions', () => {
   }
 
   beforeEach(() => {
-    previousExternalEventV2 = process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2;
-    process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = '0';
     db = makeDb();
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
@@ -319,14 +316,6 @@ describe('SpaceRuntime external event subscriptions', () => {
         return { delivered: true };
       },
     });
-  });
-
-  afterEach(() => {
-    if (previousExternalEventV2 === undefined) {
-      delete process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2;
-    } else {
-      process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = previousExternalEventV2;
-    }
   });
 
   test('rehydrates long-horizon agent subscriptions and delivers matching events', async () => {
@@ -988,13 +977,8 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(matches.some((match) => match.workflowRunId === run.id)).toBe(false);
   });
 
-  describe('events delivery v2 immediate tier routing', () => {
-    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
-    let previousFlag: string | undefined;
-
+  describe('immediate tier routing', () => {
     beforeEach(() => {
-      previousFlag = process.env[FLAG_ENV];
-      process.env[FLAG_ENV] = '1';
       db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
 				id TEXT PRIMARY KEY,
 				queue TEXT NOT NULL,
@@ -1012,14 +996,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 				heartbeat_at INTEGER,
 				completed_at TEXT
 			)`);
-    });
-
-    afterEach(() => {
-      if (previousFlag === undefined) {
-        delete process.env[FLAG_ENV];
-      } else {
-        process.env[FLAG_ENV] = previousFlag;
-      }
     });
 
     function immediateEvent(): ExternalEvent {
@@ -1045,7 +1021,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       tam.processingStates.set(sessionId, status);
     }
 
-    test('flag on: immediate event delivers one steer message with the render text', async () => {
+    test('immediate event delivers one steer message with the render text', async () => {
       await attachLiveSession('session-immediate-steer', 'processing');
       const event = immediateEvent();
       await eventService.publish(event);
@@ -1086,7 +1062,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       });
     });
 
-    test('flag on: rate-budget overflow leaves the ledger pending for the digest tier', async () => {
+    test('rate-budget overflow leaves the ledger pending for the digest tier', async () => {
       await attachLiveSession('session-immediate-budget', 'processing');
       const events = Array.from({ length: 11 }, () => immediateEvent());
       for (const event of events) {
@@ -1099,7 +1075,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(injected).toHaveLength(0);
     });
 
-    test('flag on: a deferred immediate dispatch schedules a follow-up digest pull', async () => {
+    test('a deferred immediate dispatch schedules a follow-up digest pull', async () => {
       await attachLiveSession('session-immediate-deferred', 'processing');
       const events = Array.from({ length: 11 }, () => immediateEvent());
       for (const event of events) {
@@ -1143,7 +1119,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       ).toBe(true);
     }, 10_000);
 
-    test('flag on: a stale-session deferral leaves the ledger pending for reactivation', async () => {
+    test('a stale-session deferral leaves the ledger pending for reactivation', async () => {
       await attachLiveSession('session-immediate-stale', 'idle');
       tam.alive.delete('session-immediate-stale');
       const event = immediateEvent();
@@ -1163,7 +1139,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(digestRows.n).toBe(0);
     }, 10_000);
 
-    test('flag on: a delivered immediate event still records an enqueue counter', async () => {
+    test('a delivered immediate event still records an enqueue counter', async () => {
       await attachLiveSession('session-immediate-enqueue', 'processing');
       const event = immediateEvent();
       await eventService.publish(event);
@@ -1235,13 +1211,8 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
   });
 
-  describe('events delivery v2 turn-end digest pull', () => {
-    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
-    let previousFlag: string | undefined;
-
+  describe('turn-end digest pull', () => {
     beforeEach(() => {
-      previousFlag = process.env[FLAG_ENV];
-      process.env[FLAG_ENV] = '1';
       db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
 				id TEXT PRIMARY KEY,
 				queue TEXT NOT NULL,
@@ -1261,15 +1232,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 			)`);
     });
 
-    afterEach(() => {
-      if (previousFlag === undefined) {
-        delete process.env[FLAG_ENV];
-      } else {
-        process.env[FLAG_ENV] = previousFlag;
-      }
-    });
-
-    test('flag on: renders the pending queued set as one digest row and marks the ledger delivered', async () => {
+    test('renders the pending queued set as one digest row and marks the ledger delivered', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1341,14 +1304,14 @@ describe('SpaceRuntime external event subscriptions', () => {
       });
     });
 
-    test('flag on: a session with no node execution is not a digest target', async () => {
+    test('a session with no node execution is not a digest target', async () => {
       expect(await runtime.renderPendingDigestForSession('session-unknown')).toEqual({
         action: 'skip',
         reason: 'no_execution',
       });
     });
 
-    test('flag on: an obsolete crash-replay digest is superseded when a fresh digest delivers', async () => {
+    test('an obsolete crash-replay digest is superseded when a fresh digest delivers', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1415,7 +1378,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-superseded');
     });
 
-    test('flag on: a crash-replay digest subset is superseded by a broader delivered digest', async () => {
+    test('a crash-replay digest subset is superseded by a broader delivered digest', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1475,7 +1438,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-subset');
     });
 
-    test('flag on: a digest mixing delivered and pending members is superseded', async () => {
+    test('a digest mixing delivered and pending members is superseded', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1539,7 +1502,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-overlap');
     });
 
-    test('flag on: supersede uses this target delivery state for fan-out events', async () => {
+    test('supersede uses this target delivery state for fan-out events', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1610,7 +1573,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-fanout');
     });
 
-    test('flag on: a delivered-but-unflushed digest survives a no-pending pull', async () => {
+    test('a delivered-but-unflushed digest survives a no-pending pull', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1674,7 +1637,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(1);
     });
 
-    test('flag on: another task inadmissible pull keeps a delivered digest owned by a sibling task', async () => {
+    test('another task inadmissible pull keeps a delivered digest owned by a sibling task', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1744,7 +1707,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(1);
     });
 
-    test('flag on: supersede obsoletes a deferred digest whose members are terminal under a sibling task', async () => {
+    test('supersede obsoletes a deferred digest whose members are terminal under a sibling task', async () => {
       const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
       const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
       const { run, task } = await startRunWithSubscription(topicA);
@@ -1817,7 +1780,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.some((row) => row.sdk_uuid === 'digest-stale-sibling')).toBe(false);
     });
 
-    test('flag on: an admission-rejected pull drops the deferred digest rows', async () => {
+    test('an admission-rejected pull drops the deferred digest rows', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1878,7 +1841,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(0);
     });
 
-    test('flag on: a digest with a mixed delivered/pending membership is dropped on a rejected pull', async () => {
+    test('a digest with a mixed delivered/pending membership is dropped on a rejected pull', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1942,7 +1905,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(0);
     });
 
-    test('flag on: handoff does not regress a digest row a concurrent flush already submitted', async () => {
+    test('handoff does not regress a digest row a concurrent flush already submitted', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -2006,136 +1969,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
   });
 
-  describe('flag-off persisted digest reconcile', () => {
-    async function attachSessionWithPendingMembers(
-      sessionId: string,
-      eventIds: string[]
-    ): Promise<{ run: { id: string }; task: SpaceTask; topic: string }> {
-      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
-      const { run, task } = await startRunWithSubscription(topic);
-      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-      nodeExecutionRepo.update(execution.id, {
-        status: 'idle',
-        agentSessionId: null,
-        completedAt: Date.now(),
-      });
-
-      for (const eventId of eventIds) {
-        await eventService.publish(makeEvent({ id: eventId, topic }));
-      }
-
-      nodeExecutionRepo.update(execution.id, {
-        status: 'in_progress',
-        agentSessionId: sessionId,
-        completedAt: null,
-        startedAt: Date.now(),
-      });
-      db.prepare(
-        `INSERT INTO sessions
-           (id, title, created_at, last_active_at, status, config, metadata, type)
-         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
-      ).run(sessionId, sessionId, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
-      return { run, task, topic };
-    }
-
-    function saveDeferredDigestRow(sessionId: string, uuid: string, eventIds: string[]): void {
-      const messages = new SDKMessageRepository(db);
-      const row = {
-        type: 'user',
-        uuid,
-        session_id: sessionId,
-        parent_tool_use_id: null,
-        isSynthetic: true,
-        inputKind: 'system',
-        message: { role: 'user', content: [{ type: 'text', text: 'stranded digest text' }] },
-        externalEventIds: eventIds,
-      } as unknown as SDKUserMessage;
-      messages.saveUserMessage(sessionId, row, 'deferred', 'system');
-    }
-
-    function deferredDigestRows(sessionId: string): Array<{ sdk_uuid: string }> {
-      return db
-        .prepare(
-          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = ?
-           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
-        )
-        .all(sessionId) as Array<{ sdk_uuid: string }>;
-    }
-
-    test('deletes a stranded digest row whose member deliveries are still pending', async () => {
-      const { task } = await attachSessionWithPendingMembers('session-flagoff-pending', [
-        'evt-flagoff-a',
-        'evt-flagoff-b',
-      ]);
-      saveDeferredDigestRow('session-flagoff-pending', 'digest-stranded-pending', [
-        'evt-flagoff-a',
-        'evt-flagoff-b',
-      ]);
-
-      expect(
-        runtime.reconcilePersistedDigestRowsForSession('session-flagoff-pending', task.id)
-      ).toBe(true);
-
-      expect(deferredDigestRows('session-flagoff-pending')).toHaveLength(0);
-      for (const eventId of ['evt-flagoff-a', 'evt-flagoff-b']) {
-        expect(eventStore.listDeliveries(eventId)[0]!.state).toBe('pending');
-      }
-    });
-
-    test('keeps an owed digest row whose member deliveries are all delivered', async () => {
-      const { task } = await attachSessionWithPendingMembers('session-flagoff-owed', [
-        'evt-flagoff-c',
-        'evt-flagoff-d',
-      ]);
-      for (const eventId of ['evt-flagoff-c', 'evt-flagoff-d']) {
-        const delivery = eventStore.listDeliveries(eventId)[0]!;
-        eventStore.markDeliveriesDeliveredAtomic([{ eventId, deliveryKey: delivery.deliveryKey }]);
-      }
-      saveDeferredDigestRow('session-flagoff-owed', 'digest-owed-row', [
-        'evt-flagoff-c',
-        'evt-flagoff-d',
-      ]);
-
-      expect(runtime.reconcilePersistedDigestRowsForSession('session-flagoff-owed', task.id)).toBe(
-        true
-      );
-
-      const rows = deferredDigestRows('session-flagoff-owed');
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.sdk_uuid).toBe('digest-owed-row');
-    });
-
-    test('a session unbound from its execution reconciles as unverifiable without deleting rows', async () => {
-      const { task } = await attachSessionWithPendingMembers('session-flagoff-unbound', [
-        'evt-flagoff-e',
-        'evt-flagoff-f',
-      ]);
-      for (const eventId of ['evt-flagoff-e', 'evt-flagoff-f']) {
-        const delivery = eventStore.listDeliveries(eventId)[0]!;
-        eventStore.markDeliveriesDeliveredAtomic([{ eventId, deliveryKey: delivery.deliveryKey }]);
-      }
-      saveDeferredDigestRow('session-flagoff-unbound', 'digest-owed-unbound', [
-        'evt-flagoff-e',
-        'evt-flagoff-f',
-      ]);
-      const execution = nodeExecutionRepo.listByAgentSessionId('session-flagoff-unbound')[0]!;
-      nodeExecutionRepo.update(execution.id, { agentSessionId: null });
-
-      expect(
-        runtime.reconcilePersistedDigestRowsForSession('session-flagoff-unbound', task.id)
-      ).toBe(false);
-
-      const rows = deferredDigestRows('session-flagoff-unbound');
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.sdk_uuid).toBe('digest-owed-unbound');
-    });
-
-    test('a session with no digest rows reconciles without side effects', () => {
-      expect(() => runtime.reconcilePersistedDigestRowsForSession('session-unknown')).not.toThrow();
-    });
-  });
-
-  describe('events delivery v2 idle/cap/safety digest pull', () => {
+  describe('idle/cap/safety digest pull', () => {
     const previousEnv: Record<string, string | undefined> = {};
 
     function setEnv(name: string, value: string): void {
@@ -2154,7 +1988,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     }
 
     beforeEach(() => {
-      setEnv('HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2', '1');
       setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS', '50');
       setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '100');
       setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_SAFETY_MS', '10000');
@@ -2752,67 +2585,62 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
 
     test('digest admission terminalizes pending deliveries for a done task without reactivating it', async () => {
-      process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = '1';
-      try {
-        const { run, task } = await startRunWithSubscription(
-          'github/lsm/neokai/pull_request/42.comment_polled'
-        );
-        const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-        nodeExecutionRepo.update(execution.id, {
-          status: 'idle',
-          agentSessionId: null,
-          completedAt: Date.now(),
-        });
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
 
-        const event = makeEvent({
-          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
-        });
-        await eventService.publish(event);
-        expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+      const event = makeEvent({
+        topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+      });
+      await eventService.publish(event);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-        nodeExecutionRepo.update(execution.id, {
-          status: 'in_progress',
-          agentSessionId: 'session-done-task-digest',
-          completedAt: null,
-          startedAt: Date.now(),
-        });
-        db.prepare(
-          `INSERT INTO sessions
-             (id, title, created_at, last_active_at, status, config, metadata, type)
-           VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
-        ).run(
-          'session-done-task-digest',
-          'session-done-task-digest',
-          '2026-01-01T00:00:00.000Z',
-          '2026-01-01T00:00:00.000Z'
-        );
-        tam.alive.add('session-done-task-digest');
-        tam.processingStates.set('session-done-task-digest', 'processing');
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-done-task-digest',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-done-task-digest',
+        'session-done-task-digest',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+      tam.alive.add('session-done-task-digest');
+      tam.processingStates.set('session-done-task-digest', 'processing');
 
-        taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+      taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
 
-        const outcome = await runtime.renderPendingDigestForSession(
-          'session-done-task-digest',
-          task.id
-        );
-        expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+      const outcome = await runtime.renderPendingDigestForSession(
+        'session-done-task-digest',
+        task.id
+      );
+      expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
 
-        expect(taskRepo.getTask(task.id)?.status).toBe('done');
-        const delivery = eventStore.listDeliveries(event.id)[0]!;
-        expect(delivery.state).toBe('failed');
-        expect(delivery.failureReason).toBe('task_terminal');
-        expect(eventStore.getById(event.id)?.state).toBe('failed');
+      expect(taskRepo.getTask(task.id)?.status).toBe('done');
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      expect(delivery.state).toBe('failed');
+      expect(delivery.failureReason).toBe('task_terminal');
+      expect(eventStore.getById(event.id)?.state).toBe('failed');
 
-        const rows = db
-          .prepare(
-            `SELECT sdk_message FROM sdk_messages WHERE session_id = 'session-done-task-digest'
-             AND send_status = 'deferred'`
-          )
-          .all() as Array<{ sdk_message: string }>;
-        expect(rows).toHaveLength(0);
-      } finally {
-        process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = '0';
-      }
+      const rows = db
+        .prepare(
+          `SELECT sdk_message FROM sdk_messages WHERE session_id = 'session-done-task-digest'
+           AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_message: string }>;
+      expect(rows).toHaveLength(0);
     });
 
     test('unregisters the space-resume hook on stop', async () => {
@@ -2842,7 +2670,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
   });
 
-  describe('events delivery v2 recovery-point digest requeue', () => {
+  describe('recovery-point digest requeue', () => {
     const previousEnv: Record<string, string | undefined> = {};
 
     function setEnv(name: string, value: string): void {
@@ -2925,7 +2753,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     }
 
     beforeEach(() => {
-      setEnv('HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2', '1');
       setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS', '50');
       setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '100');
       setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_SAFETY_MS', '10000');
