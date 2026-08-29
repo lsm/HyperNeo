@@ -1602,15 +1602,11 @@ export class AgentSession
     originUserInterruptEpoch: number
   ): Promise<ModelInfo | null> {
     const deadlineAt = Date.now() + 4_000;
-    let exhaustedDeadline = false;
-    const resolved = await (async (): Promise<ModelInfo | null> => {
+    const attemptPromise = (async (): Promise<ModelInfo | null> => {
       for (;;) {
         const modelInfo = await this.resolveSessionCatalogModelInfo();
         if (modelInfo) return modelInfo;
-        if (Date.now() >= deadlineAt) {
-          exhaustedDeadline = true;
-          return null;
-        }
+        if (Date.now() >= deadlineAt) return null;
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, 250);
           if (typeof timer.unref === 'function') {
@@ -1619,8 +1615,17 @@ export class AgentSession
         });
       }
     })();
-    if (exhaustedDeadline) {
-      void this.resolveSessionCatalogModelInfo()
+    const bounded = await Promise.race([
+      attemptPromise,
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 4_000);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      }),
+    ]);
+    if (bounded === null) {
+      void attemptPromise
         .then((lateModelInfo) => {
           if (lateModelInfo) {
             void this.reevaluateContextBudgetAfterModelSwitch({
@@ -1631,7 +1636,7 @@ export class AgentSession
         })
         .catch(() => {});
     }
-    return resolved;
+    return bounded;
   }
 
   private async resolveSessionCatalogModelInfo(): Promise<ModelInfo | null> {
