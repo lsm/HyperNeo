@@ -1,16 +1,17 @@
 export type SelfEchoVerdict = 'admit' | 'drop';
 
 export function decideSelfEchoFilter({
-  actorLogin,
+  initiatorLogin,
   filteredLogins,
   enabled,
 }: {
-  actorLogin: string;
+  initiatorLogin: string;
   filteredLogins: string[];
   enabled: boolean;
 }): SelfEchoVerdict {
   if (!enabled) return 'admit';
-  const normalized = actorLogin.toLowerCase();
+  if (!initiatorLogin) return 'admit';
+  const normalized = initiatorLogin.toLowerCase();
   for (const login of filteredLogins) {
     if (login.toLowerCase() === normalized) return 'drop';
   }

@@ -5,20 +5,20 @@ import {
 } from '../../../../src/lib/external-events/github/github-self-echo';
 
 describe('decideSelfEchoFilter', () => {
-  it('drops an actor that exactly matches a filtered login', () => {
+  it('drops an initiator that exactly matches a filtered login', () => {
     expect(
       decideSelfEchoFilter({
-        actorLogin: 'alice',
+        initiatorLogin: 'alice',
         filteredLogins: ['alice'],
         enabled: true,
       })
     ).toBe('drop');
   });
 
-  it('admits an actor that is not in the filtered list', () => {
+  it('admits an initiator that is not in the filtered list', () => {
     expect(
       decideSelfEchoFilter({
-        actorLogin: 'alice',
+        initiatorLogin: 'alice',
         filteredLogins: ['bob'],
         enabled: true,
       })
@@ -28,34 +28,41 @@ describe('decideSelfEchoFilter', () => {
   it('matches filtered logins case-insensitively', () => {
     expect(
       decideSelfEchoFilter({
-        actorLogin: 'Alice',
+        initiatorLogin: 'Alice',
         filteredLogins: ['alice'],
         enabled: true,
       })
     ).toBe('drop');
     expect(
       decideSelfEchoFilter({
-        actorLogin: 'alice',
+        initiatorLogin: 'alice',
         filteredLogins: ['ALICE'],
         enabled: true,
       })
     ).toBe('drop');
   });
 
-  it('admits an empty login against an empty filtered list', () => {
+  it('admits an empty or unknown initiator regardless of the filtered list', () => {
     expect(
       decideSelfEchoFilter({
-        actorLogin: '',
+        initiatorLogin: '',
         filteredLogins: [],
+        enabled: true,
+      })
+    ).toBe('admit');
+    expect(
+      decideSelfEchoFilter({
+        initiatorLogin: '',
+        filteredLogins: ['alice'],
         enabled: true,
       })
     ).toBe('admit');
   });
 
-  it('admits when disabled, even if the actor matches', () => {
+  it('admits when disabled, even if the initiator matches', () => {
     expect(
       decideSelfEchoFilter({
-        actorLogin: 'alice',
+        initiatorLogin: 'alice',
         filteredLogins: ['alice'],
         enabled: false,
       })
