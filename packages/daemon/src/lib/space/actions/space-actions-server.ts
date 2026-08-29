@@ -71,6 +71,15 @@ export function resolveRoleHotActionView(
   return { label: displayLabel(sessionRole), hotActions: GENERAL_HOT_ACTIONS };
 }
 
+function explicitRunId(params: unknown): string | undefined {
+  if (typeof params !== 'object' || params === null) return undefined;
+  const record = params as Record<string, unknown>;
+  for (const key of ['run_id', 'workflow_run_id', 'workflowRunId']) {
+    if (typeof record[key] === 'string' && record[key].length > 0) return record[key];
+  }
+  return undefined;
+}
+
 function actionSummary(action: RegisteredAction) {
   return {
     name: action.name,
@@ -230,6 +239,15 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
     description,
     CallActionParamsSchema.shape,
     async (args) => {
+      const runId = explicitRunId(args.params);
+      const run = runId ? spaceConfig?.workflowRunRepo?.getRun(runId) : null;
+      if (run && run.spaceId !== config.spaceId) {
+        return jsonResult({
+          error: 'action_denied',
+          reason: 'invalid_params',
+          message: `Workflow run ${runId} does not belong to space ${config.spaceId}`,
+        });
+      }
       const outcome = await runDispatchAction(deps, {
         actionName: args.name,
         params: args.params ?? {},

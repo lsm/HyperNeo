@@ -430,6 +430,63 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(events[1].workflowRunId).toBe('run-local');
   });
 
+  test('redacts worker-created task descriptions from central audit rows', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      spaceId: SPACE_ID,
+      nodeConfig: {
+        ...stubNodeConfig,
+        myAgentName: 'coder-9',
+        mySessionId: 'session-9',
+        onCreateStandaloneTask: async () => ({ content: [{ type: 'text', text: '{}' }] }),
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as NodeAgentToolsConfig,
+    });
+    await dispatch(server, {
+      name: 'create_standalone_task',
+      params: { title: 't', description: 'worker-secret' },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].paramsSummary).not.toContain('worker-secret');
+    expect(entries[0].paramsSummary).not.toContain('description');
+  });
+
+  test('rejects explicit run targets that belong to another space', async () => {
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        workflowRunRepo: {
+          getRun: (runId: string) =>
+            runId === 'foreign-run'
+              ? { id: runId, spaceId: 'other-space' }
+              : { id: runId, spaceId: SPACE_ID },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    const foreign = (await dispatch(server, {
+      name: 'get_workflow_run',
+      params: { run_id: 'foreign-run' },
+    })) as Record<string, unknown>;
+    expect(foreign).toMatchObject({
+      error: 'action_denied',
+      reason: 'invalid_params',
+      message: 'Workflow run foreign-run does not belong to space space-actions-server-test',
+    });
+    const local = (await dispatch(server, {
+      name: 'get_workflow_run',
+      params: { run_id: 'local-run' },
+    })) as Record<string, unknown>;
+    expect(local).not.toMatchObject({
+      message: 'Workflow run local-run does not belong to space',
+    });
+  });
+
   test('denies rate-limited dispatches through the configured budget', async () => {
     const server = makeServer({ dispatchDeps: { isWithinRateBudget: () => false } });
     expect(await dispatch(server, { name: 'list_actions' })).toMatchObject({

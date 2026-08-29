@@ -211,6 +211,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
               'Create a task request in this space with optional priority, workflow, dependencies, and draft flag.',
             paramsDoc:
               'title, description, priority?, custom_agent_id?, workflow_id?, depends_on?, draft?',
+            auditRedactKeys: ['description'],
             paramsSchema: CreateStandaloneTaskSchema,
             handler: handlers.create_standalone_task,
           }),
