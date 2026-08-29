@@ -13,9 +13,11 @@ import {
 function createFactory({
   abortReadWriteAfter,
   abortAfterRead,
+  abortAfterReadFrom = 1,
 }: {
   abortReadWriteAfter?: number;
   abortAfterRead?: boolean;
+  abortAfterReadFrom?: number;
 } = {}) {
   const factory = new IDBFactory();
   const txModes: string[] = [];
@@ -34,7 +36,7 @@ function createFactory({
           if (abortReadWriteAfter !== undefined && writeTxs > abortReadWriteAfter) {
             queueMicrotask(() => tx.abort());
           }
-          if (abortAfterRead) {
+          if (abortAfterRead && writeTxs >= abortAfterReadFrom) {
             const objectStore = tx.objectStore.bind(tx);
             tx.objectStore = (name) => {
               const store = objectStore(name);
@@ -138,7 +140,7 @@ describe('voice audio record store', () => {
   });
 
   it('rolls back eviction when the replacement write aborts at commit', async () => {
-    globalThis.indexedDB = createFactory({ abortReadWriteAfter: 5 });
+    globalThis.indexedDB = createFactory({ abortAfterRead: true, abortAfterReadFrom: 6 });
     for (let i = 0; i < 6; i++) await putVoiceRecord(makeEntry(`r${i}`, NOW + i));
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual([
       'r0',
@@ -152,20 +154,26 @@ describe('voice audio record store', () => {
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r0', 'r1', 'r2', 'r3', 'r4']);
   });
 
-  it('leaves no tombstones when the transaction aborts after its read', async () => {
+  it('leaves no tombstones and caps the mirror when transactions abort after their read', async () => {
     const factory = createFactory({ abortAfterRead: true });
     globalThis.indexedDB = factory;
     for (let i = 0; i < 6; i++)
       expect(await putVoiceRecord(makeEntry(`r${i}`, NOW + i))).toBe(false);
-    expect((await listVoiceRecords()).map((e) => e.id)).toEqual([
-      'r0',
-      'r1',
-      'r2',
-      'r3',
-      'r4',
-      'r5',
-    ]);
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r1', 'r2', 'r3', 'r4', 'r5']);
     expect(await readDurableIds(factory)).toEqual([]);
+  });
+
+  it('serializes overlapping puts against shared eviction state', async () => {
+    const factory = createFactory();
+    globalThis.indexedDB = factory;
+    for (let i = 0; i < 5; i++) await putVoiceRecord(makeEntry(`r${i}`, NOW + i));
+    const results = await Promise.all([
+      putVoiceRecord(makeEntry('a', NOW + 10)),
+      putVoiceRecord(makeEntry('b', NOW + 11)),
+    ]);
+    expect(results).toEqual([true, true]);
+    resetVoiceAudioStore();
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r2', 'r3', 'r4', 'a', 'b']);
   });
 
   it('deletes a record from both the mirror and durable storage', async () => {

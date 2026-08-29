@@ -164,25 +164,35 @@ async function writeTx(
     };
     return request;
   });
-  if (!committed && !(await openDatabase())) pruneMirrorOnly();
+  if (!committed) pruneMirrorOnly();
   return committed ? plan : null;
 }
 
-export async function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
-  mirror.set(entry.id, entry);
-  tombstones.delete(entry.id);
-  const plan = await writeTx((store, doomed) => {
-    for (const key of doomed.keys) store.delete(key);
-    if (!doomed.ids.has(entry.id)) store.put(entry);
+let mutationQueue: Promise<unknown> = Promise.resolve();
+
+function serializeMutation<T>(op: () => Promise<T>): Promise<T> {
+  const run = mutationQueue.then(op);
+  mutationQueue = run.catch(() => {});
+  return run;
+}
+
+export function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
+  return serializeMutation(async () => {
+    mirror.set(entry.id, entry);
+    tombstones.delete(entry.id);
+    const plan = await writeTx((store, doomed) => {
+      for (const key of doomed.keys) store.delete(key);
+      if (!doomed.ids.has(entry.id)) store.put(entry);
+    });
+    if (!plan) return false;
+    for (const id of plan.ids) mirror.delete(id);
+    for (const key of plan.keys) {
+      if (typeof key === 'string') tombstones.delete(key);
+    }
+    const stored = !plan.ids.has(entry.id);
+    if (stored) mirror.delete(entry.id);
+    return stored;
   });
-  if (!plan) return false;
-  for (const id of plan.ids) mirror.delete(id);
-  for (const key of plan.keys) {
-    if (typeof key === 'string') tombstones.delete(key);
-  }
-  const stored = !plan.ids.has(entry.id);
-  if (stored) mirror.delete(entry.id);
-  return stored;
 }
 
 export async function getVoiceRecord(id: string): Promise<VoiceRecordEntry | null> {
@@ -199,22 +209,26 @@ export async function listVoiceRecords(): Promise<VoiceRecordEntry[]> {
   return planDoom(rows).merged.filter((entry) => now - entry.createdAt < MAX_AGE_MS);
 }
 
-export async function deleteVoiceRecord(id: string): Promise<void> {
-  mirror.delete(id);
-  tombstones.add(id);
-  const removed = await runTx('readwrite', (store) => store.delete(id));
-  if (removed) tombstones.delete(id);
+export function deleteVoiceRecord(id: string): Promise<void> {
+  return serializeMutation(async () => {
+    mirror.delete(id);
+    tombstones.add(id);
+    const removed = await runTx('readwrite', (store) => store.delete(id));
+    if (removed) tombstones.delete(id);
+  });
 }
 
-export async function pruneVoiceRecords(): Promise<void> {
-  const plan = await writeTx((store, doomed) => {
-    for (const key of doomed.keys) store.delete(key);
+export function pruneVoiceRecords(): Promise<void> {
+  return serializeMutation(async () => {
+    const plan = await writeTx((store, doomed) => {
+      for (const key of doomed.keys) store.delete(key);
+    });
+    if (!plan) return;
+    for (const id of plan.ids) mirror.delete(id);
+    for (const key of plan.keys) {
+      if (typeof key === 'string') tombstones.delete(key);
+    }
   });
-  if (!plan) return;
-  for (const id of plan.ids) mirror.delete(id);
-  for (const key of plan.keys) {
-    if (typeof key === 'string') tombstones.delete(key);
-  }
 }
 
 export function resetVoiceAudioStore(): void {
