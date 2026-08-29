@@ -1,4 +1,5 @@
 import './styles.css';
+import './lib/theme.ts';
 import { render } from 'preact';
 import { App } from './App.tsx';
 

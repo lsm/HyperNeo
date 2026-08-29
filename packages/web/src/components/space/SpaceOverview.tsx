@@ -143,7 +143,7 @@ function RuntimeControlBar({
             <button
               onClick={onResume}
               disabled={actionLoading}
-              class="px-3 py-1.5 text-xs font-medium text-success-soft bg-success/30 hover:bg-success/50 border border-success/40 rounded-lg transition-colors disabled:opacity-40"
+              class="px-3 py-1.5 text-xs font-medium text-success-soft bg-success/15 hover:bg-success/25 border border-success/40 rounded-lg transition-colors disabled:opacity-40"
             >
               Resume
             </button>
@@ -160,7 +160,7 @@ function RuntimeControlBar({
           <button
             onClick={onStart}
             disabled={actionLoading}
-            class="px-3 py-1.5 text-xs font-medium text-success-soft bg-success/30 hover:bg-success/50 border border-success/40 rounded-lg transition-colors disabled:opacity-40"
+            class="px-3 py-1.5 text-xs font-medium text-success-soft bg-success/15 hover:bg-success/25 border border-success/40 rounded-lg transition-colors disabled:opacity-40"
           >
             Start
           </button>

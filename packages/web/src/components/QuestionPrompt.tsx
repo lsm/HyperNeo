@@ -333,7 +333,7 @@ export function QuestionPrompt({
                   'inline-block px-2 py-0.5 text-xs rounded flex-shrink-0',
                   resolvedState === 'cancelled'
                     ? 'bg-surface-raised/50 text-fg-faint border border-line'
-                    : cn('bg-cat-rose/50 text-cat-rose border', questionColors.active.border)
+                    : cn('bg-cat-rose/15 text-cat-rose border', questionColors.active.border)
                 )}
               >
                 {question.header}
