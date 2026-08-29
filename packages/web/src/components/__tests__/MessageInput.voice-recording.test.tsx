@@ -793,6 +793,7 @@ describe('MessageInput — recording UI', () => {
         )
       );
       expect(deleteVoiceRecord).not.toHaveBeenCalled();
+      expect(draft.value).toBe('x'.repeat(100_000));
     });
 
     it('Delete removes the persisted record', async () => {

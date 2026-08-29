@@ -403,13 +403,14 @@ export default function MessageInput({
         after,
         transcript
       );
+      if (!fullyInserted) return false;
       setContent(nextValue);
       const nextCursor = selectionStart + (nextValue.length - before.length - after.length);
       setTimeout(() => {
         textareaInputRef.current?.focus();
         textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
       }, 0);
-      return fullyInserted;
+      return true;
     },
     [setContent]
   );
