@@ -29,6 +29,8 @@ import type { SessionStore } from '../lib/session-store.ts';
 import { connectionState, globalSettings, isAgentWorking } from '../lib/state.ts';
 import { toast } from '../lib/toast.ts';
 import {
+  beginInteractiveVoiceSubmit,
+  endInteractiveVoiceSubmit,
   isVoiceAudioBusy,
   markVoiceAudioBusy,
   pendingVoiceAudioRecords,
@@ -638,6 +640,7 @@ export default function MessageInput({
       const recordId = generateUUID();
       setIsTranscribing(true);
       markVoiceAudioBusy(recordId);
+      beginInteractiveVoiceSubmit();
       try {
         const stoppedRecording = await voiceRecorder.stop();
         if (stoppedRecording.hitDurationLimit) {
@@ -650,11 +653,22 @@ export default function MessageInput({
             generateId: () => recordId,
             delay: (ms) =>
               new Promise<void>((resolve, reject) => {
-                if (!connectionManager.getHubIfConnected()) {
+                const fail = () => {
+                  cleanup();
                   reject(new Error(VOICE_DISCONNECTED_HANDOFF));
-                  return;
-                }
-                setTimeout(resolve, ms);
+                };
+                const timer = setTimeout(() => {
+                  cleanup();
+                  resolve();
+                }, ms);
+                const unsubscribe = connectionState.subscribe((state) => {
+                  if (state !== 'connected') fail();
+                });
+                const cleanup = () => {
+                  clearTimeout(timer);
+                  unsubscribe();
+                };
+                if (!connectionManager.getHubIfConnected()) fail();
               }),
             isMounted: () => mountedRef.current,
             currentSessionId: () => sessionIdRef.current,
@@ -668,12 +682,15 @@ export default function MessageInput({
         });
       } catch (error) {
         if (error instanceof Error && error.message === VOICE_DISCONNECTED_HANDOFF) {
-          toast.info('Voice recording saved — will be sent when reconnected');
+          toast.info(
+            'Voice recording saved — transcript will be restored to the draft when reconnected'
+          );
         } else {
           await voiceRecorder.cancel();
           toast.error(error instanceof Error ? error.message : 'Voice transcription failed');
         }
       } finally {
+        endInteractiveVoiceSubmit();
         unmarkVoiceAudioBusy(recordId);
         recordingSessionRef.current = null;
         setIsTranscribing(false);
@@ -721,6 +738,7 @@ export default function MessageInput({
       const recording = recordingFromEntry(entry);
       setResendingVoiceRecordId(entry.id);
       markVoiceAudioBusy(entry.id);
+      beginInteractiveVoiceSubmit();
       try {
         const result = await runVoiceSubmit(
           { sessionId: entry.sessionId, retrySilent: true },
@@ -742,6 +760,7 @@ export default function MessageInput({
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Voice resend failed');
       } finally {
+        endInteractiveVoiceSubmit();
         unmarkVoiceAudioBusy(entry.id);
         setResendingVoiceRecordId(null);
         void refreshPendingVoiceAudio();

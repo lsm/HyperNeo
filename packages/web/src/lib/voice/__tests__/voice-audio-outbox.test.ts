@@ -19,9 +19,17 @@ vi.mock('../voice-audio-store.ts', () => ({
   putVoiceRecord: async () => true,
 }));
 
+const enqueueTranscript = vi.hoisted(() => vi.fn(() => true));
+vi.mock('../voice-transcript-outbox.ts', async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueTranscript,
+}));
+
 import { connectionManager } from '../../connection-manager.ts';
 import { connectionState } from '../../state.ts';
 import {
+  beginInteractiveVoiceSubmit,
+  endInteractiveVoiceSubmit,
   flushPendingVoiceAudio,
   markVoiceAudioBusy,
   pendingVoiceAudioRecords,
@@ -49,6 +57,7 @@ describe('voice audio outbox', () => {
     resetVoiceAudioOutbox();
     store.records = [];
     hubRequest.mockReset().mockImplementation(async () => ({ text: 'hello world' }));
+    enqueueTranscript.mockReset().mockReturnValue(true);
     vi.mocked(connectionManager.getHubIfConnected)
       .mockReset()
       .mockReturnValue({ request: hubRequest });
@@ -103,6 +112,45 @@ describe('voice audio outbox', () => {
     });
     await flushPendingVoiceAudio();
 
+    expect(store.records).toEqual([]);
+  });
+
+  it('parks the transcript in the text outbox when draft staging is retryably refused', async () => {
+    seedEntry();
+    hubRequest.mockImplementation(async (method: string) => {
+      if (method === 'session.appendVoiceDraft') {
+        throw new Error('Pending voice draft is at the character limit');
+      }
+      return { text: 'hello world' };
+    });
+    enqueueTranscript.mockReturnValue(true);
+    await flushPendingVoiceAudio();
+
+    expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', 'rec-1');
+    expect(store.records).toEqual([]);
+  });
+
+  it('keeps the record when voice configuration refuses transcription', async () => {
+    seedEntry();
+    hubRequest.mockRejectedValue(new Error('Voice input is disabled'));
+    await flushPendingVoiceAudio();
+
+    expect(store.records).toHaveLength(1);
+    expect(enqueueTranscript).not.toHaveBeenCalled();
+  });
+
+  it('defers the flush while an interactive submit is in flight', async () => {
+    vi.useFakeTimers();
+    seedEntry();
+    beginInteractiveVoiceSubmit();
+    await flushPendingVoiceAudio();
+
+    expect(hubRequest).not.toHaveBeenCalled();
+    expect(store.records).toHaveLength(1);
+
+    endInteractiveVoiceSubmit();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(hubRequest).toHaveBeenCalled();
     expect(store.records).toEqual([]);
   });
 

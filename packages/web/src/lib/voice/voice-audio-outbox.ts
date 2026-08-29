@@ -9,7 +9,10 @@ import {
 } from './voice-audio-store.ts';
 import type { VoiceRecording } from './voice-recorder-store.ts';
 import { runVoiceSubmit } from './voice-submit-pipeline.ts';
-import { isPermanentAppendRefusal } from './voice-transcript-outbox.ts';
+import { enqueueTranscript, isPermanentAppendRefusal } from './voice-transcript-outbox.ts';
+
+const AUDIO_INTRINSIC_REFUSAL =
+  /requires audio\/wav input|Audio data is (required|empty)|must be valid base64|exceeds the 10 MB/;
 
 export function recordingFromEntry(entry: VoiceRecordEntry): VoiceRecording {
   return {
@@ -38,6 +41,16 @@ export function unmarkVoiceAudioBusy(id: string): void {
 
 export function isVoiceAudioBusy(id: string): boolean {
   return busyRecords.has(id);
+}
+
+let interactiveSubmits = 0;
+
+export function beginInteractiveVoiceSubmit(): void {
+  interactiveSubmits += 1;
+}
+
+export function endInteractiveVoiceSubmit(): void {
+  interactiveSubmits = Math.max(0, interactiveSubmits - 1);
 }
 
 export async function refreshPendingVoiceAudio(): Promise<void> {
@@ -69,6 +82,10 @@ export async function flushPendingVoiceAudio(): Promise<void> {
   if (flushInProgress) return;
   const hub = connectionManager.getHubIfConnected();
   if (!hub) return;
+  if (interactiveSubmits > 0) {
+    scheduleFollowUpFlush();
+    return;
+  }
   const pending = (await listVoiceRecords()).filter((entry) => !isVoiceAudioBusy(entry.id));
   if (pending.length === 0) {
     await refreshPendingVoiceAudio();
@@ -83,6 +100,19 @@ export async function flushPendingVoiceAudio(): Promise<void> {
     deferredSessions.add(sessionId);
     needsRetry = true;
   };
+  const parkTranscript = async (
+    entry: VoiceRecordEntry,
+    transcript: string,
+    error: unknown
+  ): Promise<void> => {
+    if (isPermanentAppendRefusal(error)) {
+      await deleteVoiceRecord(entry.id);
+    } else if (enqueueTranscript(entry.sessionId, transcript, entry.id)) {
+      await deleteVoiceRecord(entry.id);
+    } else {
+      defer(entry.sessionId);
+    }
+  };
   try {
     for (const entry of pending) {
       if (!connectionManager.getHubIfConnected()) break;
@@ -94,35 +124,42 @@ export async function flushPendingVoiceAudio(): Promise<void> {
           {
             stopRecording: async () => recordingFromEntry(entry),
             putRecord: async () => true,
-            deleteRecord: deleteVoiceRecord,
+            deleteRecord: async () => true,
             generateId: () => entry.id,
             isMounted: () => false,
             currentSessionId: () => entry.sessionId,
           }
         );
         if (result.kind === 'routed') {
-          if (result.outcome.kind === 'deliver-unmounted') {
+          const outcome = result.outcome;
+          if (outcome.kind === 'deliver-unmounted') {
             if (!(await getVoiceRecord(entry.id))) continue;
-            await hub.request('session.appendVoiceDraft', {
-              sessionId: entry.sessionId,
-              text: result.outcome.transcript,
-              dedupId: entry.id,
-            });
+            try {
+              await hub.request('session.appendVoiceDraft', {
+                sessionId: entry.sessionId,
+                text: outcome.transcript,
+                dedupId: entry.id,
+              });
+            } catch (error) {
+              await parkTranscript(entry, outcome.transcript, error);
+              continue;
+            }
             await deleteVoiceRecord(entry.id);
             delivered += 1;
-          } else if (result.outcome.kind !== 'discard-with-reason') {
+          } else if (outcome.kind === 'discard-with-reason') {
+            await deleteVoiceRecord(entry.id);
+          } else {
             defer(entry.sessionId);
           }
         } else if (result.kind === 'transcribe-failed') {
           if (!result.dequeued) defer(entry.sessionId);
+          else if (AUDIO_INTRINSIC_REFUSAL.test(result.message)) {
+            await deleteVoiceRecord(entry.id);
+          }
         }
-      } catch (error) {
+      } catch {
         if (!connectionManager.getHubIfConnected()) break;
-        if (isPermanentAppendRefusal(error)) {
-          await deleteVoiceRecord(entry.id);
-        } else {
-          defer(entry.sessionId);
-        }
+        defer(entry.sessionId);
       } finally {
         unmarkVoiceAudioBusy(entry.id);
       }
@@ -173,5 +210,6 @@ export function resetVoiceAudioOutbox(): void {
   flushInProgress = false;
   clearRetryTimer();
   busyRecords.clear();
+  interactiveSubmits = 0;
   pendingVoiceAudioRecords.value = [];
 }

@@ -24,7 +24,7 @@ vi.mock('../../lib/state.ts', () => ({
   globalSettings: {
     value: { voice: { enabled: true, endpoint: 'https://asr.example.com/v1', model: 'whisper-1' } },
   },
-  connectionState: { value: 'connected' },
+  connectionState: { value: 'connected', subscribe: () => () => {} },
   get isAgentWorking() {
     return {
       get value() {
@@ -493,7 +493,7 @@ describe('MessageInput — recording UI', () => {
       );
       await waitFor(() =>
         expect(toast.info).toHaveBeenCalledWith(
-          'Voice recording saved — will be sent when reconnected'
+          'Voice recording saved — transcript will be restored to the draft when reconnected'
         )
       );
       expect(transcribeRequest).not.toHaveBeenCalled();
