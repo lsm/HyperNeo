@@ -1,12 +1,7 @@
 import { effect, signal } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
 import { connectionState } from '../state';
-import {
-  deleteVoiceRecord,
-  getVoiceRecord,
-  listVoiceRecords,
-  type VoiceRecordEntry,
-} from './voice-audio-store.ts';
+import { deleteVoiceRecord, listVoiceRecords, type VoiceRecordEntry } from './voice-audio-store.ts';
 import { type VoiceRecording, voiceRecorderStore } from './voice-recorder-store.ts';
 import { runVoiceSubmit } from './voice-submit-pipeline.ts';
 import { enqueueTranscript, isPermanentAppendRefusal } from './voice-transcript-outbox.ts';
@@ -150,7 +145,6 @@ export async function flushPendingVoiceAudio(): Promise<void> {
         if (result.kind === 'routed') {
           const outcome = result.outcome;
           if (outcome.kind === 'deliver-unmounted') {
-            if (!(await getVoiceRecord(entry.id))) continue;
             try {
               await hub.request('session.appendVoiceDraft', {
                 sessionId: entry.sessionId,
