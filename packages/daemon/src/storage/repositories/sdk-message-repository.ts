@@ -254,6 +254,7 @@ interface SaveSdkMessageInput {
   variant: MessageAdmissionVariant;
   sendStatus: SendStatus | null;
   origin?: MessageOrigin;
+  stampInternalCompactionTurn?: boolean;
 }
 
 interface SaveSdkMessageSnapshot extends SaveSdkMessageInput {
@@ -731,7 +732,12 @@ export class SDKMessageRepository {
     return row?.m ?? 0;
   }
 
-  saveSDKMessage(sessionId: string, message: SDKMessage, origin?: MessageOrigin): boolean {
+  saveSDKMessage(
+    sessionId: string,
+    message: SDKMessage,
+    origin?: MessageOrigin,
+    options?: { stampInternalCompactionTurn?: boolean }
+  ): boolean {
     try {
       const deps: SaveSdkMessageDeps = {
         saveSDKMessageWithAdmission: (ctx) => this.saveSDKMessageWithAdmission(ctx),
@@ -746,6 +752,7 @@ export class SDKMessageRepository {
         variant: 'sdk',
         sendStatus: null,
         origin,
+        stampInternalCompactionTurn: options?.stampInternalCompactionTurn === true,
         deps,
       });
       return true;
@@ -758,6 +765,8 @@ export class SDKMessageRepository {
 
   private saveSDKMessageWithAdmission(ctx: SaveSdkMessageAdmitted): { dbId: string } {
     const { sessionId, dbId, message, admission, badgeUpdate, origin } = ctx;
+    const stampInternalCompactionTurn =
+      ctx.stampInternalCompactionTurn === true && admission.isTerminal && message.type === 'result';
     const messageType = message.type;
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();
@@ -798,6 +807,15 @@ export class SDKMessageRepository {
             .prepare('UPDATE sdk_messages SET consumed_seq = ? WHERE id = ?')
             .run(resultSeq, dbId);
         }
+      }
+      if (stampInternalCompactionTurn) {
+        this.db
+          .prepare(
+            `UPDATE sdk_messages
+                SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)
+              WHERE id = ?`
+          )
+          .run(dbId);
       }
       this.saveReplacementEdges(dbId, sessionId, taskId, admission.replacementEdges);
       this.scheduleMessageSearchIndex(dbId);

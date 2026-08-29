@@ -1065,26 +1065,18 @@ export class SDKMessageHandler {
     }
 
     try {
-      let attributedResultUuid: string | null = null;
+      const stampsInternalCompactionTurn =
+        isTopLevelResult &&
+        isSDKResultMessage(message) &&
+        !this.isInvocationStale(invocationGeneration) &&
+        this.resolveInternalCompactionResultStamp(message) !== null;
       let deferredSuccessfully: boolean;
       try {
-        deferredSuccessfully = this.withDbChangeBatch(() => {
-          const saved = db.saveSDKMessage(session.id, message);
-          if (
-            saved &&
-            isTopLevelResult &&
-            isSDKResultMessage(message) &&
-            !this.isInvocationStale(invocationGeneration)
-          ) {
-            attributedResultUuid = this.resolveInternalCompactionResultStamp(message);
-            if (attributedResultUuid) {
-              this.ctx.db
-                .getSDKMessageRepo()
-                ?.markResultInternalCompactionTurn(session.id, attributedResultUuid);
-            }
-          }
-          return saved;
-        });
+        deferredSuccessfully = this.withDbChangeBatch(() =>
+          db.saveSDKMessage(session.id, message, undefined, {
+            stampInternalCompactionTurn: stampsInternalCompactionTurn,
+          })
+        );
       } catch (error) {
         releaseTurnEndGate?.();
         releaseTurnEndGate = null;
@@ -1095,20 +1087,13 @@ export class SDKMessageHandler {
         this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
         releaseTurnEndGate?.();
         releaseTurnEndGate = null;
-        if (
-          isTopLevelResult &&
-          isSDKResultMessage(message) &&
-          !this.isInvocationStale(invocationGeneration)
-        ) {
-          this.ctx.messageQueue.consumeInternalCompactionResultAttribution();
-        }
         if (this.matchesArmedClearResult(message)) {
           this.clearIdleSuppression();
         }
         return;
       }
 
-      if (attributedResultUuid) {
+      if (stampsInternalCompactionTurn) {
         this.logger.info(
           `attributed the 0-turn terminal success to the internal compaction turn for ` +
             `session ${session.id}; it cannot satisfy a work delivery`

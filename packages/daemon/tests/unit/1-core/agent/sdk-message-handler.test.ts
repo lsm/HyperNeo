@@ -3930,62 +3930,48 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       }) as unknown as SDKMessage;
 
+    const expectStampOption = (stamped: boolean): void => {
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.anything(),
+        undefined,
+        { stampInternalCompactionTurn: stamped }
+      );
+    };
+
     it('stamps the 0-turn terminal success as the internal compaction turn when the boundary armed attribution', async () => {
-      const stampSpy = mock(() => {});
-      mockDb.getSDKMessageRepo = mock(() => ({
-        markResultInternalCompactionTurn: stampSpy,
-      })) as never;
       consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
 
       await handler.handleMessage(makeSuccessResult(0));
 
       expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
-      expect(stampSpy).toHaveBeenCalledTimes(1);
-      expect(stampSpy).toHaveBeenCalledWith('test-session-id', 'compact-turn-result-uuid');
+      expectStampOption(true);
     });
 
     it('consumes the arming without stamping when the terminal success ran model turns', async () => {
-      const stampSpy = mock(() => {});
-      mockDb.getSDKMessageRepo = mock(() => ({
-        markResultInternalCompactionTurn: stampSpy,
-      })) as never;
       consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
 
       await handler.handleMessage(makeSuccessResult(3));
 
       expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
-      expect(stampSpy).not.toHaveBeenCalled();
+      expectStampOption(false);
     });
 
     it('never stamps when no daemon-internal compaction boundary was acknowledged', async () => {
-      const stampSpy = mock(() => {});
-      mockDb.getSDKMessageRepo = mock(() => ({
-        markResultInternalCompactionTurn: stampSpy,
-      })) as never;
-
       await handler.handleMessage(makeSuccessResult(0));
 
-      expect(stampSpy).not.toHaveBeenCalled();
+      expectStampOption(false);
     });
 
     it('stamps the boundary-less compact turn result while its compaction still awaits a boundary', async () => {
-      const stampSpy = mock(() => {});
-      mockDb.getSDKMessageRepo = mock(() => ({
-        markResultInternalCompactionTurn: stampSpy,
-      })) as never;
       hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
 
       await handler.handleMessage(makeSuccessResult(0));
 
-      expect(stampSpy).toHaveBeenCalledTimes(1);
-      expect(stampSpy).toHaveBeenCalledWith('test-session-id', 'compact-turn-result-uuid');
+      expectStampOption(true);
     });
 
-    it('stamps before the sdk.message publication so a publication failure cannot strand an unstamped success', async () => {
-      const stampSpy = mock(() => {});
-      mockDb.getSDKMessageRepo = mock(() => ({
-        markResultInternalCompactionTurn: stampSpy,
-      })) as never;
+    it('decides the stamp before the sdk.message publication so a publication failure cannot strand an unstamped success', async () => {
       consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
       emitSpy.mockImplementation(async (topic: string) => {
         if (topic === 'sdk.message') throw new Error('publication failed');
@@ -3995,28 +3981,20 @@ describe('SDKMessageHandler', () => {
         'publication failed'
       );
 
-      expect(stampSpy).toHaveBeenCalledTimes(1);
+      expectStampOption(true);
     });
 
     it('consumes the arming without stamping when result persistence fails', async () => {
-      const stampSpy = mock(() => {});
-      mockDb.getSDKMessageRepo = mock(() => ({
-        markResultInternalCompactionTurn: stampSpy,
-      })) as never;
       consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
       saveSDKMessageSpy.mockImplementation(() => false);
 
       await handler.handleMessage(makeSuccessResult(0));
 
       expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
-      expect(stampSpy).not.toHaveBeenCalled();
+      expectStampOption(true);
     });
 
     it('consumes the arming without stamping a success-shaped terminal error result', async () => {
-      const stampSpy = mock(() => {});
-      mockDb.getSDKMessageRepo = mock(() => ({
-        markResultInternalCompactionTurn: stampSpy,
-      })) as never;
       consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
 
       await handler.handleMessage({
@@ -4026,39 +4004,17 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage);
 
       expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
-      expect(stampSpy).not.toHaveBeenCalled();
+      expectStampOption(false);
     });
 
     it('ignores stale-generation results so a superseded query cannot consume the arming', async () => {
-      const stampSpy = mock(() => {});
-      mockDb.getSDKMessageRepo = mock(() => ({
-        markResultInternalCompactionTurn: stampSpy,
-      })) as never;
       consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
       (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
 
       await handler.handleMessage(makeSuccessResult(0), 3);
 
       expect(consumeInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
-      expect(stampSpy).not.toHaveBeenCalled();
-    });
-
-    it('stamps inside the same DB batch as the result save', async () => {
-      const order: string[] = [];
-      (mockDb as unknown as Record<string, unknown>).beginTransaction = mock(() =>
-        order.push('begin')
-      );
-      (mockDb as unknown as Record<string, unknown>).commitTransaction = mock(() =>
-        order.push('commit')
-      );
-      mockDb.getSDKMessageRepo = mock(() => ({
-        markResultInternalCompactionTurn: mock(() => order.push('stamp')),
-      })) as never;
-      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
-
-      await handler.handleMessage(makeSuccessResult(0));
-
-      expect(order).toEqual(['begin', 'stamp', 'commit']);
+      expectStampOption(false);
     });
   });
 
