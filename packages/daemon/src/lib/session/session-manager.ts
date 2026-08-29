@@ -466,9 +466,6 @@ export class SessionManager {
     const existing = this.workflowMcpProvisioning.get(sessionId);
     if (existing) {
       await existing;
-      if (!this.workflowMcpProvisioned.has(session)) {
-        await this.provisionWorkflowMcpServers(session);
-      }
       return;
     }
 
@@ -479,15 +476,16 @@ export class SessionManager {
     });
     this.workflowMcpProvisioning.set(sessionId, provisioning);
     await provisioning;
-    if (session.getSessionData().config.mcpServers?.['node-agent']) {
-      this.workflowMcpProvisioned.add(session);
-    }
+    this.workflowMcpProvisioned.add(session);
   }
 
   private async getSessionForMessagePersistence(sessionId: string): Promise<AgentSession | null> {
     const session = await this.getSessionAsync(sessionId);
     if (!session) return null;
-    if (this.isWorkflowSubSession(session) && !this.workflowMcpProvisioned.has(session)) {
+    if (
+      this.isWorkflowSubSession(session) &&
+      !session.getSessionData().config.mcpServers?.['node-agent']
+    ) {
       return null;
     }
     return session;
