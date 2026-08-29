@@ -3192,6 +3192,82 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(second).not.toBe(first);
       expect(second.timestamps).toHaveLength(2);
     });
+
+    test('flag on: shutdown completes when a digest render never settles', async () => {
+      const sessionId = 'session-stalled-render';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      await startLiveSession(sessionId, topic);
+      process.env.HYPERNEO_EXTERNAL_EVENT_RENDER_DRAIN_MS = '100';
+
+      const repo = (
+        runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
+      ).getSdkMessageRepo();
+      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
+        .saveUserMessage as (...args: unknown[]) => string;
+      let saveStarted = false;
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+        ...args: unknown[]
+      ) => {
+        saveStarted = true;
+        return new Promise<string>(() => {}) as unknown as string;
+      };
+
+      runtime.start();
+      await eventService.publish(makeEvent({ id: 'evt-stalled-render', topic }));
+      const deadline = Date.now() + 2000;
+      while (!saveStarted && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(saveStarted).toBe(true);
+
+      const stopStartedAt = Date.now();
+      await runtime.stop();
+      const stopElapsed = Date.now() - stopStartedAt;
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
+        originalSave;
+      delete process.env.HYPERNEO_EXTERNAL_EVENT_RENDER_DRAIN_MS;
+
+      expect(stopElapsed).toBeLessThan(2000);
+    });
+
+    test('flag on: a cold-start recovery failure fails the gate and a later tick retries', async () => {
+      const internals = runtime as unknown as {
+        restoreIdleSessionsOwningPendingDeliveries: (
+          paused: Set<string>,
+          workflowRunId?: string
+        ) => Promise<Array<{ action: string; sessionId: string }>>;
+        currentReconciliation: { failed: boolean } | null;
+      };
+      const originalRestore = internals.restoreIdleSessionsOwningPendingDeliveries.bind(runtime);
+      internals.restoreIdleSessionsOwningPendingDeliveries = async () => {
+        throw new Error('restore exploded');
+      };
+
+      runtime.start();
+      const gate = internals.currentReconciliation;
+      const deadline = Date.now() + 2000;
+      while (!gate?.failed && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(gate?.failed).toBe(true);
+      expect(await runtime.renderPendingDigestForSession('session-cold-restore-failed')).toBeNull();
+
+      internals.restoreIdleSessionsOwningPendingDeliveries = originalRestore;
+      const rt = runtime as unknown as { rehydrated: boolean };
+      const recoverDeadline = Date.now() + 5000;
+      while (!rt.rehydrated && Date.now() < recoverDeadline) {
+        await runtime.executeTick().catch(() => {});
+        await wait(20);
+      }
+      expect(rt.rehydrated).toBe(true);
+      expect(await runtime.renderPendingDigestForSession('session-cold-restore-recovered')).toEqual(
+        {
+          action: 'skip',
+          reason: 'no_execution',
+        }
+      );
+      await runtime.stop();
+    });
   });
 
   describe('surviving delivery invariants after the V1 deletion', () => {

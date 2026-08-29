@@ -3568,7 +3568,23 @@ export class SpaceRuntime {
     const stalePullTriggers = Array.from(this.digestPullTriggers.entries());
     const staleRateLimits = Array.from(this.externalEventRateLimits.entries());
     const pendingRenders = Array.from(this.renderPendingDigestQueues.entries());
-    await Promise.all(pendingRenders.map(([, render]) => render.catch(() => null)));
+    const renderDrainMs = parsePositiveIntegerEnv(
+      'HYPERNEO_EXTERNAL_EVENT_RENDER_DRAIN_MS',
+      30_000
+    );
+    await new Promise<void>((resolve) => {
+      const deadline = setTimeout(() => {
+        log.warn(
+          `SpaceRuntime: timed out waiting for ${pendingRenders.length} digest render(s) after ` +
+            `${renderDrainMs}ms — proceeding with shutdown`
+        );
+        resolve();
+      }, renderDrainMs);
+      Promise.all(pendingRenders.map(([, render]) => render.catch(() => null))).then(() => {
+        clearTimeout(deadline);
+        resolve();
+      });
+    });
     for (const [sessionId, render] of pendingRenders) {
       if (this.renderPendingDigestQueues.get(sessionId) === render) {
         this.renderPendingDigestQueues.delete(sessionId);
@@ -4571,7 +4587,7 @@ export class SpaceRuntime {
     if (this.config.taskAgentManager) {
       await this.config.taskAgentManager.rehydrate();
     }
-    await this.recoverPendingDeliveries(pausedSpaceIds);
+    await this.recoverPendingDeliveriesStrict(pausedSpaceIds);
   }
 
   private pruneDigestHandoffDebt(): void {
