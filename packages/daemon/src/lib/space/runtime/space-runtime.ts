@@ -1698,6 +1698,7 @@ export class SpaceRuntime {
       if (this.isStopped) return;
       if (!this.isTargetSessionLive(sessionId)) {
         this.digestHandoffRetryCounts.delete(key);
+        this.addDigestHandoffDebt(sessionId, messageUuid);
         return;
       }
       this.handoffDigestDelivery(sessionId, messageUuid, dbId);
@@ -1900,12 +1901,13 @@ export class SpaceRuntime {
     taskId?: string
   ): Promise<RenderPendingDigestOutcome | null> {
     if (this.isStopped) return null;
-    const gate = this.currentReconciliation;
-    if (gate && !gate.settled) {
+    for (;;) {
+      const gate = this.currentReconciliation;
+      if (!gate || gate.settled) break;
       await gate.promise;
+      if (this.isStopped) return null;
     }
-    if (this.isStopped) return null;
-    if (gate?.failed) return null;
+    if (this.currentReconciliation?.failed) return null;
     const store = this.config.externalEventStore;
     if (!store) return null;
     const generation = this.runtimeGeneration;
@@ -3452,42 +3454,10 @@ export class SpaceRuntime {
     if (this.rehydrated) {
       void (async () => {
         if (this.isStopped || gate.settled) return;
-        const pausedSpaceIds = new Set<string>();
-        try {
-          for (const space of await this.config.spaceManager.listSpaces(false)) {
-            if (space.paused || space.stopped) {
-              pausedSpaceIds.add(space.id);
-              this.pausedSpaceIds.add(space.id);
-            } else {
-              this.pausedSpaceIds.delete(space.id);
-            }
-          }
-        } catch (err) {
-          log.warn(
-            `SpaceRuntime: start() could not list spaces for paused-deferral: ${formatCommandError(err)}`
-          );
-        }
-        if (gate.generation !== this.runtimeGeneration || this.isStopped) {
-          this.settleReconciliation(gate, false);
-          return;
-        }
-        try {
-          await this.recoverPendingDeliveries(pausedSpaceIds);
-          if (gate.generation !== this.runtimeGeneration || this.isStopped) {
-            this.settleReconciliation(gate, false);
-            return;
-          }
-          this.rehydrateDigestHandoffDebt();
-          this.subscribeExternalEventPublished();
-          this.settleReconciliation(gate, false);
-          this.redispatchRetainedExternalEvents();
-          this.executeTick().catch((err: unknown) => {
-            log.error('SpaceRuntime: initial tick failed:', err);
-          });
-        } catch (err) {
-          log.error(`SpaceRuntime: start() warm reconciliation failed: ${formatCommandError(err)}`);
-          this.settleReconciliation(gate, true);
-        }
+        await this.runWarmReconciliation(gate);
+        this.executeTick().catch((err: unknown) => {
+          log.error('SpaceRuntime: initial tick failed:', err);
+        });
       })();
     } else {
       this.subscribeExternalEventPublished();
@@ -3495,6 +3465,42 @@ export class SpaceRuntime {
       this.executeTick().catch((err: unknown) => {
         log.error('SpaceRuntime: initial tick failed:', err);
       });
+    }
+  }
+
+  private async runWarmReconciliation(gate: ReconciliationGate): Promise<void> {
+    const pausedSpaceIds = new Set<string>();
+    try {
+      for (const space of await this.config.spaceManager.listSpaces(false)) {
+        if (space.paused || space.stopped) {
+          pausedSpaceIds.add(space.id);
+          this.pausedSpaceIds.add(space.id);
+        } else {
+          this.pausedSpaceIds.delete(space.id);
+        }
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: could not list spaces for paused-deferral: ${formatCommandError(err)}`
+      );
+    }
+    if (gate.generation !== this.runtimeGeneration || this.isStopped) {
+      this.settleReconciliation(gate, false);
+      return;
+    }
+    try {
+      await this.recoverPendingDeliveries(pausedSpaceIds);
+      if (gate.generation !== this.runtimeGeneration || this.isStopped) {
+        this.settleReconciliation(gate, false);
+        return;
+      }
+      this.rehydrateDigestHandoffDebt();
+      this.subscribeExternalEventPublished();
+      this.settleReconciliation(gate, false);
+      this.redispatchRetainedExternalEvents();
+    } catch (err) {
+      log.error(`SpaceRuntime: warm reconciliation failed: ${formatCommandError(err)}`);
+      this.settleReconciliation(gate, true);
     }
   }
 
@@ -3578,14 +3584,19 @@ export class SpaceRuntime {
   async executeTick(): Promise<void> {
     if (this.isStopped) return;
     if (this.tickInFlight) return;
-    let gate: ReconciliationGate | null = null;
+    let rehydrating = false;
     if (!this.rehydrated) {
-      gate = this.ensureReconciliationGate();
-    } else if (this.currentReconciliation && !this.currentReconciliation.settled) {
-      return;
+      this.ensureReconciliationGate();
+      rehydrating = true;
+    } else {
+      const current = this.currentReconciliation;
+      if (current && !current.settled) return;
+      if (current?.failed) {
+        await this.runWarmReconciliation(this.ensureReconciliationGate());
+      }
     }
     this.tickInFlight = true;
-    let failed = false;
+    let rehydratedGateSettled = false;
     try {
       if (hasSqlExec(this.config.db)) {
         this.toolContinuationRepo.markExpired();
@@ -3598,6 +3609,11 @@ export class SpaceRuntime {
         await this.recoverStalledRuns();
         this.rehydrated = true;
         this.acceptingExternalEvents = true;
+        const pending = this.currentReconciliation;
+        if (pending && !pending.settled) {
+          this.settleReconciliation(pending, false);
+        }
+        rehydratedGateSettled = true;
       }
 
       if (justRehydrated) {
@@ -3616,13 +3632,13 @@ export class SpaceRuntime {
 
       this.pruneExpiredCycleEvents();
       this.pruneDigestHandoffDebt();
-    } catch (error) {
-      failed = true;
-      throw error;
     } finally {
       this.tickInFlight = false;
-      if (gate && !gate.settled) {
-        this.settleReconciliation(gate, failed);
+      if (rehydrating && !rehydratedGateSettled) {
+        const pending = this.currentReconciliation;
+        if (pending && !pending.settled) {
+          this.settleReconciliation(pending, true);
+        }
       }
     }
   }
