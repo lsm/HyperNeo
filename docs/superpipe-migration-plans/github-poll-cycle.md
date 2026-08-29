@@ -203,9 +203,13 @@ or drop state transitions (same contract class as C4's supersession plan).
   (:2845–2848), NOT the PR `state`; an open PR with `mergeable: null` and
   `mergeable_state: 'dirty'` must NOT skip (name the helper input
   `mergeableState` so a literal implementation cannot suppress dirty-state
-  conflict events). Returns `{skip} | {conflicting, sequence}` — the caller
-  applies the `mergeConflictStates`/`mergeConflictSequences` writes.
-  ~20 lines.
+  conflict events). Returns `{clearState} | {skip} | {conflicting,
+  sequence}`: a closed PR (`pullDetail.state !== 'open'`, :2841–2843) maps to
+  `clearState` and the caller applies `delete mergeConflictStates[prNumber]`
+  — without that arm a literal extraction retains stale conflict state for
+  closed PRs — and the caller applies the
+  `mergeConflictStates`/`mergeConflictSequences` writes for the transition
+  arms. ~20 lines.
 - C5b review freshness + etag policy (:2875–2989 subset, :3001–3005):
   first-seen watermark seed, seen-id + watermark gate (note the stale path
   marks the id seen WITHOUT advancing the watermark, :2981–2984), single-page
