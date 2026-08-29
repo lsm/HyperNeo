@@ -632,7 +632,7 @@ export function setupSessionHandlers(
       throw new Error('Missing required field: provider');
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }

@@ -615,6 +615,10 @@ export class SessionManager {
   }
 
   async deleteSessionResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {
+    const inFlight = this.workflowMcpProvisioning.get(sessionId);
+    if (inFlight) {
+      await inFlight.catch(() => {});
+    }
     return this.sessionLifecycle.deleteResources(sessionId, trigger);
   }
 
