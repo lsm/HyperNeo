@@ -127,8 +127,8 @@ a small plain helper inside the build slice, not a combinator. BOTH PRIMARY
 binds — reuse (:1148–1157) and fresh (:1347–1356) — must ALSO pass
 `expectAgentSessionId` with the OBSERVED value (`null` for a fresh target):
 they guard only status today, so a same-status foreign bind between snapshot
-and CAS would be overwritten and its worker orphaned; TAM-PB pins
-same-status foreign-bind rows for both. Risk: the stale
+and CAS would be overwritten and its worker orphaned; the foreign-bind race
+rows land with TAM-B1's guarded binds, never in TAM-PB. Risk: the stale
 co-owner cascade (:1167–1197) reads executions via `listByWorkflowRun` then
 writes them with a blind `update` — ADR 0004 bans blind read-modify-write
 inside stages, so the build slice must resolve the write first: a stale-owner
@@ -213,12 +213,16 @@ workspace/prompt/lifecycle — task-status rejection limited to
 ADMISSIBLE here and must stay so (pin it); conflating it with a generic
 "terminal task" gate would drop a done task's live execution during run
 restoration —, no space, cancelled run) → cached or
-`AgentSession.restore` → workspace resolve/update (TAM-D must resolve the
-task workspace through `resolveTaskWorkspace` — the registry-mandated helper —
-NOT preserve the current hand-rolled `explicitTaskWorkspace ?? … ??
-space.workspacePath` fallback at :3588–3596, or a multi-workspace task
-rehydrates into the space's primary checkout instead of its registered
-repository; pin a task-bound-secondary-workspace row) → SYSTEM-PROMPT-ONLY
+`AgentSession.restore` → workspace resolve/update (TAM-D routes task-owned
+choices through `resolveTaskWorkspace` — the registry-mandated helper —
+WITHOUT dropping the persisted-session fallback: today's chain keeps
+`agentSession.getSessionData().workspacePath` ahead of `space.workspacePath`
+(:3588–3596), pinned by the existing "restored session keeps its own
+workspace" test; a bare `resolveTaskWorkspace(space, task)` returns the
+primary workspace and relocates the worker — the helper resolves the task's
+registered repository, the chain still prefers cached > explicit >
+session-persisted > resolved; the task-bound-secondary-workspace row lands
+with D1) → SYSTEM-PROMPT-ONLY
 refresh — `resolveCurrentNodeAgentInitForExecution` returns a full init but
 the path applies ONLY `currentInit.systemPrompt` (:3610–3612; applying the
 whole init would clobber persisted tool guards, skill overrides, and
@@ -275,7 +279,13 @@ target re-snapshot, delivery) runs between acquire and release, and release
 is registered as compensation — with the class supplying the lock HANDLE as a
 resource (ADR Decision 5); the pipeline never nests a runner inside the lock
 callback and never moves rehydration under the lock (pin
-rehydration-before-lock ordering). The terminal admission is ORIGIN-SENSITIVE: `resolveTerminalInjectionStatus`
+rehydration-before-lock ordering). Because `stagedRun` does NOT unwind
+compensations on a successful halt (`buildHaltAdapter` returns a completed
+outcome directly, staged-run.ts:446–470), completed locked arms such as
+`noop` and `defer` must reach an EXPLICIT release effect before halting — a
+compensation-only release would leave the reset-coordination lock held and
+block every later inject/reset for the session (pin release on the normal
+early outcomes). The terminal admission is ORIGIN-SENSITIVE: `resolveTerminalInjectionStatus`
 (:1858–1873) rejects a `done` task ONLY when `origin === 'system'` — human
 and task injections remain admissible on a done task while runtime-recovery
 injections are rejected; carry `origin` into BOTH the pre-lock and post-lock
@@ -303,8 +313,10 @@ pipeline nests the TAM-E runner. The old cascade's DELETION is owned by
 TAM-E4 (removal-only), which lands only after E2, E3, and F2 have converted
 every caller. Inside, the `decideInjectDelivery` decision
 (`noop`/`defer`/`clear_before_deliver`/`deliver_without_clear`) already exists;
-the arms are still imperative — message assembly (pure transform),
-`defer` arm (:3926–3942), clear-with-error-tolerance (:3943–3958 — the
+the arms are still imperative — message assembly (pure transform) preceded
+by `validateImageSizes` (:3869–3872) BEFORE any lookup, reopen, persist, or
+enqueue (oversized-image rejection leaves delivery state untouched — pin in
+TAM-PE), `defer` arm (:3926–3942), clear-with-error-tolerance (:3943–3958 — the
 pre-clear `hasActiveDeliveryJob` RE-READ (:3943–3946) is an effect-time
 concurrency guard, not the decide-snapshot fact from :3917: TAM-E1 must
 RE-GATHER immediately before the clear effect, and TAM-PE pins the
@@ -399,8 +411,8 @@ the catch compensation, so an unreleased reservation keeps consuming pool
 capacity until restart (pin the release). The fresh arm installs
 `onMissingMemberSpaceMcpServers` (:5025–5027) immediately after
 `createSubSession`, before attach and kickoff — keep it, or the worker
-cannot self-heal member Space tools. TAM-PF pins terminal transitions during
-BOTH nested reuse and genuinely fresh creation. Pins exist
+cannot self-heal member Space tools. The terminal-transition rows land with
+TAM-F1's protocol (TAM-PF keeps only surviving behavior). Pins exist
 (`task-agent-manager-post-approval.test.ts`).
 
 ### `deliver-space-agent-pending-row` — cluster 5, ~71 lines
@@ -423,7 +435,11 @@ stays in the class (handles/cancel are resources).
 ### `self-heal-node-agent` — cluster 17, ~142 lines
 
 `mcpSelfHeal` (:4185) splits today across an imperative prologue and a staged
-tail: resolve execution → parent task → space gates (:4191–4222), the
+tail: resolve execution → PARENT-TASK SELECTION by the same owner-resolution
+order as cluster 14 (session-derived task ID + `findParentTaskIdForSubSession`
+before any fallback, :4199–4209 — in a multi-task run the first row is the
+wrong owner; pin the non-first-owner case in TAM-PS) → space gates
+(:4191–4222), the
 displaced-session adoption branch (:4225–4250), then the inline
 `self-heal-workspace` `stagedRun` (:4252–4325). One direct pipeline composes
 the whole operation — prologue gates and adoption as admission/effect stages
@@ -433,9 +449,11 @@ at their class-owned boundary. Three fences: (a) the prologue's
 `resolveNodeExecutionForSubSession` call (:4191) performs the same
 unconditional binding repair as cluster 14 — TAM-S1 uses the FENCED helper
 or depends on the slice that lands it; (b) the heal workspace resolution must
-route through `resolveTaskWorkspace` instead of preserving the hand-rolled
-cached/explicit/session/primary fallback (:4271–4279), or a secondary
-registered repository heals against the primary checkout (pin the case); (c)
+route task-owned choices through `resolveTaskWorkspace` instead of preserving
+the hand-rolled cached/explicit/session/primary fallback (:4271–4279) —
+without dropping the persisted-session preference (as in cluster 14), or a
+secondary registered repository heals against the primary checkout (pin the
+case); (c)
 adoption executes at a manager-owned PRE-HEAL boundary BEFORE the heal
 stages run — `reinjectNodeAgentMcpServer` restarts the target, so the
 displaced instance must already be detached and the target's hooks installed
@@ -481,10 +499,10 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-PB | Pins for `createSubSession` reuse/fresh arms restricted to SURVIVING behavior: cold-cache reuse via `rehydrateSubSession` (successful AND failed — the fall-through to fresh creation), narrow compensation, `deferFreshExecutionBind` scope (fresh-arm bind + both arms' flush suppressed; reuse CAS unaffected), fresh-arm registration-before-stream ordering, fresh-arm hook ordering before stream, detached-flush rejection — the session-owner guards' and stale-binding-resolution rows land with TAM-B1's primitive, never here | test-only | 0 | ≲110 | — |
 | TAM-PC | Pins for `restorePostApprovalWorkerSession`: refusal rows (missing task, detached task, task `cancelled`/`archived`, run `cancelled`, missing space), cooldown THROW outcome + pre-restore ordering, no-completion-callback, pre-stream registration + sanitizer ordering, cached-session ownership (register/compensate only when this operation created the session), concurrent-restore in-lock re-gather | test-only | 0 | ≲90 | — |
 | TAM-PD | Pins for `rehydrateSubSession` restricted to SURVIVING behavior: refusal-gate ordering (archived row BEFORE the repair, which is unconditional today), `done` admissibility, multi-task owner-resolution identity row, system-prompt-only overlay, current workspace-fallback characterization, hooks + sanitizer pre-stream ordering — the fenced-repair and `resolveTaskWorkspace` routing land with TAM-D1, never here | test-only | 0 | ≲100 | — |
-| TAM-PE | Pins for the complete injection operation: origin-sensitive done admission (done + system rejected, done + human admissible) in BOTH pre-lock and post-lock predicates, outer admissions + post-lock terminal recheck, cancellation passthrough, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
+| TAM-PE | Pins for the complete injection operation: origin-sensitive done admission (done + system rejected, done + human admissible) in BOTH pre-lock and post-lock predicates, oversized-image rejection leaving delivery state untouched, outer admissions + post-lock terminal recheck, cancellation passthrough, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
 | TAM-PF | Pins for `spawnPostApprovalSubSession` restricted to SURVIVING current behavior: reuse/fresh arms, fresh-arm task-ownership re-snapshot preceding all creation effects (:4923–4927), cold-cache reuse via the nested create result, member-space self-heal hook installation — the terminal-recheck/skip/race contract lands with TAM-F1's protocol, never here | test-only | 0 | ≲90 | — |
 | TAM-PG | Pins for `deliverSpaceAgentPendingRow` restricted to SURVIVING current outcomes: settlement/error behavior AS IT BEHAVES TODAY, injector-rejection locality (later rows still delivered), near-expiry deferral cases — the status-safe race contract CANNOT land here (the primitive arrives with TAM-G) | test-only | 0 | ≲60 | — |
-| TAM-PS | Pins for `mcpSelfHeal`: admissions, displaced-session adoption, adoption-before-restart and heal ordering | test-only | 0 | ≲80 | — |
+| TAM-PS | Pins for `mcpSelfHeal`: admissions incl. multi-task owner resolution (non-first-owner case), displaced-session adoption, adoption-before-restart and heal ordering | test-only | 0 | ≲80 | — |
 | TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin) | build | ≲250 | ≲250 | TAM-PB |
 | TAM-B3 | Split the spawn flow's `createSpawnedSession` dependency (a single `Promise<string>` seam, spawn-flow.ts :281) into preparation inputs + the create stage group, and compose those stages into the owning stage list — the interface CHANGE is the point: with the monolithic seam unchanged, B3 could only keep the imperative call or nest the B1 runner after B2. LANDS BEFORE TAM-B2 so no intermediate PR leaves every spawn nesting the B1 runner via the still-imperative `createSubSession` | wire | ≲90 | ≲90 | TAM-B1 |
 | TAM-B2 | Delegate the `createSubSession` method body to the B1 pipeline (the last caller-side transition); the B1 create STAGE GROUP and its created/reused outcome are EXPORTED for direct composition (no runner nesting); the public `Promise<string>` return and both in-file caller signatures stay | wire | ≲70 | ≲60 | TAM-B1, TAM-B3 |
