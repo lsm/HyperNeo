@@ -10350,17 +10350,21 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     const { service, received } = setupExternalEventService(db);
     const requests: Array<{ path: string; ifNoneMatch?: string }> = [];
     const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
-      const path = new URL(String(url)).pathname;
-      const headers = init?.headers as Record<string, string> | undefined;
-      requests.push({ path, ifNoneMatch: headers?.['If-None-Match'] });
+      const href =
+        typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+      const path = new URL(href).pathname;
+      const ifNoneMatch = init?.headers
+        ? (new Headers(init.headers).get('If-None-Match') ?? undefined)
+        : undefined;
+      requests.push({ path, ifNoneMatch });
       if (path.endsWith('/issues/comments')) {
-        if (headers?.['If-None-Match'] === 'W/"ic-etag"') {
+        if (ifNoneMatch === 'W/"ic-etag"') {
           return new Response(null, { status: 304 });
         }
         return pollingResponseWithHeaders([], { ETag: 'W/"ic-etag"' });
       }
       if (path.endsWith('/pulls/comments')) {
-        if (headers?.['If-None-Match'] === 'W/"rc-etag"') {
+        if (ifNoneMatch === 'W/"rc-etag"') {
           return new Response(null, { status: 304 });
         }
         return pollingResponseWithHeaders([], { ETag: 'W/"rc-etag"' });
@@ -10410,9 +10414,11 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     const { service, received } = setupExternalEventService(db);
     const calls: string[] = [];
     const fetchImpl = (async (url: string | URL | Request) => {
-      const path = new URL(String(url)).pathname;
+      const href =
+        typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+      const path = new URL(href).pathname;
       calls.push(path);
-      if (path.endsWith('/issues/comments')) {
+      if (path.endsWith('/issues/comments') && path.includes('/acme/widgets/')) {
         return new Response(JSON.stringify({ message: 'rate limit exceeded' }), {
           status: 403,
           headers: {
@@ -10438,10 +10444,17 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       repo: 'widgets',
       pollingEnabled: true,
     });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'gizmos',
+      pollingEnabled: true,
+    });
 
     const count = await extension.pollOnce(fetchImpl);
     expect(count).toBe(0);
     expect(calls.filter((p) => p.endsWith('/issues/comments')).length).toBe(1);
+    expect(calls.some((p) => p.includes('/gizmos/'))).toBe(false);
     expect((extension as unknown as { rateLimitedUntil: number }).rateLimitedUntil).toBeGreaterThan(
       Date.now() + 60_000
     );
@@ -10450,29 +10463,32 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
 
   test('getNextPollDelayMs boundaries', async () => {
     const db = setupDb();
-    const running = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000 });
+    const running = new GitHubEventExtension(db, 'token', { pollIntervalMs: 30_000 });
     activeExtension = running;
     expect(
       (running as unknown as { getNextPollDelayMs: () => number | null }).getNextPollDelayMs()
-    ).toBe(60_000);
+    ).toBe(30_000);
 
     const ext = running as unknown as {
       rateLimitedUntil: number;
       rateLimitedFromRetryAfter: boolean;
     };
-    ext.rateLimitedUntil = Date.now() + 30_000;
+    const deadline = Date.now() + 45_000;
+    ext.rateLimitedUntil = deadline;
     ext.rateLimitedFromRetryAfter = true;
-    expect(
-      (running as unknown as { getNextPollDelayMs: () => number | null }).getNextPollDelayMs()
-    ).toBe(60_000);
+    const fromRetryAfter = (
+      running as unknown as { getNextPollDelayMs: () => number | null }
+    ).getNextPollDelayMs() as number;
+    expect(fromRetryAfter).toBeGreaterThan(40_000);
+    expect(fromRetryAfter).toBeLessThanOrEqual(45_000);
 
     ext.rateLimitedFromRetryAfter = false;
-    ext.rateLimitedUntil = Date.now() + 120_000;
+    ext.rateLimitedUntil = deadline;
     const fromReset = (
       running as unknown as { getNextPollDelayMs: () => number | null }
     ).getNextPollDelayMs() as number;
-    expect(fromReset).toBeGreaterThan(115_000);
-    expect(fromReset).toBeLessThan(125_000);
+    expect(fromReset).toBeGreaterThanOrEqual(60_000);
+    expect(fromReset).toBeLessThanOrEqual(60_000);
 
     const disabled = new GitHubEventExtension(db, 'token', { pollIntervalMs: 0 });
     expect(
