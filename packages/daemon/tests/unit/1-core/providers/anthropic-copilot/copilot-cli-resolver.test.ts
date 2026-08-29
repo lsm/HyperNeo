@@ -1,4 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   getCopilotCliBinaryName,
   getCopilotPlatformPackageName,
@@ -8,6 +11,7 @@ import {
 
 describe('copilot-cli-resolver', () => {
   const originalEnv = process.env.COPILOT_CLI_PATH;
+  let tmpDir = '';
 
   beforeEach(() => {
     _resetForTesting();
@@ -20,6 +24,12 @@ describe('copilot-cli-resolver', () => {
       process.env.COPILOT_CLI_PATH = originalEnv;
     } else {
       delete process.env.COPILOT_CLI_PATH;
+    }
+    if (tmpDir) {
+      try {
+        rmSync(tmpDir, { recursive: true, force: true });
+      } catch {}
+      tmpDir = '';
     }
   });
 
@@ -43,10 +53,25 @@ describe('copilot-cli-resolver', () => {
     }
   });
 
-  it('respects COPILOT_CLI_PATH if set to a valid existing binary', () => {
+  it('respects COPILOT_CLI_PATH if set to a valid existing binary in process.env', () => {
     process.env.COPILOT_CLI_PATH = process.execPath;
     _resetForTesting();
     expect(resolveCopilotCliPath()).toBe(process.execPath);
+  });
+
+  it('prioritizes provider-scoped env override over process.env', () => {
+    process.env.COPILOT_CLI_PATH = '/tmp/nonexistent-path-1';
+    _resetForTesting();
+    const customEnv = { COPILOT_CLI_PATH: process.execPath };
+    expect(resolveCopilotCliPath(customEnv)).toBe(process.execPath);
+  });
+
+  it('accepts valid symlinked executable paths in COPILOT_CLI_PATH', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'copilot-symlink-test-'));
+    const symlinkPath = join(tmpDir, 'copilot-link');
+    symlinkSync(process.execPath, symlinkPath);
+
+    expect(resolveCopilotCliPath({ COPILOT_CLI_PATH: symlinkPath })).toBe(symlinkPath);
   });
 
   it('ignores COPILOT_CLI_PATH when pointing to non-existent path', () => {

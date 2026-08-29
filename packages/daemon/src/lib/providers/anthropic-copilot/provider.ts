@@ -901,7 +901,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       }
       let client: CopilotClient;
       try {
-        const cliPath = resolveCopilotCliPath();
+        const cliPath = resolveCopilotCliPath(env);
         client = new CopilotClient({
           ...(cliPath ? { cliPath } : {}),
           useStdio: true,

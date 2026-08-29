@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -92,20 +92,19 @@ export function _resetForTesting(): void {
   cachedCopilotCliPath = undefined;
 }
 
-export function resolveCopilotCliPath(): string | undefined {
-  if (cachedCopilotCliPath === '') return undefined;
-  if (cachedCopilotCliPath !== undefined) return cachedCopilotCliPath;
-
-  const envPath = process.env.COPILOT_CLI_PATH;
+export function resolveCopilotCliPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const envPath = env.COPILOT_CLI_PATH;
   if (envPath && existsSync(envPath)) {
     try {
-      const stat = lstatSync(envPath);
+      const stat = statSync(envPath);
       if (stat.isFile() && stat.size > 0) {
-        cachedCopilotCliPath = envPath;
-        return cachedCopilotCliPath;
+        return envPath;
       }
     } catch {}
   }
+
+  if (cachedCopilotCliPath === '') return undefined;
+  if (cachedCopilotCliPath !== undefined) return cachedCopilotCliPath;
 
   const nodeModulesPath = resolveFromNodeModules();
   if (nodeModulesPath) {
