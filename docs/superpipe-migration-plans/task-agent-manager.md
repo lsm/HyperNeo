@@ -33,7 +33,7 @@ matches. No migration work remains there.
 | 6 | Injection wrappers, terminal gate, locks | 1734–1915 (~182) | Terminal gate reusable; locks stay |
 | 7 | Lookups, worker identity, provenance readers | 1917–2168 (~252) | Plain helpers (extract module, optional) |
 | 8 | Post-approval worker restore | 2170–2344 (~175) | **Pipeline: `restore-post-approval-worker`** |
-| 9 | Activation routing | 2346–2550 (~205) | **Pipeline: `activate-agent-for-message`** |
+| 9 | Activation routing | 2346–2550 (~205) | Owned by `space-runtime-tools-goals.md` P48–P50 |
 | 10 | Getters + `syncLiveSessionWorkspace` | 2552–2745 (~194) | Already a `stagedRun` (exemplar) |
 | 11 | Stop/resume/cancel/cleanup lifecycle | 2748–3076 (~329) | Core migrated (`runVerifiedStopFlow`); bookkeeping stays |
 | 12 | Completion callbacks + handlers | 3078–3196 (~119) | Stays (subscription state machine) |
@@ -81,45 +81,52 @@ with expected statuses derived from `SPAWN_BINDABLE_EXECUTION_STATUSES` — NOT
 `buildSpawnExecutionFlowDeps` closures, not an exported API; the
 expected-status derivation duplicated here (:1145–1157, :1344–1356) may become
 a small plain helper inside the build slice, not a combinator. Risk: the stale
-co-owner cascade preserves `blocked/cancelled/waiting_rebind/pending` rows
-via blind `update` — keep the per-status branch order byte-for-byte in the
-extract.
+co-owner cascade (:1167–1197) reads executions via `listByWorkflowRun` then
+writes them with a blind `update` — ADR 0004 bans blind read-modify-write
+inside stages, so the build slice must resolve the write first: an
+expected-status CAS primitive, or the effect stays in the class. The
+per-status branch OUTCOMES are preserved; the blind write itself is not.
 
 ### `restore-post-approval-worker` — cluster 8, ~175 lines
 
 `performPostApprovalWorkerRestore` (:2184): refusal gates (archived task/run,
-cooldown → throw), cached-or-`AgentSession.restore`, slot match, optional
-slot-init overlay, MCP merge, `ensureNodeAgentAttached`, register + callbacks,
-stream + replay with unregister compensation (:2320–2331), detached flush. Fit:
-strong `stagedRun`. The identity resolution half (:2070–2168) stays plain
-helpers (raw-SQL provenance/durable-id/cooldown readers).
+cooldown → throw), cached-or-`AgentSession.restore`, slot match (a finite
+configuration selection — a pure stage, not a loop to preserve), optional
+slot-init overlay, MCP merge, `ensureNodeAgentAttached`, index/register with
+class-owned callback attachment at the lifecycle boundary, stream + replay
+with unregister compensation (:2320–2331), detached flush. Fit: strong
+`stagedRun`. The workspace update here (:2246–2248) writes metadata only —
+NO node-agent capture/restore pair; preserve that asymmetry. The identity
+resolution half (:2070–2168) stays plain helpers (raw-SQL
+provenance/durable-id/cooldown readers).
 
-### `activate-agent-for-message` — cluster 9, ~139 lines
+### `activate-agent-for-message` — cluster 9, ~139 lines — OWNED BY SIBLING PLAN
 
-`activateTargetSessionsForMessage` (:2346) makes three sequential
-`decideActivationRouting` calls (existing plain-fn brick in
-`activation-routing.ts`) with effects between them: resume attempt, existing
-reset CAS branch (:2378–2393), undeclared gate, node activation via
-ChannelRouter, gather task/run/workflow/space/execution, then spawn with a
-30 s timeout race, superseded swallow, and post-spawn pending requeue. Fit:
-strong `stagedRun` — the three decision calls become the decide stage group;
-the timeout race and detached requeue stay effect stages. Risks: the timeout
-`Promise.race` leaks the spawn promise intentionally (fire-and-forget requeue);
-tests `task-agent-manager-activation-timeout.test.ts` pin it.
+`activateTargetSessionsForMessage` (:2346) is measured here for completeness,
+but its migration is already assigned, slice by slice, to
+`space-runtime-tools-goals.md` P48–P50: the P48 pins, the P49 unwired
+`activation-routing-pipeline.ts` carrying the complete effect inventory
+(resume-before-classification snapshot, stale-index cleanup before the reset
+CAS, `reopenReason`/`reopenBy` forwarding, the bounded 30 s spawn race), and
+the P50 TaskAgentManager wiring. This epic contributes nothing to it —
+executing both plans would produce two competing pipelines for one operation —
+so the ladder below carries no activation slice.
 
 ### `rehydrate-sub-session` — cluster 14, ~215 lines
 
 `performSubSessionRehydrate` (:3486): six refusal gates (archived row, no
 execution, no parent task, terminal task, no space, cancelled run) → cached or
 `AgentSession.restore` → workspace resolve/update → init overlay → MCP merge →
-attach → register + completion callback → stream + replay with bookkeeping
-compensation (:3675–3685) → detached flush. Fit: strong `stagedRun`. The outer
-`rehydrateSubSessionsForRun` (:3382) loop and `rehydrateInFlight` dedup/restore
-lock (:3466) stay in the class (loop + resource ownership, P6). Its tail
-(attach → register → stream+replay+compensate → flush) is shape-identical to
-cluster 8's — compose both directly; do NOT pre-extract a shared combinator
-until both exist (ADR 0004 ≈3-use rule; this is use 2 of the shape, with
-cluster 19 the 3rd).
+attach → index/register → stream + replay with bookkeeping compensation
+(:3675–3685) → detached flush. Completion-callback subscription stays
+class-owned (cluster 12 classification): the pipeline declares the outcome,
+the manager attaches/detaches callbacks at the lifecycle boundary. Fit:
+strong `stagedRun`. The outer `rehydrateSubSessionsForRun` (:3382) loop and
+`rehydrateInFlight` dedup/restore lock (:3466) stay in the class (loop +
+resource ownership, P6). Its tail (attach → register →
+stream+replay+compensate → flush) is shape-identical to cluster 8's — compose
+both directly; do NOT pre-extract a shared combinator until both exist
+(ADR 0004 ≈3-use rule; this is use 2 of the shape, with cluster 19 the 3rd).
 
 ### `deliver-injected-message` — cluster 15, ~184 lines
 
@@ -129,10 +136,13 @@ the complete path is still imperative — message assembly (pure transform),
 `defer` arm (:3926–3942), clear-with-error-tolerance (:3943–3958), the
 not-busy backlog-replay pre-delivery block with flip-to-deferred fallback
 (:3964–4017), then `deliverInjectedMessage`. Fit: strong mixed pipeline
-embedding the existing decision as its decide stage. **Coordination risk:**
-agent-routing.md's PRs own `message-delivery-pipeline.ts`; this slice owns the
-space-runtime consumer only — the shared decision function must not be edited
-by both plans. Per-message (not per-event) frequency, so pipeline overhead is
+composing `decideInjectDelivery`'s gate functions DIRECTLY as its decide stage
+group — never an invocation of the `decisionRun('message-inject-delivery')`
+runner as a nested sub-pipeline (one business path, one pipeline; the same
+direct-composition convention agent-routing.md applies to query-retry).
+**Coordination risk:** agent-routing.md's PRs own the gates in
+`message-delivery-pipeline.ts`; this slice embeds them read-only and must not
+fork them. Per-message (not per-event) frequency, so pipeline overhead is
 fine.
 
 ### `spawn-post-approval-worker` — cluster 19, ~239 lines
@@ -183,16 +193,14 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| TAM-P | Pins: characterization for clusters 4/8/9/14/15/19 arms not covered by the 24 existing `5-space/runtime` TAM suites (gap-measure first) | test-only | 0 | ≲400 | — |
-| TAM-A1 | `activate-agent-for-message` stagedRun, unwired (decision stage group + timeout/requeue effect stages) | build | ≲180 | ≲150 | TAM-P |
-| TAM-A2 | Wire `activateTargetSessionsForMessage` (RPC handlers + `AgentMessageRouter` call sites) | wire | ≲40 | ≲50 | TAM-A1 |
-| TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations) | build | ≲250 | ≲250 | TAM-P |
-| TAM-B2 | Wire `createSubSession` call sites (spawn deps, post-approval, RPC) | wire | ≲80 | ≲60 | TAM-B1 |
+| TAM-P | Pins: characterization for clusters 4/8/14/15/19 arms, gap-measured against the existing suites in BOTH `5-space/runtime` (9 `task-agent-manager*` files plus the spawn/pending/injection brick suites) and `5-space/agent` (7 more, incl. spawn-admission/spawn-cas/spawn-flow, post-approval-*, cancel) | test-only | 0 | ≲400 | — |
+| TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + resolved stale-owner write) | build | ≲250 | ≲250 | TAM-P |
+| TAM-B2 | Delegate the `createSubSession` method body to the B1 pipeline (its only two callers — spawn-flow deps and post-approval, both in-file — stay unchanged) | wire | ≲50 | ≲60 | TAM-B1 |
 | TAM-C1 | `restore-post-approval-worker` stagedRun, unwired | build | ≲180 | ≲150 | TAM-P |
 | TAM-C2 | Wire `restorePostApprovalWorkerSession` | wire | ≲40 | ≲50 | TAM-C1 |
 | TAM-D1 | `rehydrate-sub-session` stagedRun, unwired | build | ≲220 | ≲200 | TAM-P |
 | TAM-D2 | Wire `rehydrateSubSession` | wire | ≲40 | ≲50 | TAM-D1 |
-| TAM-E1 | `deliver-injected-message` pipeline over `decideInjectDelivery`, unwired (coordinate boundary with agent-routing plan) | build | ≲170 | ≲180 | TAM-P |
+| TAM-E1 | `deliver-injected-message` pipeline composing `decideInjectDelivery`'s gates directly (coordinate boundary with agent-routing plan) | build | ≲170 | ≲180 | TAM-P |
 | TAM-E2 | Wire `injectMessageIntoSession` | wire | ≲50 | ≲60 | TAM-E1 |
 | TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired | build | ≲200 | ≲180 | TAM-B2 (createSubSession contract settled) |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
@@ -202,16 +210,21 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 Construction and integration do not share a PR: every build slice lands as
 additive dead code pinned by per-stage tests, and its wire slice is a
 single-family call-site swap; TAM-G is the one combined slice and stays within
-the trivial build+wire exception. After TAM-B2/D2/F2 land, the reuse-vs-fresh
-stagedRun shape has 3 direct uses (spawn-flow, create, post-approval) + 2
-close cousins (rehydrate, restore) — a follow-up MAY propose a combinator per
-ADR 0004's ≈3-use rule; never before.
+the trivial build+wire exception. Cluster 9 (activation) carries NO slice
+here — `space-runtime-tools-goals.md` P48–P50 already own its pins, unwired
+pipeline, and wiring; this epic defers to them. After TAM-B2/D2/F2 land, the
+reuse-vs-fresh stagedRun shape has 3 direct uses (spawn-flow, create,
+post-approval) + 2 close cousins (rehydrate, restore) — a follow-up MAY
+propose a combinator per ADR 0004's ≈3-use rule; never before.
 
 ## Cross-cutting ADR-0004 risks
 
-1. **Loop bodies, not loops** — every `for` in this file iterates durable rows
-   or sessions; migrating a loop into a pipeline would violate the fold/state
-   machine exclusion.
+1. **Two loop kinds** — loops over durable rows/sessions (the drain rows, the
+   rehydrate executions, the archive/cleanup sessions) are folds owned by the
+   class: only bodies may compose. Finite configuration selections (cluster
+   8's slot match :2219–2229, cluster 19's node/slot scan :4844–4853) are not
+   folds — they compose as pure selection stages/helpers inside their
+   pipelines.
 2. **Hot-path discipline** — activity tracking and message injection are
    per-event/per-message; decide stages must stay synchronous where coupled to
    the run tick, and `recordActivityForSession` stays inline.
@@ -220,23 +233,26 @@ ADR 0004's ≈3-use rule; never before.
    current throw/return split per caller (spawn wrapper throws; activation
    swallows and returns `[]`).
 4. **Compensation duplication** — the workspace-migration capture/restore pair
-   appears four times (clusters 4, 8, 10, 19). Until a combinator is justified,
-   each pipeline registers its own single compensation; do not share mutable
-   capture state across stages.
+   appears four times (clusters 4, 10, 17, 19; cluster 8's restore writes
+   workspace metadata only, with no pair — preserve that asymmetry). Until a
+   combinator is justified, each pipeline registers its own single
+   compensation; do not share mutable capture state across stages.
 5. **Blind-write hot spots** — stale co-owner release (cluster 4) and
    completion/error status writes (cluster 12 handlers) use `update`/`getBy…`
-   read-modify-write; extraction must not silently upgrade or downgrade their
-   atomicity — flag, don't fix, in these slices.
-6. **Boundary with agent-routing.md** — `decideInjectDelivery`,
+   read-modify-write; ADR 0004 bans carrying them into stages as-is. Each
+   slice that touches one must resolve it up front — expected-status CAS, or
+   the effect stays in the class — never silently preserving or altering the
+   atomicity.
+6. **Boundary with agent-routing.md** — `decideInjectDelivery`'s gates,
    `injection-delivery-steps.ts`, and the agent-layer delivery pipelines are
-   owned by that plan; TAM slices consume them read-only.
+   owned by that plan; TAM-E1 embeds the gate functions directly — no nested
+   runner invocation, no forking.
 
 ## Open questions
 
-1. Does `activateTargetSessionsForMessage`'s timeout race belong inside the
-   pipeline (an effect stage racing the spawn stage) or stay a wrapper
-   concern? Recommendation: inside, as the current log/return-`[]` contract is
-   path behavior.
+1. For TAM-B1's stale-owner write (risk 5): expected-status CAS primitive, or
+   the effect stays class-owned? Recommendation: the CAS primitive — the
+   `mustPreserve` branch set is small and stable.
 2. Should cluster 18's builder split (TAM-H-adjacent) be in this epic at all,
    or a separate maintainability epic? It is not superpipe work.
 3. Are the `legacyWorkflowRoute*` fallbacks in cluster 7 still load-bearing,
