@@ -170,11 +170,13 @@ describe('reevaluate-context-budget pipeline', () => {
     const liveTrackerInfo: { current: ContextInfo | null } = { current: trackerInfo };
     const enqueue = mock(async () => 'compact-id');
     const removePendingInternalCompactions = mock(() => 0);
+    const clearEpoch = { value: 0 };
     const messageQueue = {
       enqueue,
       removePendingInternalCompactions,
       hasOutstandingInternalCompaction: mock(() => false),
       isRunning: mock(() => false),
+      getClearEpoch: () => clearEpoch.value,
     };
     const contextTracker = {
       getContextInfo: () => liveTrackerInfo.current,
@@ -198,7 +200,7 @@ describe('reevaluate-context-budget pipeline', () => {
       resumePendingWork: mock(() => {}),
       clearPendingResume: mock(() => {}),
     };
-    return { input, enqueue, removePendingInternalCompactions, liveTrackerInfo };
+    return { input, enqueue, removePendingInternalCompactions, liveTrackerInfo, clearEpoch };
   }
 
   it('enqueues a dormant compaction through the enforcement pipeline on a stopped queue', async () => {
@@ -246,5 +248,18 @@ describe('reevaluate-context-budget pipeline', () => {
     const outcome = await runContextBudgetReevaluation(input);
     expect(outcome.compactionEnqueued).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('aborts when a user interrupt clears the queue during resolution', async () => {
+    const { input, enqueue, removePendingInternalCompactions, clearEpoch } = reevaluationHarness(
+      async () => {
+        clearEpoch.value += 1;
+        return { id: 'switched-model', contextWindow: 1_000_000 };
+      }
+    );
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(removePendingInternalCompactions).not.toHaveBeenCalled();
   });
 });

@@ -142,6 +142,7 @@ export interface ContextBudgetReevaluationCtx {
   clearPendingResume: () => void;
   fenceModel: string;
   fenceProvider: string | undefined;
+  queueClearEpochAtStart: number;
   supersededQueued: boolean;
   modelInfo: ModelInfo | null;
   compactionEnqueued: boolean;
@@ -149,7 +150,12 @@ export interface ContextBudgetReevaluationCtx {
 
 export type ContextBudgetReevaluationInput = Omit<
   ContextBudgetReevaluationCtx,
-  'fenceModel' | 'fenceProvider' | 'supersededQueued' | 'modelInfo' | 'compactionEnqueued'
+  | 'fenceModel'
+  | 'fenceProvider'
+  | 'queueClearEpochAtStart'
+  | 'supersededQueued'
+  | 'modelInfo'
+  | 'compactionEnqueued'
 >;
 
 export function revokeSupersededCompactions(
@@ -218,6 +224,8 @@ const runReevaluateContextBudget = (
       ctx.session.config.model !== ctx.fenceModel ||
       ctx.session.config.provider !== ctx.fenceProvider,
     modelInfoUnresolved: (ctx: ContextBudgetReevaluationCtx) => ctx.modelInfo === null,
+    queueClearedDuringEvaluation: (ctx: ContextBudgetReevaluationCtx) =>
+      ctx.messageQueue.getClearEpoch() !== ctx.queueClearEpochAtStart,
     resumeSettledElsewhere: (ctx: ContextBudgetReevaluationCtx) =>
       ctx.compactionEnqueued || ctx.messageQueue.hasOutstandingInternalCompaction(),
   })('reevaluate-context-budget') as PipelineAPI
@@ -226,6 +234,7 @@ const runReevaluateContextBudget = (
   .pipe(resolveReevaluationModelInfo, 'ctx', 'ctx')
   .pipe('!modelFenceChanged', 'ctx')
   .pipe('!modelInfoUnresolved', 'ctx')
+  .pipe('!queueClearedDuringEvaluation', 'ctx')
   .pipe(revokeSupersededCompactions, 'ctx', 'ctx')
   .pipe(runReevaluationEnforcement, 'ctx', 'ctx')
   .pipe('!resumeSettledElsewhere', 'ctx')
@@ -239,6 +248,7 @@ export function runContextBudgetReevaluation(
     ...input,
     fenceModel: input.session.config.model,
     fenceProvider: input.session.config.provider,
+    queueClearEpochAtStart: input.messageQueue.getClearEpoch(),
     supersededQueued: false,
     modelInfo: null,
     compactionEnqueued: false,
