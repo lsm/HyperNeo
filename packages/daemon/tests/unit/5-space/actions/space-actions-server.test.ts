@@ -612,6 +612,27 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries[0]).toMatchObject({ toolName: 'list_actions', spaceId: SPACE_ID });
   });
 
+  test('exempts the audit-log reader from self-audit', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      spaceId: SPACE_ID,
+      nodeConfig: {
+        ...stubNodeConfig,
+        myAgentName: 'coder-9',
+        mySessionId: 'session-9',
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as NodeAgentToolsConfig,
+    });
+    await dispatch(server, { name: 'list_audit_entries' });
+    expect(entries).toHaveLength(0);
+  });
+
   test('applies rate admission before foreign-target validation', async () => {
     const server = makeServer({
       spaceConfig: {

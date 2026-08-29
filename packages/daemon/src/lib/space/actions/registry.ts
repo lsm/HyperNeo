@@ -20,6 +20,7 @@ export interface ActionEntry<P> {
   readonly paramsSchema: z.ZodType<P>;
   readonly taskIdPreference?: ActionTaskIdPreference;
   readonly auditRedactKeys?: readonly string[];
+  readonly auditExempt?: boolean;
   readonly autonomyRequirement?: number | ActionAutonomyResolver<P>;
   readonly handler: (params: P) => Promise<unknown>;
 }
@@ -34,6 +35,7 @@ export interface ActionDefinition {
   readonly paramsSchema: z.ZodType<unknown>;
   readonly taskIdPreference?: ActionTaskIdPreference;
   readonly auditRedactKeys?: readonly string[];
+  readonly auditExempt?: boolean;
   readonly autonomyRequirement?: number | ErasedActionAutonomyResolver;
   readonly handler: ErasedActionHandler;
 }

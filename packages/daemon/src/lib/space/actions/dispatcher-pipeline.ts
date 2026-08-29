@@ -335,7 +335,7 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       return { ...ctx, outcome: deniedOutcome('invalid_params', message) };
     }
   }
-  if (ctx.deps.auditLogRepo && (ctx.isMutating || ctx.deps.auditReads)) {
+  if (ctx.deps.auditLogRepo && !action.auditExempt && (ctx.isMutating || ctx.deps.auditReads)) {
     try {
       const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
       for (const key of action.auditRedactKeys ?? []) {

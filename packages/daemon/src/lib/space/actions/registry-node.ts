@@ -322,6 +322,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
             description:
               'List MCP audit log entries for this space, optionally filtered by task or session.',
             paramsDoc: 'task_id?, session_id?, limit?, offset?',
+            auditExempt: true,
             paramsSchema: ListAuditEntriesSchema,
             handler: handlers.list_audit_entries,
           }),
