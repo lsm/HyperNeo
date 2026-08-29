@@ -10210,6 +10210,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     expect(received).toHaveLength(1);
     expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.status_failure');
     expect(received[0].payload.sha).toBe('abc123');
+    expect(fetchCalls.some((u) => u.includes('/commits/abc123/pulls'))).toBe(true);
   });
 
   test('deployment_status webhook falls back to nested deployment_status.deployment when top-level deployment is missing', async () => {
@@ -10306,6 +10307,9 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
   test('handleWebhook publishes matching events to every enabled space that shares the repository secret', async () => {
     const db = setupDb();
     db.prepare(
+      `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-3', 'space-3', 'Space 3', '/tmp-3', 'active', 1, 1)`
+    ).run();
+    db.prepare(
       `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-2', 'space-2', 'Space 2', '/tmp-2', 'active', 1, 1)`
     ).run();
     db.prepare(
@@ -10332,6 +10336,12 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       repo: 'widgets',
       webhookSecret: 'secret',
     });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-3',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'not-secret',
+    });
 
     const payload = payloadFor('issue_comment');
     const raw = JSON.stringify(payload);
@@ -10343,6 +10353,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     expect(await response.json()).toMatchObject({ spaces: 2 });
     expect(received).toHaveLength(2);
     expect(new Set(received.map((event) => event.spaceId)).size).toBe(2);
+    expect(received.some((event) => event.spaceId === 'space-3')).toBe(false);
   });
 
   test('pollWatchedRepo reuses ETags and skips unchanged issue and review comment endpoints', async () => {
@@ -10407,6 +10418,10 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     expect(issueRequests[1]?.ifNoneMatch).toBe('W/"ic-etag"');
     expect(reviewRequests[1]?.ifNoneMatch).toBe('W/"rc-etag"');
     expect(received).toHaveLength(0);
+
+    const finalRepo = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
+    expect(finalRepo.pollCursor?.etags?.issue_comments).toBe('W/"ic-etag"');
+    expect(finalRepo.pollCursor?.etags?.review_comments).toBe('W/"rc-etag"');
   });
 
   test('pollOnce returns count 0 and stops the cycle when rate limited', async () => {
