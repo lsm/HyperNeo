@@ -3567,7 +3567,7 @@ export class SpaceRuntime {
     const staleSupersedeRetryCounts = Array.from(this.digestSupersedeRetryCounts.entries());
     const stalePullTriggers = Array.from(this.digestPullTriggers.entries());
     const staleRateLimits = Array.from(this.externalEventRateLimits.entries());
-    const pendingRenders = Array.from(this.renderPendingDigestQueues.entries());
+    const pendingRenders = Array.from(this.renderPendingDigestQueues.values());
     const renderDrainMs = parsePositiveIntegerEnv(
       'HYPERNEO_EXTERNAL_EVENT_RENDER_DRAIN_MS',
       30_000
@@ -3580,16 +3580,11 @@ export class SpaceRuntime {
         );
         resolve();
       }, renderDrainMs);
-      Promise.all(pendingRenders.map(([, render]) => render.catch(() => null))).then(() => {
+      Promise.all(pendingRenders.map((render) => render.catch(() => null))).then(() => {
         clearTimeout(deadline);
         resolve();
       });
     });
-    for (const [sessionId, render] of pendingRenders) {
-      if (this.renderPendingDigestQueues.get(sessionId) === render) {
-        this.renderPendingDigestQueues.delete(sessionId);
-      }
-    }
     for (const [key, timer] of staleSupersedeRetryTimers) {
       if (this.digestSupersedeRetryTimers.get(key) === timer) {
         clearTimeout(timer);
@@ -4587,7 +4582,17 @@ export class SpaceRuntime {
     if (this.config.taskAgentManager) {
       await this.config.taskAgentManager.rehydrate();
     }
-    await this.recoverPendingDeliveriesStrict(pausedSpaceIds);
+    try {
+      await this.recoverPendingDeliveriesStrict(pausedSpaceIds);
+    } catch (err) {
+      log.error(
+        `SpaceRuntime: pending-delivery recovery during rehydration failed: ${formatCommandError(err)}`
+      );
+      const gate = this.currentReconciliation;
+      if (gate && !gate.settled) {
+        this.settleReconciliation(gate, true);
+      }
+    }
   }
 
   private pruneDigestHandoffDebt(): void {

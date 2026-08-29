@@ -3255,11 +3255,12 @@ describe('SpaceRuntime external event subscriptions', () => {
       internals.restoreIdleSessionsOwningPendingDeliveries = originalRestore;
       const rt = runtime as unknown as { rehydrated: boolean };
       const recoverDeadline = Date.now() + 5000;
-      while (!rt.rehydrated && Date.now() < recoverDeadline) {
+      while (internals.currentReconciliation && Date.now() < recoverDeadline) {
         await runtime.executeTick().catch(() => {});
         await wait(20);
       }
       expect(rt.rehydrated).toBe(true);
+      expect(internals.currentReconciliation).toBeNull();
       expect(await runtime.renderPendingDigestForSession('session-cold-restore-recovered')).toEqual(
         {
           action: 'skip',
