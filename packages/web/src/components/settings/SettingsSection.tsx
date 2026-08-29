@@ -11,8 +11,8 @@ export function SettingsSection({ title, children, class: className }: SettingsS
   return (
     <div class={cn('space-y-3 pb-6', className)}>
       <div class="flex items-center gap-2 px-1">
-        <span class="h-4 w-1 rounded-full bg-blue-500/80" aria-hidden="true" />
-        <h3 class="text-xs font-semibold uppercase tracking-[0.16em] text-gray-400">{title}</h3>
+        <span class="h-4 w-1 rounded-full bg-accent/80" aria-hidden="true" />
+        <h3 class="text-xs font-semibold uppercase tracking-[0.16em] text-fg-muted">{title}</h3>
       </div>
       <div class="space-y-2">{children}</div>
     </div>
@@ -30,15 +30,15 @@ export function SettingsRow({ label, description, children, layout = 'inline' }:
   return (
     <div
       class={cn(
-        'rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3',
+        'rounded-lg border border-line bg-fill-soft px-4 py-3',
         layout === 'inline'
           ? 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4'
           : 'space-y-3'
       )}
     >
       <div class="flex-1 min-w-0">
-        <div class="text-sm font-medium text-gray-200">{label}</div>
-        {description && <div class="text-xs text-gray-500 mt-0.5">{description}</div>}
+        <div class="text-sm font-medium text-fg-soft">{label}</div>
+        {description && <div class="text-xs text-fg-faint mt-0.5">{description}</div>}
       </div>
       <div class={cn(layout === 'inline' ? 'flex-shrink-0' : 'min-w-0')}>{children}</div>
     </div>
@@ -59,8 +59,8 @@ export function SettingsSelect({ value, onChange, options, disabled }: SettingsS
       onChange={(e) => onChange((e.target as HTMLSelectElement).value)}
       disabled={disabled}
       class={cn(
-        'bg-dark-800 border border-white/[0.08] rounded-lg px-3 py-1.5 text-sm text-gray-200',
-        'focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500',
+        'bg-surface-raised border border-line rounded-lg px-3 py-1.5 text-sm text-fg-soft',
+        'focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent',
         'disabled:opacity-50 disabled:cursor-not-allowed',
         'min-w-[140px]'
       )}
@@ -91,9 +91,9 @@ export function SettingsToggle({ checked, onChange, disabled }: SettingsTogglePr
       class={cn(
         'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full',
         'transition-colors duration-200 ease-in-out',
-        'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-dark-950',
+        'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-bg',
         'disabled:opacity-50 disabled:cursor-not-allowed',
-        checked ? 'bg-blue-600' : 'bg-dark-700'
+        checked ? 'bg-accent-hover' : 'bg-fill-strong'
       )}
     >
       <span

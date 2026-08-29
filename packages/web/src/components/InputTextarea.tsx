@@ -2,7 +2,6 @@ import type { ComponentChildren } from 'preact';
 import type { MutableRef } from 'preact/hooks';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
-import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
 import ReferenceAutocomplete from './ReferenceAutocomplete.tsx';
 import MentionAutocomplete from './space/MentionAutocomplete.tsx';
@@ -155,10 +154,10 @@ export function InputTextarea({
       aria-label="Stop generation"
       data-testid="stop-button"
       class={cn(
-        'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60',
+        'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60',
         !disabled
-          ? 'bg-red-500/90 text-white hover:bg-red-600 active:scale-95'
-          : 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+          ? 'bg-danger/90 text-accent-fg hover:bg-danger active:scale-95'
+          : 'bg-fill-strong/50 text-fg-faint cursor-not-allowed'
       )}
     >
       <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
@@ -199,12 +198,12 @@ export function InputTextarea({
       <div
         class={cn(
           'relative rounded-3xl border transition-all',
-          transparent ? 'bg-transparent backdrop-blur-sm' : 'bg-dark-800/60 backdrop-blur-sm',
+          transparent ? 'bg-transparent backdrop-blur-sm' : 'bg-surface-raised/60 backdrop-blur-sm',
           disabled
-            ? borderColors.ui.disabled
+            ? 'border-line/30'
             : transparent
-              ? 'border-dark-600/80 focus-within:bg-dark-800/30'
-              : `${borderColors.ui.input} focus-within:bg-dark-800/80`
+              ? 'border-line-strong/80 focus-within:bg-surface-raised/30'
+              : 'border-line-strong focus-within:bg-surface-raised/80'
         )}
       >
         {leadingElement && !recordingBody && (
@@ -233,8 +232,8 @@ export function InputTextarea({
             maxLength={maxChars}
             rows={1}
             class={cn(
-              `block w-full ${textareaLeftPadding} ${textareaRightPadding} py-2.5 text-gray-100 resize-none bg-transparent`,
-              'placeholder:text-gray-500 text-base leading-normal',
+              `block w-full ${textareaLeftPadding} ${textareaRightPadding} py-2.5 text-fg resize-none bg-transparent`,
+              'placeholder:text-fg-faint text-base leading-normal',
               'focus:outline-none'
             )}
             style={{
@@ -248,7 +247,7 @@ export function InputTextarea({
           <div
             class={cn(
               'absolute top-1 right-14 text-xs',
-              charCount >= maxChars ? 'text-red-400' : 'text-gray-500'
+              charCount >= maxChars ? 'text-danger' : 'text-fg-faint'
             )}
           >
             {charCount}/{maxChars}
@@ -257,7 +256,7 @@ export function InputTextarea({
 
         {!recordingBody && refCount > 0 && (
           <div
-            class="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-gray-400"
+            class="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-fg-muted"
             data-testid="reference-badge"
           >
             <svg
@@ -300,10 +299,10 @@ export function InputTextarea({
                     aria-label="Queue for next turn"
                     data-testid="queue-button"
                     class={cn(
-                      'w-9 h-9 rounded-full border flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60',
+                      'w-9 h-9 rounded-full border flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
                       hasContent && !disabled
-                        ? 'border-blue-400/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 hover:text-blue-100 active:scale-95'
-                        : 'border-dark-700/40 bg-dark-700/50 text-gray-500 cursor-not-allowed'
+                        ? 'border-blue-400/30 bg-accent/10 text-accent-soft hover:bg-accent/20 hover:text-accent-soft active:scale-95'
+                        : 'border-line/40 bg-fill-strong/50 text-fg-faint cursor-not-allowed'
                     )}
                   >
                     <svg
@@ -336,9 +335,9 @@ export function InputTextarea({
                     'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2',
                     hasContent && !disabled
                       ? isAgentWorking
-                        ? 'bg-amber-400 text-dark-950 hover:bg-amber-300 active:scale-95 focus-visible:ring-amber-300/70'
-                        : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95 focus-visible:ring-blue-400/70'
-                      : 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+                        ? 'bg-warning text-bg hover:bg-warning active:scale-95 focus-visible:ring-warning/70'
+                        : 'bg-accent text-accent-fg hover:bg-accent-hover active:scale-95 focus-visible:ring-accent/70'
+                      : 'bg-fill-strong/50 text-fg-faint cursor-not-allowed'
                   )}
                 >
                   <svg

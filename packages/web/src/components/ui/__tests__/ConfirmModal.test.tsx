@@ -59,7 +59,7 @@ describe('ConfirmModal', () => {
           message="Message"
         />
       );
-      const modal = document.body.querySelector('.bg-dark-900');
+      const modal = document.body.querySelector('.bg-surface');
       expect(modal).toBeNull();
     });
 
@@ -183,7 +183,7 @@ describe('ConfirmModal', () => {
       );
       const buttons = document.body.querySelectorAll('button[type="button"]');
       const confirmButton = Array.from(buttons).find((btn) => btn.textContent === 'Confirm');
-      expect(confirmButton?.className).toContain('bg-red-600');
+      expect(confirmButton?.className).toContain('bg-danger');
     });
 
     it('should support danger variant explicitly', () => {
@@ -201,8 +201,8 @@ describe('ConfirmModal', () => {
       );
       const buttons = document.body.querySelectorAll('button[type="button"]');
       const confirmButton = Array.from(buttons).find((btn) => btn.textContent === 'Confirm');
-      expect(confirmButton?.className).toContain('bg-red-600');
-      expect(confirmButton?.className).toContain('hover:bg-red-700');
+      expect(confirmButton?.className).toContain('bg-danger');
+      expect(confirmButton?.className).toContain('hover:bg-danger');
     });
 
     it('should support primary variant', () => {
@@ -220,8 +220,8 @@ describe('ConfirmModal', () => {
       );
       const buttons = document.body.querySelectorAll('button[type="button"]');
       const confirmButton = Array.from(buttons).find((btn) => btn.textContent === 'Confirm');
-      expect(confirmButton?.className).toContain('bg-blue-600');
-      expect(confirmButton?.className).toContain('hover:bg-blue-700');
+      expect(confirmButton?.className).toContain('bg-accent-hover');
+      expect(confirmButton?.className).toContain('hover:bg-accent-hover');
     });
 
     it('should style cancel button consistently', () => {
@@ -238,7 +238,7 @@ describe('ConfirmModal', () => {
       );
       const buttons = document.body.querySelectorAll('button[type="button"]');
       const cancelButton = Array.from(buttons).find((btn) => btn.textContent === 'Cancel');
-      expect(cancelButton?.className).toContain('bg-dark-800');
+      expect(cancelButton?.className).toContain('bg-surface-raised');
     });
   });
 
@@ -414,7 +414,7 @@ describe('ConfirmModal', () => {
         />
       );
 
-      const backdrop = document.body.querySelector('.bg-black\\/70');
+      const backdrop = document.body.querySelector('.bg-scrim');
       backdrop?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       expect(onClose).toHaveBeenCalledTimes(1);
@@ -456,7 +456,7 @@ describe('ConfirmModal', () => {
           message="Message"
         />
       );
-      const modal = document.body.querySelector('.bg-dark-900');
+      const modal = document.body.querySelector('.bg-surface');
       expect(modal?.className).toContain('max-w-md');
     });
   });
@@ -493,7 +493,7 @@ describe('ConfirmModal', () => {
         />
       );
       const message = document.body.querySelector('p');
-      expect(message?.className).toContain('text-gray-300');
+      expect(message?.className).toContain('text-fg-soft');
       expect(message?.className).toContain('text-sm');
     });
 
@@ -511,7 +511,7 @@ describe('ConfirmModal', () => {
       );
       const buttons = document.body.querySelectorAll('button[type="button"]');
       const confirmButton = Array.from(buttons).find((btn) => btn.textContent === 'Confirm');
-      expect(confirmButton?.className).toContain('text-white');
+      expect(confirmButton?.className).toContain('text-accent-fg');
     });
   });
 

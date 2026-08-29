@@ -1,11 +1,10 @@
 import { contextPanelOpenSignal } from '../../lib/signals.ts';
-import { borderColors } from '../../lib/design-tokens.ts';
 
 export function MobileMenuButton() {
   return (
     <button
       onClick={() => (contextPanelOpenSignal.value = true)}
-      class={`md:hidden p-2 bg-dark-850 border ${borderColors.ui.default} rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0`}
+      class="md:hidden p-2 bg-surface-overlay border border-line rounded-lg hover:bg-surface-raised transition-colors text-fg-muted hover:text-fg flex-shrink-0"
       title="Open menu"
       aria-label="Open navigation menu"
     >

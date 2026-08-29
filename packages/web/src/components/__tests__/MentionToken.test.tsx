@@ -70,29 +70,29 @@ describe('MentionToken', () => {
     it('renders task mention with blue styling', () => {
       const { container } = render(<MentionToken mention={taskMention} />);
       const token = container.querySelector('[aria-label]');
-      expect(token?.className).toContain('bg-blue-500/15');
-      expect(token?.className).toContain('text-blue-300');
+      expect(token?.className).toContain('bg-accent/15');
+      expect(token?.className).toContain('text-accent-soft');
     });
 
     it('renders goal mention with purple styling', () => {
       const { container } = render(<MentionToken mention={goalMention} />);
       const token = container.querySelector('[aria-label]');
-      expect(token?.className).toContain('bg-purple-500/15');
-      expect(token?.className).toContain('text-purple-300');
+      expect(token?.className).toContain('bg-cat-purple/15');
+      expect(token?.className).toContain('text-cat-purple');
     });
 
     it('renders file mention with green styling', () => {
       const { container } = render(<MentionToken mention={fileMention} />);
       const token = container.querySelector('[aria-label]');
-      expect(token?.className).toContain('bg-green-500/15');
-      expect(token?.className).toContain('text-green-300');
+      expect(token?.className).toContain('bg-success/15');
+      expect(token?.className).toContain('text-success-soft');
     });
 
     it('renders folder mention with yellow styling', () => {
       const { container } = render(<MentionToken mention={folderMention} />);
       const token = container.querySelector('[aria-label]');
-      expect(token?.className).toContain('bg-yellow-500/15');
-      expect(token?.className).toContain('text-yellow-300');
+      expect(token?.className).toContain('bg-warning/15');
+      expect(token?.className).toContain('text-warning-soft');
     });
 
     it('renders a pill shape (rounded-full)', () => {

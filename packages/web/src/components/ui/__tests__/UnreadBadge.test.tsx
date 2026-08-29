@@ -41,6 +41,6 @@ describe('UnreadBadge', () => {
   it('uses a high-contrast blue background for the white count', () => {
     const { container } = render(<UnreadBadge count={1} />);
     const badge = container.querySelector('span');
-    expect(badge?.className).toContain('bg-blue-600');
+    expect(badge?.className).toContain('bg-accent-hover');
   });
 });

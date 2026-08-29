@@ -11,32 +11,32 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
 
   switch (state) {
     case 'connected':
-      dotColor = 'bg-green-500';
+      dotColor = 'bg-success';
       statusLabel = 'Connection ready';
       displayLabel = '';
       showPulse = true;
       break;
     case 'connecting':
-      dotColor = 'bg-yellow-500';
+      dotColor = 'bg-warning';
       statusLabel = 'Connecting';
       displayLabel = 'Connecting';
       showPulse = true;
       break;
     case 'reconnecting':
-      dotColor = 'bg-yellow-500';
+      dotColor = 'bg-warning';
       statusLabel = 'Reconnecting';
       displayLabel = 'Reconnecting';
       showPulse = true;
       break;
     case 'disconnected':
-      dotColor = 'bg-gray-500';
+      dotColor = 'bg-fg-faint';
       statusLabel = 'Connection offline';
       displayLabel = 'Offline';
       break;
     case 'error':
     case 'failed':
     default:
-      dotColor = 'bg-red-500';
+      dotColor = 'bg-danger';
       statusLabel = 'Connection error';
       displayLabel = 'Error';
       break;
@@ -60,9 +60,8 @@ export function DaemonStatusIndicator({ showLabel = false }: { showLabel?: boole
       aria-pressed={isConnected}
       class={`
 					${shouldShowLabel ? 'h-9 px-2.5 gap-2' : 'h-9 w-9'}
-					flex items-center justify-center rounded-lg text-sm text-gray-400
-					transition-colors
-					${canReconnect ? 'cursor-pointer hover:bg-dark-800' : 'cursor-default'}
+					flex items-center justify-center rounded-lg text-sm text-fg-muted transition-colors
+					${canReconnect ? 'cursor-pointer hover:bg-surface-raised' : 'cursor-default'}
 			`}
       title={statusLabel}
     >

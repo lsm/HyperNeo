@@ -27,10 +27,10 @@ interface UsageData {
 
 function StatCard({ label, value, subtext }: { label: string; value: string; subtext?: string }) {
   return (
-    <div class="bg-white/[0.025] border border-white/[0.08] rounded-lg p-4">
-      <div class="text-xs text-gray-400 mb-1">{label}</div>
-      <div class="text-xl font-semibold text-gray-100">{value}</div>
-      {subtext && <div class="text-xs text-gray-500 mt-1">{subtext}</div>}
+    <div class="bg-fill-soft border border-line rounded-lg p-4">
+      <div class="text-xs text-fg-muted mb-1">{label}</div>
+      <div class="text-xl font-semibold text-fg">{value}</div>
+      {subtext && <div class="text-xs text-fg-faint mt-1">{subtext}</div>}
     </div>
   );
 }
@@ -40,15 +40,15 @@ function CostBar({ maxCost, entry }: { maxCost: number; entry: SessionCostEntry 
   return (
     <div class="flex items-center gap-3 py-1.5">
       <div class="flex-1 min-w-0">
-        <div class="text-xs text-gray-300 truncate">{entry.title}</div>
-        <div class="mt-1 h-2 bg-dark-700 rounded-full overflow-hidden">
+        <div class="text-xs text-fg-soft truncate">{entry.title}</div>
+        <div class="mt-1 h-2 bg-fill-strong rounded-full overflow-hidden">
           <div
-            class="h-full bg-green-500/60 rounded-full transition-all"
+            class="h-full bg-success/60 rounded-full transition-all"
             style={{ width: `${width}%` }}
           />
         </div>
       </div>
-      <div class="text-xs font-mono text-green-400 flex-shrink-0 w-20 text-right">
+      <div class="text-xs font-mono text-success flex-shrink-0 w-20 text-right">
         ${entry.cost.toFixed(4)}
       </div>
     </div>
@@ -57,7 +57,7 @@ function CostBar({ maxCost, entry }: { maxCost: number; entry: SessionCostEntry 
 
 function DailyChart({ dailyCosts }: { dailyCosts: DailyCost[] }) {
   if (dailyCosts.length === 0) {
-    return <div class="text-xs text-gray-500 text-center py-4">No cost data available</div>;
+    return <div class="text-xs text-fg-faint text-center py-4">No cost data available</div>;
   }
 
   const maxDailyCost = Math.max(...dailyCosts.map((d) => d.cost));
@@ -71,12 +71,12 @@ function DailyChart({ dailyCosts }: { dailyCosts: DailyCost[] }) {
           <div key={day.date} class="flex-1 flex flex-col items-center gap-1">
             <div class="w-full flex items-end justify-center" style={{ height: '80px' }}>
               <div
-                class="w-full max-w-[20px] bg-blue-500/50 rounded-t transition-all hover:bg-blue-500/80"
+                class="w-full max-w-[20px] bg-accent/50 rounded-t transition-all hover:bg-accent/80"
                 style={{ height: `${Math.max(height, 2)}%` }}
                 title={`${dateLabel}: $${day.cost.toFixed(4)}`}
               />
             </div>
-            <div class="text-[9px] text-gray-500 whitespace-nowrap">{dateLabel}</div>
+            <div class="text-[9px] text-fg-faint whitespace-nowrap">{dateLabel}</div>
           </div>
         );
       })}
@@ -110,14 +110,14 @@ export function UsageAnalytics() {
     <div class="space-y-6">
       <div class="flex items-center justify-between">
         <div>
-          <h3 class="text-sm font-medium text-gray-200">Usage Analytics</h3>
-          <p class="text-xs text-gray-500">Pre-calculated from session data</p>
+          <h3 class="text-sm font-medium text-fg-soft">Usage Analytics</h3>
+          <p class="text-xs text-fg-faint">Pre-calculated from session data</p>
         </div>
         <button
           type="button"
           onClick={fetchUsage}
           disabled={loading}
-          class="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-dark-800 px-2.5 py-1.5 text-xs text-gray-300 transition-colors hover:border-dark-500 hover:bg-dark-700 hover:text-gray-100 disabled:opacity-50"
+          class="flex items-center gap-1.5 rounded-lg border border-line bg-surface-raised px-2.5 py-1.5 text-xs text-fg-soft transition-colors hover:border-line-strong hover:bg-fill-strong hover:text-fg disabled:opacity-50"
         >
           <svg
             class={`w-3 h-3 ${loading ? 'animate-spin' : ''}`}
@@ -136,10 +136,10 @@ export function UsageAnalytics() {
         </button>
       </div>
 
-      {!data && loading && <div class="text-xs text-gray-500 text-center py-8">Calculating...</div>}
+      {!data && loading && <div class="text-xs text-fg-faint text-center py-8">Calculating...</div>}
 
       {!data && !loading && (
-        <div class="text-xs text-gray-500 text-center py-8">No data available</div>
+        <div class="text-xs text-fg-faint text-center py-8">No data available</div>
       )}
 
       {data && (
@@ -169,7 +169,7 @@ export function UsageAnalytics() {
 
           <SettingsSection title="Top Sessions by Cost">
             {data.topSessions.length === 0 ? (
-              <div class="text-xs text-gray-500 text-center py-4">No session cost data yet</div>
+              <div class="text-xs text-fg-faint text-center py-4">No session cost data yet</div>
             ) : (
               <div class="space-y-1">
                 {data.topSessions.map((entry) => (

@@ -27,7 +27,7 @@ describe('StateChannel', () => {
     }
   });
 
-  describe('constructor', () => {
+  describe('function Object() { [native code] }', () => {
     it('should create with default options', () => {
       channel = new StateChannel(mockHub as unknown as MessageHub, 'test.channel');
       expect(channel).toBeDefined();

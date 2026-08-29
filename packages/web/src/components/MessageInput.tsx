@@ -1118,7 +1118,7 @@ export default function MessageInput({
                       disabled={isTranscribing || !voiceRecorder.isRecording}
                       aria-label="Stop recording and transcribe"
                       title="Stop recording and transcribe"
-                      class="grid h-9 w-9 place-items-center rounded-full bg-red-500 shadow-[0_2px_10px_rgba(239,68,68,0.4)] hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                      class="grid h-9 w-9 place-items-center rounded-full bg-danger shadow-[0_2px_10px_rgba(239,68,68,0.4)] hover:bg-danger disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="#fff">
                         <rect x="6" y="6" width="12" height="12" rx="2" />
@@ -1135,7 +1135,7 @@ export default function MessageInput({
                             disabled={isTranscribing || !voiceRecorder.isRecording}
                             aria-label="Stop, transcribe and queue"
                             title="Stop, transcribe and queue for next turn"
-                            class="grid h-9 w-9 place-items-center rounded-full border border-blue-400/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 hover:text-blue-100 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                            class="grid h-9 w-9 place-items-center rounded-full border border-blue-400/30 bg-accent/10 text-accent-soft hover:bg-accent/20 hover:text-accent-soft active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <svg
                               class="h-4 w-4"
@@ -1160,7 +1160,7 @@ export default function MessageInput({
                           disabled={isTranscribing || !voiceRecorder.isRecording}
                           aria-label="Stop, transcribe and steer"
                           title="Stop, transcribe and steer the current turn"
-                          class="grid h-9 w-9 place-items-center rounded-full bg-amber-400 text-dark-950 hover:bg-amber-300 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                          class="grid h-9 w-9 place-items-center rounded-full bg-warning text-bg hover:bg-warning active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <svg
                             class="h-4.5 w-4.5"
@@ -1186,7 +1186,7 @@ export default function MessageInput({
                         disabled={isTranscribing || !voiceRecorder.isRecording}
                         aria-label="Stop, transcribe and send"
                         title="Stop, transcribe and send"
-                        class="grid h-9 w-9 place-items-center rounded-full bg-blue-500 text-white hover:bg-blue-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                        class="grid h-9 w-9 place-items-center rounded-full bg-accent text-accent-fg hover:bg-accent-hover active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <svg
                           class="h-4.5 w-4.5"
@@ -1219,8 +1219,8 @@ export default function MessageInput({
                     aria-label="Start voice input"
                     class={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 ${
                       isTranscribing
-                        ? 'bg-blue-500/80 text-white cursor-wait focus-visible:ring-blue-400/70'
-                        : 'bg-dark-700/70 text-gray-300 hover:bg-dark-600 hover:text-white focus-visible:ring-blue-400/60'
+                        ? 'bg-accent/80 text-accent-fg cursor-wait focus-visible:ring-accent/70'
+                        : 'bg-fill-strong/70 text-fg-soft hover:bg-line-strong hover:text-accent-fg focus-visible:ring-accent/60'
                     } ${disabled ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}`}
                   >
                     {isTranscribing ? (

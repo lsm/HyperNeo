@@ -77,7 +77,7 @@ describe('Spinner', () => {
     it('should have default gray color', () => {
       const { container } = render(<Spinner />);
       const spinner = container.querySelector('div');
-      expect(spinner?.className).toContain('border-gray-500');
+      expect(spinner?.className).toContain('border-fg-faint');
     });
 
     it('should accept custom color class', () => {
@@ -87,9 +87,9 @@ describe('Spinner', () => {
     });
 
     it('should accept different color classes', () => {
-      const { container } = render(<Spinner color="border-red-500" />);
+      const { container } = render(<Spinner color="border-danger" />);
       const spinner = container.querySelector('div');
-      expect(spinner?.className).toContain('border-red-500');
+      expect(spinner?.className).toContain('border-danger');
     });
 
     it('should accept green color class', () => {
@@ -144,11 +144,11 @@ describe('Spinner', () => {
 
   describe('Combined Props', () => {
     it('should render with size and color', () => {
-      const { container } = render(<Spinner size="lg" color="border-blue-500" />);
+      const { container } = render(<Spinner size="lg" color="border-accent" />);
       const spinner = container.querySelector('div');
       expect(spinner?.className).toContain('w-6');
       expect(spinner?.className).toContain('h-6');
-      expect(spinner?.className).toContain('border-blue-500');
+      expect(spinner?.className).toContain('border-accent');
     });
 
     it('should render with size, color, and className', () => {

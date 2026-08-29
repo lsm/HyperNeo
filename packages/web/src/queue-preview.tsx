@@ -117,17 +117,17 @@ function ScenarioCard({ scenario }: { scenario: PreviewScenario }) {
   const [nextTurnMessages, setNextTurnMessages] = useState(scenario.nextTurnMessages);
 
   return (
-    <section class="min-w-0 rounded-xl border border-dark-700 bg-dark-900/60 p-3 shadow-xl shadow-black/20">
+    <section class="min-w-0 rounded-xl border border-line bg-surface/60 p-3 shadow-xl shadow-black/20">
       <div class="mb-3 flex items-start justify-between gap-3">
         <div>
-          <h2 class="text-sm font-semibold text-gray-100">{scenario.title}</h2>
-          <p class="mt-1 text-xs leading-5 text-gray-500">{scenario.caption}</p>
+          <h2 class="text-sm font-semibold text-fg">{scenario.title}</h2>
+          <p class="mt-1 text-xs leading-5 text-fg-faint">{scenario.caption}</p>
         </div>
         <span
           class={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${
             scenario.working
-              ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
-              : 'border-dark-600 bg-dark-800 text-gray-400'
+              ? 'border-warning/30 bg-warning/10 text-warning-soft'
+              : 'border-line-strong bg-surface-raised text-fg-muted'
           }`}
         >
           {scenario.working ? 'Working' : 'Idle'}
@@ -174,10 +174,10 @@ function ScenarioCard({ scenario }: { scenario: PreviewScenario }) {
 
 function QueuePreviewApp() {
   return (
-    <div class="min-h-dvh overflow-auto bg-app-content px-5 py-5 text-gray-100">
+    <div class="min-h-dvh overflow-auto bg-app-content px-5 py-5 text-fg">
       <header class="mx-auto mb-5 max-w-7xl">
-        <p class="text-xs font-medium uppercase tracking-wide text-gray-500">Composer Preview</p>
-        <h1 class="mt-2 text-2xl font-semibold tracking-normal text-white">
+        <p class="text-xs font-medium uppercase tracking-wide text-fg-faint">Composer Preview</p>
+        <h1 class="mt-2 text-2xl font-semibold tracking-normal text-accent-fg">
           Steer and Queue States
         </h1>
       </header>

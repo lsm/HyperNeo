@@ -119,13 +119,13 @@ describe('ContentContainer', () => {
 
     it('should accept multiple custom classes', () => {
       const { container } = render(
-        <ContentContainer className="py-4 bg-dark-900">
+        <ContentContainer className="py-4 bg-surface">
           <p>Content</p>
         </ContentContainer>
       );
       const div = container.querySelector('div');
       expect(div?.className).toContain('py-4');
-      expect(div?.className).toContain('bg-dark-900');
+      expect(div?.className).toContain('bg-surface');
     });
 
     it('should handle empty className', () => {

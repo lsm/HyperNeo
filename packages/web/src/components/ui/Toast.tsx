@@ -1,6 +1,5 @@
 import { useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
-import { borderColors } from '../../lib/design-tokens.ts';
 import { useVisibleTick } from '../../hooks/useVisibleTick.ts';
 import type { Toast, ToastType } from '../../lib/toast.ts';
 import { dismissToast } from '../../lib/toast.ts';
@@ -75,28 +74,28 @@ function ToastItem({ toast }: ToastItemProps) {
   const getStyles = (type: ToastType) => {
     switch (type) {
       case 'success':
-        return `bg-green-500/10 ${borderColors.special.toast.success} text-green-400`;
+        return 'bg-success/10 border-success/20 text-success';
       case 'error':
-        return `bg-red-500/10 ${borderColors.special.toast.error} text-red-400`;
+        return 'bg-danger/10 border-danger/20 text-danger';
       case 'warning':
-        return `bg-yellow-500/10 ${borderColors.special.toast.warning} text-yellow-400`;
+        return 'bg-warning/10 border-warning/20 text-warning';
       case 'info':
       default:
-        return `bg-blue-500/10 ${borderColors.special.toast.info} text-blue-400`;
+        return 'bg-accent/10 border-accent/20 text-accent';
     }
   };
 
   const getProgressColor = (type: ToastType) => {
     switch (type) {
       case 'success':
-        return 'bg-green-500';
+        return 'bg-success';
       case 'error':
-        return 'bg-red-500';
+        return 'bg-danger';
       case 'warning':
-        return 'bg-yellow-500';
+        return 'bg-warning';
       case 'info':
       default:
-        return 'bg-blue-500';
+        return 'bg-accent';
     }
   };
 
@@ -111,11 +110,11 @@ function ToastItem({ toast }: ToastItemProps) {
     >
       <div class="flex-shrink-0">{getIcon(toast.type)}</div>
 
-      <div class="flex-1 text-sm text-gray-100 pt-0.5">{toast.message}</div>
+      <div class="flex-1 text-sm text-fg pt-0.5">{toast.message}</div>
 
       <button
         onClick={handleDismiss}
-        class="flex-shrink-0 text-gray-400 hover:text-gray-100 transition-colors"
+        class="flex-shrink-0 text-fg-muted hover:text-fg transition-colors"
         aria-label="Dismiss notification"
       >
         <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -128,7 +127,7 @@ function ToastItem({ toast }: ToastItemProps) {
       </button>
 
       {toast.duration && toast.duration > 0 && (
-        <div class="absolute bottom-0 left-0 right-0 h-1 bg-white/10">
+        <div class="absolute bottom-0 left-0 right-0 h-1 bg-fill">
           <div
             class={cn('h-full transition-all', getProgressColor(toast.type))}
             style={{ width: `${progress}%` }}

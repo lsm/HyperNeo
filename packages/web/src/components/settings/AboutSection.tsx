@@ -9,19 +9,19 @@ export function AboutSection() {
     <SettingsSection title="About">
       <div class="space-y-3">
         <div class="flex items-center justify-between">
-          <span class="text-sm text-gray-400">Version</span>
-          <span class="text-sm text-gray-300 font-mono">{appVersion}</span>
+          <span class="text-sm text-fg-muted">Version</span>
+          <span class="text-sm text-fg-soft font-mono">{appVersion}</span>
         </div>
 
-        <div class="pt-3 border-t border-dark-700 space-y-2">
-          <p class="text-sm text-gray-400">HyperNeo - A modern web UI for Claude Code</p>
+        <div class="pt-3 border-t border-line space-y-2">
+          <p class="text-sm text-fg-muted">HyperNeo - A modern web UI for Claude Code</p>
           <div class="flex gap-4 text-xs">
             <a
               href="https://github.com"
               target="_blank"
               rel="noopener noreferrer"
               class={cn(
-                'text-blue-400 hover:text-blue-300 transition-colors',
+                'text-accent hover:text-accent-soft transition-colors',
                 'flex items-center gap-1'
               )}
             >
@@ -38,7 +38,7 @@ export function AboutSection() {
               href="https://docs.anthropic.com"
               target="_blank"
               rel="noopener noreferrer"
-              class="text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
+              class="text-accent hover:text-accent-soft transition-colors flex items-center gap-1"
             >
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path

@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
 import type { ContextInfo } from '@hyperneo/shared';
-import { borderColors } from '../lib/design-tokens.ts';
 import { formatTokens } from '../lib/utils.ts';
 
 interface ContextUsageBarProps {
@@ -100,66 +99,66 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
   const autoCompactBufferPercent = 100 - autoCompactThresholdPercent;
 
   const getContextColor = () => {
-    if (contextPercentage >= 90) return 'text-red-400';
-    if (contextPercentage >= 75) return 'text-orange-400';
-    if (contextPercentage >= 60) return 'text-yellow-400';
-    return 'text-green-400';
+    if (contextPercentage >= 90) return 'text-danger';
+    if (contextPercentage >= 75) return 'text-warning';
+    if (contextPercentage >= 60) return 'text-warning';
+    return 'text-success';
   };
 
   const getContextBarColor = () => {
-    if (contextPercentage >= 90) return 'bg-red-500';
-    if (contextPercentage >= 75) return 'bg-orange-500';
-    if (contextPercentage >= 60) return 'bg-yellow-500';
-    return 'bg-green-500';
+    if (contextPercentage >= 90) return 'bg-danger';
+    if (contextPercentage >= 75) return 'bg-warning';
+    if (contextPercentage >= 60) return 'bg-warning';
+    return 'bg-success';
   };
 
   const getCategoryColor = (category: string): { bg: string; text: string; dot: string } => {
     const normalizedCategory = category.toLowerCase();
 
     if (normalizedCategory.includes('system prompt')) {
-      return { bg: 'bg-gray-600', text: 'text-gray-400', dot: 'bg-gray-400' };
+      return { bg: 'bg-fg-faint', text: 'text-fg-muted', dot: 'bg-fg-muted' };
     }
     if (normalizedCategory.includes('system tools')) {
-      return { bg: 'bg-gray-600', text: 'text-gray-400', dot: 'bg-gray-400' };
+      return { bg: 'bg-fg-faint', text: 'text-fg-muted', dot: 'bg-fg-muted' };
     }
     if (normalizedCategory.includes('autocompact')) {
-      return { bg: 'bg-gray-600', text: 'text-gray-400', dot: 'bg-gray-400' };
+      return { bg: 'bg-fg-faint', text: 'text-fg-muted', dot: 'bg-fg-muted' };
     }
     if (normalizedCategory.includes('free space')) {
-      return { bg: 'bg-gray-700', text: 'text-gray-500', dot: 'bg-gray-500' };
+      return { bg: 'bg-fill-strong', text: 'text-fg-faint', dot: 'bg-fg-faint' };
     }
 
     if (normalizedCategory.includes('mcp tools')) {
       return {
-        bg: 'bg-purple-500',
-        text: 'text-purple-400',
-        dot: 'bg-purple-400',
+        bg: 'bg-cat-purple',
+        text: 'text-cat-purple',
+        dot: 'bg-cat-purple',
       };
     }
 
     if (normalizedCategory.includes('messages')) {
-      return { bg: 'bg-blue-500', text: 'text-blue-400', dot: 'bg-blue-400' };
+      return { bg: 'bg-accent', text: 'text-accent', dot: 'bg-accent-soft' };
     }
 
     if (
       normalizedCategory.includes('input context') ||
       normalizedCategory.includes('input tokens')
     ) {
-      return { bg: 'bg-cyan-500', text: 'text-cyan-400', dot: 'bg-cyan-400' };
+      return { bg: 'bg-cat-cyan', text: 'text-cat-cyan', dot: 'bg-cat-cyan' };
     }
 
     if (normalizedCategory.includes('output tokens') || normalizedCategory.includes('output')) {
       return {
-        bg: 'bg-green-500',
-        text: 'text-green-400',
-        dot: 'bg-green-400',
+        bg: 'bg-success',
+        text: 'text-success',
+        dot: 'bg-success',
       };
     }
 
     return {
-      bg: 'bg-indigo-500',
-      text: 'text-indigo-400',
-      dot: 'bg-indigo-400',
+      bg: 'bg-accent-hover',
+      text: 'text-cat-indigo',
+      dot: 'bg-cat-indigo',
     };
   };
 
@@ -203,7 +202,7 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
               fill="none"
               stroke="currentColor"
               stroke-width="3"
-              class="text-dark-700"
+              class="text-fg-faint"
             />
             {showAutoCompactBuffer && (
               <circle
@@ -215,7 +214,7 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                 stroke="currentColor"
                 stroke-width="3"
                 stroke-dasharray={`0 ${(autoCompactThresholdPercent / 100) * CIRCLE_CIRCUMFERENCE} ${(autoCompactBufferPercent / 100) * CIRCLE_CIRCUMFERENCE} 0`}
-                class="text-dark-500 opacity-70"
+                class="text-fg-faint opacity-70"
               >
                 <title>{AUTOCOMPACT_BUFFER_TOOLTIP}</title>
               </circle>
@@ -230,12 +229,12 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
               stroke-dasharray={`${(contextPercentage / 100) * CIRCLE_CIRCUMFERENCE} ${CIRCLE_CIRCUMFERENCE}`}
               class={`transition-all duration-300 ${
                 contextPercentage >= 90
-                  ? 'text-red-500'
+                  ? 'text-danger'
                   : contextPercentage >= 75
-                    ? 'text-orange-500'
+                    ? 'text-warning'
                     : contextPercentage >= 60
-                      ? 'text-yellow-500'
-                      : 'text-green-500'
+                      ? 'text-warning'
+                      : 'text-success'
               }`}
               stroke-linecap="round"
             />
@@ -257,13 +256,11 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
         <div class="fixed right-0 px-4 z-50" style={{ bottom: `${dropdownBottom}px` }}>
           <div class="max-w-4xl mx-auto flex justify-end">
             <div ref={dropdownRef}>
-              <div
-                class={`bg-dark-800 border ${borderColors.ui.secondary} rounded-lg p-4 w-72 shadow-xl`}
-              >
+              <div class="bg-surface-raised border border-line-strong rounded-lg p-4 w-72 shadow-xl">
                 <div class="flex items-center justify-between mb-3">
-                  <h3 class="text-sm font-semibold text-gray-200">Context Usage</h3>
+                  <h3 class="text-sm font-semibold text-fg-soft">Context Usage</h3>
                   <button
-                    class="text-gray-400 hover:text-gray-200 transition-colors"
+                    class="text-fg-muted hover:text-fg-soft transition-colors"
                     onClick={closeDropdown}
                   >
                     <svg
@@ -283,18 +280,18 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                 </div>
 
                 <div class="space-y-3">
-                  <div class="bg-dark-700 rounded-lg p-2.5">
+                  <div class="bg-fill-strong rounded-lg p-2.5">
                     <div class="flex justify-between items-center mb-1.5">
-                      <span class="text-xs text-gray-400">Context Window</span>
+                      <span class="text-xs text-fg-muted">Context Window</span>
                       <span class={`text-xs font-semibold ${getContextColor()}`}>
                         {contextPercentage.toFixed(1)}%
                       </span>
                     </div>
-                    <div class="relative w-full h-2.5 bg-dark-600 rounded-full overflow-hidden">
+                    <div class="relative w-full h-2.5 bg-line-strong rounded-full overflow-hidden">
                       {showAutoCompactBuffer && (
                         <div
                           data-testid="autocompact-buffer-zone"
-                          class="absolute top-0 right-0 h-full bg-dark-500/70"
+                          class="absolute top-0 right-0 h-full bg-fill-strong/70"
                           style={{
                             width: `${autoCompactBufferPercent}%`,
                             backgroundImage: AUTOCOMPACT_BUFFER_STRIPES,
@@ -311,20 +308,20 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                       {showAutoCompactBuffer && (
                         <div
                           data-testid="autocompact-threshold-marker"
-                          class="absolute top-0 h-full w-px bg-amber-500/60"
+                          class="absolute top-0 h-full w-px bg-warning/60"
                           style={{ left: `${autoCompactThresholdPercent}%` }}
                           title={AUTOCOMPACT_THRESHOLD_TOOLTIP}
                         />
                       )}
                     </div>
-                    <div class="text-xs text-gray-500 mt-1">
+                    <div class="text-xs text-fg-faint mt-1">
                       {totalTokens.toLocaleString()} / {contextCapacity.toLocaleString()}
                     </div>
                   </div>
 
                   {contextUsage?.breakdown && (
                     <div class="space-y-2">
-                      <h4 class="text-xs font-medium text-gray-300">Breakdown</h4>
+                      <h4 class="text-xs font-medium text-fg-soft">Breakdown</h4>
                       <div class="space-y-1.5">
                         {Object.entries(contextUsage.breakdown)
                           .filter(([category]) => !category.toLowerCase().includes('autocompact'))
@@ -343,11 +340,11 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                             return (
                               <div key={category} class="flex items-center gap-2 text-xs">
                                 <div class={`w-3 h-3 rounded ${bg} flex-shrink-0`} />
-                                <span class="text-gray-400 flex-1 min-w-0 truncate">
+                                <span class="text-fg-muted flex-1 min-w-0 truncate">
                                   {category}
                                 </span>
                                 <span class={`${text} font-medium`}>{percentage.toFixed(1)}%</span>
-                                <span class="text-gray-200 font-mono text-xs">
+                                <span class="text-fg-soft font-mono text-xs">
                                   {formatTokens(data.tokens)}
                                 </span>
                               </div>
@@ -358,10 +355,10 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                   )}
 
                   {contextUsage?.model && (
-                    <div class={`pt-3 border-t ${borderColors.ui.default}`}>
+                    <div class="pt-3 border-t border-line">
                       <div class="flex items-center gap-2 text-xs">
                         <svg
-                          class="w-3.5 h-3.5 text-gray-400"
+                          class="w-3.5 h-3.5 text-fg-muted"
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
@@ -373,8 +370,8 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
                             d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
                           />
                         </svg>
-                        <span class="text-gray-400">Model:</span>
-                        <span class="text-gray-200 font-mono">{contextUsage.model}</span>
+                        <span class="text-fg-muted">Model:</span>
+                        <span class="text-fg-soft font-mono">{contextUsage.model}</span>
                       </div>
                     </div>
                   )}

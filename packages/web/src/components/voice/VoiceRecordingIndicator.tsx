@@ -88,9 +88,7 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     <button
       type="button"
       onClick={returnToRecording}
-      class={`fixed bottom-20 right-4 sm:bottom-6 sm:right-6 ${inOverlay ? 'z-[55]' : 'z-40'} flex items-center gap-2 rounded-full
-        bg-gray-900/90 backdrop-blur border border-red-500/40 pl-3 pr-4 py-2 shadow-lg
-        text-sm text-gray-100 hover:bg-gray-800/90 transition-colors`}
+      class={`fixed bottom-20 right-4 sm:bottom-6 sm:right-6 ${inOverlay ? 'z-[55]' : 'z-40'} flex items-center gap-2 rounded-full bg-surface/90 backdrop-blur border border-danger/40 pl-3 pr-4 py-2 shadow-lg text-sm text-fg hover:bg-surface-raised/90 transition-colors`}
       aria-label={
         recordingBehindThisOverlay
           ? 'Voice recording in progress in this session — click to return'
@@ -100,12 +98,12 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
     >
       <span class="relative flex h-2.5 w-2.5">
         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
+        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-danger" />
       </span>
       <span class="max-w-40 truncate">
         {recordingBehindThisOverlay ? 'Recording in this session' : 'Recording in another session'}
       </span>
-      <span class="text-red-300 font-medium">Return</span>
+      <span class="text-danger-soft font-medium">Return</span>
     </button>
   );
 }

@@ -345,12 +345,12 @@ export function SessionsPage() {
       </div>
 
       <div class="flex-1 flex flex-col items-center justify-center px-6 pb-16">
-        <h1 class="text-2xl md:text-3xl font-semibold text-gray-100 mb-8 text-center">
+        <h1 class="text-2xl md:text-3xl font-semibold text-fg mb-8 text-center">
           What should we build?
         </h1>
 
         <div class="w-full max-w-2xl">
-          <div class="bg-dark-800 border border-dark-700 rounded-2xl px-3 py-2.5 transition-colors focus-within:border-dark-600">
+          <div class="bg-surface-raised border border-line rounded-2xl px-3 py-2.5 transition-colors focus-within:border-line-strong">
             <textarea
               value={text}
               onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
@@ -359,7 +359,7 @@ export function SessionsPage() {
               rows={3}
               disabled={submitting}
               autoFocus
-              class="w-full bg-transparent resize-none px-1.5 py-1 text-sm text-gray-100 placeholder-gray-500 focus:outline-none disabled:opacity-60"
+              class="w-full bg-transparent resize-none px-1.5 py-1 text-sm text-fg placeholder-gray-500 focus:outline-none disabled:opacity-60"
             />
             <div class="flex items-center justify-between gap-2 pt-1">
               <NewChatModelPicker
@@ -382,7 +382,7 @@ export function SessionsPage() {
                 disabled={!text.trim() || submitting || !canCreate || waitingForProjectGit}
                 title="Start chat"
                 aria-label="Start chat"
-                class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+                class="flex items-center justify-center w-8 h-8 rounded-full bg-accent-hover text-accent-fg transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {submitting ? (
                   <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -435,7 +435,7 @@ export function SessionsPage() {
             {manualProjectOpen && (
               <form
                 onSubmit={handleManualProjectSubmit}
-                class="mt-2 max-w-lg rounded-xl border border-dark-700 bg-dark-800 p-2"
+                class="mt-2 max-w-lg rounded-xl border border-line bg-surface-raised p-2"
               >
                 <div class="flex items-center gap-2">
                   <input
@@ -447,21 +447,21 @@ export function SessionsPage() {
                     }}
                     placeholder="Project path"
                     autoFocus
-                    class="min-w-0 flex-1 rounded-lg border border-dark-700 bg-dark-900 px-3 py-2 text-xs text-gray-100 placeholder-gray-600 focus:border-dark-600 focus:outline-none"
+                    class="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg placeholder-gray-600 focus:border-line-strong focus:outline-none"
                   />
                   <button
                     type="submit"
                     disabled={manualProjectBusy}
-                    class="rounded-lg bg-dark-700 px-3 py-2 text-xs font-medium text-gray-200 transition-colors hover:bg-dark-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    class="rounded-lg bg-fill-strong px-3 py-2 text-xs font-medium text-fg-soft transition-colors hover:bg-line-strong disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {manualProjectBusy ? 'Adding…' : 'Add'}
                   </button>
                 </div>
-                <p class="mt-1.5 text-[11px] leading-4 text-gray-600">
+                <p class="mt-1.5 text-[11px] leading-4 text-fg-faint">
                   Use an absolute path accessible to HyperNeo.
                 </p>
                 {manualProjectError && (
-                  <p class="mt-1.5 text-[11px] leading-4 text-red-400">{manualProjectError}</p>
+                  <p class="mt-1.5 text-[11px] leading-4 text-danger">{manualProjectError}</p>
                 )}
               </form>
             )}

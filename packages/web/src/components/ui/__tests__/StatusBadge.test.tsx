@@ -20,9 +20,9 @@ describe('StatusBadge', () => {
   it('applies the soft tone classes', () => {
     const { container } = render(<StatusBadge tone="special" label="Review" />);
     const badge = container.querySelector('span');
-    expect(badge?.className).toContain('border-purple-500/30');
-    expect(badge?.className).toContain('bg-purple-500/10');
-    expect(badge?.className).toContain('text-purple-400');
+    expect(badge?.className).toContain('border-cat-purple/30');
+    expect(badge?.className).toContain('bg-cat-purple/10');
+    expect(badge?.className).toContain('text-cat-purple');
   });
 
   it('applies additional classes', () => {

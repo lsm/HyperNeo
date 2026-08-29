@@ -33,7 +33,7 @@ describe('session-lifecycle-status', () => {
 
   it('returns tone classes from getSessionLifecycleStatusClasses', () => {
     const classes = getSessionLifecycleStatusClasses('paused');
-    expect(classes.bg).toBe('bg-amber-500');
+    expect(classes.bg).toBe('bg-warning');
   });
 
   it('getSessionLifecycleStatusConfig returns the same config as the record', () => {

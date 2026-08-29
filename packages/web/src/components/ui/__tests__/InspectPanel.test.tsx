@@ -38,7 +38,7 @@ describe('InspectPanelHeader', () => {
     expect(heading?.textContent).toBe('Release health');
     expect(heading.className).toContain('truncate');
     expect(container.querySelector('.pr-12')).toBeTruthy();
-    expect(container.querySelector('.bg-dark-700')).toBeTruthy();
+    expect(container.querySelector('.bg-fill-strong')).toBeTruthy();
   });
 
   it('renders inline actions and a badges row', () => {
@@ -61,16 +61,14 @@ describe('InspectBadge', () => {
     const { container } = render(<InspectBadge tone="warning">High Priority</InspectBadge>);
     const badge = container.querySelector('span');
     expect(badge?.textContent).toContain('High Priority');
-    expect(badge.className).toContain('border-amber-500/30');
-    expect(badge.className).toContain('bg-amber-500/10');
+    expect(badge.className).toContain('border-warning/30');
+    expect(badge.className).toContain('bg-warning/10');
   });
 
   it('omits tone classes and honors a bespoke class when no tone is given', () => {
-    const { container } = render(
-      <InspectBadge class="font-mono text-gray-300">#{42}</InspectBadge>
-    );
+    const { container } = render(<InspectBadge class="font-mono text-fg-soft">#{42}</InspectBadge>);
     const badge = container.querySelector('span');
     expect(badge.className).toContain('font-mono');
-    expect(badge.className).not.toContain('border-amber-500');
+    expect(badge.className).not.toContain('border-warning');
   });
 });

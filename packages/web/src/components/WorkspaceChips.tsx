@@ -22,12 +22,12 @@ interface WorkspaceChipsProps {
 }
 
 const CHIP_CLASS =
-  'flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors';
+  'flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-fg-muted hover:text-fg-soft hover:bg-fill-soft transition-colors';
 
 function Chevron() {
   return (
     <svg
-      class="w-3 h-3 flex-shrink-0 text-gray-600"
+      class="w-3 h-3 flex-shrink-0 text-fg-faint"
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -134,7 +134,7 @@ export function WorkspaceChips({
         }
       />
 
-      {selectedProject && gitLoading && <span class="px-2 py-1 text-xs text-gray-600">…</span>}
+      {selectedProject && gitLoading && <span class="px-2 py-1 text-xs text-fg-faint">…</span>}
 
       {isGit && !gitLoading && (
         <Dropdown
@@ -167,18 +167,18 @@ export function WorkspaceChips({
             </button>
           }
           customContent={
-            <div class="w-64 bg-dark-850 border border-dark-700 rounded-lg p-2">
+            <div class="w-64 bg-surface-overlay border border-line rounded-lg p-2">
               <input
                 type="text"
                 value={branchQuery}
                 onInput={(e) => setBranchQuery((e.currentTarget as HTMLInputElement).value)}
                 placeholder="Search branches…"
                 autoFocus
-                class="w-full bg-dark-900 border border-dark-700 rounded-md px-2 py-1.5 text-xs text-gray-100 placeholder-gray-500 focus:outline-none focus:border-dark-600"
+                class="w-full bg-surface border border-line rounded-md px-2 py-1.5 text-xs text-fg placeholder-gray-500 focus:outline-none focus:border-line-strong"
               />
               <div class="mt-2 max-h-56 overflow-y-auto flex flex-col gap-0.5">
                 {shownBranches.length === 0 ? (
-                  <div class="px-2 py-3 text-xs text-gray-600 text-center">
+                  <div class="px-2 py-3 text-xs text-fg-faint text-center">
                     No matching branches
                   </div>
                 ) : (
@@ -191,12 +191,12 @@ export function WorkspaceChips({
                         setBranchOpen(false);
                         setBranchQuery('');
                       }}
-                      class="flex items-center justify-between gap-2 px-2 py-1.5 rounded text-xs text-left text-gray-300 hover:bg-white/5 hover:text-gray-100 transition-colors"
+                      class="flex items-center justify-between gap-2 px-2 py-1.5 rounded text-xs text-left text-fg-soft hover:bg-fill-soft hover:text-fg transition-colors"
                     >
                       <span class="truncate">{branch}</span>
                       {branch === baseBranch && (
                         <svg
-                          class="w-3.5 h-3.5 flex-shrink-0 text-blue-400"
+                          class="w-3.5 h-3.5 flex-shrink-0 text-accent"
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
@@ -213,7 +213,7 @@ export function WorkspaceChips({
                   ))
                 )}
                 {filteredBranches.length > shownBranches.length && (
-                  <div class="px-2 py-1.5 text-[11px] text-gray-600">
+                  <div class="px-2 py-1.5 text-[11px] text-fg-faint">
                     +{filteredBranches.length - shownBranches.length} more — refine search
                   </div>
                 )}
@@ -225,7 +225,7 @@ export function WorkspaceChips({
 
       {isGit && !gitLoading && mode === 'direct' && gitInfo?.currentBranch && (
         <span
-          class="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500"
+          class="flex items-center gap-1.5 px-2 py-1 text-xs text-fg-faint"
           title="Direct mode works on the folder's current branch"
         >
           <GitBranchIcon className="w-3.5 h-3.5 flex-shrink-0" />

@@ -1,7 +1,6 @@
 import { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
-import { borderColors } from '../../lib/design-tokens.ts';
 
 export interface TooltipProps {
   content: string;
@@ -47,7 +46,7 @@ export function Tooltip({ content, children, position = 'top', delay = 500 }: To
       {isVisible && (
         <div
           class={cn(
-            `absolute z-50 px-3 py-1.5 text-xs text-white bg-dark-800 rounded-md shadow-lg border ${borderColors.ui.secondary} whitespace-nowrap pointer-events-none animate-fadeIn`,
+            'absolute z-50 px-3 py-1.5 text-xs text-accent-fg bg-surface-raised rounded-md shadow-lg border border-line-strong whitespace-nowrap pointer-events-none animate-fadeIn',
             positions[position]
           )}
           role="tooltip"

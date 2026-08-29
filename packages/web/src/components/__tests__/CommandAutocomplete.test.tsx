@@ -106,9 +106,9 @@ describe('CommandAutocomplete', () => {
 
       const buttons = container.querySelectorAll('button');
       const commandButtons = Array.from(buttons).filter((btn) => btn.textContent?.startsWith('/'));
-      expect(commandButtons[0].className).toContain('bg-blue-500/20');
+      expect(commandButtons[0].className).toContain('bg-accent/20');
       expect(commandButtons[0].className).toContain('border-l-2');
-      expect(commandButtons[0].className).toContain('border-blue-500');
+      expect(commandButtons[0].className).toContain('border-accent');
     });
 
     it('should highlight correct command based on selectedIndex', () => {
@@ -124,10 +124,10 @@ describe('CommandAutocomplete', () => {
       const buttons = container.querySelectorAll('button');
       const commandButtons = Array.from(buttons).filter((btn) => btn.textContent?.startsWith('/'));
 
-      expect(commandButtons[2].className).toContain('bg-blue-500/20');
+      expect(commandButtons[2].className).toContain('bg-accent/20');
 
-      expect(commandButtons[0].className).not.toContain('bg-blue-500/20');
-      expect(commandButtons[1].className).not.toContain('bg-blue-500/20');
+      expect(commandButtons[0].className).not.toContain('bg-accent/20');
+      expect(commandButtons[1].className).not.toContain('bg-accent/20');
     });
 
     it('should update highlight when selectedIndex changes', () => {
@@ -152,7 +152,7 @@ describe('CommandAutocomplete', () => {
       const buttons = container.querySelectorAll('button');
       const commandButtons = Array.from(buttons).filter((btn) => btn.textContent?.startsWith('/'));
 
-      expect(commandButtons[3].className).toContain('bg-blue-500/20');
+      expect(commandButtons[3].className).toContain('bg-accent/20');
     });
   });
 
@@ -309,7 +309,7 @@ describe('CommandAutocomplete', () => {
       const dropdown = container.firstElementChild!;
       expect(dropdown.className).toContain('absolute');
       expect(dropdown.className).toContain('z-50');
-      expect(dropdown.className).toContain('bg-dark-800');
+      expect(dropdown.className).toContain('bg-surface-raised');
       expect(dropdown.className).toContain('rounded-lg');
       expect(dropdown.className).toContain('shadow-xl');
     });
@@ -373,7 +373,7 @@ describe('CommandAutocomplete', () => {
       const buttons = container.querySelectorAll('button');
       const commandButtons = Array.from(buttons).filter((btn) => btn.textContent?.startsWith('/'));
 
-      expect(commandButtons[0].className).toContain('hover:bg-dark-700/50');
+      expect(commandButtons[0].className).toContain('hover:bg-fill-strong/50');
     });
 
     it('should have blue text for commands', () => {
@@ -386,7 +386,7 @@ describe('CommandAutocomplete', () => {
         />
       );
 
-      const commandText = container.querySelector('.text-blue-400');
+      const commandText = container.querySelector('.text-accent');
       expect(commandText).toBeTruthy();
     });
 
@@ -492,7 +492,7 @@ describe('CommandAutocomplete', () => {
       const buttons = container.querySelectorAll('button');
       const commandButton = Array.from(buttons).find((btn) => btn.textContent?.includes('/help'))!;
 
-      expect(commandButton.className).toContain('bg-blue-500/20');
+      expect(commandButton.className).toContain('bg-accent/20');
     });
   });
 

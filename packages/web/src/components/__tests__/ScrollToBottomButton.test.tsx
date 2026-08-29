@@ -61,7 +61,7 @@ describe('ScrollToBottomButton', () => {
       const button = container.querySelector('button')!;
       expect(button.className).toContain('focus-visible:outline-none');
       expect(button.className).toContain('focus-visible:ring-2');
-      expect(button.className).toContain('focus-visible:ring-blue-500');
+      expect(button.className).toContain('focus-visible:ring-accent');
     });
   });
 
@@ -112,8 +112,8 @@ describe('ScrollToBottomButton', () => {
       const { container } = render(<ScrollToBottomButton onClick={mockOnClick} />);
 
       const button = container.querySelector('button')!;
-      expect(button.className).toContain('hover:bg-dark-700');
-      expect(button.className).toContain('hover:text-gray-100');
+      expect(button.className).toContain('hover:bg-fill-strong');
+      expect(button.className).toContain('hover:text-fg');
     });
 
     it('should have animation class', () => {

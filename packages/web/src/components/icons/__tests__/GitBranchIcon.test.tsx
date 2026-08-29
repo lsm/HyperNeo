@@ -49,11 +49,11 @@ describe('GitBranchIcon', () => {
 
   describe('Custom ClassName', () => {
     it('should apply custom className', () => {
-      const { container } = render(<GitBranchIcon className="w-4 h-4 text-blue-500" />);
+      const { container } = render(<GitBranchIcon className="w-4 h-4 text-accent" />);
       const svg = container.querySelector('svg');
       expect(svg?.className).toContain('w-4');
       expect(svg?.className).toContain('h-4');
-      expect(svg?.className).toContain('text-blue-500');
+      expect(svg?.className).toContain('text-accent');
     });
 
     it('should handle empty className', () => {

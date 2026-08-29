@@ -14,13 +14,13 @@ interface SessionProjectGroupProps {
 }
 
 const FOLDER_TONES = [
-  { bg: 'bg-amber-400/10', icon: 'text-amber-300' },
-  { bg: 'bg-sky-400/10', icon: 'text-sky-300' },
-  { bg: 'bg-emerald-400/10', icon: 'text-emerald-300' },
+  { bg: 'bg-warning/10', icon: 'text-warning' },
+  { bg: 'bg-sky-400/10', icon: 'text-info-soft' },
+  { bg: 'bg-emerald-400/10', icon: 'text-success-soft' },
   { bg: 'bg-violet-400/10', icon: 'text-violet-300' },
-  { bg: 'bg-rose-400/10', icon: 'text-rose-300' },
-  { bg: 'bg-cyan-400/10', icon: 'text-cyan-300' },
-  { bg: 'bg-orange-400/10', icon: 'text-orange-300' },
+  { bg: 'bg-rose-400/10', icon: 'text-cat-rose' },
+  { bg: 'bg-cat-cyan/10', icon: 'text-cat-cyan' },
+  { bg: 'bg-orange-400/10', icon: 'text-warning-soft' },
 ];
 
 function folderToneForPath(path: string) {
@@ -46,17 +46,17 @@ export function SessionProjectGroup({
 
   return (
     <div>
-      <div class="group/project flex items-center rounded-lg transition-colors hover:bg-white/5">
+      <div class="group/project flex items-center rounded-lg transition-colors hover:bg-fill-soft">
         <button
           type="button"
           data-testid="project-group-header"
           onClick={onToggle}
           title={path}
           aria-expanded={!collapsed}
-          class="flex-1 min-w-0 flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-gray-300 transition-colors group-hover/project:text-gray-100"
+          class="flex-1 min-w-0 flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-fg-soft transition-colors group-hover/project:text-fg"
         >
           <svg
-            class={`w-3 h-3 flex-shrink-0 text-gray-500 transition-transform ${
+            class={`w-3 h-3 flex-shrink-0 text-fg-faint transition-transform ${
               collapsed ? '' : 'rotate-90'
             }`}
             fill="none"
@@ -99,7 +99,7 @@ export function SessionProjectGroup({
             onClick={onRemove}
             title="Remove project"
             aria-label={`Remove project ${name}`}
-            class="opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100 mr-1 p-1 rounded text-gray-500 hover:text-red-400 hover:bg-white/10 transition-colors"
+            class="opacity-0 group-hover/project:opacity-100 focus-visible:opacity-100 mr-1 p-1 rounded text-fg-faint hover:text-danger hover:bg-fill transition-colors"
           >
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -115,7 +115,7 @@ export function SessionProjectGroup({
       {!collapsed && (
         <div class="ml-3 mt-0.5 flex flex-col gap-0.5">
           {isEmpty ? (
-            <div class="px-2.5 py-1.5 text-xs text-gray-600">No chats</div>
+            <div class="px-2.5 py-1.5 text-xs text-fg-faint">No chats</div>
           ) : (
             sessions.map((session) => (
               <SessionListItem

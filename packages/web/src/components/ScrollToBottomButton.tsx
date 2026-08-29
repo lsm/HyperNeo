@@ -1,5 +1,3 @@
-import { borderColors } from '../lib/design-tokens';
-
 export interface ScrollToBottomButtonProps {
   onClick: () => void;
   bottomClass?: string;
@@ -25,7 +23,7 @@ export function ScrollToBottomButton({
         )}
         <button
           onClick={onClick}
-          class={`relative w-10 h-10 rounded-full bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100 shadow-lg border ${autoScroll ? 'border-transparent' : borderColors.ui.secondary} flex items-center justify-center transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+          class={`relative w-10 h-10 rounded-full bg-surface-raised hover:bg-fill-strong text-fg-soft hover:text-fg shadow-lg border ${autoScroll ? 'border-transparent' : 'border-line-strong'} flex items-center justify-center transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent`}
           title="Scroll to bottom"
           aria-label="Scroll to bottom"
         >

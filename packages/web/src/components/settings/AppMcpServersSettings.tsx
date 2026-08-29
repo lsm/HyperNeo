@@ -291,7 +291,7 @@ export function AppMcpServersSettings() {
   if (loading && servers.length === 0) {
     return (
       <SettingsSection title="MCP Servers">
-        <div class="text-sm text-gray-500 py-2">Loading servers...</div>
+        <div class="text-sm text-fg-faint py-2">Loading servers...</div>
       </SettingsSection>
     );
   }
@@ -299,7 +299,7 @@ export function AppMcpServersSettings() {
   if (error) {
     return (
       <SettingsSection title="MCP Servers">
-        <div class="text-sm text-red-400 py-2">Error: {error}</div>
+        <div class="text-sm text-danger py-2">Error: {error}</div>
       </SettingsSection>
     );
   }
@@ -308,12 +308,12 @@ export function AppMcpServersSettings() {
     <>
       <SettingsSection title="MCP Servers">
         <div class="mb-4">
-          <p class="text-xs text-gray-500 mb-3">
+          <p class="text-xs text-fg-faint mb-3">
             MCP servers are available to any space or session. Configure external MCP servers here.
             For API keys and secrets, set them in your system environment (e.g.,{' '}
-            <code class="text-xs bg-dark-800 px-1 py-0.5 rounded">export MY_API_KEY=...</code>) and
-            reference them by name in the env vars field below. Values stored here are saved in
-            plain text.
+            <code class="text-xs bg-surface-raised px-1 py-0.5 rounded">export MY_API_KEY=...</code>
+            ) and reference them by name in the env vars field below. Values stored here are saved
+            in plain text.
           </p>
           <Button variant="primary" size="sm" onClick={openAddForm}>
             Add MCP Server
@@ -321,7 +321,7 @@ export function AppMcpServersSettings() {
         </div>
 
         {servers.length === 0 ? (
-          <div class="text-sm text-gray-500 py-4">
+          <div class="text-sm text-fg-faint py-4">
             No MCP servers configured. Click "Add MCP Server" to add one.
           </div>
         ) : (
@@ -333,18 +333,18 @@ export function AppMcpServersSettings() {
                   key={server.id}
                   class={cn(
                     'flex items-center justify-between gap-3 py-3 px-3',
-                    'bg-dark-800/50 rounded-lg border border-dark-700'
+                    'bg-surface-raised/50 rounded-lg border border-line'
                   )}
                 >
                   <div class="flex-1 min-w-0">
-                    <div class="text-sm text-gray-200 truncate font-medium">{server.name}</div>
-                    <div class="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                    <div class="text-sm text-fg-soft truncate font-medium">{server.name}</div>
+                    <div class="text-xs text-fg-faint mt-0.5 flex items-center gap-2 flex-wrap">
                       <span
                         class={cn(
                           'px-1.5 py-0.5 rounded text-[10px] uppercase font-medium',
-                          server.sourceType === 'stdio' && 'bg-green-500/20 text-green-400',
-                          server.sourceType === 'sse' && 'bg-blue-500/20 text-blue-400',
-                          server.sourceType === 'http' && 'bg-purple-500/20 text-purple-400'
+                          server.sourceType === 'stdio' && 'bg-success/20 text-success',
+                          server.sourceType === 'sse' && 'bg-accent/20 text-accent',
+                          server.sourceType === 'http' && 'bg-cat-purple/20 text-cat-purple'
                         )}
                       >
                         {server.sourceType}
@@ -357,11 +357,11 @@ export function AppMcpServersSettings() {
                       )}
                     </div>
                     {server.description && (
-                      <div class="text-xs text-gray-500 mt-1 truncate">{server.description}</div>
+                      <div class="text-xs text-fg-faint mt-1 truncate">{server.description}</div>
                     )}
                     {skillsLoaded && linkedSkill && (
                       <div
-                        class="text-[11px] text-sky-400/80 mt-1 truncate"
+                        class="text-[11px] text-info/80 mt-1 truncate"
                         data-testid={`skill-link-${server.name}`}
                       >
                         Exposed to sessions via the{' '}
@@ -371,7 +371,7 @@ export function AppMcpServersSettings() {
                     )}
                     {skillsLoaded && !linkedSkill && (
                       <div
-                        class="text-[11px] text-amber-400/90 mt-1"
+                        class="text-[11px] text-warning/90 mt-1"
                         data-testid={`skill-orphan-${server.name}`}
                       >
                         ⚠️ No skill wrapper — this server is not injected into any session. Toggling
@@ -383,7 +383,7 @@ export function AppMcpServersSettings() {
                   <div class="flex items-center gap-2 flex-shrink-0">
                     <button
                       onClick={() => openEditForm(server)}
-                      class="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-dark-700 rounded transition-colors"
+                      class="p-1.5 text-fg-muted hover:text-fg-soft hover:bg-fill-strong rounded transition-colors"
                       title="Edit"
                     >
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -400,7 +400,7 @@ export function AppMcpServersSettings() {
                         setDeletingServer(server);
                         setShowDeleteConfirm(true);
                       }}
-                      class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-dark-700 rounded transition-colors"
+                      class="p-1.5 text-fg-muted hover:text-danger hover:bg-fill-strong rounded transition-colors"
                       title="Delete"
                     >
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -433,8 +433,8 @@ export function AppMcpServersSettings() {
       >
         <form onSubmit={handleSubmit} class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-1">
-              Name <span class="text-red-400">*</span>
+            <label class="block text-sm font-medium text-fg-soft mb-1">
+              Name <span class="text-danger">*</span>
             </label>
             <input
               type="text"
@@ -443,31 +443,31 @@ export function AppMcpServersSettings() {
                 setFormData({ ...formData, name: (e.target as HTMLInputElement).value })
               }
               class={cn(
-                'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200',
-                'focus:outline-none focus:ring-1 focus:ring-blue-500',
-                formErrors.name ? 'border-red-500' : 'border-dark-700'
+                'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft',
+                'focus:outline-none focus:ring-1 focus:ring-accent',
+                formErrors.name ? 'border-danger' : 'border-line'
               )}
               placeholder="e.g., my-mcp-server"
             />
-            {formErrors.name && <p class="text-xs text-red-400 mt-1">{formErrors.name}</p>}
+            {formErrors.name && <p class="text-xs text-danger mt-1">{formErrors.name}</p>}
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
+            <label class="block text-sm font-medium text-fg-soft mb-1">Description</label>
             <input
               type="text"
               value={formData.description}
               onChange={(e) =>
                 setFormData({ ...formData, description: (e.target as HTMLInputElement).value })
               }
-              class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-sm text-fg-soft focus:outline-none focus:ring-1 focus:ring-accent"
               placeholder="Optional description"
             />
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-1">
-              Source Type <span class="text-red-400">*</span>
+            <label class="block text-sm font-medium text-fg-soft mb-1">
+              Source Type <span class="text-danger">*</span>
             </label>
             <select
               value={formData.sourceType}
@@ -477,7 +477,7 @@ export function AppMcpServersSettings() {
                   sourceType: (e.target as HTMLSelectElement).value as AppMcpServerSourceType,
                 })
               }
-              class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-sm text-fg-soft focus:outline-none focus:ring-1 focus:ring-accent"
             >
               <option value="stdio">Stdio (local process)</option>
               <option value="sse">SSE (Server-Sent Events)</option>
@@ -488,8 +488,8 @@ export function AppMcpServersSettings() {
           {formData.sourceType === 'stdio' && (
             <>
               <div>
-                <label class="block text-sm font-medium text-gray-300 mb-1">
-                  Command <span class="text-red-400">*</span>
+                <label class="block text-sm font-medium text-fg-soft mb-1">
+                  Command <span class="text-danger">*</span>
                 </label>
                 <input
                   type="text"
@@ -498,19 +498,17 @@ export function AppMcpServersSettings() {
                     setFormData({ ...formData, command: (e.target as HTMLInputElement).value })
                   }
                   class={cn(
-                    'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-                    'focus:outline-none focus:ring-1 focus:ring-blue-500',
-                    formErrors.command ? 'border-red-500' : 'border-dark-700'
+                    'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
+                    'focus:outline-none focus:ring-1 focus:ring-accent',
+                    formErrors.command ? 'border-danger' : 'border-line'
                   )}
                   placeholder="e.g., npx"
                 />
-                {formErrors.command && (
-                  <p class="text-xs text-red-400 mt-1">{formErrors.command}</p>
-                )}
+                {formErrors.command && <p class="text-xs text-danger mt-1">{formErrors.command}</p>}
               </div>
 
               <div>
-                <label class="block text-sm font-medium text-gray-300 mb-1">Args</label>
+                <label class="block text-sm font-medium text-fg-soft mb-1">Args</label>
                 <input
                   type="text"
                   value={formData.args}
@@ -518,14 +516,14 @@ export function AppMcpServersSettings() {
                     setFormData({ ...formData, args: (e.target as HTMLInputElement).value })
                   }
                   class={cn(
-                    'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-                    'focus:outline-none focus:ring-1 focus:ring-blue-500',
-                    formErrors.args ? 'border-red-500' : 'border-dark-700'
+                    'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
+                    'focus:outline-none focus:ring-1 focus:ring-accent',
+                    formErrors.args ? 'border-danger' : 'border-line'
                   )}
                   placeholder="e.g., -y @tokenizin/mcp-npx-fetch"
                 />
-                {formErrors.args && <p class="text-xs text-red-400 mt-1">{formErrors.args}</p>}
-                <p class="text-xs text-gray-500 mt-1">Space-separated arguments</p>
+                {formErrors.args && <p class="text-xs text-danger mt-1">{formErrors.args}</p>}
+                <p class="text-xs text-fg-faint mt-1">Space-separated arguments</p>
               </div>
             </>
           )}
@@ -533,8 +531,8 @@ export function AppMcpServersSettings() {
           {formData.sourceType !== 'stdio' && (
             <>
               <div>
-                <label class="block text-sm font-medium text-gray-300 mb-1">
-                  URL <span class="text-red-400">*</span>
+                <label class="block text-sm font-medium text-fg-soft mb-1">
+                  URL <span class="text-danger">*</span>
                 </label>
                 <input
                   type="text"
@@ -543,57 +541,53 @@ export function AppMcpServersSettings() {
                     setFormData({ ...formData, url: (e.target as HTMLInputElement).value })
                   }
                   class={cn(
-                    'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200',
-                    'focus:outline-none focus:ring-1 focus:ring-blue-500',
-                    formErrors.url ? 'border-red-500' : 'border-dark-700'
+                    'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft',
+                    'focus:outline-none focus:ring-1 focus:ring-accent',
+                    formErrors.url ? 'border-danger' : 'border-line'
                   )}
                   placeholder="e.g., http://localhost:8080/sse"
                 />
-                {formErrors.url && <p class="text-xs text-red-400 mt-1">{formErrors.url}</p>}
+                {formErrors.url && <p class="text-xs text-danger mt-1">{formErrors.url}</p>}
               </div>
 
               <div>
-                <label class="block text-sm font-medium text-gray-300 mb-1">Headers</label>
+                <label class="block text-sm font-medium text-fg-soft mb-1">Headers</label>
                 <textarea
                   value={formData.headers}
                   onChange={(e) =>
                     setFormData({ ...formData, headers: (e.target as HTMLTextAreaElement).value })
                   }
                   class={cn(
-                    'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-                    'focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none',
-                    formErrors.headers ? 'border-red-500' : 'border-dark-700'
+                    'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
+                    'focus:outline-none focus:ring-1 focus:ring-accent resize-none',
+                    formErrors.headers ? 'border-danger' : 'border-line'
                   )}
                   rows={3}
                   placeholder="e.g., Authorization=Bearer token"
                 />
-                {formErrors.headers && (
-                  <p class="text-xs text-red-400 mt-1">{formErrors.headers}</p>
-                )}
-                <p class="text-xs text-gray-500 mt-1">One header per line in key=value format</p>
+                {formErrors.headers && <p class="text-xs text-danger mt-1">{formErrors.headers}</p>}
+                <p class="text-xs text-fg-faint mt-1">One header per line in key=value format</p>
               </div>
             </>
           )}
 
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-1">
-              Environment Variables
-            </label>
+            <label class="block text-sm font-medium text-fg-soft mb-1">Environment Variables</label>
             <textarea
               value={formData.envVars}
               onChange={(e) =>
                 setFormData({ ...formData, envVars: (e.target as HTMLTextAreaElement).value })
               }
               class={cn(
-                'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-                'focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none',
-                formErrors.envVars ? 'border-red-500' : 'border-dark-700'
+                'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
+                'focus:outline-none focus:ring-1 focus:ring-accent resize-none',
+                formErrors.envVars ? 'border-danger' : 'border-line'
               )}
               rows={3}
               placeholder="e.g., MY_API_KEY=MY_API_KEY"
             />
-            {formErrors.envVars && <p class="text-xs text-red-400 mt-1">{formErrors.envVars}</p>}
-            <p class="text-xs text-gray-500 mt-1">
+            {formErrors.envVars && <p class="text-xs text-danger mt-1">{formErrors.envVars}</p>}
+            <p class="text-xs text-fg-faint mt-1">
               One env var per line in key=value format. For secrets, set the value in your system
               environment and reference the env var name here.
             </p>

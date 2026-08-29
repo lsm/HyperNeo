@@ -1,7 +1,8 @@
 import type { SpaceTaskPriority } from '@hyperneo/shared';
-import type { IndicatorTone } from './indicator-tokens.js';
 
-export function getPriorityIndicatorTone(priority: SpaceTaskPriority): IndicatorTone {
+export type PriorityIndicatorTone = 'neutral' | 'warning' | 'danger';
+
+export function getPriorityIndicatorTone(priority: SpaceTaskPriority): PriorityIndicatorTone {
   switch (priority) {
     case 'high':
       return 'warning';

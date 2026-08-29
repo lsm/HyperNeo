@@ -137,7 +137,7 @@ export function VoiceWaveform({
         disabled={isTranscribing}
         title="Discard recording"
         aria-label="Cancel recording"
-        class="grid h-9 w-9 flex-none place-items-center rounded-full bg-dark-700/80 text-gray-400 transition-colors hover:bg-dark-600 hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+        class="grid h-9 w-9 flex-none place-items-center rounded-full bg-fill-strong/80 text-fg-muted transition-colors hover:bg-line-strong hover:text-fg-soft disabled:cursor-not-allowed disabled:opacity-40"
       >
         <svg
           class="h-3.5 w-3.5"
@@ -166,7 +166,7 @@ export function VoiceWaveform({
       </div>
       {isTranscribing ? (
         <span
-          class="inline-flex flex-none items-center gap-1.5 text-xs text-red-400"
+          class="inline-flex flex-none items-center gap-1.5 text-xs text-danger"
           data-testid="voice-transcribing"
           aria-label="Transcribing"
         >
@@ -175,14 +175,14 @@ export function VoiceWaveform({
         </span>
       ) : isStarting && !isRecording ? (
         <span
-          class={`inline-flex flex-none animate-pulse items-center gap-1.5 text-gray-400 motion-reduce:animate-none ${isNarrow ? 'text-[11px]' : 'text-xs'}`}
+          class={`inline-flex flex-none animate-pulse items-center gap-1.5 text-fg-muted motion-reduce:animate-none ${isNarrow ? 'text-[11px]' : 'text-xs'}`}
           data-testid="voice-starting"
         >
           {isNarrow ? 'Mic…' : 'Waiting for mic…'}
         </span>
       ) : (
         <span
-          class={`flex-none tabular-nums text-gray-100 ${isNarrow ? 'text-[11px]' : 'text-xs'}`}
+          class={`flex-none tabular-nums text-fg ${isNarrow ? 'text-[11px]' : 'text-xs'}`}
           data-testid="voice-timer"
         >
           {formatElapsed(MAX_SECONDS - elapsed)}

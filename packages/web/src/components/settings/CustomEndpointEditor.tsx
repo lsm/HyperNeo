@@ -264,7 +264,7 @@ function ModelEditor({
   };
 
   return (
-    <div class="rounded-lg border border-white/[0.08] bg-dark-900/60 px-3 py-2.5 space-y-2">
+    <div class="rounded-lg border border-line bg-surface/60 px-3 py-2.5 space-y-2">
       <div class="flex items-start gap-2">
         <div class="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
           <input
@@ -273,7 +273,7 @@ function ModelEditor({
             aria-label="Model id"
             value={model.id}
             onInput={(e) => update({ id: e.currentTarget.value })}
-            class="bg-dark-950 border border-dark-700 rounded px-2 py-1 text-sm text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+            class="bg-bg border border-line rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent font-mono"
           />
           <input
             type="text"
@@ -281,7 +281,7 @@ function ModelEditor({
             aria-label="Model display name"
             value={model.name ?? ''}
             onInput={(e) => update({ name: e.currentTarget.value || undefined })}
-            class="bg-dark-950 border border-dark-700 rounded px-2 py-1 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+            class="bg-bg border border-line rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent"
           />
           <input
             type="text"
@@ -289,14 +289,14 @@ function ModelEditor({
             aria-label="Upstream model id"
             value={model.providerModelId ?? ''}
             onInput={(e) => update({ providerModelId: e.currentTarget.value || undefined })}
-            class="bg-dark-950 border border-dark-700 rounded px-2 py-1 text-sm text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+            class="bg-bg border border-line rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent font-mono"
           />
         </div>
         <button
           type="button"
           onClick={onRemove}
           aria-label="Remove model"
-          class="p-1.5 rounded hover:bg-red-900/30 text-red-400"
+          class="p-1.5 rounded hover:bg-danger/30 text-danger"
         >
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -320,17 +320,17 @@ function ModelEditor({
             ['streamUsage', 'Stream usage'],
           ] as const
         ).map(([k, label]) => (
-          <label key={k} class="flex items-center gap-1.5 text-gray-300 cursor-pointer">
+          <label key={k} class="flex items-center gap-1.5 text-fg-soft cursor-pointer">
             <input
               type="checkbox"
               checked={model.resolved[k]}
               onChange={(e) => updateCap(k, e.currentTarget.checked)}
-              class="rounded border-dark-600 bg-dark-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+              class="rounded border-line-strong bg-surface text-accent focus:ring-accent focus:ring-offset-0"
             />
             {label}
           </label>
         ))}
-        <label class="flex items-center gap-1.5 text-gray-300 col-span-2">
+        <label class="flex items-center gap-1.5 text-fg-soft col-span-2">
           Context:
           <input
             type="number"
@@ -342,11 +342,11 @@ function ModelEditor({
               const v = Number(e.currentTarget.value);
               if (Number.isFinite(v) && v > 0) updateCap('maxContextTokens', v);
             }}
-            class="w-24 bg-dark-950 border border-dark-700 rounded px-1.5 py-0.5 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+            class="w-24 bg-bg border border-line rounded px-1.5 py-0.5 text-xs text-fg focus:outline-none focus:border-accent"
           />
           tokens
         </label>
-        <label class="flex items-center gap-1.5 text-gray-300 col-span-2">
+        <label class="flex items-center gap-1.5 text-fg-soft col-span-2">
           Auto-compact:
           <input
             type="number"
@@ -359,7 +359,7 @@ function ModelEditor({
               const v = Number(e.currentTarget.value);
               if (Number.isFinite(v)) updateCap('autoCompactPercent', v);
             }}
-            class="w-14 bg-dark-950 border border-dark-700 rounded px-1.5 py-0.5 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+            class="w-14 bg-bg border border-line rounded px-1.5 py-0.5 text-xs text-fg focus:outline-none focus:border-accent"
           />
           %
         </label>
@@ -456,15 +456,15 @@ export function EditorModal({
   };
 
   return (
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div class="bg-dark-850 border border-dark-600 rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-dark-700">
-          <h3 class="text-sm font-semibold text-gray-100">
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
+      <div class="bg-surface-overlay border border-line-strong rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-line">
+          <h3 class="text-sm font-semibold text-fg">
             {state.mode === 'edit' ? `Edit endpoint — ${state.id}` : 'Add custom endpoint'}
           </h3>
-          <button type="button" onClick={onClose} class="p-1 rounded hover:bg-dark-700">
+          <button type="button" onClick={onClose} class="p-1 rounded hover:bg-fill-strong">
             <svg
-              class="w-4 h-4 text-gray-400"
+              class="w-4 h-4 text-fg-muted"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -482,7 +482,7 @@ export function EditorModal({
         <div class="flex-1 overflow-y-auto p-4 space-y-4">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label class="block">
-              <span class="text-xs font-medium text-gray-400 mb-1 block">Endpoint id</span>
+              <span class="text-xs font-medium text-fg-muted mb-1 block">Endpoint id</span>
               <input
                 type="text"
                 disabled={state.mode === 'edit'}
@@ -490,27 +490,27 @@ export function EditorModal({
                 placeholder="lmstudio"
                 onInput={(e) => update({ id: e.currentTarget.value })}
                 class={cn(
-                  'w-full bg-dark-950 border rounded px-2 py-1.5 text-sm text-gray-100 font-mono focus:outline-none focus:border-blue-500',
-                  idConflict ? 'border-red-700' : 'border-dark-700',
+                  'w-full bg-bg border rounded px-2 py-1.5 text-sm text-fg font-mono focus:outline-none focus:border-accent',
+                  idConflict ? 'border-danger' : 'border-line',
                   state.mode === 'edit' && 'opacity-60 cursor-not-allowed'
                 )}
               />
               {idConflict && (
-                <p class="text-xs text-red-400 mt-1">An endpoint with this id already exists</p>
+                <p class="text-xs text-danger mt-1">An endpoint with this id already exists</p>
               )}
             </label>
             <label class="block">
-              <span class="text-xs font-medium text-gray-400 mb-1 block">Display name</span>
+              <span class="text-xs font-medium text-fg-muted mb-1 block">Display name</span>
               <input
                 type="text"
                 value={state.name}
                 placeholder="LM Studio"
                 onInput={(e) => update({ name: e.currentTarget.value })}
-                class="w-full bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+                class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent"
               />
             </label>
             <label class="block">
-              <span class="text-xs font-medium text-gray-400 mb-1 block">Type</span>
+              <span class="text-xs font-medium text-fg-muted mb-1 block">Type</span>
               <select
                 value={state.type}
                 onChange={(e) => {
@@ -523,7 +523,7 @@ export function EditorModal({
                     })),
                   });
                 }}
-                class="w-full bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+                class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent"
               >
                 {TYPE_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -533,44 +533,44 @@ export function EditorModal({
               </select>
             </label>
             <label class="block">
-              <span class="text-xs font-medium text-gray-400 mb-1 block">API key (optional)</span>
+              <span class="text-xs font-medium text-fg-muted mb-1 block">API key (optional)</span>
               <input
                 type="password"
                 value={state.apiKey}
                 placeholder="sk-..."
                 onInput={(e) => update({ apiKey: e.currentTarget.value })}
-                class="w-full bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+                class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent font-mono"
               />
             </label>
             <label class="block sm:col-span-2">
-              <span class="text-xs font-medium text-gray-400 mb-1 block">Base URL</span>
+              <span class="text-xs font-medium text-fg-muted mb-1 block">Base URL</span>
               <input
                 type="url"
                 value={state.baseUrl}
                 placeholder="http://localhost:1234/v1"
                 onInput={(e) => update({ baseUrl: e.currentTarget.value })}
-                class="w-full bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+                class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent font-mono"
               />
             </label>
             <label class="block sm:col-span-2">
-              <span class="text-xs font-medium text-gray-400 mb-1 block">
+              <span class="text-xs font-medium text-fg-muted mb-1 block">
                 Extra headers (one per line, "Key: Value")
               </span>
               <textarea
                 value={state.headersText}
                 placeholder={'HTTP-Referer: https://example.com\nX-Title: HyperNeo'}
                 onInput={(e) => update({ headersText: e.currentTarget.value })}
-                class="w-full h-20 bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+                class="w-full h-20 bg-bg border border-line rounded px-2 py-1.5 text-xs text-fg focus:outline-none focus:border-accent font-mono"
               />
             </label>
             <label class="block sm:col-span-2">
-              <span class="text-xs font-medium text-gray-400 mb-1 block">
+              <span class="text-xs font-medium text-fg-muted mb-1 block">
                 Default model id (optional)
               </span>
               <select
                 value={state.defaultModelId}
                 onChange={(e) => update({ defaultModelId: e.currentTarget.value })}
-                class="w-full bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+                class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent"
               >
                 <option value="">— none —</option>
                 {state.models
@@ -586,7 +586,7 @@ export function EditorModal({
 
           <div class="space-y-2">
             <div class="flex items-center justify-between">
-              <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Models</h4>
+              <h4 class="text-xs font-semibold uppercase tracking-wider text-fg-muted">Models</h4>
               <div class="flex items-center gap-2">
                 <Button
                   size="xs"
@@ -603,15 +603,15 @@ export function EditorModal({
               </div>
             </div>
 
-            {fetchModelsError && <p class="text-xs text-red-400">{fetchModelsError}</p>}
+            {fetchModelsError && <p class="text-xs text-danger">{fetchModelsError}</p>}
 
             {fetchedModels && (
-              <div class="rounded-lg border border-white/[0.08] bg-dark-900/60 px-3 py-2.5 space-y-2">
+              <div class="rounded-lg border border-line bg-surface/60 px-3 py-2.5 space-y-2">
                 <div class="flex items-center justify-between">
-                  <span class="text-xs text-gray-300">
+                  <span class="text-xs text-fg-soft">
                     {fetchedModels.length} model{fetchedModels.length === 1 ? '' : 's'} found
                     {fetchedAt && (
-                      <span class="text-gray-500 ml-1">
+                      <span class="text-fg-faint ml-1">
                         · fetched {new Date(fetchedAt).toLocaleTimeString()}
                       </span>
                     )}
@@ -623,22 +623,22 @@ export function EditorModal({
                   )}
                 </div>
                 {selectableFetched.length === 0 ? (
-                  <p class="text-xs text-gray-500 italic">All fetched models are already added.</p>
+                  <p class="text-xs text-fg-faint italic">All fetched models are already added.</p>
                 ) : (
                   <div class="max-h-40 overflow-y-auto space-y-1">
                     {selectableFetched.map((m) => (
                       <label
                         key={m.id}
-                        class="flex items-center gap-2 text-xs text-gray-200 cursor-pointer hover:bg-white/5 rounded px-1 py-0.5"
+                        class="flex items-center gap-2 text-xs text-fg-soft cursor-pointer hover:bg-fill-soft rounded px-1 py-0.5"
                       >
                         <input
                           type="checkbox"
                           checked={(state.selectedFetchedModelIds ?? []).includes(m.id)}
                           onChange={() => toggleFetchedModel(m.id)}
-                          class="rounded border-dark-600 bg-dark-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                          class="rounded border-line-strong bg-surface text-accent focus:ring-accent focus:ring-offset-0"
                         />
                         <span class="font-mono">{m.id}</span>
-                        {m.name && m.name !== m.id && <span class="text-gray-500">{m.name}</span>}
+                        {m.name && m.name !== m.id && <span class="text-fg-faint">{m.name}</span>}
                       </label>
                     ))}
                   </div>
@@ -647,7 +647,7 @@ export function EditorModal({
             )}
 
             {state.models.length === 0 ? (
-              <p class="text-xs text-gray-500 italic">
+              <p class="text-xs text-fg-faint italic">
                 No models yet — add at least one to save the endpoint.
               </p>
             ) : (
@@ -665,8 +665,8 @@ export function EditorModal({
           </div>
         </div>
 
-        <div class="px-4 py-3 border-t border-dark-700 flex items-center justify-between gap-2">
-          <div class="text-xs text-red-400 truncate">{validationError ?? ''}</div>
+        <div class="px-4 py-3 border-t border-line flex items-center justify-between gap-2">
+          <div class="text-xs text-danger truncate">{validationError ?? ''}</div>
           <div class="flex items-center gap-2">
             <Button
               size="sm"
@@ -703,13 +703,13 @@ export interface PresetPickerProps {
 
 export function PresetPicker({ onPick, onClose }: PresetPickerProps) {
   return (
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div class="bg-dark-850 border border-dark-600 rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-dark-700">
-          <h3 class="text-sm font-semibold text-gray-100">Choose a preset</h3>
-          <button type="button" onClick={onClose} class="p-1 rounded hover:bg-dark-700">
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
+      <div class="bg-surface-overlay border border-line-strong rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-line">
+          <h3 class="text-sm font-semibold text-fg">Choose a preset</h3>
+          <button type="button" onClick={onClose} class="p-1 rounded hover:bg-fill-strong">
             <svg
-              class="w-4 h-4 text-gray-400"
+              class="w-4 h-4 text-fg-muted"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -729,12 +729,12 @@ export function PresetPicker({ onPick, onClose }: PresetPickerProps) {
               key={preset.key}
               type="button"
               onClick={() => onPick(preset)}
-              class="w-full text-left px-3 py-2 rounded hover:bg-dark-700 transition-colors"
+              class="w-full text-left px-3 py-2 rounded hover:bg-fill-strong transition-colors"
             >
-              <div class="text-sm text-gray-100 font-medium">{preset.label}</div>
-              <div class="text-xs text-gray-500 mt-0.5">{preset.description}</div>
+              <div class="text-sm text-fg font-medium">{preset.label}</div>
+              <div class="text-xs text-fg-faint mt-0.5">{preset.description}</div>
               {preset.apiKeyRequired && (
-                <div class="text-[10px] text-amber-400 mt-0.5">Requires API key</div>
+                <div class="text-[10px] text-warning mt-0.5">Requires API key</div>
               )}
             </button>
           ))}

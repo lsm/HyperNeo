@@ -1,7 +1,6 @@
 import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
-import { borderColors } from '../../lib/design-tokens.ts';
 
 export interface CollapsibleProps {
   trigger: ComponentChildren;
@@ -49,7 +48,7 @@ export function Collapsible({
   }, [isOpen]);
 
   return (
-    <div class={cn(borderColors.ui.default, className)}>
+    <div class={cn('border-line', className)}>
       <button
         onClick={toggle}
         class="flex items-center justify-between w-full text-left transition-colors"

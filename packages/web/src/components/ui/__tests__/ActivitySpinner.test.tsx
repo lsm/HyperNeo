@@ -10,13 +10,13 @@ describe('ActivitySpinner', () => {
   it('defaults to the info tone border color', () => {
     const { container } = render(<ActivitySpinner />);
     const spinner = container.querySelector('[role="status"]');
-    expect(spinner?.className).toContain('border-blue-500');
+    expect(spinner?.className).toContain('border-accent');
   });
 
   it('derives the border color from the tone', () => {
     const { container } = render(<ActivitySpinner tone="warning" />);
     const spinner = container.querySelector('[role="status"]');
-    expect(spinner?.className).toContain('border-amber-500');
+    expect(spinner?.className).toContain('border-warning');
   });
 
   it('applies additional classes', () => {

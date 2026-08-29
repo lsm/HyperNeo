@@ -246,29 +246,29 @@ describe('getMcpSkillRuntimeClasses', () => {
 
   it('maps server-off → amber (distinct from skill-disabled gray)', () => {
     expect(getMcpSkillRuntimeClasses('server-off')).toEqual({
-      dot: 'bg-amber-400',
-      text: 'text-amber-500/70',
+      dot: 'bg-warning',
+      text: 'text-warning/70',
     });
   });
 
   it('maps server-missing → red', () => {
     expect(getMcpSkillRuntimeClasses('server-missing')).toEqual({
       dot: 'bg-red-400',
-      text: 'text-red-400',
+      text: 'text-danger',
     });
   });
 
   it('maps skill-disabled → gray (user-owned state)', () => {
     expect(getMcpSkillRuntimeClasses('skill-disabled')).toEqual({
-      dot: 'bg-gray-500',
-      text: 'text-gray-500',
+      dot: 'bg-fg-faint',
+      text: 'text-fg-faint',
     });
   });
 
   it('maps unknown → gray (caller should suppress render)', () => {
     expect(getMcpSkillRuntimeClasses('unknown')).toEqual({
-      dot: 'bg-gray-500',
-      text: 'text-gray-500',
+      dot: 'bg-fg-faint',
+      text: 'text-fg-faint',
     });
   });
 });
@@ -318,7 +318,7 @@ describe('getSkillSourceBadge', () => {
   it('gives builtin skills a "Built-in" badge', () => {
     const badge = getSkillSourceBadge(makeBuiltinSkill());
     expect(badge.label).toBe('Built-in');
-    expect(badge.className).toMatch(/blue/);
+    expect(badge.className).toMatch(/accent/);
   });
 
   it('gives plugin skills a "Plugin" badge', () => {
@@ -330,7 +330,7 @@ describe('getSkillSourceBadge', () => {
   it('gives mcp_server skills an "MCP" badge', () => {
     const badge = getSkillSourceBadge(makeMcpSkill());
     expect(badge.label).toBe('MCP');
-    expect(badge.className).toMatch(/amber/);
+    expect(badge.className).toMatch(/warning/);
   });
 });
 

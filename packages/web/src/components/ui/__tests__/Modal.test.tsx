@@ -486,7 +486,7 @@ describe('Modal', () => {
           <p>Content</p>
         </Modal>
       );
-      const modal = document.body.querySelector('.bg-dark-900');
+      const modal = document.body.querySelector('.bg-surface');
       expect(modal?.className).toContain('max-w-lg');
     });
 
@@ -497,7 +497,7 @@ describe('Modal', () => {
           <p>Content</p>
         </Modal>
       );
-      const modal = document.body.querySelector('.bg-dark-900');
+      const modal = document.body.querySelector('.bg-surface');
       expect(modal?.className).toContain('max-w-md');
     });
 
@@ -508,7 +508,7 @@ describe('Modal', () => {
           <p>Content</p>
         </Modal>
       );
-      const modal = document.body.querySelector('.bg-dark-900');
+      const modal = document.body.querySelector('.bg-surface');
       expect(modal?.className).toContain('max-w-2xl');
     });
 
@@ -519,7 +519,7 @@ describe('Modal', () => {
           <p>Content</p>
         </Modal>
       );
-      const modal = document.body.querySelector('.bg-dark-900');
+      const modal = document.body.querySelector('.bg-surface');
       expect(modal?.className).toContain('max-w-4xl');
     });
   });
@@ -561,7 +561,7 @@ describe('Modal', () => {
         </Modal>
       );
 
-      const backdrop = document.body.querySelector('.bg-black\\/70');
+      const backdrop = document.body.querySelector('.bg-scrim');
       backdrop?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       expect(onClose).toHaveBeenCalledTimes(1);
@@ -575,7 +575,7 @@ describe('Modal', () => {
         </Modal>
       );
 
-      const modalContent = document.body.querySelector('.bg-dark-900');
+      const modalContent = document.body.querySelector('.bg-surface');
       modalContent?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       expect(onClose).not.toHaveBeenCalled();
@@ -650,7 +650,7 @@ describe('Modal', () => {
           <button>Last Button</button>
         </Modal>
       );
-      const modal = document.body.querySelector('.bg-dark-900');
+      const modal = document.body.querySelector('.bg-surface');
       const buttons = modal?.querySelectorAll('button');
       const inputs = modal?.querySelectorAll('input');
       expect(buttons?.length).toBeGreaterThan(0);

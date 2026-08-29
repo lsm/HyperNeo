@@ -36,7 +36,7 @@ export function ConnectionOverlay() {
   if (level === 'reconnecting') {
     return (
       <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
-        <div class="mt-2 px-4 py-2 rounded-lg bg-amber-500/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
+        <div class="mt-2 px-4 py-2 rounded-lg bg-warning/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
           <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
             <circle
               class="opacity-25"
@@ -61,7 +61,7 @@ export function ConnectionOverlay() {
   if (level === 'lost') {
     return (
       <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-none">
-        <div class="mt-2 px-4 py-2 rounded-lg bg-amber-600/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
+        <div class="mt-2 px-4 py-2 rounded-lg bg-warning/90 text-black text-sm font-medium flex items-center gap-2 shadow-lg">
           <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
             <circle
               class="opacity-25"
@@ -85,12 +85,12 @@ export function ConnectionOverlay() {
 
   return (
     <div class="fixed top-0 left-0 right-0 z-[9999] flex justify-center pointer-events-auto">
-      <div class="mt-2 px-4 py-2 rounded-lg bg-red-600/90 text-white text-sm font-medium flex items-center gap-3 shadow-lg">
+      <div class="mt-2 px-4 py-2 rounded-lg bg-danger/90 text-accent-fg text-sm font-medium flex items-center gap-3 shadow-lg">
         <span>Unable to reconnect.</span>
         <button
           onClick={handleReconnect}
           disabled={retrying}
-          class="px-3 py-1 rounded bg-white/20 hover:bg-white/30 text-white text-xs font-semibold transition-colors disabled:opacity-50"
+          class="px-3 py-1 rounded bg-white/20 hover:bg-white/30 text-accent-fg text-xs font-semibold transition-colors disabled:opacity-50"
         >
           {retrying ? 'Retrying…' : 'Retry'}
         </button>

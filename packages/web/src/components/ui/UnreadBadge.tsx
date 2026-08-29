@@ -17,7 +17,7 @@ export function UnreadBadge({ count, max = 99, className }: UnreadBadgeProps) {
     <span
       class={cn(
         'inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded-full text-[10px] font-semibold tabular-nums',
-        'bg-blue-600 text-white',
+        'bg-accent-hover text-accent-fg',
         className
       )}
     >

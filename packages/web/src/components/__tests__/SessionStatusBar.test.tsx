@@ -254,7 +254,7 @@ describe('SessionStatusBar', () => {
       const autoScrollButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Auto-scroll') || false
       );
-      expect(autoScrollButton?.className).toContain('border-emerald-500');
+      expect(autoScrollButton?.className).toContain('border-success');
     });
 
     it('should show disabled state when autoScroll is false', () => {
@@ -264,7 +264,7 @@ describe('SessionStatusBar', () => {
       const autoScrollButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Auto-scroll') || false
       );
-      expect(autoScrollButton?.className).toContain('border-dark-600/80');
+      expect(autoScrollButton?.className).toContain('border-line-strong/80');
     });
 
     it('should call onAutoScrollChange when clicked', () => {
@@ -360,7 +360,7 @@ describe('SessionStatusBar', () => {
     it('should have separator between controls and context', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} />);
 
-      const separator = container.querySelector('.bg-gray-600');
+      const separator = container.querySelector('.bg-fg-faint');
       expect(separator).toBeTruthy();
     });
 
@@ -618,28 +618,28 @@ describe('SessionStatusBar', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="off" />);
 
       const svg = getThinkingIcon(container);
-      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-gray-400');
+      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-fg-muted');
     });
 
     it('should show amber-600 icon for think8k level', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think8k" />);
 
       const svg = getThinkingIcon(container);
-      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-amber-600');
+      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-warning');
     });
 
     it('should show amber-500 icon for think16k level', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think16k" />);
 
       const svg = getThinkingIcon(container);
-      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-amber-500');
+      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-warning');
     });
 
     it('should show amber-300 icon for think32k level', () => {
       const { container } = render(<SessionStatusBar {...defaultProps} thinkingLevel="think32k" />);
 
       const svg = getThinkingIcon(container);
-      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-amber-300');
+      expect(svg?.className.baseVal || svg?.getAttribute('class')).toContain('text-warning');
     });
   });
 
@@ -651,7 +651,7 @@ describe('SessionStatusBar', () => {
       const thinkingButton = buttons.find(
         (btn) => btn.getAttribute('title')?.includes('Thinking:') || false
       );
-      expect(thinkingButton?.className).toContain('border-dark-600/80');
+      expect(thinkingButton?.className).toContain('border-line-strong/80');
     });
 
     it('should show border ring for think8k level', () => {
@@ -845,7 +845,7 @@ describe('SessionStatusBar', () => {
       fireEvent.click(modelButton);
 
       const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
-      expect(dropdown.querySelector('.bg-gray-500')).toBeTruthy();
+      expect(dropdown.querySelector('.bg-fg-faint')).toBeTruthy();
     });
 
     it('should show green availability dot when provider is authenticated', async () => {
@@ -875,7 +875,7 @@ describe('SessionStatusBar', () => {
       fireEvent.click(modelButton);
 
       const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
-      expect(dropdown.querySelector('.bg-green-500')).toBeTruthy();
+      expect(dropdown.querySelector('.bg-success')).toBeTruthy();
     });
   });
 
@@ -918,8 +918,8 @@ describe('SessionStatusBar', () => {
       await openModelDropdown(container);
 
       const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
-      expect(dropdown.querySelector('.bg-gray-500')).toBeTruthy();
-      expect(dropdown.querySelector('.bg-red-500')).toBeFalsy();
+      expect(dropdown.querySelector('.bg-fg-faint')).toBeTruthy();
+      expect(dropdown.querySelector('.bg-danger')).toBeFalsy();
     });
 
     it('renders a degraded tone for an authenticated provider with a transient failure', async () => {
@@ -930,8 +930,8 @@ describe('SessionStatusBar', () => {
       await openModelDropdown(container);
 
       const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
-      expect(dropdown.querySelector('.bg-gray-500')).toBeTruthy();
-      expect(dropdown.querySelector('.bg-green-500')).toBeFalsy();
+      expect(dropdown.querySelector('.bg-fg-faint')).toBeTruthy();
+      expect(dropdown.querySelector('.bg-success')).toBeFalsy();
     });
 
     it('renders a definitive credential failure as danger', async () => {
@@ -942,7 +942,7 @@ describe('SessionStatusBar', () => {
       await openModelDropdown(container);
 
       const dropdown = container.querySelector('[data-testid="model-dropdown"]')!;
-      expect(dropdown.querySelector('.bg-red-500')).toBeTruthy();
+      expect(dropdown.querySelector('.bg-danger')).toBeTruthy();
     });
 
     it('keeps a transiently failed provider selectable', async () => {

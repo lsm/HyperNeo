@@ -4,7 +4,6 @@ import { Collapsible } from './ui/Collapsible.tsx';
 import { Button } from './ui/Button.tsx';
 import type { StructuredError, ErrorCategory } from '../types/error.ts';
 import { cn } from '../lib/utils.ts';
-import { borderColors } from '../lib/design-tokens.ts';
 
 export interface ErrorDialogProps {
   isOpen: boolean;
@@ -14,18 +13,18 @@ export interface ErrorDialogProps {
 }
 
 const ERROR_CATEGORY_COLORS: Record<ErrorCategory, string> = {
-  authentication: 'bg-red-500/10 text-red-400 border-red-500/30',
-  connection: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
-  session: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30',
-  message: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
-  model: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
-  system: 'bg-gray-500/10 text-gray-400 border-gray-500/30',
-  validation: 'bg-pink-500/10 text-pink-400 border-pink-500/30',
-  timeout: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-  permission: 'bg-red-500/10 text-red-400 border-red-500/30',
-  rate_limit: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
-  provider_auth_error: 'bg-red-500/10 text-red-400 border-red-500/30',
-  provider_unavailable: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
+  authentication: 'bg-danger/10 text-danger border-danger/30',
+  connection: 'bg-warning/10 text-warning border-orange-500/30',
+  session: 'bg-warning/10 text-warning border-warning/30',
+  message: 'bg-accent/10 text-accent border-accent/30',
+  model: 'bg-cat-purple/10 text-cat-purple border-cat-purple/30',
+  system: 'bg-fg-faint/10 text-fg-muted border-fg-faint/30',
+  validation: 'bg-pink-500/10 text-cat-pink border-pink-500/30',
+  timeout: 'bg-warning/10 text-warning border-warning/30',
+  permission: 'bg-danger/10 text-danger border-danger/30',
+  rate_limit: 'bg-warning/10 text-warning border-orange-500/30',
+  provider_auth_error: 'bg-danger/10 text-danger border-danger/30',
+  provider_unavailable: 'bg-warning/10 text-warning border-orange-500/30',
 };
 
 const ERROR_CATEGORY_ICONS: Record<ErrorCategory, string> = {
@@ -77,25 +76,25 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
               {error.category.toUpperCase()} ERROR
             </div>
             {error.code !== 'UNKNOWN' && (
-              <span class="ml-2 text-xs text-gray-500">Code: {error.code}</span>
+              <span class="ml-2 text-xs text-fg-faint">Code: {error.code}</span>
             )}
           </div>
-          <span class="text-xs text-gray-500">
+          <span class="text-xs text-fg-faint">
             {new Date(error.timestamp).toLocaleTimeString()}
           </span>
         </div>
 
-        <div class={`p-4 rounded-lg bg-dark-800 border ${borderColors.ui.default}`}>
-          <p class="text-gray-100">{error.userMessage}</p>
+        <div class="p-4 rounded-lg bg-surface-raised border border-line">
+          <p class="text-fg">{error.userMessage}</p>
         </div>
 
         {error.recoverySuggestions && error.recoverySuggestions.length > 0 && (
-          <div class={`p-4 rounded-lg bg-blue-500/5 border border-blue-500/20`}>
-            <h3 class="text-sm font-semibold text-blue-400 mb-2">💡 What you can try:</h3>
+          <div class={`p-4 rounded-lg bg-accent/5 border border-accent/20`}>
+            <h3 class="text-sm font-semibold text-accent mb-2">💡 What you can try:</h3>
             <ul class="space-y-1.5">
               {error.recoverySuggestions.map((suggestion, idx) => (
-                <li key={idx} class="text-sm text-gray-300 flex items-start gap-2">
-                  <span class="text-blue-400 mt-0.5">•</span>
+                <li key={idx} class="text-sm text-fg-soft flex items-start gap-2">
+                  <span class="text-accent mt-0.5">•</span>
                   <span>{suggestion}</span>
                 </li>
               ))}
@@ -105,31 +104,31 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
 
         <Collapsible
           trigger={
-            <div class="flex items-center gap-2 py-2 text-gray-400 hover:text-gray-300">
+            <div class="flex items-center gap-2 py-2 text-fg-muted hover:text-fg-soft">
               <span class="text-sm font-medium">Technical Details</span>
             </div>
           }
-          class={`border ${borderColors.ui.default} rounded-lg px-4`}
+          class="border border-line rounded-lg px-4"
         >
           <div class="space-y-3 text-sm">
             <div>
-              <dt class="font-medium text-gray-400 mb-1">Error Message:</dt>
-              <dd class="text-gray-300 font-mono text-xs bg-dark-900 p-2 rounded break-all">
+              <dt class="font-medium text-fg-muted mb-1">Error Message:</dt>
+              <dd class="text-fg-soft font-mono text-xs bg-surface p-2 rounded break-all">
                 {error.message}
               </dd>
             </div>
 
             {error.sessionContext && (
               <div>
-                <dt class="font-medium text-gray-400 mb-1">Session Context:</dt>
-                <dd class="text-gray-300 space-y-1">
+                <dt class="font-medium text-fg-muted mb-1">Session Context:</dt>
+                <dd class="text-fg-soft space-y-1">
                   <div>
-                    <span class="text-gray-500">Session ID:</span>{' '}
+                    <span class="text-fg-faint">Session ID:</span>{' '}
                     <span class="font-mono text-xs">{error.sessionContext.sessionId}</span>
                   </div>
                   {error.sessionContext.processingState && (
                     <div>
-                      <span class="text-gray-500">Processing State:</span>{' '}
+                      <span class="text-fg-faint">Processing State:</span>{' '}
                       <span class="font-mono text-xs">
                         {error.sessionContext.processingState.status}
                         {error.sessionContext.processingState.phase && (
@@ -144,9 +143,9 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
 
             {error.metadata && Object.keys(error.metadata).length > 0 && (
               <div>
-                <dt class="font-medium text-gray-400 mb-1">Additional Info:</dt>
-                <dd class="text-gray-300">
-                  <pre class="text-xs bg-dark-900 p-2 rounded overflow-x-auto">
+                <dt class="font-medium text-fg-muted mb-1">Additional Info:</dt>
+                <dd class="text-fg-soft">
+                  <pre class="text-xs bg-surface p-2 rounded overflow-x-auto">
                     {JSON.stringify(error.metadata, null, 2)}
                   </pre>
                 </dd>
@@ -154,21 +153,21 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
             )}
 
             <div>
-              <dt class="font-medium text-gray-400 mb-1">Recoverable:</dt>
-              <dd class="text-gray-300">
+              <dt class="font-medium text-fg-muted mb-1">Recoverable:</dt>
+              <dd class="text-fg-soft">
                 {error.recoverable ? (
-                  <span class="text-green-400">✓ Yes - you can retry</span>
+                  <span class="text-success">✓ Yes - you can retry</span>
                 ) : (
-                  <span class="text-red-400">✗ No - requires manual fix</span>
+                  <span class="text-danger">✗ No - requires manual fix</span>
                 )}
               </dd>
             </div>
 
             {error.stack && (
               <div>
-                <dt class="font-medium text-gray-400 mb-1">Stack Trace:</dt>
-                <dd class="text-gray-300">
-                  <pre class="text-xs bg-dark-900 p-3 rounded overflow-x-auto max-h-64 whitespace-pre-wrap break-words">
+                <dt class="font-medium text-fg-muted mb-1">Stack Trace:</dt>
+                <dd class="text-fg-soft">
+                  <pre class="text-xs bg-surface p-3 rounded overflow-x-auto max-h-64 whitespace-pre-wrap break-words">
                     {error.stack}
                   </pre>
                 </dd>

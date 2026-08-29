@@ -106,12 +106,12 @@ export function getMcpSkillRuntimeClasses(status: McpSkillRuntimeStatus): McpSki
     case 'active':
       return { dot: 'bg-emerald-400', text: 'text-emerald-500/70' };
     case 'server-off':
-      return { dot: 'bg-amber-400', text: 'text-amber-500/70' };
+      return { dot: 'bg-warning', text: 'text-warning/70' };
     case 'server-missing':
-      return { dot: 'bg-red-400', text: 'text-red-400' };
+      return { dot: 'bg-red-400', text: 'text-danger' };
     case 'skill-disabled':
     case 'unknown':
-      return { dot: 'bg-gray-500', text: 'text-gray-500' };
+      return { dot: 'bg-fg-faint', text: 'text-fg-faint' };
   }
 }
 
@@ -155,19 +155,19 @@ export interface SourceBadgeStyle {
 export function getSkillSourceBadge(skill: AppSkill): SourceBadgeStyle {
   switch (skill.sourceType) {
     case 'builtin':
-      return { label: 'Built-in', className: 'text-blue-400/80 bg-blue-400/10' };
+      return { label: 'Built-in', className: 'text-accent/80 bg-accent-soft/10' };
     case 'plugin':
       return { label: 'Plugin', className: 'text-violet-400/80 bg-violet-400/10' };
     case 'mcp_server':
-      return { label: 'MCP', className: 'text-amber-400/80 bg-amber-400/10' };
+      return { label: 'MCP', className: 'text-warning/80 bg-warning/10' };
   }
 }
 
 const MCP_SOURCE_LABELS: Record<McpEffectiveEnablementSource, SourceBadgeStyle> = {
-  session: { label: 'Session override', className: 'text-sky-400/80 bg-sky-400/10' },
-  room: { label: 'Inherited from room', className: 'text-purple-400/80 bg-purple-400/10' },
+  session: { label: 'Session override', className: 'text-info/80 bg-sky-400/10' },
+  room: { label: 'Inherited from room', className: 'text-cat-purple/80 bg-cat-purple/10' },
   space: { label: 'Inherited from space', className: 'text-fuchsia-400/80 bg-fuchsia-400/10' },
-  registry: { label: 'Registry default', className: 'text-gray-400/80 bg-gray-400/10' },
+  registry: { label: 'Registry default', className: 'text-fg-muted/80 bg-fg-muted/10' },
 };
 
 export function getMcpServerSourceBadge(source: McpEffectiveEnablementSource): SourceBadgeStyle {
@@ -177,11 +177,11 @@ export function getMcpServerSourceBadge(source: McpEffectiveEnablementSource): S
 export function getMcpServerProvenanceBadge(server: AppMcpServer): SourceBadgeStyle {
   switch (server.source) {
     case 'builtin':
-      return { label: 'Built-in', className: 'text-blue-400/80 bg-blue-400/10' };
+      return { label: 'Built-in', className: 'text-accent/80 bg-accent-soft/10' };
     case 'imported':
-      return { label: 'Imported', className: 'text-emerald-400/80 bg-emerald-400/10' };
+      return { label: 'Imported', className: 'text-success/80 bg-emerald-400/10' };
     case 'user':
-      return { label: 'User', className: 'text-gray-300/80 bg-gray-400/10' };
+      return { label: 'User', className: 'text-fg-soft/80 bg-fg-muted/10' };
   }
 }
 

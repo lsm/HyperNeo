@@ -364,7 +364,7 @@ describe('Tooltip', () => {
 
       await waitFor(() => {
         const tooltip = screen.queryByRole('tooltip');
-        expect(tooltip?.classList.contains('bg-dark-800')).toBe(true);
+        expect(tooltip?.classList.contains('bg-surface-raised')).toBe(true);
       });
     });
   });
@@ -398,7 +398,7 @@ describe('Tooltip', () => {
 
       await waitFor(() => {
         const tooltip = screen.queryByRole('tooltip');
-        expect(tooltip?.classList.contains('text-white')).toBe(true);
+        expect(tooltip?.classList.contains('text-accent-fg')).toBe(true);
       });
     });
 

@@ -153,15 +153,15 @@ describe('ReferenceAutocomplete', () => {
     it('applies selected styling to the item at selectedIndex', () => {
       const { container } = render(<ReferenceAutocomplete {...defaultProps} selectedIndex={0} />);
       const buttons = container.querySelectorAll('button[type="button"]');
-      expect(buttons[0].className).toContain('bg-blue-500/20');
-      expect(buttons[0].className).toContain('border-blue-500');
+      expect(buttons[0].className).toContain('bg-accent/20');
+      expect(buttons[0].className).toContain('border-accent');
     });
 
     it('does not apply selected styling to non-selected items', () => {
       const { container } = render(<ReferenceAutocomplete {...defaultProps} selectedIndex={0} />);
       const buttons = container.querySelectorAll('button[type="button"]');
       for (let i = 1; i < buttons.length; i++) {
-        expect(buttons[i].className).not.toContain('bg-blue-500/20');
+        expect(buttons[i].className).not.toContain('bg-accent/20');
       }
     });
 
@@ -171,8 +171,8 @@ describe('ReferenceAutocomplete', () => {
       );
       rerender(<ReferenceAutocomplete {...defaultProps} selectedIndex={2} />);
       const buttons = container.querySelectorAll('button[type="button"]');
-      expect(buttons[2].className).toContain('bg-blue-500/20');
-      expect(buttons[0].className).not.toContain('bg-blue-500/20');
+      expect(buttons[2].className).toContain('bg-accent/20');
+      expect(buttons[0].className).not.toContain('bg-accent/20');
     });
   });
 

@@ -67,7 +67,7 @@ export default function SessionListItem({
       data-testid="session-row"
       class={cn(
         'group/row relative flex items-stretch rounded-lg transition-colors',
-        isActive ? 'bg-white/10' : 'hover:bg-white/5'
+        isActive ? 'bg-fill' : 'hover:bg-fill-soft'
       )}
       onMouseLeave={() => {
         if (!archiving) setConfirming(false);
@@ -78,7 +78,7 @@ export default function SessionListItem({
           type="text"
           data-testid="session-rename-input"
           {...inputProps}
-          class="flex-1 min-w-0 mx-2.5 my-0.5 px-1.5 py-1 text-sm bg-white/10 rounded-md text-gray-100 outline-none ring-1 ring-blue-500/60"
+          class="flex-1 min-w-0 mx-2.5 my-0.5 px-1.5 py-1 text-sm bg-fill rounded-md text-fg outline-none ring-1 ring-accent/60"
         />
       ) : (
         <>
@@ -89,7 +89,7 @@ export default function SessionListItem({
             onClick={() => onSessionClick(session.id)}
             class={cn(
               'flex-1 min-w-0 flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors',
-              isActive ? 'text-gray-100' : 'text-gray-400 group-hover/row:text-gray-200'
+              isActive ? 'text-fg' : 'text-fg-muted group-hover/row:text-fg-soft'
             )}
           >
             <StatusIndicator session={session} sessionId={session.id} />
@@ -101,7 +101,7 @@ export default function SessionListItem({
               {session.title || 'New Session'}
             </h3>
             {session.status === 'archived' && (
-              <span class="text-amber-600 flex-shrink-0" title="Archived session">
+              <span class="text-warning flex-shrink-0" title="Archived session">
                 <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16">
                   <path d="M15.528 2.973a.75.75 0 0 1 .472.696v8.662a.75.75 0 0 1-.472.696l-7.25 2.9a.75.75 0 0 1-.557 0l-7.25-2.9A.75.75 0 0 1 0 12.331V3.669a.75.75 0 0 1 .471-.696L7.443.184l.01-.003.268-.108a.75.75 0 0 1 .558 0l.269.108.01.003zM10.404 2 4.25 4.461 1.846 3.5 1 3.839v.4l6.5 2.6v7.922l.5.2.5-.2V6.84l6.5-2.6v-.4l-.846-.339L8 5.961 5.596 5l6.154-2.461z" />
                 </svg>
@@ -117,7 +117,7 @@ export default function SessionListItem({
                   data-testid="session-archive-confirm"
                   onClick={handleArchive}
                   disabled={archiving}
-                  class="px-2 py-0.5 rounded text-xs font-medium bg-red-600 text-white transition-colors hover:bg-red-500 disabled:opacity-60"
+                  class="px-2 py-0.5 rounded text-xs font-medium bg-danger text-accent-fg transition-colors hover:bg-danger disabled:opacity-60"
                 >
                   {archiving ? 'Archiving…' : 'Archive'}
                 </button>
@@ -128,7 +128,7 @@ export default function SessionListItem({
                   onClick={() => setConfirming(true)}
                   title="Archive chat"
                   aria-label={`Archive ${session.title || 'chat'}`}
-                  class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
+                  class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-fg-faint transition-colors hover:text-fg hover:bg-fill"
                 >
                   <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path

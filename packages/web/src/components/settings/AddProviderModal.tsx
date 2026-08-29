@@ -283,20 +283,20 @@ export function AddProviderModal({
     return (
       <div
         key={preset.providerId}
-        class={`rounded-lg border border-dark-600 bg-dark-850 p-3 flex flex-col gap-2 ${added ? 'opacity-50' : ''}`}
+        class={`rounded-lg border border-line-strong bg-surface-overlay p-3 flex flex-col gap-2 ${added ? 'opacity-50' : ''}`}
       >
         <div class="flex items-center justify-between">
           <div>
-            <div class="text-sm font-medium text-gray-100">{preset.displayName}</div>
-            <div class="text-xs text-gray-500">{preset.description}</div>
+            <div class="text-sm font-medium text-fg">{preset.displayName}</div>
+            <div class="text-xs text-fg-faint">{preset.description}</div>
           </div>
           <span
             class={`text-[10px] px-1.5 py-0.5 rounded-full ${
               preset.authType === 'api_key'
-                ? 'bg-blue-900/40 text-blue-300'
+                ? 'bg-accent/40 text-accent-soft'
                 : preset.authType === 'oauth'
-                  ? 'bg-purple-900/40 text-purple-300'
-                  : 'bg-gray-800 text-gray-400'
+                  ? 'bg-cat-purple/40 text-cat-purple'
+                  : 'bg-surface-raised text-fg-muted'
             }`}
           >
             {preset.authType === 'api_key'
@@ -311,7 +311,7 @@ export function AddProviderModal({
           <div class="flex flex-col gap-1">
             <label
               for={`kimi-region-${preset.providerId}`}
-              class="text-[10px] uppercase tracking-wider text-gray-500"
+              class="text-[10px] uppercase tracking-wider text-fg-faint"
             >
               Region
             </label>
@@ -319,7 +319,7 @@ export function AddProviderModal({
               id={`kimi-region-${preset.providerId}`}
               value={kimiRegion}
               onChange={(e) => setKimiRegion(e.currentTarget.value as 'china' | 'global')}
-              class="bg-dark-950 border border-dark-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+              class="bg-bg border border-line rounded px-2 py-1 text-xs text-fg focus:outline-none focus:border-accent"
             >
               {KIMI_REGION_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -331,7 +331,7 @@ export function AddProviderModal({
         )}
 
         {added ? (
-          <div class="text-xs text-gray-500">Already added</div>
+          <div class="text-xs text-fg-faint">Already added</div>
         ) : preset.authType === 'api_key' ? (
           <div class="flex gap-2">
             <input
@@ -339,7 +339,7 @@ export function AddProviderModal({
               placeholder="API key"
               value={apiKeys[preset.providerId] ?? ''}
               onInput={(e) => handleApiKeyChange(preset.providerId, e.currentTarget.value)}
-              class="flex-1 min-w-0 bg-dark-950 border border-dark-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+              class="flex-1 min-w-0 bg-bg border border-line rounded px-2 py-1 text-xs text-fg focus:outline-none focus:border-accent font-mono"
             />
             <Button
               size="xs"
@@ -363,7 +363,7 @@ export function AddProviderModal({
                   [preset.providerId]: e.currentTarget.value,
                 }))
               }
-              class="flex-1 min-w-0 bg-dark-950 border border-dark-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+              class="flex-1 min-w-0 bg-bg border border-line rounded px-2 py-1 text-xs text-fg focus:outline-none focus:border-accent font-mono"
             />
             <Button
               size="xs"
@@ -404,18 +404,18 @@ export function AddProviderModal({
 
   return (
     <>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-        <div class="bg-dark-850 border border-dark-600 rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-dark-700">
-            <h3 class="text-sm font-semibold text-gray-100">Add Provider</h3>
+      <div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
+        <div class="bg-surface-overlay border border-line-strong rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-line">
+            <h3 class="text-sm font-semibold text-fg">Add Provider</h3>
             <button
               type="button"
               onClick={onClose}
-              class="p-1 rounded hover:bg-dark-700"
+              class="p-1 rounded hover:bg-fill-strong"
               aria-label="Close"
             >
               <svg
-                class="w-4 h-4 text-gray-400"
+                class="w-4 h-4 text-fg-muted"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -432,7 +432,7 @@ export function AddProviderModal({
 
           <div class="flex-1 overflow-y-auto p-4 space-y-4">
             <div>
-              <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
+              <h4 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-2">
                 Quick Add
               </h4>
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -444,7 +444,7 @@ export function AddProviderModal({
               <button
                 type="button"
                 onClick={() => setShowMore((v) => !v)}
-                class="flex items-center gap-1 text-xs font-medium text-gray-400 hover:text-gray-200 transition-colors"
+                class="flex items-center gap-1 text-xs font-medium text-fg-muted hover:text-fg-soft transition-colors"
               >
                 <svg
                   class={`w-3 h-3 transition-transform ${showMore ? 'rotate-90' : ''}`}
@@ -468,14 +468,14 @@ export function AddProviderModal({
               )}
             </div>
 
-            <div class="pt-2 border-t border-dark-700">
+            <div class="pt-2 border-t border-line">
               <button
                 type="button"
                 onClick={() => setShowPresets(true)}
-                class="w-full text-left px-3 py-2.5 rounded-lg border border-dashed border-dark-600 hover:border-dark-500 hover:bg-white/5 transition-colors"
+                class="w-full text-left px-3 py-2.5 rounded-lg border border-dashed border-line-strong hover:border-line-strong hover:bg-fill-soft transition-colors"
               >
-                <div class="text-sm font-medium text-gray-200">Custom endpoint</div>
-                <div class="text-xs text-gray-500 mt-0.5">
+                <div class="text-sm font-medium text-fg-soft">Custom endpoint</div>
+                <div class="text-xs text-fg-faint mt-0.5">
                   Self-hosted or third-party API (Ollama, LM Studio, LiteLLM...)
                 </div>
               </button>

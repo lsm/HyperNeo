@@ -213,7 +213,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
           <button
             type="button"
             onClick={onClose}
-            class="md:hidden mb-1 ml-auto flex p-1.5 rounded-lg text-gray-400 hover:text-gray-100 hover:bg-white/5 transition-colors"
+            class="md:hidden mb-1 ml-auto flex p-1.5 rounded-lg text-fg-muted hover:text-fg hover:bg-fill-soft transition-colors"
             title="Close panel"
             aria-label="Close panel"
           >
@@ -231,9 +231,9 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
           type="button"
           data-testid="new-chat-button"
           onClick={handleNewChat}
-          class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium text-gray-200 hover:bg-white/5 hover:text-gray-100 transition-colors"
+          class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm font-medium text-fg-soft hover:bg-fill-soft hover:text-fg transition-colors"
         >
-          <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg class="w-4 h-4 text-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
               stroke-linecap="round"
               stroke-linejoin="round"
@@ -248,13 +248,13 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
       <div class="flex-1 overflow-y-auto px-2 pb-2">
         {!hasContent ? (
           <div class="px-2 py-10 text-center">
-            <p class="text-sm text-gray-500">No chats yet</p>
-            <p class="text-xs text-gray-600 mt-1">Start a new chat to begin.</p>
+            <p class="text-sm text-fg-faint">No chats yet</p>
+            <p class="text-xs text-fg-faint mt-1">Start a new chat to begin.</p>
           </div>
         ) : (
           <>
             <div class="flex items-center justify-between px-2.5 pt-2 pb-1">
-              <span class="text-xs font-medium text-gray-500">Projects</span>
+              <span class="text-xs font-medium text-fg-faint">Projects</span>
               <button
                 type="button"
                 data-testid="add-project-button"
@@ -268,7 +268,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                 }}
                 title="Add project"
                 aria-label="Add project"
-                class="p-0.5 rounded text-gray-500 hover:text-gray-200 hover:bg-white/5 transition-colors"
+                class="p-0.5 rounded text-fg-faint hover:text-fg-soft hover:bg-fill-soft transition-colors"
               >
                 <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
@@ -284,7 +284,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
               <form
                 data-testid="add-project-form"
                 onSubmit={handleAddProjectSubmit}
-                class="mx-2 mb-2 rounded-lg border border-dark-700 bg-dark-850 p-2"
+                class="mx-2 mb-2 rounded-lg border border-line bg-surface-overlay p-2"
               >
                 <div class="flex items-center gap-1.5">
                   <input
@@ -297,21 +297,21 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
                     }}
                     placeholder="Project path"
                     autoFocus
-                    class="min-w-0 flex-1 rounded-md border border-dark-700 bg-dark-900 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-dark-600 focus:outline-none"
+                    class="min-w-0 flex-1 rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-fg placeholder-gray-600 focus:border-line-strong focus:outline-none"
                   />
                   <button
                     type="submit"
                     disabled={addProjectBusy}
-                    class="rounded-md bg-dark-700 px-2 py-1.5 text-xs font-medium text-gray-200 transition-colors hover:bg-dark-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    class="rounded-md bg-fill-strong px-2 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:bg-line-strong disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {addProjectBusy ? 'Adding…' : 'Add'}
                   </button>
                 </div>
-                <p class="mt-1.5 text-[11px] leading-4 text-gray-600">
+                <p class="mt-1.5 text-[11px] leading-4 text-fg-faint">
                   Use an absolute path accessible to HyperNeo.
                 </p>
                 {addProjectError && (
-                  <p class="mt-1.5 text-[11px] leading-4 text-red-400">{addProjectError}</p>
+                  <p class="mt-1.5 text-[11px] leading-4 text-danger">{addProjectError}</p>
                 )}
               </form>
             )}
@@ -339,7 +339,7 @@ export function SessionsSidebar({ onSessionSelect, onClose }: SessionsSidebarPro
 
             {ungrouped.length > 0 && (
               <>
-                <div class="px-2.5 pt-3 pb-1 text-xs font-medium text-gray-500">Chats</div>
+                <div class="px-2.5 pt-3 pb-1 text-xs font-medium text-fg-faint">Chats</div>
                 <div class="flex flex-col gap-0.5">
                   {ungrouped.map((session) => (
                     <SessionListItem

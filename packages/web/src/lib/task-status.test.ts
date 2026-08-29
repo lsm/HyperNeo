@@ -56,7 +56,7 @@ describe('task-status', () => {
 
   it('returns tone classes from getTaskStatusClasses', () => {
     const classes = getTaskStatusClasses('done');
-    expect(classes.bg).toBe('bg-green-500');
+    expect(classes.bg).toBe('bg-success');
   });
 
   it('getTaskStatusConfig returns the same config as the record', () => {

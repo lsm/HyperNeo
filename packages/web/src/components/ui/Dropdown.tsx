@@ -1,7 +1,6 @@
 import { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../../lib/utils.ts';
-import { borderColors } from '../../lib/design-tokens.ts';
 
 export interface DropdownItem {
   label: string;
@@ -224,7 +223,7 @@ export function Dropdown({
             'shadow-xl z-[9999] animate-slideIn',
             customContent
               ? ''
-              : `py-1 bg-dark-850 border ${borderColors.ui.default} rounded-lg min-w-[200px]`
+              : 'py-1 bg-surface-overlay border border-line rounded-lg min-w-[200px]'
           )}
           role="menu"
         >
@@ -234,7 +233,7 @@ export function Dropdown({
             <>
               {items.map((item, index) => {
                 if ('type' in item && item.type === 'divider') {
-                  return <div key={`divider-${index}`} class="h-px bg-dark-700 my-1" />;
+                  return <div key={`divider-${index}`} class="h-px bg-fill-strong my-1" />;
                 }
 
                 const menuItem = item as DropdownItem;
@@ -269,10 +268,10 @@ export function Dropdown({
                     class={cn(
                       'w-full px-4 py-2 text-left text-sm flex items-center gap-3 transition-colors',
                       menuItem.disabled
-                        ? 'text-gray-600 cursor-not-allowed'
+                        ? 'text-fg-faint cursor-not-allowed'
                         : menuItem.danger
-                          ? 'text-red-400 hover:bg-red-500/10 hover:text-red-300'
-                          : 'text-gray-300 hover:bg-dark-800 hover:text-gray-100'
+                          ? 'text-danger hover:bg-danger/10 hover:text-danger-soft'
+                          : 'text-fg-soft hover:bg-surface-raised hover:text-fg'
                     )}
                   >
                     {menuItem.icon && <span class="w-4 h-4 flex-shrink-0">{menuItem.icon}</span>}

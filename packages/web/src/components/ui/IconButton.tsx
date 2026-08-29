@@ -25,13 +25,13 @@ export function IconButton({
   type = 'button',
 }: IconButtonProps) {
   const baseStyles =
-    'inline-flex items-center justify-center rounded-lg transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950 disabled:opacity-50 disabled:cursor-not-allowed';
+    'inline-flex items-center justify-center rounded-lg transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:opacity-50 disabled:cursor-not-allowed';
 
   const variants = {
-    ghost: 'hover:bg-dark-800 text-gray-400 hover:text-gray-100',
-    solid: 'bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100',
-    default: 'bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100',
-    danger: 'hover:bg-red-500/10 text-red-400 hover:text-red-300',
+    ghost: 'hover:bg-surface-raised text-fg-muted hover:text-fg',
+    solid: 'bg-surface-raised hover:bg-fill-strong text-fg-soft hover:text-fg',
+    default: 'bg-surface-raised hover:bg-fill-strong text-fg-soft hover:text-fg',
+    danger: 'hover:bg-danger/10 text-danger hover:text-danger-soft',
   };
 
   const sizes = {
@@ -40,7 +40,7 @@ export function IconButton({
     lg: 'p-3',
   };
 
-  const activeStyles = active ? 'bg-indigo-500/20 text-indigo-400' : '';
+  const activeStyles = active ? 'bg-accent-hover/20 text-cat-indigo' : '';
 
   return (
     <button

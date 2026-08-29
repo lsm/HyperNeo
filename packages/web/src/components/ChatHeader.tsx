@@ -56,7 +56,7 @@ export function ChatHeader({
           <button
             type="button"
             onClick={onBack}
-            class="flex-shrink-0 p-1.5 rounded text-gray-400 hover:text-gray-100 hover:bg-dark-700 transition-colors focus:outline-none focus:ring-1 focus:ring-gray-600"
+            class="flex-shrink-0 p-1.5 rounded text-fg-muted hover:text-fg hover:bg-fill-strong transition-colors focus:outline-none focus:ring-1 focus:ring-gray-600"
             aria-label="Back"
             data-testid="chat-header-back"
           >
@@ -77,7 +77,7 @@ export function ChatHeader({
         <div class="flex flex-1 min-w-0 items-center gap-1.5" data-tauri-drag-region>
           <h2
             data-testid="chat-header-title"
-            class="min-w-0 truncate text-sm font-semibold text-gray-100"
+            class="min-w-0 truncate text-sm font-semibold text-fg"
             data-tauri-drag-region
           >
             {titleOverride || session?.title || 'New Session'}

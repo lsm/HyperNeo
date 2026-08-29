@@ -117,9 +117,9 @@ export function WorkspaceSelector({
       <div class="w-full max-w-md">
         <div class="text-center mb-8">
           <div class="flex items-center justify-center mb-5">
-            <div class="w-16 h-16 rounded-2xl bg-dark-800 border border-dark-700 flex items-center justify-center shadow-lg">
+            <div class="w-16 h-16 rounded-2xl bg-surface-raised border border-line flex items-center justify-center shadow-lg">
               <svg
-                class="w-8 h-8 text-blue-400"
+                class="w-8 h-8 text-accent"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -133,22 +133,22 @@ export function WorkspaceSelector({
               </svg>
             </div>
           </div>
-          <h2 class="text-xl font-semibold text-gray-100 mb-2">Select a workspace</h2>
-          <p class="text-sm text-gray-500 max-w-xs mx-auto">
+          <h2 class="text-xl font-semibold text-fg mb-2">Select a workspace</h2>
+          <p class="text-sm text-fg-faint max-w-xs mx-auto">
             Choose a project folder to give Claude context for your work, or skip to chat without
             one.
           </p>
         </div>
 
-        <div class="bg-dark-800 border border-dark-700 rounded-2xl p-5 space-y-4 shadow-xl">
+        <div class="bg-surface-raised border border-line rounded-2xl p-5 space-y-4 shadow-xl">
           {!showCustomInput ? (
             <div>
-              <label class="block text-xs font-medium text-gray-400 mb-1.5">Workspace folder</label>
+              <label class="block text-xs font-medium text-fg-muted mb-1.5">Workspace folder</label>
               <div class="flex gap-2">
                 <select
                   value={selectedPath || '__none__'}
                   onChange={(e) => handleSelectChange((e.target as HTMLSelectElement).value)}
-                  class="flex-1 bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500 cursor-pointer"
+                  class="flex-1 bg-surface border border-line-strong rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent cursor-pointer"
                 >
                   {history.length === 0 ? (
                     <option value="__none__" disabled>
@@ -168,7 +168,7 @@ export function WorkspaceSelector({
                     type="button"
                     onClick={handleBrowse}
                     title="Browse on this computer"
-                    class="p-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors shrink-0"
+                    class="p-2 rounded-lg bg-fill-strong hover:bg-line-strong text-fg-muted hover:text-fg border border-line-strong transition-colors shrink-0"
                   >
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path
@@ -184,7 +184,7 @@ export function WorkspaceSelector({
             </div>
           ) : (
             <div>
-              <label class="block text-xs font-medium text-gray-400 mb-1.5">Workspace folder</label>
+              <label class="block text-xs font-medium text-fg-muted mb-1.5">Workspace folder</label>
               <div class="flex gap-2">
                 <input
                   type="text"
@@ -192,7 +192,7 @@ export function WorkspaceSelector({
                   onInput={(e) => setCustomPath((e.target as HTMLInputElement).value)}
                   placeholder="Project path"
                   autoFocus
-                  class="flex-1 bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                  class="flex-1 bg-surface border border-line-strong rounded-lg px-3 py-2 text-sm text-fg placeholder-gray-500 focus:outline-none focus:border-accent"
                 />
                 {history.length > 0 && (
                   <button
@@ -202,7 +202,7 @@ export function WorkspaceSelector({
                       setSelectedPath(history[0].path);
                     }}
                     title="Back to recent workspaces"
-                    class="p-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-gray-400 hover:text-gray-100 border border-dark-600 transition-colors shrink-0"
+                    class="p-2 rounded-lg bg-fill-strong hover:bg-line-strong text-fg-muted hover:text-fg border border-line-strong transition-colors shrink-0"
                   >
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path
@@ -215,7 +215,7 @@ export function WorkspaceSelector({
                   </button>
                 )}
               </div>
-              <p class="mt-1.5 text-[11px] leading-4 text-gray-600">
+              <p class="mt-1.5 text-[11px] leading-4 text-fg-faint">
                 Use an absolute path accessible to HyperNeo.
               </p>
             </div>
@@ -223,21 +223,21 @@ export function WorkspaceSelector({
 
           {activePath && (
             <div>
-              <label class="block text-xs font-medium text-gray-400 mb-1.5">Edit mode</label>
-              <div class="flex rounded-lg overflow-hidden border border-dark-600">
+              <label class="block text-xs font-medium text-fg-muted mb-1.5">Edit mode</label>
+              <div class="flex rounded-lg overflow-hidden border border-line-strong">
                 <button
                   type="button"
                   onClick={() => setWorktreeMode('worktree')}
                   class={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
                     worktreeMode === 'worktree'
-                      ? 'bg-green-700/40 text-green-300'
-                      : 'bg-dark-900 text-gray-400 hover:text-gray-200'
+                      ? 'bg-success/40 text-success-soft'
+                      : 'bg-surface text-fg-muted hover:text-fg-soft'
                   }`}
                 >
                   Worktree
                   <span
                     class={`block text-[10px] font-normal mt-0.5 ${
-                      worktreeMode === 'worktree' ? 'text-green-400/70' : 'text-gray-600'
+                      worktreeMode === 'worktree' ? 'text-success/70' : 'text-fg-faint'
                     }`}
                   >
                     Isolated branch (safe)
@@ -246,16 +246,16 @@ export function WorkspaceSelector({
                 <button
                   type="button"
                   onClick={() => setWorktreeMode('direct')}
-                  class={`flex-1 px-3 py-2 text-xs font-medium transition-colors border-l border-dark-600 ${
+                  class={`flex-1 px-3 py-2 text-xs font-medium transition-colors border-l border-line-strong ${
                     worktreeMode === 'direct'
-                      ? 'bg-amber-700/30 text-amber-300'
-                      : 'bg-dark-900 text-gray-400 hover:text-gray-200'
+                      ? 'bg-warning/30 text-warning'
+                      : 'bg-surface text-fg-muted hover:text-fg-soft'
                   }`}
                 >
                   Direct
                   <span
                     class={`block text-[10px] font-normal mt-0.5 ${
-                      worktreeMode === 'direct' ? 'text-amber-400/70' : 'text-gray-600'
+                      worktreeMode === 'direct' ? 'text-warning/70' : 'text-fg-faint'
                     }`}
                   >
                     Edit directly (fast)
@@ -265,13 +265,13 @@ export function WorkspaceSelector({
             </div>
           )}
 
-          {error && <p class="text-xs text-red-400">{error}</p>}
+          {error && <p class="text-xs text-danger">{error}</p>}
 
           <div class="flex gap-3 pt-1">
             <button
               type="button"
               onClick={onSkip}
-              class="flex-1 px-4 py-2.5 text-sm text-gray-400 hover:text-gray-200 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded-xl transition-colors font-medium"
+              class="flex-1 px-4 py-2.5 text-sm text-fg-muted hover:text-fg-soft bg-fill-strong hover:bg-line-strong border border-line-strong rounded-xl transition-colors font-medium"
             >
               Skip
             </button>
@@ -279,7 +279,7 @@ export function WorkspaceSelector({
               type="button"
               onClick={handleConfirm}
               disabled={!activePath || loading}
-              class="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl transition-colors"
+              class="flex-1 px-4 py-2.5 bg-accent-hover hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed text-accent-fg text-sm font-medium rounded-xl transition-colors"
             >
               {loading ? 'Setting...' : 'Start with workspace'}
             </button>

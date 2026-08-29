@@ -32,7 +32,6 @@ import {
 import { spaceStore, type SpaceSessionRow } from '../lib/space-store';
 import { isActionRequired, isActiveTask, isDraftTask } from '../lib/task-filters';
 import { getAgentProcessingStateConfig } from '../lib/session-processing-phase';
-import { type IndicatorTone } from '../lib/indicator-tokens';
 import { SESSION_LIFECYCLE_STATUS_CONFIG } from '../lib/session-lifecycle-status';
 import { getTaskStatusConfig } from '../lib/task-status';
 import {
@@ -49,6 +48,8 @@ import { cn } from '../lib/utils';
 
 type TaskTab = 'active' | 'action' | 'draft';
 
+type SessionIndicatorTone = ReturnType<typeof getAgentProcessingStateConfig>['tone'];
+
 const SIDEBAR_PREVIEW_LIMIT = 10;
 
 function parseAgentState(value?: string): AgentProcessingState {
@@ -60,7 +61,10 @@ function parseAgentState(value?: string): AgentProcessingState {
   }
 }
 
-function sessionIndicator(session: SpaceSessionRow): { tone: IndicatorTone; pulse: boolean } {
+function sessionIndicator(session: SpaceSessionRow): {
+  tone: SessionIndicatorTone;
+  pulse: boolean;
+} {
   const agentState = parseAgentState(session.processingState);
   if (agentState.status !== 'idle') {
     const isActive = agentState.status === 'processing' || agentState.status === 'queued';
@@ -105,7 +109,7 @@ function SpaceDetailSessionRow({
         type="text"
         data-testid="space-session-rename-input"
         {...inputProps}
-        class="w-full mx-3 my-0.5 px-2 py-1 text-sm bg-white/10 rounded-md text-gray-100 outline-none ring-1 ring-blue-500/60"
+        class="w-full mx-3 my-0.5 px-2 py-1 text-sm bg-fill rounded-md text-fg outline-none ring-1 ring-accent/60"
       />
     );
   }
@@ -122,7 +126,7 @@ function SpaceDetailSessionRow({
     <div
       class={cn(
         'group/row relative w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer',
-        isSelected ? 'bg-white/10' : 'hover:bg-white/5'
+        isSelected ? 'bg-fill' : 'hover:bg-fill-soft'
       )}
       role="button"
       tabIndex={0}
@@ -134,7 +138,7 @@ function SpaceDetailSessionRow({
     >
       <StatusDot tone={tone} pulse={pulse} />
       <span
-        class="flex-1 min-w-0 text-sm text-gray-300 truncate"
+        class="flex-1 min-w-0 text-sm text-fg-soft truncate"
         onDblClick={startEditing}
         title="Double-click to rename"
       >
@@ -152,7 +156,7 @@ function SpaceDetailSessionRow({
                 void handleArchive();
               }}
               disabled={archiving}
-              class="px-2 py-0.5 rounded text-xs font-medium bg-red-600 text-white transition-colors hover:bg-red-500 disabled:opacity-60"
+              class="px-2 py-0.5 rounded text-xs font-medium bg-danger text-accent-fg transition-colors hover:bg-danger disabled:opacity-60"
             >
               {archiving ? 'Archiving…' : 'Archive'}
             </button>
@@ -166,7 +170,7 @@ function SpaceDetailSessionRow({
               }}
               title="Archive session"
               aria-label={`Archive ${session.title || 'session'}`}
-              class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-gray-500 transition-colors hover:text-gray-100 hover:bg-white/10"
+              class="opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 p-1 rounded text-fg-faint transition-colors hover:text-fg hover:bg-fill"
             >
               <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -211,11 +215,11 @@ function TaskTabButton({
       onClick={onClick}
       class={cn(
         'flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs transition-colors',
-        active ? 'bg-white/5 text-gray-200' : 'text-gray-400 hover:bg-white/5 hover:text-gray-300'
+        active ? 'bg-fill-soft text-fg-soft' : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft'
       )}
     >
       <span>{label}</span>
-      <span class="text-[11px] text-gray-400 tabular-nums">{count}</span>
+      <span class="text-[11px] text-fg-muted tabular-nums">{count}</span>
     </button>
   );
 }
@@ -245,13 +249,13 @@ function SpaceNavItem({
       data-active={active ? 'true' : 'false'}
       class={cn(
         'mx-2 w-auto rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-left text-sm transition-colors',
-        active ? 'bg-white/10 text-gray-100' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+        active ? 'bg-fill text-fg' : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft'
       )}
     >
       <span
         class={cn(
           'flex h-5 w-5 flex-shrink-0 items-center justify-center',
-          active ? accentClass : 'text-gray-400'
+          active ? accentClass : 'text-fg-muted'
         )}
       >
         {icon}
@@ -279,7 +283,7 @@ export function SpaceDetailPanel({
   if (!isReady) {
     return (
       <div class="flex-1 flex items-center justify-center p-6">
-        <span class="text-xs text-gray-400">Loading…</span>
+        <span class="text-xs text-fg-muted">Loading…</span>
       </div>
     );
   }
@@ -508,7 +512,7 @@ export function SpaceDetailPanel({
           active={isOverviewSelected}
           onClick={handleOverviewClick}
           testId="space-detail-dashboard"
-          accentClass="text-blue-400"
+          accentClass="text-accent"
           icon={
             <svg
               class="w-4 h-4"
@@ -531,7 +535,7 @@ export function SpaceDetailPanel({
           active={isSpaceAgentSelected}
           onClick={handleSpaceAgentClick}
           testId="space-detail-agent"
-          accentClass="text-purple-400"
+          accentClass="text-cat-purple"
           icon={
             <svg
               class="w-4 h-4"
@@ -555,7 +559,7 @@ export function SpaceDetailPanel({
           active={isGoalsSelected}
           onClick={handleGoalsClick}
           testId="space-detail-goals"
-          accentClass="text-blue-400"
+          accentClass="text-accent"
           icon={
             <svg
               class="w-4 h-4"
@@ -574,7 +578,7 @@ export function SpaceDetailPanel({
           }
           badge={
             goals.length > 0 ? (
-              <span class="flex-shrink-0 text-xs tabular-nums text-gray-400">
+              <span class="flex-shrink-0 text-xs tabular-nums text-fg-muted">
                 {goals.filter((goal) => goal.status !== 'archived').length}
               </span>
             ) : undefined
@@ -585,7 +589,7 @@ export function SpaceDetailPanel({
           active={isMemoriesSelected}
           onClick={handleMemoriesClick}
           testId="space-detail-memories"
-          accentClass="text-pink-400"
+          accentClass="text-cat-pink"
           icon={
             <svg
               class="w-4 h-4"
@@ -608,7 +612,7 @@ export function SpaceDetailPanel({
           active={isForgeSelected}
           onClick={handleForgeClick}
           testId="space-detail-forge"
-          accentClass="text-cyan-400"
+          accentClass="text-cat-cyan"
           icon={
             <svg
               class="w-4 h-4"
@@ -631,7 +635,7 @@ export function SpaceDetailPanel({
           active={isTasksSelected}
           onClick={() => handleTasksClick()}
           testId="space-detail-tasks"
-          accentClass="text-green-400"
+          accentClass="text-success"
           icon={
             <svg
               class="w-4 h-4"
@@ -650,7 +654,7 @@ export function SpaceDetailPanel({
           }
           badge={
             actionCount > 0 ? (
-              <span class="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full bg-amber-500/20 px-1.5 text-xs font-medium tabular-nums text-amber-300">
+              <span class="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full bg-warning/20 px-1.5 text-xs font-medium tabular-nums text-warning">
                 {actionCount}
               </span>
             ) : undefined
@@ -661,7 +665,7 @@ export function SpaceDetailPanel({
           active={isSessionsSelected}
           onClick={handleSessionsClick}
           testId="space-detail-sessions"
-          accentClass="text-amber-400"
+          accentClass="text-warning"
           icon={
             <svg
               class="w-4 h-4"
@@ -680,7 +684,7 @@ export function SpaceDetailPanel({
           }
           badge={
             sessions.length > 0 ? (
-              <span class="flex-shrink-0 text-xs tabular-nums text-gray-400">
+              <span class="flex-shrink-0 text-xs tabular-nums text-fg-muted">
                 {sessions.length}
               </span>
             ) : undefined
@@ -688,7 +692,7 @@ export function SpaceDetailPanel({
         />
       </nav>
 
-      <div class="border-t border-white/10 mx-3 my-2" />
+      <div class="border-t border-line mx-3 my-2" />
 
       <div class="flex-1 overflow-y-auto">
         <CollapsibleSection title="Tasks">
@@ -717,7 +721,7 @@ export function SpaceDetailPanel({
             </div>
           )}
           {visibleTasks.length === 0 ? (
-            <div class="px-4 py-2 text-xs text-gray-400">No tasks</div>
+            <div class="px-4 py-2 text-xs text-fg-muted">No tasks</div>
           ) : (
             visibleTasks.map((task) => {
               const taskUnread =
@@ -733,12 +737,12 @@ export function SpaceDetailPanel({
                   onClick={() => handleTaskClick(task.id)}
                   class={cn(
                     'w-full px-3 py-1.5 flex items-center gap-2 rounded-lg transition-colors text-left',
-                    selectedTaskId === task.id ? 'bg-white/10' : 'hover:bg-white/5'
+                    selectedTaskId === task.id ? 'bg-fill' : 'hover:bg-fill-soft'
                   )}
                 >
                   <TaskStatusDot status={task.status} pulse={taskRunning} />
                   <div class="min-w-0 flex-1">
-                    <span class="block text-sm text-gray-400 truncate">{task.title}</span>
+                    <span class="block text-sm text-fg-muted truncate">{task.title}</span>
                   </div>
                   {taskUnread && <StatusDot tone="info" size="xs" aria-label="Has updates" />}
                 </button>
@@ -750,7 +754,7 @@ export function SpaceDetailPanel({
               type="button"
               data-testid="space-tasks-view-all"
               onClick={() => handleTasksClick(taskTab)}
-              class="w-full px-3 py-1.5 text-left text-xs text-gray-400 transition-colors hover:text-gray-300"
+              class="w-full px-3 py-1.5 text-left text-xs text-fg-muted transition-colors hover:text-fg-soft"
             >
               View all {tasksForTab.length}
             </button>
@@ -765,7 +769,7 @@ export function SpaceDetailPanel({
             <button
               type="button"
               onClick={handleCreateSession}
-              class="rounded-md p-0.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-300"
+              class="rounded-md p-0.5 text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft"
               aria-label="Create session"
             >
               <svg
@@ -786,7 +790,7 @@ export function SpaceDetailPanel({
           }
         >
           {visibleSessions.length === 0 ? (
-            <div class="px-4 py-2 text-xs text-gray-400">No sessions</div>
+            <div class="px-4 py-2 text-xs text-fg-muted">No sessions</div>
           ) : (
             visibleSessions.map((session) => (
               <SpaceDetailSessionRow
@@ -803,7 +807,7 @@ export function SpaceDetailPanel({
               type="button"
               data-testid="space-sessions-view-all"
               onClick={() => handleSessionsClick()}
-              class="w-full px-3 py-1.5 text-left text-xs text-gray-400 transition-colors hover:text-gray-300"
+              class="w-full px-3 py-1.5 text-left text-xs text-fg-muted transition-colors hover:text-fg-soft"
             >
               View all {sessions.length}
             </button>

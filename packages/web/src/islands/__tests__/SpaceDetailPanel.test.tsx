@@ -224,14 +224,14 @@ describe('SpaceDetailPanel', () => {
   it('highlights Overview when neither session nor task is selected', () => {
     render(<SpaceDetailPanel spaceId="space-1" />);
     const button = screen.getByText('Overview').closest('button');
-    expect(button?.className).toContain('bg-white/10');
+    expect(button?.className).toContain('bg-fill');
   });
 
   it('highlights Agents when the agents view mode is active', () => {
     mockCurrentSpaceViewModeSignal.value = 'agents';
     render(<SpaceDetailPanel spaceId="space-1" />);
     const button = screen.getByText('Agents').closest('button');
-    expect(button?.className).toContain('bg-white/10');
+    expect(button?.className).toContain('bg-fill');
   });
 
   it('shows Action tasks by default and includes counters on task tabs', () => {

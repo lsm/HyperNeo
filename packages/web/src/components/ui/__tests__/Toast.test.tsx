@@ -65,14 +65,14 @@ describe('ToastItem', () => {
         const toast = createToast({ type: 'success' });
         const { container } = render(<ToastItem toast={toast} />);
         const alert = container.querySelector('[role="alert"]');
-        expect(alert?.className).toContain('text-green-400');
+        expect(alert?.className).toContain('text-success');
       });
 
       it('should have green background', () => {
         const toast = createToast({ type: 'success' });
         const { container } = render(<ToastItem toast={toast} />);
         const alert = container.querySelector('[role="alert"]');
-        expect(alert?.className).toContain('bg-green-500/10');
+        expect(alert?.className).toContain('bg-success/10');
       });
     });
 
@@ -88,14 +88,14 @@ describe('ToastItem', () => {
         const toast = createToast({ type: 'error' });
         const { container } = render(<ToastItem toast={toast} />);
         const alert = container.querySelector('[role="alert"]');
-        expect(alert?.className).toContain('text-red-400');
+        expect(alert?.className).toContain('text-danger');
       });
 
       it('should have red background', () => {
         const toast = createToast({ type: 'error' });
         const { container } = render(<ToastItem toast={toast} />);
         const alert = container.querySelector('[role="alert"]');
-        expect(alert?.className).toContain('bg-red-500/10');
+        expect(alert?.className).toContain('bg-danger/10');
       });
     });
 
@@ -111,14 +111,14 @@ describe('ToastItem', () => {
         const toast = createToast({ type: 'warning' });
         const { container } = render(<ToastItem toast={toast} />);
         const alert = container.querySelector('[role="alert"]');
-        expect(alert?.className).toContain('text-yellow-400');
+        expect(alert?.className).toContain('text-warning');
       });
 
       it('should have yellow background', () => {
         const toast = createToast({ type: 'warning' });
         const { container } = render(<ToastItem toast={toast} />);
         const alert = container.querySelector('[role="alert"]');
-        expect(alert?.className).toContain('bg-yellow-500/10');
+        expect(alert?.className).toContain('bg-warning/10');
       });
     });
 
@@ -134,14 +134,14 @@ describe('ToastItem', () => {
         const toast = createToast({ type: 'info' });
         const { container } = render(<ToastItem toast={toast} />);
         const alert = container.querySelector('[role="alert"]');
-        expect(alert?.className).toContain('text-blue-400');
+        expect(alert?.className).toContain('text-accent');
       });
 
       it('should have blue background', () => {
         const toast = createToast({ type: 'info' });
         const { container } = render(<ToastItem toast={toast} />);
         const alert = container.querySelector('[role="alert"]');
-        expect(alert?.className).toContain('bg-blue-500/10');
+        expect(alert?.className).toContain('bg-accent/10');
       });
     });
   });
@@ -150,56 +150,56 @@ describe('ToastItem', () => {
     it('should render progress bar when duration is set', () => {
       const toast = createToast({ duration: 5000 });
       const { container } = render(<ToastItem toast={toast} />);
-      const progressContainer = container.querySelector('.bg-white\\/10');
+      const progressContainer = container.querySelector('.bg-fill');
       expect(progressContainer).toBeTruthy();
     });
 
     it('should not render progress bar when duration is 0', () => {
       const toast = createToast({ duration: 0 });
       const { container } = render(<ToastItem toast={toast} />);
-      const progressContainer = container.querySelector('.bg-white\\/10');
+      const progressContainer = container.querySelector('.bg-fill');
       expect(progressContainer).toBeNull();
     });
 
     it('should not render progress bar when duration is undefined', () => {
       const toast = createToast({ duration: undefined });
       const { container } = render(<ToastItem toast={toast} />);
-      const progressContainer = container.querySelector('.bg-white\\/10');
+      const progressContainer = container.querySelector('.bg-fill');
       expect(progressContainer).toBeNull();
     });
 
     it('should have success color progress bar for success type', () => {
       const toast = createToast({ type: 'success', duration: 5000 });
       const { container } = render(<ToastItem toast={toast} />);
-      const progressBar = container.querySelector('.bg-green-500');
+      const progressBar = container.querySelector('.bg-success');
       expect(progressBar).toBeTruthy();
     });
 
     it('should have error color progress bar for error type', () => {
       const toast = createToast({ type: 'error', duration: 5000 });
       const { container } = render(<ToastItem toast={toast} />);
-      const progressBar = container.querySelector('.bg-red-500');
+      const progressBar = container.querySelector('.bg-danger');
       expect(progressBar).toBeTruthy();
     });
 
     it('should have warning color progress bar for warning type', () => {
       const toast = createToast({ type: 'warning', duration: 5000 });
       const { container } = render(<ToastItem toast={toast} />);
-      const progressBar = container.querySelector('.bg-yellow-500');
+      const progressBar = container.querySelector('.bg-warning');
       expect(progressBar).toBeTruthy();
     });
 
     it('should have info color progress bar for info type', () => {
       const toast = createToast({ type: 'info', duration: 5000 });
       const { container } = render(<ToastItem toast={toast} />);
-      const progressBar = container.querySelector('.bg-blue-500');
+      const progressBar = container.querySelector('.bg-accent');
       expect(progressBar).toBeTruthy();
     });
 
     it('should start progress at 100%', () => {
       const toast = createToast({ duration: 5000 });
       const { container } = render(<ToastItem toast={toast} />);
-      const progressBar = container.querySelector('.bg-blue-500') as HTMLElement;
+      const progressBar = container.querySelector('.bg-accent') as HTMLElement;
       expect(progressBar?.style.width).toBe('100%');
     });
 
@@ -209,7 +209,7 @@ describe('ToastItem', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const progressBar = container.querySelector('.bg-blue-500') as HTMLElement;
+      const progressBar = container.querySelector('.bg-accent') as HTMLElement;
       const width = parseFloat(progressBar?.style.width || '100');
       expect(width).toBeLessThan(100);
     });
@@ -220,7 +220,7 @@ describe('ToastItem', () => {
 
       await new Promise((resolve) => setTimeout(resolve, 300));
 
-      const progressBar = container.querySelector('.bg-blue-500') as HTMLElement;
+      const progressBar = container.querySelector('.bg-accent') as HTMLElement;
       const width = parseFloat(progressBar?.style.width || '100');
       expect(width).toBe(0);
     });
@@ -270,7 +270,7 @@ describe('ToastItem', () => {
       const toast = createToast();
       const { container } = render(<ToastItem toast={toast} />);
       const dismissButton = container.querySelector('button[aria-label="Dismiss notification"]');
-      expect(dismissButton?.className).toContain('hover:text-gray-100');
+      expect(dismissButton?.className).toContain('hover:text-fg');
     });
   });
 
@@ -379,7 +379,7 @@ describe('ToastItem', () => {
       const { container } = render(<ToastItem toast={toast} />);
       const messageDiv = container.querySelector('.flex-1');
       expect(messageDiv?.className).toContain('text-sm');
-      expect(messageDiv?.className).toContain('text-gray-100');
+      expect(messageDiv?.className).toContain('text-fg');
     });
 
     it('should handle long messages', () => {
@@ -411,8 +411,8 @@ describe('ToastItem', () => {
       const successAlert = c1.querySelector('[role="alert"]');
       const errorAlert = c2.querySelector('[role="alert"]');
 
-      expect(successAlert?.className).toContain('text-green-400');
-      expect(errorAlert?.className).toContain('text-red-400');
+      expect(successAlert?.className).toContain('text-success');
+      expect(errorAlert?.className).toContain('text-danger');
     });
   });
 });

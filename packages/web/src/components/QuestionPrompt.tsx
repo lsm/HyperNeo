@@ -7,29 +7,28 @@ import type {
 import { useMessageHub } from '../hooks/useMessageHub.ts';
 import { Button } from './ui/Button.tsx';
 import { cn } from '../lib/utils.ts';
-import { borderColors } from '../lib/design-tokens.ts';
 
 const questionColors = {
   active: {
-    bg: 'bg-rose-950/30',
-    border: 'border-rose-200 dark:border-rose-800',
+    bg: 'bg-cat-rose/30',
+    border: 'border-cat-rose/40',
     text: 'text-rose-200',
     iconColor: 'text-rose-400',
-    selectedBg: 'bg-rose-900/60 border-rose-500 text-rose-100',
-    unselectedBg: 'bg-dark-800/60',
-    unselectedText: 'text-gray-300',
+    selectedBg: 'bg-cat-rose/60 border-rose-500 text-rose-100',
+    unselectedBg: 'bg-surface-raised/60',
+    unselectedText: 'text-fg-soft',
   },
   submitted: {
     bg: 'bg-green-950/20',
-    border: borderColors.semantic.success,
-    text: 'text-green-200',
-    iconColor: 'text-green-400',
+    border: 'border-success/40',
+    text: 'text-success-soft',
+    iconColor: 'text-success',
   },
   cancelled: {
-    bg: 'bg-gray-900/30',
-    border: borderColors.ui.secondary,
-    text: 'text-gray-400',
-    iconColor: 'text-gray-400',
+    bg: 'bg-surface/30',
+    border: 'border-line-strong',
+    text: 'text-fg-muted',
+    iconColor: 'text-fg-muted',
   },
 };
 
@@ -319,22 +318,22 @@ export function QuestionPrompt({
           {getHeaderTitle()}
         </span>
         {!isResolved && questions.length > 0 && (
-          <span class={cn('text-xs text-gray-500 truncate')}>
+          <span class={cn('text-xs text-fg-faint truncate')}>
             {questions.length} question{questions.length > 1 ? 's' : ''}
           </span>
         )}
       </div>
 
-      <div class="p-4 border-t bg-white dark:bg-gray-900 space-y-4 border-rose-200 dark:border-rose-800">
+      <div class="p-4 border-t bg-surface space-y-4 border-cat-rose/40">
         {questions.map((question, qIndex) => (
-          <div key={qIndex} class={cn('space-y-3', qIndex > 0 && 'pt-4 border-t border-dark-700')}>
+          <div key={qIndex} class={cn('space-y-3', qIndex > 0 && 'pt-4 border-t border-line')}>
             <div class="flex items-start gap-2">
               <span
                 class={cn(
                   'inline-block px-2 py-0.5 text-xs rounded flex-shrink-0',
                   resolvedState === 'cancelled'
-                    ? 'bg-gray-800/50 text-gray-500 border border-gray-700'
-                    : cn('bg-rose-900/50 text-rose-300 border', questionColors.active.border)
+                    ? 'bg-surface-raised/50 text-fg-faint border border-line'
+                    : cn('bg-cat-rose/50 text-cat-rose border', questionColors.active.border)
                 )}
               >
                 {question.header}
@@ -342,8 +341,8 @@ export function QuestionPrompt({
               <div class="flex items-center gap-2">
                 <span
                   class={cn(
-                    'text-sm text-gray-200',
-                    resolvedState === 'cancelled' && 'text-gray-500'
+                    'text-sm text-fg-soft',
+                    resolvedState === 'cancelled' && 'text-fg-faint'
                   )}
                 >
                   {question.question}
@@ -352,7 +351,7 @@ export function QuestionPrompt({
                   <span
                     class={cn(
                       'inline-flex items-center px-1.5 py-0.5 text-xs rounded',
-                      'bg-rose-900/30 text-rose-400 border border-rose-700/50'
+                      'bg-cat-rose/30 text-rose-400 border border-rose-700/50'
                     )}
                   >
                     <svg class="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -383,14 +382,14 @@ export function QuestionPrompt({
                       isResolved && 'cursor-default',
                       isSelected
                         ? resolvedState === 'cancelled'
-                          ? 'bg-gray-800/40 border-gray-600 text-gray-400'
+                          ? 'bg-surface-raised/40 border-line-strong text-fg-muted'
                           : questionColors.active.selectedBg
                         : cn(
                             questionColors.active.unselectedBg,
                             resolvedState === 'cancelled'
-                              ? 'text-gray-600'
+                              ? 'text-fg-faint'
                               : questionColors.active.unselectedText,
-                            borderColors.ui.secondary,
+                            'border-line-strong',
                             !isResolved && 'hover:border-rose-600/50'
                           )
                     )}
@@ -400,12 +399,12 @@ export function QuestionPrompt({
                       <div
                         class={cn(
                           'absolute top-2 right-2 w-4 h-4 rounded border flex items-center justify-center',
-                          isSelected ? 'bg-rose-500 border-rose-500' : 'border-gray-500'
+                          isSelected ? 'bg-rose-500 border-rose-500' : 'border-fg-faint'
                         )}
                       >
                         {isSelected && (
                           <svg
-                            class="w-3 h-3 text-white"
+                            class="w-3 h-3 text-accent-fg"
                             fill="none"
                             viewBox="0 0 24 24"
                             stroke="currentColor"
@@ -424,7 +423,7 @@ export function QuestionPrompt({
                       <div
                         class={cn(
                           'absolute top-2 right-2 w-4 h-4 rounded-full border flex items-center justify-center',
-                          isSelected ? 'border-rose-500' : 'border-gray-500'
+                          isSelected ? 'border-rose-500' : 'border-fg-faint'
                         )}
                       >
                         {isSelected && <div class="w-2 h-2 rounded-full bg-rose-500" />}
@@ -435,7 +434,7 @@ export function QuestionPrompt({
                       <div
                         class={cn(
                           'text-xs mt-0.5',
-                          resolvedState === 'cancelled' ? 'text-gray-700' : 'text-gray-500'
+                          resolvedState === 'cancelled' ? 'text-gray-700' : 'text-fg-faint'
                         )}
                       >
                         {option.description}
@@ -455,12 +454,12 @@ export function QuestionPrompt({
                     isResolved && 'cursor-default',
                     showOther.has(qIndex)
                       ? resolvedState === 'cancelled'
-                        ? 'bg-gray-800/40 border-gray-600 text-gray-400'
+                        ? 'bg-surface-raised/40 border-line-strong text-fg-muted'
                         : questionColors.active.selectedBg
                       : cn(
                           questionColors.active.unselectedBg,
-                          'text-gray-400',
-                          borderColors.ui.secondary,
+                          'text-fg-muted',
+                          'border-line-strong',
                           !isResolved && 'hover:border-rose-600/50'
                         )
                   )}
@@ -468,7 +467,7 @@ export function QuestionPrompt({
                   <div
                     class={cn(
                       'absolute top-2 right-2 w-4 h-4 rounded-full border flex items-center justify-center',
-                      showOther.has(qIndex) ? 'border-rose-500' : 'border-gray-500'
+                      showOther.has(qIndex) ? 'border-rose-500' : 'border-fg-faint'
                     )}
                   >
                     {showOther.has(qIndex) && <div class="w-2 h-2 rounded-full bg-rose-500" />}
@@ -478,7 +477,7 @@ export function QuestionPrompt({
                     <div
                       class={cn(
                         'text-xs mt-0.5',
-                        resolvedState === 'cancelled' ? 'text-gray-700' : 'text-gray-500'
+                        resolvedState === 'cancelled' ? 'text-gray-700' : 'text-fg-faint'
                       )}
                     >
                       Enter custom answer
@@ -497,10 +496,10 @@ export function QuestionPrompt({
                 rows={3}
                 class={cn(
                   'w-full px-3 py-2 rounded-lg border resize-y min-h-[80px] max-h-[200px]',
-                  'bg-dark-800/80 placeholder-gray-500',
-                  isResolved ? 'text-gray-400 cursor-default' : 'text-gray-100',
+                  'bg-surface-raised/80 placeholder-gray-500',
+                  isResolved ? 'text-fg-muted cursor-default' : 'text-fg',
                   'focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500/50',
-                  borderColors.ui.secondary
+                  'border-line-strong'
                 )}
               />
             )}
@@ -508,7 +507,7 @@ export function QuestionPrompt({
         ))}
 
         {!isResolved && (
-          <div class="flex items-center gap-3 pt-4 border-t border-dark-700">
+          <div class="flex items-center gap-3 pt-4 border-t border-line">
             <Button
               variant="primary"
               onClick={handleSubmit}

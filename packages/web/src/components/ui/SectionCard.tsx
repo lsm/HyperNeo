@@ -9,8 +9,8 @@ export interface SectionCardProps {
 
 export function SectionCard({ title, children, class: className }: SectionCardProps) {
   return (
-    <section class={cn('rounded-xl border border-white/10 bg-dark-900/50 p-4', className)}>
-      <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-400">{title}</h3>
+    <section class={cn('rounded-xl border border-line bg-surface/50 p-4', className)}>
+      <h3 class="text-xs font-semibold uppercase tracking-wide text-fg-muted">{title}</h3>
       {children !== undefined && children !== null && <div class="mt-3 space-y-3">{children}</div>}
     </section>
   );

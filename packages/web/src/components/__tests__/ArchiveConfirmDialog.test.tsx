@@ -385,7 +385,7 @@ describe('ArchiveConfirmDialog', () => {
         />
       );
 
-      const hashElement = container.querySelector('.text-blue-400');
+      const hashElement = container.querySelector('.text-accent');
       expect(hashElement).toBeTruthy();
     });
   });
@@ -430,7 +430,7 @@ describe('ArchiveConfirmDialog', () => {
         />
       );
 
-      const warning = container.querySelector('.text-orange-400');
+      const warning = container.querySelector('.text-warning');
       expect(warning).toBeTruthy();
       expect(warning?.textContent).toContain('lost');
     });
@@ -451,7 +451,7 @@ describe('ArchiveConfirmDialog', () => {
         btn.textContent?.includes('Archive Anyway')
       )!;
 
-      expect(confirmButton.className).toContain('bg-orange-500');
+      expect(confirmButton.className).toContain('bg-warning');
     });
 
     it('should have buttons with equal width', () => {
