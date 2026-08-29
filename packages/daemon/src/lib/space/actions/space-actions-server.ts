@@ -129,6 +129,7 @@ export interface SpaceActionsServerConfig {
   readonly sessionId?: string | null;
   readonly spaceLevel?: number | null;
   readonly agentLevel?: number | null;
+  readonly deniedActionNames?: ReadonlySet<string>;
   readonly spaceConfig?: SpaceAgentToolsConfig;
   readonly nodeConfig?: NodeAgentToolsConfig;
   readonly dispatchDeps?: Partial<Omit<DispatchActionDeps, 'registry'>>;
@@ -158,18 +159,27 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   const nodeEntries = config.nodeConfig ? createNodeRegistryEntries(config.nodeConfig) : [];
   const isRoleAdmittedEntry = (entry: ActionDefinition) =>
     config.role === 'coordinator' || !COORDINATOR_ONLY_ACTIONS.has(entry.name);
+  const isNotDeniedEntry = (entry: ActionDefinition) => !config.deniedActionNames?.has(entry.name);
   let registry: ActionRegistry;
   const metaEntries = createRegistryMetaEntries(() => registry);
   registry = createActionRegistry([
-    ...composeRoleActionEntries(config.role, spaceEntries, nodeEntries).filter(isRoleAdmittedEntry),
+    ...composeRoleActionEntries(config.role, spaceEntries, nodeEntries)
+      .filter(isRoleAdmittedEntry)
+      .filter(isNotDeniedEntry),
     ...metaEntries,
   ]);
+
+  const lhAgentLevel =
+    config.role === 'long_term_agent' && spaceConfig?.myAgentId && spaceConfig.longHorizonAgentRepo
+      ? (spaceConfig.longHorizonAgentRepo.getById(spaceConfig.myAgentId)?.autonomyLevel ?? null)
+      : null;
+  const agentLevel = config.agentLevel ?? lhAgentLevel;
 
   const { label, hotActions } = resolveRoleHotActionView(config.role, config.nodeRole);
   const description = buildCallActionDescription({
     role: label,
     spaceLevel: config.spaceLevel,
-    agentCeiling: config.agentLevel,
+    agentCeiling: agentLevel,
     hotActions:
       config.role === 'workflow_worker' ? [...hotActions, ...WORKER_NODE_HOT_FILL] : hotActions,
     registry,
@@ -195,7 +205,14 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
         : undefined),
     resolveRunId:
       config.dispatchDeps?.resolveRunId ??
-      (taskRepo ? (taskId) => taskRepo.getTask(taskId)?.workflowRunId ?? undefined : undefined),
+      (taskRepo
+        ? (taskId) => {
+            const task = taskRepo.getTask(taskId);
+            return task && task.spaceId === config.spaceId
+              ? (task.workflowRunId ?? undefined)
+              : undefined;
+          }
+        : undefined),
     registry,
     emitTelemetry: config.dispatchDeps?.emitTelemetry ?? emitActionDispatchedEvent,
     isWithinRateBudget:
@@ -217,7 +234,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
         agentName: config.agentName ?? config.nodeConfig?.myAgentName ?? spaceConfig?.myAgentName,
         sessionId: config.sessionId ?? config.nodeConfig?.mySessionId ?? spaceConfig?.mySessionId,
         spaceLevel: config.spaceLevel,
-        agentLevel: config.agentLevel,
+        agentLevel,
       });
       if (outcome.action === 'dispatched') return outcome.result;
       if (outcome.action === 'denied') {

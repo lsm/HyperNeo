@@ -187,6 +187,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
             description:
               'Persist a structured fact to the run artifact store as one of link/commit_set/check/metric/decision/note.',
             paramsDoc: 'shape, kind?, key?, summary?, data?',
+            auditRedactKeys: ['data'],
             paramsSchema: SaveArtifactSchema,
             handler: handlers.save_artifact,
           }),

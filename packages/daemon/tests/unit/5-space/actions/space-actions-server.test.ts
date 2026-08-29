@@ -285,7 +285,9 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
           getTaskByNumber: (_spaceId: string, taskNumber: number) =>
             taskNumber === 42 ? { id: 'task-42', workflowRunId: 'run-42' } : null,
           getTask: (taskId: string) =>
-            taskId === 'task-42' ? { id: taskId, workflowRunId: 'run-42' } : null,
+            taskId === 'task-42'
+              ? { id: taskId, spaceId: SPACE_ID, workflowRunId: 'run-42' }
+              : null,
         },
       } as unknown as SpaceAgentToolsConfig,
       dispatchDeps: { emitTelemetry: (event) => void events.push(event) },
@@ -352,6 +354,73 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].paramsSummary).not.toContain('secret-payload');
     expect(entries[0].paramsSummary).not.toContain('message');
+  });
+
+  test('redacts free-form description payloads from central audit rows', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    await dispatch(server, {
+      name: 'create_standalone_task',
+      params: { title: 't', description: 'super-secret-plan' },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].paramsSummary).not.toContain('super-secret-plan');
+    expect(entries[0].paramsSummary).not.toContain('description');
+  });
+
+  test('derives a long-term-agent autonomy ceiling from its persisted record', async () => {
+    const server = makeServer({
+      role: 'long_term_agent',
+      spaceLevel: 5,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        myAgentId: 'lh-agent-1',
+        longHorizonAgentRepo: { getById: () => ({ autonomyLevel: 1 }) },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    const body = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: 'action_denied', reason: 'autonomy_denied' });
+  });
+
+  test('excludes denied action names from the composed registry', () => {
+    const server = makeServer({ deniedActionNames: new Set(['list_sessions', 'update_task']) });
+    expect(server.registry.get('list_sessions')).toBeUndefined();
+    expect(server.registry.get('update_task')).toBeUndefined();
+    expect(server.registry.get('list_actions')).toBeDefined();
+  });
+
+  test('scopes run-id resolution to the server space', async () => {
+    const events: DispatchTelemetryEvent[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        taskRepo: {
+          getTask: (taskId: string) =>
+            taskId === 'foreign-1'
+              ? { id: taskId, spaceId: 'other-space', workflowRunId: 'run-foreign' }
+              : { id: taskId, spaceId: SPACE_ID, workflowRunId: 'run-local' },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+      dispatchDeps: { emitTelemetry: (event) => void events.push(event) },
+    });
+    await dispatch(server, { name: 'get_task_detail', params: { task_id: 'foreign-1' } });
+    await dispatch(server, { name: 'get_task_detail', params: { task_id: 'local-1' } });
+    expect(events).toHaveLength(2);
+    expect(events[0].workflowRunId).toBeUndefined();
+    expect(events[1].workflowRunId).toBe('run-local');
   });
 
   test('denies rate-limited dispatches through the configured budget', async () => {

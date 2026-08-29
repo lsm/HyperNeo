@@ -277,6 +277,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
           'Create a recurring (cron) or one-shot (at) schedule that spawns a real Space task each time it fires; returns the created schedule.',
         paramsDoc:
           'title, description, trigger_type (cron|at), cron_expression? (required for cron), run_at? ms (required for at), priority?, workflow_id?, labels?, timezone?',
+        auditRedactKeys: ['description'],
         paramsSchema: CreateScheduledTaskSchema,
         handler: (args) => handlers.create_scheduled_task(args),
       }),
@@ -453,6 +454,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Create a task the runtime may attach a workflow to; supports dependencies, draft mode, and workspace selection; returns the created task.',
       paramsDoc:
         'title, description, priority?, workflow_id?/workflow_handle?, depends_on? (task ids), draft?, workspace?',
+      auditRedactKeys: ['description'],
       paramsSchema: CreateStandaloneTaskSchema,
       handler: (args) => handlers.create_standalone_task(args),
     }),
@@ -474,6 +476,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       description:
         "Edit a task's title, description, priority, dependencies, or status; status follows the UI transition table; returns the updated task.",
       paramsDoc: 'task_id, plus any of title?, description?, priority?, depends_on?, status?',
+      auditRedactKeys: ['description'],
       paramsSchema: UpdateTaskSchema,
       autonomyRequirement: updateTaskAutonomy,
       handler: (args) => handlers.update_task(args),
@@ -485,6 +488,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       description:
         'Retry a blocked, cancelled, or done task, optionally with an updated description; returns the restarted task.',
       paramsDoc: 'task_id, description? (retryable statuses: blocked, cancelled, done)',
+      auditRedactKeys: ['description'],
       paramsSchema: RetryTaskSchema,
       handler: (args) => handlers.retry_task(args),
     }),
