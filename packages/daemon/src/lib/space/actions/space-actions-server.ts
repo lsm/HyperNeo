@@ -185,7 +185,6 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   ]);
 
   const resolveAgentLevel = (): number | null => {
-    if (config.agentLevel != null) return config.agentLevel;
     if (spaceConfig?.myAgentId && spaceConfig.longHorizonAgentRepo) {
       let record: { spaceId?: string; autonomyLevel?: number | null } | null = null;
       let lookupFailed = false;
@@ -201,6 +200,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
       if (record && record.spaceId === config.spaceId) return record.autonomyLevel ?? null;
       return 1;
     }
+    if (config.agentLevel != null) return config.agentLevel;
     return config.role === 'long_term_agent' ? 1 : null;
   };
 

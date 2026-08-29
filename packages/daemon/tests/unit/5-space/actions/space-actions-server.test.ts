@@ -1005,6 +1005,34 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(body).not.toMatchObject({ reason: 'autonomy_denied' });
   });
 
+  test('prefers the live agent ceiling over the supplied snapshot', async () => {
+    let persistedLevel = 4;
+    const server = makeServer({
+      role: 'long_term_agent',
+      agentLevel: 4,
+      spaceLevel: 5,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        getSpaceAutonomyLevel: async () => 5,
+        myAgentId: 'lh-agent-1',
+        longHorizonAgentRepo: {
+          getById: () => ({ spaceId: SPACE_ID, autonomyLevel: persistedLevel }),
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    const atFour = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(atFour).not.toMatchObject({ reason: 'autonomy_denied' });
+    persistedLevel = 1;
+    const atOne = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(atOne).toMatchObject({ error: 'action_denied', reason: 'autonomy_denied' });
+  });
+
   test('audits malformed mutating calls even with read auditing off', async () => {
     const entries: CreateMcpAuditLogParams[] = [];
     const server = makeServer({
