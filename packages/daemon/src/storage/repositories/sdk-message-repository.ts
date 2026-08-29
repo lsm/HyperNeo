@@ -8,8 +8,8 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import { Logger } from '../../lib/logger.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { Logger } from '../../lib/logger.ts';
 import { withBusyRetry } from '../busy-retry.ts';
 import {
   buildFtsQuery,
@@ -27,19 +27,24 @@ import {
   deliveryTransitionRule,
   routeDeliveryTransition,
 } from './delivery-status-routing.ts';
-import { decideMessageSearchAdmission } from './message-search-admission.ts';
 import type { MessageSearchEligibilityRow } from './message-search-admission.ts';
+import { decideMessageSearchAdmission } from './message-search-admission.ts';
 import {
   decideMessageAdmission,
   extractReplacementEdges,
-  normalizeMessageAdmissionInput,
   type MessageAdmissionRecord,
   type MessageAdmissionVariant,
+  normalizeMessageAdmissionInput,
   type SDKMessageReplacementEdge,
   type SendStatus,
 } from './sdk-message-admission.ts';
 import {
-  RENDERABLE_TEXT_MESSAGE_BATCH_SIZE,
+  type BadgeUpdateInstruction,
+  planAdmissionBadgeUpdate,
+  planBadgeRecompute,
+} from './sdk-message-badge.ts';
+import {
+  type BackgroundTaskMessageRow,
   buildRowIdHydrationBatches,
   composeMessagePage,
   extractFirstTextBlockContent,
@@ -47,20 +52,15 @@ import {
   extractVisibleText,
   inflatePersistedMessage,
   orderHydratedMessages,
+  type PaginationMessageRow,
   projectBackgroundTaskMessageRow,
   projectRenderableTextRow,
-  resolveRenderableTextScanBudget,
-  type BackgroundTaskMessageRow,
-  type PaginationMessageRow,
+  RENDERABLE_TEXT_MESSAGE_BATCH_SIZE,
   type RenderableTextMessage,
   type RenderableTextMessageRow,
+  resolveRenderableTextScanBudget,
   type SubagentMessageRow,
 } from './sdk-message-projections.ts';
-import {
-  planAdmissionBadgeUpdate,
-  planBadgeRecompute,
-  type BadgeUpdateInstruction,
-} from './sdk-message-badge.ts';
 import {
   applyMessageStatusPlan,
   PENDING_ROW_FROM_STATUSES,
@@ -1505,14 +1505,25 @@ export class SDKMessageRepository {
     expectedStatus: SendStatus,
     targetStatus: SendStatus
   ): boolean {
-    const changed = withBusyRetry(
-      () =>
+    let changed = false;
+    let notifySid: string | null = null;
+    const transitionTransaction = this.db.transaction(() => {
+      changed =
         this.db
           .prepare(`UPDATE sdk_messages SET send_status = ? WHERE id = ? AND send_status = ?`)
-          .run(targetStatus, messageId, expectedStatus).changes
-    );
-    if (changed > 0) this.scheduleMessageSearchIndex(messageId);
-    return changed > 0;
+          .run(targetStatus, messageId, expectedStatus).changes > 0;
+      if (!changed) return;
+      const row = this.db
+        .prepare(`SELECT session_id AS sid FROM sdk_messages WHERE id = ?`)
+        .get(messageId) as { sid: string } | undefined;
+      if (row && this.applyBadgeUpdate(row.sid, planBadgeRecompute())) {
+        notifySid = row.sid;
+      }
+    });
+    withBusyRetry(() => transitionTransaction());
+    if (changed) this.scheduleMessageSearchIndex(messageId);
+    if (notifySid !== null) this.notifySessionsChanged(notifySid);
+    return changed;
   }
 
   updateMessageTimestamp(messageId: string, timestampMs?: number): void {

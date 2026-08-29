@@ -6,8 +6,8 @@ import type {
   MessageSearchParams,
   MessageSearchResponse,
 } from '../../../../src/storage/message-search';
-import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 describe('SDKMessageRepository', () => {
@@ -1563,6 +1563,21 @@ describe('SDKMessageRepository', () => {
       expect(badgeCount()).toBe(1);
       badgeRepo.updateMessageStatus([id], 'enqueued');
       expect(badgeCount()).toBe(0);
+      expect(badgeCount()).toBe(freshBadgeCount());
+    });
+
+    it('recounts when a conditional transition flips the row into visibility', () => {
+      const id = badgeRepo.saveUserMessage(SID, createUserMessage('stalled'), 'enqueued');
+      expect(badgeCount()).toBe(0);
+      expect(badgeRepo.transitionMessageSendStatus(id, 'enqueued', 'failed')).toBe(true);
+      expect(badgeCount()).toBe(1);
+      expect(badgeCount()).toBe(freshBadgeCount());
+    });
+
+    it('leaves the badge untouched when a conditional transition loses', () => {
+      const id = badgeRepo.saveUserMessage(SID, createUserMessage('already gone'), 'consumed');
+      expect(badgeRepo.transitionMessageSendStatus(id, 'enqueued', 'failed')).toBe(false);
+      expect(badgeCount()).toBe(1);
       expect(badgeCount()).toBe(freshBadgeCount());
     });
 
