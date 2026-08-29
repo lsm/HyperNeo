@@ -112,7 +112,7 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
       ...ctx,
       outcome: deniedOutcome('unknown_action', `Action not found: ${ctx.actionName}`),
     };
-    writeAuditEntry(next);
+    writeAuditEntry(next, true);
     return next;
   }
   const parsed = action.paramsSchema.safeParse(ctx.params);
@@ -126,7 +126,7 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
         `Invalid parameters for ${action.name}: ${parsed.error.message}`
       ),
     };
-    writeAuditEntry(next);
+    writeAuditEntry(next, true);
     return next;
   }
   const parsedParams = parsed.data as Record<string, unknown> | null;
@@ -237,7 +237,7 @@ export function applyRoleAdmission(ctx: DispatchActionCtx): DispatchActionCtx {
         `Action ${action.name} (family "${action.family}") is not available for role ${ctx.role}.`
       ),
     };
-    writeAuditEntry(denialAuditCtx(next));
+    writeAuditEntry(denialAuditCtx(next), true);
     return next;
   }
   return ctx;
@@ -259,7 +259,7 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
         const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
-        writeAuditEntry(denialAuditCtx(next));
+        writeAuditEntry(denialAuditCtx(next), true);
         return next;
       }
     }
@@ -278,7 +278,7 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
         agentLevel,
         outcome: failedOutcome(error),
       };
-      writeAuditEntry(denialAuditCtx(next));
+      writeAuditEntry(denialAuditCtx(next), true);
       return next;
     }
   } else {
@@ -300,7 +300,7 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
     agentLevel,
     outcome: deniedOutcome('autonomy_denied', admission.message),
   };
-  writeAuditEntry(denialAuditCtx(denied));
+  writeAuditEntry(denialAuditCtx(denied), true);
   return denied;
 }
 
@@ -314,7 +314,7 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
-      writeAuditEntry(denialAuditCtx(next));
+      writeAuditEntry(denialAuditCtx(next), true);
       return next;
     }
     const spaceLevel = ctx.spaceLevel ?? 1;
@@ -334,7 +334,7 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
         agentLevel,
         outcome: deniedOutcome('autonomy_denied', admission.message),
       };
-      writeAuditEntry(denialAuditCtx(denied));
+      writeAuditEntry(denialAuditCtx(denied), true);
       return denied;
     }
   }
@@ -345,7 +345,7 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
-      writeAuditEntry(denialAuditCtx(next));
+      writeAuditEntry(denialAuditCtx(next), true);
       return next;
     }
     if (!ok) {
@@ -356,7 +356,7 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
           `Action ${action.name} is currently rate limited. Please retry later.`
         ),
       };
-      writeAuditEntry(denialAuditCtx(denied));
+      writeAuditEntry(denialAuditCtx(denied), true);
       return denied;
     }
   }
@@ -367,11 +367,11 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
-      writeAuditEntry(denialAuditCtx(next));
+      writeAuditEntry(denialAuditCtx(next), true);
       return next;
     }
     if (message) {
-      writeAuditEntry(denialAuditCtx(ctx));
+      writeAuditEntry(denialAuditCtx(ctx), true);
       return { ...ctx, outcome: deniedOutcome('invalid_params', message) };
     }
   }

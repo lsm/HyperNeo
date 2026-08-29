@@ -283,6 +283,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
             description:
               'Finish post-approval work: transition THIS task from approved to done (routed post-approval session only).',
             paramsDoc: 'goal_update? (legacy, optional)',
+            auditRedactKeys: ['goal_update'],
             paramsSchema: MarkCompleteSchema,
             handler: wrapHandlerWithHooks(
               'mark_complete',

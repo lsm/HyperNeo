@@ -860,6 +860,83 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries[0]).toMatchObject({ toolName: 'list_deliveries' });
   });
 
+  test('records denied audit-log reads without the pre-read exemption', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      spaceId: SPACE_ID,
+      nodeConfig: {
+        ...stubNodeConfig,
+        externalEventStore: {},
+        myAgentName: 'coder-9',
+        mySessionId: 'session-9',
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as NodeAgentToolsConfig,
+      dispatchDeps: { isWithinRateBudget: () => false },
+    });
+    await dispatch(server, { name: 'list_audit_entries' });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ toolName: 'list_audit_entries' });
+  });
+
+  test('clears a foreign task id when the number does not win selection', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        taskRepo: {
+          getTaskByNumber: (_spaceId: string, taskNumber: number) =>
+            taskNumber === 42 ? { id: 'task-42', spaceId: SPACE_ID } : null,
+          getTask: () => null,
+        },
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+      dispatchDeps: { isWithinRateBudget: () => false },
+    });
+    await dispatch(server, {
+      name: 'send_message_to_task',
+      params: { task_number: 42, task_id: 'foreign-1', message: 'ping' },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].taskId).toBeNull();
+  });
+
+  test('redacts mark_complete goal updates from audits', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      spaceId: SPACE_ID,
+      nodeConfig: {
+        ...stubNodeConfig,
+        myAgentName: 'coder-9',
+        mySessionId: 'session-9',
+        onMarkComplete: async () => ({ content: [{ type: 'text', text: '{}' }] }),
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as NodeAgentToolsConfig,
+    });
+    await dispatch(server, {
+      name: 'mark_complete',
+      params: { goal_update: { summary: 'secret-goal-summary' } },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].paramsSummary).not.toContain('secret-goal-summary');
+  });
+
   test('audits malformed mutating calls even with read auditing off', async () => {
     const entries: CreateMcpAuditLogParams[] = [];
     const server = makeServer({
