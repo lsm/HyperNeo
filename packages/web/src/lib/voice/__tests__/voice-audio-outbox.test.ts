@@ -133,7 +133,7 @@ describe('voice audio outbox', () => {
     expect(store.records).toEqual([]);
   });
 
-  it('hands delivery to the text outbox even when its durable write fails', async () => {
+  it('keeps the audio when the text outbox could not durably park the transcript', async () => {
     seedEntry();
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'session.appendVoiceDraft') {
@@ -145,7 +145,7 @@ describe('voice audio outbox', () => {
     await flushPendingVoiceAudio();
 
     expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', 'rec-1');
-    expect(store.records).toEqual([]);
+    expect(store.records).toHaveLength(1);
   });
 
   it('defers the flush while a recording is active', async () => {

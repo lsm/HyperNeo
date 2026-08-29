@@ -111,10 +111,15 @@ export async function flushPendingVoiceAudio(): Promise<void> {
     transcript: string,
     error: unknown
   ): Promise<void> => {
-    if (!isPermanentAppendRefusal(error)) {
-      enqueueTranscript(entry.sessionId, transcript, entry.id);
+    if (isPermanentAppendRefusal(error)) {
+      await deleteVoiceRecord(entry.id);
+      return;
     }
-    await deleteVoiceRecord(entry.id);
+    if (enqueueTranscript(entry.sessionId, transcript, entry.id)) {
+      await deleteVoiceRecord(entry.id);
+    } else {
+      defer(entry.sessionId);
+    }
   };
   try {
     const pending = (await listVoiceRecords()).filter((entry) => !isVoiceAudioBusy(entry.id));
