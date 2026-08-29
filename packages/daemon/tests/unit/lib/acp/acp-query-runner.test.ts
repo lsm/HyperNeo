@@ -3051,6 +3051,104 @@ describe('AcpQueryRunner', () => {
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
     }, 5000);
 
+    test('an auth failure with a process exit keeps its provider path, not a startup retry', async () => {
+      const firstClient = createMockClient();
+      const { ctx } = createRunnerFixture({ client: firstClient });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return firstClient as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        constructorOptions[0]?.onExit?.(1, null);
+        throw new Error('401 Unauthorized');
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(ctx.errorManager.handleError).toHaveBeenCalledWith(
+        'session-1',
+        expect.any(Error),
+        'provider_auth_error',
+        undefined,
+        expect.any(Object),
+        expect.objectContaining({ providerId: 'acp' }),
+        expect.any(Function)
+      );
+    }, 5000);
+
+    test('a rate limit with a process exit keeps its cooldown, not a startup retry', async () => {
+      const firstClient = createMockClient();
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return firstClient as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      ctx.onRateLimitExhausted = mock(async () => true);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        constructorOptions[0]?.onExit?.(1, null);
+        throw new Error('Too Many Requests');
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(ctx.onRateLimitExhausted).toHaveBeenCalledTimes(1);
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a startup retry restores every active delivery batch member', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      (ctx.db as unknown as { getJobQueueRepo: () => unknown }).getJobQueueRepo = () => ({
+        getActiveDeliveryBatchUuids: mock(() => ['user-message-1', 'member-2']),
+      });
+      const reopenDeliveryByUuid = mock((_sessionId: string, uuid: string) => `row-${uuid}`);
+      const markDeliveryRetryableByUuid = mock(() => null);
+      (ctx.db as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        reopenDeliveryByUuid,
+        markDeliveryRetryableByUuid,
+      });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith('session-1', 'user-message-1');
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith('session-1', 'member-2');
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
     test('retries when the abortable query stream ends without delivering any message', async () => {
       const firstClient = createMockClient();
       const secondClient = createMockClient();

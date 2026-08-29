@@ -118,6 +118,19 @@ function isAcpProviderClassifiedError(message: string): boolean {
   );
 }
 
+function isAcpAuthOrLimitError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    assessLimitError({ rawText: message }).isLimit ||
+    message.includes('401') ||
+    message.includes('403') ||
+    lower.includes('unauthorized') ||
+    lower.includes('not authenticated') ||
+    message.includes('429') ||
+    lower.includes('rate limit')
+  );
+}
+
 function getAcpContextWindow(): number {
   const provider = getProviderRegistry().get('acp');
   return provider instanceof AcpProvider
@@ -1095,10 +1108,12 @@ export class AcpQueryRunner {
       restoreMessageEnqueuedHandler?.();
       (terminalManager as AcpTerminalManager | null)?.dispose();
       terminalManager = null;
+      const errorText = String(error);
       const startupFailedByErrorResult =
         !startupWatchFirstMessageSeen &&
-        (acpProcessExit !== null ||
-          (!isAcpProviderClassifiedError(String(error)) && startupWatchSawErrorResult));
+        (acpProcessExit !== null
+          ? !isAcpAuthOrLimitError(errorText)
+          : !isAcpProviderClassifiedError(errorText) && startupWatchSawErrorResult);
       const effectiveError =
         startupTimeoutReached || startupFailedByErrorResult
           ? new Error('ACP startup timeout - query aborted')
@@ -1247,14 +1262,23 @@ export class AcpQueryRunner {
       const lastMsg = this._lastConsumedUserMessage;
       if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
         const deliveryRepo = this.ctx.db.getSDKMessageRepo?.();
-        const reopenedId =
-          deliveryRepo?.reopenDeliveryByUuid(session.id, lastMsg.uuid) ??
-          deliveryRepo?.markDeliveryRetryableByUuid(session.id, lastMsg.uuid) ??
-          null;
-        if (reopenedId) {
+        const batchMembers =
+          this.ctx.db
+            .getJobQueueRepo?.()
+            ?.getActiveDeliveryBatchUuids?.(session.id, lastMsg.uuid) ?? [];
+        const uuidsToRestore = [lastMsg.uuid, ...batchMembers.filter((u) => u !== lastMsg.uuid)];
+        const restoredIds: string[] = [];
+        for (const uuid of uuidsToRestore) {
+          const restoredId =
+            deliveryRepo?.reopenDeliveryByUuid(session.id, uuid) ??
+            deliveryRepo?.markDeliveryRetryableByUuid(session.id, uuid) ??
+            null;
+          if (restoredId) restoredIds.push(restoredId);
+        }
+        if (restoredIds.length > 0) {
           this.ctx.internalEventBus.publishAsync('messages.statusChanged', {
             sessionId: session.id,
-            messageIds: [reopenedId],
+            messageIds: restoredIds,
             status: 'enqueued',
           });
           messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
