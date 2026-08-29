@@ -42,6 +42,8 @@ function makeEventRecord(): ExternalEventRecord {
 }
 
 interface DepsState {
+  taskStatusAfterRestore: string | null | undefined;
+  executionRestorableAfter: boolean | undefined;
   inFlight: Set<string>;
   expired: boolean;
   paused: boolean;
@@ -68,8 +70,11 @@ function makeDeps(state: Partial<DepsState> = {}): RestoreIdleSessionsDeps {
     restores: [],
     cancels: [],
     failRestore: false,
+    taskStatusAfterRestore: undefined,
+    executionRestorableAfter: undefined,
     ...state,
   };
+  let taskAdmissionCalls = 0;
   let spaceStateCalls = 0;
   return {
     listPendingDeliveries: () => [DELIVERY],
@@ -84,15 +89,24 @@ function makeDeps(state: Partial<DepsState> = {}): RestoreIdleSessionsDeps {
       return full.spaceStateAfterRestore ?? full.spaceState ?? { paused: false, stopped: false };
     },
     isTargetStillSubscribed: () => full.subscribed,
-    isTaskAdmissible: () =>
-      !!full.taskStatus &&
-      !['cancelled', 'archived', 'done', 'rate_limited', 'usage_limited'].includes(full.taskStatus),
+    isTaskAdmissible: () => {
+      taskAdmissionCalls += 1;
+      const status =
+        taskAdmissionCalls > 1 && full.taskStatusAfterRestore !== undefined
+          ? full.taskStatusAfterRestore
+          : full.taskStatus;
+      return (
+        !!status &&
+        !['cancelled', 'archived', 'done', 'rate_limited', 'usage_limited'].includes(status)
+      );
+    },
     findIdleExecutionWithDeadSession: () =>
       full.hasIdleExecution ? { executionId: 'exec-1', agentSessionId: 'session-1' } : undefined,
     restoreSession: async (target) => {
       if (full.failRestore) throw new Error('restore exploded');
       full.restores.push(target.agentName);
     },
+    isExecutionRestorable: () => full.executionRestorableAfter ?? full.hasIdleExecution,
     cancelSession: (sessionId) => {
       full.cancels.push(sessionId);
     },
@@ -133,7 +147,19 @@ describe('runRestoreIdleSessions', () => {
       spaceStateAfterRestore: { paused: false, stopped: true },
     });
     const outcomes = await runRestoreIdleSessions(deps);
-    expect(outcomes).toEqual([{ action: 'skipped_stopped_space', sessionId: 'session-1' }]);
+    expect(outcomes).toEqual([{ action: 'skipped_inactivation', sessionId: 'session-1' }]);
+  });
+
+  test('tears down a restored session whose task or execution went inactive mid-restore', async () => {
+    const cancelledTask = makeDeps({ taskStatusAfterRestore: 'cancelled' });
+    expect(await runRestoreIdleSessions(cancelledTask)).toEqual([
+      { action: 'skipped_inactivation', sessionId: 'session-1' },
+    ]);
+
+    const repurposedExecution = makeDeps({ executionRestorableAfter: false });
+    expect(await runRestoreIdleSessions(repurposedExecution)).toEqual([
+      { action: 'skipped_inactivation', sessionId: 'session-1' },
+    ]);
   });
 
   test('records a failed outcome when restoration throws', async () => {

@@ -30,12 +30,13 @@ export interface RestoreIdleSessionsDeps {
     target: RestoreIdleSessionTarget
   ) => RestoreIdleSessionExecution | undefined;
   restoreSession: (target: RestoreIdleSessionTarget) => Promise<void>;
+  isExecutionRestorable: (execution: RestoreIdleSessionExecution) => boolean;
   cancelSession: (sessionId: string) => void;
 }
 
 export type RestoreIdleSessionsOutcome =
   | { action: 'restored'; sessionId: string }
-  | { action: 'skipped_stopped_space'; sessionId: string }
+  | { action: 'skipped_inactivation'; sessionId: string }
   | { action: 'failed' };
 
 export interface RestoreIdleSessionsCtx {
@@ -105,9 +106,17 @@ export async function restoreWithRevalidation(
     }
     const spaceId = ctx.deps.getRunSpaceId(target.workflowRunId);
     const spaceState = spaceId ? await ctx.deps.getSpaceState(spaceId).catch(() => null) : null;
-    if (!spaceState || spaceState.paused || spaceState.stopped) {
+    const taskAdmissible = ctx.deps.isTaskAdmissible(target.taskId);
+    const executionRestorable = ctx.deps.isExecutionRestorable(execution);
+    if (
+      !spaceState ||
+      spaceState.paused ||
+      spaceState.stopped ||
+      !taskAdmissible ||
+      !executionRestorable
+    ) {
       ctx.deps.cancelSession(execution.agentSessionId);
-      outcomes.push({ action: 'skipped_stopped_space', sessionId: execution.agentSessionId });
+      outcomes.push({ action: 'skipped_inactivation', sessionId: execution.agentSessionId });
       continue;
     }
     outcomes.push({ action: 'restored', sessionId: execution.agentSessionId });

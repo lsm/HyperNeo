@@ -3881,13 +3881,19 @@ export class SpaceRuntime {
       },
       restoreSession: (target) =>
         tam.tryResumeNodeAgentSession!(target.workflowRunId, target.agentName, target.nodeId),
+      isExecutionRestorable: (execution) => {
+        const fresh = this.config.nodeExecutionRepo.getById(execution.executionId);
+        return (
+          !!fresh && fresh.status === 'idle' && fresh.agentSessionId === execution.agentSessionId
+        );
+      },
       cancelSession: (sessionId) => tam.cancelBySessionId(sessionId),
     };
     const outcomes = await runRestoreIdleSessions(deps, workflowRunId);
     for (const outcome of outcomes) {
-      if (outcome.action === 'skipped_stopped_space') {
+      if (outcome.action === 'skipped_inactivation') {
         log.warn(
-          `SpaceRuntime: tore down restored node-agent session ${outcome.sessionId} because its space stopped during restoration`
+          `SpaceRuntime: tore down restored node-agent session ${outcome.sessionId} because its space, task, or execution went inactive during restoration`
         );
       }
     }
