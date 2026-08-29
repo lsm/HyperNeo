@@ -187,7 +187,17 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   const resolveAgentLevel = (): number | null => {
     if (config.agentLevel != null) return config.agentLevel;
     if (spaceConfig?.myAgentId && spaceConfig.longHorizonAgentRepo) {
-      const record = spaceConfig.longHorizonAgentRepo.getById(spaceConfig.myAgentId);
+      let record: { spaceId?: string; autonomyLevel?: number | null } | null = null;
+      let lookupFailed = false;
+      try {
+        record = spaceConfig.longHorizonAgentRepo.getById(spaceConfig.myAgentId) as {
+          spaceId?: string;
+          autonomyLevel?: number | null;
+        } | null;
+      } catch {
+        lookupFailed = true;
+      }
+      if (lookupFailed) return 1;
       if (record && record.spaceId === config.spaceId) return record.autonomyLevel ?? null;
       return 1;
     }
@@ -281,7 +291,6 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
         workflowRunId: config.workflowRunId ?? config.nodeConfig?.workflowRunId ?? undefined,
         agentName: config.agentName ?? config.nodeConfig?.myAgentName ?? spaceConfig?.myAgentName,
         sessionId: config.sessionId ?? config.nodeConfig?.mySessionId ?? spaceConfig?.mySessionId,
-        spaceLevel: config.spaceLevel,
         agentLevel: resolveAgentLevel(),
       };
       const outcome = await runDispatchAction(deps, dispatchInput);

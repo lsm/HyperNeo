@@ -385,6 +385,7 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
       spaceLevel: 5,
       spaceConfig: {
         ...stubSpaceConfig,
+        getSpaceAutonomyLevel: async () => 5,
         myAgentId: 'lh-agent-1',
         longHorizonAgentRepo: {
           getById: () => ({ spaceId: SPACE_ID, autonomyLevel: persistedLevel }),
@@ -935,6 +936,53 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     });
     expect(entries).toHaveLength(1);
     expect(entries[0].paramsSummary).not.toContain('secret-goal-summary');
+  });
+
+  test('resolves the live space level per dispatch instead of the snapshot', async () => {
+    let persistedSpaceLevel = 5;
+    const server = makeServer({
+      spaceLevel: 5,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        getSpaceAutonomyLevel: async () => persistedSpaceLevel,
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    const atFive = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(atFive).not.toMatchObject({ reason: 'autonomy_denied' });
+    persistedSpaceLevel = 1;
+    const atOne = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(atOne).toMatchObject({ error: 'action_denied', reason: 'autonomy_denied' });
+  });
+
+  test('fails closed through the dispatcher when the agent-level lookup throws', async () => {
+    const events: DispatchTelemetryEvent[] = [];
+    const server = makeServer({
+      role: 'long_term_agent',
+      spaceLevel: 5,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        myAgentId: 'lh-agent-1',
+        longHorizonAgentRepo: {
+          getById: () => {
+            throw new Error('sqlite unavailable');
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+      dispatchDeps: { emitTelemetry: (event) => void events.push(event) },
+    });
+    const body = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: 'action_denied', reason: 'autonomy_denied' });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: 'denied' });
   });
 
   test('audits malformed mutating calls even with read auditing off', async () => {
