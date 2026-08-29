@@ -226,7 +226,7 @@ describe('voice audio record store', () => {
 
   it('deletes a record from both the mirror and durable storage', async () => {
     await putVoiceRecord(makeEntry('r1', NOW));
-    await deleteVoiceRecord('r1');
+    expect(await deleteVoiceRecord('r1')).toBe(true);
     expect(await getVoiceRecord('r1')).toBeNull();
     expect(await listVoiceRecords()).toHaveLength(0);
     resetVoiceAudioStore();
@@ -236,7 +236,7 @@ describe('voice audio record store', () => {
   it('keeps a deleted record suppressed when the durable removal fails', async () => {
     globalThis.indexedDB = createFactory({ abortReadWriteAfter: 0 });
     await putVoiceRecord(makeEntry('r1', NOW));
-    await deleteVoiceRecord('r1');
+    expect(await deleteVoiceRecord('r1')).toBe(false);
     expect(await getVoiceRecord('r1')).toBeNull();
     expect(await listVoiceRecords()).toHaveLength(0);
   });
@@ -245,7 +245,7 @@ describe('voice audio record store', () => {
     const factory = createFactory({ abortReadWriteAt: 2 });
     globalThis.indexedDB = factory;
     await putVoiceRecord(makeEntry('r1', NOW));
-    await deleteVoiceRecord('r1');
+    expect(await deleteVoiceRecord('r1')).toBe(true);
     resetVoiceAudioStore();
     expect(await getVoiceRecord('r1')).toBeNull();
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual([]);

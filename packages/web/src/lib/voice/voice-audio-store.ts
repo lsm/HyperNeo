@@ -214,16 +214,16 @@ export async function listVoiceRecords(): Promise<VoiceRecordEntry[]> {
   return planDoom(rows).merged.filter((entry) => now - entry.createdAt < MAX_AGE_MS);
 }
 
-export function deleteVoiceRecord(id: string): Promise<void> {
+export function deleteVoiceRecord(id: string): Promise<boolean> {
   return serializeMutation(async () => {
     mirror.delete(id);
     tombstones.add(id);
     const removed = await runTx('readwrite', (store) => store.delete(id));
     if (removed) {
       tombstones.delete(id);
-      return;
+      return true;
     }
-    await runTx('readwrite', (store) => store.put({ deleted: true, id }));
+    return runTx('readwrite', (store) => store.put({ deleted: true, id }));
   });
 }
 
