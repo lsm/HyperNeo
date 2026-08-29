@@ -79,11 +79,15 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
 ~190 lines of near-duplicate classification.
 
 - **Shape:** `classifyGitHubPollResponse({ status, rateLimit, errorText })` →
-  discriminated union `network-error | primary-limited | secondary-limited |
-  not-modified | http-error | ok`, each arm carrying the rate-limit payload to
-  apply; `resolveRateLimitBackoff(rateLimit, now)` computes the
+  discriminated union `primary-limited | secondary-limited | not-modified |
+  http-error | ok`, each arm carrying the rate-limit payload to apply;
+  `resolveRateLimitBackoff(rateLimit, now)` computes the
   `retryAfter ? resetAt−now : MIN_BACKOFF` delay. Classification runs ≤ ~20
-  times per cycle per repo — not hot.
+  times per cycle per repo — not hot. The union deliberately has no
+  `network-error` arm: a failed fetch produces no `Response`, so there is no
+  `status`/`rateLimit`/`errorText` to classify — network failures are caught
+  at the fetch boundary (:2341–2353 and siblings) and never reach the
+  classifier.
 - **What stays imperative:** the per-site control flow differs legitimately
   (endpoint scan `continue`s on network error; check-run sets `headSucceeded`;
   reaction clears `reactionsFullyPolled`; review breaks its page loop). The
@@ -196,13 +200,14 @@ equivalence pins are added.
 
 | Slice | Kind | Delivers | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| GH-P1 | pin | commit-policy + classification decision tables (the matrix dimensions the fake-fetch suites cover only indirectly: `partialScan × hasBacklog × deferred × stale × accessible × pollErrorMessage`) | 0 | ≲350 (split by family, never truncate) | — |
-| GH-E1 | extract | C1 `classifyGitHubPollResponse` + backoff helper, swapped at the 5 cycle sites (`githubFetch` optional 6th) | ≲120 net (−~150 dup) | ≲300 | GH-P1 |
-| GH-E2 | extract | C2 watermark/seed/cutoff/page-advance helpers | ≲100 | ≲250 | GH-P1 |
+| GH-P1a | pin | response-classification decision table (the 429-synthesis, secondary body-sniff, 304, low-remaining dimensions the fake-fetch suites cover only via whole cycles) | 0 | ≲200 | — |
+| GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × stale × accessible × pollErrorMessage` → committed/pending watermarks, error fields, write split) | 0 | ≲250 | — |
+| GH-E1 | extract | C1 `classifyGitHubPollResponse` + backoff helper, swapped at the 5 cycle sites (`githubFetch` optional 6th) | ≲120 net (−~150 dup) | ≲300 | GH-P1a |
+| GH-E2 | extract | C2 watermark/seed/cutoff/page-advance helpers | ≲100 | ≲250 | — |
 | GH-E3 | extract | C3 head-ref policy, tracked-PR reconcile, cursor GC | ≲110 | ≲200 | GH-E2 |
 | GH-E4 | extract | C4 supersession + legacy-owner decisions | ≲80 | ≲200 | — |
 | GH-E5 | extract | C5 merge/review/reaction transition helpers (one module; split if review prefers) | ≲90 | ≲250 | — |
-| GH-E6 | extract | C6 `planPollCursorCommit` + write-split decision | ≲90 | ≲300 (decision table) | GH-P1, GH-E2 |
+| GH-E6 | extract | C6 `planPollCursorCommit` + write-split decision | ≲90 | ≲300 (decision table) | GH-P1b, GH-E2 |
 
 Each slice: one module + its call-site swaps; may not touch the loops'
 control flow, the class state methods, or the scheduler. Merge contract per
