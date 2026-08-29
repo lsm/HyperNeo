@@ -904,6 +904,10 @@ export class AcpQueryRunner {
 
         const queuedMessage = message as SDKUserMessage & { internal?: boolean };
         if (!queuedMessage.internal) {
+          receivedAcpMessageDuringRun = false;
+          startupWatchFirstMessageSeen = false;
+          startupWatchHasFirstMessage = () => false;
+          startupWatchMessages = [];
           if (!attemptOwnsRun()) {
             requeueYieldedPrompt(message);
             break;
@@ -1224,8 +1228,11 @@ export class AcpQueryRunner {
 
       const lastMsg = this._lastConsumedUserMessage;
       if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
+        const deliveryRepo = this.ctx.db.getSDKMessageRepo?.();
         const reopenedId =
-          this.ctx.db.getSDKMessageRepo?.().reopenDeliveryByUuid(session.id, lastMsg.uuid) ?? null;
+          deliveryRepo?.reopenDeliveryByUuid(session.id, lastMsg.uuid) ??
+          deliveryRepo?.markDeliveryRetryableByUuid(session.id, lastMsg.uuid) ??
+          null;
         if (reopenedId) {
           this.ctx.internalEventBus.publishAsync('messages.statusChanged', {
             sessionId: session.id,

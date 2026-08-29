@@ -2934,6 +2934,138 @@ describe('AcpQueryRunner', () => {
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     }, 5000);
 
+    test('restores an accepted (consumed) delivery row for the startup retry', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const reopenDeliveryByUuid = mock(() => null);
+      const markDeliveryRetryableByUuid = mock(() => 'db-id-2');
+      (ctx.db as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        reopenDeliveryByUuid,
+        markDeliveryRetryableByUuid,
+      });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith('session-1', 'user-message-1');
+      expect(markDeliveryRetryableByUuid).toHaveBeenCalledWith('session-1', 'user-message-1');
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('an exit during per-turn configuration after prior progress enters the startup retry', async () => {
+      const firstClient = createMockClient();
+      firstClient.getConfigOptions = mock(() => [
+        {
+          id: 'thought',
+          name: 'Thought',
+          type: 'select',
+          category: 'thought_level',
+          currentValue: 'off',
+          options: [{ name: 'Medium', value: 'medium' }],
+        },
+      ]);
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({
+        client: firstClient,
+        messages: [makeUserMessage('first'), makeUserMessage('second')],
+        session: { config: { thinkingLevel: 'think8k' } } as Partial<Session>,
+      });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      firstClient.setConfigOption = mock(async () => {
+        const calls = firstClient.setConfigOption.mock.calls.length;
+        if (calls === 2) {
+          constructorOptions[0]?.onExit?.(1, null);
+          return [];
+        }
+        if (calls >= 3) {
+          throw new Error('ACP agent process exited');
+        }
+        return [];
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'second' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('clears the dead new session when a later prompt dies before meaningful progress', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        if (firstClient.sendPrompt.mock.calls.length === 1) {
+          yield {
+            sessionId: 'acp-session-1',
+            update: { sessionUpdate: 'plan', entries: [] },
+          };
+          return;
+        }
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({
+        client: firstClient,
+        messages: [makeUserMessage('first'), makeUserMessage('second')],
+      });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await waitFor(() => firstClient.sendPrompt.mock.calls.length >= 2, 500);
+      constructorOptions[0].onExit?.(1, null);
+
+      await ctx.queryPromise;
+
+      expect(ctx.db.updateSession).toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+      expect(secondClient.createSession).toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'second' },
+      ]);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
     test('ambient metadata does not disarm the watch: a hanging agent hits the backstop and retries', async () => {
       process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '300';
       const firstClient = createMockClient();
