@@ -10,11 +10,9 @@ import {
   ROLE_HOT_ACTIONS,
 } from './description-generator.ts';
 import {
-  emitDispatchTelemetry,
   runDispatchAction,
   type DispatchActionDeps,
   type DispatchActionInput,
-  type DispatchActionOutcome,
 } from './dispatcher-pipeline.ts';
 import {
   createRateAdmission,
@@ -186,12 +184,12 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
 
   const resolveAgentLevel = (): number | null => {
     if (config.agentLevel != null) return config.agentLevel;
-    if (
-      config.role === 'long_term_agent' &&
-      spaceConfig?.myAgentId &&
-      spaceConfig.longHorizonAgentRepo
-    ) {
-      return spaceConfig.longHorizonAgentRepo.getById(spaceConfig.myAgentId)?.autonomyLevel ?? null;
+    if (config.role === 'long_term_agent') {
+      if (spaceConfig?.myAgentId && spaceConfig.longHorizonAgentRepo) {
+        const record = spaceConfig.longHorizonAgentRepo.getById(spaceConfig.myAgentId);
+        if (record && record.spaceId === config.spaceId) return record.autonomyLevel ?? null;
+      }
+      return 1;
     }
     return null;
   };
@@ -234,6 +232,26 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
               : undefined;
           }
         : undefined),
+    validateTargets:
+      config.dispatchDeps?.validateTargets ??
+      ((params: unknown, spaceId: string) => {
+        if (typeof params !== 'object' || params === null) return undefined;
+        const record = params as Record<string, unknown>;
+        const runId = explicitRunId(record);
+        if (runId && spaceConfig?.workflowRunRepo) {
+          const run = spaceConfig.workflowRunRepo.getRun(runId);
+          if (run && run.spaceId !== spaceId) {
+            return `Workflow run ${runId} does not belong to space ${spaceId}`;
+          }
+        }
+        if (typeof record.task_id === 'string' && record.task_id.length > 0 && taskRepo) {
+          const task = taskRepo.getTask(record.task_id);
+          if (task && task.spaceId !== spaceId) {
+            return `Task ${record.task_id} does not belong to space ${spaceId}`;
+          }
+        }
+        return undefined;
+      }),
     registry,
     emitTelemetry: config.dispatchDeps?.emitTelemetry ?? emitActionDispatchedEvent,
     isWithinRateBudget:
@@ -257,21 +275,6 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
         spaceLevel: config.spaceLevel,
         agentLevel: resolveAgentLevel(),
       };
-      const runId = explicitRunId(args.params);
-      const run = runId ? spaceConfig?.workflowRunRepo?.getRun(runId) : null;
-      if (run && run.spaceId !== config.spaceId) {
-        const denied: DispatchActionOutcome = {
-          action: 'denied',
-          reason: 'invalid_params',
-          message: `Workflow run ${runId} does not belong to space ${config.spaceId}`,
-        };
-        await emitDispatchTelemetry(deps, dispatchInput, deps.registry.get(args.name), denied);
-        return jsonResult({
-          error: 'action_denied',
-          reason: denied.reason,
-          message: denied.message,
-        });
-      }
       const outcome = await runDispatchAction(deps, dispatchInput);
       if (outcome.action === 'dispatched') return outcome.result;
       if (outcome.action === 'denied') {

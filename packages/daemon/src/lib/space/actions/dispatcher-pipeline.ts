@@ -27,6 +27,8 @@ export type DispatchTelemetryEvent = {
   safetyClass?: string;
   role: SpaceMcpSessionRole;
   spaceId: string;
+  agentName?: string | null;
+  sessionId?: string | null;
   taskId?: string;
   workflowRunId?: string;
   outcome: 'dispatched' | 'denied' | 'failed';
@@ -58,6 +60,10 @@ export interface DispatchActionDeps {
     params: Record<string, unknown>
   ) => string | undefined | Promise<string | undefined>;
   resolveRunId?: (taskId: string) => string | undefined | Promise<string | undefined>;
+  validateTargets?: (
+    params: unknown,
+    spaceId: string
+  ) => string | undefined | Promise<string | undefined>;
 }
 
 export interface DispatchActionCtx extends DispatchActionInput {
@@ -163,6 +169,12 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
 
 export async function resolveTargets(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
   if (ctx.outcome) return ctx;
+  if (ctx.deps.validateTargets) {
+    const message = await ctx.deps.validateTargets(ctx.parsedParams, ctx.spaceId);
+    if (message) {
+      return { ...ctx, outcome: deniedOutcome('invalid_params', message) };
+    }
+  }
   const action = ctx.action!;
   const params = (ctx.parsedParams ?? null) as Record<string, unknown> | null;
   const contextualTaskId = ctx.contextualTaskId;
@@ -392,6 +404,8 @@ export function buildDispatchTelemetryEvent(
     safetyClass: action?.safetyClass,
     role: input.role,
     spaceId: input.spaceId,
+    agentName: input.agentName,
+    sessionId: input.sessionId,
     taskId: input.taskId,
     workflowRunId: input.workflowRunId,
     outcome: outcome.action,
