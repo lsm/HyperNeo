@@ -275,10 +275,13 @@ worker CREATED lets P46's deadline/CAS-loss cleanup terminate a live reused
 worker (pin the cold-cache row in TAM-PF). The nested-reuse case also needs an
 UNDER-LOCK POST-CREATE TERMINAL RECHECK the current code lacks: the nominal
 fresh arm has no terminal check before injection, so a task/run that went
-terminal while restoration was in flight would receive the kickoff on a
-REUSED worker P46 cannot safely terminate — TAM-F1 adds the recheck for this
-case, returns KICKOFF SKIPPED on terminal, and TAM-PF pins the
-terminal-transition row. Pins exist
+terminal while the spawn was in flight would receive the kickoff. The recheck
+covers EVERY `createSubSession` outcome, not only nested reuse: both
+CREATED and REUSED outcomes return KICKOFF SKIPPED on a terminal task/run —
+and for a CREATED worker the skip must additionally TERMINATE the
+just-created session (per P46's created-only cleanup), while a REUSED worker
+is left untouched. TAM-PF pins terminal transitions during BOTH nested reuse
+and genuinely fresh creation. Pins exist
 (`task-agent-manager-post-approval.test.ts`).
 
 ### `deliver-space-agent-pending-row` — cluster 5, ~71 lines
@@ -327,7 +330,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-PC | Pins for `restorePostApprovalWorkerSession`: three refusal rows (task `cancelled`/`archived`, run `cancelled`), cooldown THROW outcome + pre-restore ordering, no-completion-callback, pre-stream registration + sanitizer ordering | test-only | 0 | ≲80 | — |
 | TAM-PD | Pins for `rehydrateSubSession`: refusal-gate ordering (archived row BEFORE the fenced repair), `done` admissibility, system-prompt-only overlay, `resolveTaskWorkspace` routing (task-bound secondary workspace), hooks + sanitizer pre-stream ordering | test-only | 0 | ≲100 | — |
 | TAM-PE | Pins for the complete injection operation: outer admissions + post-lock terminal recheck, cancellation passthrough, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
-| TAM-PF | Pins for `spawnPostApprovalSubSession` reuse/fresh arms + the cold-cache ownership row (flag from the nested create result) + the nested-reuse terminal-transition row (under-lock post-create recheck → KICKOFF SKIPPED) | test-only | 0 | ≲100 | — |
+| TAM-PF | Pins for `spawnPostApprovalSubSession` reuse/fresh arms + the cold-cache ownership row (flag from the nested create result) + terminal-transition rows for BOTH outcomes (under-lock post-create recheck → KICKOFF SKIPPED; CREATED skip also terminates the just-created session) | test-only | 0 | ≲100 | — |
 | TAM-PG | Pins for `deliverSpaceAgentPendingRow`: settlement/error races + near-expiry deferral cases | test-only | 0 | ≲60 | — |
 | TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin) | build | ≲250 | ≲250 | TAM-PB |
 | TAM-B2 | Delegate the `createSubSession` method body to the B1 pipeline and expose the B1 outcome (created/reused) through a richer INTERNAL entrypoint — the public `Promise<string>` return stays, but TAM-F consumes the internal outcome; both in-file callers keep their signatures | wire | ≲70 | ≲60 | TAM-B1 |
@@ -335,9 +338,9 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-C2 | Wire `restorePostApprovalWorkerSession` | wire | ≲40 | ≲50 | TAM-C1 |
 | TAM-D1 | `rehydrate-sub-session` stagedRun, unwired (fenced repair, `resolveTaskWorkspace` routing, system-prompt-only overlay) | build | ≲220 | ≲200 | TAM-PD |
 | TAM-D2 | Wire `rehydrateSubSession` | wire | ≲40 | ≲50 | TAM-D1 |
-| TAM-E1 | `deliver-injected-message` pipeline over the COMPLETE operation (outer admissions + inner arms), composing `decideInjectDelivery`'s gates directly; requires the FENCED repair helper (shared with TAM-D1 — sequence after the slice that lands it); delivery stage group exported for direct composition by owning pipelines | build | ≲230 | ≲180 | TAM-PE |
+| TAM-E1 | `deliver-injected-message` pipeline over the COMPLETE operation (outer admissions + inner arms), composing `decideInjectDelivery`'s gates directly; requires the FENCED repair helper (shared with TAM-D1 — sequence after the slice that lands it); delivery stage group exported for direct composition by owning pipelines | build | ≲230 | ≲180 | TAM-PE, TAM-D1 (fenced repair helper) |
 | TAM-E2 | Wire `injectSubSessionMessageWithOrigin` (and its thin wrappers) to the E1 pipeline, and compose the extracted delivery stage group into spawn-flow's kickoff injection directly; inject lock stays class-owned | wire | ≲70 | ≲70 | TAM-E1 |
-| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 CREATED/REUSED + DELIVERED/SKIPPED outcome (ownership from the nested create result; under-lock post-create terminal recheck for nested reuse) and composing the delivery stage group for its injections | build | ≲220 | ≲180 | TAM-B2, TAM-E1, TAM-PF (P46 outcome contract) |
+| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 CREATED/REUSED + DELIVERED/SKIPPED outcome (ownership from the nested create result; under-lock post-create terminal recheck covering EVERY create outcome — CREATED skip terminates the just-created session, REUSED skip leaves the worker) and composing the delivery stage group for its injections | build | ≲220 | ≲180 | TAM-B2, TAM-E1, TAM-PF (P46 outcome contract) |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
 | TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); requires the status-guarded settlement/error primitive (risk 5) | build+wire | ≲100 | ≲80 | TAM-PG |
 | TAM-H (optional, not superpipe) | Extract provenance/cooldown/durable-id readers + `resolveTerminalInjectionStatus` into `sub-session-identity.ts` plain helpers | extract | ≲120 | ≲60 | — |
