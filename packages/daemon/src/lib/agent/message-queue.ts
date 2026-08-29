@@ -133,6 +133,8 @@ export class MessageQueue {
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private internalCompactionResultAttributionArmed: boolean = false;
+  private outstandingCompactionBoundaries: Array<'daemon' | 'user'> = [];
+  private internalCompactionBuffered: boolean = false;
   private nonCompactionSentSinceBoundary: boolean = false;
   private recentSentPrompts: Map<string, string | MessageContent[]> = new Map();
 
@@ -166,6 +168,8 @@ export class MessageQueue {
       this.internalCompactionResultAttributionArmed = false;
       this.internalCompactionsAwaitingBoundary += 1;
       this.internalCompactionIdsAwaitingBoundary.add(message.id);
+      this.internalCompactionBuffered = this.outstandingCompactionBoundaries.length > 0;
+      this.outstandingCompactionBoundaries.push('daemon');
     } else {
       this.nonCompactionSentSinceBoundary = true;
       this.recentSentPrompts.delete(message.id);
@@ -175,6 +179,9 @@ export class MessageQueue {
         if (oldest !== undefined) {
           this.recentSentPrompts.delete(oldest);
         }
+      }
+      if (typeof message.content === 'string' && message.content === '/compact') {
+        this.outstandingCompactionBoundaries.push('user');
       }
     }
   }
@@ -222,20 +229,16 @@ export class MessageQueue {
     return armed;
   }
 
-  hasPendingUserCompactBoundary(): boolean {
-    for (const content of this.recentSentPrompts.values()) {
-      if (typeof content === 'string' && content === '/compact') return true;
-    }
-    return false;
+  nextCompactionBoundaryIsDaemon(): boolean {
+    return this.outstandingCompactionBoundaries[0] === 'daemon';
   }
 
-  consumePendingUserCompactBoundary(): void {
-    for (const [messageId, content] of this.recentSentPrompts) {
-      if (typeof content === 'string' && content === '/compact') {
-        this.recentSentPrompts.delete(messageId);
-        return;
-      }
-    }
+  consumeCompactionBoundary(): void {
+    this.outstandingCompactionBoundaries.shift();
+  }
+
+  hasBufferedInternalCompaction(): boolean {
+    return this.internalCompactionBuffered;
   }
 
   removePendingInternalCompactions(): number {
@@ -459,6 +462,8 @@ export class MessageQueue {
     this.internalCompactionsAwaitingBoundary = 0;
     this.internalCompactionIdsAwaitingBoundary.clear();
     this.internalCompactionResultAttributionArmed = false;
+    this.outstandingCompactionBoundaries = [];
+    this.internalCompactionBuffered = false;
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
     this.deliveryGate = null;

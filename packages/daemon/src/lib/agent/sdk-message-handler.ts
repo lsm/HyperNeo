@@ -1910,12 +1910,14 @@ export class SDKMessageHandler {
     const manualBoundary =
       (message as SDKCompactBoundaryMessage).compact_metadata?.trigger === 'manual';
     if (manualBoundary && this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) {
-      if (this.ctx.messageQueue.hasPendingUserCompactBoundary()) {
-        this.ctx.messageQueue.consumePendingUserCompactBoundary();
-      } else {
+      if (this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()) {
         this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
         this.ctx.messageQueue.armInternalCompactionResultAttribution();
+      } else {
+        this.ctx.messageQueue.consumeCompactionBoundary();
       }
+    } else if (manualBoundary) {
+      this.ctx.messageQueue.consumeCompactionBoundary();
     }
     this.ctx.messageQueue.noteBoundaryCompleted();
     const boundaryInfo = contextTracker.getContextInfo();
@@ -2022,6 +2024,7 @@ export class SDKMessageHandler {
           this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
           !this.ctx.messageQueue.hasQueuedInternalCompaction() &&
           !this.ctx.messageQueue.hasInFlightInternalCompaction() &&
+          !this.ctx.messageQueue.hasBufferedInternalCompaction() &&
           !this.ctx.stateManager.getIsCompacting();
         if (this.compactionEnqueuedMidTurnGeneration !== undefined) {
           const deferralOwnsThisTurn =

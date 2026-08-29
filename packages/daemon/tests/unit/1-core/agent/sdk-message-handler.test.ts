@@ -106,8 +106,9 @@ describe('SDKMessageHandler', () => {
   let acknowledgeCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
   let armInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
   let consumeInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
-  let hasPendingUserCompactBoundarySpy: ReturnType<typeof mock>;
-  let consumePendingUserCompactBoundarySpy: ReturnType<typeof mock>;
+  let nextCompactionBoundaryIsDaemonSpy: ReturnType<typeof mock>;
+  let consumeCompactionBoundarySpy: ReturnType<typeof mock>;
+  let hasBufferedInternalCompactionSpy: ReturnType<typeof mock>;
   let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
   let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
@@ -221,8 +222,9 @@ describe('SDKMessageHandler', () => {
     acknowledgeCompactionsAwaitingBoundarySpy = mock(() => {});
     armInternalCompactionResultAttributionSpy = mock(() => {});
     consumeInternalCompactionResultAttributionSpy = mock(() => false);
-    hasPendingUserCompactBoundarySpy = mock(() => false);
-    consumePendingUserCompactBoundarySpy = mock(() => {});
+    nextCompactionBoundaryIsDaemonSpy = mock(() => true);
+    consumeCompactionBoundarySpy = mock(() => {});
+    hasBufferedInternalCompactionSpy = mock(() => false);
     removePendingInternalCompactionsSpy = mock(() => 0);
     clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
@@ -246,8 +248,9 @@ describe('SDKMessageHandler', () => {
       acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
       armInternalCompactionResultAttribution: armInternalCompactionResultAttributionSpy,
       consumeInternalCompactionResultAttribution: consumeInternalCompactionResultAttributionSpy,
-      hasPendingUserCompactBoundary: hasPendingUserCompactBoundarySpy,
-      consumePendingUserCompactBoundary: consumePendingUserCompactBoundarySpy,
+      nextCompactionBoundaryIsDaemon: nextCompactionBoundaryIsDaemonSpy,
+      consumeCompactionBoundary: consumeCompactionBoundarySpy,
+      hasBufferedInternalCompaction: hasBufferedInternalCompactionSpy,
       removePendingInternalCompactions: removePendingInternalCompactionsSpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
       noteBoundaryCompleted: mock(() => {}),
@@ -3941,7 +3944,7 @@ describe('SDKMessageHandler', () => {
     it('treats a user /compact boundary as the user command, not the daemon compaction', async () => {
       mockContext.queryObject = null;
       hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
-      hasPendingUserCompactBoundarySpy.mockImplementation(() => true);
+      nextCompactionBoundaryIsDaemonSpy.mockImplementation(() => false);
       const message: SDKMessage = {
         type: 'system',
         subtype: 'compact_boundary',
@@ -3954,7 +3957,26 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(message);
 
-      expect(consumePendingUserCompactBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(consumeCompactionBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+      expect(armInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
+    });
+
+    it('consumes a completed user compact boundary even when no daemon compaction awaits', async () => {
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: {
+          trigger: 'manual',
+          pre_tokens: 50000,
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(consumeCompactionBoundarySpy).toHaveBeenCalledTimes(1);
       expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
       expect(armInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
     });

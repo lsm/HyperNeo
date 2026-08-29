@@ -1077,6 +1077,51 @@ describe('MessageQueue', () => {
       expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
     });
 
+    it('tracks compaction boundaries in delivery order so a completed user compact cannot mask a daemon boundary', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'user-compact',
+        content: '/compact',
+        internal: false,
+      } as never);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+      q.consumeCompactionBoundary();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+      expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
+      q.acknowledgeCompactionsAwaitingBoundary();
+      q.armInternalCompactionResultAttribution();
+      expect(q.consumeInternalCompactionResultAttribution()).toBe(true);
+      q.stop();
+    });
+
+    it('keeps daemon-first ordering so the daemon boundary is not masked by a later user compact', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      q.noteInternalCompactionSent({
+        id: 'user-compact',
+        content: '/compact',
+        internal: false,
+      } as never);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+      q.acknowledgeCompactionsAwaitingBoundary();
+      q.consumeCompactionBoundary();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+      q.stop();
+    });
+
     it('keeps a yielded internal compaction outstanding across a compact boundary', async () => {
       const q = new MessageQueue();
       q.start();
