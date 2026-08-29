@@ -264,8 +264,13 @@ function digestMembershipRow(
   };
 }
 
-function seedSizedComments(h: Harness, eventIds: string[]): void {
+function seedSizedComments(
+  h: Harness,
+  eventIds: string[],
+  overrides: Record<string, { body?: string; commentId?: string }> = {}
+): void {
   for (const [index, eventId] of eventIds.entries()) {
+    const override = overrides[eventId] ?? {};
     h.rows.push(pendingRow(eventId));
     h.records.set(eventId, {
       event: {
@@ -277,7 +282,11 @@ function seedSizedComments(h: Harness, eventIds: string[]): void {
         occurredAt: BASE_AT + index * 1000,
         ingestedAt: BASE_AT,
         summary: 'fixture',
-        payload: { ...PAYLOADS.comment, commentId: String(1000 + index) },
+        payload: {
+          ...PAYLOADS.comment,
+          body: override.body ?? PAYLOADS.comment.body,
+          commentId: override.commentId ?? String(1000 + index),
+        },
       },
       state: 'published',
       createdAt: BASE_AT,
@@ -680,6 +689,20 @@ describe('render-pending-digest pipeline', () => {
     h.deps.digestMessageByteCap = messageBytesFor(h, ['ev-d', 'ev-c']);
     const ctx = cappedEssences(h);
     expect(ctx.essences?.map((essence) => essence.eventId)).toEqual(['ev-d', 'ev-c']);
+  });
+
+  it('capDigestBatch picks a larger fitting prefix when group folding shrinks the render', () => {
+    const h = harness();
+    const longBody = 'b'.repeat(160);
+    seedSizedComments(h, ['ev-a', 'ev-b', 'ev-c', 'ev-d'], {
+      'ev-a': { body: longBody, commentId: '5000' },
+      'ev-b': { body: longBody, commentId: '5000' },
+      'ev-c': { body: 'x', commentId: '5000' },
+      'ev-d': { body: longBody },
+    });
+    h.deps.digestMessageByteCap = messageBytesFor(h, ['ev-a', 'ev-b', 'ev-c']);
+    const ctx = cappedEssences(h);
+    expect(ctx.essences?.map((essence) => essence.eventId)).toEqual(['ev-a', 'ev-b', 'ev-c']);
   });
 
   it('capDigestBatch emits an over-cap single event as its own batch', () => {

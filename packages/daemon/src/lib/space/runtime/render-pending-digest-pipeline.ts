@@ -483,15 +483,13 @@ export function capDigestBatch(ctx: RenderPendingDigestCtx): RenderPendingDigest
     return Buffer.byteLength(JSON.stringify(digestMessage), 'utf8') <= cap;
   };
   if (ordered.length <= 1 || batchFits(ordered)) return ctx;
-  let lo = 1;
-  let hi = ordered.length - 1;
-  while (lo < hi) {
-    const mid = lo + Math.ceil((hi - lo) / 2);
-    if (batchFits(ordered.slice(0, mid))) lo = mid;
-    else hi = mid - 1;
+  let size = 1;
+  for (let candidate = ordered.length - 1; candidate >= 2; candidate--) {
+    if (batchFits(ordered.slice(0, candidate))) {
+      size = candidate;
+      break;
+    }
   }
-  let size = lo;
-  while (size > 1 && !batchFits(ordered.slice(0, size))) size--;
   return { ...ctx, essences: ordered.slice(0, size) };
 }
 
