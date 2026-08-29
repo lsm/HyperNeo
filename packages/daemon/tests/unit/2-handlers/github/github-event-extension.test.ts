@@ -10364,8 +10364,10 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       const href =
         typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
       const path = new URL(href).pathname;
-      const ifNoneMatch = init?.headers
-        ? (new Headers(init.headers).get('If-None-Match') ?? undefined)
+      const headersSource =
+        init?.headers ?? (url instanceof Request ? (url as Request).headers : undefined);
+      const ifNoneMatch = headersSource
+        ? (new Headers(headersSource).get('If-None-Match') ?? undefined)
         : undefined;
       requests.push({ path, ifNoneMatch });
       if (path.endsWith('/issues/comments')) {
