@@ -75,6 +75,7 @@ const SPACE_ADMISSION_FAMILIES = [
   'sessions',
   'workflows',
   'tasks',
+  'forge',
   'scheduled',
   'external_events',
   'inactivity',
