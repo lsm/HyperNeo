@@ -91,6 +91,22 @@ describe('runVoiceSubmit snapshot → stop → persist', () => {
     expect(harness.deleted).toEqual([]);
   });
 
+  it('persists and transcribes a silent recording when retrying a persisted record', async () => {
+    const harness = createHarness({
+      stopRecording: async () => createRecording({ peakLevel: 0.0005 }),
+    });
+    const result = await runVoiceSubmit(
+      { sessionId: 'session-1', retrySilent: true },
+      harness.deps
+    );
+    expect(result).toMatchObject({
+      kind: 'routed',
+      outcome: { kind: 'insert', transcript: 'hello world', autoSend: false },
+      persisted: true,
+    });
+    expect(harness.persisted).toHaveLength(1);
+  });
+
   it('rejects and persists nothing when stopping the recorder fails', async () => {
     const harness = createHarness({
       stopRecording: async () => {

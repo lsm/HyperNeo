@@ -93,6 +93,8 @@ const QUEUE_FETCH_LIMIT = 1000;
 const QUEUE_EVENT_REFRESH_DEBOUNCE_MS = 300;
 const QUEUE_FALLBACK_POLL_MS = 5000;
 
+const VOICE_DISCONNECTED_HANDOFF = 'Voice submit handed off to the reconnect outbox';
+
 interface VoicePayloadSnapshot {
   before: string;
   after: string;
@@ -545,9 +547,7 @@ export default function MessageInput({
         });
       };
       if (result.kind === 'silent-recording') {
-        if (followUp.resendOf !== undefined) {
-          toast.error('No microphone signal detected — check your mic or input device');
-        } else {
+        if (followUp.resendOf === undefined) {
           const saved = await saveForResend(generateUUID());
           toast.error(
             saved
@@ -636,21 +636,26 @@ export default function MessageInput({
       const targetSessionId = recordingSessionRef.current ?? sessionId;
       const payload = captureVoicePayload();
       const recordId = generateUUID();
-      let recording: VoiceRecording | null = null;
       setIsTranscribing(true);
       markVoiceAudioBusy(recordId);
       try {
+        const stoppedRecording = await voiceRecorder.stop();
+        if (stoppedRecording.hitDurationLimit) {
+          toast.info('Voice recording stopped at 5 minutes — transcribing…');
+        }
         const result = await runVoiceSubmit(
           { sessionId: targetSessionId, mode },
           {
-            stopRecording: async () => {
-              recording = await voiceRecorder.stop();
-              if (recording.hitDurationLimit) {
-                toast.info('Voice recording stopped at 5 minutes — transcribing…');
-              }
-              return recording;
-            },
+            stopRecording: async () => stoppedRecording,
             generateId: () => recordId,
+            delay: (ms) =>
+              new Promise<void>((resolve, reject) => {
+                if (!connectionManager.getHubIfConnected()) {
+                  reject(new Error(VOICE_DISCONNECTED_HANDOFF));
+                  return;
+                }
+                setTimeout(resolve, ms);
+              }),
             isMounted: () => mountedRef.current,
             currentSessionId: () => sessionIdRef.current,
           }
@@ -658,12 +663,16 @@ export default function MessageInput({
         await interpretVoiceSubmit(result, {
           targetSessionId,
           mode,
-          recording,
+          recording: stoppedRecording,
           payload,
         });
       } catch (error) {
-        await voiceRecorder.cancel();
-        toast.error(error instanceof Error ? error.message : 'Voice transcription failed');
+        if (error instanceof Error && error.message === VOICE_DISCONNECTED_HANDOFF) {
+          toast.info('Voice recording saved — will be sent when reconnected');
+        } else {
+          await voiceRecorder.cancel();
+          toast.error(error instanceof Error ? error.message : 'Voice transcription failed');
+        }
       } finally {
         unmarkVoiceAudioBusy(recordId);
         recordingSessionRef.current = null;
@@ -697,7 +706,7 @@ export default function MessageInput({
 
   const [resendingVoiceRecordId, setResendingVoiceRecordId] = useState<string | null>(null);
   const pendingVoiceEntries = pendingVoiceAudioRecords.value.filter(
-    (entry) => entry.sessionId === sessionId && !isVoiceAudioBusy(entry.id)
+    (entry) => entry.sessionId === sessionId
   );
 
   useEffect(() => {
@@ -707,13 +716,14 @@ export default function MessageInput({
   const handleVoiceAudioResend = useCallback(
     async (entry: VoiceRecordEntry) => {
       if (resendingVoiceRecordId !== null || isTranscribing) return;
+      if (isVoiceAudioBusy(entry.id)) return;
       const payload = captureVoicePayload();
       const recording = recordingFromEntry(entry);
       setResendingVoiceRecordId(entry.id);
       markVoiceAudioBusy(entry.id);
       try {
         const result = await runVoiceSubmit(
-          { sessionId: entry.sessionId },
+          { sessionId: entry.sessionId, retrySilent: true },
           {
             stopRecording: async () => recording,
             putRecord: async () => true,
@@ -741,6 +751,7 @@ export default function MessageInput({
   );
 
   const handleVoiceAudioDelete = useCallback(async (entry: VoiceRecordEntry) => {
+    if (isVoiceAudioBusy(entry.id)) return;
     await deleteVoiceRecord(entry.id);
     await refreshPendingVoiceAudio();
   }, []);
@@ -911,6 +922,7 @@ export default function MessageInput({
     attachments.length,
     queuedForCurrentTurn.length,
     queuedForNextTurn.length,
+    pendingVoiceEntries.length,
   ]);
 
   useEffect(() => {
@@ -1174,6 +1186,7 @@ export default function MessageInput({
             <PendingVoiceAudioTray
               records={pendingVoiceEntries}
               resendingId={resendingVoiceRecordId}
+              isBusy={isVoiceAudioBusy}
               className="mb-2 sm:ml-[58px]"
               onResend={(entry) => {
                 void handleVoiceAudioResend(entry);

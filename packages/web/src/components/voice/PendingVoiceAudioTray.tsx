@@ -4,6 +4,7 @@ import { VOICE_SUBMIT_SILENCE_PEAK_LEVEL } from '../../lib/voice/voice-submit-pi
 interface PendingVoiceAudioTrayProps {
   records: VoiceRecordEntry[];
   resendingId?: string | null;
+  isBusy?: (id: string) => boolean;
   onResend: (entry: VoiceRecordEntry) => void;
   onDelete: (entry: VoiceRecordEntry) => void;
   className?: string;
@@ -16,6 +17,7 @@ function formatRecordedAt(createdAt: number): string {
 export function PendingVoiceAudioTray({
   records,
   resendingId = null,
+  isBusy,
   onResend,
   onDelete,
   className = '',
@@ -27,6 +29,7 @@ export function PendingVoiceAudioTray({
       <div class="overflow-hidden rounded-xl border border-dark-700/80 bg-dark-900/90 shadow-lg shadow-black/20 backdrop-blur-md">
         {records.map((entry) => {
           const resending = resendingId === entry.id;
+          const busy = resendingId !== null || (isBusy?.(entry.id) ?? false);
           const silent = entry.peakLevel < VOICE_SUBMIT_SILENCE_PEAK_LEVEL;
           return (
             <div
@@ -45,7 +48,7 @@ export function PendingVoiceAudioTray({
                 <button
                   type="button"
                   class="flex h-8 items-center rounded-full px-2.5 text-xs text-gray-300 transition-colors hover:bg-violet-500/15 hover:text-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60 disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={resendingId !== null}
+                  disabled={busy}
                   title={resending ? 'Resending…' : 'Transcribe and insert this recording'}
                   aria-label="Resend voice recording"
                   data-testid="resend-voice-audio"
@@ -55,7 +58,8 @@ export function PendingVoiceAudioTray({
                 </button>
                 <button
                   type="button"
-                  class="flex h-8 items-center rounded-full px-2.5 text-xs text-gray-500 transition-colors hover:bg-red-500/15 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+                  class="flex h-8 items-center rounded-full px-2.5 text-xs text-gray-500 transition-colors hover:bg-red-500/15 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={busy}
                   title="Delete recording"
                   aria-label="Delete voice recording"
                   data-testid="delete-voice-audio"

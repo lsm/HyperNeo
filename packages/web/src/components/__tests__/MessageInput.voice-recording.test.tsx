@@ -478,36 +478,35 @@ describe('MessageInput — recording UI', () => {
   });
 
   describe('stop-and-transcribe outcome branches', () => {
-    it('persists the recording for resend when the hub is disconnected at stop', async () => {
+    it('hands the recording to the reconnect outbox when the hub is disconnected at stop', async () => {
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
       const onSend = vi.fn(async () => true);
       render(<MessageInput sessionId="s1" onSend={onSend} />);
 
-      vi.useFakeTimers();
-      try {
-        fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
-        await vi.advanceTimersByTimeAsync(140_000);
-        expect(voiceStop).toHaveBeenCalledTimes(1);
-        expect(voiceCancel).not.toHaveBeenCalled();
-        expect(transcribeRequest).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByLabelText('Stop, transcribe and send'));
+
+      await waitFor(() => expect(voiceStop).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
         expect(putVoiceRecord).toHaveBeenCalledWith(
           expect.objectContaining({ sessionId: 's1', audioBase64: 'aGk=' })
-        );
-        expect(deleteVoiceRecord).not.toHaveBeenCalled();
-        await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith('Not connected'));
-        await vi.waitFor(() =>
-          expect(toast.info).toHaveBeenCalledWith('Voice recording saved for resend')
-        );
-        expect(onSend).not.toHaveBeenCalled();
-        expect(enqueueTranscript).not.toHaveBeenCalled();
-        expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeFalsy();
-      } finally {
-        vi.useRealTimers();
-      }
+        )
+      );
+      await waitFor(() =>
+        expect(toast.info).toHaveBeenCalledWith(
+          'Voice recording saved — will be sent when reconnected'
+        )
+      );
+      expect(transcribeRequest).not.toHaveBeenCalled();
+      expect(voiceCancel).not.toHaveBeenCalled();
+      expect(deleteVoiceRecord).not.toHaveBeenCalled();
+      expect(onSend).not.toHaveBeenCalled();
+      expect(enqueueTranscript).not.toHaveBeenCalled();
+      expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeFalsy();
     });
 
     it('keeps the recording for resend after transient transcribe failures exhaust retries', async () => {
-      transcribeRequest.mockRejectedValue(new Error('ASR unavailable'));
+      for (let i = 0; i < 6; i++)
+        transcribeRequest.mockRejectedValueOnce(new Error('ASR unavailable'));
       const onSend = vi.fn(async () => true);
       render(<MessageInput sessionId="s1" onSend={onSend} />);
 
@@ -749,6 +748,27 @@ describe('MessageInput — recording UI', () => {
       expect(voiceStop).not.toHaveBeenCalled();
       const transcribeCall = hubRequest.mock.calls.find(([m]) => m === 'voice.transcribe');
       expect(transcribeCall[1]).toMatchObject({ audioBase64: 'aGk=' });
+      await waitFor(() => expect(draft.value).toBe('hello world'));
+      expect(deleteVoiceRecord).toHaveBeenCalledWith('r1');
+    });
+
+    it('Resend transcribes a silent saved recording instead of re-rejecting it', async () => {
+      listVoiceRecords.mockResolvedValue([
+        {
+          id: 'r1',
+          sessionId: 's1',
+          audioBase64: 'aGk=',
+          mimeType: 'audio/wav',
+          peakLevel: 0.0004,
+          createdAt: Date.now(),
+        },
+      ]);
+      render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+      await waitFor(() => expect(screen.getByTestId('pending-voice-audio-tray')).toBeTruthy());
+
+      fireEvent.click(screen.getByLabelText('Resend voice recording'));
+
+      await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(draft.value).toBe('hello world'));
       expect(deleteVoiceRecord).toHaveBeenCalledWith('r1');
     });

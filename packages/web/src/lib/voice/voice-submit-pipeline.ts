@@ -20,6 +20,7 @@ const VOICE_SUBMIT_TRANSCRIBE_TIMEOUT_MS = 125_000;
 export interface VoiceSubmitInput {
   sessionId: string;
   mode?: VoiceSubmitMode;
+  retrySilent?: boolean;
 }
 
 export interface VoiceSubmitDeps {
@@ -113,7 +114,7 @@ async function stopAndEncodeRecording(ctx: VoiceSubmitSnapshotCtx): Promise<Voic
 function gateSilentRecording(ctx: VoiceSubmitEncodedCtx): VoiceSubmitGatedCtx {
   return {
     ...ctx,
-    silentRecording: ctx.recording.peakLevel < VOICE_SUBMIT_SILENCE_PEAK_LEVEL,
+    silentRecording: !ctx.retrySilent && ctx.recording.peakLevel < VOICE_SUBMIT_SILENCE_PEAK_LEVEL,
   };
 }
 
@@ -193,9 +194,7 @@ const runVoiceSubmitPipeline = (
   ctx: VoiceSubmitCtx
 ) => Promise<VoiceSubmitFinishedCtx | VoiceSubmitHaltedCtx | VoiceSubmitSilentCtx>;
 
-export async function requestVoiceTranscription(
-  recording: VoiceRecording
-): Promise<{ text?: string }> {
+async function requestVoiceTranscription(recording: VoiceRecording): Promise<{ text?: string }> {
   const hub = connectionManager.getHubIfConnected();
   if (!hub) throw new Error('Not connected');
   return hub.request<{ text?: string }>('voice.transcribe', recording, {

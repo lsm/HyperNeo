@@ -7,12 +7,16 @@ vi.mock('../../connection-manager', () => ({
   connectionManager: { getHubIfConnected: vi.fn(() => ({ request: hubRequest })) },
 }));
 
-const listVoiceRecords = vi.hoisted(() => vi.fn(async () => []));
-const deleteVoiceRecord = vi.hoisted(() => vi.fn(async () => true));
+const store = vi.hoisted(() => ({ records: [] }));
+
 vi.mock('../voice-audio-store.ts', () => ({
-  listVoiceRecords,
-  deleteVoiceRecord,
-  putVoiceRecord: vi.fn(async () => true),
+  listVoiceRecords: async () => store.records.map((r) => ({ ...r })),
+  getVoiceRecord: async (id) => store.records.find((r) => r.id === id) ?? null,
+  deleteVoiceRecord: async (id) => {
+    store.records = store.records.filter((r) => r.id !== id);
+    return true;
+  },
+  putVoiceRecord: async () => true,
 }));
 
 import { connectionManager } from '../../connection-manager.ts';
@@ -26,8 +30,8 @@ import {
   stopVoiceAudioOutboxFlush,
 } from '../voice-audio-outbox.ts';
 
-function createEntry(overrides = {}) {
-  return {
+function seedEntry(overrides = {}) {
+  const entry = {
     id: 'rec-1',
     sessionId: 's1',
     audioBase64: 'aGk=',
@@ -36,17 +40,18 @@ function createEntry(overrides = {}) {
     createdAt: 1_726_000_000_000,
     ...overrides,
   };
+  store.records.push(entry);
+  return entry;
 }
 
 describe('voice audio outbox', () => {
   beforeEach(() => {
     resetVoiceAudioOutbox();
+    store.records = [];
     hubRequest.mockReset().mockImplementation(async () => ({ text: 'hello world' }));
     vi.mocked(connectionManager.getHubIfConnected)
       .mockReset()
       .mockReturnValue({ request: hubRequest });
-    listVoiceRecords.mockReset().mockImplementation(async () => []);
-    deleteVoiceRecord.mockClear();
     connectionState.value = 'disconnected';
   });
 
@@ -56,7 +61,7 @@ describe('voice audio outbox', () => {
   });
 
   it('delivers a pending record transcript to the session draft and deletes the record', async () => {
-    listVoiceRecords.mockResolvedValue([createEntry()]);
+    seedEntry();
     await flushPendingVoiceAudio();
 
     expect(hubRequest).toHaveBeenCalledWith(
@@ -69,83 +74,122 @@ describe('voice audio outbox', () => {
       text: 'hello world',
       dedupId: 'rec-1',
     });
-    expect(deleteVoiceRecord).toHaveBeenCalledWith('rec-1');
+    expect(store.records).toEqual([]);
     expect(pendingVoiceAudioRecords.value).toEqual([]);
   });
 
   it('deletes the record without staging when transcription yields no speech', async () => {
-    listVoiceRecords.mockResolvedValue([createEntry()]);
+    seedEntry();
     hubRequest.mockResolvedValue({ text: '   ' });
     await flushPendingVoiceAudio();
 
-    expect(deleteVoiceRecord).toHaveBeenCalledWith('rec-1');
+    expect(store.records).toEqual([]);
     expect(hubRequest.mock.calls.some(([m]) => m === 'session.appendVoiceDraft')).toBe(false);
   });
 
   it('deletes the record when transcription is a deterministic refusal', async () => {
-    listVoiceRecords.mockResolvedValue([createEntry()]);
+    seedEntry();
     hubRequest.mockRejectedValue(new Error('Voice transcription requires audio/wav input'));
     await flushPendingVoiceAudio();
 
-    expect(deleteVoiceRecord).toHaveBeenCalledWith('rec-1');
+    expect(store.records).toEqual([]);
   });
 
   it('drops the record when the session no longer exists', async () => {
-    listVoiceRecords.mockResolvedValue([createEntry()]);
+    seedEntry();
     hubRequest.mockImplementation(async (method: string) => {
       if (method === 'session.appendVoiceDraft') throw new Error('Session not found');
       return { text: 'hello world' };
     });
     await flushPendingVoiceAudio();
 
-    expect(deleteVoiceRecord).toHaveBeenCalledWith('rec-1');
+    expect(store.records).toEqual([]);
+  });
+
+  it('keeps a silent record for manual resend without transcribing it', async () => {
+    seedEntry({ peakLevel: 0.0004 });
+    await flushPendingVoiceAudio();
+
+    expect(hubRequest).not.toHaveBeenCalled();
+    expect(store.records).toHaveLength(1);
+    expect(pendingVoiceAudioRecords.value).toHaveLength(1);
+  });
+
+  it('defers newer records of a session after an older one fails retryably', async () => {
+    vi.useFakeTimers();
+    seedEntry({ id: 'older', audioBase64: 'b2xk' });
+    seedEntry({ id: 'newer', sessionId: 's2', audioBase64: 'bmV3' });
+    hubRequest.mockImplementation(async (_method: string, payload: { audioBase64: string }) => {
+      if (payload.audioBase64 === 'b2xk') {
+        throw new Error('Voice transcription rate limit exceeded; please wait before trying again');
+      }
+      return { text: 'from the newer record' };
+    });
+    const flushing = flushPendingVoiceAudio();
+    await vi.advanceTimersByTimeAsync(140_000);
+    await flushing;
+
+    expect(store.records.map((r) => r.id)).toEqual(['older']);
+    expect(hubRequest).toHaveBeenCalledWith(
+      'session.appendVoiceDraft',
+      expect.objectContaining({ sessionId: 's2', dedupId: 'newer' })
+    );
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(hubRequest.mock.calls.filter(([m]) => m === 'voice.transcribe').length).toBeGreaterThan(
+      6
+    );
+    expect(store.records.map((r) => r.id)).toEqual(['older']);
   });
 
   it('keeps the record on a transient failure and retries on the follow-up schedule', async () => {
     vi.useFakeTimers();
-    listVoiceRecords.mockResolvedValue([createEntry()]);
-    hubRequest.mockRejectedValueOnce(
-      new Error('Voice transcription rate limit exceeded; please wait before trying again')
-    );
-    await flushPendingVoiceAudio();
+    seedEntry();
+    hubRequest.mockImplementation(async () => {
+      throw new Error('Voice transcription rate limit exceeded; please wait before trying again');
+    });
+    const firstPass = flushPendingVoiceAudio();
+    await vi.advanceTimersByTimeAsync(140_000);
+    await firstPass;
 
-    expect(hubRequest).toHaveBeenCalledTimes(1);
-    expect(deleteVoiceRecord).not.toHaveBeenCalled();
+    expect(hubRequest.mock.calls.filter(([m]) => m === 'voice.transcribe')).toHaveLength(6);
+    expect(store.records).toHaveLength(1);
 
+    hubRequest.mockImplementation(async () => ({ text: 'recovered' }));
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(hubRequest).toHaveBeenCalledTimes(2);
-    expect(deleteVoiceRecord).toHaveBeenCalledWith('rec-1');
+    expect(store.records).toEqual([]);
+    expect(hubRequest).toHaveBeenCalledWith(
+      'session.appendVoiceDraft',
+      expect.objectContaining({ sessionId: 's1', text: 'recovered', dedupId: 'rec-1' })
+    );
   });
 
-  it('skips silent and in-flight records without transcribing them', async () => {
-    const silent = createEntry({ id: 'silent', peakLevel: 0.0004 });
-    const busy = createEntry({ id: 'busy' });
-    markVoiceAudioBusy('busy');
-    listVoiceRecords.mockResolvedValue([silent, busy]);
+  it('skips records claimed by a manual resend without transcribing them', async () => {
+    seedEntry({ id: 'claimed' });
+    markVoiceAudioBusy('claimed');
     await flushPendingVoiceAudio();
 
     expect(hubRequest).not.toHaveBeenCalled();
-    expect(deleteVoiceRecord).not.toHaveBeenCalled();
-    expect(pendingVoiceAudioRecords.value).toHaveLength(2);
+    expect(store.records).toHaveLength(1);
   });
 
   it('does nothing when the connection is down', async () => {
-    listVoiceRecords.mockResolvedValue([createEntry()]);
+    seedEntry();
     vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
     await flushPendingVoiceAudio();
 
     expect(hubRequest).not.toHaveBeenCalled();
-    expect(deleteVoiceRecord).not.toHaveBeenCalled();
+    expect(store.records).toHaveLength(1);
   });
 
   it('auto-flushes when the connection (re)establishes', async () => {
     vi.useFakeTimers();
-    listVoiceRecords.mockResolvedValue([createEntry()]);
+    seedEntry();
     startVoiceAudioOutboxFlush();
     connectionState.value = 'connected';
     await vi.advanceTimersByTimeAsync(600);
 
     expect(hubRequest).toHaveBeenCalled();
-    expect(deleteVoiceRecord).toHaveBeenCalledWith('rec-1');
+    expect(store.records).toEqual([]);
   });
 });

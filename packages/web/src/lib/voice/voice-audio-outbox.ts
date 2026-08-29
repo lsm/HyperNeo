@@ -1,13 +1,14 @@
 import { effect, signal } from '@preact/signals';
 import { connectionManager } from '../connection-manager';
 import { connectionState } from '../state';
-import { deleteVoiceRecord, listVoiceRecords, type VoiceRecordEntry } from './voice-audio-store.ts';
-import type { VoiceRecording } from './voice-recorder-store.ts';
 import {
-  requestVoiceTranscription,
-  VOICE_SUBMIT_SILENCE_PEAK_LEVEL,
-} from './voice-submit-pipeline.ts';
-import { classifyVoiceSubmitError, routeVoiceOutcome } from './voice-submit-routing.ts';
+  deleteVoiceRecord,
+  getVoiceRecord,
+  listVoiceRecords,
+  type VoiceRecordEntry,
+} from './voice-audio-store.ts';
+import type { VoiceRecording } from './voice-recorder-store.ts';
+import { runVoiceSubmit } from './voice-submit-pipeline.ts';
 import { isPermanentAppendRefusal } from './voice-transcript-outbox.ts';
 
 export function recordingFromEntry(entry: VoiceRecordEntry): VoiceRecording {
@@ -64,52 +65,66 @@ function scheduleFollowUpFlush(): void {
   retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
 }
 
-function isFlushable(entry: VoiceRecordEntry): boolean {
-  return !isVoiceAudioBusy(entry.id) && entry.peakLevel >= VOICE_SUBMIT_SILENCE_PEAK_LEVEL;
-}
-
 export async function flushPendingVoiceAudio(): Promise<void> {
   if (flushInProgress) return;
   const hub = connectionManager.getHubIfConnected();
   if (!hub) return;
-  const flushable = (await listVoiceRecords()).filter(isFlushable);
-  if (flushable.length === 0) {
+  const pending = (await listVoiceRecords()).filter((entry) => !isVoiceAudioBusy(entry.id));
+  if (pending.length === 0) {
     await refreshPendingVoiceAudio();
     return;
   }
 
   flushInProgress = true;
+  const deferredSessions = new Set<string>();
   let delivered = 0;
+  let needsRetry = false;
+  const defer = (sessionId: string) => {
+    deferredSessions.add(sessionId);
+    needsRetry = true;
+  };
   try {
-    for (const entry of flushable) {
+    for (const entry of pending) {
       if (!connectionManager.getHubIfConnected()) break;
+      if (deferredSessions.has(entry.sessionId)) continue;
+      markVoiceAudioBusy(entry.id);
       try {
-        const result = await requestVoiceTranscription(recordingFromEntry(entry));
-        const outcome = routeVoiceOutcome({
-          transcript: result.text?.trim() ?? '',
-          mounted: false,
-          sessionChanged: false,
-          mode: 'stay',
-        });
-        if (outcome.kind === 'deliver-unmounted') {
-          await hub.request('session.appendVoiceDraft', {
-            sessionId: entry.sessionId,
-            text: outcome.transcript,
-            dedupId: entry.id,
-          });
-          await deleteVoiceRecord(entry.id);
-          delivered += 1;
-        } else if (outcome.kind === 'discard-with-reason') {
-          await deleteVoiceRecord(entry.id);
+        const result = await runVoiceSubmit(
+          { sessionId: entry.sessionId },
+          {
+            stopRecording: async () => recordingFromEntry(entry),
+            putRecord: async () => true,
+            deleteRecord: deleteVoiceRecord,
+            generateId: () => entry.id,
+            isMounted: () => false,
+            currentSessionId: () => entry.sessionId,
+          }
+        );
+        if (result.kind === 'routed') {
+          if (result.outcome.kind === 'deliver-unmounted') {
+            if (!(await getVoiceRecord(entry.id))) continue;
+            await hub.request('session.appendVoiceDraft', {
+              sessionId: entry.sessionId,
+              text: result.outcome.transcript,
+              dedupId: entry.id,
+            });
+            await deleteVoiceRecord(entry.id);
+            delivered += 1;
+          } else if (result.outcome.kind !== 'discard-with-reason') {
+            defer(entry.sessionId);
+          }
+        } else if (result.kind === 'transcribe-failed') {
+          if (!result.dequeued) defer(entry.sessionId);
         }
       } catch (error) {
         if (!connectionManager.getHubIfConnected()) break;
-        if (
-          isPermanentAppendRefusal(error) ||
-          classifyVoiceSubmitError(error, 'transcribe') === 'discard'
-        ) {
+        if (isPermanentAppendRefusal(error)) {
           await deleteVoiceRecord(entry.id);
+        } else {
+          defer(entry.sessionId);
         }
+      } finally {
+        unmarkVoiceAudioBusy(entry.id);
       }
     }
   } finally {
@@ -117,7 +132,7 @@ export async function flushPendingVoiceAudio(): Promise<void> {
     await refreshPendingVoiceAudio();
   }
   if (delivered > 0) retryDelayMs = RETRY_DELAY_MS;
-  if ((await listVoiceRecords()).some(isFlushable) && connectionManager.getHubIfConnected()) {
+  if (needsRetry && connectionManager.getHubIfConnected()) {
     scheduleFollowUpFlush();
   } else {
     clearRetryTimer();
