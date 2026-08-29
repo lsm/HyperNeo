@@ -111,9 +111,11 @@ vi.mock('../../lib/connection-manager', () => ({
 
 const enqueueTranscript = vi.hoisted(() => vi.fn());
 const isPermanentAppendRefusal = vi.hoisted(() => vi.fn(() => false));
+const removePendingTranscript = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/voice/voice-transcript-outbox.ts', () => ({
   enqueueTranscript,
   isPermanentAppendRefusal,
+  removePendingTranscript,
 }));
 
 const putVoiceRecord = vi.hoisted(() => vi.fn(async () => true));
@@ -143,6 +145,7 @@ describe('MessageInput — recording UI', () => {
       return {};
     });
     enqueueTranscript.mockReset().mockReturnValue(true);
+    removePendingTranscript.mockClear();
     putVoiceRecord.mockReset().mockImplementation(async () => true);
     deleteVoiceRecord.mockReset().mockImplementation(async () => true);
     listVoiceRecords.mockReset().mockImplementation(async () => []);
@@ -674,6 +677,7 @@ describe('MessageInput — recording UI', () => {
       expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', expect.any(String));
       expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeTruthy();
       expect(deleteVoiceRecord).not.toHaveBeenCalled();
+      expect(removePendingTranscript).toHaveBeenCalledWith(expect.any(String));
     });
 
     it('keeps the recording for manual resend when draft staging is permanently refused', async () => {

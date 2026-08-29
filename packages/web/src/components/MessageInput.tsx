@@ -49,6 +49,7 @@ import type { VoiceSubmitMode } from '../lib/voice/voice-submit-routing.ts';
 import {
   enqueueTranscript,
   isPermanentAppendRefusal,
+  removePendingTranscript,
 } from '../lib/voice/voice-transcript-outbox.ts';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
@@ -492,7 +493,7 @@ export default function MessageInput({
         images?: MessageImage[];
         send: MessageInputProps['onSend'];
       }
-    ): Promise<{ ok: boolean; message: string; durable?: boolean }> => {
+    ): Promise<{ ok: boolean; message: string; durable?: boolean; outboxId: string }> => {
       const outboxId = generateUUID();
       const stageToDraft = async () => {
         const hub = connectionManager.getHubIfConnected();
@@ -505,22 +506,23 @@ export default function MessageInput({
       };
       const stageFallback = async (
         message: string
-      ): Promise<{ ok: boolean; message: string; durable?: boolean }> => {
+      ): Promise<{ ok: boolean; message: string; durable?: boolean; outboxId: string }> => {
         try {
           await stageToDraft();
-          return { ok: true, message, durable: true };
+          return { ok: true, message, durable: true, outboxId };
         } catch (error) {
           if (!isPermanentAppendRefusal(error)) {
             const durable = enqueueTranscript(targetSessionId, transcript, outboxId);
             return {
               ok: true,
               durable,
+              outboxId,
               message: durable
                 ? 'Voice transcript saved — will be delivered when reconnected'
                 : 'Voice transcript kept in this tab — reconnect before closing it',
             };
           }
-          return { ok: false, message: '' };
+          return { ok: false, message: '', outboxId };
         }
       };
       if (mode === 'stay') {
@@ -560,6 +562,7 @@ export default function MessageInput({
       return {
         ok: true,
         durable: true,
+        outboxId,
         message:
           mode === 'queue' ? 'Voice transcript queued for the next turn' : 'Voice transcript sent',
       };
@@ -627,7 +630,11 @@ export default function MessageInput({
         );
         if (delivered.ok) {
           toast.info(delivered.message);
-          if (delivered.durable !== false) await deleteVoiceRecord(result.recordId);
+          if (delivered.durable !== false) {
+            await deleteVoiceRecord(result.recordId);
+          } else if (result.persisted || followUp.resendOf !== undefined) {
+            removePendingTranscript(delivered.outboxId);
+          }
         } else if (result.persisted || followUp.resendOf !== undefined) {
           toast.error('Voice transcript could not be delivered — recording saved for resend');
         } else {
