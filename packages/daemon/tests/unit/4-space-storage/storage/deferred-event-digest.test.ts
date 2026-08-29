@@ -1,19 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import {
-  buildDeferredEventDigestEnvelopeText,
   buildExternalEventDigestMessage,
-  DEFERRED_EXTERNAL_EVENT_ROW_CAP,
-  type DeferredDeliveryRow,
-  type DeferredEventDigestRowOps,
-  deferredExternalEventEntryEvents,
-  foldDeferredExternalEventOverflow,
-  foldDeferredExternalEventsAtFlush,
-  parseDeferredDeliveryRow,
-  parseDeferredExternalEventText,
-  partitionDeferredExternalEventRows,
-  planDeferredExternalEventOverflow,
+  type ExternalEventEssenceEntry,
 } from '../../../../src/lib/external-events/deferred-event-digest';
-import { formatExternalEventEssence } from '../../../../src/lib/external-events/event-essence';
+import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry';
 import {
   classifyExternalEventTier,
   EXTERNAL_EVENT_TOPIC_TIERS,
@@ -39,18 +29,17 @@ interface EssenceArgs {
   extra?: Record<string, unknown>;
 }
 
-function essenceText(args: EssenceArgs): string {
-  const event: ExternalEventPublishedPayload = {
-    namespaceId: 'ns',
+function essence(args: EssenceArgs): ExternalEventEssenceEntry {
+  return essenceEntryFromExternalEvent({
+    id: args.eventId,
     spaceId: 'space-1',
-    eventId: args.eventId,
-    source: 'github',
     topic: args.topic,
-    dedupeKey: args.eventId,
-    summary: 'summary',
-    externalUrl: `${PR_URL}#${args.eventId}`,
     occurredAt: args.occurredAt,
     ingestedAt: args.occurredAt,
+    source: 'github',
+    summary: 'summary',
+    dedupeKey: args.eventId,
+    externalUrl: `${PR_URL}#${args.eventId}`,
     payload: {
       eventType: args.eventType,
       action: args.action ?? 'polled',
@@ -62,26 +51,11 @@ function essenceText(args: EssenceArgs): string {
       body: args.body ?? '',
       ...args.extra,
     },
-  };
-  return formatExternalEventEssence(event);
+  })!;
 }
 
-function row(dbId: string, uuid: string, text: string): DeferredDeliveryRow {
-  return {
-    type: 'user',
-    uuid,
-    session_id: 'session-1',
-    parent_tool_use_id: null,
-    isSynthetic: true,
-    inputKind: 'system',
-    dbId,
-    timestamp: 0,
-    message: { role: 'user', content: [{ type: 'text', text }] },
-  } as unknown as DeferredDeliveryRow;
-}
-
-function checkText(eventId: string, occurredAt: number, conclusion: string): string {
-  return essenceText({
+function check(eventId: string, occurredAt: number, conclusion: string): ExternalEventEssenceEntry {
+  return essence({
     eventId,
     topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
     eventType: 'check_run',
@@ -114,151 +88,19 @@ describe('external event tier registry', () => {
   });
 });
 
-describe('parseDeferredExternalEventText', () => {
-  it('parses a formatted external event essence payload', () => {
-    const text = essenceText({
-      eventId: 'evt-1',
-      topic: 'github/lsm/hyperneo/pull_request/2828.reaction_added',
-      eventType: 'reaction',
-      occurredAt: at(15, 10),
-      action: 'added',
-      actor: 'marcliu',
-      body: '👍',
-    });
-    const entry = parseDeferredExternalEventText(text);
-    expect(entry?.kind).toBe('event');
-    if (entry?.kind !== 'event') return;
-    expect(entry.essence.eventId).toBe('evt-1');
-    expect(entry.essence.topic).toBe('github/lsm/hyperneo/pull_request/2828.reaction_added');
-    expect(entry.essence.actor).toBe('marcliu');
-    expect(entry.essence.prNumber).toBe(2828);
-    expect(entry.essence.occurredAt).toBe(at(15, 10));
-  });
-
-  it('parses an early-fold digest envelope back into its events', () => {
-    const events = deferredExternalEventEntryEvents({
-      kind: 'event',
-      essence: {
-        eventId: 'evt-1',
-        topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
-      },
-    });
-    const envelope = buildDeferredEventDigestEnvelopeText(events);
-    const parsed = parseDeferredExternalEventText(envelope);
-    expect(parsed?.kind).toBe('fold');
-    if (parsed?.kind !== 'fold') return;
-    expect(parsed.events).toHaveLength(1);
-    expect(parsed.events[0]?.eventId).toBe('evt-1');
-  });
-
-  it('parses the space-runtime rate-limit digest text as foldable events', () => {
-    const annotated =
-      '2 events received for topics: github/o/r/pull_request/7.check_failed ' +
-      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
-      'Event IDs: rl-1 (github/o/r/pull_request/7.check_failed), ' +
-      'rl-2 (github/o/r/pull_request/7.check_failed). ' +
-      'Use get_external_event(eventId) for full details.';
-    const entry = parseDeferredExternalEventText(annotated);
-    expect(entry?.kind).toBe('fold');
-    if (entry?.kind !== 'fold') return;
-    expect(entry.events).toHaveLength(2);
-    expect(entry.events[0]).toMatchObject({
-      eventId: 'rl-1',
-      topic: 'github/o/r/pull_request/7.check_failed',
-    });
-    expect(entry.events[1]).toMatchObject({ eventId: 'rl-2' });
-
-    const legacy =
-      '1 events received for topics: github/o/r/pull_request/7.check_failed ' +
-      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
-      'Event IDs: rl-legacy. Use get_external_event(eventId) for full details.';
-    const legacyEntry = parseDeferredExternalEventText(legacy);
-    expect(legacyEntry?.kind).toBe('fold');
-    if (legacyEntry?.kind !== 'fold') return;
-    expect(legacyEntry.events[0]).toMatchObject({
-      eventId: 'rl-legacy',
-      topic: 'github/o/r/pull_request/7.check_failed',
-    });
-  });
-
-  it('parses the JSON-structural rate-limit format and round-trips arbitrary IDs', () => {
-    const ids = [
-      { id: 'plain-id', topic: 'github/o/r/pull_request/7.check_failed' },
-      { id: 'deploy event, 1', topic: 'github/o/r/pull_request/7.check_failed' },
-    ];
-    const structured =
-      '2 events received for topics: github/o/r/pull_request/7.check_failed ' +
-      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
-      `Event IDs: ${JSON.stringify(ids)}. ` +
-      'Use get_external_event(eventId) for full details.';
-    const entry = parseDeferredExternalEventText(structured);
-    expect(entry?.kind).toBe('fold');
-    if (entry?.kind !== 'fold') return;
-    expect(entry.events.map((event) => event.eventId)).toEqual(['plain-id', 'deploy event, 1']);
-    expect(entry.events[1]).toMatchObject({
-      topic: 'github/o/r/pull_request/7.check_failed',
-      prNumber: 7,
-    });
-  });
-
-  it('matches rate-limit JSON containing Unicode line separators', () => {
-    const id = `bad${'\u2028'}id${'\u2029'}end`;
-    const ids = [{ id, topic: 'github/o/r/pull_request/7.check_failed' }];
-    const structured =
-      '1 events received for topics: github/o/r/pull_request/7.check_failed ' +
-      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
-      `Event IDs: ${JSON.stringify(ids)}. ` +
-      'Use get_external_event(eventId) for full details.';
-    const entry = parseDeferredExternalEventText(structured);
-    expect(entry?.kind).toBe('fold');
-    if (entry?.kind !== 'fold') return;
-    expect(entry.events[0]?.eventId).toBe(id);
-  });
-
-  it('returns null for non-external-event text', () => {
-    expect(parseDeferredExternalEventText('a human follow-up')).toBeNull();
-    expect(parseDeferredExternalEventText('{"type":"chat","topic":"x"}')).toBeNull();
-    expect(parseDeferredExternalEventText('not json')).toBeNull();
-    expect(parseDeferredExternalEventText('{"type":"external_event","topic":"t"}')).toBeNull();
-  });
-});
-
-describe('parseDeferredDeliveryRow', () => {
-  it('reads the essence from a deferred delivery row', () => {
-    const text = checkText('chk-1', at(16, 34), 'failure');
-    const entry = parseDeferredDeliveryRow(row('db-1', 'u-1', text));
-    expect(entry?.kind).toBe('event');
-    if (entry?.kind !== 'event') return;
-    expect(entry.essence.checkName).toBe('Build Binary (linux-x64)');
-  });
-
-  it('ignores pasted external-event JSON that did not come from the inject path', () => {
-    const text = checkText('chk-1', at(16), 'failure');
-    const human = {
-      ...row('db-1', 'u-1', text),
-      isSynthetic: false,
-      inputKind: 'human',
-    };
-    expect(parseDeferredDeliveryRow(human)).toBeNull();
-    const partition = partitionDeferredExternalEventRows([human]);
-    expect(partition.digestRows).toHaveLength(0);
-    expect(partition.remainder.map((r) => r.dbId)).toEqual(['db-1']);
-  });
-});
-
 describe('buildExternalEventDigestMessage', () => {
   it('collapses a mixed incident-shaped backlog into one grouped summary', () => {
     const events: string[] = [];
     for (let i = 0; i < 6; i++) {
-      events.push(checkText(`chk-c-${i}`, at(15, 5 + i), 'canceled'));
+      events.push(check(`chk-c-${i}`, at(15, 5 + i), 'canceled'));
     }
     for (let i = 0; i < 4; i++) {
-      events.push(checkText(`chk-f-${i}`, at(15, 40 + i), 'failure'));
+      events.push(check(`chk-f-${i}`, at(15, 40 + i), 'failure'));
     }
-    events.push(checkText('check-11', at(16, 34), 'failure'));
+    events.push(check('check-11', at(16, 34), 'failure'));
     for (let i = 0; i < 3; i++) {
       events.push(
-        essenceText({
+        essence({
           eventId: `rc-${i + 1}`,
           topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
           eventType: 'pull_request_review_comment',
@@ -274,7 +116,7 @@ describe('buildExternalEventDigestMessage', () => {
       );
     }
     events.push(
-      essenceText({
+      essence({
         eventId: 'rc-4',
         topic: 'github/lsm/hyperneo/pull_request/2828.review_comment_polled',
         eventType: 'pull_request_review_comment',
@@ -289,7 +131,7 @@ describe('buildExternalEventDigestMessage', () => {
     );
     for (let i = 0; i < 5; i++) {
       events.push(
-        essenceText({
+        essence({
           eventId: `pc-${i + 1}`,
           topic: 'github/lsm/hyperneo/pull_request/2828.comment_polled',
           eventType: 'issue_comment',
@@ -302,7 +144,7 @@ describe('buildExternalEventDigestMessage', () => {
     }
     for (let i = 0; i < 8; i++) {
       events.push(
-        essenceText({
+        essence({
           eventId: `st-${i + 1}`,
           topic: 'github/lsm/hyperneo/pull_request/2828.polled',
           eventType: 'pull_request',
@@ -312,7 +154,7 @@ describe('buildExternalEventDigestMessage', () => {
       );
     }
     events.push(
-      essenceText({
+      essence({
         eventId: 're-1',
         topic: 'github/lsm/hyperneo/pull_request/2828.reaction_added',
         eventType: 'reaction',
@@ -323,7 +165,7 @@ describe('buildExternalEventDigestMessage', () => {
       })
     );
     events.push(
-      essenceText({
+      essence({
         eventId: 're-2',
         topic: 'github/lsm/hyperneo/pull_request/2828.reaction_added',
         eventType: 'reaction',
@@ -334,9 +176,7 @@ describe('buildExternalEventDigestMessage', () => {
       })
     );
 
-    const essences = events
-      .map((text) => parseDeferredExternalEventText(text))
-      .flatMap((entry) => (entry ? deferredExternalEventEntryEvents(entry) : []));
+    const essences = events;
 
     const digest = buildExternalEventDigestMessage(essences);
     const lines = digest.split('\n');
@@ -527,28 +367,16 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).toContain('latest 08-23 16:34 UTC');
   });
 
-  it('bounds envelope size and carries dropped events through to the digest totals', () => {
-    const events = Array.from({ length: 205 }, (_, i) => ({
-      eventId: `env-${i}`,
+  it('carries dropped events through to the digest totals', () => {
+    const events = Array.from({ length: 200 }, (_, i) => ({
+      eventId: `env-${i + 5}`,
       topic: 'github/o/r/pull_request/7.check_failed',
+      prNumber: 7,
       checkName: 'lint',
       conclusion: 'failure',
       occurredAt: at(15) + i * 1000,
     }));
-    const envelope = buildDeferredEventDigestEnvelopeText(events);
-    const parsed = parseDeferredExternalEventText(envelope);
-    expect(parsed?.kind).toBe('fold');
-    if (parsed?.kind !== 'fold') return;
-    expect(parsed.events).toHaveLength(200);
-    expect(parsed.events[0]).toMatchObject({ eventId: 'env-5' });
-    expect(parsed.droppedCount).toBe(5);
-
-    const partition = partitionDeferredExternalEventRows([row('db-env', 'u-env', envelope)]);
-    expect(partition.digestEvents).toHaveLength(200);
-    expect(partition.droppedCount).toBe(5);
-    const digest = buildExternalEventDigestMessage(partition.digestEvents, {
-      droppedEventCount: partition.droppedCount,
-    });
+    const digest = buildExternalEventDigestMessage(events, { droppedEventCount: 5 });
     expect(digest.split('\n')[0]).toBe(
       'External events while you were working (205 events, PR #7):'
     );
@@ -559,24 +387,18 @@ describe('buildExternalEventDigestMessage', () => {
 
   it('keeps only the newest state across superseded polls', () => {
     const essences = [
-      ...deferredExternalEventEntryEvents({
-        kind: 'event',
-        essence: {
-          eventId: 's1',
-          topic: 'github/o/r/pull_request/7.polled',
-          prNumber: 7,
-          state: 'open',
-        },
-      }),
-      ...deferredExternalEventEntryEvents({
-        kind: 'event',
-        essence: {
-          eventId: 's2',
-          topic: 'github/o/r/pull_request/7.polled',
-          prNumber: 7,
-          state: 'closed',
-        },
-      }),
+      {
+        eventId: 's1',
+        topic: 'github/o/r/pull_request/7.polled',
+        prNumber: 7,
+        state: 'open',
+      },
+      {
+        eventId: 's2',
+        topic: 'github/o/r/pull_request/7.polled',
+        prNumber: 7,
+        state: 'closed',
+      },
     ];
     const digest = buildExternalEventDigestMessage(essences);
     expect(digest).toContain('PR #7 state: closed');
@@ -726,16 +548,24 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).toContain('latest eventId: bad-2');
   });
 
-  it('derives per-PR scope for rate-limited events from their annotated topics', () => {
-    const annotated =
-      '2 events received for topics: github/o/r/pull_request/7.polled, github/o/r/pull_request/8.polled ' +
-      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
-      'Event IDs: rl-7 (github/o/r/pull_request/7.polled), rl-8 (github/o/r/pull_request/8.polled). ' +
-      'Use get_external_event(eventId) for full details.';
-    const entry = parseDeferredExternalEventText(annotated);
-    expect(entry?.kind).toBe('fold');
-    if (entry?.kind !== 'fold') return;
-    const digest = buildExternalEventDigestMessage(entry.events);
+  it('derives per-PR scope from topic-segmented events', () => {
+    const topicScopedEssence = (eventId: string, topic: string): ExternalEventEssenceEntry =>
+      essenceEntryFromExternalEvent({
+        id: eventId,
+        spaceId: 'space-1',
+        topic,
+        occurredAt: at(15),
+        ingestedAt: at(15),
+        source: 'github',
+        summary: 'summary',
+        dedupeKey: eventId,
+        payload: { eventType: 'pull_request', action: 'polled' },
+      })!;
+    const essences = [
+      topicScopedEssence('rl-7', 'github/o/r/pull_request/7.polled'),
+      topicScopedEssence('rl-8', 'github/o/r/pull_request/8.polled'),
+    ];
+    const digest = buildExternalEventDigestMessage(essences);
     expect(digest).toContain('PR #7 state: updated');
     expect(digest).toContain('PR #8 state: updated');
     expect(digest).toContain('latest eventId: rl-7');
@@ -855,426 +685,5 @@ describe('buildExternalEventDigestMessage', () => {
     expect(buildExternalEventDigestMessage(essences)).toBe(
       buildExternalEventDigestMessage([...essences].reverse())
     );
-  });
-});
-
-describe('partitionDeferredExternalEventRows', () => {
-  it('bounds events flattened from a single rate-limit burst row', () => {
-    const ids = Array.from({ length: 250 }, (_, i) => ({
-      id: `burst-${i}`,
-      topic: 'github/o/r/pull_request/7.check_failed',
-    }));
-    const burst =
-      '250 events received for topics: github/o/r/pull_request/7.check_failed ' +
-      '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
-      `Event IDs: ${JSON.stringify(ids)}. ` +
-      'Use get_external_event(eventId) for full details.';
-    const partition = partitionDeferredExternalEventRows([row('db-burst', 'u-burst', burst)]);
-    expect(partition.digestEvents).toHaveLength(200);
-    expect(partition.droppedCount).toBe(50);
-    expect(partition.digestEvents[0]).toMatchObject({ eventId: 'burst-50' });
-    const digest = buildExternalEventDigestMessage(partition.digestEvents, {
-      droppedEventCount: partition.droppedCount,
-    });
-    expect(digest.split('\n')[0]).toBe(
-      'External events while you were working (250 events, PR #7):'
-    );
-    expect(digest).toContain(
-      '50 older events were omitted from this summary (over the event bound) and may still need attention.'
-    );
-  });
-
-  it('caps flattened events across the whole partition, not per row', () => {
-    const burstRows = [0, 1].map((n) => {
-      const ids = Array.from({ length: 150 }, (_, i) => ({
-        id: `r${n}-${i}`,
-        topic: 'github/o/r/pull_request/7.check_failed',
-      }));
-      return row(
-        `db-burst-${n}`,
-        `u-burst-${n}`,
-        '150 events received for topics: github/o/r/pull_request/7.check_failed ' +
-          '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
-          `Event IDs: ${JSON.stringify(ids)}. ` +
-          'Use get_external_event(eventId) for full details.'
-      );
-    });
-    const partition = partitionDeferredExternalEventRows(burstRows);
-    expect(partition.digestEvents).toHaveLength(200);
-    expect(partition.droppedCount).toBe(100);
-    expect(partition.digestEvents[0]).toMatchObject({ eventId: 'r0-100' });
-  });
-
-  it('splits digest-tier external rows from everything else', () => {
-    const external = row('db-1', 'u-1', checkText('chk-1', at(16), 'failure'));
-    const plain = row('db-2', 'u-2', '─── Message from coder ───');
-    const partition = partitionDeferredExternalEventRows([external, plain]);
-    expect(partition.digestRows.map((r) => r.dbId)).toEqual(['db-1']);
-    expect(partition.digestEvents).toHaveLength(1);
-    expect(partition.remainder.map((r) => r.dbId)).toEqual(['db-2']);
-  });
-
-  it('keeps rows of a future direct tier in the remainder', () => {
-    const tiers = EXTERNAL_EVENT_TOPIC_TIERS as Record<string, 'digest' | 'direct'>;
-    const previous = tiers.review_requested;
-    tiers.review_requested = 'direct';
-    try {
-      const direct = row(
-        'db-1',
-        'u-1',
-        essenceText({
-          eventId: 'evt-direct',
-          topic: 'github/lsm/hyperneo/pull_request/2828.review_requested',
-          eventType: 'pull_request',
-          occurredAt: at(16),
-        })
-      );
-      const partition = partitionDeferredExternalEventRows([direct]);
-      expect(partition.digestRows).toHaveLength(0);
-      expect(partition.remainder.map((r) => r.dbId)).toEqual(['db-1']);
-    } finally {
-      if (previous === undefined) delete tiers.review_requested;
-      else tiers.review_requested = previous;
-    }
-  });
-
-  it('flattens early-fold envelope rows into the digest events', () => {
-    const envelopeText = buildDeferredEventDigestEnvelopeText([
-      { eventId: 'e-1', topic: 'github/o/r/pull_request/1.check_failed' },
-      { eventId: 'e-2', topic: 'github/o/r/pull_request/1.check_failed' },
-    ]);
-    const folded = row('db-fold', 'u-fold', envelopeText);
-    const partition = partitionDeferredExternalEventRows([folded]);
-    expect(partition.digestRows.map((r) => r.dbId)).toEqual(['db-fold']);
-    expect(partition.digestEvents).toHaveLength(2);
-  });
-
-  it('backfills each missing scope component from the topic', () => {
-    const envelope = row(
-      'db-scope',
-      'u-scope',
-      buildDeferredEventDigestEnvelopeText([
-        {
-          eventId: 'sc-1',
-          topic: 'github/one/r/pull_request/7.polled',
-          prNumber: 7,
-          state: 'open',
-          occurredAt: at(15),
-        },
-        {
-          eventId: 'sc-2',
-          topic: 'github/two/r/pull_request/7.polled',
-          prNumber: 7,
-          state: 'closed',
-          occurredAt: at(16),
-        },
-      ])
-    );
-    const partition = partitionDeferredExternalEventRows([envelope]);
-    expect(partition.digestEvents[0]).toMatchObject({ repo: 'one/r' });
-    expect(partition.digestEvents[1]).toMatchObject({ repo: 'two/r' });
-    const digest = buildExternalEventDigestMessage(partition.digestEvents);
-    expect(digest).toContain('latest eventId: sc-1');
-    expect(digest).toContain('latest eventId: sc-2');
-  });
-
-  it('keeps a carried receipt time when flattening an envelope row', () => {
-    const envelope = row(
-      'db-envelope',
-      'u-envelope',
-      buildDeferredEventDigestEnvelopeText([
-        {
-          eventId: 'carried-1',
-          topic: 'github/o/r/pull_request/7.polled',
-          receivedAt: 1000,
-        },
-      ])
-    );
-    envelope.timestamp = 9000;
-    const partition = partitionDeferredExternalEventRows([envelope]);
-    expect(partition.digestEvents[0]?.receivedAt).toBe(1000);
-  });
-
-  it('stamps receipt time so later unknown-time events outrank older known-time events', () => {
-    const older = row(
-      'db-old',
-      'u-old',
-      essenceText({
-        eventId: 'st-old',
-        topic: 'github/lsm/hyperneo/pull_request/2828.polled',
-        eventType: 'pull_request',
-        occurredAt: at(15),
-        extra: { state: 'open' },
-      })
-    );
-    const ids = [{ id: 'st-new', topic: 'github/lsm/hyperneo/pull_request/2828.polled' }];
-    const later = row(
-      'db-new',
-      'u-new',
-      '1 events received for topics: github/lsm/hyperneo/pull_request/2828.polled ' +
-        '(oldest: 2026-08-23T15:00:00.000Z, newest: 2026-08-23T16:00:00.000Z). ' +
-        `Event IDs: ${JSON.stringify(ids)}. ` +
-        'Use get_external_event(eventId) for full details.'
-    );
-    const partition = partitionDeferredExternalEventRows([older, later]);
-    const digest = buildExternalEventDigestMessage(partition.digestEvents);
-    expect(digest).toContain('state: updated');
-    expect(digest).toContain('latest eventId: st-new');
-  });
-});
-
-describe('deferred external event overflow cap', () => {
-  function externalRows(count: number): DeferredDeliveryRow[] {
-    return Array.from({ length: count }, (_, i) =>
-      row(`db-${i}`, `u-${i}`, checkText(`chk-${i}`, at(15) + i * 1000, 'failure'))
-    );
-  }
-
-  it('plans no overflow at or below the cap', () => {
-    expect(
-      planDeferredExternalEventOverflow(externalRows(DEFERRED_EXTERNAL_EVENT_ROW_CAP), 100)
-    ).toBeNull();
-    expect(planDeferredExternalEventOverflow(externalRows(3), 100)).toBeNull();
-  });
-
-  it('plans the oldest rows as overflow above the cap', () => {
-    const rows = [...externalRows(102), row('db-plain', 'u-plain', 'human chat stays')];
-    const plan = planDeferredExternalEventOverflow(rows, 100);
-    expect(plan).not.toBeNull();
-    expect(plan?.overflowRows).toHaveLength(3);
-    expect(plan?.overflowRows.map((r) => r.dbId)).toEqual(['db-0', 'db-1', 'db-2']);
-    expect(plan?.events).toHaveLength(3);
-  });
-
-  it('folds the oldest rows into a deferred envelope and marks them superseded', async () => {
-    const opsCalls: string[] = [];
-    const saved: Array<{ status: 'enqueued' | 'deferred'; text: string }> = [];
-    const superseded: string[][] = [];
-    const ops: DeferredEventDigestRowOps = {
-      findByUuid: async () => null,
-      saveRow: async (message, sendStatus) => {
-        opsCalls.push('save');
-        const text = (message.message?.content as Array<{ type: string; text?: string }>)[0]?.text;
-        saved.push({ status: sendStatus, text: text ?? '' });
-        return `db-saved-${saved.length}`;
-      },
-      markSuperseded: async (dbIds) => {
-        opsCalls.push('supersede');
-        superseded.push(dbIds);
-      },
-    };
-    const folded = await foldDeferredExternalEventOverflow({
-      sessionId: 'session-1',
-      rows: externalRows(101),
-      cap: 100,
-      ops,
-    });
-    expect(folded?.foldedRows).toBe(2);
-    expect(folded?.supersededUuids).toEqual(['u-0', 'u-1']);
-    expect(folded?.envelopeDbId).toBe('db-saved-1');
-    expect(opsCalls).toEqual(['save', 'supersede']);
-    expect(saved).toHaveLength(1);
-    expect(saved[0]?.status).toBe('deferred');
-    const envelope = parseDeferredExternalEventText(saved[0]?.text ?? '');
-    expect(envelope?.kind).toBe('fold');
-    if (envelope?.kind === 'fold') {
-      expect(envelope.events.map((entry) => entry.eventId)).toEqual(['chk-0', 'chk-1']);
-    }
-    expect(superseded).toEqual([['db-0', 'db-1']]);
-  });
-
-  it('does not save a duplicate envelope when a prior overflow fold crashed', async () => {
-    let savedCount = 0;
-    let savedUuid = '';
-    const superseded: string[][] = [];
-    const ops: DeferredEventDigestRowOps = {
-      findByUuid: async (uuid) => (uuid === savedUuid ? { dbId: 'db-envelope-1' } : null),
-      saveRow: async (message) => {
-        savedCount += 1;
-        savedUuid = message.uuid ?? '';
-        return `db-envelope-${savedCount}`;
-      },
-      markSuperseded: async (dbIds) => {
-        superseded.push(dbIds);
-      },
-    };
-    const args = {
-      sessionId: 'session-1',
-      rows: externalRows(101),
-      cap: 100,
-      ops,
-    };
-
-    await foldDeferredExternalEventOverflow(args);
-    expect(savedCount).toBe(1);
-
-    await foldDeferredExternalEventOverflow(args);
-    expect(savedCount).toBe(1);
-    expect(superseded).toEqual([
-      ['db-0', 'db-1'],
-      ['db-0', 'db-1'],
-    ]);
-  });
-
-  it('leaves a backlog under the cap untouched', async () => {
-    let saveCalls = 0;
-    let supersedeCalls = 0;
-    const ops: DeferredEventDigestRowOps = {
-      findByUuid: async () => null,
-      saveRow: async () => {
-        saveCalls += 1;
-        return 'db';
-      },
-      markSuperseded: async () => {
-        supersedeCalls += 1;
-      },
-    };
-    const folded = await foldDeferredExternalEventOverflow({
-      sessionId: 'session-1',
-      rows: externalRows(50),
-      cap: 100,
-      ops,
-    });
-    expect(folded).toBeNull();
-    expect(saveCalls).toBe(0);
-    expect(supersedeCalls).toBe(0);
-  });
-});
-
-describe('foldDeferredExternalEventsAtFlush', () => {
-  function recordingOps(
-    calls: string[],
-    superseded: string[][]
-  ): DeferredEventDigestRowOps & { savedTexts: string[] } {
-    const savedTexts: string[] = [];
-    return {
-      savedTexts,
-      findByUuid: async () => null,
-      saveRow: async (message, sendStatus) => {
-        calls.push(`save:${sendStatus}`);
-        const text = (message.message?.content as Array<{ type: string; text?: string }>)[0]?.text;
-        savedTexts.push(text ?? '');
-        return 'db-digest';
-      },
-      markSuperseded: async (dbIds) => {
-        calls.push('supersede');
-        superseded.push(dbIds);
-      },
-    };
-  }
-
-  it('creates one digest row, supersedes the sources, and keeps the remainder', async () => {
-    const calls: string[] = [];
-    const superseded: string[][] = [];
-    const ops = recordingOps(calls, superseded);
-    const externalA = row('db-a', 'u-a', checkText('chk-a', at(16), 'failure'));
-    const externalB = row(
-      'db-b',
-      'u-b',
-      essenceText({
-        eventId: 're-b',
-        topic: 'github/lsm/hyperneo/pull_request/2828.reaction_added',
-        eventType: 'reaction',
-        occurredAt: at(15, 10),
-        action: 'added',
-        actor: 'marcliu',
-        body: '👍',
-      })
-    );
-    const plain = row('db-plain', 'u-plain', '─── Message from coder ───');
-
-    const result = await foldDeferredExternalEventsAtFlush({
-      sessionId: 'session-1',
-      rows: [externalA, externalB, plain],
-      ops,
-    });
-
-    expect(calls).toEqual(['save:enqueued', 'supersede']);
-    expect(superseded).toEqual([['db-a', 'db-b']]);
-    expect(result.foldedCount).toBe(2);
-    expect(result.digestRow?.dbId).toBe('db-digest');
-    expect(result.digestRow?.uuid).toBeTruthy();
-    expect(ops.savedTexts[0]).toContain('External events while you were working (2 events');
-    expect(result.remainder.map((r) => r.dbId)).toEqual(['db-plain']);
-  });
-
-  it('supersedes a stale undelivered digest when a later fold covers more events', async () => {
-    const calls: string[] = [];
-    const superseded: string[][] = [];
-    const staleSweeps: string[] = [];
-    const ops = recordingOps(calls, superseded);
-    ops.supersedeStaleFolds = async (keepUuid) => {
-      staleSweeps.push(keepUuid);
-      if (staleSweeps.length === 1) return;
-      superseded.push(['db-digest-1']);
-    };
-    const externalA = row('db-a', 'u-a', checkText('chk-a', at(16), 'failure'));
-
-    await foldDeferredExternalEventsAtFlush({
-      sessionId: 'session-1',
-      rows: [externalA],
-      ops,
-    });
-    expect(staleSweeps).toHaveLength(1);
-
-    const externalB = row('db-b', 'u-b', checkText('chk-b', at(17), 'failure'));
-    const second = await foldDeferredExternalEventsAtFlush({
-      sessionId: 'session-1',
-      rows: [externalA, externalB],
-      ops,
-    });
-
-    expect(staleSweeps).toHaveLength(2);
-    expect(second.digestRow?.dbId).toBe('db-digest');
-    expect(superseded).toContainEqual(['db-digest-1']);
-    expect(superseded).toContainEqual(['db-a', 'db-b']);
-  });
-
-  it('reuses the existing digest row when a prior fold crashed before superseding', async () => {
-    const calls: string[] = [];
-    const superseded: string[][] = [];
-    const ops = recordingOps(calls, superseded);
-    const externalA = row('db-a', 'u-a', checkText('chk-a', at(16), 'failure'));
-    const externalB = row('db-b', 'u-b', checkText('chk-b', at(17), 'failure'));
-
-    const first = await foldDeferredExternalEventsAtFlush({
-      sessionId: 'session-1',
-      rows: [externalA, externalB],
-      ops,
-    });
-    expect(calls).toEqual(['save:enqueued', 'supersede']);
-
-    const crashUuid = first.digestRow?.uuid ?? '';
-    ops.findByUuid = async (uuid) => (uuid === crashUuid ? { dbId: first.digestRow!.dbId } : null);
-
-    const second = await foldDeferredExternalEventsAtFlush({
-      sessionId: 'session-1',
-      rows: [externalA, externalB],
-      ops,
-    });
-
-    expect(calls).toEqual(['save:enqueued', 'supersede', 'supersede']);
-    expect(second.digestRow?.dbId).toBe(first.digestRow?.dbId);
-    expect(second.digestRow?.uuid).toBe(crashUuid);
-    expect(superseded).toEqual([
-      ['db-a', 'db-b'],
-      ['db-a', 'db-b'],
-    ]);
-  });
-
-  it('returns rows untouched when no external events are deferred', async () => {
-    const calls: string[] = [];
-    const superseded: string[][] = [];
-    const ops = recordingOps(calls, superseded);
-    const plain = row('db-plain', 'u-plain', 'a human follow-up');
-    const result = await foldDeferredExternalEventsAtFlush({
-      sessionId: 'session-1',
-      rows: [plain],
-      ops,
-    });
-    expect(result.digestRow).toBeNull();
-    expect(result.foldedCount).toBe(0);
-    expect(result.remainder).toEqual([plain]);
-    expect(calls).toEqual([]);
   });
 });

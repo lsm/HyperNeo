@@ -26,12 +26,6 @@ import {
   withSessionResetCoordination,
 } from '../../../lib/agent/message-delivery.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
-import {
-  type DeferredEventOverflowFoldResult,
-  DEFERRED_EXTERNAL_EVENT_ROW_CAP,
-  foldDeferredExternalEventOverflow,
-  parseDeferredExternalEventText,
-} from '../../../lib/external-events/deferred-event-digest.ts';
 
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import type { Database } from '../../../storage/database.ts';
@@ -3937,7 +3931,6 @@ export class TaskAgentManager {
         status: 'deferred',
         origin,
       });
-      await this.enforceDeferredExternalEventCap(sessionId, message);
       return deferredDbId;
     }
     if (
@@ -4029,51 +4022,6 @@ export class TaskAgentManager {
         origin,
       }
     );
-  }
-
-  private async enforceDeferredExternalEventCap(
-    sessionId: string,
-    deferredMessageText: string
-  ): Promise<DeferredEventOverflowFoldResult | null> {
-    if (!parseDeferredExternalEventText(deferredMessageText)) return null;
-    const { messages } = this.config.db.getUserMessagesByStatus(sessionId, 'deferred');
-    const capFold = await foldDeferredExternalEventOverflow({
-      sessionId,
-      rows: messages,
-      cap: DEFERRED_EXTERNAL_EVENT_ROW_CAP,
-      ops: {
-        findByUuid: async (uuid) => {
-          const repo = this.config.db.getSDKMessageRepo();
-          return (
-            repo.getMessageByStatusAndUuid(sessionId, 'deferred', uuid) ??
-            repo.getMessageByStatusAndUuid(sessionId, 'enqueued', uuid)
-          );
-        },
-        saveRow: async (message, sendStatus) => {
-          const dbId = this.config.db.saveUserMessage(sessionId, message, sendStatus);
-          await this.publishMessageStatusChanged(sessionId, dbId, sendStatus);
-          return dbId;
-        },
-        markSuperseded: async (dbIds) => {
-          this.config.db.updateMessageStatus(dbIds, 'consumed');
-          await this.config.internalEventBus
-            .publish('messages.statusChanged', {
-              sessionId,
-              messageIds: dbIds,
-              status: 'consumed',
-            })
-            .catch(() => {});
-        },
-      },
-    });
-    if (capFold) {
-      log.warn(
-        `TaskAgentManager: deferred external-event backlog exceeded ` +
-          `${DEFERRED_EXTERNAL_EVENT_ROW_CAP} for session ${sessionId}; folded ` +
-          `${capFold.foldedRows} oldest rows into an early digest`
-      );
-    }
-    return capFold;
   }
 
   private injectDeliveryRowDeps(): InjectionDeliveryRowDeps {

@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import { formatExternalEventEssence } from '../../../../src/lib/external-events/event-essence.ts';
-import {
-  parseDeferredExternalEventText,
-  type ExternalEventEssenceEntry,
-} from '../../../../src/lib/external-events/deferred-event-digest.ts';
+import { type ExternalEventEssenceEntry } from '../../../../src/lib/external-events/deferred-event-digest.ts';
+import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry.ts';
 import {
   classifyExternalEventDirectSteer,
   type DirectSteerEventClass,
@@ -64,11 +61,22 @@ function publishedEvent(
 }
 
 function essenceFromEvent(event: ExternalEventPublishedPayload): ExternalEventEssenceEntry {
-  const entry = parseDeferredExternalEventText(formatExternalEventEssence(event));
-  if (!entry || entry.kind !== 'event') {
-    throw new Error(`event did not round-trip to an essence: ${event.topic}`);
+  const essence = essenceEntryFromExternalEvent({
+    id: event.eventId,
+    spaceId: event.spaceId,
+    topic: event.topic,
+    occurredAt: event.occurredAt,
+    ingestedAt: event.ingestedAt,
+    source: event.source,
+    summary: event.summary,
+    dedupeKey: event.dedupeKey,
+    externalUrl: event.externalUrl,
+    payload: event.payload,
+  });
+  if (!essence) {
+    throw new Error(`event did not convert to an essence: ${event.topic}`);
   }
-  return entry.essence;
+  return essence;
 }
 
 const DECISION_TABLE: Array<
