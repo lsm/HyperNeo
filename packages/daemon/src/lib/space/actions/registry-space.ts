@@ -251,6 +251,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       paramsDoc:
         'name, description?, model?, thinking_level?, provider?, custom_prompt?, tools?, setting_sources?',
       paramsSchema: CreateAgentSchema,
+      auditRedactKeys: ['custom_prompt', 'description'],
       handler: (args) => handlers.create_agent(args),
     }),
     defineAction({
@@ -282,6 +283,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       paramsDoc:
         'agent_id, plus any of name?, status?, description?, model?, thinking_level?, provider?, custom_prompt?, tools?, setting_sources? (null clears)',
       paramsSchema: UpdateAgentSchema,
+      auditRedactKeys: ['custom_prompt', 'description'],
       handler: (args) => handlers.update_agent(args),
     }),
     defineAction({
