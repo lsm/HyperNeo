@@ -1820,7 +1820,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - **Lands**: the most effect-heavy routing site is one named composition; P43 pins stay green.
 - **Excludes**: changes to `goalService.handleTaskTerminal` itself (P51–P53).
 - **Tests**: `post-approval-router.test.ts`, `post-approval-routing-integration.test.ts`.
-- **Depends on**: P46, P46-W; TAM-F2 and TAM-C1 from `task-agent-manager.md` (the wired
+- **Depends on**: P46, P46-W; TAM-F2 and TAM-C2 from `task-agent-manager.md` (the wired
   `spawnPostApprovalSubSession` returning the richer outcome).
 
 ### P48 — `test(space): pin activation routing classification`
