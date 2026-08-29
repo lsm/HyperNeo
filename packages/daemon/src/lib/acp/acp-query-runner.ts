@@ -784,14 +784,6 @@ export class AcpQueryRunner {
               onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
               onExit: (code, signal) => {
                 acpProcessExit = { code, signal };
-                if (
-                  !startupWatchHasFirstMessage() &&
-                  this.ctx.startupTimeoutTimer !== null &&
-                  ownsStartupWatch()
-                ) {
-                  this.clearStartupTimer();
-                  killAcpStartupWatch(`agent process exited (code=${code}, signal=${signal})`);
-                }
               },
               onPermissionRequest: async (params: AcpPermissionRequest) => {
                 if (!attemptToken.isLive()) {
@@ -1089,7 +1081,7 @@ export class AcpQueryRunner {
       const startupFailedByErrorResult =
         !startupWatchFirstMessageSeen &&
         !isAcpProviderClassifiedError(String(error)) &&
-        startupWatchMessages.some(isAcpErrorResultMessage);
+        (acpProcessExit !== null || startupWatchMessages.some(isAcpErrorResultMessage));
       const effectiveError =
         startupTimeoutReached || startupFailedByErrorResult
           ? new Error('ACP startup timeout - query aborted')
@@ -1232,6 +1224,15 @@ export class AcpQueryRunner {
 
       const lastMsg = this._lastConsumedUserMessage;
       if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
+        const reopenedId =
+          this.ctx.db.getSDKMessageRepo?.().reopenDeliveryByUuid(session.id, lastMsg.uuid) ?? null;
+        if (reopenedId) {
+          this.ctx.internalEventBus.publishAsync('messages.statusChanged', {
+            sessionId: session.id,
+            messageIds: [reopenedId],
+            status: 'enqueued',
+          });
+        }
         messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
         this._lastConsumedUserMessage = null;
       }

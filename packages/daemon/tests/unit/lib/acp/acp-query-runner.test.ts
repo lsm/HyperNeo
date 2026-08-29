@@ -2842,9 +2842,19 @@ describe('AcpQueryRunner', () => {
       }
     }, 5000);
 
-    test('kills and retries immediately when the agent process exits pre-first-message', async () => {
+    test('retries when the agent process exits pre-first-message and the stream drains empty', async () => {
       const firstClient = createMockClient();
-      holdPrompt(firstClient);
+      let releasePrompt: (() => void) | undefined;
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        await new Promise<void>((resolve) => {
+          releasePrompt = resolve;
+        });
+        throw new Error('ACP agent process exited');
+      });
       const secondClient = createMockClient();
       secondClient.canLoadSession.mockImplementation(() => true);
       const clients = [firstClient, secondClient];
@@ -2855,27 +2865,72 @@ describe('AcpQueryRunner', () => {
         return clients.shift() as unknown as AcpClient;
       });
       const runner = new AcpQueryRunner(ctx, createClient);
-      const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
 
       await runner.start();
       await waitFor(() => firstClient.sendPrompt.mock.calls.length > 0, 500);
       constructorOptions[0].onExit?.(1, null);
+      releasePrompt?.();
 
       await ctx.queryPromise;
 
-      expect(
-        loggerError.mock.calls.some(([message]) =>
-          String(message).includes(
-            'ACP startup failure: agent process exited (code=1, signal=null)'
-          )
-        )
-      ).toBe(true);
-      expect(firstClient.cancel).toHaveBeenCalled();
-      expect(firstClient.close).toHaveBeenCalled();
+      expect(createClient).toHaveBeenCalledTimes(2);
       expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
         { type: 'text', text: 'hello' },
       ]);
-      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a buffered legal result delivered after the process exit is not retried', async () => {
+      const client = createMockClient();
+      const { runner, ctx, constructorOptions } = createRunnerFixture({ client });
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        constructorOptions[0].onExit?.(0, null);
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'plan', entries: [] },
+        };
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(client.sendPrompt).toHaveBeenCalledTimes(1);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      expect(ctx.db.updateSession).not.toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+    }, 5000);
+
+    test('reopens the persisted delivery row before the startup retry re-submits it', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        throw new Error('session/prompt failed');
+      });
+      const secondClient = createMockClient();
+      const clients = [firstClient, secondClient];
+      const { ctx } = createRunnerFixture({ client: firstClient });
+      const reopenDeliveryByUuid = mock(() => 'db-id-1');
+      (ctx.db as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        reopenDeliveryByUuid,
+      });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith('session-1', 'user-message-1');
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     }, 5000);
 
