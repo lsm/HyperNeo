@@ -200,7 +200,18 @@ describe('voice transcribe pipeline', () => {
     ) as typeof fetch;
     await expect(transcribe(createDeps())).resolves.toEqual({
       action: 'failed',
-      error: 'Invalid model',
+      error: 'Invalid model (failed with HTTP 400)',
+    });
+  });
+
+  it.each([
+    ['request failed', 400, 'request failed (failed with HTTP 400)'],
+    ['failed with HTTP 400', 500, 'failed with HTTP 400 (failed with HTTP 500)'],
+  ])('keeps the daemon HTTP status over body text: %s', async (body, status, expected) => {
+    globalThis.fetch = mock(async () => new Response(body, { status })) as typeof fetch;
+    await expect(transcribe(createDeps())).resolves.toEqual({
+      action: 'failed',
+      error: expected,
     });
   });
 

@@ -277,15 +277,21 @@ export async function readLimitedResponseText(response: Response): Promise<strin
 }
 
 export function normalizeErrorMessage(bodyText: string, status: number): string {
+  const statusTag = `failed with HTTP ${status}`;
   const parsed = parseJson(bodyText);
-  const message =
+  const rawMessage =
     parsed?.error && typeof parsed.error === 'object' && 'message' in parsed.error
       ? parsed.error.message
       : parsed?.message;
-  if (typeof message === 'string' && message.trim()) return message.trim();
-  const trimmed = bodyText.trim();
-  if (trimmed) return trimmed.length > 500 ? `${trimmed.slice(0, 500)}…` : trimmed;
-  return `Voice transcription failed with HTTP ${status}`;
+  const body =
+    typeof rawMessage === 'string' && rawMessage.trim() ? rawMessage.trim() : bodyText.trim();
+  if (!body) return `Voice transcription ${statusTag}`;
+  const suffix = ` (${statusTag})`;
+  const maxBody = 500 - suffix.length - 1;
+  if (body.length > maxBody && maxBody > 0) {
+    return `${body.slice(0, maxBody)}…${suffix}`;
+  }
+  return `${body}${suffix}`;
 }
 
 export function parseJson(text: string): Record<string, unknown> | undefined {

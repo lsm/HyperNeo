@@ -24,9 +24,9 @@ export function classifyVoiceSubmitError(
   if (operation === 'draft-delivery' && PERMANENT_SESSION_REFUSAL.test(error.message)) {
     return 'permanent';
   }
-  if (TRANSIENT_SUBMIT_ERROR.test(error.message)) return 'retry';
-  const httpStatus = error.message.match(/failed with HTTP (\d{3})/);
+  const httpStatus = error.message.match(/.*failed with HTTP (\d{3})/s);
   if (httpStatus && isDeterministicClientStatus(Number(httpStatus[1]))) return 'discard';
+  if (TRANSIENT_SUBMIT_ERROR.test(error.message)) return 'retry';
   if (DISCARDED_SUBMIT_ERROR.test(error.message)) return 'discard';
   return 'retry';
 }
