@@ -105,16 +105,17 @@ export async function restoreWithRevalidation(
       outcomes.push({ action: 'failed' });
       continue;
     }
-    if (!ctx.deps.isExecutionRestorable(execution)) {
-      outcomes.push({ action: 'adopted_by_new_owner', sessionId: execution.agentSessionId });
-      continue;
-    }
+    const executionRestorable = ctx.deps.isExecutionRestorable(execution);
     const spaceId = ctx.deps.getRunSpaceId(target.workflowRunId);
     const spaceState = spaceId ? await ctx.deps.getSpaceState(spaceId).catch(() => null) : null;
     const taskAdmissible = ctx.deps.isTaskAdmissible(target.taskId);
     if (!spaceState || spaceState.paused || spaceState.stopped || !taskAdmissible) {
       ctx.deps.cancelSession(execution.agentSessionId);
       outcomes.push({ action: 'skipped_inactivation', sessionId: execution.agentSessionId });
+      continue;
+    }
+    if (!executionRestorable) {
+      outcomes.push({ action: 'adopted_by_new_owner', sessionId: execution.agentSessionId });
       continue;
     }
     outcomes.push({ action: 'restored', sessionId: execution.agentSessionId });

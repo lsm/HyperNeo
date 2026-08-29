@@ -169,6 +169,13 @@ describe('runRestoreIdleSessions', () => {
     expect(outcomes).toEqual([{ action: 'adopted_by_new_owner', sessionId: 'session-1' }]);
   });
 
+  test('still tears down a rebound session whose task went inactive mid-restore', async () => {
+    const outcomes = await runRestoreIdleSessions(
+      makeDeps({ executionRestorableAfter: false, taskStatusAfterRestore: 'cancelled' })
+    );
+    expect(outcomes).toEqual([{ action: 'skipped_inactivation', sessionId: 'session-1' }]);
+  });
+
   test('records a failed outcome when restoration throws', async () => {
     const outcomes = await runRestoreIdleSessions(makeDeps({ failRestore: true }));
     expect(outcomes).toEqual([{ action: 'failed' }]);
