@@ -2842,6 +2842,38 @@ describe('AcpQueryRunner', () => {
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     }, 5000);
 
+    test('ambient metadata does not disarm the watch: a hanging agent hits the backstop', async () => {
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '300';
+      const client = createMockClient();
+      const releasePrompt = holdPrompt(client);
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'available_commands_update', availableCommands: [] },
+        };
+        await new Promise<void>(() => {});
+      });
+      const { runner, ctx } = createRunnerFixture({ client });
+      const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
+
+      await runner.start();
+      await waitFor(() => ctx.queryAbortController?.signal.aborted === true, 2000);
+      expect(client.cancel).toHaveBeenCalled();
+      expect(
+        loggerError.mock.calls.some(([message]) =>
+          String(message).includes('ACP startup failure: inactivity backstop')
+        )
+      ).toBe(true);
+
+      releasePrompt();
+      await ctx.queryPromise;
+    }, 5000);
+
     test('a process exit after the first agent message does not trigger the startup kill', async () => {
       const client = createMockClient();
       let releasePrompt: (() => void) | undefined;
@@ -2853,10 +2885,7 @@ describe('AcpQueryRunner', () => {
         callbacks?.onAccepted?.();
         yield {
           sessionId: 'acp-session-1',
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: 'working' },
-          },
+          update: { sessionUpdate: 'plan', entries: [] },
         };
         await new Promise<void>((resolve) => {
           releasePrompt = resolve;

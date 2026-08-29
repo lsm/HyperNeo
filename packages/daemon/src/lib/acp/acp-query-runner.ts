@@ -36,6 +36,7 @@ import { AcpProvider } from '../providers/acp-provider.ts';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns.ts';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery.ts';
 import { assessLimitError } from '../agent/limit-error-classifier.ts';
+import { isMeaningfulSdkStartupProgress } from '../agent/sdk-startup-progress.ts';
 import type { SdkStartExitInfo } from '../agent/sdk-start-terminal.ts';
 import {
   getSdkStartInactivityBackstopMs,
@@ -74,7 +75,7 @@ const MAX_POST_ABORT_DRAIN_MESSAGES = 256;
 const POST_ABORT_DRAIN_TIMEOUT_MS = 1000;
 
 function isAcpAgentStartupMessage(message: SDKMessage): boolean {
-  return message.type !== 'result';
+  return message.type !== 'result' && isMeaningfulSdkStartupProgress(message);
 }
 
 function isAcpErrorResultMessage(message: SDKMessage): boolean {
