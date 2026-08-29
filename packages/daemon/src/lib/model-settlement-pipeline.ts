@@ -15,9 +15,9 @@ export interface SettleProviderLoadOutcomeDeps {
   cancelProviderRetry(providerId: string): void;
   recordClassifiedProviderFailure(
     providerId: string,
-    failure: { errorKind: 'transient' | 'credential'; message: string }
+    failure: ProviderLoadFailure
   ): ProviderFailureRecord;
-  emitProviderSettlement(changedProviderIds: readonly string[]): void;
+  emitProviderSettlement(providerIds: readonly string[]): void;
 }
 
 export interface SettleProviderLoadOutcomeResult {
@@ -26,68 +26,49 @@ export interface SettleProviderLoadOutcomeResult {
   readonly armedProviderIds: readonly string[];
   readonly canceledProviderIds: readonly string[];
   readonly recordedFailures: readonly ProviderLoadFailure[];
-  readonly changedProviderIds: readonly string[];
   readonly emitted: boolean;
 }
 
-export interface SettleProviderLoadOutcomeCtx {
+interface SettleProviderLoadOutcomeCtx {
   deps: SettleProviderLoadOutcomeDeps;
   outcomes: ProviderLoadOutcome[];
   loadSeq: number;
   result: SettleProviderLoadOutcomeResult;
 }
 
-function addUnique<T>(values: readonly T[], value: T): T[] {
-  if (values.includes(value)) return values as T[];
-  return [...values, value];
-}
-
-function unique<T>(values: readonly T[]): T[] {
-  const result: T[] = [];
-  for (const value of values) {
-    if (!result.includes(value)) result.push(value);
-  }
-  return result;
+function withResult(
+  ctx: SettleProviderLoadOutcomeCtx,
+  patch: Partial<SettleProviderLoadOutcomeResult>
+): SettleProviderLoadOutcomeCtx {
+  return { ...ctx, result: { ...ctx.result, ...patch } };
 }
 
 export function cleanupOrphans(ctx: SettleProviderLoadOutcomeCtx): SettleProviderLoadOutcomeCtx {
   const registry = ctx.deps.getProviderRegistry();
-  const changed = new Set(ctx.result.changedProviderIds);
   for (const failure of ctx.deps.getAllProviderFailures()) {
     if (registry.has(failure.providerId)) continue;
     ctx.deps.removeProviderFailure(failure.providerId);
     ctx.deps.clearProviderRetry(failure.providerId);
-    changed.add(failure.providerId);
   }
-  return { ...ctx, result: { ...ctx.result, changedProviderIds: Array.from(changed) } };
+  return ctx;
 }
 
 export function markApplied(ctx: SettleProviderLoadOutcomeCtx): SettleProviderLoadOutcomeCtx {
-  const applied = [...ctx.result.appliedProviderIds];
-  const changed = new Set(ctx.result.changedProviderIds);
+  const applied: string[] = [...ctx.result.appliedProviderIds];
   for (const outcome of ctx.outcomes) {
     if (outcome.kind !== 'loaded' && outcome.kind !== 'unavailable') continue;
     ctx.deps.setProviderAppliedSeq(outcome.providerId, ctx.loadSeq);
     applied.push(outcome.providerId);
-    changed.add(outcome.providerId);
   }
-  return {
-    ...ctx,
-    result: {
-      ...ctx.result,
-      appliedProviderIds: unique(applied),
-      changedProviderIds: Array.from(changed),
-    },
-  };
+  return withResult(ctx, { appliedProviderIds: Array.from(new Set(applied)) });
 }
 
 export function settleRetries(ctx: SettleProviderLoadOutcomeCtx): SettleProviderLoadOutcomeCtx {
+  const registry = ctx.deps.getProviderRegistry();
   let cleared = [...ctx.result.clearedProviderIds];
   let armed = [...ctx.result.armedProviderIds];
   let canceled = [...ctx.result.canceledProviderIds];
-  const changed = new Set(ctx.result.changedProviderIds);
   for (const outcome of ctx.outcomes) {
-    const registry = ctx.deps.getProviderRegistry();
     if (outcome.kind === 'failed' && !registry.has(outcome.providerId)) continue;
     let action = decideProviderRetryAction(outcome);
     if (
@@ -99,64 +80,54 @@ export function settleRetries(ctx: SettleProviderLoadOutcomeCtx): SettleProvider
     if (action === 'clear') {
       ctx.deps.clearProviderFailure(outcome.providerId);
       ctx.deps.clearProviderRetry(outcome.providerId);
-      cleared = addUnique(cleared, outcome.providerId);
-      changed.add(outcome.providerId);
+      cleared.push(outcome.providerId);
     } else if (action === 'arm') {
       ctx.deps.armProviderRetry(outcome.providerId);
-      armed = addUnique(armed, outcome.providerId);
-      changed.add(outcome.providerId);
+      armed.push(outcome.providerId);
     } else if (action === 'cancel') {
       ctx.deps.cancelProviderRetry(outcome.providerId);
-      canceled = addUnique(canceled, outcome.providerId);
-      changed.add(outcome.providerId);
+      canceled.push(outcome.providerId);
     }
   }
-  return {
-    ...ctx,
-    result: {
-      ...ctx.result,
-      clearedProviderIds: cleared,
-      armedProviderIds: armed,
-      canceledProviderIds: canceled,
-      changedProviderIds: Array.from(changed),
-    },
-  };
+  return withResult(ctx, {
+    clearedProviderIds: Array.from(new Set(cleared)),
+    armedProviderIds: Array.from(new Set(armed)),
+    canceledProviderIds: Array.from(new Set(canceled)),
+  });
 }
 
 export function recordFailures(ctx: SettleProviderLoadOutcomeCtx): SettleProviderLoadOutcomeCtx {
   const registry = ctx.deps.getProviderRegistry();
-  const applied = [...ctx.result.appliedProviderIds];
-  const recorded = [...ctx.result.recordedFailures];
-  const changed = new Set(ctx.result.changedProviderIds);
+  const applied: string[] = [...ctx.result.appliedProviderIds];
+  const recorded: ProviderLoadFailure[] = [...ctx.result.recordedFailures];
   for (const outcome of ctx.outcomes) {
-    if (outcome.kind !== 'failed' || !outcome.failure) continue;
-    if (!registry.has(outcome.providerId)) continue;
+    if (outcome.kind !== 'failed' || !outcome.failure || !registry.has(outcome.providerId))
+      continue;
     ctx.deps.setProviderAppliedSeq(outcome.providerId, ctx.loadSeq);
     ctx.deps.recordClassifiedProviderFailure(outcome.providerId, outcome.failure);
     applied.push(outcome.providerId);
     recorded.push(outcome.failure);
-    changed.add(outcome.providerId);
   }
-  return {
-    ...ctx,
-    result: {
-      ...ctx.result,
-      appliedProviderIds: unique(applied),
-      recordedFailures: recorded,
-      changedProviderIds: Array.from(changed),
-    },
-  };
+  return withResult(ctx, {
+    appliedProviderIds: Array.from(new Set(applied)),
+    recordedFailures: recorded,
+  });
 }
 
 export function emit(ctx: SettleProviderLoadOutcomeCtx): SettleProviderLoadOutcomeCtx {
-  const changed = unique(ctx.result.changedProviderIds);
+  const changed = Array.from(
+    new Set([
+      ...ctx.result.appliedProviderIds,
+      ...ctx.result.clearedProviderIds,
+      ...ctx.result.armedProviderIds,
+      ...ctx.result.canceledProviderIds,
+      ...ctx.result.recordedFailures.map((failure) => failure.providerId),
+    ])
+  );
   if (changed.length > 0) {
     ctx.deps.emitProviderSettlement(changed);
   }
-  return {
-    ...ctx,
-    result: { ...ctx.result, changedProviderIds: changed, emitted: changed.length > 0 },
-  };
+  return withResult(ctx, { emitted: changed.length > 0 });
 }
 
 function outcomesEmpty(ctx: SettleProviderLoadOutcomeCtx): boolean {
@@ -170,7 +141,6 @@ function emptyResult(): SettleProviderLoadOutcomeResult {
     armedProviderIds: [],
     canceledProviderIds: [],
     recordedFailures: [],
-    changedProviderIds: [],
     emitted: false,
   };
 }
@@ -184,11 +154,8 @@ const run = (
   .pipe(cleanupOrphans, 'ctx', 'ctx')
   .pipe('!outcomesEmpty', 'ctx')
   .pipe(markApplied, 'ctx', 'ctx')
-  .pipe('!outcomesEmpty', 'ctx')
   .pipe(settleRetries, 'ctx', 'ctx')
-  .pipe('!outcomesEmpty', 'ctx')
   .pipe(recordFailures, 'ctx', 'ctx')
-  .pipe('!outcomesEmpty', 'ctx')
   .pipe(emit, 'ctx', 'ctx')
   .end('ctx') as (ctx: SettleProviderLoadOutcomeCtx) => SettleProviderLoadOutcomeCtx;
 
