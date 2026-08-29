@@ -492,7 +492,7 @@ export default function MessageInput({
         images?: MessageImage[];
         send: MessageInputProps['onSend'];
       }
-    ): Promise<{ ok: boolean; message: string }> => {
+    ): Promise<{ ok: boolean; message: string; durable?: boolean }> => {
       const outboxId = generateUUID();
       const stageToDraft = async () => {
         const hub = connectionManager.getHubIfConnected();
@@ -503,15 +503,18 @@ export default function MessageInput({
           dedupId: outboxId,
         });
       };
-      const stageFallback = async (message: string): Promise<{ ok: boolean; message: string }> => {
+      const stageFallback = async (
+        message: string
+      ): Promise<{ ok: boolean; message: string; durable?: boolean }> => {
         try {
           await stageToDraft();
-          return { ok: true, message };
+          return { ok: true, message, durable: true };
         } catch (error) {
           if (!isPermanentAppendRefusal(error)) {
             const durable = enqueueTranscript(targetSessionId, transcript, outboxId);
             return {
               ok: true,
+              durable,
               message: durable
                 ? 'Voice transcript saved — will be delivered when reconnected'
                 : 'Voice transcript kept in this tab — reconnect before closing it',
@@ -556,6 +559,7 @@ export default function MessageInput({
       }
       return {
         ok: true,
+        durable: true,
         message:
           mode === 'queue' ? 'Voice transcript queued for the next turn' : 'Voice transcript sent',
       };
@@ -623,7 +627,7 @@ export default function MessageInput({
         );
         if (delivered.ok) {
           toast.info(delivered.message);
-          await deleteVoiceRecord(result.recordId);
+          if (delivered.durable !== false) await deleteVoiceRecord(result.recordId);
         } else if (result.persisted || followUp.resendOf !== undefined) {
           toast.error('Voice transcript could not be delivered — recording saved for resend');
         } else {

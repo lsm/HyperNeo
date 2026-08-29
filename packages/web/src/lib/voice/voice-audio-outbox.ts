@@ -4,7 +4,11 @@ import { connectionState } from '../state';
 import { deleteVoiceRecord, listVoiceRecords, type VoiceRecordEntry } from './voice-audio-store.ts';
 import { type VoiceRecording, voiceRecorderStore } from './voice-recorder-store.ts';
 import { runVoiceSubmit } from './voice-submit-pipeline.ts';
-import { enqueueTranscript, isPermanentAppendRefusal } from './voice-transcript-outbox.ts';
+import {
+  enqueueTranscript,
+  isPermanentAppendRefusal,
+  removePendingTranscript,
+} from './voice-transcript-outbox.ts';
 
 const AUDIO_INTRINSIC_REFUSAL =
   /requires audio\/wav input|Audio data is (required|empty)|must be valid base64|exceeds the 10 MB/;
@@ -113,6 +117,7 @@ export async function flushPendingVoiceAudio(): Promise<void> {
     if (enqueueTranscript(entry.sessionId, transcript, entry.id)) {
       await deleteVoiceRecord(entry.id);
     } else {
+      removePendingTranscript(entry.id);
       defer(entry.sessionId);
     }
   };

@@ -20,9 +20,11 @@ vi.mock('../voice-audio-store.ts', () => ({
 }));
 
 const enqueueTranscript = vi.hoisted(() => vi.fn(() => true));
+const removePendingTranscript = vi.hoisted(() => vi.fn());
 vi.mock('../voice-transcript-outbox.ts', async (importOriginal) => ({
   ...(await importOriginal()),
   enqueueTranscript,
+  removePendingTranscript,
 }));
 
 import { connectionManager } from '../../connection-manager.ts';
@@ -61,6 +63,7 @@ describe('voice audio outbox', () => {
     voiceRecorderStore.isStarting.value = false;
     hubRequest.mockReset().mockImplementation(async () => ({ text: 'hello world' }));
     enqueueTranscript.mockReset().mockReturnValue(true);
+    removePendingTranscript.mockClear();
     vi.mocked(connectionManager.getHubIfConnected)
       .mockReset()
       .mockReturnValue({ request: hubRequest });
@@ -145,6 +148,7 @@ describe('voice audio outbox', () => {
     await flushPendingVoiceAudio();
 
     expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', 'rec-1');
+    expect(removePendingTranscript).toHaveBeenCalledWith('rec-1');
     expect(store.records).toHaveLength(1);
   });
 

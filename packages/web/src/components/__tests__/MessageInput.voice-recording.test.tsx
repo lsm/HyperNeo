@@ -673,7 +673,7 @@ describe('MessageInput — recording UI', () => {
       );
       expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', expect.any(String));
       expect(hubRequest.mock.calls.find(([m]) => m === 'session.appendVoiceDraft')).toBeTruthy();
-      expect(deleteVoiceRecord).toHaveBeenCalledWith(expect.any(String));
+      expect(deleteVoiceRecord).not.toHaveBeenCalled();
     });
 
     it('keeps the recording for manual resend when draft staging is permanently refused', async () => {
