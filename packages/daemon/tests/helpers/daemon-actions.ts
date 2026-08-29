@@ -118,12 +118,13 @@ async function waitForProcessingState(
   });
 }
 
-const SDK_STARTUP_TIMEOUT_DEFAULT_MS = 60000;
+const SDK_START_INACTIVITY_TIMEOUT_DEFAULT_MS = 600000;
 const IDLE_WAIT_SETTLE_MARGIN_MS = 10000;
 
 function minimumIdleWaitMs(): number {
-  const raw = Number.parseInt(process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS ?? '', 10);
-  const startupBoundMs = Number.isFinite(raw) && raw > 0 ? raw : SDK_STARTUP_TIMEOUT_DEFAULT_MS;
+  const raw = Number.parseInt(process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS ?? '', 10);
+  const startupBoundMs =
+    Number.isFinite(raw) && raw > 0 ? raw : SDK_START_INACTIVITY_TIMEOUT_DEFAULT_MS;
   return startupBoundMs + IDLE_WAIT_SETTLE_MARGIN_MS;
 }
 

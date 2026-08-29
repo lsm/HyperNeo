@@ -167,3 +167,4 @@ delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 delete process.env.ANTHROPIC_BASE_URL;
 delete process.env.API_TIMEOUT_MS;
 delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;

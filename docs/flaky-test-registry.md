@@ -35,12 +35,13 @@ fallback; it never sleeps for a fixed duration. Flakes come from the
 *budgets*, not the mechanism:
 
 - `waitForIdle` enforces a floor of
-  `HYPERNEO_SDK_STARTUP_TIMEOUT_MS + 10s`. The online vitest config sets
-  that env before any module loads, so CI mock runs use the 30s startup
-  bound → 40s floor; runs without the env set mirror query-runner's 60s
-  production default → 70s floor (spawned-mode children inherit the same
-  bound — the propagated env's 30s or the 60s default — so the floor
-  tracks their startup gate either way). A session cannot go
+  `HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS + 10s`. The online vitest
+  config sets that env before any module loads, so CI mock runs use the
+  30s backstop → 40s floor; runs without the env set mirror
+  query-runner's 600s production default → 610s floor (spawned-mode
+  children inherit the same bound — the propagated env's 30s or the
+  600s default — so the floor tracks their startup gate either way). A
+  session cannot go
   idle before its SDK subprocess cold-starts and the turn settles; CI
   cold starts take 20-30s while warm turns settle in 1-2s, so per-file
   mock budgets below the floor only hold on warm runners. Don't try to

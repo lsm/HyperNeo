@@ -9,7 +9,7 @@ const TEST_TIMEOUT = IS_MOCK ? 60000 : 90000;
 const IDLE_TIMEOUT = IS_MOCK ? 45000 : 60000;
 const MODELS_READY_TIMEOUT_MS = IS_MOCK ? 25000 : 30000;
 
-const FORCED_STARTUP_TIMEOUT_MS = '10';
+const FORCED_STARTUP_INACTIVITY_TIMEOUT_MS = '10';
 
 async function getSessionError(
   daemon: DaemonServerContext,
@@ -91,10 +91,10 @@ describe('Startup Timeout Error Surfacing', () => {
 
   beforeEach(async () => {
     const origSpawn = process.env.DAEMON_TEST_SPAWN;
-    const origTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+    const origTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
 
     process.env.DAEMON_TEST_SPAWN = 'true';
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = FORCED_STARTUP_INACTIVITY_TIMEOUT_MS;
 
     try {
       daemon = await createDaemonServer({
@@ -108,9 +108,9 @@ describe('Startup Timeout Error Surfacing', () => {
         process.env.DAEMON_TEST_SPAWN = origSpawn;
       }
       if (origTimeout === undefined) {
-        delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
       } else {
-        process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = origTimeout;
+        process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = origTimeout;
       }
     }
   }, SETUP_TIMEOUT);
@@ -176,7 +176,7 @@ describe('Startup Timeout Error Surfacing', () => {
         expect(errorMsg).toContain('bounded by the startup gate');
         expect(errorMsg).not.toContain('stale lock file');
         expect(errorMsg).not.toContain('another Claude Code session');
-        expect(errorMsg).toContain('HYPERNEO_SDK_STARTUP_TIMEOUT_MS');
+        expect(errorMsg).toContain('HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS');
         expect(errorMsg).toContain('current: 10ms');
       } finally {
         unsubscribe();
