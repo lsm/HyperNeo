@@ -1151,6 +1151,37 @@ describe('MessageQueue', () => {
       await userMessage.catch(() => {});
     });
 
+    it('a delivery hold keeps a queued compaction from bypassing the gate until released', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const compaction = q.enqueue('/compact', true, { durable: true });
+      expect(q.hasQueuedInternalCompaction()).toBe(true);
+      const generator = q.messageGenerator(testSessionId);
+
+      q.holdInternalCompactionDelivery();
+      let delivered = false;
+      const nextPromise = generator.next().then((result) => {
+        delivered = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(delivered).toBe(false);
+
+      q.releaseInternalCompactionDelivery();
+      const result = await Promise.race([
+        nextPromise,
+        new Promise((resolve) => setTimeout(resolve, 500)).then(() => 'timeout'),
+      ]);
+      expect(result).not.toBe('timeout');
+      (
+        result as unknown as {
+          value: { onSent: () => void };
+        }
+      ).value.onSent();
+      await compaction;
+      q.stop();
+    });
+
     it('a queue restart clears outstanding compaction state so prompts are not held', async () => {
       const q = new MessageQueue();
       q.start();

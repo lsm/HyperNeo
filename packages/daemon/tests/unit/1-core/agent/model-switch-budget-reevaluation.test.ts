@@ -170,4 +170,17 @@ describe('AgentSession model-switch context budget re-evaluation', () => {
     expect(session.messageQueue.hasQueuedInternalCompaction()).toBe(true);
     expect(session.messageQueue.size()).toBe(1);
   });
+
+  it('holds compaction delivery for the duration of the re-evaluation', async () => {
+    cacheModelsWithWindow(1_000_000);
+    const session = createAgentSession('switched-model');
+    session.contextTracker.restoreFromMetadata(restoreTrackerInfo(950_000, 2_000_000));
+    const holdSpy = spyOn(session.messageQueue, 'holdInternalCompactionDelivery');
+    const releaseSpy = spyOn(session.messageQueue, 'releaseInternalCompactionDelivery');
+
+    await session.reevaluateContextBudgetAfterModelSwitch();
+
+    expect(holdSpy).toHaveBeenCalledTimes(1);
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+  });
 });

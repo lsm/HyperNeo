@@ -128,6 +128,8 @@ export class MessageQueue {
   private midTurnBoundarySeq: number = 0;
   private promptPhaseBoundarySeq: number = 0;
   private midTurnCompactionQueued: boolean = false;
+
+  private internalCompactionDeliveryHolds: number = 0;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private nonCompactionSentSinceBoundary: boolean = false;
@@ -432,6 +434,7 @@ export class MessageQueue {
     this.recentSentPrompts.clear();
     this.deliveryGate = null;
     this.midTurnCompactionQueued = false;
+    this.internalCompactionDeliveryHolds = 0;
     for (const msg of this.queue) {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
@@ -648,6 +651,7 @@ export class MessageQueue {
     this.cancelInternalCompactionEntries(true, true);
     this.deliveryGate = null;
     this.midTurnCompactionQueued = false;
+    this.internalCompactionDeliveryHolds = 0;
     this.wakeWaiters();
     if (deliveredCompactions || rejectedCompactions) {
       this.onInternalCompactionsAborted?.();
@@ -764,8 +768,22 @@ export class MessageQueue {
     }
   }
 
+  holdInternalCompactionDelivery(): void {
+    this.internalCompactionDeliveryHolds += 1;
+  }
+
+  releaseInternalCompactionDelivery(): void {
+    if (this.internalCompactionDeliveryHolds > 0) {
+      this.internalCompactionDeliveryHolds -= 1;
+    }
+    if (this.internalCompactionDeliveryHolds === 0) {
+      this.wakeWaiters();
+    }
+  }
+
   private gatedBypassIndex(): number {
-    if (this.midTurnCompactionQueued && this.hasQueuedInternalCompaction()) {
+    const compactionsHeld = this.internalCompactionDeliveryHolds > 0;
+    if (!compactionsHeld && this.midTurnCompactionQueued && this.hasQueuedInternalCompaction()) {
       return this.queue.findIndex((message) => this.isInternalCompaction(message));
     }
     const toolResultIndex = this.queue.findIndex(
@@ -774,6 +792,7 @@ export class MessageQueue {
         message.content.some((block) => isToolResultContent(block))
     );
     if (toolResultIndex !== -1) return toolResultIndex;
+    if (compactionsHeld) return -1;
     return this.queue.findIndex((message) => this.isInternalCompaction(message));
   }
 

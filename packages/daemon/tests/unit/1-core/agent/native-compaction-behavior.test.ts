@@ -648,7 +648,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     const runner = new QueryRunner({
       session,
       messageQueue: queue,
-      stateManager: { setProcessing: setProcessingSpy } as unknown as ProcessingStateManager,
+      stateManager: {
+        setProcessing: setProcessingSpy,
+        getState: () => ({ status: 'idle' }),
+      } as unknown as ProcessingStateManager,
       logger: {
         debug: () => {},
         info: () => {},
@@ -689,6 +692,62 @@ describe('N4: literal /compact never enters the transcript or provider request',
     const replay = (runner as unknown as { _lastConsumedUserMessage: { content: unknown } | null })
       ._lastConsumedUserMessage;
     expect(replay?.content).toEqual([{ type: 'text', text: 'fix the bug' }]);
+  });
+
+  it('a steering compaction delivered mid-turn does not displace the processing owner', async () => {
+    const queue = new MessageQueue();
+    queue.start();
+
+    const setProcessingSpy = mock(async () => {});
+    const session: Session = {
+      id: 'query-boundary-session-steering',
+      title: 'Query Boundary Session',
+      workspacePath: '/test/path',
+      createdAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+      status: 'active',
+      config: { model: 'default', maxTokens: 8192, temperature: 1.0 },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+      },
+    };
+
+    const runner = new QueryRunner({
+      session,
+      messageQueue: queue,
+      stateManager: {
+        setProcessing: setProcessingSpy,
+        getState: () => ({ status: 'processing' }),
+      } as unknown as ProcessingStateManager,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+        log: () => {},
+        trace: () => {},
+      },
+    } as unknown as QueryRunnerContext);
+
+    const delivered: Array<SDKUserMessage & { internal?: boolean }> = [];
+    const consumer = (async () => {
+      for await (const message of runner.createMessageGeneratorWrapper()) {
+        delivered.push(message as SDKUserMessage & { internal?: boolean });
+        queue.stop();
+      }
+    })();
+
+    await queue.enqueue('/compact', true).catch(() => {});
+    await consumer;
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].internal).toBe(true);
+    expect(setProcessingSpy).not.toHaveBeenCalled();
   });
 
   it('when the context budget is exceeded on a custom provider, the handler enqueues /compact as internal (production call site)', async () => {

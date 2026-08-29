@@ -167,6 +167,7 @@ describe('reevaluate-context-budget pipeline', () => {
       breakdown: {},
       isAutoCompactEnabled: false,
     } as unknown as ContextInfo;
+    const liveTrackerInfo: { current: ContextInfo | null } = { current: trackerInfo };
     const enqueue = mock(async () => 'compact-id');
     const removePendingInternalCompactions = mock(() => 0);
     const messageQueue = {
@@ -176,6 +177,7 @@ describe('reevaluate-context-budget pipeline', () => {
       isRunning: mock(() => false),
     };
     const contextTracker = {
+      getContextInfo: () => liveTrackerInfo.current,
       isCoolingDown: mock(() => false),
       markCompactionTriggered: mock(() => {}),
       clearCompactionCooldown: mock(() => {}),
@@ -196,7 +198,7 @@ describe('reevaluate-context-budget pipeline', () => {
       resumePendingWork: mock(() => {}),
       clearPendingResume: mock(() => {}),
     };
-    return { input, enqueue, removePendingInternalCompactions };
+    return { input, enqueue, removePendingInternalCompactions, liveTrackerInfo };
   }
 
   it('enqueues a dormant compaction through the enforcement pipeline on a stopped queue', async () => {
@@ -227,5 +229,22 @@ describe('reevaluate-context-budget pipeline', () => {
     expect(outcome.compactionEnqueued).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
     expect(removePendingInternalCompactions).not.toHaveBeenCalled();
+  });
+
+  it('decides from tracker state at decision time, not from the call-time snapshot', async () => {
+    const { input, enqueue, liveTrackerInfo } = reevaluationHarness(async () => {
+      liveTrackerInfo.current = {
+        model: 'old-model',
+        totalUsed: 50_000,
+        totalCapacity: 2_000_000,
+        percentUsed: 2,
+        breakdown: {},
+        isAutoCompactEnabled: false,
+      } as unknown as ContextInfo;
+      return { id: 'switched-model', contextWindow: 1_000_000 };
+    });
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
   });
 });

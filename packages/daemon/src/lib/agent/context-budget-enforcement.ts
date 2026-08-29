@@ -172,15 +172,17 @@ export function runReevaluationEnforcement(
   ctx: ContextBudgetReevaluationCtx
 ): ContextBudgetReevaluationCtx {
   const modelInfo = ctx.modelInfo;
+  const trackerInfo = ctx.contextTracker.getContextInfo();
+  if (!trackerInfo || trackerInfo.totalUsed <= 0) {
+    return ctx;
+  }
   const contextInfo: ContextInfo = {
-    ...ctx.trackerInfo,
+    ...trackerInfo,
     totalCapacity:
       modelInfo?.contextWindow && modelInfo.contextWindow > 0
         ? modelInfo.contextWindow
-        : ctx.trackerInfo.totalCapacity,
-    autoCompactPercent: modelInfo
-      ? modelInfo.autoCompactPercent
-      : ctx.trackerInfo.autoCompactPercent,
+        : trackerInfo.totalCapacity,
+    autoCompactPercent: modelInfo ? modelInfo.autoCompactPercent : trackerInfo.autoCompactPercent,
   };
   const outcome = enforceContextBudget({
     sessionId: ctx.session.id,

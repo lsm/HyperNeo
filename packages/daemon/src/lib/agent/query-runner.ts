@@ -1847,7 +1847,7 @@ export class QueryRunner {
             : undefined;
       const isDaemonCompactCommand = isInternal && promptText === '/compact';
 
-      if (isDaemonCompactCommand) {
+      if (isDaemonCompactCommand && stateManager.getState().status !== 'processing') {
         await stateManager.setProcessing(queuedMessage.uuid ?? 'unknown', 'initializing');
       }
 

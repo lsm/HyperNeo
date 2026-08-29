@@ -1547,10 +1547,11 @@ export class AgentSession
   }
 
   async reevaluateContextBudgetAfterModelSwitch(): Promise<void> {
-    const trackerInfo = this.contextTracker.getContextInfo();
-    if (!trackerInfo || trackerInfo.totalUsed <= 0) return;
-    const decision = this.contextBudgetReevaluationQueue.then(() =>
-      runContextBudgetReevaluation({
+    this.messageQueue.holdInternalCompactionDelivery();
+    const decision = this.contextBudgetReevaluationQueue.then(async () => {
+      const trackerInfo = this.contextTracker.getContextInfo();
+      if (!trackerInfo || trackerInfo.totalUsed <= 0) return null;
+      return runContextBudgetReevaluation({
         session: this.session,
         trackerInfo,
         resolveModelInfo: () => this.resolveSessionModelInfoWithRetry(),
@@ -1561,8 +1562,8 @@ export class AgentSession
         logger: this.logger,
         resumePendingWork: () => this.resumePendingWorkAfterCompaction(),
         clearPendingResume: () => this.clearPendingResumeAfterCompaction(),
-      })
-    );
+      });
+    });
     this.contextBudgetReevaluationQueue = decision.then(
       () => undefined,
       () => undefined
@@ -1571,6 +1572,9 @@ export class AgentSession
       .then(() => undefined)
       .catch((error) => {
         this.logger.warn('post-switch context budget evaluation failed:', error);
+      })
+      .finally(() => {
+        this.messageQueue.releaseInternalCompactionDelivery();
       });
     this.messageQueue.setDeliveryGate(boundedDeliveryGate(reevaluation, Date.now() + 5000));
     await reevaluation;
