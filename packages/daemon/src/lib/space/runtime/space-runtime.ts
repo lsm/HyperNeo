@@ -1860,6 +1860,7 @@ export class SpaceRuntime {
     this.clearDigestPullState(sessionId);
     if (this.isStopped) return;
     if (!this.isTargetSessionLive(sessionId)) return;
+    const generation = this.runtimeGeneration;
     void this.renderPendingDigestScopesForSession(sessionId, state.taskId)
       .then((outcomes) => {
         if (outcomes.some((outcome) => this.isDigestOutcomeRetryable(outcome))) {
@@ -1869,11 +1870,13 @@ export class SpaceRuntime {
         if (
           outcomes.length > 0 &&
           outcomes.every((outcome) => outcome === null) &&
-          (this.currentReconciliation?.failed ||
+          (generation !== this.runtimeGeneration ||
+            this.currentReconciliation?.failed ||
             (this.currentReconciliation && !this.currentReconciliation.settled)) &&
-          this.isTargetSessionLive(sessionId)
+          this.isTargetSessionLive(sessionId) &&
+          !this.isStopped
         ) {
-          this.scheduleDigestProbeForSession(sessionId, state.taskId);
+          this.scheduleInterruptProbeForSession(sessionId, state.taskId);
         }
       })
       .catch((error) => {
@@ -1935,23 +1938,6 @@ export class SpaceRuntime {
     }
   }
 
-<<<<<<< HEAD
-=======
-  reconcilePersistedDigestRowsForSession(sessionId: string, _taskId?: string): boolean {
-    if (this.isStopped) return false;
-    const gate = this.currentReconciliation;
-    if (gate && !gate.settled) return false;
-    if (gate?.failed) return false;
-    const store = this.config.externalEventStore;
-    if (!store) return false;
-    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
-    if (!execution) return false;
-    this.rehydrateDigestHandoffDebt();
-    this.dropUncoveredDeferredDigestRows(sessionId, store);
-    return true;
-  }
-
->>>>>>> 093293eb67 (fix(daemon): gate digest renders behind reconciliation and prune handoff debt)
   private async renderPendingDigestForSessionInternal(
     sessionId: string,
     taskId?: string,
@@ -2099,7 +2085,7 @@ export class SpaceRuntime {
         if (this.isDigestOutcomeRetryable(outcome) && this.isTargetSessionLive(sessionId)) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);
           if (outcome.action === 'skip' && outcome.reason === 'session_interrupted') {
-            this.scheduleDigestProbeForSession(sessionId, taskId);
+            this.scheduleInterruptProbeForSession(sessionId, taskId);
           }
         }
       }
@@ -4572,8 +4558,8 @@ export class SpaceRuntime {
     }>;
     for (const raw of rows) {
       const sessionId = raw.session_id;
-      const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
-      if (!execution) continue;
+      const owningExecutions = this.listExecutionsOwningSession(sessionId);
+      if (owningExecutions.length === 0) continue;
       let message: SDKUserMessage & { externalEventIds?: unknown; externalEventTaskId?: unknown };
       try {
         message = JSON.parse(raw.sdk_message) as SDKUserMessage & {
@@ -4598,16 +4584,31 @@ export class SpaceRuntime {
           .some(
             (delivery) =>
               delivery.taskId === rowTaskId &&
-              delivery.workflowRunId === execution.workflowRunId &&
-              delivery.nodeId === execution.workflowNodeId &&
-              delivery.agentName === execution.agentName &&
-              delivery.state === 'delivered'
+              delivery.state === 'delivered' &&
+              owningExecutions.some(
+                (execution) =>
+                  delivery.workflowRunId === execution.workflowRunId &&
+                  delivery.nodeId === execution.workflowNodeId &&
+                  delivery.agentName === execution.agentName
+              )
           )
       );
       if (allMembersDelivered) {
         this.addDigestHandoffDebt(sessionId, String(message.uuid));
       }
     }
+  }
+
+  private listExecutionsOwningSession(sessionId: string): NodeExecution[] {
+    const bound = this.config.nodeExecutionRepo.listByAgentSessionId(sessionId);
+    const marker = ':exec:';
+    const markerIndex = sessionId.indexOf(marker);
+    if (markerIndex === -1) return bound;
+    const embeddedId = sessionId.slice(markerIndex + marker.length).split(':')[0];
+    if (!embeddedId) return bound;
+    const embedded = this.config.nodeExecutionRepo.getById(embeddedId);
+    if (!embedded || bound.some((execution) => execution.id === embedded.id)) return bound;
+    return [embedded, ...bound];
   }
 
   private recoveryDone = false;

@@ -2856,8 +2856,8 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(saveStarted).toBe(true);
 
       (
-        runtime as unknown as { scheduleDigestProbeForSession: (sessionId: string) => void }
-      ).scheduleDigestProbeForSession(sessionId);
+        runtime as unknown as { scheduleInterruptProbeForSession: (sessionId: string) => void }
+      ).scheduleInterruptProbeForSession(sessionId);
       const staleProbe = (
         runtime as unknown as { digestPullTriggers: Map<string, unknown> }
       ).digestPullTriggers.get(sessionId);
@@ -2968,6 +2968,64 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(digestRows(sessionId)).toHaveLength(1);
       expect(eventStore.listDeliveries('evt-stranded-1')[0]?.state).toBe('delivered');
       await runtime.stop();
+    });
+
+    test('flag on: an interrupted session does not treat a no-pending pull as digest-safe', async () => {
+      const sessionId = 'session-interrupt-owed';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { task } = await startLiveSession(sessionId, topic);
+      await eventService.publish(makeEvent({ id: 'evt-interrupt-owed', topic }));
+      const delivery = eventStore.listDeliveries('evt-interrupt-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-interrupt-owed', deliveryKey: delivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(
+        sessionId,
+        'digest-interrupt-owed',
+        ['evt-interrupt-owed'],
+        task.id
+      );
+
+      tam.processingStates.set(sessionId, 'interrupted');
+      tam.interrupting.add(sessionId);
+      const outcome = await runtime.renderPendingDigestForSession(sessionId, task.id);
+
+      expect(outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+      expect(deferredDigestUuids(sessionId)).toContain('digest-interrupt-owed');
+    });
+
+    test('flag on: handoff debt restores for a session rebound to a later node execution', async () => {
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { run, task } = await startRunWithSubscription(topic);
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      const sessionId = `space:${SPACE_ID}:task:${task.id}:exec:${execution.id}`;
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      await eventService.publish(makeEvent({ id: 'evt-reuse-owed', topic }));
+      const delivery = eventStore.listDeliveries('evt-reuse-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-reuse-owed', deliveryKey: delivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-reuse-owed', ['evt-reuse-owed'], task.id);
+      nodeExecutionRepo.update(execution.id, { agentSessionId: null });
+
+      const runtimeInternals = runtime as unknown as {
+        rehydrateDigestHandoffDebt: () => void;
+        digestHandoffDebt: Map<string, Set<string>>;
+      };
+      runtimeInternals.rehydrateDigestHandoffDebt();
+      expect(runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-reuse-owed')).toBe(
+        true
+      );
     });
   });
 

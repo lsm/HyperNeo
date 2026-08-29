@@ -179,6 +179,8 @@ export function resolveTarget(ctx: RenderPendingDigestCtx): RenderPendingDigestC
     agentName: execution.agentName,
   });
   if (scopedRows.length === 0) {
+    const admissionSkip = skipWhenInadmissible(ctx, execution);
+    if (admissionSkip) return admissionSkip;
     return { ...ctx, outcome: { action: 'skip', reason: 'no_pending_events' } };
   }
   const fallbackTaskId = ctx.taskId ?? scopedRows[0].taskId;
@@ -192,6 +194,31 @@ export function resolveTarget(ctx: RenderPendingDigestCtx): RenderPendingDigestC
     agentName: execution.agentName,
   };
   return { ...ctx, execution, scopedRows: targetScopedRows, target };
+}
+
+function skipWhenInadmissible(
+  ctx: RenderPendingDigestCtx,
+  execution: TurnEndExecutionRef
+): RenderPendingDigestCtx | null {
+  const target: RenderPendingDigestTarget = {
+    workflowRunId: execution.workflowRunId,
+    taskId: ctx.taskId ?? '',
+    nodeId: execution.workflowNodeId,
+    agentName: execution.agentName,
+  };
+  if (!ctx.deps.ownsCurrentExecution(target, ctx.sessionId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_not_current' } };
+  }
+  if (ctx.taskId !== undefined && !ctx.deps.isTaskAdmissible(ctx.taskId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'task_not_admissible' } };
+  }
+  if (ctx.deps.isSpacePaused(execution.workflowRunId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'space_paused' } };
+  }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_interrupted' } };
+  }
+  return null;
 }
 
 export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
