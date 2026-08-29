@@ -476,7 +476,9 @@ export class SessionManager {
     });
     this.workflowMcpProvisioning.set(sessionId, provisioning);
     await provisioning;
-    this.workflowMcpProvisioned.add(session);
+    if (session.getSessionData().config.mcpServers?.['node-agent']) {
+      this.workflowMcpProvisioned.add(session);
+    }
   }
 
   private async getSessionForMessagePersistence(sessionId: string): Promise<AgentSession | null> {
@@ -598,6 +600,10 @@ export class SessionManager {
     sessionId: string,
     trigger: ArchiveResourcesTrigger
   ): Promise<void> {
+    const inFlight = this.workflowMcpProvisioning.get(sessionId);
+    if (inFlight) {
+      await inFlight.catch(() => {});
+    }
     return this.sessionLifecycle.archiveResources(sessionId, trigger);
   }
 

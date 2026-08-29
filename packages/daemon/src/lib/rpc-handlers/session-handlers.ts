@@ -578,7 +578,7 @@ export function setupSessionHandlers(
   messageHub.onRequest('client.interrupt', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
