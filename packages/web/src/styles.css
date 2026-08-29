@@ -101,6 +101,7 @@
 
     --line: #2a2a30;
     --line-strong: #3a3a42;
+    --scrollbar-thumb: #3a3a42;
 
     --fill-soft: rgb(255 255 255 / 0.045);
     --fill: rgb(255 255 255 / 0.1);
@@ -199,6 +200,7 @@
 
     --line: #e4e4e7;
     --line-strong: #d4d4d8;
+    --scrollbar-thumb: #b4b4bc;
 
     --fill-soft: rgb(0 0 0 / 0.04);
     --fill: rgb(0 0 0 / 0.08);
@@ -498,23 +500,23 @@ html {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--line-strong);
+  background: var(--scrollbar-thumb);
 }
 
 /* Firefox scrollbar */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .scrollbar-dark {
   scrollbar-gutter: stable;
-  scrollbar-color: var(--line) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .scrollbar-dark::-webkit-scrollbar {
@@ -527,14 +529,14 @@ html {
 }
 
 .scrollbar-dark::-webkit-scrollbar-thumb {
-  background-color: var(--line);
+  background-color: var(--scrollbar-thumb);
   background-clip: content-box;
   border: 2px solid transparent;
   border-radius: 999px;
 }
 
 .scrollbar-dark::-webkit-scrollbar-thumb:hover {
-  background-color: var(--line-strong);
+  background-color: var(--scrollbar-thumb);
 }
 
 /* Prose styles for markdown — colors come from the per-theme Layer-1 vars.

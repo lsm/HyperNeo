@@ -14,7 +14,7 @@ const questionColors = {
     border: 'border-cat-rose/40',
     text: 'text-cat-rose',
     iconColor: 'text-rose-400',
-    selectedBg: 'bg-cat-rose/60 border-cat-rose text-cat-rose',
+    selectedBg: 'bg-cat-rose/15 border-cat-rose/60 text-cat-rose',
     unselectedBg: 'bg-surface-raised/60',
     unselectedText: 'text-fg-soft',
   },

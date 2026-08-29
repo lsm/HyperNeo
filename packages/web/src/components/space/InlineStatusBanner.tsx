@@ -55,12 +55,12 @@ const ACTION_VARIANT_CLASSES: Record<
     gray: 'bg-fill-strong text-fg-soft hover:bg-line-strong',
   },
   danger: {
-    amber: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
-    blue: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
-    green: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
-    purple: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
-    red: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
-    gray: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
+    amber: 'bg-danger/15 text-danger-soft border border-danger/40 hover:bg-danger/25',
+    blue: 'bg-danger/15 text-danger-soft border border-danger/40 hover:bg-danger/25',
+    green: 'bg-danger/15 text-danger-soft border border-danger/40 hover:bg-danger/25',
+    purple: 'bg-danger/15 text-danger-soft border border-danger/40 hover:bg-danger/25',
+    red: 'bg-danger/15 text-danger-soft border border-danger/40 hover:bg-danger/25',
+    gray: 'bg-danger/15 text-danger-soft border border-danger/40 hover:bg-danger/25',
   },
 };
 

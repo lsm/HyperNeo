@@ -101,7 +101,7 @@ export function TodoViewer({ todos, className }: TodoViewerProps) {
 
               <div class="flex-shrink-0">
                 {todo.status === 'completed' && (
-                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/30 text-success">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/30 text-success-soft">
                     Done
                   </span>
                 )}

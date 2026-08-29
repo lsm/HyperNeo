@@ -49,7 +49,7 @@ const SETTINGS_SECTIONS: Array<{
     id: 'app-mcp-servers',
     label: 'MCP Servers',
     icon: 'server',
-    accent: 'text-violet-300 bg-cat-violet/15',
+    accent: 'text-cat-violet bg-cat-violet/15',
   },
   { id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-success-soft bg-success/15' },
   { id: 'models', label: 'Models', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },

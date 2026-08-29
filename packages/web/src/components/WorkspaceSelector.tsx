@@ -230,14 +230,14 @@ export function WorkspaceSelector({
                   onClick={() => setWorktreeMode('worktree')}
                   class={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
                     worktreeMode === 'worktree'
-                      ? 'bg-success/40 text-success-soft'
+                      ? 'bg-success/15 text-success-soft'
                       : 'bg-surface text-fg-muted hover:text-fg-soft'
                   }`}
                 >
                   Worktree
                   <span
                     class={`block text-[10px] font-normal mt-0.5 ${
-                      worktreeMode === 'worktree' ? 'text-success/70' : 'text-fg-faint'
+                      worktreeMode === 'worktree' ? 'text-success-soft' : 'text-fg-faint'
                     }`}
                   >
                     Isolated branch (safe)
@@ -248,14 +248,14 @@ export function WorkspaceSelector({
                   onClick={() => setWorktreeMode('direct')}
                   class={`flex-1 px-3 py-2 text-xs font-medium transition-colors border-l border-line-strong ${
                     worktreeMode === 'direct'
-                      ? 'bg-warning/30 text-warning'
+                      ? 'bg-warning/15 text-warning'
                       : 'bg-surface text-fg-muted hover:text-fg-soft'
                   }`}
                 >
                   Direct
                   <span
                     class={`block text-[10px] font-normal mt-0.5 ${
-                      worktreeMode === 'direct' ? 'text-warning/70' : 'text-fg-faint'
+                      worktreeMode === 'direct' ? 'text-warning-soft' : 'text-fg-faint'
                     }`}
                   >
                     Edit directly (fast)
