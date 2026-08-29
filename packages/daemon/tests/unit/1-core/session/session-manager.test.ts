@@ -243,7 +243,6 @@ describe('SessionManager', () => {
 
       expect(result).not.toBeNull();
     });
-
   });
 
   describe('getSessionAsync', () => {
