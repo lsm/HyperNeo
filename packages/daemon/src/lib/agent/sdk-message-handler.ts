@@ -1909,11 +1909,13 @@ export class SDKMessageHandler {
     }
     const manualBoundary =
       (message as SDKCompactBoundaryMessage).compact_metadata?.trigger === 'manual';
-    const acknowledgesInternalCompaction =
-      manualBoundary && this.ctx.messageQueue.hasCompactionsAwaitingBoundary();
-    if (acknowledgesInternalCompaction) {
-      this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
-      this.ctx.messageQueue.armInternalCompactionResultAttribution();
+    if (manualBoundary && this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) {
+      if (this.ctx.messageQueue.hasPendingUserCompactBoundary()) {
+        this.ctx.messageQueue.consumePendingUserCompactBoundary();
+      } else {
+        this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+        this.ctx.messageQueue.armInternalCompactionResultAttribution();
+      }
     }
     this.ctx.messageQueue.noteBoundaryCompleted();
     const boundaryInfo = contextTracker.getContextInfo();

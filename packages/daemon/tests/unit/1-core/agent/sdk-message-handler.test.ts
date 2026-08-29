@@ -106,6 +106,8 @@ describe('SDKMessageHandler', () => {
   let acknowledgeCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
   let armInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
   let consumeInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
+  let hasPendingUserCompactBoundarySpy: ReturnType<typeof mock>;
+  let consumePendingUserCompactBoundarySpy: ReturnType<typeof mock>;
   let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
   let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
@@ -219,6 +221,8 @@ describe('SDKMessageHandler', () => {
     acknowledgeCompactionsAwaitingBoundarySpy = mock(() => {});
     armInternalCompactionResultAttributionSpy = mock(() => {});
     consumeInternalCompactionResultAttributionSpy = mock(() => false);
+    hasPendingUserCompactBoundarySpy = mock(() => false);
+    consumePendingUserCompactBoundarySpy = mock(() => {});
     removePendingInternalCompactionsSpy = mock(() => 0);
     clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
@@ -242,6 +246,8 @@ describe('SDKMessageHandler', () => {
       acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
       armInternalCompactionResultAttribution: armInternalCompactionResultAttributionSpy,
       consumeInternalCompactionResultAttribution: consumeInternalCompactionResultAttributionSpy,
+      hasPendingUserCompactBoundary: hasPendingUserCompactBoundarySpy,
+      consumePendingUserCompactBoundary: consumePendingUserCompactBoundarySpy,
       removePendingInternalCompactions: removePendingInternalCompactionsSpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
       noteBoundaryCompleted: mock(() => {}),
@@ -3928,6 +3934,27 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(message);
 
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+      expect(armInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
+    });
+
+    it('treats a user /compact boundary as the user command, not the daemon compaction', async () => {
+      mockContext.queryObject = null;
+      hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+      hasPendingUserCompactBoundarySpy.mockImplementation(() => true);
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: {
+          trigger: 'manual',
+          pre_tokens: 50000,
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(consumePendingUserCompactBoundarySpy).toHaveBeenCalledTimes(1);
       expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
       expect(armInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
     });

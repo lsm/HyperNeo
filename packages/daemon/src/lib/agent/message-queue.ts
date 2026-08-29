@@ -222,6 +222,22 @@ export class MessageQueue {
     return armed;
   }
 
+  hasPendingUserCompactBoundary(): boolean {
+    for (const content of this.recentSentPrompts.values()) {
+      if (typeof content === 'string' && content === '/compact') return true;
+    }
+    return false;
+  }
+
+  consumePendingUserCompactBoundary(): void {
+    for (const [messageId, content] of this.recentSentPrompts) {
+      if (typeof content === 'string' && content === '/compact') {
+        this.recentSentPrompts.delete(messageId);
+        return;
+      }
+    }
+  }
+
   removePendingInternalCompactions(): number {
     return this.cancelInternalCompactionEntries(false, false);
   }
