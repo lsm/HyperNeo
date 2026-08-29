@@ -1546,17 +1546,23 @@ export class AgentSession
     );
   }
 
-  async reevaluateContextBudgetAfterModelSwitch(): Promise<void> {
+  async reevaluateContextBudgetAfterModelSwitch(opts?: {
+    queueClearEpochAtStart?: number;
+    userInterruptEpochAtStart?: number;
+  }): Promise<void> {
     this.messageQueue.holdInternalCompactionDelivery();
-    const queueClearEpochAtStart = this.messageQueue.getClearEpoch();
-    const userInterruptEpochAtStart = this.messageQueue.getUserInterruptEpoch();
+    const queueClearEpochAtStart =
+      opts?.queueClearEpochAtStart ?? this.messageQueue.getClearEpoch();
+    const userInterruptEpochAtStart =
+      opts?.userInterruptEpochAtStart ?? this.messageQueue.getUserInterruptEpoch();
     const decision = this.contextBudgetReevaluationQueue.then(async () => {
       const trackerInfo = this.contextTracker.getContextInfo();
       if (!trackerInfo || trackerInfo.totalUsed <= 0) return null;
       return runContextBudgetReevaluation({
         session: this.session,
         trackerInfo,
-        resolveModelInfo: () => this.resolveSessionModelInfoWithRetry(),
+        resolveModelInfo: () =>
+          this.resolveSessionModelInfoWithRetry(queueClearEpochAtStart, userInterruptEpochAtStart),
         limitRecoveryPending: this.isLimitRecoveryPending(),
         contextTracker: this.contextTracker,
         messageQueue: this.messageQueue,
@@ -1584,7 +1590,10 @@ export class AgentSession
     await reevaluation;
   }
 
-  private async resolveSessionModelInfoWithRetry(): Promise<ModelInfo | null> {
+  private async resolveSessionModelInfoWithRetry(
+    originQueueClearEpoch: number,
+    originUserInterruptEpoch: number
+  ): Promise<ModelInfo | null> {
     const attemptPromise = this.resolveSessionModelInfoWithDelayedRetry();
     let timedOut = false;
     const bounded = await Promise.race([
@@ -1603,7 +1612,10 @@ export class AgentSession
       void attemptPromise
         .then((lateModelInfo) => {
           if (lateModelInfo) {
-            void this.reevaluateContextBudgetAfterModelSwitch();
+            void this.reevaluateContextBudgetAfterModelSwitch({
+              queueClearEpochAtStart: originQueueClearEpoch,
+              userInterruptEpochAtStart: originUserInterruptEpoch,
+            });
           }
         })
         .catch(() => {});
