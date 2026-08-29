@@ -312,7 +312,11 @@ fine.
 
 `spawnPostApprovalSubSession` (:4827): slot match → live-reuse arm (terminal
 gate, run-ownership guard, workspace migration with capture/restore
-compensation, inject) vs fresh arm (model-pool reservation with release
+compensation, inject) vs fresh arm (TASK-OWNERSHIP RE-SNAPSHOT: re-read the
+task and reject a changed `workflowRunId` (:4923–4927) BEFORE workspace
+resolution, pool reservation, or any creation side effect — pin in TAM-PF
+that it precedes all creation effects; omitting it spawns a worker from a
+stale task/workflow pairing — then model-pool reservation with release
 compensation, init + MCP merge, `createSubSession`, attach, inject, activate
 reservation). Fit: strong `stagedRun`; third instance of the reuse-vs-fresh
 shape (after `spawn-flow.ts` and cluster 4). **Outcome contract (P46
@@ -461,11 +465,11 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-PC | Pins for `restorePostApprovalWorkerSession`: refusal rows (missing task, detached task, task `cancelled`/`archived`, run `cancelled`, missing space), cooldown THROW outcome + pre-restore ordering, no-completion-callback, pre-stream registration + sanitizer ordering, cached-session ownership (register/compensate only when this operation created the session), concurrent-restore in-lock re-gather | test-only | 0 | ≲90 | — |
 | TAM-PD | Pins for `rehydrateSubSession` restricted to SURVIVING behavior: refusal-gate ordering (archived row BEFORE the repair, which is unconditional today), `done` admissibility, multi-task owner-resolution identity row, system-prompt-only overlay, current workspace-fallback characterization, hooks + sanitizer pre-stream ordering — the fenced-repair and `resolveTaskWorkspace` routing land with TAM-D1, never here | test-only | 0 | ≲100 | — |
 | TAM-PE | Pins for the complete injection operation: origin-sensitive done admission (done + system rejected, done + human admissible) in BOTH pre-lock and post-lock predicates, outer admissions + post-lock terminal recheck, cancellation passthrough, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
-| TAM-PF | Pins for `spawnPostApprovalSubSession` restricted to SURVIVING current behavior: reuse/fresh arms, cold-cache reuse via the nested create result, member-space self-heal hook installation — the terminal-recheck/skip/race contract lands with TAM-F1's protocol, never here | test-only | 0 | ≲90 | — |
+| TAM-PF | Pins for `spawnPostApprovalSubSession` restricted to SURVIVING current behavior: reuse/fresh arms, fresh-arm task-ownership re-snapshot preceding all creation effects (:4923–4927), cold-cache reuse via the nested create result, member-space self-heal hook installation — the terminal-recheck/skip/race contract lands with TAM-F1's protocol, never here | test-only | 0 | ≲90 | — |
 | TAM-PG | Pins for `deliverSpaceAgentPendingRow` restricted to SURVIVING current outcomes: settlement/error behavior AS IT BEHAVES TODAY, injector-rejection locality (later rows still delivered), near-expiry deferral cases — the status-safe race contract CANNOT land here (the primitive arrives with TAM-G) | test-only | 0 | ≲60 | — |
 | TAM-PS | Pins for `mcpSelfHeal`: admissions, displaced-session adoption, adoption-before-restart and heal ordering | test-only | 0 | ≲80 | — |
 | TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin) | build | ≲250 | ≲250 | TAM-PB |
-| TAM-B3 | Compose the B1 create stage group into the spawn flow's `createSpawnedSession` dependency directly (spawn-flow stage-list edit; the dep keeps its interface) — LANDS BEFORE TAM-B2 so no intermediate PR leaves every spawn nesting the B1 runner via the still-imperative `createSubSession` | wire | ≲60 | ≲80 | TAM-B1 |
+| TAM-B3 | Split the spawn flow's `createSpawnedSession` dependency (a single `Promise<string>` seam, spawn-flow.ts :281) into preparation inputs + the create stage group, and compose those stages into the owning stage list — the interface CHANGE is the point: with the monolithic seam unchanged, B3 could only keep the imperative call or nest the B1 runner after B2. LANDS BEFORE TAM-B2 so no intermediate PR leaves every spawn nesting the B1 runner via the still-imperative `createSubSession` | wire | ≲90 | ≲90 | TAM-B1 |
 | TAM-B2 | Delegate the `createSubSession` method body to the B1 pipeline (the last caller-side transition); the B1 create STAGE GROUP and its created/reused outcome are EXPORTED for direct composition (no runner nesting); the public `Promise<string>` return and both in-file caller signatures stay | wire | ≲70 | ≲60 | TAM-B1, TAM-B3 |
 | TAM-C1 | `restore-post-approval-worker` stagedRun, unwired (pre-stream registration boundary) | build | ≲180 | ≲150 | TAM-PC |
 | TAM-C2 | Wire `restorePostApprovalWorkerSession` | wire | ≲40 | ≲50 | TAM-C1 |
