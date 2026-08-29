@@ -594,6 +594,42 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(events).toHaveLength(2);
   });
 
+  test('audits read actions dispatched through the server', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    await dispatch(server, { name: 'list_actions' });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ toolName: 'list_actions', spaceId: SPACE_ID });
+  });
+
+  test('applies rate admission before foreign-target validation', async () => {
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        taskRepo: {
+          getTask: (taskId: string) =>
+            taskId === 'foreign-1' ? { id: taskId, spaceId: 'other-space' } : null,
+        },
+      } as unknown as SpaceAgentToolsConfig,
+      dispatchDeps: { isWithinRateBudget: () => false },
+    });
+    const body = (await dispatch(server, {
+      name: 'update_task',
+      params: { task_id: 'foreign-1', status: 'open' },
+    })) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: 'action_denied', reason: 'rate_limited' });
+  });
+
   test('denies rate-limited dispatches through the configured budget', async () => {
     const server = makeServer({ dispatchDeps: { isWithinRateBudget: () => false } });
     expect(await dispatch(server, { name: 'list_actions' })).toMatchObject({

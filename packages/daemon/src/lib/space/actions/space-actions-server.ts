@@ -213,6 +213,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
       spaceConfig?.auditLogRepo,
     getSpaceAutonomyLevel:
       config.dispatchDeps?.getSpaceAutonomyLevel ?? spaceConfig?.getSpaceAutonomyLevel,
+    auditReads: config.dispatchDeps?.auditReads ?? true,
     resolveTaskId:
       config.dispatchDeps?.resolveTaskId ??
       (taskRepo

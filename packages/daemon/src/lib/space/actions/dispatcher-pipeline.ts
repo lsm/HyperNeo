@@ -65,6 +65,7 @@ export interface DispatchActionDeps {
     spaceId: string,
     action?: RegisteredAction
   ) => string | undefined | Promise<string | undefined>;
+  auditReads?: boolean;
 }
 
 export interface DispatchActionCtx extends DispatchActionInput {
@@ -170,12 +171,6 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
 
 export async function resolveTargets(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
   if (ctx.outcome) return ctx;
-  if (ctx.deps.validateTargets) {
-    const message = await ctx.deps.validateTargets(ctx.parsedParams, ctx.spaceId, ctx.action);
-    if (message) {
-      return { ...ctx, outcome: deniedOutcome('invalid_params', message) };
-    }
-  }
   const action = ctx.action!;
   const params = (ctx.parsedParams ?? null) as Record<string, unknown> | null;
   const contextualTaskId = ctx.contextualTaskId;
@@ -334,7 +329,13 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       };
     }
   }
-  if (ctx.isMutating && ctx.deps.auditLogRepo) {
+  if (ctx.deps.validateTargets) {
+    const message = await ctx.deps.validateTargets(ctx.parsedParams, ctx.spaceId, ctx.action);
+    if (message) {
+      return { ...ctx, outcome: deniedOutcome('invalid_params', message) };
+    }
+  }
+  if (ctx.deps.auditLogRepo && (ctx.isMutating || ctx.deps.auditReads)) {
     try {
       const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
       for (const key of action.auditRedactKeys ?? []) {
