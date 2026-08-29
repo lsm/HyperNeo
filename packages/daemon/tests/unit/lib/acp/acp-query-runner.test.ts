@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { z } from 'zod';
 import type {
   AcpConfigOption,
   MessageContent,
@@ -11,35 +10,36 @@ import type {
   Session,
 } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { Database } from '../../../../src/storage/database';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { Logger } from '../../../../src/lib/logger';
-import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
-import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
-import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
-import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
+import { z } from 'zod';
 import type { AcpClient, AcpClientOptions } from '../../../../src/lib/acp/acp-client';
-import { AcpQueryAdapter } from '../../../../src/lib/acp/acp-query-adapter';
 import { getAcpCommandIdentityDigest } from '../../../../src/lib/acp/acp-command';
+import { AcpQueryAdapter } from '../../../../src/lib/acp/acp-query-adapter';
 import {
   AcpQueryRunner,
   convertMcpServersForAcp,
   parseAcpCommand,
 } from '../../../../src/lib/acp/acp-query-runner';
-import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { readFileWithinWorkspace } from '../../../../src/lib/acp/acp-safe-fs';
+import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
+import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
+import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
+import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import type { ErrorManager } from '../../../../src/lib/error-manager';
+import type { Logger } from '../../../../src/lib/logger';
 import {
   clearModelsCache,
   getAvailableModels,
   getModelsCache,
   setModelsCache,
 } from '../../../../src/lib/model-service';
-import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { providerEnvCoordinator } from '../../../../src/lib/providers/provider-env-enrollment';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import type { Database } from '../../../../src/storage/database';
 
 function createMockClient() {
   return {
@@ -923,8 +923,8 @@ describe('AcpQueryRunner', () => {
       const { ctx } = createRunnerFixture({ client, queueSize: 1 });
       const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
 
-      const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
       try {
         await runner.start();
         for (let i = 0; i < 100 && !ctx.startupTimeoutTimer; i++) {
@@ -944,8 +944,9 @@ describe('AcpQueryRunner', () => {
         releaseInitialize?.();
         await ctx.queryPromise;
       } finally {
-        if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
       }
     }, 1000);
 
@@ -1147,8 +1148,8 @@ describe('AcpQueryRunner', () => {
       const { ctx } = createRunnerFixture({ client, queueSize: 1 });
       const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
 
-      const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
       try {
         await runner.start();
         for (let i = 0; i < 100 && !ctx.startupTimeoutTimer; i++) {
@@ -1169,8 +1170,9 @@ describe('AcpQueryRunner', () => {
         releaseInitialize?.();
         await ctx.queryPromise;
       } finally {
-        if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
       }
     }, 1000);
   });
@@ -2205,8 +2207,8 @@ describe('AcpQueryRunner', () => {
     };
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
     try {
       await runner.start();
       await ctx.queryPromise;
@@ -2216,8 +2218,9 @@ describe('AcpQueryRunner', () => {
       expect(secondClient.sendPrompt).toHaveBeenCalled();
       expect(messageQueue.onMessageEnqueued).toBe(previousOnMessageEnqueued);
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
     }
   }, 1000);
 
@@ -2236,8 +2239,8 @@ describe('AcpQueryRunner', () => {
     const { ctx } = createRunnerFixture({ client: firstClient, queueSize: 1 });
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
     try {
       await runner.start();
       await ctx.queryPromise;
@@ -2245,8 +2248,9 @@ describe('AcpQueryRunner', () => {
       expect(firstClient.close).toHaveBeenCalled();
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
     }
   }, 1000);
 
@@ -2279,8 +2283,8 @@ describe('AcpQueryRunner', () => {
     });
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
     try {
       await runner.start();
       await ctx.queryPromise;
@@ -2294,8 +2298,9 @@ describe('AcpQueryRunner', () => {
         acpSessionId: undefined,
       });
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
     }
   }, 1000);
 
@@ -2319,8 +2324,8 @@ describe('AcpQueryRunner', () => {
     });
     const retryRunner = new AcpQueryRunner(ctx, createClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
     try {
       await retryRunner.start();
       await ctx.queryPromise;
@@ -2332,8 +2337,9 @@ describe('AcpQueryRunner', () => {
       ]);
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
     }
   }, 1000);
 
@@ -2341,13 +2347,14 @@ describe('AcpQueryRunner', () => {
     let previousStartupTimeout: string | undefined;
 
     beforeEach(() => {
-      previousStartupTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      previousStartupTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
     });
 
     afterEach(() => {
-      if (previousStartupTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousStartupTimeout;
+      if (previousStartupTimeout === undefined)
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousStartupTimeout;
     });
 
     async function waitFor(ready: () => boolean, spins = 100): Promise<void> {
@@ -2394,8 +2401,8 @@ describe('AcpQueryRunner', () => {
         ['not-a-number', 15000],
       ];
       for (const [envValue, expectedMs] of cases) {
-        if (envValue === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = envValue;
+        if (envValue === undefined) delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = envValue;
 
         const client = createMockClient();
         const releaseInitialize = holdInitialize(client);
@@ -2412,7 +2419,7 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('re-arms a fresh watchdog at prompt-send after the queued-kickoff arm', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '5000';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '5000';
       const client = createMockClient();
       const releaseInitialize = holdInitialize(client);
       const releasePrompt = holdPrompt(client);
@@ -2441,7 +2448,7 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('disarms the watchdog when the first ACP message arrives', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '200';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '200';
       const client = createMockClient();
       let releaseFirstUpdate: (() => void) | undefined;
       client.sendPrompt = mock(async function* () {
@@ -2481,7 +2488,7 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('timeout invokes the teardown sequence in order and surfaces the startup-timeout abort', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '50';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '50';
       const firstClient = createMockClient();
       firstClient.canCloseSession.mockImplementation(() => true);
       const releasePrompt = holdPrompt(firstClient);
@@ -2501,7 +2508,7 @@ describe('AcpQueryRunner', () => {
       });
       const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
       const originalAdapterClose = AcpQueryAdapter.prototype.close;
-      AcpQueryAdapter.prototype.close = function () {
+      AcpQueryAdapter.prototype.close = () => {
         teardownOrder.push('queryObject.close');
       };
 
@@ -2534,7 +2541,7 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('skips session/close on timeout when the agent cannot close sessions', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '50';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '50';
       const firstClient = createMockClient();
       holdPrompt(firstClient);
       const secondClient = createMockClient();
@@ -2580,7 +2587,7 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('retries a startup timeout once, then surfaces the failed startup', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
       const firstClient = createMockClient();
       holdPrompt(firstClient);
       const secondClient = createMockClient();
@@ -2602,13 +2609,13 @@ describe('AcpQueryRunner', () => {
         'timeout',
         expect.stringContaining('The ACP agent failed to start'),
         expect.any(Object),
-        expect.objectContaining({ providerId: 'acp', startupTimeoutMs: 20 }),
+        expect.objectContaining({ providerId: 'acp', inactivityBackstopMs: 20 }),
         expect.any(Function)
       );
     }, 5000);
 
     test('clears ACP session state when a startup timeout hits before any message', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
       const firstClient = createMockClient();
       holdPrompt(firstClient);
       const secondClient = createMockClient();
@@ -2678,6 +2685,163 @@ describe('AcpQueryRunner', () => {
       for (const call of updateSession.mock.calls) {
         expect(call[1]).not.toMatchObject({ acpSessionId: undefined });
       }
+    }, 5000);
+
+    test('keeps a slow live agent alive: the nudge-only watch never kills', async () => {
+      const previousOldVar = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      try {
+        const client = createMockClient();
+        holdPrompt(client);
+        const { runner, ctx } = createRunnerFixture({ client });
+
+        await runner.start();
+        await waitFor(() => ctx.startupTimeoutTimer !== null, 500);
+        expect(ctx.startupTimeoutTimer).not.toBeNull();
+        expect(timerDelayMs(ctx.startupTimeoutTimer)).toBe(15000);
+
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(ctx.queryAbortController?.signal.aborted).toBe(false);
+        expect(client.cancel).not.toHaveBeenCalled();
+        expect(client.close).not.toHaveBeenCalled();
+        expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+        ctx.queryAbortController?.abort();
+        client.close();
+        await ctx.queryPromise;
+      } finally {
+        if (previousOldVar === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousOldVar;
+      }
+    }, 5000);
+
+    test('retries immediately when the agent stream ends before any agent message', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+      });
+      firstClient.getLastPromptStopReason = mock(() => 'refusal');
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('retries when the abortable query stream ends without delivering any message', async () => {
+      const firstClient = createMockClient();
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      const originalIterator = AcpQueryAdapter.prototype[Symbol.asyncIterator];
+      AcpQueryAdapter.prototype[Symbol.asyncIterator] = async function* () {};
+
+      try {
+        await runner.start();
+        await ctx.queryPromise;
+
+        expect(createClient).toHaveBeenCalledTimes(2);
+        expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+          { type: 'text', text: 'hello' },
+        ]);
+        expect(ctx.errorManager.handleError).toHaveBeenCalledTimes(1);
+      } finally {
+        AcpQueryAdapter.prototype[Symbol.asyncIterator] = originalIterator;
+      }
+    }, 5000);
+
+    test('kills and retries immediately when the agent process exits pre-first-message', async () => {
+      const firstClient = createMockClient();
+      holdPrompt(firstClient);
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
+
+      await runner.start();
+      await waitFor(() => firstClient.sendPrompt.mock.calls.length > 0, 500);
+      constructorOptions[0].onExit?.(1, null);
+
+      await ctx.queryPromise;
+
+      expect(
+        loggerError.mock.calls.some(([message]) =>
+          String(message).includes(
+            'ACP startup failure: agent process exited (code=1, signal=null)'
+          )
+        )
+      ).toBe(true);
+      expect(firstClient.cancel).toHaveBeenCalled();
+      expect(firstClient.close).toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+    }, 5000);
+
+    test('a process exit after the first agent message does not trigger the startup kill', async () => {
+      const client = createMockClient();
+      let releasePrompt: (() => void) | undefined;
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        yield {
+          sessionId: 'acp-session-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'working' },
+          },
+        };
+        await new Promise<void>((resolve) => {
+          releasePrompt = resolve;
+        });
+      });
+      const { runner, ctx, constructorOptions } = createRunnerFixture({ client });
+
+      await runner.start();
+      await waitFor(
+        () => client.sendPrompt.mock.calls.length > 0 && ctx.startupTimeoutTimer === null,
+        500
+      );
+      constructorOptions[0].onExit?.(0, null);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(ctx.queryAbortController?.signal.aborted).toBe(false);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+      releasePrompt?.();
+      await ctx.queryPromise;
+      expect(client.cancel).not.toHaveBeenCalled();
     }, 5000);
   });
 
