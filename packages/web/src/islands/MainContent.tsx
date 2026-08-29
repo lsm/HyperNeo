@@ -28,6 +28,11 @@ const SessionsPage = lazy(() =>
 const GeneralSettings = lazy(() =>
   import('../components/settings/GeneralSettings.tsx').then((m) => ({ default: m.GeneralSettings }))
 );
+const AppearanceSettings = lazy(() =>
+  import('../components/settings/AppearanceSettings.tsx').then((m) => ({
+    default: m.AppearanceSettings,
+  }))
+);
 const ProvidersSettings = lazy(() =>
   import('../components/settings/ProvidersSettings.tsx').then((m) => ({
     default: m.ProvidersSettings,
@@ -63,7 +68,7 @@ const ShortcutsSettings = lazy(() =>
 
 const lazyFallback = (
   <div class="flex-1 flex items-center justify-center bg-app-content">
-    <div class="text-xs text-gray-600">Loading...</div>
+    <div class="text-xs text-fg-faint">Loading...</div>
   </div>
 );
 
@@ -110,11 +115,11 @@ function SpacesHome() {
             <div class="md:hidden">
               <MobileMenuButton />
             </div>
-            <h1 class="text-sm font-semibold text-gray-100 flex-1">Spaces</h1>
+            <h1 class="text-sm font-semibold text-fg flex-1">Spaces</h1>
             <button
               type="button"
               onClick={() => setCreateSpaceOpen(true)}
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors flex-shrink-0"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-sm font-medium text-accent-fg transition-colors flex-shrink-0"
             >
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -143,23 +148,23 @@ function SpacesHome() {
                   d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
                 />
               </svg>
-              <p class="text-sm font-medium text-gray-300">No spaces yet</p>
-              <p class="mt-1.5 text-xs text-gray-500 max-w-xs leading-relaxed">
+              <p class="text-sm font-medium text-fg-soft">No spaces yet</p>
+              <p class="mt-1.5 text-xs text-fg-faint max-w-xs leading-relaxed">
                 Create a Space to coordinate agents around a project goal.
               </p>
               <button
                 type="button"
                 onClick={() => setCreateSpaceOpen(true)}
-                class="mt-6 flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm font-medium text-white transition-colors"
+                class="mt-6 flex items-center gap-2 px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-sm font-medium text-accent-fg transition-colors"
               >
                 Create your first Space
               </button>
             </div>
           ) : !hasContent ? (
             <div class="flex flex-col gap-6">
-              <div class="flex items-center gap-2.5 py-3 text-sm text-gray-500">
+              <div class="flex items-center gap-2.5 py-3 text-sm text-fg-faint">
                 <svg
-                  class="w-4 h-4 text-green-500 flex-shrink-0"
+                  class="w-4 h-4 text-success flex-shrink-0"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -179,10 +184,10 @@ function SpacesHome() {
                     key={space.id}
                     type="button"
                     onClick={() => navigateToSpace(space.slug)}
-                    class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-white/5 transition-colors group"
+                    class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-fill-soft transition-colors group"
                   >
                     <svg
-                      class="w-4 h-4 text-gray-600 flex-shrink-0"
+                      class="w-4 h-4 text-fg-faint flex-shrink-0"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -194,11 +199,11 @@ function SpacesHome() {
                         d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
                       />
                     </svg>
-                    <span class="text-sm text-gray-400 group-hover:text-gray-100 transition-colors truncate flex-1">
+                    <span class="text-sm text-fg-muted group-hover:text-fg transition-colors truncate flex-1">
                       {space.name}
                     </span>
                     <svg
-                      class="w-3.5 h-3.5 text-gray-700 group-hover:text-gray-500 flex-shrink-0 transition-colors"
+                      class="w-3.5 h-3.5 text-gray-700 group-hover:text-fg-faint flex-shrink-0 transition-colors"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -219,11 +224,11 @@ function SpacesHome() {
               {actionItems.length > 0 && (
                 <div>
                   <div class="flex items-center gap-2 mb-2 px-1">
-                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
-                    <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                    <span class="w-1.5 h-1.5 rounded-full bg-warning flex-shrink-0" />
+                    <span class="text-xs font-semibold text-fg-muted uppercase tracking-wide">
                       Needs Attention
                     </span>
-                    <span class="ml-auto text-xs font-medium tabular-nums text-amber-400">
+                    <span class="ml-auto text-xs font-medium tabular-nums text-warning">
                       {actionItems.length}
                     </span>
                   </div>
@@ -233,17 +238,17 @@ function SpacesHome() {
                         key={task.id}
                         type="button"
                         onClick={() => navigateToSpaceTask(space.slug, task.id)}
-                        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-white/5 transition-colors group"
+                        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-fill-soft transition-colors group"
                       >
                         <div
-                          class={`w-2 h-2 rounded-full flex-shrink-0 ${task.status === 'review' ? 'bg-purple-500' : 'bg-amber-500'}`}
+                          class={`w-2 h-2 rounded-full flex-shrink-0 ${task.status === 'review' ? 'bg-cat-purple' : 'bg-warning'}`}
                         />
                         <div class="min-w-0 flex-1">
-                          <div class="text-sm text-gray-200 truncate">{task.title}</div>
-                          <div class="text-xs text-gray-600 truncate mt-0.5">{space.name}</div>
+                          <div class="text-sm text-fg-soft truncate">{task.title}</div>
+                          <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
                         </div>
                         <span
-                          class={`flex-shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded ${task.status === 'review' ? 'bg-purple-500/20 text-purple-300' : 'bg-amber-500/20 text-amber-300'}`}
+                          class={`flex-shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded ${task.status === 'review' ? 'bg-cat-purple/20 text-cat-purple' : 'bg-warning/20 text-warning'}`}
                         >
                           {TASK_STATUS_LABEL[task.status] ?? task.status}
                         </span>
@@ -256,11 +261,11 @@ function SpacesHome() {
               {activeSessions.length > 0 && (
                 <div>
                   <div class="flex items-center gap-2 mb-2 px-1">
-                    <span class="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
-                    <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                    <span class="w-1.5 h-1.5 rounded-full bg-success flex-shrink-0" />
+                    <span class="text-xs font-semibold text-fg-muted uppercase tracking-wide">
                       Active Sessions
                     </span>
-                    <span class="ml-auto text-xs font-medium tabular-nums text-green-400">
+                    <span class="ml-auto text-xs font-medium tabular-nums text-success">
                       {activeSessions.length}
                     </span>
                   </div>
@@ -270,12 +275,12 @@ function SpacesHome() {
                         key={session.id}
                         type="button"
                         onClick={() => navigateToSpaceSession(space.slug, session.id)}
-                        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-white/5 transition-colors group"
+                        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-fill-soft transition-colors group"
                       >
-                        <div class="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                        <div class="w-2 h-2 rounded-full bg-success flex-shrink-0" />
                         <div class="min-w-0 flex-1">
-                          <div class="text-sm text-gray-200 truncate">{session.title}</div>
-                          <div class="text-xs text-gray-600 truncate mt-0.5">{space.name}</div>
+                          <div class="text-sm text-fg-soft truncate">{session.title}</div>
+                          <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
                         </div>
                       </button>
                     ))}
@@ -286,11 +291,11 @@ function SpacesHome() {
               {runningItems.length > 0 && (
                 <div>
                   <div class="flex items-center gap-2 mb-2 px-1">
-                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />
-                    <span class="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                    <span class="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
+                    <span class="text-xs font-semibold text-fg-muted uppercase tracking-wide">
                       In Progress
                     </span>
-                    <span class="ml-auto text-xs font-medium tabular-nums text-blue-400">
+                    <span class="ml-auto text-xs font-medium tabular-nums text-accent">
                       {runningItems.length}
                     </span>
                   </div>
@@ -300,14 +305,14 @@ function SpacesHome() {
                         key={task.id}
                         type="button"
                         onClick={() => navigateToSpaceTask(space.slug, task.id)}
-                        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-white/5 transition-colors group"
+                        class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left hover:bg-fill-soft transition-colors group"
                       >
-                        <div class="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+                        <div class="w-2 h-2 rounded-full bg-accent flex-shrink-0" />
                         <div class="min-w-0 flex-1">
-                          <div class="text-sm text-gray-200 truncate">{task.title}</div>
-                          <div class="text-xs text-gray-600 truncate mt-0.5">{space.name}</div>
+                          <div class="text-sm text-fg-soft truncate">{task.title}</div>
+                          <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
                         </div>
-                        <span class="flex-shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">
+                        <span class="flex-shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded bg-accent/20 text-accent-soft">
                           {TASK_STATUS_LABEL[task.status] ?? task.status}
                         </span>
                       </button>
@@ -393,10 +398,7 @@ export default function MainContent() {
           >
             <div class="flex min-w-0 flex-1 items-center gap-3" data-tauri-drag-region>
               <MobileMenuButton />
-              <h2
-                class="min-w-0 truncate text-sm font-semibold text-gray-100"
-                data-tauri-drag-region
-              >
+              <h2 class="min-w-0 truncate text-sm font-semibold text-fg" data-tauri-drag-region>
                 Global Settings
               </h2>
             </div>
@@ -405,6 +407,7 @@ export default function MainContent() {
             <div class="mx-auto w-full max-w-5xl">
               <Suspense fallback={lazyFallback}>
                 {settingsSection === 'general' && <GeneralSettings />}
+                {settingsSection === 'appearance' && <AppearanceSettings />}
                 {settingsSection === 'providers' && <ProvidersSettings />}
                 {settingsSection === 'voice' && <VoiceSettings />}
                 {settingsSection === 'app-mcp-servers' && <AppMcpServersSettings />}

@@ -1,41 +1,9 @@
 @import "tailwindcss";
 
 @theme {
-  --color-dark-950: #0a0a0b;
-  --color-dark-900: #111113;
-  --color-dark-850: #18181b;
-  --color-dark-800: #1f1f23;
-  --color-dark-700: #2a2a30;
-  --color-dark-600: #3a3a42;
+  /* App shell surfaces — values overridden per theme in the Layer-1 blocks */
   --color-app-sidebar: #242123;
   --color-app-content: #151517;
-  --color-dark-850-rgb: 24 24 27;
-  --color-dark-800-rgb: 31 31 35;
-  --color-blue: 59 130 246;
-
-  /* Accent */
-  --color-accent: 99 102 241;
-  --color-accent-hover: 79 70 229;
-
-  /* Surface */
-  --color-surface-0: var(--color-dark-950);
-  --color-surface-1: var(--color-dark-900);
-  --color-surface-2: var(--color-dark-800);
-
-  /* Text scale */
-  --color-text-primary: 243 244 246;
-  --color-text-secondary: 156 163 175;
-  --color-text-muted: 107 114 128;
-
-  /* Border */
-  --color-border-default: 42 42 48;
-  --color-border-subtle: 58 58 66;
-
-  /* Status */
-  --color-status-success: 34 197 94;
-  --color-status-warning: 251 191 36;
-  --color-status-error: 239 68 68;
-  --color-status-info: 99 102 241;
 
   /* Transition durations — registers Tailwind utilities */
   --duration-250: 250ms;
@@ -46,6 +14,251 @@
   --radius-base: 8px;
   --radius-lg: 12px;
   --radius-xl: 20px;
+}
+
+/*
+ * Semantic token namespace (Layer 2). Values reference the per-theme
+ * Layer-1 variables below, so utilities like bg-surface / text-fg-muted /
+ * border-line compile to var(--…) resolved at use-site and re-skin at
+ * runtime when [data-theme] changes on <html>. `inline` is required —
+ * without it the var() reference would resolve at definition site.
+ */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-surface-raised: var(--surface-raised);
+  --color-fg: var(--fg);
+  --color-fg-soft: var(--fg-soft);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-faint: var(--fg-faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fill-soft: var(--fill-soft);
+  --color-fill: var(--fill);
+  --color-fill-strong: var(--fill-strong);
+  --color-scrim: var(--scrim);
+  --color-scrim-soft: var(--scrim-soft);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-cat-indigo: var(--cat-indigo);
+  --color-cat-violet: var(--cat-violet);
+  --color-cat-purple: var(--cat-purple);
+  --color-cat-cyan: var(--cat-cyan);
+  --color-cat-rose: var(--cat-rose);
+  --color-cat-pink: var(--cat-pink);
+  --color-cat-teal: var(--cat-teal);
+}
+
+/* Theme-gated dark variant: `dark:` utilities follow [data-theme] on <html>
+   instead of the OS prefers-color-scheme media query. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * Theme values (Layer 1) — the only block that changes per theme.
+ * Dark values reproduce the app's current rendered look; :root doubles as
+ * the no-attribute fallback so pages without the boot script stay dark.
+ * A new theme is a new [data-theme='…'] block overriding these variables.
+ */
+@layer base {
+  :root,
+  [data-theme="dark"] {
+    color-scheme: dark;
+
+    --bg: #0a0a0b;
+    --surface: #111113;
+    --surface-overlay: #18181b;
+    --surface-raised: #1f1f23;
+
+    --fg: #f3f4f6;
+    --fg-soft: #e5e7eb;
+    --fg-muted: #9ca3af;
+    --fg-faint: #6b7280;
+
+    --line: #2a2a30;
+    --line-strong: #3a3a42;
+
+    --fill-soft: rgb(255 255 255 / 0.045);
+    --fill: rgb(255 255 255 / 0.1);
+    --fill-strong: #2a2a30;
+    --scrim: rgb(0 0 0 / 0.3);
+    --scrim-soft: rgb(0 0 0 / 0.1);
+
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --accent-fg: #ffffff;
+    --accent-soft: #93c5fd;
+
+    --success: #4ade80;
+    --success-soft: #86efac;
+    --warning: #fcd34d;
+    --warning-soft: #fde68a;
+    --danger: #f87171;
+    --danger-soft: #fca5a5;
+    --info: #38bdf8;
+    --info-soft: #bae6fd;
+
+    /* Categorical hues (tool categories, artifact types, charts) */
+    --cat-indigo: #a5b4fc;
+    --cat-violet: #c4b5fd;
+    --cat-purple: #d8b4fe;
+    --cat-cyan: #67e8f9;
+    --cat-rose: #fda4af;
+    --cat-pink: #f9a8d4;
+    --cat-teal: #5eead4;
+
+    --focus-ring: #3b82f6;
+    --glass-bg: rgb(17 17 19 / 0.7);
+    --elevated-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.3);
+    --shimmer-highlight: rgb(255 255 255 / 0.18);
+
+    /* Space glass surfaces */
+    --color-app-content: #151517;
+    --color-app-sidebar: #242123;
+    --glass-line: rgb(255 255 255 / 0.15);
+    --glass-fill: rgb(255 255 255 / 0.07);
+    --glass-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 16px 40px rgb(0 0 0 / 0.18);
+    --flat-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 18px 44px rgb(0 0 0 / 0.24);
+    --glass-accent: #fcd34d;
+    --glass-accent-hover: #fde68a;
+    --glass-accent-fg: #0a0a0b;
+    --glass-accent-shadow: 0 10px 24px rgb(252 211 77 / 0.16);
+    --glass-accent-ring: rgb(253 230 138 / 0.7);
+    --glass-gradient-1: radial-gradient(circle at 8% 0%, rgb(142 79 100 / 0.22), transparent 34%);
+    --glass-gradient-2: radial-gradient(circle at 95% 10%, rgb(42 91 119 / 0.18), transparent 39%);
+    --glass-gradient-3: radial-gradient(circle at 54% 112%, rgb(77 68 151 / 0.22), transparent 49%);
+    --glass-vignette: linear-gradient(180deg, rgb(12 15 22 / 0.02), rgb(8 11 18 / 0.22));
+
+    --prose-fg: #e5e7eb;
+    --prose-heading: #f9fafb;
+    --prose-code-fg: #93c5fd;
+    --prose-link: #3b82f6;
+    --prose-link-hover: #93c5fd;
+    --prose-quote-fg: #d1d5db;
+
+    --hljs-fg: #e6edf3;
+    --hljs-comment: #8b949e;
+    --hljs-keyword: #ff7b72;
+    --hljs-number: #79c0ff;
+    --hljs-string: #a5d6ff;
+    --hljs-title: #d2a8ff;
+    --hljs-type: #ffa657;
+    --hljs-tag: #7ee787;
+    --hljs-regexp: #a5d6ff;
+    --hljs-symbol: #ffa657;
+    --hljs-builtin: #ffa657;
+    --hljs-meta: #79c0ff;
+    --hljs-deletion-fg: #ff7b72;
+    --hljs-deletion-bg: #490202;
+    --hljs-addition-fg: #7ee787;
+    --hljs-addition-bg: #04260f;
+
+    --code-lineno-fg: #6e7681;
+  }
+
+  [data-theme="light"] {
+    color-scheme: light;
+
+    --bg: #e9e9ec;
+    --surface: #f7f7f9;
+    --surface-overlay: #fdfdfd;
+    --surface-raised: #ffffff;
+
+    --fg: #18181b;
+    --fg-soft: #3f3f46;
+    --fg-muted: #52525b;
+    --fg-faint: #71717a;
+
+    --line: #e4e4e7;
+    --line-strong: #d4d4d8;
+
+    --fill-soft: rgb(0 0 0 / 0.04);
+    --fill: rgb(0 0 0 / 0.08);
+    --fill-strong: #e4e4e7;
+    --scrim: rgb(0 0 0 / 0.3);
+    --scrim-soft: rgb(0 0 0 / 0.1);
+
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-fg: #ffffff;
+    --accent-soft: #1d4ed8;
+
+    --success: #16a34a;
+    --success-soft: #15803d;
+    --warning: #d97706;
+    --warning-soft: #b45309;
+    --danger: #dc2626;
+    --danger-soft: #b91c1c;
+    --info: #0284c7;
+    --info-soft: #0369a1;
+
+    /* Categorical hues (tool categories, artifact types, charts) */
+    --cat-indigo: #4338ca;
+    --cat-violet: #6d28d9;
+    --cat-purple: #7e22ce;
+    --cat-cyan: #0e7490;
+    --cat-rose: #be123c;
+    --cat-pink: #be185d;
+    --cat-teal: #0f766e;
+
+    --focus-ring: #2563eb;
+    --glass-bg: rgb(255 255 255 / 0.7);
+    --elevated-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    --shimmer-highlight: rgb(0 0 0 / 0.1);
+
+    /* Space glass surfaces */
+    --color-app-content: #fafafc;
+    --color-app-sidebar: #f0f0f3;
+    --glass-line: rgb(0 0 0 / 0.1);
+    --glass-fill: rgb(255 255 255 / 0.6);
+    --glass-shadow: inset 0 1px 0 rgb(255 255 255 / 0.6), 0 16px 40px rgb(0 0 0 / 0.08);
+    --flat-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 18px 44px rgb(0 0 0 / 0.1);
+    --glass-accent: #f59e0b;
+    --glass-accent-hover: #fbbf24;
+    --glass-accent-fg: #0a0a0b;
+    --glass-accent-shadow: 0 10px 24px rgb(245 158 11 / 0.25);
+    --glass-accent-ring: rgb(245 158 11 / 0.5);
+    --glass-gradient-1: radial-gradient(circle at 8% 0%, rgb(142 79 100 / 0.1), transparent 34%);
+    --glass-gradient-2: radial-gradient(circle at 95% 10%, rgb(42 91 119 / 0.08), transparent 39%);
+    --glass-gradient-3: radial-gradient(circle at 54% 112%, rgb(77 68 151 / 0.1), transparent 49%);
+    --glass-vignette: linear-gradient(180deg, rgb(255 255 255 / 0), rgb(255 255 255 / 0.4));
+
+    --prose-fg: #1f2328;
+    --prose-heading: #1f2328;
+    --prose-code-fg: #0550ae;
+    --prose-link: #0969da;
+    --prose-link-hover: #0550ae;
+    --prose-quote-fg: #59636e;
+
+    --hljs-fg: #24292f;
+    --hljs-comment: #6e7781;
+    --hljs-keyword: #cf222e;
+    --hljs-number: #0550ae;
+    --hljs-string: #0a3069;
+    --hljs-title: #8250df;
+    --hljs-type: #953800;
+    --hljs-tag: #116329;
+    --hljs-regexp: #0a3069;
+    --hljs-symbol: #953800;
+    --hljs-builtin: #953800;
+    --hljs-meta: #0550ae;
+    --hljs-deletion-fg: #82071e;
+    --hljs-deletion-bg: #ffebe9;
+    --hljs-addition-fg: #116329;
+    --hljs-addition-bg: #dafbe1;
+
+    --code-lineno-fg: #8c8c94;
+  }
 }
 
 :root {
@@ -63,13 +276,9 @@
 }
 
 /*
- * NOTE: Global border color removed to allow semantic border colors
- * from design tokens to work properly (tool categories, success/error states, etc.)
- *
- * Components should use borderColors from design-tokens.ts:
- * - borderColors.ui.default ('border-dark-700') for UI elements
- * - borderColors.semantic.* for status colors
- * - borderColors.tool.* for tool category colors
+ * NOTE: No global border color — components use semantic border utilities
+ * (border-line, border-line-strong, border-danger, border-cat-*, etc.)
+ * so every border is theme-aware and intentional.
  */
 
 /* Interactive elements — show pointer cursor */
@@ -89,19 +298,105 @@ button:disabled,
 
 /* Elevated surface — used for primary cards, panels, modals */
 .surface-elevated {
-  background-color: var(--color-dark-850);
-  border: 1px solid var(--color-dark-700);
+  background-color: var(--surface-overlay);
+  border: 1px solid var(--line);
   border-radius: 0.75rem;
-  box-shadow:
-    0 1px 3px 0 rgb(0 0 0 / 0.3),
-    0 1px 2px -1px rgb(0 0 0 / 0.3);
+  box-shadow: var(--elevated-shadow);
 }
 
 /* Inset surface — used for input groups, nested containers */
 .surface-inset {
-  background-color: var(--color-dark-900);
-  border: 1px solid var(--color-dark-700);
+  background-color: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 0.75rem;
+}
+
+/* ─── Space glass workspace ──────────────────────────────────────
+   The visual language of the space pages, driven by the per-theme
+   --glass-* vars above. Replaces the former TS class-string constants
+   from components/space/glass-workspace.tsx. */
+
+.glass-surface {
+  border: 1px solid var(--glass-line);
+  background-color: var(--glass-fill);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.flat-surface {
+  border: 1px solid var(--glass-line);
+  background-color: color-mix(in oklab, var(--surface) 95%, transparent);
+  box-shadow: var(--flat-shadow);
+}
+
+.glass-route-shell {
+  position: relative;
+  isolation: isolate;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--color-app-content);
+}
+
+.glass-route-shell::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: -10;
+  background-image: var(--glass-gradient-1), var(--glass-gradient-2), var(--glass-gradient-3);
+}
+
+.glass-route-shell::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: -10;
+  background-image: var(--glass-vignette);
+}
+
+.glass-content-container {
+  margin-inline: auto;
+  width: 100%;
+  max-width: 72rem;
+  padding: 0.5rem 1rem 2.5rem;
+}
+
+@media (min-width: 640px) {
+  .glass-content-container {
+    padding: 1rem 2rem 2.5rem;
+  }
+}
+
+.glass-primary-button {
+  display: inline-flex;
+  height: 2.5rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  background-color: var(--glass-accent);
+  padding-inline: 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--glass-accent-fg);
+  box-shadow: var(--glass-accent-shadow);
+  transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-primary-button:hover {
+  transform: translateY(-0.125rem);
+  background-color: var(--glass-accent-hover);
+}
+
+.glass-primary-button:focus-visible {
+  outline: none;
+  box-shadow:
+    var(--glass-accent-shadow),
+    0 0 0 2px var(--glass-accent-ring);
 }
 
 /* Glow border — subtle colored border for highlighted cards */
@@ -133,9 +428,8 @@ button:disabled,
 
 html,
 body {
-  background-color: var(--color-dark-950);
-  color: rgb(243 244 246);
-  color-scheme: dark;
+  background-color: var(--bg);
+  color: var(--fg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* Prevent page-level scrolling - only message container should scroll */
@@ -164,39 +458,41 @@ html {
 
 /* Glassmorphism effect */
 .glass {
-  background: rgba(17, 17, 19, 0.7);
+  background: var(--glass-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
 
-/* Custom scrollbar - Dark theme */
+/* Custom scrollbar. NOTE: these rules previously wrapped hex tokens in
+   rgb() (e.g. rgb(var(--color-dark-950))) which is invalid CSS and rendered
+   as transparent/unset — the thumbs below are intentionally made visible. */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgb(var(--color-dark-950));
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgb(var(--color-dark-600));
+  background: var(--line-strong);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--color-dark-600));
+  background: var(--line-strong);
 }
 
 /* Firefox scrollbar */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgb(var(--color-dark-700)) rgb(var(--color-dark-900));
+  scrollbar-color: var(--line-strong) transparent;
 }
 
 .scrollbar-dark {
   scrollbar-gutter: stable;
-  scrollbar-color: rgb(var(--color-dark-700)) transparent;
+  scrollbar-color: var(--line) transparent;
 }
 
 .scrollbar-dark::-webkit-scrollbar {
@@ -209,19 +505,22 @@ html {
 }
 
 .scrollbar-dark::-webkit-scrollbar-thumb {
-  background-color: rgb(var(--color-dark-700));
+  background-color: var(--line);
   background-clip: content-box;
   border: 2px solid transparent;
   border-radius: 999px;
 }
 
 .scrollbar-dark::-webkit-scrollbar-thumb:hover {
-  background-color: rgb(var(--color-dark-600));
+  background-color: var(--line-strong);
 }
 
-/* Prose styles for markdown - Dark theme */
+/* Prose styles for markdown — colors come from the per-theme Layer-1 vars.
+   NOTE: table/pre/hr borders previously used invalid rgb(var(--color-dark-*))
+   forms (hex inside rgb()) and rendered borderless; they are intentionally
+   fixed to var(--line) here. */
 .prose {
-  color: #e5e7eb;
+  color: var(--prose-fg);
   max-width: 100%;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -239,7 +538,7 @@ html {
 .prose h4,
 .prose h5,
 .prose h6 {
-  color: #f9fafb;
+  color: var(--prose-heading);
   font-weight: 600;
   line-height: 1.3;
 }
@@ -263,15 +562,15 @@ html {
 }
 
 .prose strong {
-  color: #f9fafb;
+  color: var(--prose-heading);
   font-weight: 600;
 }
 
 .prose code {
-  color: #93c5fd;
+  color: var(--prose-code-fg);
   font-weight: 500;
   font-size: 0.875em;
-  background: rgb(var(--color-dark-800-rgb));
+  background: var(--surface-raised);
   padding: 0.2em 0.4em;
   border-radius: 0.25rem;
   /* Prevent long inline code from overflowing */
@@ -285,8 +584,8 @@ html {
 }
 
 .prose pre {
-  color: #e5e7eb;
-  background-color: rgb(var(--color-dark-850-rgb));
+  color: var(--prose-fg);
+  background-color: var(--surface-overlay);
   overflow-x: auto;
   font-weight: 400;
   font-size: 0.875em;
@@ -295,7 +594,7 @@ html {
   margin-bottom: 1.7142857em;
   border-radius: 0.5rem;
   padding: 1em 1.2em;
-  border: 1px solid rgb(var(--color-dark-700));
+  border: 1px solid var(--line);
 }
 
 .prose pre code {
@@ -311,21 +610,21 @@ html {
 }
 
 .prose a {
-  color: rgb(var(--color-blue));
+  color: var(--prose-link);
   text-decoration: underline;
   font-weight: 500;
 }
 
 .prose a:hover {
-  color: #93c5fd;
+  color: var(--prose-link-hover);
 }
 
 .prose blockquote {
   font-style: italic;
-  border-left: 4px solid rgb(var(--color-dark-700));
+  border-left: 4px solid var(--line);
   padding-left: 1em;
   margin: 1.6em 0;
-  color: #d1d5db;
+  color: var(--prose-quote-fg);
 }
 
 .prose ul,
@@ -353,25 +652,25 @@ html {
 }
 
 .prose th {
-  background: rgb(var(--color-dark-850-rgb));
-  color: #f9fafb;
+  background: var(--surface-overlay);
+  color: var(--prose-heading);
   font-weight: 600;
   text-align: left;
   padding: 0.6em 0.8em;
-  border: 1px solid rgb(var(--color-dark-700));
+  border: 1px solid var(--line);
 }
 
 .prose td {
   padding: 0.6em 0.8em;
-  border: 1px solid rgb(var(--color-dark-700));
+  border: 1px solid var(--line);
 }
 
 .prose tr:nth-child(even) {
-  background: rgb(var(--color-dark-900));
+  background: var(--surface);
 }
 
 .prose hr {
-  border-color: rgb(var(--color-dark-700));
+  border-color: var(--line);
   margin: 2em 0;
 }
 
@@ -380,80 +679,81 @@ html {
   margin: 1.7em 0;
 }
 
-/* Syntax highlighting theme - GitHub Dark style */
+/* Syntax highlighting — per-theme palette via --hljs-* vars
+   (dark = GitHub Dark, light = GitHub Light). */
 .hljs {
-  background: rgb(var(--color-dark-850-rgb));
-  color: #e6edf3;
+  background: var(--surface-overlay);
+  color: var(--hljs-fg);
 }
 
 .hljs-comment,
 .hljs-quote {
-  color: #8b949e;
+  color: var(--hljs-comment);
   font-style: italic;
 }
 
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-subst {
-  color: #ff7b72;
+  color: var(--hljs-keyword);
 }
 
 .hljs-number,
 .hljs-literal,
 .hljs-variable,
 .hljs-template-variable {
-  color: #79c0ff;
+  color: var(--hljs-number);
 }
 
 .hljs-string,
 .hljs-doctag {
-  color: #a5d6ff;
+  color: var(--hljs-string);
 }
 
 .hljs-title,
 .hljs-section,
 .hljs-selector-id {
-  color: #d2a8ff;
+  color: var(--hljs-title);
 }
 
 .hljs-type,
 .hljs-class .hljs-title {
-  color: #ffa657;
+  color: var(--hljs-type);
 }
 
 .hljs-tag,
 .hljs-name,
 .hljs-attribute {
-  color: #7ee787;
+  color: var(--hljs-tag);
 }
 
 .hljs-regexp,
 .hljs-link {
-  color: #a5d6ff;
+  color: var(--hljs-regexp);
 }
 
 .hljs-symbol,
 .hljs-bullet {
-  color: #ffa657;
+  color: var(--hljs-symbol);
 }
 
 .hljs-built_in,
 .hljs-builtin-name {
-  color: #ffa657;
+  color: var(--hljs-builtin);
 }
 
 .hljs-meta {
-  color: #79c0ff;
+  color: var(--hljs-meta);
 }
 
 .hljs-deletion {
-  color: #ff7b72;
-  background: #490202;
+  color: var(--hljs-deletion-fg);
+  background: var(--hljs-deletion-bg);
 }
 
 .hljs-addition {
-  color: #7ee787;
-  background: #04260f;
+  color: var(--hljs-addition-fg);
+  background: var(--hljs-addition-bg);
 }
 
 .hljs-emphasis {
@@ -483,9 +783,9 @@ html {
   padding-right: 1em;
   padding-left: 0.5em;
   user-select: none;
-  color: #6e7681;
-  border-right: 1px solid rgb(var(--color-dark-700));
-  background: rgb(var(--color-dark-800-rgb));
+  color: var(--code-lineno-fg);
+  border-right: 1px solid var(--line);
+  background: var(--surface-raised);
   min-width: 3em;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
@@ -589,7 +889,7 @@ html {
 
 /* Focus styles */
 *:focus-visible {
-  outline: 2px solid rgb(var(--color-blue));
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -601,7 +901,7 @@ textarea:focus-visible {
 
 button:focus-visible,
 a:focus-visible {
-  outline: 2px solid rgb(var(--color-blue));
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -629,9 +929,9 @@ a:focus-visible {
 .skeleton {
   background: linear-gradient(
     90deg,
-    rgb(var(--color-dark-850-rgb)) 0px,
-    rgb(var(--color-dark-800-rgb)) 40px,
-    rgb(var(--color-dark-850-rgb)) 80px
+    var(--surface-overlay) 0px,
+    var(--surface-raised) 40px,
+    var(--surface-overlay) 80px
   );
   background-size: 1000px 100%;
   animation: shimmer 2s infinite;
@@ -642,10 +942,12 @@ a:focus-visible {
   text-wrap: balance;
 }
 
-/* Surface utility for modals, panels, and card components */
+/* Surface utility for modals, panels, and card components.
+   NOTE: previously used invalid rgb(var(--color-dark-*)) forms and rendered
+   transparent with no border; intentionally fixed to real surface colors. */
 .surface-panel {
-  background: rgb(var(--color-dark-900));
-  border: 1px solid rgb(var(--color-dark-700));
+  background: var(--surface);
+  border: 1px solid var(--line);
 }
 
 /* Mobile styles for status bar controls */
@@ -772,9 +1074,9 @@ html.keyboard-open [data-testid="bottom-tab-bar"] {
   width: 40%;
   background-image: linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.18) 50%,
-    rgba(255, 255, 255, 0) 100%
+    transparent 0%,
+    var(--shimmer-highlight) 50%,
+    transparent 100%
   );
   /* Sweep left→right, fully off-screen at both ends so the infinite-loop seam
      is invisible. translateX % is relative to the band's own width (40% of the

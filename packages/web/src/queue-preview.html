@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 	<head>
 		<meta charset="utf-8" />
 		<meta
@@ -7,6 +7,23 @@
 			content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
 		/>
 		<title>HyperNeo Queue Preview</title>
+		<script>
+			// Theme boot: resolve light/dark before first paint.
+			// Mirrors packages/web/src/lib/theme.ts — keep the logic in sync.
+			(function () {
+				var media = window.matchMedia("(prefers-color-scheme: dark)");
+				var apply = function () {
+					var stored = null;
+					try {
+						stored = localStorage.getItem("theme");
+					} catch (e) {}
+					document.documentElement.dataset.theme =
+						stored === "light" || stored === "dark" ? stored : media.matches ? "dark" : "light";
+				};
+				apply();
+				media.addEventListener("change", apply);
+			})();
+		</script>
 	</head>
 	<body>
 		<div id="root"></div>

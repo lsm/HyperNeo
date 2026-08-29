@@ -48,6 +48,7 @@ const SPACE_TASK_VIEW_ROUTE_PATTERN =
 const SPACE_SESSIONS_ROUTE_PATTERN = /^\/space\/([a-z0-9-]+)\/sessions$/;
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
   'general',
+  'appearance',
   'providers',
   'voice',
   'app-mcp-servers',
