@@ -4,6 +4,8 @@ import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
+import { renderEventBlock } from '../../../../src/lib/external-events/deferred-event-digest';
+import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry';
 import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/queue-health-metrics';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
@@ -366,6 +368,68 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(snapshot.counters.enqueue).toBe(1);
     expect(snapshot.counters.enqueueBySource['github']).toBe(1);
     expect(snapshot.counters.enqueueByTargetState).toEqual({ 'long_horizon=active': 1 });
+  });
+
+  test('requeue of a pending pre-migration event without a stored render derives the message from the record', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-legacy-render',
+      spaceId: SPACE_ID,
+      handle: 'legacy-watcher',
+      displayName: 'Legacy Watcher',
+    });
+    const subscription = repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+
+    const event = makeEvent();
+    eventStore.store(event);
+    expect(eventStore.getById(event.id)?.event.render).toBeUndefined();
+
+    const deliveryKey = JSON.stringify([
+      'long_horizon_agent',
+      event.source,
+      event.dedupeKey,
+      SPACE_ID,
+      agent.id,
+      subscription.id,
+    ]);
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: `long_horizon:${SPACE_ID}`,
+      taskId: subscription.id,
+      nodeId: agent.id,
+      agentName: agent.id,
+    });
+
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+
+    expect(longHorizonMessages).toHaveLength(1);
+    const entry = essenceEntryFromExternalEvent(eventStore.getById(event.id)!.event);
+    expect(entry).not.toBeNull();
+    expect(longHorizonMessages[0]!.message).toBe(renderEventBlock(entry!));
+    expect(longHorizonMessages[0]!.message.length).toBeGreaterThan(0);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
   test('rehydrates relative long-horizon agent subscriptions and matches full event topics', async () => {
