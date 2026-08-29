@@ -1807,10 +1807,10 @@ The slices follow the `Suggested migration order` phases and together cover ever
   stage consumes — without it the `{ sessionId }`-only spawner cannot support
   the asymmetric compensations above).
 
-### P46-W — `refactor(space): wire finalizePostApprovalDispatch into the worker-completion path`
+### P46-W — `feat(space): deferred-message settlement primitive + completion wiring`
 
-- 🔧 apply — prod Δ ≲40, test Δ ≲60
-- **Scope**: Wires `finalizePostApprovalDispatch` into the worker-completion path so the reused-delivery fence always has a lifter (round 30) — the completion-path integration split OUT of P46 (which stays additive/unwired construction). MUST ALSO cover the ERROR-TERMINAL path: a reused worker processing a delivered kickoff that emits `session.error` is handled by the separate `handleSubSessionError` subscription (task-agent-manager.ts:3124–3143), and the completion callback fires only from the idle branch (:3088–3121) — an error-before-idle worker never fires it, so the unfinalized dispatch record would block `claimPostApprovalDispatch` forever; wire the finalizer into the error-terminal path too, and pin an error-before-idle retry row. These generic completion/error/termination lifters are RESTRICTED TO `DELIVERED` attempts: a `DEFERRED` outcome's unconsumed kickoff survives the worker stop as a durable deferred message, and finalizing its fence on termination would admit a new dispatch after reapproval while the old deferred kickoff can still replay on session restore (delivering both kickoffs) — for DEFERRED attempts, atomically fail/remove the exact deferred message and settle its attempt correlation BEFORE finalizing, with a deferred-then-cancelled-then-reapproved row. The finalizer must ALSO run on VERIFIED/CANCELLED SESSION TERMINATION: `stopSessionPreserveDb` removes the completion listener/callback after cleanup (:4063–4105) and an interrupt does not necessarily emit `idle` or `session.error`, so a reused worker's unfinalized dispatch record survives cancellation and blocks a cancel-then-reapprove retry — wire finalization into verified/cancelled session termination as well, with a cancel-then-reapprove retry pin.
+- 🔧 apply — prod Δ ≲60, test Δ ≲80
+- **Scope**: The deferred-message atomic fail/remove-and-correlate settlement operation (additive build) PLUS wiring `finalizePostApprovalDispatch` into the IDLE-COMPLETION path (round 30) so the reused-delivery fence has a lifter — the completion-path integration split OUT of P46 (which stays additive/unwired construction). MUST ALSO cover the ERROR-TERMINAL path: a reused worker processing a delivered kickoff that emits `session.error` is handled by the separate `handleSubSessionError` subscription (task-agent-manager.ts:3124–3143), and the completion callback fires only from the idle branch (:3088–3121) — an error-before-idle worker never fires it, so the unfinalized dispatch record would block `claimPostApprovalDispatch` forever; wire the finalizer into the error-terminal path too, and pin an error-before-idle retry row. These generic completion/error/termination lifters are RESTRICTED TO `DELIVERED` attempts: a `DEFERRED` outcome's unconsumed kickoff survives the worker stop as a durable deferred message, and finalizing its fence on termination would admit a new dispatch after reapproval while the old deferred kickoff can still replay on session restore (delivering both kickoffs) — for DEFERRED attempts, atomically fail/remove the exact deferred message and settle its attempt correlation BEFORE finalizing, with a deferred-then-cancelled-then-reapproved row. The finalizer must ALSO run on VERIFIED/CANCELLED SESSION TERMINATION: `stopSessionPreserveDb` removes the completion listener/callback after cleanup (:4063–4105) and an interrupt does not necessarily emit `idle` or `session.error`, so a reused worker's unfinalized dispatch record survives cancellation and blocks a cancel-then-reapprove retry — wire finalization into verified/cancelled session termination as well, with a cancel-then-reapprove retry pin.
 - **Depends on**: P46.
 
 ### P46-R — `refactor(space): wire daemon-startup prepared-fence reconciliation`
@@ -1819,6 +1819,18 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - **Scope**: Wires the PREPARED/ENQUEUED fence reconciler into daemon startup (P46 is additive/unwired and P46-W wires only worker-completion finalization — no declared slice otherwise invokes the reconciler, so a crash after PREPARED but before enqueue blocks P44 forever).
 - **Depends on**: P46.
 
+### P46-W2 — `refactor(space): wire finalizePostApprovalDispatch into the error-terminal path`
+
+- 🔧 apply — prod Δ ≲40, test Δ ≲60
+- **Scope**: Wires the finalizer into the `session.error` subscription (task-agent-manager.ts:3124–3143 — the completion callback fires only from the idle branch), with the error-before-idle retry pin.
+- **Depends on**: P46-W.
+
+### P46-W3 — `refactor(space): wire dispatch finalization into verified/cancelled termination`
+
+- 🔧 apply — prod Δ ≲40, test Δ ≲60
+- **Scope**: Wires finalization into every verified/cancelled session-termination path (`stopSessionPreserveDb` :4063–4105 removes the completion listener), RESTRICTED to DELIVERED attempts — for DEFERRED outcomes the exact deferred message is atomically failed/removed and its correlation settled first (deferred-then-cancelled-then-reapproved row).
+- **Depends on**: P46-W, P46-W2.
+
 ### P47 — `refactor(space): run PostApprovalRouter.route on the staged pipeline`
 
 - 🔧 apply — prod Δ ≲80, test Δ ≲150
@@ -1826,7 +1838,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - **Lands**: the most effect-heavy routing site is one named composition; P43 pins stay green.
 - **Excludes**: changes to `goalService.handleTaskTerminal` itself (P51–P53).
 - **Tests**: `post-approval-router.test.ts`, `post-approval-routing-integration.test.ts`.
-- **Depends on**: P46, P46-W, P46-R (startup prepared-fence reconciliation), P53 (the CAS-capable goal terminal handler — P45's no-route branch requires the expected-`approved` update to be the FIRST operation inside `handleTaskTerminal`'s `runAtomic` transaction, but the current handler performs an unconditional `taskRepo.updateTask` and P47 explicitly excludes changing it; wiring the router first would let a concurrent cancel/reopen be overwritten with `done` while goal bookkeeping commits); TAM-F2 and TAM-C2 from `task-agent-manager.md` (the wired
+- **Depends on**: P46, P46-W, P46-W2, P46-W3, P46-R (startup prepared-fence reconciliation), P53 (the CAS-capable goal terminal handler — P45's no-route branch requires the expected-`approved` update to be the FIRST operation inside `handleTaskTerminal`'s `runAtomic` transaction, but the current handler performs an unconditional `taskRepo.updateTask` and P47 explicitly excludes changing it; wiring the router first would let a concurrent cancel/reopen be overwritten with `done` while goal bookkeeping commits); TAM-F2 and TAM-C2 from `task-agent-manager.md` (the wired
   `spawnPostApprovalSubSession` returning the richer outcome).
 
 ### P48 — `test(space): pin activation routing classification`
