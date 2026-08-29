@@ -359,7 +359,7 @@ describe('voice transcribe pipeline', () => {
     try {
       await expect(transcribe(createDeps())).resolves.toEqual({
         action: 'failed',
-        error: 'Voice transcription timed out after 60 seconds',
+        error: 'Voice transcription timed out after 120 seconds',
       });
     } finally {
       globalThis.setTimeout = originalSetTimeout;

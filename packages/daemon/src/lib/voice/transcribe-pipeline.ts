@@ -389,7 +389,7 @@ export async function runVoiceTranscribe(
     return ctx.outcome ?? failed('Voice transcription produced no outcome');
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      return failed('Voice transcription timed out after 60 seconds');
+      return failed('Voice transcription timed out after 120 seconds');
     }
     return failed(error instanceof Error ? error.message : String(error));
   } finally {
