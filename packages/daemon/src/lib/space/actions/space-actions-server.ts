@@ -30,6 +30,20 @@ const CallActionParamsSchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
+const WORKER_NODE_HOT_FILL = [
+  'list_peers',
+  'list_reachable_agents',
+  'list_channels',
+  'send_message',
+  'restore_node_agent',
+] as const;
+
+const COORDINATOR_ONLY_ACTIONS = new Set(['approve_pending_completion']);
+
+function isCoordinatorAdmittedRole(role: SpaceMcpSessionRole): boolean {
+  return role === 'coordinator' || role === 'legacy_task_agent';
+}
+
 function displayLabel(value: string): string {
   return value
     .split('_')
@@ -91,9 +105,11 @@ function createRegistryMetaEntries(getRegistry: () => ActionRegistry): ActionDef
           params: action.paramsDoc,
           returns: action.returnsHint ?? 'the action result',
           autonomyRequirement:
-            typeof action.autonomyRequirement === 'number'
-              ? action.autonomyRequirement
-              : 'depends on the provided parameters',
+            action.autonomyRequirement === undefined
+              ? 'none — available at every autonomy level'
+              : typeof action.autonomyRequirement === 'number'
+                ? action.autonomyRequirement
+                : 'depends on the provided parameters',
         };
       },
     }),
@@ -116,15 +132,27 @@ export interface SpaceActionsServerConfig {
 }
 
 export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
+  if (config.spaceConfig && config.spaceConfig.spaceId !== config.spaceId) {
+    throw new Error(
+      `spaceConfig.spaceId "${config.spaceConfig.spaceId}" does not match server spaceId "${config.spaceId}"`
+    );
+  }
+  if (config.nodeConfig && config.nodeConfig.spaceId !== config.spaceId) {
+    throw new Error(
+      `nodeConfig.spaceId "${config.nodeConfig.spaceId}" does not match server spaceId "${config.spaceId}"`
+    );
+  }
   const spaceConfig = config.spaceConfig
     ? { ...config.spaceConfig, callerRole: config.role }
     : undefined;
   const spaceEntries = spaceConfig ? createSpaceRegistryEntries(spaceConfig) : [];
   const nodeEntries = config.nodeConfig ? createNodeRegistryEntries(config.nodeConfig) : [];
+  const isRoleAdmittedEntry = (entry: ActionDefinition) =>
+    isCoordinatorAdmittedRole(config.role) || !COORDINATOR_ONLY_ACTIONS.has(entry.name);
   let registry: ActionRegistry;
   const metaEntries = createRegistryMetaEntries(() => registry);
   registry = createActionRegistry([
-    ...composeRoleActionEntries(config.role, spaceEntries, nodeEntries),
+    ...composeRoleActionEntries(config.role, spaceEntries, nodeEntries).filter(isRoleAdmittedEntry),
     ...metaEntries,
   ]);
 
@@ -133,10 +161,12 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
     role: label,
     spaceLevel: config.spaceLevel,
     agentCeiling: config.agentLevel,
-    hotActions,
+    hotActions:
+      config.role === 'workflow_worker' ? [...hotActions, ...WORKER_NODE_HOT_FILL] : hotActions,
     registry,
   });
 
+  const taskRepo = spaceConfig?.taskRepo ?? config.nodeConfig?.taskRepo;
   const deps: DispatchActionDeps = {
     ...config.dispatchDeps,
     auditLogRepo:
@@ -145,6 +175,18 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
       spaceConfig?.auditLogRepo,
     getSpaceAutonomyLevel:
       config.dispatchDeps?.getSpaceAutonomyLevel ?? spaceConfig?.getSpaceAutonomyLevel,
+    resolveTaskId:
+      config.dispatchDeps?.resolveTaskId ??
+      (taskRepo
+        ? (params) => {
+            const taskNumber = params.task_number;
+            if (typeof taskNumber !== 'number') return undefined;
+            return taskRepo.getTaskByNumber(config.spaceId, taskNumber)?.id ?? undefined;
+          }
+        : undefined),
+    resolveRunId:
+      config.dispatchDeps?.resolveRunId ??
+      (taskRepo ? (taskId) => taskRepo.getTask(taskId)?.workflowRunId ?? undefined : undefined),
     registry,
     emitTelemetry: config.dispatchDeps?.emitTelemetry ?? emitActionDispatchedEvent,
     isWithinRateBudget:

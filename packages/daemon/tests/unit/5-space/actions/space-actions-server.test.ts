@@ -248,6 +248,105 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     });
   });
 
+  test('rejects tool configs bound to a different space', () => {
+    expect(() =>
+      makeServer({
+        spaceConfig: {
+          ...stubSpaceConfig,
+          spaceId: 'other-space',
+        } as unknown as SpaceAgentToolsConfig,
+      })
+    ).toThrow('does not match server spaceId');
+    expect(() =>
+      createSpaceActionsMcpServer({
+        role: 'workflow_worker',
+        spaceId: SPACE_ID,
+        nodeConfig: {
+          ...stubNodeConfig,
+          spaceId: 'other-space',
+        } as unknown as NodeAgentToolsConfig,
+      })
+    ).toThrow('does not match server spaceId');
+  });
+
+  test('derives task and run targets from the space task repository', async () => {
+    const events: DispatchTelemetryEvent[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        taskRepo: {
+          getTaskByNumber: (_spaceId: string, taskNumber: number) =>
+            taskNumber === 42 ? { id: 'task-42', workflowRunId: 'run-42' } : null,
+          getTask: (taskId: string) =>
+            taskId === 'task-42' ? { id: taskId, workflowRunId: 'run-42' } : null,
+        },
+      } as unknown as SpaceAgentToolsConfig,
+      dispatchDeps: { emitTelemetry: (event) => void events.push(event) },
+    });
+    await dispatch(server, { name: 'get_task_detail', params: { task_number: 42 } });
+    expect(events[0]).toMatchObject({
+      actionName: 'get_task_detail',
+      taskId: 'task-42',
+      workflowRunId: 'run-42',
+    });
+  });
+
+  test('reports ungated actions as having no autonomy requirement', async () => {
+    const server = makeServer();
+    const ungated = (await dispatch(server, {
+      name: 'describe_action',
+      params: { name: 'list_actions' },
+    })) as Record<string, unknown>;
+    expect(ungated.autonomyRequirement).toBe('none — available at every autonomy level');
+    const dynamic = (await dispatch(server, {
+      name: 'describe_action',
+      params: { name: 'update_task' },
+    })) as Record<string, unknown>;
+    expect(dynamic.autonomyRequirement).toBe('depends on the provided parameters');
+  });
+
+  test('excludes coordinator-only actions from non-coordinator registries', () => {
+    expect(makeServer().registry.get('approve_pending_completion')).toBeDefined();
+    expect(
+      makeServer({ role: 'ad_hoc_member' }).registry.get('approve_pending_completion')
+    ).toBeUndefined();
+    expect(
+      makeServer({ role: 'long_term_agent' }).registry.get('approve_pending_completion')
+    ).toBeUndefined();
+  });
+
+  test('backfills worker hot lists with always-registered node actions', () => {
+    const server = makeServer({ role: 'workflow_worker', nodeConfig: stubNodeConfig });
+    expect(server.description).toContain('- send_message — ');
+    expect(server.description).toContain('- list_peers — ');
+  });
+
+  test('redacts node message payloads from central audit rows', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      spaceId: SPACE_ID,
+      nodeConfig: {
+        ...stubNodeConfig,
+        myAgentName: 'coder-9',
+        mySessionId: 'session-9',
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as NodeAgentToolsConfig,
+    });
+    await dispatch(server, {
+      name: 'send_message',
+      params: { target: 'peer', message: 'secret-payload', data: { secret: true } },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].paramsSummary).not.toContain('secret-payload');
+    expect(entries[0].paramsSummary).not.toContain('message');
+  });
+
   test('denies rate-limited dispatches through the configured budget', async () => {
     const server = makeServer({ dispatchDeps: { isWithinRateBudget: () => false } });
     expect(await dispatch(server, { name: 'list_actions' })).toMatchObject({

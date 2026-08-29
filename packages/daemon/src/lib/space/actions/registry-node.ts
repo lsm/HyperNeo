@@ -98,6 +98,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
     }),
     nodeAction({
       name: 'send_message',
+      auditRedactKeys: ['message', 'data'],
       safetyClass: 'mutate',
       description:
         'Send a DM by agent name, fan out by node name, multicast by array, or broadcast with "*"; validates against channel topology.',
