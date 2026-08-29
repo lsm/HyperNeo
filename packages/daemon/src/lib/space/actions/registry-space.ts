@@ -10,10 +10,12 @@ import {
   ArchiveTaskSchema,
   CancelTaskSchema,
   ChangePlanSchema,
+  CreateGoalSchema,
   CreateScheduledTaskSchema,
   CreateStandaloneTaskSchema,
   DeleteScheduledTaskSchema,
   GetExternalEventSchema,
+  GetGoalSchema,
   GetScheduledTaskSchema,
   GetSessionDetailSchema,
   GetSessionMessagesSchema,
@@ -25,19 +27,27 @@ import {
   InactivityConfigSetSchema,
   InactivityRunNowSchema,
   InterruptSessionSchema,
+  ListGoalEventsSchema,
+  ListGoalsSchema,
+  ListGoalTasksSchema,
   ListScheduledTasksSchema,
   ListSessionsSchema,
   ListTaskMembersSchema,
   ListTasksSchema,
   ListWorkflowsSchema,
+  PauseGoalSchema,
   PauseScheduledTaskSchema,
   PublishTaskSchema,
   ReassignTaskSchema,
+  ResumeGoalSchema,
   ResumeScheduledTaskSchema,
+  ReviewGoalOutcomeSchema,
   RetryTaskSchema,
   SendMessageToTaskSchema,
   SendSessionMessageSchema,
   SuggestWorkflowSchema,
+  TriggerGoalTaskSchema,
+  UpdateGoalSchema,
   UpdateSessionStateSchema,
   UpdateTaskSchema,
 } from '../tools/space-agent-tool-schemas.ts';
@@ -576,9 +586,119 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     }),
   ];
 
+  const goalEntries: ActionDefinition[] = [
+    defineAction({
+      name: 'list_goals',
+      family: 'goals',
+      safetyClass: 'read',
+      description:
+        'List long-horizon goals in this space with rolling summary and progress; read this before changing goal state; returns goal records.',
+      paramsDoc: 'status?',
+      paramsSchema: ListGoalsSchema,
+      handler: (args) => handlers.list_goals(args),
+    }),
+    defineAction({
+      name: 'get_goal',
+      family: 'goals',
+      safetyClass: 'read',
+      description:
+        'Get one goal with rolling state, active task pointers, next check-in, metrics, and next steps; returns the full goal record.',
+      paramsDoc: 'goal_id',
+      paramsSchema: GetGoalSchema,
+      handler: (args) => handlers.get_goal(args),
+    }),
+    defineAction({
+      name: 'create_goal',
+      family: 'goals',
+      safetyClass: 'mutate',
+      description:
+        'Create a long-horizon goal, optionally scheduling recurring check-ins or triggering the first task immediately; returns the created goal.',
+      paramsDoc:
+        'title, description?, type?, priority?, labels?, metrics?, summary?, progress?, next_steps?, preferred_workflow_id?, auto_trigger_next?, check_in_cron_expression?, check_in_timezone?, trigger_immediately?, owner_agent_id?, workspace_path?',
+      paramsSchema: CreateGoalSchema,
+      handler: (args) => handlers.create_goal(args),
+    }),
+    defineAction({
+      name: 'update_goal',
+      family: 'goals',
+      safetyClass: 'mutate',
+      description:
+        'Update goal fields and rolling state (summary/progress/metrics/next_steps), or edit its check-in schedule in place; internal fields are not writable; returns the updated goal.',
+      paramsDoc:
+        'goal_id, plus any of title?, description?, status?, type?, priority?, labels?, metrics?, summary?, progress?, next_steps?, preferred_workflow_id?, auto_trigger_next?, check_in_cron_expression?, check_in_timezone?, workspace_path?',
+      paramsSchema: UpdateGoalSchema,
+      handler: (args) => handlers.update_goal(args),
+    }),
+    defineAction({
+      name: 'pause_goal',
+      family: 'goals',
+      safetyClass: 'mutate',
+      description:
+        'Pause an active goal and its linked check-in schedule if present; returns the updated goal.',
+      paramsDoc: 'goal_id',
+      paramsSchema: PauseGoalSchema,
+      handler: (args) => handlers.pause_goal(args),
+    }),
+    defineAction({
+      name: 'resume_goal',
+      family: 'goals',
+      safetyClass: 'mutate',
+      description:
+        'Resume a paused goal and re-enable its linked check-in schedule if present; returns the updated goal.',
+      paramsDoc: 'goal_id',
+      paramsSchema: ResumeGoalSchema,
+      handler: (args) => handlers.resume_goal(args),
+    }),
+    defineAction({
+      name: 'trigger_goal_task',
+      family: 'goals',
+      safetyClass: 'mutate',
+      description:
+        'Create an immediate task for a goal, queueing one follow-up when another goal task is active and auto_trigger_next is set; returns the created task.',
+      paramsDoc: 'goal_id',
+      paramsSchema: TriggerGoalTaskSchema,
+      handler: (args) => handlers.trigger_goal_task(args),
+    }),
+    defineAction({
+      name: 'list_goal_tasks',
+      family: 'goals',
+      safetyClass: 'read',
+      description:
+        'List tasks linked to a goal as a bounded page of compact summaries ordered newest-first; paginate with before/before_id.',
+      paramsDoc: 'goal_id, status?, limit? (default 20, max 100), before?, before_id?',
+      paramsSchema: ListGoalTasksSchema,
+      handler: (args) => handlers.list_goal_tasks(args),
+    }),
+    defineAction({
+      name: 'list_goal_events',
+      family: 'goals',
+      safetyClass: 'read',
+      description:
+        'List append-only history events for a goal to understand why its rolling state changed; returns newest-first events.',
+      paramsDoc: 'goal_id, limit?, before?, before_id?',
+      paramsSchema: ListGoalEventsSchema,
+      handler: (args) => handlers.list_goal_events(args),
+    }),
+  ];
+
+  const reviewGoalOutcomeEntry = defineAction({
+    name: 'review_goal_outcome',
+    family: 'goals',
+    safetyClass: 'mutate',
+    description:
+      'Review a terminal goal-outcome notification — call without notification_id to discover pending notifications you own, then terminalize with a disposition (acknowledge/reject/supersede) or acknowledge while persisting goal-state updates.',
+    paramsDoc:
+      'notification_id?, goal_id?, task_id?, disposition? (acknowledge|reject|supersede), observed_goal_revision?, summary?, next_steps?, metrics?, observations?, progress?',
+    paramsSchema: ReviewGoalOutcomeSchema,
+    handler: (args) => handlers.review_goal_outcome(args),
+  });
+
   const entries = config.db
     ? [...sessionEntries, ...workflowEntries, ...taskEntries, ...partCEntries]
     : [...workflowEntries, ...taskEntries, ...partCEntries];
+  if (config.goalService) entries.push(...goalEntries);
+  if (config.callerRole === 'long_term_agent' || config.callerRole === 'coordinator')
+    entries.push(reviewGoalOutcomeEntry);
   return config.taskAgentManager
     ? entries
     : entries.filter((entry) => entry.name !== 'send_message_to_task');

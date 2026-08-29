@@ -853,6 +853,50 @@ export const ApplyForgeRollupSchema = z.object({
   }),
 });
 
+export const ReviewGoalOutcomeSchema = z.object({
+  goal_id: z
+    .string()
+    .optional()
+    .describe('Goal ID the outcome belongs to (required for a disposition)'),
+  task_id: z
+    .string()
+    .optional()
+    .describe('Completed task ID the outcome belongs to (required for a disposition)'),
+  notification_id: z
+    .string()
+    .optional()
+    .describe('Pending notification identity; omit to discover owned pending notifications'),
+  disposition: z
+    .enum(['acknowledge', 'reject', 'supersede'])
+    .optional()
+    .describe('Terminal disposition'),
+  observed_goal_revision: z
+    .number()
+    .int()
+    .optional()
+    .nullable()
+    .describe('Goal revision observed by the caller; set when resubmitting after a stale denial'),
+  summary: z.string().optional().describe('Replace the goal rolling summary'),
+  next_steps: z.array(z.string()).optional().describe('Replace the goal next steps'),
+  metrics: GoalMetricsSchema.optional().describe('Replace the given goal metric values'),
+  observations: z
+    .array(
+      z.object({
+        key: z.string().describe('Metric key'),
+        value: z.number().describe('Delta added to the current metric value'),
+      })
+    )
+    .optional()
+    .describe('Accumulate metric observations as numeric deltas'),
+  progress: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .optional()
+    .describe('Set goal progress 0-100 (rejected for recurring goals)'),
+});
+
 export const SPACE_FORGE_TOOL_SCHEMAS = {
   create_forge_scope: CreateForgeScopeSchema,
   create_forge_scope_from_goal: CreateForgeScopeFromGoalSchema,
