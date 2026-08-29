@@ -58,11 +58,11 @@ pins header parsing and the cooldown/backoff path; the extracted helper modules
 
 | # | Candidate | Home module | Pure core | Deletes (dup) | Pipeline? |
 | --- | --- | --- | --- | --- | --- |
-| C1 | `classifyGitHubPollResponse` + `resolveRateLimitBackoff` | new `github-poll-response.ts` | ~70 | ~150 | No — plain pure fn |
+| C1 | `classifyPollResponseStatus` / `classifyPollResponseError` (two-phase) + `resolveRateLimitBackoff` | new `github-poll-response.ts` | ~70 | ~150 | No — plain pure fns |
 | C2 | `resolveEndpointWatermark`, `resolvePullsSeedNeed`, `resolvePullsBacklogCutoff`, `planEndpointPageAdvance` | new `github-poll-watermarks.ts` | ~85 | 0 | No — plain pure fns |
 | C3a | head-ref delta maintenance, tracked-PR reconcile | `github-pr-head-ref-index.ts` | ~75 | 0 | No — explicit-state mutator fns |
-| C3b | cursor GC, check-run pending→committed promotion | new `github-poll-cursor-gc.ts` | ~40 | 0 | No — explicit-state mutator fns |
-| C4 | `resolveCheckRunSupersession`, `resolveCheckRunLegacyOwner` | new `github-check-run-dedupe.ts` | ~45 | 0 | No — plain pure fns |
+| C3b | cursor GC, check-run pending→committed promotion | new `github-poll-cursor-gc.ts` | ~40 | 0 | No — GC mutators; promotion returns replacement record |
+| C4 | `resolveCheckRunSupersession` (pure plan w/ set updates), `resolveCheckRunLegacyOwner` | new `github-check-run-dedupe.ts` | ~45 | 0 | No — pure plan + pure fn |
 | C5 | `resolveMergeConflictTransition`, review freshness/etag policy, reaction freshness policy | new `github-poll-subscans.ts` | ~80 | 0 | No — plain pure fns |
 | C6 | `planPollCursorCommit` | new `github-poll-cursor-commit.ts` | ~60 | 0 | No — pure plan, apply stays in class |
 
@@ -79,16 +79,21 @@ sixth variant in `githubFetch` (:2197–2217) that adds the credential-generatio
 guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
 ~190 lines of near-duplicate classification.
 
-- **Shape:** `classifyGitHubPollResponse({ status, rateLimit, errorText })` →
-  discriminated union `primary-limited | secondary-limited | not-modified |
-  http-error | ok`, each arm carrying the rate-limit payload to apply;
-  `resolveRateLimitBackoff(rateLimit, now)` computes the
-  `retryAfter ? resetAt−now : MIN_BACKOFF` delay. Classification runs ≤ ~20
-  times per cycle per repo — not hot. The union deliberately has no
-  `network-error` arm: a failed fetch produces no `Response`, so there is no
-  `status`/`rateLimit`/`errorText` to classify — network failures are caught
-  at the fetch boundary (:2341–2353 and siblings) and never reach the
-  classifier.
+- **Shape:** two phases, split at the body read. Phase A,
+  `classifyPollResponseStatus({ status, rateLimit })` → `primary-limited |
+  not-modified | needs-body | ok`, each arm carrying the rate-limit payload
+  to apply; phase B, `classifyPollResponseError({ status, rateLimit,
+  errorText })` → `secondary-limited | http-error`, run only for
+  `needs-body` after the caller's `await response.text()` — the body is read
+  only past the primary-limited and 304 guards today (:2376 and siblings),
+  and the extraction must not add an earlier `await` or a new failure mode
+  for primary-limited responses. `resolveRateLimitBackoff(rateLimit, now)`
+  computes the `retryAfter ? resetAt−now : MIN_BACKOFF` delay.
+  Classification runs ≤ ~20 times per cycle per repo — not hot. Neither
+  phase has a `network-error` arm: a failed fetch produces no `Response`, so
+  there is no `status`/`rateLimit`/`errorText` to classify — network
+  failures are caught at the fetch boundary (:2341–2353 and siblings) and
+  never reach the classifier.
 - **What stays imperative:** the per-site control flow differs legitimately
   (endpoint scan `continue`s on network error; check-run sets `headSucceeded`;
   reaction clears `reactionsFullyPolled`; review breaks its page loop). The
@@ -133,19 +138,30 @@ not an extract.
 
 ### C3b — cursor GC and check-run promotion
 
-Same mutator shape (prunes keys in place on passed-in cursor structures); its
-own module because it is a different purpose from index maintenance:
+Mixed shapes; its own module because it is a different purpose from index
+maintenance:
 
 - Cursor GC (:3119–3145, ~27 lines): prune reaction/merge/review etags by
   tracked-PR set, head watermarks by tracked head set, check-run etags by
-  `headRef:` prefix scan.
-- Check-run pending→committed promotion (:2758–2767).
+  `headRef:` prefix scan — in-place mutators over passed-in cursor structures.
+- Check-run pending→committed promotion (:2758–2767): NOT an in-place
+  mutation — after copying entries the source REASSIGNS
+  `checkRunHeadPendingLastSeenAt = {}` (:2763; the binding is `let` at :2260
+  for exactly this). The helper returns the replacement pending record for
+  the caller to assign; deleting keys in place instead would change what a
+  mid-scan failure persists before the final cursor write.
 
 ### C4 — check-run supersession and legacy-owner dedupe
 
 - `resolveCheckRunSupersession` (:2674–2688): first `${checkName}:${appKey}`
   conclusion wins; `null` topic actions are consumed silently; only `failed`
-  stays eligible for later same-key rows. ~15 lines.
+  stays eligible for later same-key rows. A pure PLAN, not a bare predicate:
+  it returns the eligibility decision AND the set updates for the caller to
+  apply (`markSeen: checkRunId`, optional `addSupersessionKey`), because the
+  current sequence inserts every accepted ID into `seenCheckRunIds` (:2675)
+  and conditionally into `supersededCheckKeys` (:2681–2688) — a resolver
+  returning only eligibility would drop those cross-row updates and
+  republish duplicate IDs or superseded conclusions. ~15 lines.
 - `resolveCheckRunLegacyOwner` (:2694–2711): the pure half of legacy-PR dedupe —
   recorded owner ?? store-observed owner ?? first fan-out PR, and the
   `legacyPrInFanOut` scoping decision. The `eventStore.getByDedupe` lookup
@@ -157,8 +173,12 @@ own module because it is a different purpose from index maintenance:
 ### C5 — PR-scoped sub-scan transitions
 
 - `resolveMergeConflictTransition` (:2841–2855): `mergeable === null &&
-  state !== 'dirty'` skip, conflicting computation, no-change suppression,
-  sequence bump. ~20 lines.
+  mergeableState !== 'dirty'` skip — the input is the `mergeable_state` field
+  (:2845–2848), NOT the PR `state`; an open PR with `mergeable: null` and
+  `mergeable_state: 'dirty'` must NOT skip (name the helper input
+  `mergeableState` so a literal implementation cannot suppress dirty-state
+  conflict events). Conflicting computation, no-change suppression, sequence
+  bump. ~20 lines.
 - Review freshness + etag policy (:2875–2989 subset): first-seen watermark
   seed, seen-id + watermark gate, single-page etag commit
   (`complete && singlePage && pendingEtag`) vs delete (:3001–3005). ~25 lines.
@@ -220,8 +240,8 @@ equivalence pins are added.
 | Slice | Kind | Delivers | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
 | GH-P1a | pin | response-classification decision table (the 429-synthesis, secondary body-sniff, 304, low-remaining dimensions the fake-fetch suites cover only via whole cycles) | 0 | ≲200 | — |
-| GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × credentialStale × accessible × pollErrorMessage × prior-error presence/value` — `cursor.lastPollError`/`lastPartialPollError` are load-bearing fallbacks at :3154, :3161–3165 — → committed/pending watermarks, error fields, reaction timestamp, write split) | 0 | ≲300 | — |
-| GH-E1 | extract | C1 `classifyGitHubPollResponse` + backoff helper, swapped at the 5 cycle sites (`githubFetch` optional 6th) | ≲120 net (−~150 dup) | ≲300 | GH-P1a |
+| GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × credentialStale × accessible × pollErrorMessage × prior-error presence/value × reactionsFullyPolled × reactionPolledAt × prior cursor.lastReactionPollAt` — the error fields are load-bearing fallbacks at :3154, :3161–3165 and the reaction timestamp reads all three reaction axes at :3196–3198 — → committed/pending watermarks, error fields, reaction timestamp, write split) | 0 | ≲300 | — |
+| GH-E1 | extract | C1 two-phase poll-response classifiers + backoff helper, swapped at the 5 cycle sites ONLY — `githubFetch` keeps its own classification (see open question 1) | ≲120 net (−~150 dup) | ≲300 | GH-P1a |
 | GH-E2 | extract | C2 watermark/seed/cutoff/page-advance helpers | ≲100 | ≲250 | — |
 | GH-E3a | extract | C3a head-ref delta policy + tracked-PR reconcile (mutator extraction) | ≲90 | ≲200 | GH-E2 |
 | GH-E3b | extract | C3b cursor GC + check-run promotion (mutator extraction) | ≲50 | ≲150 | GH-E3a |
@@ -263,9 +283,13 @@ modules; no slice mixes clusters or modules.
 
 ## Open questions
 
-1. Should `githubFetch`'s sixth classification variant (:2197–2217) join C1's
-   swap, or stay separate because it carries the credential-generation guard?
-   Default: include, guard stays at the call site.
+1. RESOLVED (review round 2): `githubFetch` stays OUT of GH-E1's swap. Beyond
+   the credential-generation guard, its rate-limit policy differs: for
+   429-with-`remaining > 0`-no-`Retry-After` it passes the header reset epoch
+   through to `applyRateLimit` (:2202–2216), while the cycle sites synthesize
+   `now + RATE_LIMIT_MIN_BACKOFF_MS` — reusing the cycle classification there
+   would shorten its cooldown and resume requests before GitHub's reset.
+   Unifying the two policies would be a behavior change, not an extraction.
 2. `REACTION_STALE_INTERVALS`/`MIN_MS` feed `buildHealthSnapshot` (:1428–1433),
    not the cycle — confirm health stays out of this lane (epic says core-path
    only).
