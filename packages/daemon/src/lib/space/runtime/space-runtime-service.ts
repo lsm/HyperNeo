@@ -860,11 +860,12 @@ export class SpaceRuntimeService {
     );
     if (!changed) return;
     await session.updateConfig(updates);
-    const result = await session.resetQuery({ restartQuery: true });
+    const result = await session.resetQuery({ restartQuery: false });
     if (!result.success) {
       throw new Error(result.error ?? 'Failed to refresh long-horizon agent session');
     }
     await session.reevaluateContextBudgetAfterModelSwitch?.();
+    await session.startStreamingQuery();
   }
 
   private async resolveCoordinatorSession(spaceId: string) {
