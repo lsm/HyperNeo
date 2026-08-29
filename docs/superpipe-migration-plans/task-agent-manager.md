@@ -132,9 +132,11 @@ class-owned (cluster 12 classification): the pipeline declares the outcome,
 the manager attaches/detaches callbacks at the lifecycle boundary. The
 `resolveNodeExecutionForSubSession` repair (:3759–3768) — an unconditional
 `updateSessionId` write when an `:exec:`-embedded execution lacks
-`agent_session_id` — runs BEFORE the refusal gates; TAM-D1 must fence it
-(expected-null CAS via `expectAgentSessionId: null`) or keep the repair
-manager-owned outside the pipeline, never carry the blind write into a stage.
+`agent_session_id` — runs AFTER the archived-session refusal (:3490) but
+before the execution-dependent refusal gates. TAM-D1 must preserve that
+order and fence the repair (expected-null CAS via `expectAgentSessionId:
+null`), or keep it manager-owned outside the pipeline; never carry the blind
+write into a stage.
 Fit: strong `stagedRun`. The outer `rehydrateSubSessionsForRun` (:3382) loop
 and `rehydrateInFlight` dedup/restore lock (:3466) stay in the class (loop +
 resource ownership, P6). Its tail (attach → register →
