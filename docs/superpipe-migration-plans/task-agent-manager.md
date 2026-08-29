@@ -77,12 +77,16 @@ update, workspace migration under inject lock with node-agent-server
 capture/restore compensation :1250–1264), fresh arm (`AgentSession.fromInit`,
 bind CAS with superseded compensation that deletes the never-streamed session
 row :1357–1371, stream). The `deferFreshExecutionBind` flag is LOAD-BEARING in
-the stage contract: the spawn-flow caller passes it (:968) so the method skips
-its inner execution CAS AND the trailing flush, leaving the outer guarded bind
-(`bindExecutionToSession` with `expectAgentSessionId`, :983–997) as the SOLE
-commit point — a pipeline that binds or flushes without carrying that gate
-binds prematurely, makes the outer CAS report `superseded`, and unwinds
-otherwise valid spawns (pin both arms under the flag). Index/registration
+the stage contract: the spawn-flow caller passes it (:968, together with
+`freshSessionOnly`, which makes the reuse arm unreachable there) — under the
+flag the FRESH-arm bind CAS (:1343) and BOTH arms' trailing flush (:1286,
+:1391) are suppressed, leaving the outer guarded bind (`bindExecutionToSession`
+with `expectAgentSessionId`, :983–997) as the SOLE commit point. The
+REUSE-arm rebind CAS (:1144–1166) is NOT flag-gated — do not widen the gate
+to it. A pipeline that fresh-binds or flushes without carrying the flag binds
+prematurely, makes the outer CAS report `superseded`, and unwinds otherwise
+valid spawns (pin the fresh arm under the flag and the reuse CAS's
+independence from it). Index/registration
 (:1327–1333) stays manager-owned at the lifecycle boundary, like the callback
 re-registration (:1272–1277): the pipeline returns the reuse/create outcome
 and the manager swaps the callback and registers the session. Both
@@ -283,7 +287,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| TAM-PB | Pins for `createSubSession` reuse/fresh arms: cold-cache reuse via `rehydrateSubSession`, narrow compensation, same-status rebind, `deferFreshExecutionBind` gate (both arms), detached-flush rejection behavior | test-only | 0 | ≲120 | — |
+| TAM-PB | Pins for `createSubSession` reuse/fresh arms: cold-cache reuse via `rehydrateSubSession`, narrow compensation, same-status rebind, `deferFreshExecutionBind` scope (fresh-arm bind + both arms' flush suppressed; reuse CAS unaffected), detached-flush rejection behavior | test-only | 0 | ≲120 | — |
 | TAM-PC | Pins for `restorePostApprovalWorkerSession`: three refusal rows (task `cancelled`/`archived`, run `cancelled`), no-completion-callback, pre-stream sanitizer ordering | test-only | 0 | ≲80 | — |
 | TAM-PD | Pins for `rehydrateSubSession`: refusal-gate ordering (archived row BEFORE the fenced repair), `done` admissibility, hooks + sanitizer pre-stream ordering | test-only | 0 | ≲100 | — |
 | TAM-PE | Pins for the complete injection operation: outer admissions + post-lock terminal recheck, cancellation passthrough, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
