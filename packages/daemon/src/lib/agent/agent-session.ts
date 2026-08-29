@@ -140,6 +140,7 @@ import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
 import {
   ensureScopedProviderCatalogModels,
   getSessionModelInfo,
+  initializeModels,
   resolveModelAlias,
 } from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
@@ -1590,6 +1591,9 @@ export class AgentSession
       await ensureScopedProviderCatalogModels(this.session.id, providerId, providerConfig);
       return getSessionModelInfo(this.session, this.session.id);
     }
+    const cached = await getSessionModelInfo(this.session);
+    if (cached) return cached;
+    await initializeModels().catch(() => {});
     return getSessionModelInfo(this.session);
   }
 
