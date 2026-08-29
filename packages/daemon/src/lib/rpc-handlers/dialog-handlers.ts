@@ -53,14 +53,14 @@ async function pickFolder(
       }
     } else if (platform === 'win32') {
       const psScript = `
-				Add-Type -AssemblyName System.Windows.Forms
-				$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-				$dialog.Description = "Select a workspace folder"
-				$dialog.ShowNewFolderButton = $true
-				if ($dialog.ShowDialog() -eq "OK") {
-					$dialog.SelectedPath
-				}
-			`;
+					Add-Type -AssemblyName System.Windows.Forms
+					$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+					$dialog.Description = "Select a workspace folder"
+					$dialog.ShowNewFolderButton = $true
+					if ($dialog.ShowDialog() -eq "OK") {
+						$dialog.SelectedPath
+					}
+				`;
       const result = await runCommand('powershell', ['-Command', psScript], timeoutMs, spawnImpl);
       return result?.trim() || null;
     } else {

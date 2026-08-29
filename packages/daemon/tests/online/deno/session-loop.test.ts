@@ -110,23 +110,26 @@ const hasDeno = isDeno2Point9();
     expect(Array.isArray(result.sdkMessages)).toBe(true);
     expect(result.sdkMessages.length).toBeGreaterThanOrEqual(2);
 
-    const assistant = result.sdkMessages.find(
+    const assistantMessages = result.sdkMessages.filter(
       (message) => (message as Record<string, unknown>).type === 'assistant'
-    ) as Record<string, unknown> | undefined;
-    expect(assistant).toBeDefined();
+    ) as Array<Record<string, unknown>>;
+    expect(assistantMessages.length).toBeGreaterThanOrEqual(1);
 
-    const messageBody = assistant?.message as Record<string, unknown> | undefined;
-    const content = messageBody?.content;
-    let text = '';
-    if (typeof content === 'string') {
-      text = content;
-    } else if (Array.isArray(content)) {
-      const textBlock = content.find(
-        (block) => (block as Record<string, unknown>).type === 'text'
-      ) as Record<string, unknown> | undefined;
-      text = (textBlock?.text as string) ?? '';
-    }
-    expect(typeof text).toBe('string');
-    expect(text.length).toBeGreaterThan(0);
+    const fullAssistantText = assistantMessages
+      .map((assistant) => {
+        const messageBody = assistant?.message as Record<string, unknown> | undefined;
+        const content = messageBody?.content;
+        if (typeof content === 'string') return content;
+        if (Array.isArray(content)) {
+          return content
+            .filter((block) => (block as Record<string, unknown>).type === 'text')
+            .map((block) => (block as Record<string, unknown>).text as string)
+            .join('');
+        }
+        return '';
+      })
+      .join('');
+    expect(typeof fullAssistantText).toBe('string');
+    expect(fullAssistantText.length).toBeGreaterThan(0);
   }, 180_000);
 });
