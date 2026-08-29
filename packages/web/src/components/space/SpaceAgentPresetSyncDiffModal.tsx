@@ -136,7 +136,7 @@ function BeforeAfter({ before, after }: { before: string; after: string }) {
         <p class="mb-1 text-[10px] font-medium uppercase tracking-wider text-danger-soft/80">
           Before
         </p>
-        <pre class="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-scrim p-2 text-xs leading-5 text-fg-soft">
+        <pre class="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-fill-strong p-2 text-xs leading-5 text-fg-soft">
           {before || '(empty)'}
         </pre>
       </div>
@@ -144,7 +144,7 @@ function BeforeAfter({ before, after }: { before: string; after: string }) {
         <p class="mb-1 text-[10px] font-medium uppercase tracking-wider text-success-soft/80">
           After
         </p>
-        <pre class="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-scrim p-2 text-xs leading-5 text-fg-soft">
+        <pre class="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-fill-strong p-2 text-xs leading-5 text-fg-soft">
           {after || '(empty)'}
         </pre>
       </div>

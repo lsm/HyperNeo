@@ -85,7 +85,7 @@ export function ErrorOutput({ content, className }: ErrorOutputProps) {
 
       <div
         class={cn(
-          'bg-danger/40 border border-danger/50 rounded-lg p-4',
+          'bg-danger/10 border border-danger/40 rounded-lg p-4',
           'text-sm text-danger-soft whitespace-pre-wrap break-words'
         )}
       >

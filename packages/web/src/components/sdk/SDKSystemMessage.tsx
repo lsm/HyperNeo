@@ -50,9 +50,9 @@ export function SDKSystemMessage({ message, isLiveTail = false, completedHookUui
     if (statusMessage.status === 'compacting') {
       return (
         <div class="flex items-center gap-3 py-4">
-          <div class="flex-1 h-px" style={{ backgroundColor: '#FFEF00' }}></div>
+          <div class="flex-1 h-px bg-warning"></div>
           <span class="text-xs font-medium text-warning">Compact Boundary</span>
-          <div class="flex-1 h-px" style={{ backgroundColor: '#FFEF00' }}></div>
+          <div class="flex-1 h-px bg-warning"></div>
         </div>
       );
     }

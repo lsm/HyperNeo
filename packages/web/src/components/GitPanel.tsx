@@ -823,7 +823,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
         {error && (
           <p
             data-testid="git-status-error-banner"
-            class="flex-shrink-0 border-b border-line bg-warning/10 px-4 py-2 text-xs leading-relaxed text-warning"
+            class="flex-shrink-0 border-b border-line bg-warning/10 px-4 py-2 text-xs leading-relaxed text-warning-soft"
           >
             Couldn't refresh: {error}. Showing the last known status.
           </p>
