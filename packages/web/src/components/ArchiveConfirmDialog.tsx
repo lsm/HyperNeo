@@ -49,7 +49,7 @@ export function ArchiveConfirmDialog({
           <Button
             onClick={onConfirm}
             disabled={archiving}
-            class="flex-1 bg-warning hover:bg-warning text-accent-fg"
+            class="flex-1 bg-warning hover:bg-warning text-on-warning"
           >
             {archiving ? 'Archiving...' : 'Archive Anyway'}
           </Button>

@@ -410,7 +410,7 @@ function WorkflowCard({
               <button
                 onClick={handleResyncDuplicates}
                 disabled={dupResyncing}
-                class="px-3 py-1.5 text-xs font-medium text-accent-fg bg-orange-700 hover:bg-warning rounded transition-colors disabled:opacity-50"
+                class="px-3 py-1.5 text-xs font-medium text-on-warning bg-warning hover:bg-warning rounded transition-colors disabled:opacity-50"
               >
                 {dupResyncing ? 'Resyncing…' : 'Delete older rows & resync'}
               </button>

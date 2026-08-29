@@ -1929,7 +1929,7 @@ function AgentTurnRow({
   const headerContent = (
     <>
       <div
-        class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-bg"
+        class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center text-sm font-bold text-dark-950"
         style={{ backgroundColor: color }}
         aria-hidden="true"
       >

@@ -84,8 +84,8 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
 						px-3 py-1.5 text-xs font-medium rounded border transition-colors
 						${
               loading === 'start_fresh'
-                ? 'opacity-50 cursor-not-allowed bg-warning border-warning text-accent-fg'
-                : 'bg-warning hover:bg-warning border-warning hover:border-warning text-accent-fg cursor-pointer'
+                ? 'opacity-50 cursor-not-allowed bg-warning border-warning text-on-warning'
+                : 'bg-warning hover:bg-warning border-warning hover:border-warning text-on-warning cursor-pointer'
             }
 					`}
         >

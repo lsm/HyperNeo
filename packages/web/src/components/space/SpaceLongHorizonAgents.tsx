@@ -221,7 +221,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
                   onClick={() => setAutonomyLevel(autonomyLevel === level ? null : level)}
                   class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60 ${
                     autonomyLevel === level
-                      ? 'border-warning/40 bg-warning text-accent-fg shadow-[0_8px_20px_rgba(251,191,36,0.14)]'
+                      ? 'border-warning/40 bg-warning text-on-warning shadow-[0_8px_20px_rgba(251,191,36,0.14)]'
                       : 'border-line bg-surface-overlay/85 text-fg-muted hover:border-line hover:bg-surface-raised hover:text-fg-soft'
                   }`}
                 >
@@ -274,7 +274,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
             size="md"
             onClick={handleSave}
             disabled={saving}
-            class="rounded-xl bg-warning px-6 font-semibold text-accent-fg shadow-[0_10px_28px_rgba(251,191,36,0.16)] hover:bg-amber-200"
+            class="rounded-xl bg-warning px-6 font-semibold text-on-warning shadow-[0_10px_28px_rgba(251,191,36,0.16)] hover:bg-amber-200"
           >
             {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create agent'}
           </Button>
@@ -378,7 +378,7 @@ function TemplateEditor({ onCancel }: { onCancel: () => void }) {
                   key={level}
                   type="button"
                   onClick={() => setAutonomyLevel(level)}
-                  class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60 ${autonomyLevel === level ? 'border-warning/40 bg-warning text-accent-fg' : 'border-line bg-surface-overlay/85 text-fg-muted hover:border-line hover:text-fg-soft'}`}
+                  class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60 ${autonomyLevel === level ? 'border-warning/40 bg-warning text-on-warning' : 'border-line bg-surface-overlay/85 text-fg-muted hover:border-line hover:text-fg-soft'}`}
                 >
                   {level}
                 </button>
@@ -399,7 +399,7 @@ function TemplateEditor({ onCancel }: { onCancel: () => void }) {
             size="md"
             disabled
             title="Custom template persistence is not available yet"
-            class="rounded-xl bg-warning px-6 font-semibold text-accent-fg"
+            class="rounded-xl bg-warning px-6 font-semibold text-on-warning"
           >
             Create template
           </Button>

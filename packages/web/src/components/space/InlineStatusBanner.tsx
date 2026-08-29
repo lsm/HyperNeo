@@ -39,11 +39,11 @@ const ACTION_VARIANT_CLASSES: Record<
   Record<InlineStatusBannerTone, string>
 > = {
   primary: {
-    amber: 'bg-warning/40 text-warning-soft border border-warning/50 hover:bg-amber-800/50',
-    blue: 'bg-sky-900/40 text-info-soft border border-sky-700/50 hover:bg-sky-800/50',
-    green: 'bg-success/40 text-success-soft border border-success/50 hover:bg-green-800/50',
-    purple: 'bg-cat-purple/40 text-cat-purple border border-cat-purple/50 hover:bg-purple-800/50',
-    red: 'bg-danger/40 text-danger-soft border border-danger/50 hover:bg-danger/50',
+    amber: 'bg-warning/15 text-warning-soft border border-warning/40 hover:bg-warning/25',
+    blue: 'bg-info/15 text-info-soft border border-info/40 hover:bg-info/25',
+    green: 'bg-success/15 text-success-soft border border-success/40 hover:bg-success/25',
+    purple: 'bg-cat-purple/15 text-cat-purple border border-cat-purple/40 hover:bg-cat-purple/25',
+    red: 'bg-danger/15 text-danger-soft border border-danger/40 hover:bg-danger/25',
     gray: 'bg-surface-raised/60 text-fg-soft border border-line/50 hover:bg-surface-raised/80',
   },
   secondary: {

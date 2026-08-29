@@ -67,18 +67,20 @@ export function rewriteClassString(
     return next;
   });
 
-  const semanticProps = new Set(
-    mapped
-      .filter((token) => !token.split(':').includes('dark') && SEMANTIC_TOKEN_RE.test(token))
-      .map((token) => token.split('-')[0])
-  );
   const finalWords = mapped.filter((token) => {
     if (!token.startsWith('dark:')) return true;
     const body = token.slice(5);
     const suffixMatch = /^(.*?)(\/\d{1,3}|\/\[[\d.]+\])?$/.exec(body);
     const base = suffixMatch?.[1] ?? body;
-    if (!mapping.utilities[body] && !mapping.utilities[base]) return true;
-    if (!semanticProps.has(body.split('-')[0])) return true;
+    const darkMapped = mapping.utilities[body] ?? mapping.utilities[base];
+    const peer = mapped.find(
+      (other) =>
+        !other.includes(':') &&
+        other.split('-')[0] === body.split('-')[0] &&
+        SEMANTIC_TOKEN_RE.test(other)
+    );
+    if (!peer) return true;
+    if (darkMapped && darkMapped !== peer) return true;
     changes.push(`drop ${token}`);
     return false;
   });

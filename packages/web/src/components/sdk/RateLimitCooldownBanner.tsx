@@ -78,7 +78,7 @@ export function RateLimitCooldownBanner({ sessionId, retryCount, maxRetries, ret
           type="button"
           onClick={handleRetryNow}
           disabled={retrying}
-          class="text-xs font-medium px-2 py-0.5 rounded bg-warning hover:bg-warning text-accent-fg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          class="text-xs font-medium px-2 py-0.5 rounded bg-warning hover:bg-warning text-on-warning disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {retrying ? 'Retrying…' : 'Retry Now'}
         </button>

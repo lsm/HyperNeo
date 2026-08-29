@@ -1394,7 +1394,7 @@ export default function MessageInput({
                           disabled={isTranscribing || !voiceRecorder.isRecording}
                           aria-label="Stop, transcribe and steer"
                           title="Stop, transcribe and steer the current turn"
-                          class="grid h-9 w-9 place-items-center rounded-full bg-warning text-accent-fg hover:bg-warning active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                          class="grid h-9 w-9 place-items-center rounded-full bg-warning text-on-warning hover:bg-warning active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <svg
                             class="h-4.5 w-4.5"

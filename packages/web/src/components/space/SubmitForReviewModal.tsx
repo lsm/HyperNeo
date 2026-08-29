@@ -81,7 +81,7 @@ export function SubmitForReviewModal({
             onClick={handleConfirm}
             disabled={busy}
             data-testid="submit-for-review-confirm"
-            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-warning hover:bg-warning text-accent-fg disabled:bg-warning/50 disabled:cursor-not-allowed"
+            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-warning hover:bg-warning text-on-warning disabled:bg-warning/50 disabled:cursor-not-allowed"
           >
             {busy ? 'Submitting...' : 'Submit for Review'}
           </button>

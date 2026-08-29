@@ -335,7 +335,7 @@ export function InputTextarea({
                     'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2',
                     hasContent && !disabled
                       ? isAgentWorking
-                        ? 'bg-warning text-accent-fg hover:bg-warning active:scale-95 focus-visible:ring-warning/70'
+                        ? 'bg-warning text-on-warning hover:bg-warning active:scale-95 focus-visible:ring-warning/70'
                         : 'bg-accent text-accent-fg hover:bg-accent-hover active:scale-95 focus-visible:ring-accent/70'
                       : 'bg-fill-strong/50 text-fg-faint cursor-not-allowed'
                   )}

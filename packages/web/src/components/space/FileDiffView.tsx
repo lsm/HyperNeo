@@ -209,7 +209,7 @@ export function FileDiffView({
 
                 switch (line.type) {
                   case 'added':
-                    rowClass = 'bg-green-950/40';
+                    rowClass = 'bg-success/10';
                     contentClass = 'text-success-soft';
                     sigil = '+';
                     break;

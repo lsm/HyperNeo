@@ -594,7 +594,7 @@ export function WorkflowNodeCard({
         <span
           class={cn(
             'w-5 h-5 flex items-center justify-center rounded-full text-xs font-semibold flex-shrink-0',
-            allDone ? 'bg-green-800 text-success-soft' : 'bg-fill-strong text-fg-muted'
+            allDone ? 'bg-success/20 text-success-soft' : 'bg-fill-strong text-fg-muted'
           )}
           data-testid="node-step-badge"
         >

@@ -202,7 +202,7 @@ async function cleanupPreviousRun(): Promise<void> {
   const spacesRes = await rpcCall(ws, 'space.list', { includeArchived: true });
   const spaces = Array.isArray(spacesRes) ? spacesRes : (spacesRes?.spaces ?? []);
   for (const space of spaces) {
-    if (space.name === SEED_SPACE_NAME || space.workspacePath === WORKSPACE) {
+    if (space.name === SEED_SPACE_NAME && space.workspacePath === WORKSPACE) {
       try {
         await rpcCall(ws, 'space.delete', { id: space.id });
       } catch (error) {
@@ -1358,7 +1358,7 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
   );
   await rpcCall(ws, 'session.update', { sessionId: endedSession, status: 'ended' });
 
-  const taskAgent = await createSession(ws, 'sdk migration worker');
+  const taskAgent = await createSession(ws, 'sdk migration worker', spaceId);
   await rpcCall(ws, 'session.update', {
     sessionId: taskAgent,
     type: 'space_task_agent',

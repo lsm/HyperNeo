@@ -66,6 +66,26 @@ describe('rewriteClassString', () => {
     expect(result.text).toBe('text-fg-muted');
   });
 
+  it('keeps dark: tokens whose mapped target differs from the light side', () => {
+    const toneShift: ThemeMapping = {
+      utilities: { 'text-green-400': 'text-success-soft', 'text-red-400': 'text-danger-soft' },
+      pairs: {},
+    };
+    expect(rewriteClassString('text-green-400 dark:text-red-400', toneShift).text).toBe(
+      'text-success-soft dark:text-red-400'
+    );
+  });
+
+  it('drops dark: overrides that map to the same target as the light side', () => {
+    const sameTarget: ThemeMapping = {
+      utilities: { 'text-gray-400': 'text-fg-muted', 'text-gray-500': 'text-fg-muted' },
+      pairs: {},
+    };
+    expect(rewriteClassString('text-gray-400 dark:text-gray-500', sameTarget).text).toBe(
+      'text-fg-muted'
+    );
+  });
+
   it('keeps dark: tokens when the light side is unmapped', () => {
     const result = rewriteClassString('bg-white dark:bg-gray-700', mapping);
     expect(result.text).toBe('bg-white dark:bg-gray-700');

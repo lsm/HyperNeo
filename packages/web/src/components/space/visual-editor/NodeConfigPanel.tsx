@@ -658,7 +658,7 @@ function PromptModeToggle({
           data-testid="prompt-mode-replace"
           onClick={() => onChange(true)}
           class={`text-[11px] rounded px-2 py-1 transition-colors ${
-            replace ? 'bg-warning text-accent-fg' : 'text-fg-muted hover:text-fg-soft'
+            replace ? 'bg-warning text-on-warning' : 'text-fg-muted hover:text-fg-soft'
           }`}
         >
           Replace agent prompt
