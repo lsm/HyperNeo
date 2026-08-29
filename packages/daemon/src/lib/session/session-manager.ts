@@ -514,6 +514,7 @@ export class SessionManager {
     const inFlight = this.workflowMcpProvisioning.get(sessionId);
     if (inFlight) {
       await inFlight.catch(() => {});
+      return this.sessionCache.getAsync(sessionId);
     }
     return session;
   }
