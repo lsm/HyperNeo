@@ -71,6 +71,7 @@ export class SessionManager {
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
   private workflowMcpProvisioning = new Map<string, Promise<void>>();
+  private workflowMcpProvisioned = new WeakSet<AgentSession>();
 
   constructor(
     private db: Database,
@@ -117,7 +118,7 @@ export class SessionManager {
       messageHub,
       internalEventBus,
       referenceResolver,
-      (sessionId) => this.getSessionAsync(sessionId)
+      (sessionId) => this.getSessionForMessagePersistence(sessionId)
     );
 
     this.setupEventSubscriptions();
@@ -448,7 +449,8 @@ export class SessionManager {
 
   private async provisionWorkflowMcpServers(session: AgentSession): Promise<void> {
     if (!this.isWorkflowSubSession(session)) return;
-    if (session.getSessionData().config.mcpServers?.['node-agent']) return;
+    if (this.workflowMcpProvisioned.has(session)) return;
+    if (session.getSessionData().status === 'archived') return;
 
     const provider = this.spaceRuntimeMcpProvider;
     if (!provider?.provisionWorkflowSession) return;
@@ -467,6 +469,18 @@ export class SessionManager {
     });
     this.workflowMcpProvisioning.set(sessionId, provisioning);
     await provisioning;
+    if (session.getSessionData().config.mcpServers?.['node-agent']) {
+      this.workflowMcpProvisioned.add(session);
+    }
+  }
+
+  private async getSessionForMessagePersistence(sessionId: string): Promise<AgentSession | null> {
+    const session = await this.getSessionAsync(sessionId);
+    if (!session) return null;
+    if (this.isWorkflowSubSession(session) && !this.workflowMcpProvisioned.has(session)) {
+      return null;
+    }
+    return session;
   }
 
   getSessionLifecycle(): SessionLifecycle {

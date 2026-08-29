@@ -122,6 +122,9 @@ export class MessagePersistence {
         `[MessagePersistence] Session ${sessionId} is archived; cannot accept new messages.`
       );
     }
+    if (images && images.length > 0) {
+      validateImageSizes(images);
+    }
 
     if (images && images.length > 0) {
       validateImageSizes(images);

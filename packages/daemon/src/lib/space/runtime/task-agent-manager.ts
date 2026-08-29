@@ -126,6 +126,7 @@ import {
 } from './pending-envelope.ts';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
+import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
@@ -2173,25 +2174,37 @@ export class TaskAgentManager {
 
   async restorePostApprovalWorkerSession(
     taskId: string,
-    hintSessionId?: string
+    hintSessionId?: string,
+    suppliedSession?: AgentSession,
+    options: { startQuery?: boolean } = {}
   ): Promise<string | null> {
     const identity = this.readPostApprovalWorkerIdentity(taskId, hintSessionId);
     if (!identity) return null;
 
-    if (this.agentSessionIndex.has(identity.sessionId)) return identity.sessionId;
-
-    return this.withSessionRestoreLock(identity.sessionId, () =>
-      this.performPostApprovalWorkerRestore(taskId, identity)
-    );
+    return this.withSessionRestoreLock(identity.sessionId, async () => {
+      const indexed = this.agentSessionIndex.get(identity.sessionId);
+      if (indexed && (indexed === suppliedSession || !suppliedSession)) return identity.sessionId;
+      if (indexed) {
+        await this.stopSessionPreserveDb(identity.sessionId, indexed, {
+          preserveDeliveryJobs: true,
+        });
+        this.detachSessionBookkeeping(identity.sessionId);
+        this.agentSessionIndex.delete(identity.sessionId);
+      }
+      return this.performPostApprovalWorkerRestore(taskId, identity, suppliedSession, options);
+    });
   }
 
   private async performPostApprovalWorkerRestore(
     taskId: string,
-    identity: { sessionId: string; agentName: string; nodeId?: string; agentId?: string }
+    identity: { sessionId: string; agentName: string; nodeId?: string; agentId?: string },
+    suppliedSession?: AgentSession,
+    options: { startQuery?: boolean } = {}
   ): Promise<string | null> {
     const { sessionId, agentName, nodeId, agentId } = identity;
 
-    if (this.agentSessionIndex.has(sessionId)) return sessionId;
+    const indexed = this.agentSessionIndex.get(sessionId);
+    if (indexed && (indexed === suppliedSession || !suppliedSession)) return sessionId;
 
     const task = this.config.taskRepo.getTask(taskId);
     if (!task?.workflowRunId) return null;
@@ -2232,7 +2245,7 @@ export class TaskAgentManager {
       }
     }
 
-    const cached = this.config.sessionManager.getCachedSession(sessionId);
+    const cached = suppliedSession ?? this.config.sessionManager.getCachedSession(sessionId);
     const createdNow = !cached;
     const agentSession =
       cached ??
@@ -2323,8 +2336,10 @@ export class TaskAgentManager {
 
     try {
       this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
-      await agentSession.startStreamingQuery();
-      await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+      if (options.startQuery !== false) {
+        await agentSession.startStreamingQuery();
+        await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+      }
     } catch (err) {
       this.subSessions.get(taskId)?.delete(sessionId);
       this.agentSessionIndex.delete(sessionId);
@@ -2559,10 +2574,7 @@ export class TaskAgentManager {
 
   isSessionAlive(sessionId: string): boolean {
     const indexed = this.agentSessionIndex.get(sessionId);
-    if (indexed) return this.isAgentSessionAlive(indexed);
-
-    const session = this.config.sessionManager.getSession(sessionId);
-    return session ? this.isAgentSessionAlive(session) : false;
+    return indexed ? this.isAgentSessionAlive(indexed) : false;
   }
 
   isSessionInMemory(sessionId: string): boolean {
@@ -3419,22 +3431,112 @@ export class TaskAgentManager {
     }
   }
 
-  async provisionWorkflowSession(session: AgentSession): Promise<void> {
+  async provisionWorkflowSession(
+    session: AgentSession,
+    options: { startQuery?: boolean } = {}
+  ): Promise<void> {
+    interface WorkflowProvisioningState {
+      sessionId: string;
+      taskId: string;
+      task: SpaceTask | null;
+      workflowRun: SpaceWorkflowRun | null;
+      space: Space | null;
+    }
+
     const sessionId = session.getSessionData().id;
     const taskId = taskIdFromSubSessionIdentity(sessionId);
     if (!taskId) return;
 
-    if (sessionId.includes(':post-approval:')) {
-      await this.restorePostApprovalWorkerSession(taskId, sessionId);
-      return;
-    }
-
-    const execution = this.resolveNodeExecutionForSubSession(sessionId);
-    if (!execution) return;
-    if (execution.status !== 'in_progress' && execution.status !== 'blocked') {
-      if (!this.hasQueuedRetryableHookAction(execution.workflowRunId, execution)) return;
-    }
-    await this.rehydrateSubSession(sessionId);
+    const outcome = await stagedRun<WorkflowProvisioningState>(
+      'provision-workflow-session',
+      (s) => [
+        s.snapshot({
+          name: 'resolve-workflow-owner',
+          provides: ['task', 'workflowRun', 'space'],
+          run: async () => {
+            const task = this.config.taskRepo.getTask(taskId) ?? null;
+            const workflowRun = task?.workflowRunId
+              ? (this.config.workflowRunRepo.getRun(task.workflowRunId) ?? null)
+              : null;
+            const space = task ? await this.config.spaceManager.getSpace(task.spaceId) : null;
+            return { task, workflowRun, space };
+          },
+        }),
+        s.decide({
+          name: 'admit-workflow-provisioning',
+          reads: ['task', 'workflowRun', 'space'],
+          branches: ['skip', 'postApproval', 'rehydrate'],
+          run: (view) => {
+            const task = view.task;
+            const workflowRun = view.workflowRun;
+            const space = view.space;
+            const isPostApproval = sessionId.includes(':post-approval:');
+            if (session.getSessionData().status === 'archived') {
+              return { decision: 'archived-session', skip: true };
+            }
+            if (
+              !task?.workflowRunId ||
+              !workflowRun ||
+              workflowRun.status === 'cancelled' ||
+              !space ||
+              space.stopped
+            ) {
+              return { decision: 'ineligible', skip: true };
+            }
+            if (isPostApproval) {
+              if (task.status !== 'approved') {
+                return { decision: 'post-approval-not-active', skip: true };
+              }
+              if (this.readPersistedRateLimitCooldown(sessionId)) {
+                return { decision: 'cooling-down', skip: true };
+              }
+              return { decision: 'restore-post-approval', postApproval: true };
+            }
+            if (isCanonicalTaskTerminalForSpawn(task.status) || workflowRun.status === 'done') {
+              return { decision: 'ineligible', skip: true };
+            }
+            const execution = this.resolveNodeExecutionForSubSession(sessionId);
+            if (!execution) return { decision: 'missing-execution', skip: true };
+            if (
+              execution.status !== 'in_progress' &&
+              execution.status !== 'blocked' &&
+              !this.hasQueuedRetryableHookAction(execution.workflowRunId, execution)
+            ) {
+              return { decision: 'non-resumable-execution', skip: true };
+            }
+            return { decision: 'rehydrate-execution', rehydrate: true };
+          },
+        }),
+        s.halt({
+          name: 'skip-workflow-provisioning',
+          when: 'skip',
+          run: () => undefined,
+        }),
+        s.effect({
+          name: 'restore-post-approval-worker',
+          when: 'postApproval',
+          writes: [],
+          run: async () => {
+            await this.restorePostApprovalWorkerSession(taskId, sessionId, session, options);
+          },
+        }),
+        s.halt({
+          name: 'return-restored-post-approval-worker',
+          when: 'postApproval',
+          run: () => undefined,
+        }),
+        s.effect({
+          name: 'rehydrate-workflow-execution',
+          when: 'rehydrate',
+          writes: [],
+          run: async () => {
+            await this.rehydrateSubSession(sessionId, session, options);
+          },
+        }),
+      ],
+      { input: ['sessionId', 'taskId'] }
+    )({ sessionId, taskId });
+    if (outcome.status === 'error') throw outcome.error;
   }
 
   private hasQueuedRetryableHookAction(workflowRunId: string, execution: NodeExecution): boolean {
@@ -3485,16 +3587,28 @@ export class TaskAgentManager {
     }
   }
 
-  private async rehydrateSubSession(subSessionId: string): Promise<AgentSession | null> {
-    const indexed = this.agentSessionIndex.get(subSessionId);
-    if (indexed) return indexed;
-
+  private async rehydrateSubSession(
+    subSessionId: string,
+    suppliedSession?: AgentSession,
+    options: { startQuery?: boolean } = {}
+  ): Promise<AgentSession | null> {
     const inFlight = this.rehydrateInFlight.get(subSessionId);
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      const restored = await inFlight;
+      if (!suppliedSession || restored === suppliedSession) return restored;
+      return this.rehydrateSubSession(subSessionId, suppliedSession, options);
+    }
 
-    const rehydrateTask = this.withSessionRestoreLock(subSessionId, () =>
-      this.performSubSessionRehydrate(subSessionId)
-    );
+    const rehydrateTask = this.withSessionRestoreLock(subSessionId, async () => {
+      const indexed = this.agentSessionIndex.get(subSessionId);
+      if (indexed && (indexed === suppliedSession || !suppliedSession)) return indexed;
+      if (indexed) {
+        await this.stopSessionPreserveDb(subSessionId, indexed, { preserveDeliveryJobs: true });
+        this.detachSessionBookkeeping(subSessionId);
+        this.agentSessionIndex.delete(subSessionId);
+      }
+      return this.performSubSessionRehydrate(subSessionId, suppliedSession, options);
+    });
     this.rehydrateInFlight.set(subSessionId, rehydrateTask);
     try {
       return await rehydrateTask;
@@ -3505,9 +3619,15 @@ export class TaskAgentManager {
     }
   }
 
-  private async performSubSessionRehydrate(subSessionId: string): Promise<AgentSession | null> {
+  private async performSubSessionRehydrate(
+    subSessionId: string,
+    suppliedSession?: AgentSession,
+    options: { startQuery?: boolean } = {}
+  ): Promise<AgentSession | null> {
     const alreadyIndexed = this.agentSessionIndex.get(subSessionId);
-    if (alreadyIndexed) return alreadyIndexed;
+    if (alreadyIndexed && (alreadyIndexed === suppliedSession || !suppliedSession)) {
+      return alreadyIndexed;
+    }
 
     if (this.config.db.getSession?.(subSessionId)?.status === 'archived') {
       log.warn(
@@ -3587,7 +3707,7 @@ export class TaskAgentManager {
       : null;
     const workflowRunId = execution.workflowRunId;
 
-    const cached = this.config.sessionManager.getCachedSession(subSessionId);
+    const cached = suppliedSession ?? this.config.sessionManager.getCachedSession(subSessionId);
     const agentSession =
       cached ??
       AgentSession.restore(
@@ -3695,12 +3815,17 @@ export class TaskAgentManager {
     this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
 
     try {
-      await agentSession.startStreamingQuery();
-      await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+      if (options.startQuery !== false) {
+        await agentSession.startStreamingQuery();
+        await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+      }
     } catch (err) {
       this.detachSessionBookkeeping(subSessionId);
       this.agentSessionIndex.delete(subSessionId);
-      if (this.config.sessionManager.getCachedSession(subSessionId) === agentSession) {
+      if (
+        !suppliedSession &&
+        this.config.sessionManager.getCachedSession(subSessionId) === agentSession
+      ) {
         await this.config.sessionManager.unregisterSession(subSessionId).catch(() => {});
       }
       throw err;

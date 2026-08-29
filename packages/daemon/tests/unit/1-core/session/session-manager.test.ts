@@ -272,7 +272,7 @@ describe('SessionManager', () => {
 
     it('provisions a workflow sub-session before returning it', async () => {
       const mockSession: Session = {
-        id: 'space:s1:task:t1:exec:e1',
+        id: 'space:s1:task:t1:exec:e2',
         title: 'Worker',
         workspacePath: '/test',
         status: 'active',
@@ -298,7 +298,7 @@ describe('SessionManager', () => {
 
     it('shares in-flight workflow provisioning across concurrent restores', async () => {
       const mockSession: Session = {
-        id: 'space:s1:task:t1:exec:e1',
+        id: 'space:s1:task:t1:exec:e3',
         title: 'Worker',
         workspacePath: '/test',
         status: 'active',
@@ -308,11 +308,16 @@ describe('SessionManager', () => {
       };
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
       let releaseProvisioning: (() => void) | undefined;
+      let signalProvisioningStarted: (() => void) | undefined;
+      const provisioningStarted = new Promise<void>((resolve) => {
+        signalProvisioningStarted = resolve;
+      });
       const provider = {
         reattachMemberSpaceTools: mock(async () => {}),
         provisionWorkflowSession: mock(
           () =>
             new Promise<void>((resolve) => {
+              signalProvisioningStarted!();
               releaseProvisioning = resolve;
             })
         ),
@@ -321,7 +326,7 @@ describe('SessionManager', () => {
 
       const first = sessionManager.getSessionAsync(mockSession.id);
       const second = sessionManager.getSessionAsync(mockSession.id);
-      await Promise.resolve();
+      await provisioningStarted;
       expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(1);
 
       releaseProvisioning!();

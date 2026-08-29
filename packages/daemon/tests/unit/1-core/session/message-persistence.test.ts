@@ -389,6 +389,29 @@ describe('MessagePersistence', () => {
     expect(resolveSession).toHaveBeenCalledWith('test-session-id');
     expect(mockSessionCache.getAsync).not.toHaveBeenCalled();
   });
+
+  it('validates oversized images before resolving a workflow session', async () => {
+    const resolveSession = mock(async () => mockAgentSession);
+    persistence = new MessagePersistence(
+      mockSessionCache,
+      mockDb,
+      mockMessageHub,
+      mockInternalEventBus,
+      undefined,
+      resolveSession
+    );
+
+    await expect(
+      persistence.persist({
+        sessionId: 'test-session-id',
+        messageId: 'msg-oversized-image',
+        content: 'do not activate a worker',
+        images: [{ media_type: 'image/png', data: 'a'.repeat(MAX_IMAGE_BASE64_SIZE + 1) }],
+      })
+    ).rejects.toThrow('exceeds API limit');
+
+    expect(resolveSession).not.toHaveBeenCalled();
+  });
 });
 
 describe('validateImageSizes', () => {
