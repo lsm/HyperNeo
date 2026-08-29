@@ -1458,7 +1458,7 @@ export default function MessageInput({
                     class={`w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 ${
                       isTranscribing
                         ? 'bg-accent/80 text-accent-fg cursor-wait focus-visible:ring-accent/70'
-                        : 'bg-fill-strong/70 text-fg-soft hover:bg-line-strong hover:text-accent-fg focus-visible:ring-accent/60'
+                        : 'bg-fill-strong/70 text-fg-soft hover:bg-line-strong hover:text-fg focus-visible:ring-accent/60'
                     } ${disabled ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}`}
                   >
                     {isTranscribing ? (

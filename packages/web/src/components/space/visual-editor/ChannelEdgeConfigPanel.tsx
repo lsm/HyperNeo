@@ -26,14 +26,14 @@ export function ChannelEdgeConfigPanel({
   return (
     <div
       data-testid="channel-edge-config-panel"
-      class="flex flex-col gap-3 p-4 bg-surface-overlay border border-line rounded-lg text-sm text-accent-fg"
+      class="flex flex-col gap-3 p-4 bg-surface-overlay border border-line rounded-lg text-sm text-fg"
     >
       {showHeader && (
         <div class="flex items-center justify-between">
-          <span class="font-semibold text-accent-fg text-sm">Channel</span>
+          <span class="font-semibold text-fg text-sm">Channel</span>
           <button
             data-testid="channel-close-button"
-            class="text-fg-muted hover:text-accent-fg transition-colors"
+            class="text-fg-muted hover:text-fg transition-colors"
             onClick={onClose}
             aria-label="Close"
           >

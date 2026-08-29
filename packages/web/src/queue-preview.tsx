@@ -177,9 +177,7 @@ function QueuePreviewApp() {
     <div class="min-h-dvh overflow-auto bg-app-content px-5 py-5 text-fg">
       <header class="mx-auto mb-5 max-w-7xl">
         <p class="text-xs font-medium uppercase tracking-wide text-fg-faint">Composer Preview</p>
-        <h1 class="mt-2 text-2xl font-semibold tracking-normal text-accent-fg">
-          Steer and Queue States
-        </h1>
+        <h1 class="mt-2 text-2xl font-semibold tracking-normal text-fg">Steer and Queue States</h1>
       </header>
       <main class="mx-auto grid max-w-7xl min-w-0 gap-3 lg:grid-cols-2 xl:grid-cols-3">
         {scenarios.map((scenario) => (

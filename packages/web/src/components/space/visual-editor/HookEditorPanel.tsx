@@ -244,8 +244,8 @@ export function HookEditorPanel({
       data-testid="hook-editor-panel"
       class={
         embedded
-          ? 'flex-1 overflow-y-auto px-4 py-4 space-y-3 text-sm text-accent-fg'
-          : 'flex flex-col gap-3 p-4 bg-surface-overlay border border-line rounded-lg text-sm text-accent-fg max-h-full overflow-y-auto'
+          ? 'flex-1 overflow-y-auto px-4 py-4 space-y-3 text-sm text-fg'
+          : 'flex flex-col gap-3 p-4 bg-surface-overlay border border-line rounded-lg text-sm text-fg max-h-full overflow-y-auto'
       }
     >
       {!embedded && (
@@ -254,12 +254,12 @@ export function HookEditorPanel({
             type="button"
             data-testid="hook-editor-back"
             onClick={onBack}
-            class="text-fg-muted hover:text-accent-fg transition-colors text-xs"
+            class="text-fg-muted hover:text-fg transition-colors text-xs"
             aria-label="Back"
           >
             &larr;
           </button>
-          <span class="font-semibold text-accent-fg text-sm">Hook Editor</span>
+          <span class="font-semibold text-fg text-sm">Hook Editor</span>
         </div>
       )}
 

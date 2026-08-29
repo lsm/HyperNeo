@@ -877,7 +877,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
           <button
             type="button"
             onClick={handleCancel}
-            class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-accent-fg transition-colors"
+            class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-fg transition-colors"
           >
             Cancel
           </button>

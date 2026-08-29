@@ -58,7 +58,7 @@ export function RejectModal({
             type="button"
             onClick={handleClose}
             disabled={isLoading}
-            class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-accent-fg bg-surface-raised hover:bg-fill-strong rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-fg bg-surface-raised hover:bg-fill-strong rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {cancelText}
           </button>

@@ -102,7 +102,7 @@ export function InputActionsMenu({
           `bg-fill-strong/80 border border-line-strong`,
           disabled
             ? 'opacity-50 cursor-not-allowed text-fg-faint'
-            : 'text-fg-soft hover:bg-line-strong hover:text-accent-fg active:scale-95'
+            : 'text-fg-soft hover:bg-line-strong hover:text-fg active:scale-95'
         )}
         title={disabled ? 'Not connected' : 'More options'}
       >

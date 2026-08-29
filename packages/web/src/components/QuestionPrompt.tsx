@@ -12,9 +12,9 @@ const questionColors = {
   active: {
     bg: 'bg-cat-rose/30',
     border: 'border-cat-rose/40',
-    text: 'text-rose-200',
+    text: 'text-cat-rose',
     iconColor: 'text-rose-400',
-    selectedBg: 'bg-cat-rose/60 border-rose-500 text-rose-100',
+    selectedBg: 'bg-cat-rose/60 border-cat-rose text-cat-rose',
     unselectedBg: 'bg-surface-raised/60',
     unselectedText: 'text-fg-soft',
   },

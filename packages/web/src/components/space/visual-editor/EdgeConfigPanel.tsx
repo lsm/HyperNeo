@@ -65,13 +65,13 @@ export function EdgeConfigPanel({
   return (
     <div
       data-testid="edge-config-panel"
-      class="flex flex-col gap-3 p-4 bg-surface-overlay border border-line rounded-lg text-sm text-accent-fg"
+      class="flex flex-col gap-3 p-4 bg-surface-overlay border border-line rounded-lg text-sm text-fg"
     >
       <div class="flex items-center justify-between">
-        <span class="font-semibold text-accent-fg text-sm">Transition</span>
+        <span class="font-semibold text-fg text-sm">Transition</span>
         <button
           data-testid="close-button"
-          class="text-fg-muted hover:text-accent-fg transition-colors"
+          class="text-fg-muted hover:text-fg transition-colors"
           onClick={onClose}
           aria-label="Close"
         >

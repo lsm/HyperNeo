@@ -1235,7 +1235,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           <button
             onClick={addStep}
             data-testid="add-step-button"
-            class="flex items-center gap-1.5 rounded-lg border border-line bg-fill-soft px-3 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:border-line-strong hover:bg-fill hover:text-accent-fg"
+            class="flex items-center gap-1.5 rounded-lg border border-line bg-fill-soft px-3 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:border-line-strong hover:bg-fill hover:text-fg"
           >
             <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -1253,7 +1253,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
               <button
                 onClick={() => setShowTemplates((v) => !v)}
                 data-testid="template-picker-button"
-                class="flex items-center gap-1.5 rounded-lg border border-line bg-fill-soft px-3 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:border-line-strong hover:bg-fill hover:text-accent-fg"
+                class="flex items-center gap-1.5 rounded-lg border border-line bg-fill-soft px-3 py-1.5 text-xs font-medium text-fg-soft transition-colors hover:border-line-strong hover:bg-fill hover:text-fg"
               >
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path

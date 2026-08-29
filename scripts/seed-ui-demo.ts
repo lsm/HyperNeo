@@ -213,7 +213,7 @@ async function cleanupPreviousRun(): Promise<void> {
   const sessionsRes = await rpcCall(ws, 'session.list', { includeArchived: true });
   const sessions = Array.isArray(sessionsRes) ? sessionsRes : (sessionsRes?.sessions ?? []);
   for (const session of sessions) {
-    if (SEED_SESSION_TITLES.includes(session.title)) {
+    if (SEED_SESSION_TITLES.includes(session.title) && session.workspacePath === WORKSPACE) {
       try {
         await rpcCall(ws, 'session.delete', { sessionId: session.id });
       } catch (error) {

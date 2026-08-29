@@ -492,7 +492,7 @@ export function SpaceAgentEditor({
                   if (errors['model']) setErrors((prev) => ({ ...prev, model: '' }));
                 }}
                 testId="space-agent-model-select"
-                className={`w-full bg-surface-raised border rounded-lg px-4 py-2.5 text-fg focus:outline-none focus:border-accent font-mono text-sm${
+                className={`w-full bg-surface-raised border rounded-lg px-4 py-2.5 text-fg focus:outline-none focus:border-accent font-mono text-sm ${
                   errors['model'] ? 'border-danger' : 'border-line-strong'
                 }`}
               />
