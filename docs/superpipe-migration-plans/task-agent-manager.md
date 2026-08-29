@@ -318,7 +318,8 @@ reservation). Fit: strong `stagedRun`; third instance of the reuse-vs-fresh
 shape (after `spawn-flow.ts` and cluster 4). **Outcome contract (P46
 coordination):** the sibling plan's P46 `post-approval-route` pipeline
 consumes this spawner through a bounded spawn outcome that must distinguish
-CREATED vs REUSED sessions and KICKOFF DELIVERED vs SKIPPED (the terminal-gate
+CREATED vs REUSED sessions (three-way with COLD-RESTORED for compensation;
+the P46 box may keep its two-way delivery flag) and KICKOFF DELIVERED vs SKIPPED (the terminal-gate
 skip) — its CAS-loss compensation and deadline cleanup run ONLY for sessions
 the attempt created, and a skipped reuse routes to release/terminal handling.
 TAM-F therefore owns the richer outcome record (or is explicitly sequenced
@@ -354,14 +355,19 @@ fence/rollback EXTENDS THROUGH FRESH-ARM DELIVERY: the inject lock does not
 serialize task/run status updates there either, so a task going terminal
 AFTER the post-create recheck but BEFORE the composed delivery effect must
 terminate the just-created worker — never deliver the kickoff and report
-DELIVERED. POST-CREATE FAILURES also need an ownership outcome: when
-`ensureNodeAgentAttached` or kickoff injection rejects after
-`createSubSession` (:5012–5042), today's catch releases only the model-pool
-reservation and leaves the registered streaming worker alive, and a bare
-error return gives P46 no ownership to compensate — TAM-F compensates such
-failures itself, stopping/unregistering ONLY a CREATED session while leaving
-a nested REUSED session intact (attach- and inject-rejection rows land with
-TAM-F1). The protocol
+DELIVERED. POST-CREATE FAILURES also need an ownership outcome — a THREE-WAY
+one, carried in the create-stage result: CREATED / LIVE-REUSED /
+COLD-RESTORED-BY-THIS-ATTEMPT. When `ensureNodeAgentAttached` or kickoff
+injection rejects after `createSubSession` (:5012–5042), today's catch
+releases only the model-pool reservation and leaves the registered streaming
+worker alive, and a bare error return gives P46 no ownership to compensate —
+TAM-F compensates per outcome: a CREATED worker is stopped and unregistered;
+a COLD-RESTORED worker (this attempt started its streaming via
+`rehydrateSubSession`) has its streaming and manager bookkeeping unwound
+WITHOUT deleting the durable session — CREATED-only cleanup would leave it
+registered and streaming, consuming capacity indefinitely; an already-live
+REUSED worker is left intact (attach- and inject-rejection rows for all
+three outcomes land with TAM-F1). The protocol
 must also distinguish COLD-CACHE RESTORATION:
 `rehydrateSubSession` registers and starts streaming the durable session
 (:3646–3677) BEFORE the create stages report REUSED, so on a terminal skip
@@ -467,7 +473,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-D2 | Wire `rehydrateSubSession` | wire | ≲40 | ≲50 | TAM-D1 |
 | TAM-E1 | `deliver-injected-message` pipeline over the COMPLETE operation (outer admissions + inner arms), composing `decideInjectDelivery`'s gates directly; requires the FENCED repair helper (shared with TAM-D1 — sequence after the slice that lands it); delivery stage group exported for direct composition by owning pipelines | build | ≲230 | ≲180 | TAM-PE, TAM-D1 (fenced repair helper) |
 | TAM-E2 | Wire `injectSubSessionMessageWithOrigin` (and its thin wrappers) to the E1 pipeline, and compose the extracted delivery stage group into spawn-flow's kickoff injection directly; inject lock stays class-owned | wire | ≲70 | ≲70 | TAM-E1 |
-| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 CREATED/REUSED + DELIVERED/SKIPPED outcome; COMPOSES the B1 create stage group and the E1 delivery stage group directly (no runner nesting); the reuse-arm terminal gate runs BEFORE the reuse mutation sequence under the same lock; the fresh arm's post-create recheck covers every create outcome (CREATED skip terminates the just-created session, REUSED skip leaves the worker untouched); lands the atomic-ownership/rollback protocol TOGETHER WITH its tests (terminal-skip rows for both outcomes, after-recheck-before-delivery transition, post-create attach/inject failure compensation stopping CREATED only, cold-cache unwind, the terminal races) | build | ≲220 | ≲240 | TAM-B2, TAM-E1, TAM-PF (P46 outcome contract) |
+| TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 delivery outcome with a THREE-WAY ownership result (CREATED / LIVE-REUSED / COLD-RESTORED) carried from the create-stage result; COMPOSES the B1 create stage group and the E1 delivery stage group directly (no runner nesting); the reuse-arm terminal gate runs BEFORE the reuse mutation sequence under the same lock; the fresh arm's post-create recheck covers every create outcome (CREATED skip terminates the just-created session, REUSED skip leaves the worker untouched); lands the atomic-ownership/rollback protocol TOGETHER WITH its tests (terminal-skip rows for both outcomes, after-recheck-before-delivery transition, post-create attach/inject failure compensation per ownership — CREATED stopped/unregistered, COLD-RESTORED unwound without deleting the durable session, LIVE-REUSED intact — cold-cache unwind, the terminal races) | build | ≲220 | ≲250 | TAM-B2, TAM-E1, TAM-PF (P46 outcome contract) |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
 | TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); introduces the status-guarded settlement/error primitive (risk 5) TOGETHER WITH its race-correctness tests (which cannot pass before it exists) | build+wire | ≲100 | ≲80 | TAM-PG |
 | TAM-S1 | `self-heal-node-agent` stagedRun, unwired (prologue gates via the FENCED repair helper + adoption admission composed in front of the existing heal stages; heal workspace routed through `resolveTaskWorkspace`; adoption at the manager-owned pre-heal boundary) | build | ≲140 | ≲120 | TAM-PS, TAM-D1 (fenced repair helper) |
