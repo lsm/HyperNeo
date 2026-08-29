@@ -142,8 +142,12 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
   `else if` with an empty body — preserve verbatim; deletion is out of scope.
 - `planEndpointPageAdvance` (:2487–2523): pagination decision
   (`backlogClearedByCutoff ? 1 : rows ≥ 100 ? page+1 : 1`), the tied-watermark
-  `+1` bump (:2508–2514), and the pending/committed endpoint watermark
-  promotion. ~30 lines.
+  `+1` bump (:2508–2514), the pending/committed endpoint watermark promotion,
+  AND the next `pullsSeedInProgress` state for the pulls endpoint
+  (:2505–2506, `pullsNeedsSeed && processedPages.pulls > 1`) — the plan
+  returns it for the caller to persist; a dropped flag exits seed mode after
+  the first 100-row page and lets the old-watermark cutoff truncate the
+  backlog prematurely. ~30 lines.
 
 ### C3a — initial head-ref index rebuild
 
@@ -259,10 +263,16 @@ transitions (same contract class as C4's supersession plan).
   `skip` arm would publish a false resolution of a prior conflict.
   ~20 lines.
 - C5b review row freshness (:2886–2888 pre-loop seed, :2975–2989 per-row
-  gate): first-seen watermark seed, seen-id + watermark gate (note the stale
-  path marks the id seen WITHOUT advancing the watermark, :2981–2984).
-  Returns `{markSeen?, advanceWatermark?}`. Row level — runs once per review
-  row. ~15 lines.
+  gate): seen-id + watermark gate (note the stale path marks the id seen
+  WITHOUT advancing the watermark, :2981–2984). Returns
+  `{seedWatermark?, markSeen?, advanceWatermark?}` — `seedWatermark` is the
+  PRE-LOOP first-seen seed: the source persists
+  `reviewLastSeenAt[prNumber] = watermarks.committed` BEFORE fetching
+  (:2886–2888), so a scan that returns no rows, 304s, or fails before row
+  iteration still seeds; without the explicit seed action a later advance of
+  the committed watermark would stale-suppress a delayed review instead of
+  publishing it. The seed applies once per PR scan; `markSeen`/
+  `advanceWatermark` run once per review row. ~15 lines.
 - C5c review scan-level etag finalization (:2966–2968 pending capture,
   :3001–3005 commit/clear): single-page etag commit
   (`complete && singlePage && pendingEtag`) vs delete. A scan-level decision
