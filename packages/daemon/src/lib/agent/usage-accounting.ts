@@ -46,17 +46,3 @@ export function recordResultUsage(
     costBaseline: adjustedBaseline,
   };
 }
-
-export function commitPendingCost(state: UsageAccountingState): UsageAccountingState {
-  if (state.lastSdkCost <= 0) {
-    return state;
-  }
-
-  const costBaseline = state.costBaseline + state.lastSdkCost;
-  return {
-    ...state,
-    costBaseline,
-    lastSdkCost: 0,
-    totalCost: costBaseline,
-  };
-}
