@@ -1070,6 +1070,7 @@ describe('AcpQueryRunner', () => {
 
       expect(messageQueue.requeueYielded).toHaveBeenCalledWith('user-message-1');
       expect(onSent).not.toHaveBeenCalled();
+      expect(runner.lastConsumedUserMessage).toBeNull();
     }, 1000);
 
     test('a stale handshake skips persisting session results after a replacement', async () => {
@@ -2904,6 +2905,39 @@ describe('AcpQueryRunner', () => {
       expect(createClient).toHaveBeenCalledTimes(2);
       expect(secondClient.sendPrompt).toHaveBeenCalled();
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('persists instructions when metadata precedes the first real reply', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'available_commands_update', availableCommands: [] },
+        };
+      });
+      const { runner, ctx } = createRunnerFixture({
+        client,
+        queryOptions: {
+          cwd: '/tmp/acp-session',
+          mcpServers: {},
+          systemPrompt: 'SYSTEM-PROMPT',
+        },
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(ctx.db.updateSession).toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({
+          metadata: expect.objectContaining({ acpInstructionsSent: true }),
+        })
+      );
     }, 5000);
 
     test('preserves instruction blocks across a pre-submission retry', async () => {

@@ -917,14 +917,6 @@ export class AcpQueryRunner {
         }
 
         const queuedMessage = message as SDKUserMessage & { internal?: boolean };
-        receivedAcpMessageDuringRun = false;
-        startupWatchFirstMessageSeen = false;
-        startupWatchHasFirstMessage = () => false;
-        startupWatchSawErrorResult = false;
-        this._lastConsumedUserMessage = {
-          uuid: message.uuid ?? '',
-          content: (message.message?.content ?? '') as unknown as string | MessageContent[],
-        };
         if (!queuedMessage.internal) {
           if (!attemptOwnsRun()) {
             requeueYieldedPrompt(message);
@@ -936,6 +928,18 @@ export class AcpQueryRunner {
             break;
           }
         }
+        if (!attemptOwnsRun()) {
+          requeueYieldedPrompt(message);
+          break;
+        }
+        receivedAcpMessageDuringRun = false;
+        startupWatchFirstMessageSeen = false;
+        startupWatchHasFirstMessage = () => false;
+        startupWatchSawErrorResult = false;
+        this._lastConsumedUserMessage = {
+          uuid: message.uuid ?? '',
+          content: (message.message?.content ?? '') as unknown as string | MessageContent[],
+        };
 
         await this.applyStoredAcpThinkingLevel(acpClient, ownsSessionWrite);
         if (!attemptOwnsRun()) {
@@ -996,6 +1000,11 @@ export class AcpQueryRunner {
             }
 
             messageCount++;
+            if (messageCount === 1 && shouldPersistInstructionsSent) {
+              if (!isAcpErrorResultMessage(acpMessage as SDKMessage)) {
+                this.persistAcpInstructionsSent();
+              }
+            }
             if (!promptMessageReceived) {
               if (
                 isAcpAgentStartupMessage(acpMessage as SDKMessage) ||
@@ -1004,9 +1013,6 @@ export class AcpQueryRunner {
                 promptMessageReceived = true;
                 startupWatchFirstMessageSeen = true;
                 receivedAcpMessageDuringRun = true;
-                if (messageCount === 1 && shouldPersistInstructionsSent) {
-                  this.persistAcpInstructionsSent();
-                }
                 this.clearStartupTimer();
               } else if (isAcpErrorResultMessage(acpMessage as SDKMessage)) {
                 startupWatchSawErrorResult = true;
