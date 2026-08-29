@@ -640,8 +640,9 @@ export default function MessageInput({
                 : 'Recording target changed — transcript discarded'
             );
           }
-        } else if (outcome.reason) {
-          toast.info(outcome.reason);
+        } else {
+          if (outcome.reason) toast.info(outcome.reason);
+          await deleteVoiceRecord(result.recordId);
         }
         return;
       }

@@ -475,6 +475,7 @@ describe('MessageInput — recording UI', () => {
     );
     expect(onSend).not.toHaveBeenCalled();
     expect(draft.value).toBe('');
+    expect(deleteVoiceRecord).toHaveBeenCalledWith(expect.any(String));
   });
 
   it('consumes the record after a successful insert even when durable persistence failed', async () => {
