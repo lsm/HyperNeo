@@ -1,4 +1,4 @@
-import { spawn as nodeSpawn } from 'node:child_process';
+import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import type {
   CanUseTool,
   HookCallback,
@@ -42,7 +42,12 @@ import {
 } from './query-retry-routing.ts';
 import type { SDKMessageHandler } from './sdk-message-handler.ts';
 import { getSdkStartupGate, type SdkStartupPermit } from './sdk-startup-gate.ts';
-import { isMeaningfulSdkStartupProgress } from './sdk-startup-progress.ts';
+import {
+  DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS,
+  getSdkStartInactivityBackstopMs,
+  runStartupWatch,
+  type SdkStartExitInfo,
+} from './startup-watch-pipeline.ts';
 import {
   isRetryableProviderError,
   TRANSIENT_CONNECTION_ERROR_SUBSTRINGS,
@@ -69,17 +74,16 @@ function defaultSpawn(opts: SpawnOptions): SpawnedProcess {
   return proc as unknown as SpawnedProcess;
 }
 
-const DEFAULT_STARTUP_TIMEOUT_MS = 60000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 
-function getStartupTimeoutMs(): number {
-  const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-  if (!raw) return DEFAULT_STARTUP_TIMEOUT_MS;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
-}
-
-const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
+type StartupWatchRace =
+  | { kind: 'message'; result: IteratorResult<unknown, void> }
+  | { kind: 'iterator_error'; error: unknown }
+  | { kind: 'nudge' }
+  | { kind: 'backstop' }
+  | { kind: 'drain' }
+  | { kind: 'exit' }
+  | { kind: 'abort' };
 
 const DEFAULT_MAX_PROVIDER_RETRIES = 3;
 const DEFAULT_PROVIDER_RETRY_BASE_DELAY_MS = 2000;
@@ -653,6 +657,13 @@ export class QueryRunner {
     let runAbortController: AbortController | null = null;
     let isAbortError = false;
 
+    const inactivityBackstopMs = getSdkStartInactivityBackstopMs();
+    const nudgeThresholdMs = DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS;
+
+    let processExitInfo: SdkStartExitInfo = { code: null, signal: null };
+    let processExited = false;
+    let deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null;
+
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
         '../providers/factory.js'
@@ -881,12 +892,27 @@ export class QueryRunner {
         extraProviderManagedEnvVars,
       }) as Record<string, string>;
 
+      let resolveProcessExit: (() => void) | null = null;
+      const processExitPromise = new Promise<void>((resolve) => {
+        resolveProcessExit = resolve;
+      });
+
       const originalSpawn = queryOptions.spawnClaudeCodeProcess;
       queryOptions.spawnClaudeCodeProcess = (opts: SpawnOptions): SpawnedProcess => {
         const proc = (
           originalSpawn ? originalSpawn(opts) : defaultSpawn(opts)
         ) as TrackedAgentProcess;
         this.ctx.trackAgentProcess(proc);
+        const child = proc as unknown as ChildProcess;
+        if (child.exitCode !== null) {
+          processExitInfo = { code: child.exitCode, signal: child.signalCode ?? null };
+          resolveProcessExit?.();
+        } else {
+          child.once('exit', (code, signal) => {
+            processExitInfo = { code: code ?? null, signal: signal ?? null };
+            resolveProcessExit?.();
+          });
+        }
         logger.info(
           `SDK subprocess spawned (pid=${proc.pid} session=${session.id} ` +
             `resume=${session.sdkSessionId ?? 'fresh'} model=${queryOptions.model})`
@@ -928,6 +954,10 @@ export class QueryRunner {
       });
       this.ctx.queryObject = queryObject;
 
+      this.ctx.onModelsFetched(queryGeneration, attemptToken).catch((e) => {
+        logger.warn('Background fetch of models failed:', e);
+      });
+
       void this.applyDeferredPermissionMode(
         queryObject,
         optionsBuilder.getDeferredPermissionMode()
@@ -949,93 +979,341 @@ export class QueryRunner {
       }
 
       const queryStartTime = Date.now();
-      let startupTimeoutReached = false;
-      let startupProgressSeen = false;
 
-      const startupTimer = setTimeout(() => {
-        if (!startupProgressSeen) {
-          startupTimeoutReached = true;
-          const elapsed = Date.now() - queryStartTime;
-          const isRootWorkspace = !session.worktree;
-          const workspaceDesc = isRootWorkspace
-            ? `root workspace: ${session.workspacePath ?? 'unbound'}`
-            : `worktree: ${session.worktree!.worktreePath}`;
-          logger.error(
-            `SDK startup timeout: SDK did not respond within ${elapsed}ms. ` +
-              `Model: ${queryOptions.model}, ${workspaceDesc}` +
-              (isRootWorkspace ? ' — running on root workspace (not a worktree)' : '') +
-              ` The SDK subprocess did not emit its first message within the startup window; ` +
-              `concurrent cold-start load is bounded by the startup gate.` +
-              ` (Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${STARTUP_TIMEOUT_MS}ms)`
-          );
-          logger.error(
-            `SDK startup timeout diagnostics: queueRunning=${messageQueue.isRunning()} ` +
-              `queueSize=${messageQueue.size()} trackedPids=[${this.ctx
-                .snapshotTrackedAgentProcesses()
-                .map(([pid]) => pid)
-                .join(',')}] sdkSessionId=${session.sdkSessionId ?? 'none'}`
-          );
+      const sdkIterator = this.createAbortableQuery(queryObject, runAbortController.signal);
+      let nextPromise = sdkIterator.next();
+      const startupWatchMessages: SDKMessage[] = [];
+      let nudgeSent = false;
+      let firstMessageArrived = false;
 
-          if (runAbortController && !runAbortController.signal.aborted) {
-            runAbortController.abort();
-          }
+      let resolveNudge: () => void = () => {};
+      const nudgePromise = new Promise<void>((resolve) => {
+        resolveNudge = resolve;
+      });
+      const nudgeTimeout = setTimeout(() => {
+        resolveNudge();
+      }, nudgeThresholdMs);
+
+      let resolveBackstop: () => void = () => {};
+      const backstopPromise = new Promise<void>((resolve) => {
+        resolveBackstop = resolve;
+      });
+      const backstopTimeout = setTimeout(() => {
+        resolveBackstop();
+      }, inactivityBackstopMs);
+      this.ctx.startupTimeoutTimer = backstopTimeout;
+
+      let resolveDrain: () => void = () => {};
+      const drainPromise = new Promise<void>((resolve) => {
+        resolveDrain = resolve;
+      });
+      let drainTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const abortPromise = new Promise<void>((resolve) => {
+        if (runAbortController!.signal.aborted) {
+          resolve();
+        } else {
+          runAbortController!.signal.addEventListener('abort', () => resolve(), { once: true });
         }
-      }, STARTUP_TIMEOUT_MS);
-      this.ctx.startupTimeoutTimer = startupTimer;
-
-      this.ctx.onModelsFetched(queryGeneration, attemptToken).catch((e) => {
-        logger.warn('Background fetch of models failed:', e);
       });
 
-      if (!queryObject) {
-        throw new Error('Query object is null after initialization');
-      }
+      const slowStartNotice = (elapsedMs: number): string =>
+        `⚠️ The AI session is slow to start — no response after ` +
+        `${Math.round(elapsedMs / 1000)}s. Continuing to wait…`;
 
-      for await (const message of this.createAbortableQuery(
-        queryObject,
-        runAbortController.signal
-      )) {
-        if (startupTimeoutReached && !startupProgressSeen) {
-          throw new Error('SDK startup timeout - query aborted');
-        }
+      const logStartupTimeout = (elapsedMs: number): void => {
+        const isRootWorkspace = !session.worktree;
+        const workspaceDesc = isRootWorkspace
+          ? `root workspace: ${session.workspacePath ?? 'unbound'}`
+          : `worktree: ${session.worktree!.worktreePath}`;
+        logger.error(
+          `SDK startup timeout: SDK did not respond within ${elapsedMs}ms. ` +
+            `Model: ${queryOptions.model}, ${workspaceDesc}` +
+            (isRootWorkspace ? ' — running on root workspace (not a worktree)' : '') +
+            ` The SDK subprocess did not emit its first message within the startup window; ` +
+            `concurrent cold-start load is bounded by the startup gate.` +
+            ` (Hint: set HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS to increase timeout, currently ${inactivityBackstopMs}ms)`
+        );
+        logger.error(
+          `SDK startup timeout diagnostics: queueRunning=${messageQueue.isRunning()} ` +
+            `queueSize=${messageQueue.size()} trackedPids=[${this.ctx
+              .snapshotTrackedAgentProcesses()
+              .map(([pid]) => pid)
+              .join(',')}] sdkSessionId=${session.sdkSessionId ?? 'none'}`
+        );
+      };
 
-        if (!startupProgressSeen && isMeaningfulSdkStartupProgress(message as SDKMessage)) {
-          startupProgressSeen = true;
-          const timer = this.ctx.startupTimeoutTimer;
-          if (timer) {
-            clearTimeout(timer);
-            this.ctx.startupTimeoutTimer = null;
+      try {
+        while (true) {
+          if (runAbortController.signal.aborted) {
+            break;
           }
-          releaseStartupPermit('first_message');
-          this.ctx.firstMessageReceived = true;
-          this._consumedUserMessages.delete(queryGeneration);
+
+          const race: Array<Promise<StartupWatchRace>> = [
+            nextPromise.then(
+              (result) => ({ kind: 'message' as const, result }),
+              (error) => ({ kind: 'iterator_error' as const, error })
+            ),
+            abortPromise.then(() => ({ kind: 'abort' as const })),
+          ];
+          if (!firstMessageArrived) {
+            if (!processExited) {
+              race.push(processExitPromise.then(() => ({ kind: 'exit' as const })));
+            }
+            if (!nudgeSent && !processExited) {
+              race.push(nudgePromise.then(() => ({ kind: 'nudge' as const })));
+            }
+            if (processExited) {
+              race.push(drainPromise.then(() => ({ kind: 'drain' as const })));
+            }
+            race.push(backstopPromise.then(() => ({ kind: 'backstop' as const })));
+          }
+
+          const winner = await Promise.race(race);
+
+          if (winner.kind === 'abort') {
+            break;
+          }
+
+          if (winner.kind === 'iterator_error') {
+            if (!firstMessageArrived && processExited) {
+              deadReason = 'process_exit';
+              logger.error(
+                `SDK startup liveness: SDK iterator rejected after the process exited ` +
+                  `(code=${processExitInfo.code}, signal=${processExitInfo.signal}). ` +
+                  'Treating as a startup timeout and retrying once if a prompt is available.'
+              );
+              throw new Error('SDK startup timeout - query aborted');
+            }
+            throw winner.error;
+          }
+
+          if (winner.kind === 'nudge') {
+            nudgeSent = true;
+            clearTimeout(nudgeTimeout);
+            const outcome = await runStartupWatch(
+              { nudgeThresholdMs, inactivityBackstopMs },
+              {
+                messages: startupWatchMessages,
+                processExit: null,
+                streamClosed: false,
+                inactivity: { elapsedMs: nudgeThresholdMs, lastActivityAt: null },
+              }
+            );
+            if (outcome.action === 'nudge-slow') {
+              try {
+                await this.displayErrorAsAssistantMessage(slowStartNotice(nudgeThresholdMs), {
+                  markAsError: false,
+                });
+              } catch (err) {
+                logger.warn(
+                  `Failed to display slow-start notice for session ${session.id}: ` +
+                    `${err instanceof Error ? err.message : String(err)}`
+                );
+              }
+            }
+            continue;
+          }
+
+          if (winner.kind === 'backstop') {
+            const outcome = await runStartupWatch(
+              {
+                nudgeThresholdMs: nudgeSent ? Number.POSITIVE_INFINITY : nudgeThresholdMs,
+                inactivityBackstopMs,
+              },
+              {
+                messages: startupWatchMessages,
+                processExit: processExited ? processExitInfo : null,
+                streamClosed: false,
+                inactivity: { elapsedMs: inactivityBackstopMs, lastActivityAt: null },
+              }
+            );
+            if (outcome.action === 'abort-backstop') {
+              deadReason = 'backstop';
+              logStartupTimeout(inactivityBackstopMs);
+              throw new Error('SDK startup timeout - query aborted');
+            }
+            if (outcome.action === 'retry-dead') {
+              if (outcome.reason === 'process_exit') {
+                deadReason = 'process_exit';
+                logger.error(
+                  `SDK startup liveness: SDK process exited before the first message ` +
+                    `(code=${processExitInfo.code}, signal=${processExitInfo.signal}). ` +
+                    'Treating as a startup timeout and retrying once if a prompt is available.'
+                );
+              } else {
+                deadReason = 'stream_closed';
+                logger.error(
+                  'SDK startup liveness: SDK stream closed before the first message. ' +
+                    'Treating as a startup timeout and retrying once if a prompt is available.'
+                );
+              }
+              throw new Error('SDK startup timeout - query aborted');
+            }
+            continue;
+          }
+
+          if (winner.kind === 'exit') {
+            processExited = true;
+            if (drainTimer === null) {
+              drainTimer = setTimeout(() => resolveDrain(), RETRY_EXIT_TIMEOUT_MS);
+            }
+            continue;
+          }
+
+          if (winner.kind === 'drain') {
+            const outcome = await runStartupWatch(
+              {
+                nudgeThresholdMs: nudgeSent ? Number.POSITIVE_INFINITY : nudgeThresholdMs,
+                inactivityBackstopMs,
+              },
+              {
+                messages: startupWatchMessages,
+                processExit: processExitInfo,
+                streamClosed: false,
+                inactivity: null,
+              }
+            );
+            if (outcome.action === 'retry-dead') {
+              deadReason = 'process_exit';
+              logger.error(
+                `SDK startup liveness: SDK process exited before the first message ` +
+                  `(code=${processExitInfo.code}, signal=${processExitInfo.signal}). ` +
+                  'Treating as a startup timeout and retrying once if a prompt is available.'
+              );
+              throw new Error('SDK startup timeout - query aborted');
+            }
+            continue;
+          }
+
+          const { result } = winner;
+          if (result.done) {
+            if (firstMessageArrived) {
+              break;
+            }
+            const consumedPrompts = this._consumedUserMessages.get(queryGeneration) ?? [];
+            const hasUnsentYieldedPrompt = consumedPrompts.some((m) =>
+              this.ctx.messageQueue.hasYielded(m.uuid)
+            );
+            if (hasUnsentYieldedPrompt || consumedPrompts.length > 0 || messageQueue.size() > 0) {
+              break;
+            }
+            const outcome = await runStartupWatch(
+              {
+                nudgeThresholdMs: nudgeSent ? Number.POSITIVE_INFINITY : nudgeThresholdMs,
+                inactivityBackstopMs,
+              },
+              {
+                messages: startupWatchMessages,
+                processExit: processExited ? processExitInfo : null,
+                streamClosed: !processExited,
+                inactivity: null,
+              }
+            );
+            if (outcome.action === 'retry-dead') {
+              if (processExited) {
+                deadReason = 'process_exit';
+                logger.error(
+                  `SDK startup liveness: SDK process exited before the first message ` +
+                    `(code=${processExitInfo.code}, signal=${processExitInfo.signal}). ` +
+                    'Treating as a startup timeout and retrying once if a prompt is available.'
+                );
+              } else {
+                deadReason = 'stream_closed';
+                logger.error(
+                  'SDK startup liveness: SDK stream closed before the first message. ' +
+                    'Treating as a startup timeout and retrying once if a prompt is available.'
+                );
+              }
+              throw new Error('SDK startup timeout - query aborted');
+            }
+            break;
+          }
+
+          const message = result.value as SDKMessage;
+          if (!firstMessageArrived) {
+            startupWatchMessages.push(message);
+            const elapsed = Date.now() - queryStartTime;
+            const messageOutcome = await runStartupWatch(
+              {
+                nudgeThresholdMs: nudgeSent ? Number.POSITIVE_INFINITY : nudgeThresholdMs,
+                inactivityBackstopMs,
+              },
+              {
+                messages: startupWatchMessages,
+                processExit: null,
+                streamClosed: false,
+                inactivity: { elapsedMs: elapsed, lastActivityAt: null },
+              }
+            );
+            if (messageOutcome.action === 'continue' && messageOutcome.disarmed) {
+              firstMessageArrived = true;
+              this.ctx.firstMessageReceived = true;
+              clearTimeout(nudgeTimeout);
+              clearTimeout(backstopTimeout);
+              if (drainTimer) {
+                clearTimeout(drainTimer);
+                drainTimer = null;
+              }
+              if (this.ctx.startupTimeoutTimer === backstopTimeout) {
+                this.ctx.startupTimeoutTimer = null;
+              }
+              releaseStartupPermit('first_message');
+              this._consumedUserMessages.delete(queryGeneration);
+            } else if (messageOutcome.action === 'nudge-slow') {
+              nudgeSent = true;
+              clearTimeout(nudgeTimeout);
+              try {
+                await this.displayErrorAsAssistantMessage(
+                  slowStartNotice(messageOutcome.inactivity?.elapsedMs ?? elapsed),
+                  { markAsError: false }
+                );
+              } catch (err) {
+                logger.warn(
+                  `Failed to display slow-start notice for session ${session.id}: ` +
+                    `${err instanceof Error ? err.message : String(err)}`
+                );
+              }
+            } else if (
+              messageOutcome.action === 'abort-backstop' ||
+              messageOutcome.action === 'retry-dead'
+            ) {
+              if (messageOutcome.action === 'abort-backstop') {
+                deadReason = 'backstop';
+              } else {
+                deadReason =
+                  messageOutcome.reason === 'process_exit' ? 'process_exit' : 'stream_closed';
+              }
+              logStartupTimeout(elapsed);
+              throw new Error('SDK startup timeout - query aborted');
+            }
+          }
+
+          try {
+            await this.handleSDKMessage(message, queryGeneration);
+          } catch (error) {
+            await this.handleStreamMessageError(message, error, queryGeneration, attemptToken);
+          }
+
+          nextPromise = sdkIterator.next();
         }
 
-        try {
-          await this.handleSDKMessage(message as SDKMessage, queryGeneration);
-        } catch (error) {
-          await this.handleStreamMessageError(
-            message as SDKMessage,
-            error,
-            queryGeneration,
-            attemptToken
-          );
+        if (this.ctx.getQueryGeneration() === queryGeneration) {
+          this.ctx.consumePendingResumeSessionAt?.();
+          messageQueue.stop();
         }
-      }
-
-      if (
-        this.ctx.getQueryGeneration() === queryGeneration &&
-        !(startupTimeoutReached && !startupProgressSeen)
-      ) {
-        this.ctx.consumePendingResumeSessionAt?.();
-      }
-
-      if (this.ctx.getQueryGeneration() === queryGeneration) {
-        messageQueue.stop();
-      }
-
-      if (startupTimeoutReached && !startupProgressSeen) {
-        throw new Error('SDK startup timeout - query aborted');
+      } finally {
+        clearTimeout(nudgeTimeout);
+        clearTimeout(backstopTimeout);
+        if (drainTimer) {
+          clearTimeout(drainTimer);
+        }
+        if (this.ctx.startupTimeoutTimer === backstopTimeout) {
+          this.ctx.startupTimeoutTimer = null;
+        }
+        resolveNudge = () => {};
+        resolveBackstop = () => {};
+        resolveDrain = () => {};
       }
     } catch (error) {
       logger.error('Streaming query error:', error);
@@ -1138,7 +1416,23 @@ export class QueryRunner {
       }
 
       if (routeDecision.route.action === 'startup_timeout_retry') {
+        const startupRetryNotice = ((): string => {
+          if (deadReason === 'process_exit') {
+            const exitDesc = processExitInfo.signal
+              ? `signal ${processExitInfo.signal}`
+              : `code ${processExitInfo.code ?? 'unknown'}`;
+            return `⚠️ The AI session ended unexpectedly before responding (process exited with ${exitDesc}). Retrying once…`;
+          }
+          if (deadReason === 'stream_closed') {
+            return `⚠️ The AI session ended unexpectedly before responding (SDK stream closed). Retrying once…`;
+          }
+          return (
+            `⚠️ The AI session is slow to start — no response after ` +
+            `${Math.round(inactivityBackstopMs / 1000)}s. Retrying once…`
+          );
+        })();
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
+        runAbortController?.abort();
         return await this.runRetryTeardown(queryGeneration, attemptToken, {
           nextAttempt: 1,
           recoveryState,
@@ -1154,9 +1448,7 @@ export class QueryRunner {
           guardAfterExit: true,
           restartQueueIfStopped: true,
           requeueConsumedList: true,
-          noticeAfterTeardown:
-            `⚠️ The AI session is slow to start — no response after ` +
-            `${Math.round(STARTUP_TIMEOUT_MS / 1000)}s. Retrying once…`,
+          noticeAfterTeardown: startupRetryNotice,
         });
       }
       if (routeDecision.route.action === 'message_not_found_retry') {
@@ -1285,7 +1577,12 @@ export class QueryRunner {
                 session.id,
                 error as Error,
                 route.category,
-                this.terminalUserMessageFor(route.messageHint, maxProviderRetries),
+                this.terminalUserMessageFor(
+                  route.messageHint,
+                  maxProviderRetries,
+                  inactivityBackstopMs,
+                  deadReason
+                ),
                 processingState,
                 {
                   errorMessage,
@@ -1293,7 +1590,7 @@ export class QueryRunner {
                   providerId: providerId ?? 'anthropic',
                   workspacePath: session.workspacePath ?? undefined,
                   isRootWorkspace: !session.worktree,
-                  startupTimeoutMs: STARTUP_TIMEOUT_MS,
+                  startupTimeoutMs: inactivityBackstopMs,
                 },
                 publishGuard
               );
@@ -1656,6 +1953,9 @@ export class QueryRunner {
         );
         for (let i = consumed.length - 1; i >= 0; i--) {
           const message = consumed[i];
+          if (messageQueue.requeueYielded(message.uuid)) {
+            continue;
+          }
           messageQueue
             .enqueueWithId(message.uuid, message.content, false, { prepend: true })
             .catch(() => {});
@@ -2028,16 +2328,32 @@ export class QueryRunner {
 
   private terminalUserMessageFor(
     messageHint: string | undefined,
-    maxProviderRetries: number
+    maxProviderRetries: number,
+    startupTimeoutMs: number,
+    deadReason: 'process_exit' | 'stream_closed' | 'backstop' | null = null
   ): string | undefined {
     const { session } = this.ctx;
     if (messageHint === 'startup_timeout') {
+      if (deadReason === 'process_exit') {
+        return (
+          `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
+          `The SDK process exited unexpectedly (after one automatic retry). ` +
+          `Try: resending your message.`
+        );
+      }
+      if (deadReason === 'stream_closed') {
+        return (
+          `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
+          `The SDK stream closed unexpectedly (after one automatic retry). ` +
+          `Try: resending your message.`
+        );
+      }
       return (
         `The AI session failed to start (workspace: ${session.workspacePath ?? 'unbound'}). ` +
         `The SDK subprocess did not emit its first message within the startup window ` +
         `(after one automatic retry); concurrent cold-start load is bounded by the startup gate. ` +
         `Try: resending your message, or increase the timeout with ` +
-        `HYPERNEO_SDK_STARTUP_TIMEOUT_MS (current: ${STARTUP_TIMEOUT_MS}ms).`
+        `HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS (current: ${startupTimeoutMs}ms).`
       );
     }
     if (messageHint === 'conversation_not_found') {
