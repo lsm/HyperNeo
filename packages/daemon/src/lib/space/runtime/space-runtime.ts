@@ -3910,8 +3910,10 @@ export class SpaceRuntime {
     pausedSpaceIds: Set<string> = new Set(),
     workflowRunId?: string
   ): Promise<void> {
+    const generation = this.runtimeGeneration;
     try {
       await this.restoreIdleSessionsOwningPendingDeliveries(pausedSpaceIds, workflowRunId);
+      if (this.isStopped || generation !== this.runtimeGeneration) return;
       this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
     } catch (err) {
       log.warn(
