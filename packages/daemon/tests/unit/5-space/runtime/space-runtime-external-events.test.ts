@@ -3091,6 +3091,73 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.getById(event.id)?.state).toBe('failed');
     });
 
+    test('a paused space does not restore its parked idle sessions at a recovery point', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-paused-restore', { status: 'idle' });
+      tam.alive.delete('session-paused-restore');
+      let resumeCalls = 0;
+      tam.tryResumeNodeAgentSession = async () => {
+        resumeCalls += 1;
+        tam.alive.add('session-paused-restore');
+      };
+
+      await (
+        runtime as unknown as {
+          recoverPendingDeliveries: (paused: Set<string>, workflowRunId?: string) => Promise<void>;
+        }
+      ).recoverPendingDeliveries(new Set([SPACE_ID]));
+      await wait(200);
+
+      expect(resumeCalls).toBe(0);
+      expect(digestRowCount('session-paused-restore')).toBe(0);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+    });
+
+    test('an in-flight long-horizon delivery crossing the TTL is not terminally failed by recovery', async () => {
+      const repo = new SpaceLongHorizonAgentRepository(db);
+      const agent = repo.create({
+        id: 'lh-agent-inflight-ttl',
+        spaceId: SPACE_ID,
+        handle: 'inflight-ttl',
+        displayName: 'Inflight TTL',
+      });
+      const subscription = repo.createSubscription({
+        spaceId: SPACE_ID,
+        agentId: agent.id,
+        source: 'github',
+        topic: DEFAULT_TOPIC,
+      });
+      const event = makeEvent({ id: 'evt-lh-inflight-ttl' });
+      eventStore.store(event);
+      const deliveryKey = `lh:${subscription.id}:${event.id}`;
+      eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+        workflowRunId: `long_horizon:${SPACE_ID}`,
+        taskId: subscription.id,
+        nodeId: agent.id,
+        agentName: agent.id,
+      });
+      eventStore.markDeliveryFailed(event.id, deliveryKey, {
+        terminal: false,
+        reason: 'long-horizon agent unavailable',
+      });
+      (
+        runtime as unknown as { externalEventDeliveriesInFlight: Set<string> }
+      ).externalEventDeliveriesInFlight.add(deliveryKey);
+
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 300_001;
+      try {
+        await runtime.onSpaceResumed(SPACE_ID);
+      } finally {
+        Date.now = originalNow;
+      }
+      await wait(100);
+
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      expect(delivery.state).toBe('pending');
+      expect(delivery.failureReason).not.toBe('ttl_expired');
+    });
+
     test('cancelling a stopped task leaves its persisted pending deliveries inert', async () => {
       const { run, task, event } = await runWithPendingDelivery({ taskStatus: 'stopped' });
       bindLiveSession(

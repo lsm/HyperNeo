@@ -3824,7 +3824,10 @@ export class SpaceRuntime {
     return true;
   }
 
-  private async restoreIdleSessionsOwningPendingDeliveries(workflowRunId?: string): Promise<void> {
+  private async restoreIdleSessionsOwningPendingDeliveries(
+    pausedSpaceIds: Set<string>,
+    workflowRunId?: string
+  ): Promise<void> {
     const store = this.config.externalEventStore;
     const tam = this.config.taskAgentManager;
     if (!store || !tam || typeof tam.tryResumeNodeAgentSession !== 'function') return;
@@ -3832,8 +3835,54 @@ export class SpaceRuntime {
       string,
       { workflowRunId: string; nodeId: string; agentName: string }
     >();
+    const spaceStateById = new Map<string, { paused: boolean; stopped: boolean } | null>();
     for (const delivery of store.listPendingDeliveries(workflowRunId)) {
       if (longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId)) continue;
+      if (
+        this.externalEventDeliveriesInFlight.has(delivery.deliveryKey) ||
+        this.immediateDispatchesInFlight.has(delivery.deliveryKey)
+      ) {
+        continue;
+      }
+      const eventRecord = store.getById(delivery.eventId);
+      if (!eventRecord || eventRecord.state !== 'published') continue;
+      if (
+        isQueuedExternalEventExpired(eventRecord.createdAt, Date.now(), EXTERNAL_EVENT_QUEUE_TTL_MS)
+      ) {
+        continue;
+      }
+      const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
+      if (!run || pausedSpaceIds.has(run.spaceId) || this.pausedSpaceIds.has(run.spaceId)) continue;
+      if (!spaceStateById.has(run.spaceId)) {
+        const space = await this.config.spaceManager.getSpace(run.spaceId).catch(() => null);
+        spaceStateById.set(
+          run.spaceId,
+          space ? { paused: !!space.paused, stopped: !!space.stopped } : null
+        );
+      }
+      const spaceState = spaceStateById.get(run.spaceId);
+      if (!spaceState || spaceState.paused || spaceState.stopped) continue;
+      if (
+        !this.isTargetStillSubscribed(
+          {
+            workflowRunId: delivery.workflowRunId,
+            taskId: delivery.taskId,
+            nodeId: delivery.nodeId,
+            agentName: delivery.agentName,
+          },
+          eventRecord.event.topic
+        )
+      ) {
+        continue;
+      }
+      if (
+        evaluateRequeueTaskLifecycle(
+          this.config.taskRepo.getTask(delivery.taskId),
+          eventRecord.event
+        )
+      ) {
+        continue;
+      }
       restorable.set(`${delivery.workflowRunId}:${delivery.nodeId}:${delivery.agentName}`, {
         workflowRunId: delivery.workflowRunId,
         nodeId: delivery.nodeId,
@@ -3870,7 +3919,7 @@ export class SpaceRuntime {
     workflowRunId?: string
   ): Promise<void> {
     try {
-      await this.restoreIdleSessionsOwningPendingDeliveries(workflowRunId);
+      await this.restoreIdleSessionsOwningPendingDeliveries(pausedSpaceIds, workflowRunId);
       this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
     } catch (err) {
       log.warn(
@@ -3911,6 +3960,7 @@ export class SpaceRuntime {
         this.requeueWorkflowPendingDelivery(delivery, eventRecord, pausedSpaceIds);
         continue;
       }
+      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
       if (
         isQueuedExternalEventExpired(eventRecord.createdAt, Date.now(), EXTERNAL_EVENT_QUEUE_TTL_MS)
       ) {
@@ -3968,7 +4018,6 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         continue;
       }
-      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
       void this.deliverToLongHorizonAgent(target, eventPayload, delivery.deliveryKey);
     }
   }
