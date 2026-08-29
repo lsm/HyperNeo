@@ -2441,27 +2441,35 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('disarms the watchdog when the first ACP message arrives', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '5000';
+      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '200';
       const client = createMockClient();
-      let resumedAfterFirstMessage = false;
+      let releaseFirstUpdate: (() => void) | undefined;
       client.sendPrompt = mock(async function* () {
+        await new Promise<void>((resolve) => {
+          releaseFirstUpdate = resolve;
+        });
         yield {
           sessionId: 'acp-session-1',
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: 'first' },
-          },
+          update: { sessionUpdate: 'plan', entries: [] },
         };
-        resumedAfterFirstMessage = true;
         await new Promise<never>(() => {});
       });
-      const { runner, ctx } = createRunnerFixture({ client });
+      const { runner, ctx, onSDKMessage } = createRunnerFixture({ client });
       const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
 
       await runner.start();
-      await waitFor(() => resumedAfterFirstMessage && ctx.startupTimeoutTimer === null, 500);
-      expect(resumedAfterFirstMessage).toBe(true);
+      await waitFor(() => ctx.startupTimeoutTimer !== null, 500);
+      expect(timerDelayMs(ctx.startupTimeoutTimer)).toBe(200);
+      releaseFirstUpdate?.();
+
+      await waitFor(
+        () => onSDKMessage.mock.calls.length > 0 && ctx.startupTimeoutTimer === null,
+        500
+      );
+      expect(onSDKMessage).toHaveBeenCalled();
       expect(ctx.startupTimeoutTimer).toBeNull();
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
       expect(ctx.queryAbortController?.signal.aborted).toBe(false);
       expect(
         loggerError.mock.calls.some(([message]) => String(message).includes('ACP startup timeout'))
@@ -2624,20 +2632,23 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('retries transient connection errors once with prompt re-delivery', async () => {
-      const firstClient = createMockClient();
-      firstClient.sendPrompt = mock(async function* (
+      const transientSendPrompt = async function* (
         _prompt: unknown,
         callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
       ) {
         callbacks?.onSubmitted?.();
         callbacks?.onAccepted?.();
         throw new Error('TypeError: fetch failed');
-      });
+      };
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(transientSendPrompt);
       const secondClient = createMockClient();
       secondClient.canLoadSession.mockImplementation(() => true);
+      secondClient.sendPrompt = mock(transientSendPrompt);
       const clients = [firstClient, secondClient];
       const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
-      const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
       const updateSession = ctx.db.updateSession as ReturnType<typeof mock>;
       const loggerWarn = (ctx.logger as unknown as { warn: ReturnType<typeof mock> }).warn;
 
@@ -2652,7 +2663,18 @@ describe('AcpQueryRunner', () => {
       expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
         { type: 'text', text: 'hello' },
       ]);
+      expect(createClient).toHaveBeenCalledTimes(2);
       expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).toHaveBeenCalledTimes(1);
+      expect(ctx.errorManager.handleError).toHaveBeenCalledWith(
+        'session-1',
+        expect.any(Error),
+        'provider_unavailable',
+        undefined,
+        expect.any(Object),
+        expect.objectContaining({ providerId: 'acp' }),
+        expect.any(Function)
+      );
       for (const call of updateSession.mock.calls) {
         expect(call[1]).not.toMatchObject({ acpSessionId: undefined });
       }
