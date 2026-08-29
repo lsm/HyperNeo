@@ -82,7 +82,12 @@ function isAcpErrorResultMessage(message: SDKMessage): boolean {
   return message.type === 'result' && (message as { is_error?: boolean }).is_error === true;
 }
 
-const ACP_VALID_ERROR_STOP_REASONS = new Set(['max_tokens', 'max_turn_requests', 'refusal']);
+const ACP_VALID_ERROR_STOP_REASONS = new Set([
+  'max_tokens',
+  'max_turn_requests',
+  'refusal',
+  'cancelled',
+]);
 
 function isAcpValidTerminalResult(message: SDKMessage): boolean {
   if (message.type !== 'result') return false;
@@ -912,11 +917,15 @@ export class AcpQueryRunner {
         }
 
         const queuedMessage = message as SDKUserMessage & { internal?: boolean };
+        receivedAcpMessageDuringRun = false;
+        startupWatchFirstMessageSeen = false;
+        startupWatchHasFirstMessage = () => false;
+        startupWatchSawErrorResult = false;
+        this._lastConsumedUserMessage = {
+          uuid: message.uuid ?? '',
+          content: (message.message?.content ?? '') as unknown as string | MessageContent[],
+        };
         if (!queuedMessage.internal) {
-          receivedAcpMessageDuringRun = false;
-          startupWatchFirstMessageSeen = false;
-          startupWatchHasFirstMessage = () => false;
-          startupWatchSawErrorResult = false;
           if (!attemptOwnsRun()) {
             requeueYieldedPrompt(message);
             break;
@@ -926,10 +935,6 @@ export class AcpQueryRunner {
             requeueYieldedPrompt(message);
             break;
           }
-          this._lastConsumedUserMessage = {
-            uuid: message.uuid ?? '',
-            content: (message.message?.content ?? '') as unknown as string | MessageContent[],
-          };
         }
 
         await this.applyStoredAcpThinkingLevel(acpClient, ownsSessionWrite);
@@ -991,11 +996,6 @@ export class AcpQueryRunner {
             }
 
             messageCount++;
-            if (messageCount === 1) {
-              if (shouldPersistInstructionsSent) {
-                this.persistAcpInstructionsSent();
-              }
-            }
             if (!promptMessageReceived) {
               if (
                 isAcpAgentStartupMessage(acpMessage as SDKMessage) ||
@@ -1004,6 +1004,9 @@ export class AcpQueryRunner {
                 promptMessageReceived = true;
                 startupWatchFirstMessageSeen = true;
                 receivedAcpMessageDuringRun = true;
+                if (messageCount === 1 && shouldPersistInstructionsSent) {
+                  this.persistAcpInstructionsSent();
+                }
                 this.clearStartupTimer();
               } else if (isAcpErrorResultMessage(acpMessage as SDKMessage)) {
                 startupWatchSawErrorResult = true;
