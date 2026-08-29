@@ -1479,9 +1479,9 @@ export class AgentSession
     await this.lifecycleManager.restartQuery();
   }
 
-  async restart(): Promise<void> {
+  async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
     this.rateLimitWatchdog.cancel();
-    await this.lifecycleManager.restart();
+    await this.lifecycleManager.restart(options);
   }
 
   getRewindPoints(): RewindPoint[] {

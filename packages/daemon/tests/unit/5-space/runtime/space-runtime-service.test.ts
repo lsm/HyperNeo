@@ -3829,20 +3829,12 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
     expect(restart).toHaveBeenCalledTimes(1);
   });
 
-  test('re-evaluates the context budget before starting the restarted query', async () => {
-    const order: string[] = [];
-    const updateConfig = mock(async () => {
-      order.push('updateConfig');
-    });
-    const resetQuery = mock(async () => {
-      order.push('resetQuery');
-      return { success: true };
-    });
-    const reevaluate = mock(async () => {
-      order.push('reevaluate');
-    });
-    const restart = mock(async () => {
-      order.push('restart');
+  test('re-evaluates the context budget in the restart beforeStart gap', async () => {
+    const updateConfig = mock(async () => {});
+    const resetQuery = mock(async () => ({ success: true }));
+    const reevaluate = mock(async () => {});
+    const restart = mock(async (options?: { beforeStart?: () => Promise<void> }) => {
+      await options?.beforeStart?.();
     });
     const session = {
       getSessionData: () => ({ config: { model: 'old-model', provider: 'kimi' } }),
@@ -3859,7 +3851,8 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
 
     expect(updateConfig).toHaveBeenCalledTimes(1);
     expect(resetQuery).toHaveBeenCalledWith({ restartQuery: false });
-    expect(order).toEqual(['updateConfig', 'resetQuery', 'reevaluate', 'restart']);
+    expect(restart).toHaveBeenCalledTimes(1);
+    expect(reevaluate).toHaveBeenCalledTimes(1);
   });
 
   test('is a no-op when the provider already matches', async () => {
