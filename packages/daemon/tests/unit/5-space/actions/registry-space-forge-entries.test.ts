@@ -420,6 +420,13 @@ describe('createSpaceRegistryEntries — forge handler wiring', () => {
         expect(await lessonResolver({ lesson_id: lessonId, rule: 'Live-guidance edit' })).toBe(
           SESSION_WRITE_AUTONOMY_LEVEL
         );
+        expect(await lessonResolver({ lesson_id: lessonId, status: 'dismissed' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+        await call('update_forge_lesson', { lesson_id: lessonId, status: 'dismissed' });
+        expect(await lessonResolver({ lesson_id: lessonId, rule: 'Terminal-record edit' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
       }
 
       const episodeResolver = byName.get('update_forge_episode')?.autonomyRequirement;
@@ -506,7 +513,7 @@ describe('createSpaceRegistryEntries — forge handler wiring', () => {
         },
         {
           name: 'update_forge_lesson',
-          params: { lesson_id: lessonId, status: 'active' },
+          params: { lesson_id: lessonId, rule: 'Round trip edit' },
           success: true,
         },
         {
