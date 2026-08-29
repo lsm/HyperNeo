@@ -12,10 +12,12 @@ import {
 
 function createFactory({
   abortReadWriteAfter,
+  abortReadWriteAt,
   abortAfterRead,
   abortAfterReadFrom = 1,
 }: {
   abortReadWriteAfter?: number;
+  abortReadWriteAt?: number;
   abortAfterRead?: boolean;
   abortAfterReadFrom?: number;
 } = {}) {
@@ -34,6 +36,9 @@ function createFactory({
         if (targs[1] === 'readwrite') {
           writeTxs += 1;
           if (abortReadWriteAfter !== undefined && writeTxs > abortReadWriteAfter) {
+            queueMicrotask(() => tx.abort());
+          }
+          if (abortReadWriteAt === writeTxs) {
             queueMicrotask(() => tx.abort());
           }
           if (abortAfterRead && writeTxs >= abortAfterReadFrom) {
@@ -174,6 +179,16 @@ describe('voice audio record store', () => {
     expect(results).toEqual([true, true]);
     resetVoiceAudioStore();
     expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['r2', 'r3', 'r4', 'a', 'b']);
+  });
+
+  it('persists a pending memory-only record on the next successful write', async () => {
+    const factory = createFactory({ abortReadWriteAt: 1 });
+    globalThis.indexedDB = factory;
+    expect(await putVoiceRecord(makeEntry('x', NOW))).toBe(false);
+    expect(await getVoiceRecord('x')).not.toBeNull();
+    expect(await putVoiceRecord(makeEntry('y', NOW + 1))).toBe(true);
+    resetVoiceAudioStore();
+    expect((await listVoiceRecords()).map((e) => e.id)).toEqual(['x', 'y']);
   });
 
   it('deletes a record from both the mirror and durable storage', async () => {

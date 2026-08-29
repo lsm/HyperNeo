@@ -116,6 +116,7 @@ interface DoomPlan {
   keys: IDBValidKey[];
   ids: Set<string>;
   merged: VoiceRecordEntry[];
+  pending: VoiceRecordEntry[];
 }
 
 function planDoom(rows: unknown[]): DoomPlan {
@@ -131,8 +132,12 @@ function planDoom(rows: unknown[]): DoomPlan {
       keys.push(key);
     }
   }
+  const pending: VoiceRecordEntry[] = [];
+  const durableIds = new Set(rows.map((row) => (row as { id?: unknown } | null)?.id));
   for (const entry of mirror.values()) {
-    if (isVoiceRecordEntry(entry)) valid.set(entry.id, entry);
+    if (!isVoiceRecordEntry(entry)) continue;
+    valid.set(entry.id, entry);
+    if (!durableIds.has(entry.id)) pending.push(entry);
   }
   const merged = [...valid.values()].sort((a, b) => a.createdAt - b.createdAt);
   const now = Date.now();
@@ -145,7 +150,7 @@ function planDoom(rows: unknown[]): DoomPlan {
     keys.push(entry.id);
     ids.add(entry.id);
   }
-  return { keys, ids, merged };
+  return { keys, ids, merged, pending: pending.filter((entry) => !ids.has(entry.id)) };
 }
 
 function pruneMirrorOnly(): void {
@@ -160,6 +165,8 @@ async function writeTx(
     const request = store.getAll();
     request.onsuccess = () => {
       plan = planDoom(request.result ?? []);
+      for (const key of plan.keys) store.delete(key);
+      for (const entry of plan.pending) store.put(entry);
       body(store, plan);
     };
     return request;
@@ -181,7 +188,6 @@ export function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
     mirror.set(entry.id, entry);
     tombstones.delete(entry.id);
     const plan = await writeTx((store, doomed) => {
-      for (const key of doomed.keys) store.delete(key);
       if (!doomed.ids.has(entry.id)) store.put(entry);
     });
     if (!plan) return false;
@@ -189,6 +195,7 @@ export function putVoiceRecord(entry: VoiceRecordEntry): Promise<boolean> {
     for (const key of plan.keys) {
       if (typeof key === 'string') tombstones.delete(key);
     }
+    for (const persisted of plan.pending) mirror.delete(persisted.id);
     const stored = !plan.ids.has(entry.id);
     if (stored) mirror.delete(entry.id);
     return stored;
@@ -220,14 +227,13 @@ export function deleteVoiceRecord(id: string): Promise<void> {
 
 export function pruneVoiceRecords(): Promise<void> {
   return serializeMutation(async () => {
-    const plan = await writeTx((store, doomed) => {
-      for (const key of doomed.keys) store.delete(key);
-    });
+    const plan = await writeTx(() => {});
     if (!plan) return;
     for (const id of plan.ids) mirror.delete(id);
     for (const key of plan.keys) {
       if (typeof key === 'string') tombstones.delete(key);
     }
+    for (const persisted of plan.pending) mirror.delete(persisted.id);
   });
 }
 
