@@ -67,13 +67,22 @@ matches. No migration work remains there.
 ### `create-node-agent-sub-session` — cluster 4, ~298 lines
 
 `createSubSession` (:1110) is the reuse-vs-create path: find prior execution
-for the agent (skip when `freshSessionOnly`), reuse arm (rebind CAS with
+for the agent (skip when `freshSessionOnly`). Reuse admission includes the
+COLD-CACHE branch — a prior `agentSessionId` absent from `agentSessionIndex`
+awaits `rehydrateSubSession` and reuses the durable session when restoration
+succeeds (:1124–1127); treating "not indexed" as "fresh" after a daemon
+restart would double-spawn the worker. Reuse arm (rebind CAS with
 `SpawnSupersededError`, stale co-owner release cascade :1167–1197, config
 update, workspace migration under inject lock with node-agent-server
-capture/restore compensation :1250–1264, callback re-register, flush), fresh
-arm (`AgentSession.fromInit`, index/register, bind CAS with superseded
-compensation that deletes the never-streamed session row :1357–1371, stream,
-flush). Fit: strong `stagedRun` — sync admission gates, CAS effects, awaited
+capture/restore compensation :1250–1264), fresh arm (`AgentSession.fromInit`,
+index/register, bind CAS with superseded compensation that deletes the
+never-streamed session row :1357–1371, stream). Callback re-registration
+(:1272–1277) stays manager-owned at the lifecycle boundary — the pipeline
+returns the reuse/create outcome and the manager swaps the callback. Both
+arms end with a DETACHED `void flushPendingMessagesForTarget(...).catch`
+(:1286–1297, :1391–1402): a drain failure must never reject or compensate a
+successfully created/reused session. Fit: strong `stagedRun` — sync admission
+gates, CAS effects, awaited
 workspace migration, two compensations. The bind step composes the repo
 primitive the spawn flow also wraps — `nodeExecutionRepo.casExecutionStatus`
 with expected statuses derived from `SPAWN_BINDABLE_EXECUTION_STATUSES` — NOT
@@ -124,7 +133,11 @@ so the ladder below carries no activation slice.
 ### `rehydrate-sub-session` — cluster 14, ~215 lines
 
 `performSubSessionRehydrate` (:3486): six refusal gates (archived row, no
-execution, no parent task, terminal task, no space, cancelled run) → cached or
+execution, no parent task, task-status rejection limited to
+`cancelled`/`archived`/`stopped` (:3537–3545) — `done` is deliberately
+ADMISSIBLE here and must stay so (pin it); conflating it with a generic
+"terminal task" gate would drop a done task's live execution during run
+restoration —, no space, cancelled run) → cached or
 `AgentSession.restore` → workspace resolve/update → init overlay → MCP merge →
 attach → index/register → stream + replay with bookkeeping compensation
 (:3675–3685) → detached flush. Completion-callback subscription stays
@@ -152,7 +165,12 @@ direct tail uses exist; a shared combinator needs a true third (ADR 0004
 `injectMessageIntoSession` (:3849): the `decideInjectDelivery` decision
 (`noop`/`defer`/`clear_before_deliver`/`deliver_without_clear`) already exists;
 the complete path is still imperative — message assembly (pure transform),
-`defer` arm (:3926–3942), clear-with-error-tolerance (:3943–3958 —
+`defer` arm (:3926–3942), clear-with-error-tolerance (:3943–3958 — the
+pre-clear `hasActiveDeliveryJob` RE-READ (:3943–3946) is an effect-time
+concurrency guard, not the decide-snapshot fact from :3917: TAM-E1 must
+RE-GATHER immediately before the clear effect, and TAM-PE pins the
+first-read-false/pre-clear-read-true case, or a job arriving after the decide
+snapshot gets its context reset underneath it;
 `ClearConversationCancelledError` is RETHROWN, never tolerated: cancellation
 must pass through so no message is delivered during a cancelled reset; only
 ordinary clear errors fall through to deliver), the
@@ -224,10 +242,10 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
-| TAM-PB | Pins for `createSubSession` reuse/fresh arms (incl. the narrow-compensation and same-status-rebind rows) | test-only | 0 | ≲120 | — |
+| TAM-PB | Pins for `createSubSession` reuse/fresh arms: cold-cache reuse via `rehydrateSubSession`, narrow compensation, same-status rebind, detached-flush rejection behavior | test-only | 0 | ≲120 | — |
 | TAM-PC | Pins for `restorePostApprovalWorkerSession` (incl. no-completion-callback) | test-only | 0 | ≲80 | — |
-| TAM-PD | Pins for `rehydrateSubSession` refusal gates + repair effect | test-only | 0 | ≲100 | — |
-| TAM-PE | Pins for `injectMessageIntoSession` arms (incl. cancellation passthrough ordering) | test-only | 0 | ≲120 | — |
+| TAM-PD | Pins for `rehydrateSubSession`: refusal-gate ordering (archived row BEFORE the fenced repair), `done` admissibility | test-only | 0 | ≲100 | — |
+| TAM-PE | Pins for `injectMessageIntoSession` arms: cancellation passthrough ordering, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
 | TAM-PF | Pins for `spawnPostApprovalSubSession` reuse/fresh arms | test-only | 0 | ≲100 | — |
 | TAM-PG | Pins for `deliverSpaceAgentPendingRow` settlement/error races | test-only | 0 | ≲60 | — |
 | TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin) | build | ≲250 | ≲250 | TAM-PB |
@@ -256,7 +274,9 @@ additive dead code pinned by per-stage tests, and its wire slice is a
 single-family call-site swap; TAM-G is the one combined slice and stays within
 the trivial build+wire exception. Cluster 9 (activation) carries NO slice
 here — `space-runtime-tools-goals.md` P48–P50 already own its pins, unwired
-pipeline, and wiring; this epic defers to them. After TAM-B2/D2/F2 land, the
+pipeline, and wiring; this epic defers to them. The reciprocal sequencing is
+encoded in BOTH ladders: P46 depends on TAM-F1 (outcome contract) and P47 on
+TAM-F2 in `space-runtime-tools-goals.md`. After TAM-B2/D2/F2 land, the
 reuse-vs-fresh stagedRun shape has 3 direct uses (spawn-flow, create,
 post-approval) + 2 close cousins (rehydrate, restore) — a follow-up MAY
 propose a combinator per ADR 0004's ≈3-use rule; never before.
