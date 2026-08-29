@@ -17,7 +17,7 @@ const FOLDER_TONES = [
   { bg: 'bg-warning/10', icon: 'text-warning' },
   { bg: 'bg-sky-400/10', icon: 'text-info-soft' },
   { bg: 'bg-emerald-400/10', icon: 'text-success-soft' },
-  { bg: 'bg-violet-400/10', icon: 'text-violet-300' },
+  { bg: 'bg-cat-violet/10', icon: 'text-cat-violet' },
   { bg: 'bg-rose-400/10', icon: 'text-cat-rose' },
   { bg: 'bg-cat-cyan/10', icon: 'text-cat-cyan' },
   { bg: 'bg-orange-400/10', icon: 'text-warning-soft' },

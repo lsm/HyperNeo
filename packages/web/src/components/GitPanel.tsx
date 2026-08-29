@@ -32,7 +32,7 @@ const STATUS_COLORS: Record<GitFileStatusKind, string> = {
   added: 'text-success-soft',
   deleted: 'text-danger-soft',
   renamed: 'text-info-soft',
-  untracked: 'text-violet-300',
+  untracked: 'text-cat-violet',
   conflicted: 'text-warning-soft',
   other: 'text-fg-muted',
 };

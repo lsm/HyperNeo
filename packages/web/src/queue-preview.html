@@ -34,6 +34,7 @@
 					try {
 						var stored = localStorage.getItem("theme");
 						if (stored === "light" || stored === "dark") explicit = stored;
+						else if (stored === "system") explicit = null;
 					} catch (e2) {}
 					document.documentElement.dataset.theme =
 						explicit || (media.matches ? "dark" : "light");

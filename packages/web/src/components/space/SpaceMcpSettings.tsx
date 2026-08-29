@@ -245,9 +245,9 @@ function SpaceMcpEntryRow({ entry, disabled, onToggle, onClearOverride }: SpaceM
               key={b.label}
               class={cn(
                 'text-xs px-1.5 py-0.5 rounded',
-                b.tone === 'override' && 'bg-accent/40 text-accent',
+                b.tone === 'override' && 'bg-accent/15 text-accent-soft',
                 b.tone === 'muted' && 'bg-fill-strong text-fg-muted',
-                b.tone === 'info' && 'bg-cat-purple/40 text-cat-purple'
+                b.tone === 'info' && 'bg-cat-purple/15 text-cat-purple'
               )}
             >
               {b.label}

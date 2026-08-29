@@ -49,7 +49,7 @@ describe('ContextUsageBar', () => {
       const lowUsage: ContextInfo = { ...mockContextUsage, percentUsed: 25 };
       const { container } = render(<ContextUsageBar contextUsage={lowUsage} />);
 
-      const percentText = container.querySelector('.text-success');
+      const percentText = container.querySelector('.text-success-soft');
       expect(percentText).toBeTruthy();
     });
 
@@ -57,7 +57,7 @@ describe('ContextUsageBar', () => {
       const mediumUsage: ContextInfo = { ...mockContextUsage, percentUsed: 65 };
       const { container } = render(<ContextUsageBar contextUsage={mediumUsage} />);
 
-      const percentText = container.querySelector('.text-warning');
+      const percentText = container.querySelector('.text-warning-soft');
       expect(percentText).toBeTruthy();
     });
 
@@ -65,7 +65,7 @@ describe('ContextUsageBar', () => {
       const highUsage: ContextInfo = { ...mockContextUsage, percentUsed: 80 };
       const { container } = render(<ContextUsageBar contextUsage={highUsage} />);
 
-      const percentText = container.querySelector('.text-warning');
+      const percentText = container.querySelector('.text-warning-soft');
       expect(percentText).toBeTruthy();
     });
 
@@ -76,7 +76,7 @@ describe('ContextUsageBar', () => {
       };
       const { container } = render(<ContextUsageBar contextUsage={criticalUsage} />);
 
-      const percentText = container.querySelector('.text-danger');
+      const percentText = container.querySelector('.text-danger-soft');
       expect(percentText).toBeTruthy();
     });
   });

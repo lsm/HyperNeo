@@ -99,10 +99,10 @@ export default function ContextUsageBar({ contextUsage, maxContextTokens }: Cont
   const autoCompactBufferPercent = 100 - autoCompactThresholdPercent;
 
   const getContextColor = () => {
-    if (contextPercentage >= 90) return 'text-danger';
-    if (contextPercentage >= 75) return 'text-warning';
-    if (contextPercentage >= 60) return 'text-warning';
-    return 'text-success';
+    if (contextPercentage >= 90) return 'text-danger-soft';
+    if (contextPercentage >= 75) return 'text-warning-soft';
+    if (contextPercentage >= 60) return 'text-warning-soft';
+    return 'text-success-soft';
   };
 
   const getContextBarColor = () => {
