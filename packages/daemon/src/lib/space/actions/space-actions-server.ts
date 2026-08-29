@@ -21,6 +21,7 @@ import {
 } from './dispatch-telemetry.ts';
 import { composeRoleActionEntries, createNodeRegistryEntries } from './registry-node.ts';
 import { createSpaceRegistryEntries } from './registry-space.ts';
+import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import {
   createActionRegistry,
   defineAction,
@@ -143,6 +144,7 @@ export interface SpaceActionsServerConfig {
   readonly spaceLevel?: number | null;
   readonly agentLevel?: number | null;
   readonly deniedActionNames?: ReadonlySet<string>;
+  readonly workflowRunRepo?: Pick<SpaceWorkflowRunRepository, 'getRun'>;
   readonly spaceConfig?: SpaceAgentToolsConfig;
   readonly nodeConfig?: NodeAgentToolsConfig;
   readonly dispatchDeps?: Partial<Omit<DispatchActionDeps, 'registry'>>;
@@ -189,7 +191,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
       if (record && record.spaceId === config.spaceId) return record.autonomyLevel ?? null;
       return 1;
     }
-    return null;
+    return config.role === 'long_term_agent' ? 1 : null;
   };
 
   const { label, hotActions } = resolveRoleHotActionView(config.role, config.nodeRole);
@@ -237,8 +239,9 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
         if (typeof params !== 'object' || params === null) return undefined;
         const record = params as Record<string, unknown>;
         const runId = explicitRunId(record);
-        if (runId && spaceConfig?.workflowRunRepo) {
-          const run = spaceConfig.workflowRunRepo.getRun(runId);
+        const runRepo = spaceConfig?.workflowRunRepo ?? config.workflowRunRepo;
+        if (runId && runRepo) {
+          const run = runRepo.getRun(runId);
           if (run && run.spaceId !== spaceId) {
             return `Workflow run ${runId} does not belong to space ${spaceId}`;
           }

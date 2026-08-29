@@ -253,6 +253,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       description:
         'List all enabled workflows unranked for a described piece of work; returns id, handle, description, tags, and node count.',
       paramsDoc: 'description (context only — every workflow is returned)',
+      auditRedactKeys: ['description'],
       paramsSchema: SuggestWorkflowSchema,
       handler: (args) => handlers.suggest_workflow(args),
     }),

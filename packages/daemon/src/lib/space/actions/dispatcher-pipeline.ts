@@ -115,7 +115,7 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
   }
   const parsed = action.paramsSchema.safeParse(ctx.params);
   if (!parsed.success) {
-    return {
+    const next: DispatchActionCtx = {
       ...ctx,
       action,
       outcome: deniedOutcome(
@@ -123,6 +123,8 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
         `Invalid parameters for ${action.name}: ${parsed.error.message}`
       ),
     };
+    writeAuditEntry(next);
+    return next;
   }
   const parsedParams = parsed.data as Record<string, unknown> | null;
   const hasTaskId =
@@ -225,13 +227,15 @@ export function applyRoleAdmission(ctx: DispatchActionCtx): DispatchActionCtx {
   const action = ctx.action!;
   const allowed = ROLE_ACTION_FAMILY_ALLOWLIST[ctx.role] ?? [];
   if (!allowed.includes(action.family)) {
-    return {
+    const next: DispatchActionCtx = {
       ...ctx,
       outcome: deniedOutcome(
         'role_denied',
         `Action ${action.name} (family "${action.family}") is not available for role ${ctx.role}.`
       ),
     };
+    writeAuditEntry(next);
+    return next;
   }
   return ctx;
 }
@@ -278,12 +282,14 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
   if (admission.action === 'allow') {
     return { ...ctx, spaceLevel, agentLevel };
   }
-  return {
+  const denied: DispatchActionCtx = {
     ...ctx,
     spaceLevel,
     agentLevel,
     outcome: deniedOutcome('autonomy_denied', admission.message),
   };
+  writeAuditEntry(denied);
+  return denied;
 }
 
 export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
@@ -320,13 +326,15 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       return { ...ctx, outcome: failedOutcome(error) };
     }
     if (!ok) {
-      return {
+      const denied: DispatchActionCtx = {
         ...ctx,
         outcome: deniedOutcome(
           'rate_limited',
           `Action ${action.name} is currently rate limited. Please retry later.`
         ),
       };
+      writeAuditEntry(denied);
+      return denied;
     }
   }
   if (ctx.deps.validateTargets) {
@@ -341,9 +349,9 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
 }
 
 function writeAuditEntry(ctx: DispatchActionCtx): void {
-  if (!ctx.deps.auditLogRepo || ctx.action?.auditExempt) return;
+  if (!ctx.deps.auditLogRepo || !ctx.action || ctx.action.auditExempt) return;
   if (!ctx.isMutating && !ctx.deps.auditReads) return;
-  const action = ctx.action!;
+  const action = ctx.action;
   try {
     const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
     for (const key of action.auditRedactKeys ?? []) {

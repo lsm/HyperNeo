@@ -309,6 +309,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
             safetyClass: 'read',
             description: 'Read one task with status, result, and metadata.',
             paramsDoc: 'task_number? or task_id? (one required)',
+            taskIdPreference: 'task_number',
             paramsSchema: GetTaskSchema,
             handler: handlers.get_task,
           }),

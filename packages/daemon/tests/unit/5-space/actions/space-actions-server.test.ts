@@ -656,6 +656,106 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries[0]).toMatchObject({ toolName: 'update_task', spaceId: SPACE_ID });
   });
 
+  test('fails closed for long-term agents without an identity', async () => {
+    const server = makeServer({ role: 'long_term_agent', spaceLevel: 5 });
+    const body = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: 'action_denied', reason: 'autonomy_denied' });
+  });
+
+  test('redacts suggest_workflow descriptions from read audits', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    await dispatch(server, {
+      name: 'suggest_workflow',
+      params: { description: 'confidential-plan' },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].paramsSummary).not.toContain('confidential-plan');
+  });
+
+  test('audits autonomy denials', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceLevel: 1,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      toolName: 'update_session_state',
+      spaceId: SPACE_ID,
+    });
+  });
+
+  test('prefers a local task_number for the node get_task action', async () => {
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      spaceId: SPACE_ID,
+      nodeConfig: {
+        ...stubNodeConfig,
+        taskRepo: {
+          getTaskByNumber: (_spaceId: string, taskNumber: number) =>
+            taskNumber === 42 ? { id: 'task-42', spaceId: SPACE_ID } : null,
+          getTask: (taskId: string) =>
+            taskId === 'foreign-1' ? { id: taskId, spaceId: 'other-space' } : null,
+        },
+      } as unknown as NodeAgentToolsConfig,
+    });
+    const body = (await dispatch(server, {
+      name: 'get_task',
+      params: { task_number: 42, task_id: 'foreign-1' },
+    })) as Record<string, unknown>;
+    expect(body).not.toMatchObject({ message: 'does not belong to space' });
+  });
+
+  test('validates explicit run targets for node-only servers via config repo', async () => {
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      spaceId: SPACE_ID,
+      workflowRunRepo: {
+        getRun: (runId: string) =>
+          runId === 'foreign-run' ? ({ id: runId, spaceId: 'other-space' } as never) : null,
+      },
+      nodeConfig: {
+        ...stubNodeConfig,
+        externalEventStore: {},
+      } as unknown as NodeAgentToolsConfig,
+    });
+    const body = (await dispatch(server, {
+      name: 'list_deliveries',
+      params: { workflowRunId: 'foreign-run' },
+    })) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      error: 'action_denied',
+      reason: 'invalid_params',
+      message: 'Workflow run foreign-run does not belong to space space-actions-server-test',
+    });
+  });
+
   test('exempts the audit-log reader from self-audit', async () => {
     const entries: CreateMcpAuditLogParams[] = [];
     const server = createSpaceActionsMcpServer({
