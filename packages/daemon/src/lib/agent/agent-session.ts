@@ -26,8 +26,7 @@ import type {
   SkillEnablementOverride,
   SystemPromptConfig,
 } from '@hyperneo/shared';
-import { DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
-import { generateUUID } from '@hyperneo/shared';
+import { generateUUID, DEFAULT_WORKER_FEATURES as WORKER_FEATURES } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
 import { ErrorCategory, ErrorManager, type StructuredError } from '../error-manager.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -143,8 +142,8 @@ import {
   initializeModels,
   resolveModelAlias,
 } from '../model-service.ts';
-import { getProviderRegistry } from '../providers/factory.js';
 import { getProviderService } from '../provider-service.ts';
+import { getProviderRegistry } from '../providers/factory.js';
 import {
   AskUserQuestionHandler,
   type AskUserQuestionHandlerContext,
@@ -155,11 +154,9 @@ import {
 } from './context-budget-decision.ts';
 import { runContextBudgetReevaluation } from './context-budget-enforcement.ts';
 import { ContextTracker } from './context-tracker.ts';
-import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
-import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
 import {
-  runDeliveryTurnAdmission,
   type DeliveryTurnAdmissionDeps,
+  runDeliveryTurnAdmission,
 } from './delivery-turn-admission-pipeline.ts';
 import { classifyAcknowledgedSteer, resolveSteerAdmission } from './delivery-turn-routing.ts';
 import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog.ts';
@@ -173,12 +170,12 @@ import { InterruptHandler, type InterruptHandlerContext } from './interrupt-hand
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
 import {
+  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   BATCH_DELIVERY_MAX_CHARS,
   buildBatchedDeliveryContent,
   classifyReclaimTermination,
   type DriveTurnOutcome,
   deliverMessage,
-  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   type FeedSteerOutcome,
   flattenDeliveryText,
   isMessageDeliveryV2Enabled,
@@ -192,25 +189,26 @@ import {
   throwIfDeliveryAborted,
   waitForDeliveryAbort,
   withSessionLock,
-  withSessionResetCoordination,
 } from './message-delivery.ts';
+import { deliveryMetrics } from './message-delivery-metrics.ts';
 import {
   classifyTurnCompletion,
   decideReconcileAdmission,
   selectStrandedDeliveries,
   shouldRearmSpuriousTurnEnd,
 } from './message-delivery-pipeline.ts';
-import { deliveryMetrics } from './message-delivery-metrics.ts';
+import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
 import { MessageQueue } from './message-queue.ts';
+import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
 import { ModelSwitchHandler, type ModelSwitchHandlerContext } from './model-switch-handler.ts';
 import { ProcessingStateManager } from './processing-state-manager.ts';
+import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import {
   QueryLifecycleManager,
   type QueryLifecycleManagerContext,
 } from './query-lifecycle-manager.ts';
 import type { QueryLike } from './query-like.ts';
 import { QueryModeHandler, type QueryModeHandlerContext } from './query-mode-handler.ts';
-import { QueryAttemptRegistry, type QueryAttemptToken } from './query-attempt-token.ts';
 import {
   NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
   QueryOptionsBuilder,
@@ -222,8 +220,8 @@ import {
   type QueryRunnerContext,
   type TrackedAgentProcess,
 } from './query-runner.ts';
-import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
+import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
   boundedDeliveryGate,
@@ -239,9 +237,9 @@ import {
 import { SlashCommandManager, type SlashCommandManagerContext } from './slash-command-manager.ts';
 import {
   buildTaskNotificationRequeryEscalationEvent,
+  resolveTaskNotificationRequery,
   TASK_NOTIFICATION_REQUERY_CONTINUE_MESSAGE,
   TASK_NOTIFICATION_REQUERY_MAX_ATTEMPTS,
-  resolveTaskNotificationRequery,
   taskNotificationRequeryDelayMs,
 } from './task-notification-requery.ts';
 
@@ -2493,9 +2491,7 @@ export class AgentSession
     if (
       alreadyConsumed &&
       !this.rateLimitWatchdog.isRecoveryPending() &&
-      !!this.db
-        .getSDKMessageRepo()
-        ?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
+      this.db.getSDKMessageRepo()?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
     ) {
       this.logger.info(
         `delivery-turn: reclaiming recovery-intercepted row directly (uuid=${messageUuid}); ` +
@@ -3364,24 +3360,22 @@ export class AgentSession
       return 0;
     }
 
-    const reEnqueued = await withSessionResetCoordination(this.session.id, async () =>
-      withSessionLock(this.session.id, async () => {
-        if (!this.stateManager.isIdleOwnerCurrent(owner)) return 0;
-        const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
-        const stranded = selectStrandedDeliveries(
-          this.db.getUserMessageIdsByStatus(this.session.id, 'enqueued'),
-          active,
-          (uuid) => this.messageQueue.hasPendingOrInFlight(uuid)
-        );
-        for (const uuid of stranded) {
-          const role = deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
-          if (role === 'turn') {
-            await this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
-          }
+    const reEnqueued = await withSessionLock(this.session.id, async () => {
+      if (!this.stateManager.isIdleOwnerCurrent(owner)) return 0;
+      const active = jobQueue.activeDeliveryMessageUuids(this.session.id);
+      const stranded = selectStrandedDeliveries(
+        this.db.getUserMessageIdsByStatus(this.session.id, 'enqueued'),
+        active,
+        (uuid) => this.messageQueue.hasPendingOrInFlight(uuid)
+      );
+      for (const uuid of stranded) {
+        const role = deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
+        if (role === 'turn') {
+          void this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
         }
-        return stranded.length;
-      })
-    );
+      }
+      return stranded.length;
+    });
     let settled = 0;
     const sdkRepo = this.db.getSDKMessageRepo();
     await withSessionLock(this.session.id, async () => {
