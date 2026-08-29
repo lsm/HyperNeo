@@ -3323,6 +3323,7 @@ export class SpaceRuntime {
         }
         if (generation !== this.runtimeGeneration) return;
         await this.recoverPendingDeliveries(pausedSpaceIds);
+        if (generation !== this.runtimeGeneration) return;
         this.subscribeExternalEventPublished();
         this.reconciliationDone = true;
         this.redispatchRetainedExternalEvents();
@@ -4009,6 +4010,7 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         continue;
       }
+      if (this.pausedSpaceIds.has(longHorizonSpaceId)) continue;
       void this.deliverToLongHorizonAgent(target, eventPayload, delivery.deliveryKey);
     }
   }
