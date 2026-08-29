@@ -1843,10 +1843,11 @@ export class SpaceRuntime {
     if (this.isStopped) return null;
     const store = this.config.externalEventStore;
     if (!store) return null;
+    const generation = this.runtimeGeneration;
     const previous = this.renderPendingDigestQueues.get(sessionId) ?? Promise.resolve(null);
     const next = previous
       .catch(() => null)
-      .then(() => this.renderPendingDigestForSessionInternal(sessionId, taskId));
+      .then(() => this.renderPendingDigestForSessionInternal(sessionId, taskId, generation));
     this.renderPendingDigestQueues.set(sessionId, next);
     try {
       return await next;
@@ -1859,9 +1860,12 @@ export class SpaceRuntime {
 
   private async renderPendingDigestForSessionInternal(
     sessionId: string,
-    taskId?: string
+    taskId?: string,
+    generation?: number
   ): Promise<RenderPendingDigestOutcome | null> {
-    if (this.isStopped) return null;
+    if (this.isStopped || (generation !== undefined && this.runtimeGeneration !== generation)) {
+      return null;
+    }
     const store = this.config.externalEventStore!;
     const messages = this.getSdkMessageRepo();
     const deps: RenderPendingDigestDeps = {
@@ -1944,7 +1948,9 @@ export class SpaceRuntime {
           const existing = messages.getMessageByStatusAndUuid(targetSessionId, status, uuid);
           if (existing) return { dbId: existing.dbId, replayed: true };
         }
-        const dbId = messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
+        const dbId = await Promise.resolve(
+          messages.saveUserMessage(targetSessionId, message, 'deferred', 'system')
+        );
         return { dbId, replayed: false };
       },
       reopenFailedDigest: (targetSessionId, uuid) => {
@@ -3423,7 +3429,9 @@ export class SpaceRuntime {
     }
     this.digestHandoffRetryTimers.clear();
     this.digestHandoffRetryCounts.clear();
+    const pendingRenders = Array.from(this.renderPendingDigestQueues.values());
     this.renderPendingDigestQueues.clear();
+    await Promise.all(pendingRenders.map((render) => render.catch(() => null)));
     for (const timer of this.digestSupersedeRetryTimers.values()) {
       clearTimeout(timer);
     }

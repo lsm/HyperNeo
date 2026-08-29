@@ -2212,6 +2212,64 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(digestRows('session-multi-task')).toHaveLength(2);
     });
 
+    test('stop drains in-flight and queued digest renders before restart accepts new work', async () => {
+      const { task } = await startLiveSession('session-stop-restart');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      await eventService.publish(makeEvent({ id: 'evt-stop-restart-1', topic }));
+
+      const repo = (
+        runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
+      ).getSdkMessageRepo();
+      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
+        .saveUserMessage as (...args: unknown[]) => string;
+      let saveStarted = false;
+      let unblockSave: ((value: string) => void) | null = null;
+      const saveBlocker = new Promise<string>((resolve) => {
+        unblockSave = resolve;
+      });
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+        ...args: unknown[]
+      ) => {
+        saveStarted = true;
+        return saveBlocker.then(() => originalSave.apply(repo, args)) as unknown as string;
+      };
+
+      const activeRender = runtime.renderPendingDigestForSession('session-stop-restart', task.id);
+      const queuedRender = runtime.renderPendingDigestForSession('session-stop-restart', task.id);
+
+      const start = Date.now();
+      while (!saveStarted && Date.now() - start < 1000) {
+        await wait(1);
+      }
+      expect(saveStarted).toBe(true);
+
+      const stopPromise = runtime.stop();
+
+      await wait(10);
+      unblockSave!('db-blocked');
+      await stopPromise;
+
+      const activeOutcome = await activeRender;
+      const queuedOutcome = await queuedRender;
+      expect(activeOutcome?.action).toBe('delivered');
+      expect(queuedOutcome).toBeNull();
+
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
+        originalSave;
+
+      runtime.start();
+
+      await eventService.publish(makeEvent({ id: 'evt-stop-restart-2', topic }));
+      const postRestart = await runtime.renderPendingDigestForSession(
+        'session-stop-restart',
+        task.id
+      );
+      expect(postRestart?.action).toBe('delivered');
+
+      expect(eventStore.listDeliveries('evt-stop-restart-1')[0]?.state).toBe('delivered');
+      expect(eventStore.listDeliveries('evt-stop-restart-2')[0]?.state).toBe('delivered');
+    });
+
     test('digest pull during an active interrupt holds, then delivers after it clears', async () => {
       await startLiveSession('session-interrupted');
       const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
