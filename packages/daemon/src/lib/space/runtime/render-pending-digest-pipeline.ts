@@ -495,10 +495,12 @@ export async function persistAndAppend(
     };
   }
   if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
-    try {
-      ctx.deps.deleteDigestMessage(ctx.sessionId, dbId);
-    } catch (error) {
-      return { ...ctx, outcome: { action: 'failed', stage: 'digestCleanup', error } };
+    if (!saved.replayed) {
+      try {
+        ctx.deps.deleteDigestMessage(ctx.sessionId, dbId);
+      } catch (error) {
+        return { ...ctx, outcome: { action: 'failed', stage: 'digestCleanup', error } };
+      }
     }
     return {
       ...ctx,

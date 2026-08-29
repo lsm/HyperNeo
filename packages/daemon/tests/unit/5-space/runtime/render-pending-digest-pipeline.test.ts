@@ -705,6 +705,24 @@ describe('render-pending-digest pipeline', () => {
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
   });
 
+  it('persistAndAppend does not delete a replayed digest row owned by another task on interrupt', async () => {
+    const h = harness({
+      saveDigestMessageIfAbsent: async (_sessionId, message) => {
+        const uuid = String(message.uuid);
+        return { dbId: `db-${uuid}`, replayed: true };
+      },
+      appendDigest: async () => {
+        h.admissibility.interruptInProgress = true;
+        return true;
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const ctx = await persistAndAppend(runStages(h));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.deletedDigests).toEqual([]);
+    expect(h.marks).toEqual([]);
+  });
+
   it('persistAndAppend reports a digestCleanup failure when an interrupt-struck row cannot be deleted', async () => {
     const h = harness({
       appendDigest: async () => {
