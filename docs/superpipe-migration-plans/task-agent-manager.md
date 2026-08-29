@@ -142,7 +142,9 @@ DETACHED task (`!task?.workflowRunId` → null, :2192–2193; pin both the
 deleted-task and detached-task inputs), task
 `cancelled`/`archived` (:2192–2194) AND run `cancelled` (:2195–2196) return
 `null` before any space load or restore (pin all three rows; "archived
-task/run" alone underspecifies them), cooldown → throw — then cached-or-
+task/run" alone underspecifies them), cooldown → throw, missing space
+(`getSpace` null → `null` at :2205–2206, before slot resolution or restore —
+pin the pre-restore ordering) — then cached-or-
 `AgentSession.restore`, slot match (a finite
 configuration selection — a pure stage, not a loop to preserve), optional
 slot-init overlay, MCP merge, `ensureNodeAgentAttached`, `onMissing*` hooks +
@@ -250,10 +252,18 @@ The complete injection path spans BOTH the outer admissions of
 target resolution via index/subSessions scan/rehydration, inject-lock
 acquisition, POST-LOCK terminal recheck, locked target re-snapshot) and the
 inner `injectMessageIntoSession` (:3849) arms. TAM-E composes the whole
-operation — one direct pipeline per business path — with the inject lock
-itself class-owned (`withSessionResetCoordination`); migrating only the inner
-method would split the path across an imperative gate cascade and the
-pipeline. The terminal admission is ORIGIN-SENSITIVE: `resolveTerminalInjectionStatus`
+operation — one direct pipeline per business path. The inject-lock boundary
+needs a REALIZABLE protocol: `stagedRun` has no suspend/resume, and
+`withSessionResetCoordination` holds the lock for exactly one callback, while
+today's path resolves/rehydrates the target BEFORE entering that callback and
+rechecks+delivers INSIDE it (:1796–1849). TAM-E1 therefore models the lock as
+an ACQUIRE/RELEASE effect-stage pair within the ONE pipeline — pre-lock
+admissions run before acquisition, the locked stage group (terminal recheck,
+target re-snapshot, delivery) runs between acquire and release, and release
+is registered as compensation — with the class supplying the lock HANDLE as a
+resource (ADR Decision 5); the pipeline never nests a runner inside the lock
+callback and never moves rehydration under the lock (pin
+rehydration-before-lock ordering). The terminal admission is ORIGIN-SENSITIVE: `resolveTerminalInjectionStatus`
 (:1858–1873) rejects a `done` task ONLY when `origin === 'system'` — human
 and task injections remain admissible on a done task while runtime-recovery
 injections are rejected; carry `origin` into BOTH the pre-lock and post-lock
@@ -333,7 +343,12 @@ with an atomic ownership protocol — a repository-level reservation/CAS
 fencing terminal transitions throughout the reuse arm, or a complete
 rollback of every reuse mutation when the post-create check skips; TAM-PF
 characterizes the race (terminal after the pre-mutation gate, before reuse
-finishes). Every SKIPPED outcome must also RELEASE the model-pool
+finishes). The protocol must also distinguish COLD-CACHE RESTORATION:
+`rehydrateSubSession` registers and starts streaming the durable session
+(:3646–3677) BEFORE the create stages report REUSED, so on a terminal skip
+this attempt has newly started a worker — unwind that instance's streaming
+and bookkeeping WITHOUT deleting the durable session, and pin a terminal
+transition during rehydration. Every SKIPPED outcome must also RELEASE the model-pool
 reservation taken by the fresh arm (:4961): a successful halt does not run
 the catch compensation, so an unreleased reservation keeps consuming pool
 capacity until restart (pin the release). The fresh arm installs
@@ -413,11 +428,11 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
 | TAM-PB | Pins for `createSubSession` reuse/fresh arms: cold-cache reuse via `rehydrateSubSession`, narrow compensation, same-status rebind + PRIMARY-bind foreign-bind rows (both binds pass `expectAgentSessionId`), `deferFreshExecutionBind` scope (fresh-arm bind + both arms' flush suppressed; reuse CAS unaffected), fresh-arm registration-before-stream ordering, fresh-arm hook ordering before stream, detached-flush rejection behavior | test-only | 0 | ≲130 | — |
-| TAM-PC | Pins for `restorePostApprovalWorkerSession`: refusal rows (missing task, detached task, task `cancelled`/`archived`, run `cancelled`), cooldown THROW outcome + pre-restore ordering, no-completion-callback, pre-stream registration + sanitizer ordering, cached-session ownership (register/compensate only when this operation created the session), concurrent-restore in-lock re-gather | test-only | 0 | ≲90 | — |
+| TAM-PC | Pins for `restorePostApprovalWorkerSession`: refusal rows (missing task, detached task, task `cancelled`/`archived`, run `cancelled`, missing space), cooldown THROW outcome + pre-restore ordering, no-completion-callback, pre-stream registration + sanitizer ordering, cached-session ownership (register/compensate only when this operation created the session), concurrent-restore in-lock re-gather | test-only | 0 | ≲90 | — |
 | TAM-PD | Pins for `rehydrateSubSession`: refusal-gate ordering (archived row BEFORE the fenced repair), `done` admissibility, multi-task owner-resolution identity row, system-prompt-only overlay, `resolveTaskWorkspace` routing (task-bound secondary workspace), hooks + sanitizer pre-stream ordering | test-only | 0 | ≲110 | — |
 | TAM-PE | Pins for the complete injection operation: origin-sensitive done admission (done + system rejected, done + human admissible) in BOTH pre-lock and post-lock predicates, outer admissions + post-lock terminal recheck, cancellation passthrough, pre-clear active-delivery-job re-gather | test-only | 0 | ≲120 | — |
-| TAM-PF | Pins for `spawnPostApprovalSubSession` reuse/fresh arms + the cold-cache ownership row (flag from the nested create result) + terminal-transition rows for BOTH outcomes (under-lock post-create recheck → KICKOFF SKIPPED; CREATED skip also terminates the just-created session AND releases the model-pool reservation) + the terminal race (terminal after the pre-mutation gate, before reuse finishes — resolved by the atomic ownership protocol, never a mutated-then-skipped worker) + member-space self-heal hook installation | test-only | 0 | ≲110 | — |
-| TAM-PG | Pins for `deliverSpaceAgentPendingRow`: settlement/error races, injector-rejection locality (later rows still delivered), near-expiry deferral cases | test-only | 0 | ≲60 | — |
+| TAM-PF | Pins for `spawnPostApprovalSubSession` reuse/fresh arms + the cold-cache ownership row (flag from the nested create result) + terminal-transition rows for BOTH outcomes (under-lock post-create recheck → KICKOFF SKIPPED; CREATED skip also terminates the just-created session AND releases the model-pool reservation) + the terminal race rows (terminal after the pre-mutation gate before reuse finishes — resolved by the atomic ownership protocol; terminal DURING cold-cache rehydration — unwind streaming/bookkeeping without deleting the durable session) + member-space self-heal hook installation | test-only | 0 | ≲110 | — |
+| TAM-PG | Pins for `deliverSpaceAgentPendingRow` restricted to SURVIVING current outcomes: settlement/error behavior AS IT BEHAVES TODAY, injector-rejection locality (later rows still delivered), near-expiry deferral cases — the status-safe race contract CANNOT land here (the primitive arrives with TAM-G) | test-only | 0 | ≲60 | — |
 | TAM-PS | Pins for `mcpSelfHeal`: admissions, displaced-session adoption, adoption-before-restart and heal ordering | test-only | 0 | ≲80 | — |
 | TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin) | build | ≲250 | ≲250 | TAM-PB |
 | TAM-B2 | Delegate the `createSubSession` method body to the B1 pipeline; the B1 create STAGE GROUP and its created/reused outcome are EXPORTED for direct composition by the owning spawn pipelines (no runner nesting); the public `Promise<string>` return and both in-file caller signatures stay | wire | ≲70 | ≲60 | TAM-B1 |
@@ -430,7 +445,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-E2 | Wire `injectSubSessionMessageWithOrigin` (and its thin wrappers) to the E1 pipeline, and compose the extracted delivery stage group into spawn-flow's kickoff injection directly; inject lock stays class-owned | wire | ≲70 | ≲70 | TAM-E1 |
 | TAM-F1 | `spawn-post-approval-worker` stagedRun, unwired, returning the P46 CREATED/REUSED + DELIVERED/SKIPPED outcome; COMPOSES the B1 create stage group and the E1 delivery stage group directly (no runner nesting); the reuse-arm terminal gate runs BEFORE the reuse mutation sequence under the same lock; the fresh arm's post-create recheck covers every create outcome (CREATED skip terminates the just-created session, REUSED skip leaves the worker untouched) | build | ≲220 | ≲180 | TAM-B2, TAM-E1, TAM-PF (P46 outcome contract) |
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
-| TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); requires the status-guarded settlement/error primitive (risk 5) | build+wire | ≲100 | ≲80 | TAM-PG |
+| TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap); introduces the status-guarded settlement/error primitive (risk 5) TOGETHER WITH its race-correctness tests (which cannot pass before it exists) | build+wire | ≲100 | ≲80 | TAM-PG |
 | TAM-S1 | `self-heal-node-agent` stagedRun, unwired (prologue gates via the FENCED repair helper + adoption admission composed in front of the existing heal stages; heal workspace routed through `resolveTaskWorkspace`; adoption at the manager-owned pre-heal boundary) | build | ≲140 | ≲120 | TAM-PS, TAM-D1 (fenced repair helper) |
 | TAM-S2 | Wire `mcpSelfHeal` to the S1 pipeline; index/callback/displaced-session lifecycle effects stay class-owned | wire | ≲40 | ≲50 | TAM-S1 |
 | TAM-H (optional, not superpipe) | Extract provenance/cooldown/durable-id readers + `resolveTerminalInjectionStatus` into `sub-session-identity.ts` plain helpers | extract | ≲120 | ≲60 | — |
