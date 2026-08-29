@@ -149,7 +149,7 @@ describe('voice audio outbox', () => {
       throw new Error('Voice transcription rate limit exceeded; please wait before trying again');
     });
     const firstPass = flushPendingVoiceAudio();
-    await vi.advanceTimersByTimeAsync(140_000);
+    await vi.advanceTimersByTimeAsync(136_000);
     await firstPass;
 
     expect(hubRequest.mock.calls.filter(([m]) => m === 'voice.transcribe')).toHaveLength(6);
