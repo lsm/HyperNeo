@@ -19,7 +19,6 @@ import {
   resolveTarget,
   runRenderPendingDigest,
   TURN_END_DIGEST_PENDING_ROW_CAP,
-  type LegacyDurableScanStatus,
   type RenderPendingDigestCtx,
   type RenderPendingDigestDeps,
   type RenderPendingDigestLedgerMark,
@@ -49,11 +48,10 @@ interface Harness {
   records: Map<string, ExternalEventRecord>;
   saved: SDKUserMessage[];
   reopened: Array<{ sessionId: string; uuid: string }>;
+  deletedDigests: Array<{ sessionId: string; dbId: string }>;
   appended: SDKUserMessage[];
   marks: RenderPendingDigestLedgerMark[];
   listedScopes: unknown[];
-  legacyRows: Map<LegacyDurableScanStatus, SDKUserMessage[]>;
-  consumedRows: SDKUserMessage[];
   digestRows: SDKUserMessage[];
   deliveryContent: Map<string, unknown>;
   inFlight: Set<string>;
@@ -62,6 +60,7 @@ interface Harness {
   failedDeliveries: Array<{ eventId: string; deliveryKey: string; reason: string }>;
   admissibility: {
     ownsCurrentExecution: boolean;
+    interruptInProgress: boolean;
     taskAdmissible: boolean;
     taskTerminal: boolean;
     spacePaused: boolean;
@@ -74,15 +73,10 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
   const records = new Map<string, ExternalEventRecord>();
   const saved: SDKUserMessage[] = [];
   const reopened: Array<{ sessionId: string; uuid: string }> = [];
+  const deletedDigests: Array<{ sessionId: string; dbId: string }> = [];
   const appended: SDKUserMessage[] = [];
   const marks: RenderPendingDigestLedgerMark[] = [];
   const listedScopes: unknown[] = [];
-  const legacyRows = new Map<LegacyDurableScanStatus, SDKUserMessage[]>([
-    ['deferred', []],
-    ['enqueued', []],
-    ['submitted', []],
-  ]);
-  const consumedRows: SDKUserMessage[] = [];
   const digestRows: SDKUserMessage[] = [];
   const deliveryContent = new Map<string, unknown>();
   const inFlight = new Set<string>();
@@ -91,6 +85,7 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
   const failedDeliveries: Array<{ eventId: string; deliveryKey: string; reason: string }> = [];
   const admissibility = {
     ownsCurrentExecution: true,
+    interruptInProgress: false,
     taskAdmissible: true,
     taskTerminal: false,
     spacePaused: false,
@@ -103,11 +98,10 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
       return rows.filter((row) => scope.taskId === undefined || row.taskId === scope.taskId);
     },
     ownsCurrentExecution: () => admissibility.ownsCurrentExecution,
+    isSessionInterruptInProgress: () => admissibility.interruptInProgress,
     isTaskAdmissible: () => admissibility.taskAdmissible,
     isTaskTerminal: () => admissibility.taskTerminal,
     isSpacePaused: () => admissibility.spacePaused,
-    listUserMessagesByStatus: (_sessionId, status, _limit, _direction) =>
-      status === 'consumed' ? consumedRows : (legacyRows.get(status) ?? []),
     listUserMessagesByUuidPrefix: () => digestRows,
     getDeliveryContent: (_sessionId, uuid) => deliveryContent.get(uuid) ?? null,
     isDeliveryInFlight: (deliveryKey) => inFlight.has(deliveryKey),
@@ -135,6 +129,9 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
     reopenFailedDigest: (sessionId, uuid) => {
       reopened.push({ sessionId, uuid });
     },
+    deleteDigestMessage: (sessionId, dbId) => {
+      deletedDigests.push({ sessionId, dbId });
+    },
     appendDigest: async (_sessionId, message) => {
       appended.push(message);
       return true;
@@ -150,11 +147,10 @@ function harness(overrides: Partial<RenderPendingDigestDeps> = {}): Harness {
     records,
     saved,
     reopened,
+    deletedDigests,
     appended,
     marks,
     listedScopes,
-    legacyRows,
-    consumedRows,
     digestRows,
     deliveryContent,
     inFlight,
@@ -251,14 +247,6 @@ function seedPending(h: Harness, seeds: Array<[eventId: string, kind: SeedKind]>
   }
 }
 
-function legacyDurableRow(eventId: string, topic: string): SDKUserMessage {
-  return buildSyntheticExternalEventMessage(
-    SESSION_ID,
-    JSON.stringify({ type: 'external_event', eventId, topic }),
-    `legacy-${eventId}`
-  );
-}
-
 function digestMembershipRow(
   eventIds: string[],
   sendStatus?: string
@@ -344,6 +332,7 @@ describe('render-pending-digest pipeline', () => {
   it('admitTurnEnd halts on each admission gate with a distinct reason', () => {
     const cases = [
       { ownsCurrentExecution: false, reason: 'session_not_current' },
+      { interruptInProgress: true, reason: 'session_interrupted' },
       { taskAdmissible: false, reason: 'task_not_admissible' },
       { spacePaused: true, reason: 'space_paused' },
     ];
@@ -353,6 +342,32 @@ describe('render-pending-digest pipeline', () => {
       const ctx = admitTurnEnd(ctxOf(h, { target: TARGET }));
       expect(ctx.outcome).toEqual({ action: 'skip', reason });
     }
+  });
+
+  it('admitTurnEnd holds scoped rows without terminal-failing them during an interrupt', () => {
+    const h = harness();
+    seedPending(h, [
+      ['ev-a', 'check'],
+      ['ev-b', 'review'],
+    ]);
+    h.admissibility.interruptInProgress = true;
+    const ctx = admitTurnEnd(ctxOf(h, { target: TARGET, scopedRows: h.rows }));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.marks).toEqual([]);
+    expect(h.failedDeliveries).toEqual([]);
+  });
+
+  it('admitTurnEnd runs terminal-task cleanup even while the session is interrupted', () => {
+    const h = harness();
+    seedPending(h, [['ev-a', 'check']]);
+    h.admissibility.interruptInProgress = true;
+    h.admissibility.taskAdmissible = false;
+    h.admissibility.taskTerminal = true;
+    const ctx = admitTurnEnd(ctxOf(h, { target: TARGET, scopedRows: h.rows }));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+    expect(h.failedDeliveries).toEqual([
+      { eventId: 'ev-a', deliveryKey: 'delivery-ev-a', reason: 'task_terminal' },
+    ]);
   });
 
   it('admitTurnEnd terminally fails scoped rows for a terminal task, not a transiently stopped one', () => {
@@ -383,7 +398,7 @@ describe('render-pending-digest pipeline', () => {
       ['ev-a', 'check'],
       ['ev-b', 'review'],
     ]);
-    h.consumedRows.push(legacyDurableRow('ev-a', TOPICS.check));
+    h.digestRows.push(digestMembershipRow(['ev-a'], 'consumed'));
     h.admissibility.taskAdmissible = false;
     h.admissibility.taskTerminal = true;
     const ctx = admitTurnEnd(ctxOf(h, { target: TARGET, scopedRows: h.rows }));
@@ -412,15 +427,10 @@ describe('render-pending-digest pipeline', () => {
       ['ev-a', 'check'],
       ['ev-b', 'review'],
     ]);
-    h.legacyRows.set('deferred', [legacyDurableRow('ev-legacy', TOPICS.comment)]);
-    h.legacyRows.set('enqueued', [
-      buildSyntheticExternalEventMessage(SESSION_ID, 'not json', 'legacy-noise'),
-    ]);
-    h.consumedRows.push(legacyDurableRow('ev-consumed', TOPICS.comment));
+    h.digestRows.push(digestMembershipRow(['ev-consumed'], 'consumed'));
     h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b']));
     h.digestRows.push(digestMembershipRow(['ev-c'], 'enqueued'));
     const ctx = reconcileDurable(ctxOf(h, { scopedRows: h.rows }));
-    expect(ctx.legacyDurableEventIds).toEqual(new Set(['ev-legacy']));
     expect(ctx.consumedDurableEventIds).toEqual(new Set(['ev-consumed']));
     expect(ctx.digestMembershipEventIds).toEqual(new Set(['ev-c']));
     expect(ctx.replayable).toBe(true);
@@ -447,14 +457,13 @@ describe('render-pending-digest pipeline', () => {
     expect(ctx.replayDigestMessage).toBeUndefined();
   });
 
-  it('claimPending skips in-flight, legacy, membership, and immediate-tier rows', () => {
+  it('claimPending skips in-flight, membership, and immediate-tier rows without marking them', () => {
     const h = harness();
-    for (const eventId of ['ev-inflight', 'ev-legacy', 'ev-member', 'ev-immediate', 'ev-ok']) {
+    for (const eventId of ['ev-inflight', 'ev-member', 'ev-immediate', 'ev-ok']) {
       seedPending(h, [[eventId, 'comment']]);
     }
     h.inFlight.add('delivery-ev-inflight');
-    h.legacyRows.set('deferred', [legacyDurableRow('ev-legacy', TOPICS.comment)]);
-    h.digestRows.push(digestMembershipRow(['ev-member']));
+    h.digestRows.push(digestMembershipRow(['ev-member'], 'enqueued'));
     h.deliveryContent.set(buildImmediateEventMessageUuid('ev-immediate', 'delivery-ev-immediate'), {
       sendStatus: 'submitted',
     });
@@ -462,13 +471,13 @@ describe('render-pending-digest pipeline', () => {
       ctxOf(h, {
         target: TARGET,
         scopedRows: h.rows,
-        legacyDurableEventIds: new Set(['ev-legacy']),
         digestMembershipEventIds: new Set(['ev-member']),
         replayable: false,
       })
     );
     expect(ctx.pendingRows?.map((row) => row.eventId)).toEqual(['ev-ok']);
     expect(h.acquiredClaims).toEqual(['delivery-ev-ok']);
+    expect(h.marks).toEqual([]);
     expect(h.failedDeliveries).toEqual([]);
   });
 
@@ -502,9 +511,9 @@ describe('render-pending-digest pipeline', () => {
     for (let index = 0; index < TURN_END_DIGEST_PENDING_ROW_CAP; index++) {
       h.rows.push(pendingRow(`ev-fresh-${index}`));
     }
-    const legacyIds = new Set(h.rows.slice(0, blocked).map((row) => row.eventId));
+    const membershipIds = new Set(h.rows.slice(0, blocked).map((row) => row.eventId));
     const ctx = claimPending(
-      ctxOf(h, { target: TARGET, scopedRows: h.rows, legacyDurableEventIds: legacyIds })
+      ctxOf(h, { target: TARGET, scopedRows: h.rows, digestMembershipEventIds: membershipIds })
     );
     expect(ctx.pendingRows).toHaveLength(TURN_END_DIGEST_PENDING_ROW_CAP);
     expect(ctx.pendingRows?.every((row) => row.eventId.startsWith('ev-fresh-'))).toBe(true);
@@ -678,6 +687,58 @@ describe('render-pending-digest pipeline', () => {
     expect(h.marks).toEqual([]);
   });
 
+  it('persistAndAppend deletes an interrupt-struck digest row so the generic flush cannot enqueue it', async () => {
+    const h = harness({
+      appendDigest: async () => {
+        h.admissibility.interruptInProgress = true;
+        return true;
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const ctx = await persistAndAppend(runStages(h));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.saved).toHaveLength(1);
+    expect(h.deletedDigests).toEqual([
+      { sessionId: SESSION_ID, dbId: `db-${String(h.saved[0]!.uuid)}` },
+    ]);
+    expect(h.marks).toEqual([]);
+    expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
+  it('persistAndAppend does not delete a replayed digest row owned by another task on interrupt', async () => {
+    const h = harness({
+      saveDigestMessageIfAbsent: async (_sessionId, message) => {
+        const uuid = String(message.uuid);
+        return { dbId: `db-${uuid}`, replayed: true };
+      },
+      appendDigest: async () => {
+        h.admissibility.interruptInProgress = true;
+        return true;
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const ctx = await persistAndAppend(runStages(h));
+    expect(ctx.outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.deletedDigests).toEqual([]);
+    expect(h.marks).toEqual([]);
+  });
+
+  it('persistAndAppend reports a digestCleanup failure when an interrupt-struck row cannot be deleted', async () => {
+    const h = harness({
+      appendDigest: async () => {
+        h.admissibility.interruptInProgress = true;
+        return true;
+      },
+      deleteDigestMessage: () => {
+        throw new Error('delete rejected');
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const ctx = await persistAndAppend(runStages(h));
+    expect(ctx.outcome).toMatchObject({ action: 'failed', stage: 'digestCleanup' });
+    expect(h.marks).toEqual([]);
+  });
+
   it('end to end: one digest message for a mixed pending set, all rows marked', async () => {
     const h = harness();
     seedPending(h, [
@@ -723,6 +784,47 @@ describe('render-pending-digest pipeline', () => {
     expect(outcome).toEqual({ action: 'skip', reason: 'session_not_current' });
     expect(h.saved).toHaveLength(1);
     expect(h.appended).toEqual([]);
+    expect(h.marks).toEqual([]);
+    expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
+  it('end to end: an interrupt starting during the persist gap neither appends nor marks', async () => {
+    const h = harness({
+      saveDigestMessageIfAbsent: async (_sessionId, message) => {
+        h.admissibility.interruptInProgress = true;
+        const uuid = String(message.uuid);
+        h.saved.push(message);
+        return { dbId: `db-${uuid}`, replayed: false };
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.saved).toHaveLength(1);
+    expect(h.appended).toEqual([]);
+    expect(h.marks).toEqual([]);
+    expect(h.releasedClaims).toEqual(h.acquiredClaims);
+  });
+
+  it('end to end: an interrupt starting during the append await skips before marking', async () => {
+    const h = harness({
+      appendDigest: async (_sessionId, message) => {
+        h.appended.push(message);
+        h.admissibility.interruptInProgress = true;
+        return true;
+      },
+    });
+    seedPending(h, [['ev-a', 'check']]);
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+    expect(h.saved).toHaveLength(1);
+    expect(h.appended).toHaveLength(1);
     expect(h.marks).toEqual([]);
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
   });
@@ -789,7 +891,7 @@ describe('render-pending-digest pipeline', () => {
       ['ev-fresh', 'check'],
       ['ev-eaten', 'comment'],
     ]);
-    h.consumedRows.push(legacyDurableRow('ev-eaten', TOPICS.comment));
+    h.digestRows.push(digestMembershipRow(['ev-eaten'], 'consumed'));
     const outcome = await runRenderPendingDigest(h.deps, {
       sessionId: SESSION_ID,
       taskId: TARGET.taskId,
@@ -807,7 +909,7 @@ describe('render-pending-digest pipeline', () => {
   it('end to end: every pending row evidenced by consumed rows finalizes without a digest', async () => {
     const h = harness();
     seedPending(h, [['ev-eaten', 'comment']]);
-    h.consumedRows.push(legacyDurableRow('ev-eaten', TOPICS.comment));
+    h.digestRows.push(digestMembershipRow(['ev-eaten'], 'consumed'));
     const outcome = await runRenderPendingDigest(h.deps, {
       sessionId: SESSION_ID,
       taskId: TARGET.taskId,
@@ -889,7 +991,7 @@ describe('render-pending-digest pipeline', () => {
     expect(h.releasedClaims).toEqual(h.acquiredClaims);
   });
 
-  it('end to end: pending rows covered by an in-flight persisted digest are held, not re-delivered', async () => {
+  it('end to end: pending rows covered by an in-flight persisted digest hold for a retryable reconcile', async () => {
     const h = harness();
     seedPending(h, [
       ['ev-a', 'check'],
@@ -900,10 +1002,35 @@ describe('render-pending-digest pipeline', () => {
       sessionId: SESSION_ID,
       taskId: TARGET.taskId,
     });
-    expect(outcome).toEqual({ action: 'skip', reason: 'no_claimable_events' });
+    expect(outcome).toEqual({
+      action: 'skip',
+      reason: 'no_claimable_events',
+      heldDigestInFlight: true,
+    });
     expect(h.saved).toEqual([]);
     expect(h.appended).toEqual([]);
     expect(h.marks).toEqual([]);
+    expect(h.failedDeliveries).toEqual([]);
+  });
+
+  it('end to end: pending rows covered by a consumed persisted digest are marked delivered', async () => {
+    const h = harness();
+    seedPending(h, [
+      ['ev-a', 'check'],
+      ['ev-b', 'review'],
+    ]);
+    h.digestRows.push(digestMembershipRow(['ev-a', 'ev-b'], 'consumed'));
+    const outcome = await runRenderPendingDigest(h.deps, {
+      sessionId: SESSION_ID,
+      taskId: TARGET.taskId,
+    });
+    expect(outcome).toEqual({ action: 'skip', reason: 'no_claimable_events' });
+    expect(h.saved).toEqual([]);
+    expect(h.appended).toEqual([]);
+    expect(h.marks).toEqual([
+      { eventId: 'ev-a', deliveryKey: 'delivery-ev-a' },
+      { eventId: 'ev-b', deliveryKey: 'delivery-ev-b' },
+    ]);
     expect(h.failedDeliveries).toEqual([]);
   });
 

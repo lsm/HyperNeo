@@ -9,6 +9,7 @@ import type {
   MessageContent,
   MessageHub,
   MessageOrigin,
+  ModelInfo,
   Provider,
   QuestionDraftResponse,
   RewindMode,
@@ -136,7 +137,12 @@ import {
   isSDKSessionStateChangedMessage,
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
-import { getSessionModelInfo, resolveModelAlias } from '../model-service.ts';
+import {
+  ensureScopedProviderCatalogModels,
+  getSessionModelInfo,
+  initializeModels,
+  resolveModelAlias,
+} from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
 import { getProviderService } from '../provider-service.ts';
 import {
@@ -147,6 +153,7 @@ import {
   contextBudgetThreshold,
   decideContextBudgetCompaction,
 } from './context-budget-decision.ts';
+import { runContextBudgetReevaluation } from './context-budget-enforcement.ts';
 import { ContextTracker } from './context-tracker.ts';
 import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
 import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
@@ -219,6 +226,7 @@ import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
+  boundedDeliveryGate,
   SDKMessageHandler,
   type SDKMessageHandlerContext,
   type SuppressedResultOutcome,
@@ -265,6 +273,7 @@ export class AgentSession
 
   private queryRunner: QueryRunner | AcpQueryRunner;
   readonly interruptHandler: InterruptHandler;
+  private interruptRequests = 0;
   private sdkRuntimeConfig: SDKRuntimeConfig;
   private eventSubscriptionSetup: EventSubscriptionSetup;
   readonly queryModeHandler: QueryModeHandler;
@@ -348,6 +357,8 @@ export class AgentSession
   private pendingResumeSessionAt: string | undefined;
   private pendingResumeAfterCompaction = false;
   private midTurnBudgetCheckInFlight = false;
+
+  private contextBudgetReevaluationQueue: Promise<void> = Promise.resolve();
   private lastMidTurnUsageRefreshAt = 0;
   private lastMidTurnUsageRefreshKey = '';
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
@@ -374,8 +385,6 @@ export class AgentSession
   ) => Promise<
     import('../space/runtime/render-pending-digest-pipeline.ts').RenderPendingDigestOutcome | null
   >;
-
-  reconcilePersistedDigestRows?: (sessionId: string, taskId?: string) => boolean;
 
   get mcpEnablementRepo(): import('../../storage/repositories/mcp-enablement-repository.ts').McpEnablementRepository {
     return this.db.mcpEnablement;
@@ -556,6 +565,7 @@ export class AgentSession
 
     if (session.metadata?.lastContextInfo) {
       this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);
+      void this.reevaluateContextBudgetAfterModelSwitch();
     }
     this.stateManager.restoreFromDatabase();
 
@@ -871,19 +881,24 @@ export class AgentSession
     preserveDeliveryJobs?: boolean;
     skipDeferredReplay?: boolean;
   }): Promise<void> {
-    this.rateLimitWatchdog.cancel();
-    this.clearPendingResumeAfterCompaction();
-    this.messageHandler.cancelSuppressedResultWait();
-    const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
-    if (
-      yieldedContinuationId &&
-      this.stateManager.getState().status === 'idle' &&
-      (this.messageQueue.isRunning() || this.queryPromise)
-    ) {
-      await this.stateManager.setProcessing(yieldedContinuationId, 'initializing');
-    }
+    this.interruptRequests += 1;
+    try {
+      this.rateLimitWatchdog.cancel();
+      this.clearPendingResumeAfterCompaction();
+      this.messageHandler.cancelSuppressedResultWait();
+      const yieldedContinuationId = this.taskNotificationRequeryContinueMessageId;
+      if (
+        yieldedContinuationId &&
+        this.stateManager.getState().status === 'idle' &&
+        (this.messageQueue.isRunning() || this.queryPromise)
+      ) {
+        await this.stateManager.setProcessing(yieldedContinuationId, 'initializing');
+      }
 
-    await this.interruptHandler.handleInterrupt(opts);
+      await this.interruptHandler.handleInterrupt(opts);
+    } finally {
+      this.interruptRequests -= 1;
+    }
   }
 
   onInterruptRequested(): void {
@@ -900,7 +915,11 @@ export class AgentSession
   }
 
   isInterruptInProgress(): boolean {
-    return this.interruptHandler.getInterruptPromise() !== null;
+    return (
+      this.interruptRequests > 0 ||
+      this.interruptHandler.isInterruptRequested() ||
+      this.interruptHandler.getInterruptPromise() !== null
+    );
   }
 
   async normalizeStaleInterruptedState(): Promise<void> {
@@ -1458,9 +1477,9 @@ export class AgentSession
     await this.lifecycleManager.restartQuery();
   }
 
-  async restart(): Promise<void> {
+  async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
     this.rateLimitWatchdog.cancel();
-    await this.lifecycleManager.restart();
+    await this.lifecycleManager.restart(options);
   }
 
   getRewindPoints(): RewindPoint[] {
@@ -1525,6 +1544,115 @@ export class AgentSession
     );
   }
 
+  async reevaluateContextBudgetAfterModelSwitch(opts?: {
+    queueClearEpochAtStart?: number;
+    userInterruptEpochAtStart?: number;
+  }): Promise<void> {
+    this.messageQueue.holdInternalCompactionDelivery();
+    const queueClearEpochAtStart =
+      opts?.queueClearEpochAtStart ?? this.messageQueue.getClearEpoch();
+    const userInterruptEpochAtStart =
+      opts?.userInterruptEpochAtStart ?? this.messageQueue.getUserInterruptEpoch();
+    const decision = this.contextBudgetReevaluationQueue.then(async () => {
+      const trackerInfo = this.contextTracker.getContextInfo();
+      if (!trackerInfo || trackerInfo.totalUsed <= 0) return null;
+      const run = runContextBudgetReevaluation({
+        session: this.session,
+        trackerInfo,
+        resolveModelInfo: () =>
+          this.resolveSessionModelInfoWithRetry(queueClearEpochAtStart, userInterruptEpochAtStart),
+        limitRecoveryPending: this.isLimitRecoveryPending(),
+        contextTracker: this.contextTracker,
+        messageQueue: this.messageQueue,
+        stateManager: this.stateManager,
+        logger: this.logger,
+        resumePendingWork: () => this.resumePendingWorkAfterCompaction(),
+        clearPendingResume: () => this.clearPendingResumeAfterCompaction(),
+        queueClearEpochAtStart,
+        userInterruptEpochAtStart,
+      });
+      this.messageQueue.setDeliveryGate(
+        boundedDeliveryGate(
+          run.then(() => undefined).catch(() => {}),
+          Date.now() + 5000
+        )
+      );
+      return run;
+    });
+    this.contextBudgetReevaluationQueue = decision.then(
+      () => undefined,
+      () => undefined
+    );
+    const reevaluation = decision
+      .then(() => undefined)
+      .catch((error) => {
+        this.logger.warn('post-switch context budget evaluation failed:', error);
+      })
+      .finally(() => {
+        this.messageQueue.releaseInternalCompactionDelivery();
+      });
+    this.messageQueue.setDeliveryGate(boundedDeliveryGate(reevaluation, Date.now() + 5000));
+    await reevaluation;
+  }
+
+  private async resolveSessionModelInfoWithRetry(
+    originQueueClearEpoch: number,
+    originUserInterruptEpoch: number
+  ): Promise<ModelInfo | null> {
+    const deadlineAt = Date.now() + 4_000;
+    const attemptPromise = (async (): Promise<ModelInfo | null> => {
+      for (;;) {
+        const modelInfo = await this.resolveSessionCatalogModelInfo();
+        if (modelInfo) return modelInfo;
+        if (Date.now() >= deadlineAt) return null;
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 250);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        });
+      }
+    })();
+    const bounded = await Promise.race([
+      attemptPromise,
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 4_000);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      }),
+    ]);
+    if (bounded === null) {
+      void attemptPromise
+        .then((lateModelInfo) => {
+          if (lateModelInfo) {
+            void this.reevaluateContextBudgetAfterModelSwitch({
+              queueClearEpochAtStart: originQueueClearEpoch,
+              userInterruptEpochAtStart: originUserInterruptEpoch,
+            });
+          }
+        })
+        .catch(() => {});
+    }
+    return bounded;
+  }
+
+  private async resolveSessionCatalogModelInfo(): Promise<ModelInfo | null> {
+    const providerId = this.session.config.provider;
+    const providerConfig = this.session.config.providerConfig;
+    if (
+      providerId &&
+      (providerConfig?.apiKey || providerConfig?.baseUrl || providerConfig?.region)
+    ) {
+      await ensureScopedProviderCatalogModels(this.session.id, providerId, providerConfig);
+      return getSessionModelInfo(this.session, this.session.id);
+    }
+    const cached = await getSessionModelInfo(this.session);
+    if (cached) return cached;
+    await initializeModels().catch(() => {});
+    return getSessionModelInfo(this.session);
+  }
+
   async midTurnContextBudgetCheck(): Promise<void> {
     if (this.midTurnBudgetCheckInFlight) return;
     this.midTurnBudgetCheckInFlight = true;
@@ -1558,8 +1686,49 @@ export class AgentSession
         this.pendingResumeAfterCompaction = false;
       },
       onSurvivorRequeued: (uuid) => this.reopenDeliveryForRetry(uuid),
-      getDurableMessageContent: (uuid) =>
-        this.db.getSDKMessageRepo().getUserMessageContentByUuid(this.session.id, uuid) ?? undefined,
+      getDurableMessageContent: (uuid) => {
+        const repo = this.db.getSDKMessageRepo();
+        const kickoff = repo.getUserMessageContentByUuid(this.session.id, uuid);
+        if (kickoff === null || kickoff === undefined) return undefined;
+        try {
+          const batchUuids = this.db
+            .getJobQueueRepo?.()
+            ?.getActiveDeliveryBatchUuids?.(this.session.id, uuid);
+          if (batchUuids && batchUuids.length > 1) {
+            const rebuilt = this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids);
+            const admitted = rebuilt.admittedUuids ?? [];
+            if (!admitted.includes(uuid)) {
+              if (!this.narrowRecoveredDeliveryBatch(uuid, [uuid])) return undefined;
+              if (repo.getDeliveryContent(this.session.id, uuid)?.sendStatus === 'failed') {
+                const reopenedId = repo.reopenDeliveryByUuid(this.session.id, uuid);
+                if (reopenedId) {
+                  void this.internalEventBus
+                    .publish('messages.statusChanged', {
+                      sessionId: this.session.id,
+                      messageIds: [reopenedId],
+                      status: 'enqueued',
+                    })
+                    .catch(() => {});
+                }
+              }
+              return kickoff;
+            }
+            if (admitted.length < batchUuids.length) {
+              if (!this.narrowRecoveredDeliveryBatch(uuid, admitted)) return undefined;
+            }
+            return rebuilt.content;
+          }
+        } catch (error) {
+          this.logger.warn(
+            `batch content rebuild for evicted survivor ${uuid} in session ${this.session.id} ` +
+              `failed; falling back to the recovered kickoff content:`,
+            error
+          );
+          if (!this.narrowRecoveredDeliveryBatch(uuid, [uuid])) return undefined;
+        }
+        return kickoff;
+      },
+      ownsTurn: () => this.queryObject === queryObject,
     };
     try {
       await runMidTurnBudgetPipeline({
@@ -1597,7 +1766,7 @@ export class AgentSession
         },
       });
     } finally {
-      this.messageQueue.releaseEarlyDeliveryGate();
+      this.messageQueue.releaseEarlyDeliveryGate(opts);
     }
   }
 
@@ -3113,6 +3282,29 @@ export class AgentSession
     expected: string | MessageContent[]
   ): boolean {
     return JSON.stringify(queued) === JSON.stringify(expected);
+  }
+
+  private narrowRecoveredDeliveryBatch(uuid: string, admitted: string[]): boolean {
+    try {
+      const narrowed =
+        this.db
+          .getJobQueueRepo?.()
+          ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, admitted) === true;
+      if (!narrowed) {
+        this.logger.warn(
+          `narrowing the delivery batch for evicted survivor ${uuid} in session ` +
+            `${this.session.id} was not applied; declining the recovery`
+        );
+      }
+      return narrowed;
+    } catch (error) {
+      this.logger.warn(
+        `narrowing the delivery batch for evicted survivor ${uuid} in session ` +
+          `${this.session.id} failed:`,
+        error
+      );
+      return false;
+    }
   }
 
   private rebuildBatchDeliveryContent(

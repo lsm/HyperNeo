@@ -6,11 +6,17 @@ import {
   refreshQueryEnvFromProcess,
   type QueryRunnerContext,
 } from '../../../../src/lib/agent/query-runner';
+import { resetSdkStartupGateForTests } from '../../../../src/lib/agent/sdk-startup-gate';
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { Session, MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { CanUseTool, HookCallback, Query } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  type CanUseTool,
+  type HookCallback,
+  type Query,
+} from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -23,6 +29,10 @@ import {
   QueryAttemptRegistry,
   type QueryAttemptToken,
 } from '../../../../src/lib/agent/query-attempt-token';
+
+mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+  query: mock(async () => ({ interrupt: () => {} })),
+}));
 
 describe('QueryRunner', () => {
   let runner: QueryRunner;
@@ -210,6 +220,7 @@ describe('QueryRunner', () => {
       setAskUserQuestionHook: setAskUserQuestionHookSpy,
       getDeferredPermissionMode: getDeferredPermissionModeSpy,
       getCurrentPermissionMode: getCurrentPermissionModeSpy,
+      getEffectiveMcpServers: mock(() => ({})),
     } as unknown as QueryOptionsBuilder;
 
     createCanUseToolCallbackSpy = mock(() => async () => true);
@@ -1140,6 +1151,37 @@ describe('QueryRunner', () => {
 
       expect(results).toHaveLength(2);
       expect(sentCount.value).toBe(2);
+    });
+
+    it('passes the query generation through to the queue generator options', async () => {
+      async function* mockMessageGenerator() {
+        yield {
+          message: { uuid: 'msg-1', content: 'Hello', internal: true },
+          onSent: () => {},
+        };
+      }
+
+      const generatorOptions: Array<{
+        suppressPreYieldCallback?: boolean;
+        queryGeneration?: number;
+      }> = [];
+      const mockQueue = {
+        ...mockMessageQueue,
+        messageGenerator: mock((_sessionId: string, options?: object) => {
+          generatorOptions.push(options as (typeof generatorOptions)[number]);
+          return mockMessageGenerator();
+        }),
+      };
+
+      runner = createRunner({
+        messageQueue: mockQueue as unknown as MessageQueue,
+      });
+
+      const generator = runner.createMessageGeneratorWrapper(7);
+      for await (const _msg of generator) {
+      }
+
+      expect(generatorOptions).toEqual([{ suppressPreYieldCallback: true, queryGeneration: 7 }]);
     });
 
     it('should set processing state for non-internal messages', async () => {
@@ -6074,6 +6116,233 @@ describe('QueryRunner', () => {
       expect(setCanUseToolSpy).toHaveBeenCalledTimes(0);
       expect(buildSpy).toHaveBeenCalledTimes(2);
     }, 15000);
+  });
+
+  describe('startup timeout watchdog behaviors', () => {
+    let queryFactory: (() => QueryLike) | null;
+
+    beforeEach(() => {
+      resetSdkStartupGateForTests();
+      process.env.ANTHROPIC_API_KEY = 'sk-test-key';
+      mockSession.workspacePath = tmpdir();
+      queryFactory = null;
+      (query as unknown as ReturnType<typeof mock>).mockImplementation(() => {
+        return queryFactory ? queryFactory() : { interrupt: () => {} };
+      });
+    });
+
+    afterEach(() => {
+      queryFactory = null;
+      if (process.env.ANTHROPIC_API_KEY === 'sk-test-key') {
+        process.env.ANTHROPIC_API_KEY = '';
+      }
+    });
+
+    function consumedStartupTimeoutQuery(): QueryLike {
+      const startupError = new Error('SDK startup timeout - query aborted');
+      return {
+        close: () => {},
+        interrupt: async () => {},
+        setMcpServers: async () => {},
+        [Symbol.asyncIterator]: () => ({
+          next: async () => {
+            throw startupError;
+          },
+          return: async () => ({ value: undefined, done: true }),
+        }),
+      } as unknown as QueryLike;
+    }
+
+    function hangingStartupTimeoutQuery(): QueryLike {
+      return {
+        close: () => {},
+        interrupt: async () => {},
+        setMcpServers: async () => {},
+        [Symbol.asyncIterator]: () => ({
+          next: () => new Promise<never>(() => {}),
+          return: async () => ({ value: undefined, done: true }),
+        }),
+      } as unknown as QueryLike;
+    }
+
+    function silentStreamEndQuery(): QueryLike {
+      return {
+        close: () => {},
+        interrupt: async () => {},
+        setMcpServers: async () => {},
+        [Symbol.asyncIterator]: async function* () {},
+      } as unknown as QueryLike;
+    }
+
+    async function flushMicrotasks(count = 30): Promise<void> {
+      for (let i = 0; i < count; i++) {
+        await Promise.resolve();
+      }
+    }
+
+    it('emits the interim notice and requeues consumed prompts on the consumed redeliver path', async () => {
+      const kickoff = {
+        uuid: 'kickoff-uuid',
+        content: [{ type: 'text' as const, text: 'K' }],
+      };
+      buildSpy
+        .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+      queryFactory = consumedStartupTimeoutQuery;
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(enqueueWithIdSpy).toHaveBeenCalledWith(kickoff.uuid, kickoff.content, false, {
+        prepend: true,
+      });
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          type: 'assistant',
+          message: expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('Retrying once'),
+              }),
+            ]),
+          }),
+        })
+      );
+    });
+
+    it('emits the interim notice on the queued-kickoff redeliver path', async () => {
+      sizeSpy.mockReturnValue(1);
+      buildSpy
+        .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+      queryFactory = consumedStartupTimeoutQuery;
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          type: 'assistant',
+          message: expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('Retrying once'),
+              }),
+            ]),
+          }),
+        })
+      );
+    });
+
+    it('skips the futile startup-timeout retry when no prompt was consumed or queued', async () => {
+      buildSpy.mockResolvedValueOnce({
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {},
+      });
+      queryFactory = consumedStartupTimeoutQuery;
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).toHaveBeenCalled();
+    });
+
+    it('routes a live run with zero messages through startup_timeout_retry (timer-abort bug)', async () => {
+      const kickoff = {
+        uuid: 'kickoff-uuid',
+        content: [{ type: 'text' as const, text: 'K' }],
+      };
+      buildSpy
+        .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+      queryFactory = hangingStartupTimeoutQuery;
+
+      mockSession.workspacePath = undefined;
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+      jest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        runner.start();
+        let spins = 0;
+        while (ctx.startupTimeoutTimer === null && spins < 100) {
+          await flushMicrotasks();
+          spins++;
+        }
+        expect(ctx.startupTimeoutTimer).not.toBeNull();
+        expect(jest.getTimerCount()).toBeGreaterThan(0);
+        jest.advanceTimersByTime(60001);
+        await ctx.queryPromise?.catch(() => {});
+      } finally {
+        jest.useRealTimers();
+      }
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(handleErrorSpy).toHaveBeenCalled();
+    }, 15000);
+
+    it('does not retry when the SDK stream ends before any first message', async () => {
+      buildSpy.mockResolvedValue({
+        model: 'claude-sonnet-4-20250514',
+        mcpServers: {},
+      });
+      queryFactory = silentStreamEndQuery;
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      runner.start();
+      await ctx.queryPromise;
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      expect(stopSpy).toHaveBeenCalled();
+    });
+
+    it('abandons the startup-timeout retry when interrupted during teardown', async () => {
+      const kickoff = {
+        uuid: 'kickoff-uuid',
+        content: [{ type: 'text' as const, text: 'K' }],
+      };
+      buildSpy.mockRejectedValue(new Error('SDK startup timeout - query aborted'));
+      setIdleSpy.mockImplementation(async () => {
+        getStateSpy.mockReturnValue({ status: 'interrupted' });
+      });
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([[1, [kickoff]]]);
+
+      runner.start();
+      await ctx.queryPromise?.catch(() => {});
+
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+    });
   });
 });
 

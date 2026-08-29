@@ -6,12 +6,7 @@ import { reserveBasedThreshold } from '../../../../src/lib/agent/context-tracker
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
-import {
-  buildProviderSettings,
-  NATIVE_CONTEXT_WINDOW_PROVIDER_IDS,
-  PROVIDER_NO_SDK_AUTO_COMPACT,
-  shouldUseHyperNeoCompactFallback,
-} from '../../../../src/lib/agent/query-options-builder';
+import { buildProviderSettings } from '../../../../src/lib/agent/query-options-builder';
 import { QueryRunner, type QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
 import {
   SDKMessageHandler,
@@ -193,55 +188,6 @@ describe('N2: thresholds — active SDK window (kimi/codex) + dormant fallback r
     expect(buildProviderSettings('anthropic-codex', 272_000, 'gpt-5.5')).toBeUndefined();
     expect(reserveBasedThreshold(262_144, 'kimi')).toBe(262_144 - 45_000);
     expect(reserveBasedThreshold(1_048_576, 'kimi')).toBe(1_048_576 - 45_000);
-  });
-});
-
-describe('N3: NeoKai (HyperNeo) fallback applied only where intended', () => {
-  it('PROVIDER_NO_SDK_AUTO_COMPACT is empty (no provider uses the async /compact fallback)', () => {
-    expect(PROVIDER_NO_SDK_AUTO_COMPACT.size).toBe(0);
-  });
-
-  it('the four native context-window providers are exactly the documented set', () => {
-    expect([...NATIVE_CONTEXT_WINDOW_PROVIDER_IDS].sort()).toEqual(
-      ['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm'].sort()
-    );
-  });
-
-  it.each([
-    ['anthropic', 200_000],
-    ['anthropic-copilot', 200_000],
-    ['anthropic-codex', 272_000],
-    ['glm', 1_000_000],
-  ] as const)('%s ignores the configured window entirely (SDK keeps its own compaction)', (providerId, window) => {
-    expect(buildProviderSettings(providerId, window)).toBeUndefined();
-    expect(buildProviderSettings(providerId, window, 'any-model')).toBeUndefined();
-  });
-
-  it.each([
-    ['anthropic', 'anthropic'],
-    ['anthropic-copilot', 'anthropic-copilot'],
-    ['anthropic-codex', 'anthropic-codex'],
-    ['glm', 'glm'],
-    ['deepseek', 'deepseek'],
-    ['kimi', 'kimi'],
-    ['minimax', 'minimax'],
-    ['openrouter', 'openrouter'],
-    ['ollama', 'ollama'],
-    ['ollama-cloud', 'ollama-cloud'],
-    ['acp', 'acp'],
-  ])('shouldUseHyperNeoCompactFallback(%s) is false', (_label, providerId) => {
-    expect(shouldUseHyperNeoCompactFallback(providerId)).toBe(false);
-  });
-
-  it('every Kimi and Codex model id resolves to no HyperNeo fallback', () => {
-    const ids = [
-      ...KimiProvider.MODELS.map((m) => m.id),
-      ...(Object.keys(MODEL_CONTEXT_WINDOWS) as Array<keyof typeof MODEL_CONTEXT_WINDOWS>),
-    ];
-    for (const id of ids) {
-      expect(shouldUseHyperNeoCompactFallback('kimi'), `kimi/${id}`).toBe(false);
-      expect(shouldUseHyperNeoCompactFallback('anthropic-codex'), `codex/${id}`).toBe(false);
-    }
   });
 });
 
@@ -648,7 +594,10 @@ describe('N4: literal /compact never enters the transcript or provider request',
     const runner = new QueryRunner({
       session,
       messageQueue: queue,
-      stateManager: { setProcessing: setProcessingSpy } as unknown as ProcessingStateManager,
+      stateManager: {
+        setProcessing: setProcessingSpy,
+        getState: () => ({ status: 'idle' }),
+      } as unknown as ProcessingStateManager,
       logger: {
         debug: () => {},
         info: () => {},
@@ -685,10 +634,66 @@ describe('N4: literal /compact never enters the transcript or provider request',
     expect(yielded).toHaveLength(2);
     expect(yielded[0].internal).toBe(true);
     expect(yielded[1].internal).toBe(false);
-    expect(setProcessingSpy).toHaveBeenCalledTimes(1);
+    expect(setProcessingSpy).toHaveBeenCalledTimes(2);
     const replay = (runner as unknown as { _lastConsumedUserMessage: { content: unknown } | null })
       ._lastConsumedUserMessage;
     expect(replay?.content).toEqual([{ type: 'text', text: 'fix the bug' }]);
+  });
+
+  it('a steering compaction delivered mid-turn does not displace the processing owner', async () => {
+    const queue = new MessageQueue();
+    queue.start();
+
+    const setProcessingSpy = mock(async () => {});
+    const session: Session = {
+      id: 'query-boundary-session-steering',
+      title: 'Query Boundary Session',
+      workspacePath: '/test/path',
+      createdAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+      status: 'active',
+      config: { model: 'default', maxTokens: 8192, temperature: 1.0 },
+      metadata: {
+        messageCount: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalCost: 0,
+        toolCallCount: 0,
+      },
+    };
+
+    const runner = new QueryRunner({
+      session,
+      messageQueue: queue,
+      stateManager: {
+        setProcessing: setProcessingSpy,
+        getState: () => ({ status: 'processing' }),
+      } as unknown as ProcessingStateManager,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+        log: () => {},
+        trace: () => {},
+      },
+    } as unknown as QueryRunnerContext);
+
+    const delivered: Array<SDKUserMessage & { internal?: boolean }> = [];
+    const consumer = (async () => {
+      for await (const message of runner.createMessageGeneratorWrapper()) {
+        delivered.push(message as SDKUserMessage & { internal?: boolean });
+        queue.stop();
+      }
+    })();
+
+    await queue.enqueue('/compact', true).catch(() => {});
+    await consumer;
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].internal).toBe(true);
+    expect(setProcessingSpy).not.toHaveBeenCalled();
   });
 
   it('when the context budget is exceeded on a custom provider, the handler enqueues /compact as internal (production call site)', async () => {

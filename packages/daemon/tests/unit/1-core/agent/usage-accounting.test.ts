@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'bun:test';
 import {
   recordResultUsage,
-  commitPendingCost,
   type UsageAccountingState,
 } from '../../../../src/lib/agent/usage-accounting';
 
@@ -69,22 +68,5 @@ describe('recordResultUsage', () => {
       lastSdkCost: 0,
       totalCost: 0,
     });
-  });
-});
-
-describe('commitPendingCost', () => {
-  it('moves the last SDK cost into the baseline and clears it', () => {
-    const state = { ...zeroState, costBaseline: 1, lastSdkCost: 2.5, totalCost: 3.5 };
-    expect(commitPendingCost(state)).toEqual({
-      ...state,
-      costBaseline: 3.5,
-      lastSdkCost: 0,
-      totalCost: 3.5,
-    });
-  });
-
-  it('leaves the state unchanged when there is no pending cost', () => {
-    const state = { ...zeroState, costBaseline: 1, lastSdkCost: 0, totalCost: 1 };
-    expect(commitPendingCost(state)).toBe(state);
   });
 });

@@ -8,11 +8,11 @@ import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../../src/lib/agent/query-lifecycle-manager';
 import { markBuiltFallbackIdentity } from '../../../../src/lib/agent/query-options-builder';
-import { recordResultUsage } from '../../../../src/lib/agent/usage-accounting';
 import {
   SDKMessageHandler,
   type SDKMessageHandlerContext,
 } from '../../../../src/lib/agent/sdk-message-handler';
+import { recordResultUsage } from '../../../../src/lib/agent/usage-accounting';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
@@ -96,6 +96,8 @@ describe('SDKMessageHandler', () => {
   let hasPendingOrClaimedSpy: ReturnType<typeof mock>;
   let hasYieldedSpy: ReturnType<typeof mock>;
   let acknowledgeYieldedSpy: ReturnType<typeof mock>;
+  let ownsYieldedGenerationSpy: ReturnType<typeof mock>;
+  let ownsLastYieldSpy: ReturnType<typeof mock>;
   let setDeliveryGateSpy: ReturnType<typeof mock>;
   let hasQueuedMessagesSpy: ReturnType<typeof mock>;
   let hasOutstandingInternalCompactionSpy: ReturnType<typeof mock>;
@@ -205,6 +207,8 @@ describe('SDKMessageHandler', () => {
     hasPendingOrClaimedSpy = mock(() => false);
     hasYieldedSpy = mock(() => false);
     acknowledgeYieldedSpy = mock(() => false);
+    ownsYieldedGenerationSpy = mock(() => true);
+    ownsLastYieldSpy = mock(() => true);
     setDeliveryGateSpy = mock(() => {});
     hasQueuedMessagesSpy = mock(() => false);
     hasOutstandingInternalCompactionSpy = mock(() => false);
@@ -220,6 +224,8 @@ describe('SDKMessageHandler', () => {
       hasPendingOrClaimed: hasPendingOrClaimedSpy,
       hasYielded: hasYieldedSpy,
       acknowledgeYielded: acknowledgeYieldedSpy,
+      ownsYieldedGeneration: ownsYieldedGenerationSpy,
+      ownsLastYield: ownsLastYieldSpy,
       setDeliveryGate: setDeliveryGateSpy,
       hasQueuedMessages: hasQueuedMessagesSpy,
       hasOutstandingInternalCompaction: hasOutstandingInternalCompactionSpy,
@@ -598,6 +604,33 @@ describe('SDKMessageHandler', () => {
           version: expect.any(Number),
         }),
         { channel: 'session:test-session-id' }
+      );
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      expect((message as unknown as { isSynthetic?: boolean }).isSynthetic).toBeUndefined();
+    });
+
+    it('discards a stale user echo from a superseded query instead of consuming it', async () => {
+      ownsLastYieldSpy.mockReturnValue(false);
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sessionId: string, status: string, uuid: string) =>
+          status === 'enqueued' && uuid === 'test-uuid'
+            ? { dbId: 'db-msg-1', uuid: 'test-uuid' }
+            : null
+      );
+
+      const message: SDKMessage = {
+        type: 'user',
+        uuid: 'test-uuid',
+        message: { role: 'user', content: 'Hello' },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+      expect(publishSpy).not.toHaveBeenCalledWith(
+        'state.sdkMessages.delta',
+        expect.anything(),
+        expect.anything()
       );
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
       expect((message as unknown as { isSynthetic?: boolean }).isSynthetic).toBeUndefined();
@@ -2143,6 +2176,60 @@ describe('SDKMessageHandler', () => {
       expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-queued'], 'consumed');
     });
 
+    it('skips the turn-end queued-user ack when the yield is owned by a superseded generation', async () => {
+      getUserMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+        if (status === 'enqueued') {
+          return {
+            messages: [
+              {
+                dbId: 'db-yielded',
+                uuid: 'yielded-user-uuid',
+                type: 'user',
+                timestamp: 1700000000000,
+                message: { role: 'user', content: [{ type: 'text', text: 'yielded' }] },
+              },
+            ],
+            total: 1,
+          };
+        }
+        return { messages: [], total: 0 };
+      });
+      const markDeliveriesConsumedAtTurnEndSpy = mock(() => ({
+        ids: ['db-yielded'],
+        uuids: ['yielded-user-uuid'],
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
+      })) as never;
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markDeliveriesConsumedAtTurnEnd: markDeliveriesConsumedAtTurnEndSpy,
+      })) as never;
+      getStateSpy.mockReturnValue({
+        status: 'processing',
+        messageId: 'yielded-user-uuid',
+        phase: 'streaming',
+      });
+      setIdleSpy.mockImplementation(async () => {
+        getStateSpy.mockReturnValue({ status: 'idle' });
+      });
+      hasPendingOrClaimedSpy.mockReturnValue(false);
+      hasYieldedSpy.mockImplementation((uuid: string) => uuid === 'yielded-user-uuid');
+      ownsYieldedGenerationSpy.mockReturnValue(false);
+
+      await handler.handleMessage({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'result-uuid',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        modelUsage: {},
+      } as unknown as SDKMessage);
+
+      expect(markDeliveriesConsumedAtTurnEndSpy).not.toHaveBeenCalled();
+      expect(acknowledgeYieldedSpy).not.toHaveBeenCalled();
+      expect(updateMessageStatusSpy).not.toHaveBeenCalledWith(['db-yielded'], 'consumed');
+    });
+
     it('acknowledges a yielded durable message at turn end when replay is absent', async () => {
       getUserMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
         if (status === 'enqueued') {
@@ -2202,7 +2289,7 @@ describe('SDKMessageHandler', () => {
         ['yielded-user-uuid', 'batch-member-uuid'],
         'result-uuid'
       );
-      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid');
+      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid', undefined);
       expect(
         await Promise.all([
           kickoffWaiter.promise.then(() => 'consumed'),
@@ -2326,7 +2413,7 @@ describe('SDKMessageHandler', () => {
         } as unknown as SDKMessage)
       ).rejects.toThrow('search maintenance failed');
 
-      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid');
+      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid', undefined);
       await expect(kickoffWaiter.promise).resolves.toBeUndefined();
       kickoffWaiter.cancel();
     });
@@ -5357,7 +5444,7 @@ describe('SDKMessageHandler', () => {
         expect(enqueueMessageSpy).not.toHaveBeenCalled();
       });
 
-      it('does not enqueue /compact for non-PROVIDER_NO_SDK_AUTO_COMPACT providers (SDK handles)', async () => {
+      it('does not enqueue /compact for openrouter when SDK auto-compact is active (SDK handles)', async () => {
         setModelsCache(
           new Map([
             [
@@ -6668,7 +6755,7 @@ describe('SDKMessageHandler', () => {
           expected: true,
         });
         expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
-        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid);
+        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid, undefined);
       });
 
       it('acknowledges a yielded non-durable message that is also active', async () => {
@@ -6680,7 +6767,7 @@ describe('SDKMessageHandler', () => {
           expected: true,
         });
         expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
-        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid);
+        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid, undefined);
       });
 
       it('skips a durable message that is not yielded', async () => {
@@ -6725,7 +6812,7 @@ describe('SDKMessageHandler', () => {
           expected: true,
         });
         expect(markConsumed).toHaveBeenCalledWith('test-session-id', [turnUuid], 'result-uuid');
-        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid);
+        expect(acknowledgeYieldedSpy).toHaveBeenCalledWith(turnUuid, undefined);
       });
 
       it('skips a durable yielded active message that is pending or claimed', async () => {

@@ -1,11 +1,13 @@
 import { describe, expect, it, mock } from 'bun:test';
-import type { ContextInfo } from '@hyperneo/shared';
+import type { ContextInfo, Session } from '@hyperneo/shared';
 import {
   type ContextBudgetEnforcementInput,
+  type ContextBudgetReevaluationInput,
   enforceContextBudget,
   enqueueBudgetCompaction,
   resolveBudgetThresholds,
   runContextBudgetDecision,
+  runContextBudgetReevaluation,
 } from '../../../../src/lib/agent/context-budget-enforcement';
 import type { ContextTracker } from '../../../../src/lib/agent/context-tracker';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
@@ -22,6 +24,7 @@ function enforcementHarness(overrides?: {
   compactionOutstanding?: boolean;
   queueRunning?: boolean;
   processingStatus?: string;
+  reason?: 'event-tick' | 'turn-end' | 'compact-boundary' | 'model-switch';
 }) {
   const contextInfo = {
     totalUsed: overrides?.totalUsed ?? 950_000,
@@ -54,7 +57,7 @@ function enforcementHarness(overrides?: {
   const input: ContextBudgetEnforcementInput = {
     sessionId: 'enforcement-session',
     providerId: 'providerId' in (overrides ?? {}) ? overrides?.providerId : 'openrouter',
-    reason: 'turn-end',
+    reason: overrides?.reason ?? 'turn-end',
     contextInfo,
     fallbackContextWindow: 262_144,
     clearedDeadCompaction: overrides?.clearedDeadCompaction ?? false,
@@ -124,6 +127,13 @@ describe('enforce-context-budget pipeline', () => {
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
+  it('enqueues a dormant /compact on a stopped queue for model-switch re-evaluation', () => {
+    const { input, enqueue } = enforcementHarness({ queueRunning: false, reason: 'model-switch' });
+    const outcome = enforceContextBudget(input);
+    expect(outcome.compactionEnqueued).toBe(true);
+    expect(enqueue).toHaveBeenCalledWith('/compact', true, { durable: true, prepend: true });
+  });
+
   it.each([
     ['native provider', { providerId: 'anthropic' }],
     ['acp provider', { providerId: 'acp' }],
@@ -140,5 +150,139 @@ describe('enforce-context-budget pipeline', () => {
     const outcome = enforceContextBudget(input);
     expect(outcome.compactionEnqueued).toBe(false);
     expect(enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('reevaluate-context-budget pipeline', () => {
+  function reevaluationHarness(resolveModelInfo: () => Promise<unknown>) {
+    const session = {
+      id: 'reevaluation-session',
+      config: { model: 'switched-model', provider: 'openrouter' },
+    } as unknown as Session;
+    const trackerInfo = {
+      model: 'old-model',
+      totalUsed: 950_000,
+      totalCapacity: 2_000_000,
+      percentUsed: 47,
+      breakdown: {},
+      isAutoCompactEnabled: false,
+    } as unknown as ContextInfo;
+    const liveTrackerInfo: { current: ContextInfo | null } = { current: trackerInfo };
+    const enqueue = mock(async () => 'compact-id');
+    const removePendingInternalCompactions = mock(() => 0);
+    const clearEpoch = { value: 0 };
+    const userInterruptEpoch = { value: 0 };
+    const messageQueue = {
+      enqueue,
+      removePendingInternalCompactions,
+      hasOutstandingInternalCompaction: mock(() => false),
+      isRunning: mock(() => false),
+      getClearEpoch: () => clearEpoch.value,
+      getUserInterruptEpoch: () => userInterruptEpoch.value,
+    };
+    const contextTracker = {
+      getContextInfo: () => liveTrackerInfo.current,
+      isCoolingDown: mock(() => false),
+      markCompactionTriggered: mock(() => {}),
+      clearCompactionCooldown: mock(() => {}),
+    };
+    const stateManager = {
+      getIsCompacting: mock(() => false),
+      getState: mock(() => ({ phase: 'idle', status: 'idle' })),
+    };
+    const input: ContextBudgetReevaluationInput = {
+      session,
+      trackerInfo,
+      resolveModelInfo: resolveModelInfo as ContextBudgetReevaluationInput['resolveModelInfo'],
+      limitRecoveryPending: false,
+      contextTracker: contextTracker as never,
+      messageQueue: messageQueue as never,
+      stateManager: stateManager as never,
+      logger: new Logger('reevaluation-test'),
+      resumePendingWork: mock(() => {}),
+      clearPendingResume: mock(() => {}),
+      queueClearEpochAtStart: messageQueue.getClearEpoch(),
+      userInterruptEpochAtStart: messageQueue.getUserInterruptEpoch(),
+    };
+    return {
+      input,
+      enqueue,
+      removePendingInternalCompactions,
+      liveTrackerInfo,
+      clearEpoch,
+      userInterruptEpoch,
+    };
+  }
+
+  it('enqueues a dormant compaction through the enforcement pipeline on a stopped queue', async () => {
+    const { input, enqueue } = reevaluationHarness(async () => ({
+      id: 'switched-model',
+      contextWindow: 1_000_000,
+    }));
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(true);
+    expect(enqueue).toHaveBeenCalledWith('/compact', true, { durable: true, prepend: true });
+  });
+
+  it('halts when the model fence changes while the catalog resolves', async () => {
+    const { input, enqueue } = reevaluationHarness(async () => {
+      input.session.config.model = 'newer-switch';
+      return { id: 'newer-switch', contextWindow: 1_000_000 };
+    });
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('defers instead of deciding against stale capacity when the catalog is unresolved', async () => {
+    const { input, enqueue, removePendingInternalCompactions } = reevaluationHarness(
+      async () => null
+    );
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(removePendingInternalCompactions).not.toHaveBeenCalled();
+  });
+
+  it('decides from tracker state at decision time, not from the call-time snapshot', async () => {
+    const { input, enqueue, liveTrackerInfo } = reevaluationHarness(async () => {
+      liveTrackerInfo.current = {
+        model: 'old-model',
+        totalUsed: 50_000,
+        totalCapacity: 2_000_000,
+        percentUsed: 2,
+        breakdown: {},
+        isAutoCompactEnabled: false,
+      } as unknown as ContextInfo;
+      return { id: 'switched-model', contextWindow: 1_000_000 };
+    });
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('aborts when a user interrupt clears the queue during resolution', async () => {
+    const { input, enqueue, removePendingInternalCompactions, clearEpoch } = reevaluationHarness(
+      async () => {
+        clearEpoch.value += 1;
+        return { id: 'switched-model', contextWindow: 1_000_000 };
+      }
+    );
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(removePendingInternalCompactions).not.toHaveBeenCalled();
+  });
+
+  it('aborts when an empty-queue interrupt bumps the user-interrupt epoch during resolution', async () => {
+    const { input, enqueue, removePendingInternalCompactions, userInterruptEpoch } =
+      reevaluationHarness(async () => {
+        userInterruptEpoch.value += 1;
+        return { id: 'switched-model', contextWindow: 1_000_000 };
+      });
+    const outcome = await runContextBudgetReevaluation(input);
+    expect(outcome.compactionEnqueued).toBe(false);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(removePendingInternalCompactions).not.toHaveBeenCalled();
   });
 });

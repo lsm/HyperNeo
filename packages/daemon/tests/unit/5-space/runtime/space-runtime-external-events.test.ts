@@ -1,11 +1,21 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type {
+  NodeExecutionStatus,
+  SpaceTask,
+  SpaceTaskStatus,
+  SpaceWorkflow,
+} from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
+import { renderEventBlock } from '../../../../src/lib/external-events/deferred-event-digest';
+import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry';
 import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/queue-health-metrics';
-import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+import type {
+  ExternalEvent,
+  ExternalEventDeliveryRecord,
+} from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
@@ -99,6 +109,7 @@ class MockTaskAgentManager {
   activationResult: Array<{ agentName: string; sessionId: string }> = [];
   activationError: Error | null = null;
   onActivate: (() => void) | null = null;
+  onSpawn: ((executionId: string, sessionId: string) => void) | null = null;
 
   isSessionAlive(sessionId: string): boolean {
     return this.alive.has(sessionId);
@@ -175,6 +186,7 @@ class MockTaskAgentManager {
     const sessionId = `session-${execution.id}`;
     this.spawned.push(sessionId);
     this.alive.add(sessionId);
+    this.onSpawn?.(execution.id, sessionId);
     return sessionId;
   }
 }
@@ -196,14 +208,13 @@ describe('SpaceRuntime external event subscriptions', () => {
   let tam: MockTaskAgentManager;
   let bus: ReturnType<typeof createDaemonInternalEventBus>;
   let spaceManager: SpaceManager;
-  let previousExternalEventV2: string | undefined;
 
   function createWorkflow(
     nodeId = 'code',
-    options: { eventInterests?: Array<{ topic: string }> } = {}
+    options: { eventInterests?: Array<{ topic: string }>; spaceId?: string } = {}
   ): SpaceWorkflow {
     return workflowManager.createWorkflow({
-      spaceId: SPACE_ID,
+      spaceId: options.spaceId ?? SPACE_ID,
       name: `Workflow ${Math.random()}`,
       description: '',
       nodes: [
@@ -259,8 +270,6 @@ describe('SpaceRuntime external event subscriptions', () => {
   }
 
   beforeEach(() => {
-    previousExternalEventV2 = process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2;
-    process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = '0';
     db = makeDb();
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
@@ -309,14 +318,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
   });
 
-  afterEach(() => {
-    if (previousExternalEventV2 === undefined) {
-      delete process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2;
-    } else {
-      process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = previousExternalEventV2;
-    }
-  });
-
   test('rehydrates long-horizon agent subscriptions and delivers matching events', async () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     const agent = repo.create({
@@ -355,7 +356,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 
     expect(longHorizonMessages).toHaveLength(1);
     expect(longHorizonMessages[0]!.agentId).toBe(agent.id);
-    expect(JSON.parse(longHorizonMessages[0]!.message).eventId).toBe(event.id);
+    expect(longHorizonMessages[0]!.message).toBe(eventStore.getById(event.id)?.event.render);
     expect(eventStore.getById(event.id)?.state).toBe('delivered');
     const deliveries = eventStore.listDeliveries(event.id);
     expect(deliveries).toHaveLength(1);
@@ -366,6 +367,68 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(snapshot.counters.enqueue).toBe(1);
     expect(snapshot.counters.enqueueBySource['github']).toBe(1);
     expect(snapshot.counters.enqueueByTargetState).toEqual({ 'long_horizon=active': 1 });
+  });
+
+  test('requeue of a pending pre-migration event without a stored render derives the message from the record', async () => {
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const agent = repo.create({
+      id: 'lh-agent-legacy-render',
+      spaceId: SPACE_ID,
+      handle: 'legacy-watcher',
+      displayName: 'Legacy Watcher',
+    });
+    const subscription = repo.createSubscription({
+      spaceId: SPACE_ID,
+      agentId: agent.id,
+      source: 'github',
+      topic: DEFAULT_TOPIC,
+    });
+
+    const event = makeEvent();
+    eventStore.store(event);
+    expect(eventStore.getById(event.id)?.event.render).toBeUndefined();
+
+    const deliveryKey = JSON.stringify([
+      'long_horizon_agent',
+      event.source,
+      event.dedupeKey,
+      SPACE_ID,
+      agent.id,
+      subscription.id,
+    ]);
+    eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+      workflowRunId: `long_horizon:${SPACE_ID}`,
+      taskId: subscription.id,
+      nodeId: agent.id,
+      agentName: agent.id,
+    });
+
+    runtime = new SpaceRuntime({
+      db,
+      spaceManager: new SpaceManager(db),
+      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: repo,
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo,
+      nodeExecutionRepo,
+      internalEventBus: bus,
+      externalEventStore: eventStore,
+      taskAgentManager: tam as never,
+      deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+        longHorizonMessages.push({ agentId, message, idempotencyKey });
+        return { delivered: true };
+      },
+    });
+
+    await runtime.rehydrateExecutors();
+
+    expect(longHorizonMessages).toHaveLength(1);
+    const entry = essenceEntryFromExternalEvent(eventStore.getById(event.id)!.event);
+    expect(entry).not.toBeNull();
+    expect(longHorizonMessages[0]!.message).toBe(renderEventBlock(entry!));
+    expect(longHorizonMessages[0]!.message.length).toBeGreaterThan(0);
+    expect(eventStore.getById(event.id)?.state).toBe('delivered');
   });
 
   test('rehydrates relative long-horizon agent subscriptions and matches full event topics', async () => {
@@ -914,13 +977,8 @@ describe('SpaceRuntime external event subscriptions', () => {
     expect(matches.some((match) => match.workflowRunId === run.id)).toBe(false);
   });
 
-  describe('events delivery v2 immediate tier routing', () => {
-    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
-    let previousFlag: string | undefined;
-
+  describe('immediate tier routing', () => {
     beforeEach(() => {
-      previousFlag = process.env[FLAG_ENV];
-      process.env[FLAG_ENV] = '1';
       db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
 				id TEXT PRIMARY KEY,
 				queue TEXT NOT NULL,
@@ -938,14 +996,6 @@ describe('SpaceRuntime external event subscriptions', () => {
 				heartbeat_at INTEGER,
 				completed_at TEXT
 			)`);
-    });
-
-    afterEach(() => {
-      if (previousFlag === undefined) {
-        delete process.env[FLAG_ENV];
-      } else {
-        process.env[FLAG_ENV] = previousFlag;
-      }
     });
 
     function immediateEvent(): ExternalEvent {
@@ -971,7 +1021,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       tam.processingStates.set(sessionId, status);
     }
 
-    test('flag on: immediate event delivers one steer message with the render text', async () => {
+    test('immediate event delivers one steer message with the render text', async () => {
       await attachLiveSession('session-immediate-steer', 'processing');
       const event = immediateEvent();
       await eventService.publish(event);
@@ -1012,7 +1062,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       });
     });
 
-    test('flag on: rate-budget overflow leaves the ledger pending for the digest tier', async () => {
+    test('rate-budget overflow leaves the ledger pending for the digest tier', async () => {
       await attachLiveSession('session-immediate-budget', 'processing');
       const events = Array.from({ length: 11 }, () => immediateEvent());
       for (const event of events) {
@@ -1025,7 +1075,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(injected).toHaveLength(0);
     });
 
-    test('flag on: a deferred immediate dispatch schedules a follow-up digest pull', async () => {
+    test('a deferred immediate dispatch schedules a follow-up digest pull', async () => {
       await attachLiveSession('session-immediate-deferred', 'processing');
       const events = Array.from({ length: 11 }, () => immediateEvent());
       for (const event of events) {
@@ -1069,7 +1119,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       ).toBe(true);
     }, 10_000);
 
-    test('flag on: a stale-session deferral leaves the ledger pending for reactivation', async () => {
+    test('a stale-session deferral leaves the ledger pending for reactivation', async () => {
       await attachLiveSession('session-immediate-stale', 'idle');
       tam.alive.delete('session-immediate-stale');
       const event = immediateEvent();
@@ -1089,7 +1139,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(digestRows.n).toBe(0);
     }, 10_000);
 
-    test('flag on: a delivered immediate event still records an enqueue counter', async () => {
+    test('a delivered immediate event still records an enqueue counter', async () => {
       await attachLiveSession('session-immediate-enqueue', 'processing');
       const event = immediateEvent();
       await eventService.publish(event);
@@ -1161,13 +1211,8 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
   });
 
-  describe('events delivery v2 turn-end digest pull', () => {
-    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
-    let previousFlag: string | undefined;
-
+  describe('turn-end digest pull', () => {
     beforeEach(() => {
-      previousFlag = process.env[FLAG_ENV];
-      process.env[FLAG_ENV] = '1';
       db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
 				id TEXT PRIMARY KEY,
 				queue TEXT NOT NULL,
@@ -1187,15 +1232,7 @@ describe('SpaceRuntime external event subscriptions', () => {
 			)`);
     });
 
-    afterEach(() => {
-      if (previousFlag === undefined) {
-        delete process.env[FLAG_ENV];
-      } else {
-        process.env[FLAG_ENV] = previousFlag;
-      }
-    });
-
-    test('flag on: renders the pending queued set as one digest row and marks the ledger delivered', async () => {
+    test('renders the pending queued set as one digest row and marks the ledger delivered', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1267,14 +1304,14 @@ describe('SpaceRuntime external event subscriptions', () => {
       });
     });
 
-    test('flag on: a session with no node execution is not a digest target', async () => {
+    test('a session with no node execution is not a digest target', async () => {
       expect(await runtime.renderPendingDigestForSession('session-unknown')).toEqual({
         action: 'skip',
         reason: 'no_execution',
       });
     });
 
-    test('flag on: an obsolete crash-replay digest is superseded when a fresh digest delivers', async () => {
+    test('an obsolete crash-replay digest is superseded when a fresh digest delivers', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1341,7 +1378,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-superseded');
     });
 
-    test('flag on: a crash-replay digest subset is superseded by a broader delivered digest', async () => {
+    test('a crash-replay digest subset is superseded by a broader delivered digest', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1401,7 +1438,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-subset');
     });
 
-    test('flag on: a digest mixing delivered and pending members is superseded', async () => {
+    test('a digest mixing delivered and pending members is superseded', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1465,7 +1502,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-overlap');
     });
 
-    test('flag on: supersede uses this target delivery state for fan-out events', async () => {
+    test('supersede uses this target delivery state for fan-out events', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1536,7 +1573,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows[0]!.sdk_uuid).not.toBe('digest-orphan-fanout');
     });
 
-    test('flag on: a delivered-but-unflushed digest survives a no-pending pull', async () => {
+    test('a delivered-but-unflushed digest survives a no-pending pull', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1600,7 +1637,150 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(1);
     });
 
-    test('flag on: an admission-rejected pull drops the deferred digest rows', async () => {
+    test('another task inadmissible pull keeps a delivered digest owned by a sibling task', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const event = makeEvent({ id: 'evt-cross-task-drop', topic });
+      await eventService.publish(event);
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      eventStore.markDeliveryDelivered(event.id, delivery.deliveryKey);
+
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'stopped',
+        workflowRunId: run.id,
+      });
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-cross-task-drop',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-cross-task-drop',
+        'session-cross-task-drop',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const owed = {
+        type: 'user',
+        uuid: 'digest-owed-cross-task',
+        session_id: 'session-cross-task-drop',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'handoff pending digest' }] },
+        externalEventIds: [event.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-cross-task-drop', owed, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession(
+        'session-cross-task-drop',
+        secondTask.id
+      );
+      expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+      expect(eventStore.listDeliveries(event.id)[0]!.taskId).toBe(task.id);
+
+      const rows = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-cross-task-drop'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .get() as { n: number };
+      expect(rows.n).toBe(1);
+    });
+
+    test('supersede obsoletes a deferred digest whose members are terminal under a sibling task', async () => {
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startRunWithSubscription(topicA);
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topicB).success
+      ).toBe(true);
+
+      const siblingEvent = makeEvent({ id: 'evt-supersede-sibling', topic: topicA });
+      const freshEvent = makeEvent({ id: 'evt-supersede-fresh', topic: topicB });
+      await eventService.publish(siblingEvent);
+      await eventService.publish(freshEvent);
+      const siblingDelivery = eventStore.listDeliveries(siblingEvent.id)[0]!;
+      eventStore.markDeliveryDelivered(siblingEvent.id, siblingDelivery.deliveryKey);
+
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-cross-task-supersede',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-cross-task-supersede',
+        'session-cross-task-supersede',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+
+      const messages = new SDKMessageRepository(db);
+      const stale = {
+        type: 'user',
+        uuid: 'digest-stale-sibling',
+        session_id: 'session-cross-task-supersede',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'stale sibling digest' }] },
+        externalEventIds: [siblingEvent.id],
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage('session-cross-task-supersede', stale, 'deferred', 'system');
+
+      const outcome = await runtime.renderPendingDigestForSession(
+        'session-cross-task-supersede',
+        secondTask.id
+      );
+      expect(outcome).toMatchObject({ action: 'delivered', eventIds: [freshEvent.id] });
+
+      const rows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-cross-task-supersede'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(rows.some((row) => row.sdk_uuid === 'digest-stale-sibling')).toBe(false);
+    });
+
+    test('an admission-rejected pull drops the deferred digest rows', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1661,7 +1841,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(0);
     });
 
-    test('flag on: a digest with a mixed delivered/pending membership is dropped on a rejected pull', async () => {
+    test('a digest with a mixed delivered/pending membership is dropped on a rejected pull', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1725,7 +1905,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(rows.n).toBe(0);
     });
 
-    test('flag on: handoff does not regress a digest row a concurrent flush already submitted', async () => {
+    test('handoff does not regress a digest row a concurrent flush already submitted', async () => {
       const { run, task } = await startRunWithSubscription(
         'github/lsm/neokai/pull_request/42.comment_polled'
       );
@@ -1787,138 +1967,83 @@ describe('SpaceRuntime external event subscriptions', () => {
       const payloads = jobs.map((job) => JSON.parse(job.payload) as Record<string, unknown>);
       expect(payloads.some((payload) => payload.messageUuid === delivered.uuid)).toBe(false);
     });
-  });
 
-  describe('flag-off persisted digest reconcile', () => {
-    async function attachSessionWithPendingMembers(
-      sessionId: string,
-      eventIds: string[]
-    ): Promise<{ run: { id: string }; task: SpaceTask; topic: string }> {
-      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
-      const { run, task } = await startRunWithSubscription(topic);
-      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-      nodeExecutionRepo.update(execution.id, {
-        status: 'idle',
-        agentSessionId: null,
-        completedAt: Date.now(),
-      });
+    test('flag on: an exhausted handoff retry protects the deferred digest from supersede', {
+      timeout: 15_000,
+    }, async () => {
+      const previousIdleMs = process.env.HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS;
+      process.env.HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS = '50';
+      try {
+        const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+        const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+        const { run, task } = await startRunWithSubscription(topicA);
+        const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+        nodeExecutionRepo.update(execution.id, {
+          status: 'in_progress',
+          agentSessionId: 'session-handoff-exhaust',
+          completedAt: null,
+          startedAt: Date.now(),
+        });
+        db.prepare(
+          `INSERT INTO sessions
+             (id, title, created_at, last_active_at, status, config, metadata, type)
+           VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+        ).run(
+          'session-handoff-exhaust',
+          'session-handoff-exhaust',
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z'
+        );
+        tam.alive.add('session-handoff-exhaust');
 
-      for (const eventId of eventIds) {
-        await eventService.publish(makeEvent({ id: eventId, topic }));
+        db.exec('DROP TABLE job_queue');
+
+        await eventService.publish(makeEvent({ id: 'evt-handoff-exhaust-a', topic: topicA }));
+        await new Promise((resolve) => setTimeout(resolve, 5500));
+
+        const secondTask = taskRepo.createTask({
+          spaceId: SPACE_ID,
+          title: 'Second task',
+          status: 'open',
+          workflowRunId: run.id,
+        });
+        expect(
+          runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topicB).success
+        ).toBe(true);
+
+        await eventService.publish(makeEvent({ id: 'evt-handoff-exhaust-b', topic: topicB }));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+
+        const allRows = db
+          .prepare(
+            `SELECT sdk_uuid, send_status FROM sdk_messages
+             WHERE session_id = 'session-handoff-exhaust' AND sdk_uuid LIKE 'digest-%'`
+          )
+          .all() as Array<{ sdk_uuid: string; send_status: string }>;
+        const aDeliveries = eventStore.listDeliveries('evt-handoff-exhaust-a');
+        const bDeliveries = eventStore.listDeliveries('evt-handoff-exhaust-b');
+        const aDelivered = aDeliveries[0];
+        const bDelivered = bDeliveries[0];
+        expect(aDelivered?.state).toBe('delivered');
+        expect(bDelivered?.state).toBe('delivered');
+        const deferredRows = db
+          .prepare(
+            `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-handoff-exhaust'
+             AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+          )
+          .all() as Array<{ sdk_uuid: string }>;
+        expect(deferredRows).toHaveLength(2);
+      } finally {
+        if (previousIdleMs === undefined) {
+          delete process.env.HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS;
+        } else {
+          process.env.HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS = previousIdleMs;
+        }
       }
-
-      nodeExecutionRepo.update(execution.id, {
-        status: 'in_progress',
-        agentSessionId: sessionId,
-        completedAt: null,
-        startedAt: Date.now(),
-      });
-      db.prepare(
-        `INSERT INTO sessions
-           (id, title, created_at, last_active_at, status, config, metadata, type)
-         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
-      ).run(sessionId, sessionId, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
-      return { run, task, topic };
-    }
-
-    function saveDeferredDigestRow(sessionId: string, uuid: string, eventIds: string[]): void {
-      const messages = new SDKMessageRepository(db);
-      const row = {
-        type: 'user',
-        uuid,
-        session_id: sessionId,
-        parent_tool_use_id: null,
-        isSynthetic: true,
-        inputKind: 'system',
-        message: { role: 'user', content: [{ type: 'text', text: 'stranded digest text' }] },
-        externalEventIds: eventIds,
-      } as unknown as SDKUserMessage;
-      messages.saveUserMessage(sessionId, row, 'deferred', 'system');
-    }
-
-    function deferredDigestRows(sessionId: string): Array<{ sdk_uuid: string }> {
-      return db
-        .prepare(
-          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = ?
-           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
-        )
-        .all(sessionId) as Array<{ sdk_uuid: string }>;
-    }
-
-    test('deletes a stranded digest row whose member deliveries are still pending', async () => {
-      const { task } = await attachSessionWithPendingMembers('session-flagoff-pending', [
-        'evt-flagoff-a',
-        'evt-flagoff-b',
-      ]);
-      saveDeferredDigestRow('session-flagoff-pending', 'digest-stranded-pending', [
-        'evt-flagoff-a',
-        'evt-flagoff-b',
-      ]);
-
-      expect(
-        runtime.reconcilePersistedDigestRowsForSession('session-flagoff-pending', task.id)
-      ).toBe(true);
-
-      expect(deferredDigestRows('session-flagoff-pending')).toHaveLength(0);
-      for (const eventId of ['evt-flagoff-a', 'evt-flagoff-b']) {
-        expect(eventStore.listDeliveries(eventId)[0]!.state).toBe('pending');
-      }
-    });
-
-    test('keeps an owed digest row whose member deliveries are all delivered', async () => {
-      const { task } = await attachSessionWithPendingMembers('session-flagoff-owed', [
-        'evt-flagoff-c',
-        'evt-flagoff-d',
-      ]);
-      for (const eventId of ['evt-flagoff-c', 'evt-flagoff-d']) {
-        const delivery = eventStore.listDeliveries(eventId)[0]!;
-        eventStore.markDeliveriesDeliveredAtomic([{ eventId, deliveryKey: delivery.deliveryKey }]);
-      }
-      saveDeferredDigestRow('session-flagoff-owed', 'digest-owed-row', [
-        'evt-flagoff-c',
-        'evt-flagoff-d',
-      ]);
-
-      expect(runtime.reconcilePersistedDigestRowsForSession('session-flagoff-owed', task.id)).toBe(
-        true
-      );
-
-      const rows = deferredDigestRows('session-flagoff-owed');
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.sdk_uuid).toBe('digest-owed-row');
-    });
-
-    test('a session unbound from its execution reconciles as unverifiable without deleting rows', async () => {
-      const { task } = await attachSessionWithPendingMembers('session-flagoff-unbound', [
-        'evt-flagoff-e',
-        'evt-flagoff-f',
-      ]);
-      for (const eventId of ['evt-flagoff-e', 'evt-flagoff-f']) {
-        const delivery = eventStore.listDeliveries(eventId)[0]!;
-        eventStore.markDeliveriesDeliveredAtomic([{ eventId, deliveryKey: delivery.deliveryKey }]);
-      }
-      saveDeferredDigestRow('session-flagoff-unbound', 'digest-owed-unbound', [
-        'evt-flagoff-e',
-        'evt-flagoff-f',
-      ]);
-      const execution = nodeExecutionRepo.listByAgentSessionId('session-flagoff-unbound')[0]!;
-      nodeExecutionRepo.update(execution.id, { agentSessionId: null });
-
-      expect(
-        runtime.reconcilePersistedDigestRowsForSession('session-flagoff-unbound', task.id)
-      ).toBe(false);
-
-      const rows = deferredDigestRows('session-flagoff-unbound');
-      expect(rows).toHaveLength(1);
-      expect(rows[0]!.sdk_uuid).toBe('digest-owed-unbound');
-    });
-
-    test('a session with no digest rows reconciles without side effects', () => {
-      expect(() => runtime.reconcilePersistedDigestRowsForSession('session-unknown')).not.toThrow();
     });
   });
 
-  describe('events delivery v2 idle/cap/safety digest pull', () => {
+  describe('idle/cap/safety digest pull', () => {
     const previousEnv: Record<string, string | undefined> = {};
 
     function setEnv(name: string, value: string): void {
@@ -1937,7 +2062,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     }
 
     beforeEach(() => {
-      setEnv('HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2', '1');
       setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS', '50');
       setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '100');
       setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_SAFETY_MS', '10000');
@@ -1967,10 +2091,14 @@ describe('SpaceRuntime external event subscriptions', () => {
       restoreEnv();
     });
 
-    async function startLiveSession(sessionId: string): Promise<{ run: unknown; task: SpaceTask }> {
-      const { run, task } = await startRunWithSubscription(
-        'github/lsm/neokai/pull_request/42.comment_polled'
-      );
+    async function startLiveSession(
+      sessionId: string,
+      topic = 'github/lsm/neokai/pull_request/42.comment_polled'
+    ): Promise<{
+      run: Awaited<ReturnType<typeof runtime.startWorkflowRun>>['run'];
+      task: SpaceTask;
+    }> {
+      const { run, task } = await startRunWithSubscription(topic);
       const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
       nodeExecutionRepo.update(execution.id, {
         status: 'in_progress',
@@ -2050,6 +2178,1096 @@ describe('SpaceRuntime external event subscriptions', () => {
       const rows = digestRows('session-safety');
       expect(rows).toHaveLength(1);
       expect(eventStore.listDeliveries('evt-safety-1')[0]?.state).toBe('delivered');
+    });
+
+    test('two tasks sharing a session each get their pending rows rendered', async () => {
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startLiveSession('session-multi-task', topicA);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      const registered = runtime.registerSubscription(
+        run.id,
+        secondTask.id,
+        'code',
+        'coder',
+        topicB
+      );
+      expect(registered.success).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-multi-a', topic: topicA }));
+      await eventService.publish(makeEvent({ id: 'evt-multi-b', topic: topicB }));
+      await wait(150);
+
+      const deliveryA = eventStore.listDeliveries('evt-multi-a')[0];
+      const deliveryB = eventStore.listDeliveries('evt-multi-b')[0];
+      expect(deliveryA?.taskId).toBe(task.id);
+      expect(deliveryB?.taskId).toBe(secondTask.id);
+      expect(deliveryA?.state).toBe('delivered');
+      expect(deliveryB?.state).toBe('delivered');
+      expect(digestRows('session-multi-task')).toHaveLength(2);
+    });
+
+    test('stop drains in-flight and queued digest renders before restart accepts new work', async () => {
+      const { task } = await startLiveSession('session-stop-restart');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      await eventService.publish(makeEvent({ id: 'evt-stop-restart-1', topic }));
+
+      const repo = (
+        runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
+      ).getSdkMessageRepo();
+      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
+        .saveUserMessage as (...args: unknown[]) => string;
+      let saveStarted = false;
+      let unblockSave: ((value: string) => void) | null = null;
+      const saveBlocker = new Promise<string>((resolve) => {
+        unblockSave = resolve;
+      });
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+        ...args: unknown[]
+      ) => {
+        saveStarted = true;
+        return saveBlocker.then(() => originalSave.apply(repo, args)) as unknown as string;
+      };
+
+      const activeRender = runtime.renderPendingDigestForSession('session-stop-restart', task.id);
+      const queuedRender = runtime.renderPendingDigestForSession('session-stop-restart', task.id);
+
+      const start = Date.now();
+      while (!saveStarted && Date.now() - start < 1000) {
+        await wait(1);
+      }
+      expect(saveStarted).toBe(true);
+
+      const stopPromise = runtime.stop();
+
+      await wait(10);
+      unblockSave!('db-blocked');
+      await stopPromise;
+
+      const activeOutcome = await activeRender;
+      const queuedOutcome = await queuedRender;
+      expect(activeOutcome?.action).toBe('delivered');
+      expect(queuedOutcome).toBeNull();
+
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
+        originalSave;
+
+      runtime.start();
+
+      await eventService.publish(makeEvent({ id: 'evt-stop-restart-2', topic }));
+      const postRestart = await runtime.renderPendingDigestForSession(
+        'session-stop-restart',
+        task.id
+      );
+      expect(postRestart?.action).toBe('delivered');
+
+      expect(eventStore.listDeliveries('evt-stop-restart-1')[0]?.state).toBe('delivered');
+      expect(eventStore.listDeliveries('evt-stop-restart-2')[0]?.state).toBe('delivered');
+    });
+
+    test('digest pull during an active interrupt holds, then delivers after it clears', async () => {
+      await startLiveSession('session-interrupted');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-interrupted', 'interrupted');
+      tam.interrupting.add('session-interrupted');
+
+      await eventService.publish(makeEvent({ id: 'evt-interrupt-1', topic }));
+      await wait(150);
+
+      expect(digestRows('session-interrupted')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-interrupt-1')[0]?.state).toBe('pending');
+
+      tam.interrupting.delete('session-interrupted');
+      tam.processingStates.set('session-interrupted', 'idle');
+      await wait(1200);
+
+      const rows = digestRows('session-interrupted');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.sdk_message).toContain('(1 event, PR #42):');
+      expect(eventStore.listDeliveries('evt-interrupt-1')[0]?.state).toBe('delivered');
+    });
+
+    test('digest pull stays held through an interrupt longer than the retry budget', async () => {
+      await startLiveSession('session-long-interrupt');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-long-interrupt', 'interrupted');
+      tam.interrupting.add('session-long-interrupt');
+
+      await eventService.publish(makeEvent({ id: 'evt-long-interrupt-1', topic }));
+      await wait(6500);
+
+      expect(digestRows('session-long-interrupt')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-long-interrupt-1')[0]?.state).toBe('pending');
+
+      tam.interrupting.delete('session-long-interrupt');
+      tam.processingStates.set('session-long-interrupt', 'idle');
+      await wait(400);
+
+      const rows = digestRows('session-long-interrupt');
+      expect(rows).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-long-interrupt-1')[0]?.state).toBe('delivered');
+    });
+
+    test('an event fanned out to two tasks on one session delivers both rows via one digest once consumed', async () => {
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { run, task } = await startLiveSession('session-shared-event', topic);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topic).success
+      ).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-shared-1', topic }));
+
+      const deadline = Date.now() + 5000;
+      let deliveredCount = 0;
+      while (Date.now() < deadline) {
+        deliveredCount = eventStore
+          .listDeliveries('evt-shared-1')
+          .filter((delivery) => delivery.state === 'delivered').length;
+        if (deliveredCount === 1 && digestRows('session-shared-event').length > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(deliveredCount).toBe(1);
+
+      const deliveries = eventStore.listDeliveries('evt-shared-1');
+      expect(deliveries).toHaveLength(2);
+      expect(deliveries.filter((delivery) => delivery.state === 'delivered')).toHaveLength(1);
+      expect(deliveries.filter((delivery) => delivery.state === 'pending')).toHaveLength(1);
+      const deliveredRow = deliveries.find((delivery) => delivery.state === 'delivered')!;
+      const heldRow = deliveries.find((delivery) => delivery.state === 'pending')!;
+      expect([deliveredRow.taskId, heldRow.taskId].sort()).toEqual([task.id, secondTask.id].sort());
+      expect(digestRows('session-shared-event')).toHaveLength(1);
+
+      const digestUuid = digestRows('session-shared-event')[0]!.sdk_uuid;
+      const messages = new SDKMessageRepository(db);
+      const digestRow = messages
+        .listUserMessagesByUuidPrefix('session-shared-event', 'digest-')
+        .find((row) => row.uuid === digestUuid)!;
+      messages.updateMessageStatus([digestRow.dbId], 'consumed');
+
+      const settledDeadline = Date.now() + 5000;
+      let allDelivered = false;
+      while (Date.now() < settledDeadline) {
+        allDelivered = eventStore
+          .listDeliveries('evt-shared-1')
+          .every((delivery) => delivery.state === 'delivered');
+        if (allDelivered) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(allDelivered).toBe(true);
+
+      const finalDigest = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = 'session-shared-event'
+           AND sdk_uuid = ?`
+        )
+        .get(digestUuid) as { n: number };
+      expect(finalDigest.n).toBe(1);
+    }, 15_000);
+
+    test('digest pull holds while an interrupt is requested but the interrupted state has not landed', async () => {
+      await startLiveSession('session-early-interrupt');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-early-interrupt', 'processing');
+      tam.interrupting.add('session-early-interrupt');
+
+      await eventService.publish(makeEvent({ id: 'evt-early-interrupt-1', topic }));
+      await wait(150);
+
+      expect(digestRows('session-early-interrupt')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-early-interrupt-1')[0]?.state).toBe('pending');
+
+      tam.interrupting.delete('session-early-interrupt');
+      tam.processingStates.set('session-early-interrupt', 'idle');
+      await wait(1200);
+
+      expect(digestRows('session-early-interrupt')).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-early-interrupt-1')[0]?.state).toBe('delivered');
+    });
+
+    test('interrupt probing stays on the idle debounce and bypasses the count cap', async () => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '1');
+      await startLiveSession('session-probe-cap');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.processingStates.set('session-probe-cap', 'interrupted');
+      tam.interrupting.add('session-probe-cap');
+
+      const runtimeSpy = runtime as unknown as {
+        triggerDigestPullForSession: (sessionId: string, trigger: string) => void;
+      };
+      const originalTrigger = runtimeSpy.triggerDigestPullForSession.bind(runtime);
+      let pulls = 0;
+      runtimeSpy.triggerDigestPullForSession = (sessionId: string, trigger: string) => {
+        pulls += 1;
+        return originalTrigger(sessionId, trigger);
+      };
+
+      await eventService.publish(makeEvent({ id: 'evt-probe-cap-1', topic }));
+      await wait(400);
+      const pullsDuringInterrupt = pulls;
+
+      tam.interrupting.delete('session-probe-cap');
+      tam.processingStates.set('session-probe-cap', 'idle');
+      await wait(300);
+
+      expect(pullsDuringInterrupt).toBeLessThanOrEqual(12);
+      expect(digestRows('session-probe-cap')).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-probe-cap-1')[0]?.state).toBe('delivered');
+    });
+
+    test('supersede preserves a sibling task digest awaiting its handoff retry', async () => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '1');
+      db.exec('DROP TABLE job_queue');
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startLiveSession('session-preserve-handoff', topicA);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topicB).success
+      ).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-preserve-a', topic: topicA }));
+      await wait(150);
+      const firstDigestRows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-preserve-handoff'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(firstDigestRows).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-preserve-a')[0]?.state).toBe('delivered');
+
+      await eventService.publish(makeEvent({ id: 'evt-preserve-b', topic: topicB }));
+      await wait(150);
+
+      const deferredRows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages WHERE session_id = 'session-preserve-handoff'
+           AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(deferredRows).toHaveLength(2);
+      expect(deferredRows.some((row) => row.sdk_uuid === firstDigestRows[0]!.sdk_uuid)).toBe(true);
+    });
+
+    test('flag on: a dead session clears the digest pull probe state', async () => {
+      const { task } = await startLiveSession('session-dead-probe');
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      tam.alive.delete('session-dead-probe');
+
+      await eventService.publish(makeEvent({ id: 'evt-dead-probe', topic }));
+      await wait(150);
+
+      const triggers = (runtime as unknown as { digestPullTriggers: Map<string, unknown> })
+        .digestPullTriggers;
+      expect(triggers.has('session-dead-probe')).toBe(false);
+      expect(digestRows('session-dead-probe')).toHaveLength(0);
+      expect(eventStore.listDeliveries('evt-dead-probe')[0]?.state).toBe('pending');
+    });
+
+    test('flag on: concurrent digest pulls for different task scopes do not coalesce', async () => {
+      const topicA = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const topicB = 'github/lsm/neokai/pull_request/42.review_submitted';
+      const { run, task } = await startLiveSession('session-coalesce', topicA);
+      const secondTask = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Second task',
+        status: 'open',
+        workflowRunId: run.id,
+      });
+      expect(
+        runtime.registerSubscription(run.id, secondTask.id, 'code', 'coder', topicB).success
+      ).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-coalesce-a', topic: topicA }));
+      await eventService.publish(makeEvent({ id: 'evt-coalesce-b', topic: topicB }));
+
+      const [outcomeA, outcomeB] = await Promise.all([
+        runtime.renderPendingDigestForSession('session-coalesce', task.id),
+        runtime.renderPendingDigestForSession('session-coalesce', secondTask.id),
+      ]);
+
+      expect(outcomeA?.action).toBe('delivered');
+      expect(outcomeB?.action).toBe('delivered');
+      if (outcomeA?.action !== 'delivered' || outcomeB?.action !== 'delivered') return;
+      expect(outcomeA.eventIds).toEqual(['evt-coalesce-a']);
+      expect(outcomeB.eventIds).toEqual(['evt-coalesce-b']);
+
+      const allDigestRows = db
+        .prepare(
+          `SELECT sdk_uuid FROM sdk_messages
+           WHERE session_id = 'session-coalesce' AND sdk_uuid LIKE 'digest-%'
+           AND send_status IN ('deferred', 'enqueued')`
+        )
+        .all() as Array<{ sdk_uuid: string }>;
+      expect(allDigestRows).toHaveLength(2);
+      expect(
+        allDigestRows.some((row) => row.sdk_uuid === outcomeA.uuid) &&
+          allDigestRows.some((row) => row.sdk_uuid === outcomeB.uuid)
+      ).toBe(true);
+      expect(eventStore.listDeliveries('evt-coalesce-a')[0]?.state).toBe('delivered');
+      expect(eventStore.listDeliveries('evt-coalesce-b')[0]?.state).toBe('delivered');
+    });
+
+    function saveDeferredDigestWithTask(
+      sessionId: string,
+      uuid: string,
+      eventIds: string[],
+      taskId: string
+    ): void {
+      const messages = new SDKMessageRepository(db);
+      const row = {
+        type: 'user',
+        uuid,
+        session_id: sessionId,
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'system',
+        message: { role: 'user', content: [{ type: 'text', text: 'owed digest text' }] },
+        externalEventIds: eventIds,
+        externalEventTaskId: taskId,
+      } as unknown as SDKUserMessage;
+      messages.saveUserMessage(sessionId, row, 'deferred', 'system');
+    }
+
+    function deferredDigestUuids(sessionId: string): string[] {
+      return (
+        db
+          .prepare(
+            `SELECT sdk_uuid FROM sdk_messages WHERE session_id = ?
+             AND sdk_uuid LIKE 'digest-%' AND send_status = 'deferred'`
+          )
+          .all(sessionId) as Array<{ sdk_uuid: string }>
+      ).map((row) => row.sdk_uuid);
+    }
+
+    test('flag on: a render during cold-start rehydration waits for handoff-debt restoration', async () => {
+      const sessionId = 'session-cold-gate';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { task } = await startLiveSession(sessionId, topic);
+
+      await eventService.publish(makeEvent({ id: 'evt-cold-owed', topic }));
+      const owedDelivery = eventStore.listDeliveries('evt-cold-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-cold-owed', deliveryKey: owedDelivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-cold-owed', ['evt-cold-owed'], task.id);
+      await eventService.publish(makeEvent({ id: 'evt-cold-new', topic }));
+
+      await runtime.stop();
+      const runtimeInternals = runtime as unknown as {
+        digestHandoffDebt: Map<string, Set<string>>;
+      };
+      runtimeInternals.digestHandoffDebt.clear();
+
+      const originalListSpaces = spaceManager.listSpaces.bind(spaceManager);
+      let releaseListSpaces: (() => void) | null = null;
+      const listSpacesBlocked = new Promise<void>((resolve) => {
+        releaseListSpaces = resolve;
+      });
+      spaceManager.listSpaces = async (
+        ...args: Parameters<typeof originalListSpaces>
+      ): ReturnType<typeof originalListSpaces> => {
+        await listSpacesBlocked;
+        return originalListSpaces(...args);
+      };
+
+      runtime.start();
+      const renderPromise = runtime.renderPendingDigestForSession(sessionId, task.id);
+      await wait(50);
+
+      expect(deferredDigestUuids(sessionId)).toContain('digest-cold-owed');
+      expect(eventStore.listDeliveries('evt-cold-new')[0]?.state).toBe('pending');
+
+      releaseListSpaces!();
+      const outcome = await renderPromise;
+      spaceManager.listSpaces = originalListSpaces;
+
+      expect(outcome?.action).toBe('delivered');
+      expect(deferredDigestUuids(sessionId)).toContain('digest-cold-owed');
+      expect(eventStore.listDeliveries('evt-cold-new')[0]?.state).toBe('delivered');
+      await runtime.stop();
+    });
+
+    test('flag on: a failed rehydration settles waiting renders instead of hanging them', async () => {
+      const originalRehydrate = tam.rehydrate.bind(tam);
+      tam.rehydrate = async () => {
+        throw new Error('rehydrate exploded');
+      };
+      runtime.start();
+
+      const gate = (runtime as unknown as { currentReconciliation: { failed: boolean } | null })
+        .currentReconciliation;
+      const deadline = Date.now() + 2000;
+      while (!gate?.failed && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(gate?.failed).toBe(true);
+
+      expect(await runtime.renderPendingDigestForSession('session-rehydrate-failed')).toBeNull();
+
+      tam.rehydrate = originalRehydrate;
+      await runtime.executeTick();
+      expect(await runtime.renderPendingDigestForSession('session-rehydrate-recovered')).toEqual({
+        action: 'skip',
+        reason: 'no_execution',
+      });
+      await runtime.stop();
+    });
+
+    test('flag on: handoff debt for colon-delimited session ids survives pruning', async () => {
+      const sessionId = `space:${SPACE_ID}:task:task-colon:exec:exec-colon`;
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+      const { run, task } = await startRunWithSubscription(topic);
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      await eventService.publish(makeEvent({ id: 'evt-colon-owed', topic }));
+      const delivery = eventStore.listDeliveries('evt-colon-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-colon-owed', deliveryKey: delivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-colon-owed', ['evt-colon-owed'], task.id);
+
+      const runtimeInternals = runtime as unknown as {
+        rehydrateDigestHandoffDebt: () => void;
+        pruneDigestHandoffDebt: () => void;
+        digestHandoffDebt: Map<string, Set<string>>;
+      };
+      runtimeInternals.rehydrateDigestHandoffDebt();
+      expect(runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-colon-owed')).toBe(
+        true
+      );
+
+      runtimeInternals.pruneDigestHandoffDebt();
+      expect(runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-colon-owed')).toBe(
+        true
+      );
+      expect(deferredDigestUuids(sessionId)).toContain('digest-colon-owed');
+    });
+
+    test('flag on: a waiting render cannot cross a restart into an unreconciled gate', async () => {
+      const sessionId = 'session-restart-cross';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { task } = await startLiveSession(sessionId, topic);
+
+      await eventService.publish(makeEvent({ id: 'evt-restart-owed', topic }));
+      const owedDelivery = eventStore.listDeliveries('evt-restart-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-restart-owed', deliveryKey: owedDelivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-restart-owed', ['evt-restart-owed'], task.id);
+      await eventService.publish(makeEvent({ id: 'evt-restart-new', topic }));
+
+      await runtime.stop();
+      (
+        runtime as unknown as { digestHandoffDebt: Map<string, Set<string>> }
+      ).digestHandoffDebt.clear();
+
+      const originalListSpaces = spaceManager.listSpaces.bind(spaceManager);
+      let releaseListSpaces: (() => void) | null = null;
+      const listSpacesBlocked = new Promise<void>((resolve) => {
+        releaseListSpaces = resolve;
+      });
+      spaceManager.listSpaces = async (
+        ...args: Parameters<typeof originalListSpaces>
+      ): ReturnType<typeof originalListSpaces> => {
+        await listSpacesBlocked;
+        return originalListSpaces(...args);
+      };
+
+      runtime.start();
+      const renderPromise = runtime.renderPendingDigestForSession(sessionId, task.id);
+      await wait(30);
+
+      const stopPromise = runtime.stop();
+      runtime.start();
+      await wait(30);
+
+      expect(deferredDigestUuids(sessionId)).toContain('digest-restart-owed');
+      expect(eventStore.listDeliveries('evt-restart-new')[0]?.state).toBe('pending');
+
+      releaseListSpaces!();
+      const outcome = await renderPromise;
+      await stopPromise;
+      spaceManager.listSpaces = originalListSpaces;
+
+      expect(outcome).toBeNull();
+      expect(deferredDigestUuids(sessionId)).toContain('digest-restart-owed');
+      expect(eventStore.listDeliveries('evt-restart-new')[0]?.state).toBe('pending');
+
+      await runtime.executeTick();
+      const postRace = await runtime.renderPendingDigestForSession(sessionId, task.id);
+      expect(postRace?.action).toBe('delivered');
+      expect(deferredDigestUuids(sessionId)).toContain('digest-restart-owed');
+      expect(eventStore.listDeliveries('evt-restart-new')[0]?.state).toBe('delivered');
+      await runtime.stop();
+    });
+
+    test('flag on: a failed warm reconciliation is retried by a later tick', async () => {
+      await runtime.executeTick();
+      await runtime.stop();
+
+      const originalListPendingDeliveries = eventStore.listPendingDeliveries.bind(eventStore);
+      let failRequeue = true;
+      eventStore.listPendingDeliveries = (
+        ...args: Parameters<typeof originalListPendingDeliveries>
+      ): ReturnType<typeof originalListPendingDeliveries> => {
+        if (failRequeue) throw new Error('requeue exploded');
+        return originalListPendingDeliveries(...args);
+      };
+
+      runtime.start();
+      const gate = (runtime as unknown as { currentReconciliation: { failed: boolean } | null })
+        .currentReconciliation;
+      const deadline = Date.now() + 2000;
+      while (!gate?.failed && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(gate?.failed).toBe(true);
+      expect(await runtime.renderPendingDigestForSession('session-warm-failed')).toBeNull();
+
+      failRequeue = false;
+      await runtime.executeTick();
+      expect(await runtime.renderPendingDigestForSession('session-warm-recovered')).toEqual({
+        action: 'skip',
+        reason: 'no_execution',
+      });
+      eventStore.listPendingDeliveries = originalListPendingDeliveries;
+      await runtime.stop();
+    });
+
+    test('flag on: abandoning a handoff retry for a dead session records handoff debt', async () => {
+      const sessionId = 'session-abandon-debt';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+      const { task } = await startRunWithSubscription(topic);
+      await eventService.publish(makeEvent({ id: 'evt-abandon-owed', topic }));
+      const delivery = eventStore.listDeliveries('evt-abandon-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-abandon-owed', deliveryKey: delivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-abandon-owed', ['evt-abandon-owed'], task.id);
+      const row = db
+        .prepare(
+          `SELECT id FROM sdk_messages WHERE session_id = ? AND sdk_uuid = 'digest-abandon-owed'`
+        )
+        .get(sessionId) as { id: string };
+      tam.alive.delete(sessionId);
+
+      (
+        runtime as unknown as {
+          scheduleDigestHandoffRetry: (sessionId: string, uuid: string, dbId: string) => void;
+        }
+      ).scheduleDigestHandoffRetry(sessionId, 'digest-abandon-owed', String(row.id));
+      await wait(1200);
+
+      const runtimeInternals = runtime as unknown as {
+        digestHandoffDebt: Map<string, Set<string>>;
+      };
+      expect(runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-abandon-owed')).toBe(
+        true
+      );
+      expect(deferredDigestUuids(sessionId)).toContain('digest-abandon-owed');
+    });
+
+    test('flag on: a tick failure after rehydration does not poison the reconciliation gate', async () => {
+      const sessionId = 'session-tickfail-gate';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { task } = await startLiveSession(sessionId, topic);
+
+      await eventService.publish(makeEvent({ id: 'evt-tickfail-owed', topic }));
+      const owedDelivery = eventStore.listDeliveries('evt-tickfail-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-tickfail-owed', deliveryKey: owedDelivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-tickfail-owed', ['evt-tickfail-owed'], task.id);
+      await eventService.publish(makeEvent({ id: 'evt-tickfail-new', topic }));
+
+      const runtimeInternals = runtime as unknown as {
+        attachStandaloneTasksToWorkflows: () => Promise<void>;
+      };
+      const originalAttach = runtimeInternals.attachStandaloneTasksToWorkflows.bind(runtime);
+      runtimeInternals.attachStandaloneTasksToWorkflows = async () => {
+        throw new Error('attach exploded');
+      };
+
+      runtime.start();
+      const outcome = await runtime.renderPendingDigestForSession(sessionId, task.id);
+      runtimeInternals.attachStandaloneTasksToWorkflows = originalAttach;
+
+      expect(outcome?.action).toBe('delivered');
+      expect(deferredDigestUuids(sessionId)).toContain('digest-tickfail-owed');
+      expect(eventStore.listDeliveries('evt-tickfail-new')[0]?.state).toBe('delivered');
+      await runtime.stop();
+    });
+
+    test('flag on: a start racing an unfinished stop keeps the restarted runtime active', async () => {
+      const sessionId = 'session-race-restart';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { task } = await startLiveSession(sessionId, topic);
+      await eventService.publish(makeEvent({ id: 'evt-race-1', topic }));
+
+      const repo = (
+        runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
+      ).getSdkMessageRepo();
+      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
+        .saveUserMessage as (...args: unknown[]) => string;
+      let saveStarted = false;
+      let unblockSave: ((value: string) => void) | null = null;
+      const saveBlocker = new Promise<string>((resolve) => {
+        unblockSave = resolve;
+      });
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+        ...args: unknown[]
+      ) => {
+        saveStarted = true;
+        return saveBlocker.then(() => originalSave.apply(repo, args)) as unknown as string;
+      };
+
+      runtime.start();
+      const blockedRender = runtime.renderPendingDigestForSession(sessionId, task.id);
+      const deadline = Date.now() + 2000;
+      while (!saveStarted && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(saveStarted).toBe(true);
+
+      (
+        runtime as unknown as { scheduleInterruptProbeForSession: (sessionId: string) => void }
+      ).scheduleInterruptProbeForSession(sessionId);
+      const staleProbe = (
+        runtime as unknown as { digestPullTriggers: Map<string, unknown> }
+      ).digestPullTriggers.get(sessionId);
+      expect(staleProbe).toBeDefined();
+
+      const stopPromise = runtime.stop();
+      runtime.start();
+      unblockSave!('db-race');
+      const outcome = await blockedRender;
+      await stopPromise;
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
+        originalSave;
+
+      expect(outcome?.action).toBe('delivered');
+      const internals = runtime as unknown as {
+        acceptingExternalEvents: boolean;
+        tickTimer: unknown;
+        digestPullTriggers: Map<string, unknown>;
+      };
+      expect(internals.acceptingExternalEvents).toBe(true);
+      expect(internals.tickTimer).not.toBeNull();
+      expect(internals.digestPullTriggers.get(sessionId)).not.toBe(staleProbe);
+
+      await eventService.publish(makeEvent({ id: 'evt-race-2', topic }));
+      const postRace = await runtime.renderPendingDigestForSession(sessionId, task.id);
+      expect(postRace?.action).toBe('delivered');
+      expect(eventStore.listDeliveries('evt-race-1')[0]?.state).toBe('delivered');
+      expect(eventStore.listDeliveries('evt-race-2')[0]?.state).toBe('delivered');
+      await runtime.stop();
+    });
+
+    test('flag on: sibling agent deliveries under one task do not create false handoff debt', async () => {
+      const sessionId = 'session-sibling-debt';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+      const { run, task } = await startRunWithSubscription(topic);
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      await eventService.publish(makeEvent({ id: 'evt-sibling-owed', topic }));
+      eventStore.registerExpectedDelivery('evt-sibling-owed', 'delivery-sibling', {
+        workflowRunId: run.id,
+        taskId: task.id,
+        nodeId: 'review',
+        agentName: 'reviewer',
+      });
+      const sibling = eventStore
+        .listDeliveries('evt-sibling-owed')
+        .find((delivery) => delivery.deliveryKey === 'delivery-sibling')!;
+      eventStore.markDeliveryDelivered('evt-sibling-owed', sibling.deliveryKey);
+      saveDeferredDigestWithTask(sessionId, 'digest-sibling-owed', ['evt-sibling-owed'], task.id);
+
+      const runtimeInternals = runtime as unknown as {
+        rehydrateDigestHandoffDebt: () => void;
+        digestHandoffDebt: Map<string, Set<string>>;
+      };
+      runtimeInternals.rehydrateDigestHandoffDebt();
+      expect(runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-sibling-owed')).toBe(
+        undefined
+      );
+      expect(deferredDigestUuids(sessionId)).toContain('digest-sibling-owed');
+    });
+
+    test('flag on: a digest pull stranded by failed reconciliation re-arms after recovery', async () => {
+      const sessionId = 'session-stranded-pull';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { task } = await startLiveSession(sessionId, topic);
+      const originalRehydrate = tam.rehydrate.bind(tam);
+      tam.rehydrate = async () => {
+        throw new Error('rehydrate exploded');
+      };
+      runtime.start();
+      const gate = (runtime as unknown as { currentReconciliation: { failed: boolean } | null })
+        .currentReconciliation;
+      const failedDeadline = Date.now() + 2000;
+      while (!gate?.failed && Date.now() < failedDeadline) {
+        await wait(5);
+      }
+      expect(gate?.failed).toBe(true);
+
+      await eventService.publish(makeEvent({ id: 'evt-stranded-1', topic }));
+      await wait(150);
+      expect(eventStore.listDeliveries('evt-stranded-1')[0]?.state).toBe('pending');
+      expect(
+        (runtime as unknown as { digestPullTriggers: Map<string, unknown> }).digestPullTriggers.has(
+          sessionId
+        )
+      ).toBe(true);
+
+      tam.rehydrate = originalRehydrate;
+      const rt = runtime as unknown as { rehydrated: boolean };
+      const recoverDeadline = Date.now() + 5000;
+      while (!rt.rehydrated && Date.now() < recoverDeadline) {
+        await runtime.executeTick().catch(() => {});
+        await wait(20);
+      }
+      expect(rt.rehydrated).toBe(true);
+
+      await wait(200);
+      expect(digestRows(sessionId)).toHaveLength(1);
+      expect(eventStore.listDeliveries('evt-stranded-1')[0]?.state).toBe('delivered');
+      await runtime.stop();
+    });
+
+    test('flag on: an interrupted session does not treat a no-pending pull as digest-safe', async () => {
+      const sessionId = 'session-interrupt-owed';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { task } = await startLiveSession(sessionId, topic);
+      await eventService.publish(makeEvent({ id: 'evt-interrupt-owed', topic }));
+      const delivery = eventStore.listDeliveries('evt-interrupt-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-interrupt-owed', deliveryKey: delivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(
+        sessionId,
+        'digest-interrupt-owed',
+        ['evt-interrupt-owed'],
+        task.id
+      );
+
+      tam.processingStates.set(sessionId, 'interrupted');
+      tam.interrupting.add(sessionId);
+      const outcome = await runtime.renderPendingDigestForSession(sessionId, task.id);
+
+      expect(outcome).toEqual({ action: 'skip', reason: 'session_interrupted' });
+      expect(deferredDigestUuids(sessionId)).toContain('digest-interrupt-owed');
+    });
+
+    test('flag on: handoff debt restores for a session rebound to a later node execution', async () => {
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { run, task } = await startRunWithSubscription(topic);
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      const sessionId = `space:${SPACE_ID}:task:${task.id}:exec:${execution.id}`;
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      await eventService.publish(makeEvent({ id: 'evt-reuse-owed', topic }));
+      const delivery = eventStore.listDeliveries('evt-reuse-owed')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-reuse-owed', deliveryKey: delivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-reuse-owed', ['evt-reuse-owed'], task.id);
+      nodeExecutionRepo.update(execution.id, { agentSessionId: null });
+
+      const runtimeInternals = runtime as unknown as {
+        rehydrateDigestHandoffDebt: () => void;
+        digestHandoffDebt: Map<string, Set<string>>;
+      };
+      runtimeInternals.rehydrateDigestHandoffDebt();
+      expect(runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-reuse-owed')).toBe(
+        true
+      );
+    });
+
+    test('flag on: a warm-start recovery failure fails the reconciliation gate', async () => {
+      await runtime.executeTick();
+      await runtime.stop();
+      const internals = runtime as unknown as {
+        restoreIdleSessionsOwningPendingDeliveries: (
+          paused: Set<string>,
+          workflowRunId?: string
+        ) => Promise<Array<{ action: string; sessionId: string }>>;
+        currentReconciliation: { failed: boolean } | null;
+      };
+      const originalRestore = internals.restoreIdleSessionsOwningPendingDeliveries.bind(runtime);
+      internals.restoreIdleSessionsOwningPendingDeliveries = async () => {
+        throw new Error('restore exploded');
+      };
+
+      runtime.start();
+      const gate = internals.currentReconciliation;
+      const deadline = Date.now() + 2000;
+      while (!gate?.failed && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(gate?.failed).toBe(true);
+      expect(await runtime.renderPendingDigestForSession('session-restore-failed')).toBeNull();
+
+      internals.restoreIdleSessionsOwningPendingDeliveries = originalRestore;
+      await runtime.executeTick();
+      expect(await runtime.renderPendingDigestForSession('session-restore-recovered')).toEqual({
+        action: 'skip',
+        reason: 'no_execution',
+      });
+      await runtime.stop();
+    });
+
+    test('flag on: mixed-coverage digest rows across executions do not become handoff debt', async () => {
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { run, task } = await startRunWithSubscription(topic);
+      const firstExecution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      const sessionId = `space:${SPACE_ID}:task:${task.id}:exec:${firstExecution.id}`;
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+      nodeExecutionRepo.update(firstExecution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      await eventService.publish(makeEvent({ id: 'evt-mixed-1', topic }));
+      await eventService.publish(makeEvent({ id: 'evt-mixed-2', topic }));
+      const first = eventStore.listDeliveries('evt-mixed-1')[0]!;
+      eventStore.markDeliveryDelivered('evt-mixed-1', first.deliveryKey);
+      eventStore.registerExpectedDelivery('evt-mixed-2', 'delivery-mixed-second', {
+        workflowRunId: run.id,
+        taskId: task.id,
+        nodeId: 'review',
+        agentName: 'reviewer',
+      });
+      const second = eventStore
+        .listDeliveries('evt-mixed-2')
+        .find((delivery) => delivery.deliveryKey === 'delivery-mixed-second')!;
+      eventStore.markDeliveryDelivered('evt-mixed-2', second.deliveryKey);
+      saveDeferredDigestWithTask(
+        sessionId,
+        'digest-mixed-coverage',
+        ['evt-mixed-1', 'evt-mixed-2'],
+        task.id
+      );
+      nodeExecutionRepo.update(firstExecution.id, { agentSessionId: null });
+      nodeExecutionRepo.create({
+        workflowRunId: run.id,
+        workflowNodeId: 'review',
+        agentName: 'reviewer',
+        agentSessionId: sessionId,
+        status: 'in_progress',
+      });
+
+      const runtimeInternals = runtime as unknown as {
+        rehydrateDigestHandoffDebt: () => void;
+        digestHandoffDebt: Map<string, Set<string>>;
+      };
+      runtimeInternals.rehydrateDigestHandoffDebt();
+      expect(
+        runtimeInternals.digestHandoffDebt.get(sessionId)?.has('digest-mixed-coverage')
+      ).toBeUndefined();
+    });
+
+    test('flag on: a render committed before a stop overlap still hands off its digest', async () => {
+      const sessionId = 'session-stopped-handoff';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      await startLiveSession(sessionId, topic);
+
+      const repo = (
+        runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
+      ).getSdkMessageRepo();
+      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
+        .saveUserMessage as (...args: unknown[]) => string;
+      let saveStarted = false;
+      let unblockSave: ((value: string) => void) | null = null;
+      const saveBlocker = new Promise<string>((resolve) => {
+        unblockSave = resolve;
+      });
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+        ...args: unknown[]
+      ) => {
+        saveStarted = true;
+        return saveBlocker.then(() => originalSave.apply(repo, args)) as unknown as string;
+      };
+
+      await eventService.publish(makeEvent({ id: 'evt-stop-handoff', topic }));
+      const deadline = Date.now() + 2000;
+      while (!saveStarted && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(saveStarted).toBe(true);
+
+      const stopPromise = runtime.stop();
+      unblockSave!('db-stop-handoff');
+      await stopPromise;
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
+        originalSave;
+
+      const row = db
+        .prepare(
+          `SELECT send_status FROM sdk_messages WHERE session_id = ? AND sdk_uuid LIKE 'digest-%'`
+        )
+        .get(sessionId) as { send_status: string };
+      expect(row?.send_status).toBe('enqueued');
+      expect(eventStore.listDeliveries('evt-stop-handoff')[0]?.state).toBe('delivered');
+    });
+
+    test('flag on: rate-limit state entries are replaced rather than mutated', () => {
+      const internals = runtime as unknown as {
+        consumeImmediateTierRateBudget: (target: {
+          workflowRunId: string;
+          nodeId: string;
+          agentName: string;
+          taskId: string;
+        }) => boolean;
+        externalEventRateLimits: Map<string, { timestamps: number[]; cleanupTimer: unknown }>;
+      };
+      const target = {
+        workflowRunId: 'run-rate-limit',
+        nodeId: 'node-rate-limit',
+        agentName: 'agent-rate-limit',
+        taskId: 'task-rate-limit',
+      };
+      internals.consumeImmediateTierRateBudget(target);
+      const key = [...internals.externalEventRateLimits.keys()][0]!;
+      const first = internals.externalEventRateLimits.get(key)!;
+      expect(first.timestamps).toHaveLength(1);
+
+      internals.consumeImmediateTierRateBudget(target);
+      const second = internals.externalEventRateLimits.get(key)!;
+      expect(second).not.toBe(first);
+      expect(second.timestamps).toHaveLength(2);
+    });
+
+    test('flag on: shutdown completes when a digest render never settles', async () => {
+      const sessionId = 'session-stalled-render';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      await startLiveSession(sessionId, topic);
+      process.env.HYPERNEO_EXTERNAL_EVENT_RENDER_DRAIN_MS = '100';
+
+      const repo = (
+        runtime as unknown as { getSdkMessageRepo(): SDKMessageRepository }
+      ).getSdkMessageRepo();
+      const originalSave = (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown })
+        .saveUserMessage as (...args: unknown[]) => string;
+      let saveStarted = false;
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage = (
+        ...args: unknown[]
+      ) => {
+        saveStarted = true;
+        return new Promise<string>(() => {}) as unknown as string;
+      };
+
+      runtime.start();
+      await eventService.publish(makeEvent({ id: 'evt-stalled-render', topic }));
+      const deadline = Date.now() + 2000;
+      while (!saveStarted && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(saveStarted).toBe(true);
+
+      const stopStartedAt = Date.now();
+      await runtime.stop();
+      const stopElapsed = Date.now() - stopStartedAt;
+      (repo as unknown as { saveUserMessage: (...args: unknown[]) => unknown }).saveUserMessage =
+        originalSave;
+      delete process.env.HYPERNEO_EXTERNAL_EVENT_RENDER_DRAIN_MS;
+
+      expect(stopElapsed).toBeLessThan(2000);
+    });
+
+    test('flag on: a cold-start recovery failure fails the gate and a later tick retries', async () => {
+      const internals = runtime as unknown as {
+        restoreIdleSessionsOwningPendingDeliveries: (
+          paused: Set<string>,
+          workflowRunId?: string
+        ) => Promise<Array<{ action: string; sessionId: string }>>;
+        currentReconciliation: { failed: boolean } | null;
+      };
+      const originalRestore = internals.restoreIdleSessionsOwningPendingDeliveries.bind(runtime);
+      internals.restoreIdleSessionsOwningPendingDeliveries = async () => {
+        throw new Error('restore exploded');
+      };
+
+      runtime.start();
+      const gate = internals.currentReconciliation;
+      const deadline = Date.now() + 2000;
+      while (!gate?.failed && Date.now() < deadline) {
+        await wait(5);
+      }
+      expect(gate?.failed).toBe(true);
+      expect(await runtime.renderPendingDigestForSession('session-cold-restore-failed')).toBeNull();
+
+      internals.restoreIdleSessionsOwningPendingDeliveries = originalRestore;
+      const rt = runtime as unknown as { rehydrated: boolean };
+      const recoverDeadline = Date.now() + 5000;
+      while (internals.currentReconciliation && Date.now() < recoverDeadline) {
+        await runtime.executeTick().catch(() => {});
+        await wait(20);
+      }
+      expect(rt.rehydrated).toBe(true);
+      expect(internals.currentReconciliation).toBeNull();
+      expect(await runtime.renderPendingDigestForSession('session-cold-restore-recovered')).toEqual(
+        {
+          action: 'skip',
+          reason: 'no_execution',
+        }
+      );
+      await runtime.stop();
     });
   });
 
@@ -2304,67 +3522,62 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
 
     test('digest admission terminalizes pending deliveries for a done task without reactivating it', async () => {
-      process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = '1';
-      try {
-        const { run, task } = await startRunWithSubscription(
-          'github/lsm/neokai/pull_request/42.comment_polled'
-        );
-        const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
-        nodeExecutionRepo.update(execution.id, {
-          status: 'idle',
-          agentSessionId: null,
-          completedAt: Date.now(),
-        });
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
 
-        const event = makeEvent({
-          topic: 'github/lsm/neokai/pull_request/42.comment_polled',
-        });
-        await eventService.publish(event);
-        expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+      const event = makeEvent({
+        topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+      });
+      await eventService.publish(event);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
 
-        nodeExecutionRepo.update(execution.id, {
-          status: 'in_progress',
-          agentSessionId: 'session-done-task-digest',
-          completedAt: null,
-          startedAt: Date.now(),
-        });
-        db.prepare(
-          `INSERT INTO sessions
-             (id, title, created_at, last_active_at, status, config, metadata, type)
-           VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
-        ).run(
-          'session-done-task-digest',
-          'session-done-task-digest',
-          '2026-01-01T00:00:00.000Z',
-          '2026-01-01T00:00:00.000Z'
-        );
-        tam.alive.add('session-done-task-digest');
-        tam.processingStates.set('session-done-task-digest', 'processing');
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session-done-task-digest',
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(
+        'session-done-task-digest',
+        'session-done-task-digest',
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-01T00:00:00.000Z'
+      );
+      tam.alive.add('session-done-task-digest');
+      tam.processingStates.set('session-done-task-digest', 'processing');
 
-        taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
+      taskRepo.updateTask(task.id, { status: 'done', completedAt: Date.now() });
 
-        const outcome = await runtime.renderPendingDigestForSession(
-          'session-done-task-digest',
-          task.id
-        );
-        expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
+      const outcome = await runtime.renderPendingDigestForSession(
+        'session-done-task-digest',
+        task.id
+      );
+      expect(outcome).toEqual({ action: 'skip', reason: 'task_not_admissible' });
 
-        expect(taskRepo.getTask(task.id)?.status).toBe('done');
-        const delivery = eventStore.listDeliveries(event.id)[0]!;
-        expect(delivery.state).toBe('failed');
-        expect(delivery.failureReason).toBe('task_terminal');
-        expect(eventStore.getById(event.id)?.state).toBe('failed');
+      expect(taskRepo.getTask(task.id)?.status).toBe('done');
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      expect(delivery.state).toBe('failed');
+      expect(delivery.failureReason).toBe('task_terminal');
+      expect(eventStore.getById(event.id)?.state).toBe('failed');
 
-        const rows = db
-          .prepare(
-            `SELECT sdk_message FROM sdk_messages WHERE session_id = 'session-done-task-digest'
-             AND send_status = 'deferred'`
-          )
-          .all() as Array<{ sdk_message: string }>;
-        expect(rows).toHaveLength(0);
-      } finally {
-        process.env.HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2 = '0';
-      }
+      const rows = db
+        .prepare(
+          `SELECT sdk_message FROM sdk_messages WHERE session_id = 'session-done-task-digest'
+           AND send_status = 'deferred'`
+        )
+        .all() as Array<{ sdk_message: string }>;
+      expect(rows).toHaveLength(0);
     });
 
     test('unregisters the space-resume hook on stop', async () => {
@@ -2391,6 +3604,699 @@ describe('SpaceRuntime external event subscriptions', () => {
 
       await runtime2.stop();
       expect(resumeHookCount()).toBe(before);
+    });
+  });
+
+  describe('recovery-point digest requeue', () => {
+    const previousEnv: Record<string, string | undefined> = {};
+
+    function setEnv(name: string, value: string): void {
+      previousEnv[name] = process.env[name];
+      process.env[name] = value;
+    }
+
+    function restoreEnv(): void {
+      for (const [name, value] of Object.entries(previousEnv)) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
+    }
+
+    function wait(ms: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function digestRowCount(sessionId: string): number {
+      return (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM sdk_messages WHERE session_id = ? AND sdk_uuid LIKE 'digest-%'`
+          )
+          .get(sessionId) as { n: number }
+      ).n;
+    }
+
+    function seedSessionRow(sessionId: string): void {
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+    }
+
+    function bindLiveSession(
+      executionId: string,
+      sessionId: string,
+      options: { status?: NodeExecutionStatus } = {}
+    ): void {
+      nodeExecutionRepo.update(executionId, {
+        status: options.status ?? 'in_progress',
+        agentSessionId: sessionId,
+        completedAt: null,
+        startedAt: Date.now(),
+      });
+      seedSessionRow(sessionId);
+      tam.alive.add(sessionId);
+      tam.processingStates.set(sessionId, 'idle');
+    }
+
+    async function runWithPendingDelivery(options: { taskStatus?: SpaceTaskStatus } = {}): Promise<{
+      run: Awaited<ReturnType<typeof runtime.startWorkflowRun>>['run'];
+      task: SpaceTask;
+      executionId: string;
+      event: ExternalEvent;
+    }> {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+      if (options.taskStatus) {
+        taskRepo.updateTask(task.id, { status: options.taskStatus });
+      }
+      const event = makeEvent({
+        topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+      });
+      await eventService.publish(event);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+      return { run, task, executionId: execution.id, event };
+    }
+
+    beforeEach(() => {
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS', '50');
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_COUNT_CAP', '100');
+      setEnv('HYPERNEO_EXTERNAL_EVENT_DIGEST_SAFETY_MS', '10000');
+      db.exec(`CREATE TABLE IF NOT EXISTS job_queue (
+				id TEXT PRIMARY KEY,
+				queue TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+				payload TEXT NOT NULL DEFAULT '{}',
+				result TEXT,
+				error TEXT,
+				priority INTEGER NOT NULL DEFAULT 0,
+				max_retries INTEGER NOT NULL DEFAULT 3,
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				run_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				heartbeat_at INTEGER,
+				completed_at INTEGER
+			)`);
+    });
+
+    afterEach(() => {
+      restoreEnv();
+    });
+
+    test('startup rehydrate re-arms a persisted pending delivery as a digest pull', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-rehydrate-recovery');
+      tam.alive.delete('session-rehydrate-recovery');
+      tam.rehydrate = async () => {
+        tam.alive.add('session-rehydrate-recovery');
+      };
+
+      const runtime2 = new SpaceRuntime({
+        db,
+        spaceManager,
+        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        internalEventBus: bus,
+        commandBus: (runtime as unknown as { config: { commandBus: unknown } }).config
+          .commandBus as never,
+        externalEventStore: eventStore,
+        taskAgentManager: tam as never,
+      });
+      await runtime2.rehydrateExecutors();
+      await wait(300);
+
+      expect(digestRowCount('session-rehydrate-recovery')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+      expect(eventStore.getById(event.id)?.state).toBe('delivered');
+    });
+
+    test('onSpaceResumed re-arms a persisted pending delivery as a digest pull', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-resume-recovery');
+
+      runtime.onSpaceResumed(SPACE_ID);
+      await wait(300);
+
+      expect(digestRowCount('session-resume-recovery')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('recoverWorkflowBackedTask re-arms persisted pending deliveries on resume', async () => {
+      const { task, event, executionId } = await runWithPendingDelivery({
+        taskStatus: 'stopped',
+      });
+      bindLiveSession(executionId, 'session-recover-recovery');
+
+      const recovered = await runtime.recoverWorkflowBackedTask(SPACE_ID, task.id, 'in_progress');
+      expect(recovered.task.status).toBe('in_progress');
+      await wait(300);
+
+      expect(digestRowCount('session-recover-recovery')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('reopening a stopped task re-arms its persisted pending deliveries', async () => {
+      const { task, event, executionId } = await runWithPendingDelivery({
+        taskStatus: 'stopped',
+      });
+      bindLiveSession(executionId, 'session-reopen-recovery', { status: 'idle' });
+
+      const reopened = await runtime.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'open',
+      });
+      expect(reopened?.status).toBe('open');
+      await wait(300);
+
+      expect(digestRowCount('session-reopen-recovery')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('a reopen restores parked idle sessions before re-arming their deliveries', async () => {
+      const { task, event, executionId } = await runWithPendingDelivery({
+        taskStatus: 'stopped',
+      });
+      bindLiveSession(executionId, 'session-reopen-parked', { status: 'idle' });
+      tam.alive.delete('session-reopen-parked');
+      tam.tryResumeNodeAgentSession = async () => {
+        tam.alive.add('session-reopen-parked');
+      };
+
+      const reopened = await runtime.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'open',
+      });
+      expect(reopened?.status).toBe('open');
+      await wait(300);
+
+      expect(digestRowCount('session-reopen-parked')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('a space resume restores parked idle sessions before re-arming their deliveries', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-resume-parked', { status: 'idle' });
+      tam.alive.delete('session-resume-parked');
+      tam.tryResumeNodeAgentSession = async () => {
+        tam.alive.add('session-resume-parked');
+      };
+
+      await runtime.onSpaceResumed(SPACE_ID);
+      await wait(300);
+
+      expect(digestRowCount('session-resume-parked')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('startup rehydrate restores idle sessions owning pending deliveries', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-startup-parked', { status: 'idle' });
+      tam.alive.delete('session-startup-parked');
+      tam.rehydrate = async () => {};
+      tam.tryResumeNodeAgentSession = async () => {
+        tam.alive.add('session-startup-parked');
+      };
+
+      const runtime2 = new SpaceRuntime({
+        db,
+        spaceManager,
+        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        internalEventBus: bus,
+        commandBus: (runtime as unknown as { config: { commandBus: unknown } }).config
+          .commandBus as never,
+        externalEventStore: eventStore,
+        taskAgentManager: tam as never,
+      });
+      await runtime2.rehydrateExecutors();
+      await wait(300);
+
+      expect(digestRowCount('session-startup-parked')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('a reopen does not resurrect a cancelled execution that kept its session id', async () => {
+      const { task, event, executionId } = await runWithPendingDelivery({
+        taskStatus: 'stopped',
+      });
+      bindLiveSession(executionId, 'session-reopen-live', { status: 'cancelled' });
+      tam.alive.delete('session-reopen-live');
+      let resumeCalls = 0;
+      tam.tryResumeNodeAgentSession = async () => {
+        resumeCalls += 1;
+        tam.alive.add('session-reopen-live');
+      };
+
+      const reopened = await runtime.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'open',
+      });
+      expect(reopened?.status).toBe('open');
+      await wait(200);
+
+      expect(resumeCalls).toBe(0);
+      expect(digestRowCount('session-reopen-live')).toBe(0);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+    });
+
+    test('an expired long-horizon delivery is failed on resume instead of re-dispatched', async () => {
+      const repo = new SpaceLongHorizonAgentRepository(db);
+      const agent = repo.create({
+        id: 'lh-agent-resume-ttl',
+        spaceId: SPACE_ID,
+        handle: 'resume-ttl',
+        displayName: 'Resume TTL',
+      });
+      const subscription = repo.createSubscription({
+        spaceId: SPACE_ID,
+        agentId: agent.id,
+        source: 'github',
+        topic: DEFAULT_TOPIC,
+      });
+      const event = makeEvent({ id: 'evt-lh-resume-ttl' });
+      eventStore.store(event);
+      const deliveryKey = `lh:${subscription.id}:${event.id}`;
+      eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+        workflowRunId: `long_horizon:${SPACE_ID}`,
+        taskId: subscription.id,
+        nodeId: agent.id,
+        agentName: agent.id,
+      });
+      eventStore.markDeliveryFailed(event.id, deliveryKey, {
+        terminal: false,
+        reason: 'long-horizon agent unavailable',
+      });
+
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 300_001;
+      try {
+        await runtime.onSpaceResumed(SPACE_ID);
+      } finally {
+        Date.now = originalNow;
+      }
+      await wait(100);
+
+      expect(longHorizonMessages).toHaveLength(0);
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      expect(delivery.state).toBe('failed');
+      expect(delivery.failureReason).toBe('ttl_expired');
+      expect(eventStore.getById(event.id)?.state).toBe('failed');
+    });
+
+    test('a paused space does not restore its parked idle sessions at a recovery point', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-paused-restore', { status: 'idle' });
+      tam.alive.delete('session-paused-restore');
+      let resumeCalls = 0;
+      tam.tryResumeNodeAgentSession = async () => {
+        resumeCalls += 1;
+        tam.alive.add('session-paused-restore');
+      };
+
+      await (
+        runtime as unknown as {
+          recoverPendingDeliveries: (paused: Set<string>, workflowRunId?: string) => Promise<void>;
+        }
+      ).recoverPendingDeliveries(new Set([SPACE_ID]));
+      await wait(200);
+
+      expect(resumeCalls).toBe(0);
+      expect(digestRowCount('session-paused-restore')).toBe(0);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+    });
+
+    test('an in-flight long-horizon delivery crossing the TTL is not terminally failed by recovery', async () => {
+      const repo = new SpaceLongHorizonAgentRepository(db);
+      const agent = repo.create({
+        id: 'lh-agent-inflight-ttl',
+        spaceId: SPACE_ID,
+        handle: 'inflight-ttl',
+        displayName: 'Inflight TTL',
+      });
+      const subscription = repo.createSubscription({
+        spaceId: SPACE_ID,
+        agentId: agent.id,
+        source: 'github',
+        topic: DEFAULT_TOPIC,
+      });
+      const event = makeEvent({ id: 'evt-lh-inflight-ttl' });
+      eventStore.store(event);
+      const deliveryKey = `lh:${subscription.id}:${event.id}`;
+      eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+        workflowRunId: `long_horizon:${SPACE_ID}`,
+        taskId: subscription.id,
+        nodeId: agent.id,
+        agentName: agent.id,
+      });
+      eventStore.markDeliveryFailed(event.id, deliveryKey, {
+        terminal: false,
+        reason: 'long-horizon agent unavailable',
+      });
+      (
+        runtime as unknown as { externalEventDeliveriesInFlight: Set<string> }
+      ).externalEventDeliveriesInFlight.add(deliveryKey);
+
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 300_001;
+      try {
+        await runtime.onSpaceResumed(SPACE_ID);
+      } finally {
+        Date.now = originalNow;
+      }
+      await wait(100);
+
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      expect(delivery.state).toBe('pending');
+      expect(delivery.failureReason).not.toBe('ttl_expired');
+    });
+
+    test('cancelling a stopped task leaves its persisted pending deliveries inert', async () => {
+      const { run, task, event } = await runWithPendingDelivery({ taskStatus: 'stopped' });
+      bindLiveSession(
+        nodeExecutionRepo.listByNode(run.id, 'code')[0]!.id,
+        'session-cancel-recovery'
+      );
+
+      const cancelled = await runtime.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'cancelled',
+      });
+      expect(cancelled?.status).toBe('cancelled');
+      await wait(200);
+
+      expect(digestRowCount('session-cancel-recovery')).toBe(0);
+      expect(eventStore.listPendingDeliveries(run.id)).toHaveLength(1);
+      expect(eventStore.listPendingDeliveries(run.id)[0]!.eventId).toBe(event.id);
+    });
+
+    test('an expired pending delivery is failed on requeue instead of re-armed', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-ttl-recovery');
+
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 300_001;
+      try {
+        await runtime.onSpaceResumed(SPACE_ID);
+      } finally {
+        Date.now = originalNow;
+      }
+      await wait(200);
+
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      expect(delivery.state).toBe('failed');
+      expect(delivery.failureReason).toBe('ttl_expired');
+      expect(eventStore.getById(event.id)?.state).toBe('failed');
+      expect(digestRowCount('session-ttl-recovery')).toBe(0);
+    });
+
+    test('a delivery already in flight is not re-armed a second time', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-inflight-recovery');
+      const deliveryKey = eventStore.listDeliveries(event.id)[0]!.deliveryKey;
+      const inFlight = (runtime as unknown as { externalEventDeliveriesInFlight: Set<string> })
+        .externalEventDeliveriesInFlight;
+      inFlight.add(deliveryKey);
+
+      runtime.onSpaceResumed(SPACE_ID);
+      await wait(200);
+
+      expect(digestRowCount('session-inflight-recovery')).toBe(0);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+    });
+
+    test('a delivery under a live immediate-tier dispatch is not expired by a recovery pass', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-immediate-recovery');
+      const deliveryKey = eventStore.listDeliveries(event.id)[0]!.deliveryKey;
+      const immediateInFlight = (runtime as unknown as { immediateDispatchesInFlight: Set<string> })
+        .immediateDispatchesInFlight;
+      immediateInFlight.add(deliveryKey);
+
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 300_001;
+      try {
+        await runtime.onSpaceResumed(SPACE_ID);
+      } finally {
+        Date.now = originalNow;
+      }
+      await wait(200);
+
+      expect(digestRowCount('session-immediate-recovery')).toBe(0);
+      const delivery = eventStore.listDeliveries(event.id)[0]!;
+      expect(delivery.state).toBe('pending');
+      expect(delivery.failureReason).toBeNull();
+    });
+
+    test('a space resume only re-arms deliveries for runs of the resumed space', async () => {
+      const OTHER_SPACE_ID = `${SPACE_ID}-other`;
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(OTHER_SPACE_ID, OTHER_SPACE_ID, '/tmp/runtime-events-other', 'Other', now, now);
+      const otherWorkflow = createWorkflow('code-other', { spaceId: OTHER_SPACE_ID });
+      const { run: otherRun, tasks: otherTasks } = await runtime.startWorkflowRun(
+        OTHER_SPACE_ID,
+        otherWorkflow.id,
+        'Other Run'
+      );
+      const otherTask = otherTasks[0]!;
+      runtime.registerSubscription(
+        otherRun.id,
+        otherTask.id,
+        'code-other',
+        'coder',
+        'github/*/*/pull_request/*.review_*'
+      );
+      const otherExecution = nodeExecutionRepo.listByNode(otherRun.id, 'code-other')[0]!;
+      nodeExecutionRepo.update(otherExecution.id, {
+        status: 'idle',
+        agentSessionId: null,
+        completedAt: Date.now(),
+      });
+      const otherEvent = makeEvent({ spaceId: OTHER_SPACE_ID });
+      await eventService.publish(otherEvent);
+      expect(eventStore.listDeliveries(otherEvent.id)[0]!.state).toBe('pending');
+      bindLiveSession(otherExecution.id, 'session-other-space', { status: 'idle' });
+
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-resumed-space');
+
+      runtime.onSpaceResumed(SPACE_ID);
+      await wait(300);
+
+      expect(digestRowCount('session-resumed-space')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+      expect(digestRowCount('session-other-space')).toBe(0);
+      expect(eventStore.listDeliveries(otherEvent.id)[0]!.state).toBe('pending');
+    });
+
+    test('an interrupted target session defers to a probe that delivers once the interrupt clears', async () => {
+      const { event, executionId } = await runWithPendingDelivery();
+      bindLiveSession(executionId, 'session-interrupt-recovery');
+      tam.interrupting.add('session-interrupt-recovery');
+      tam.processingStates.set('session-interrupt-recovery', 'interrupted');
+
+      runtime.onSpaceResumed(SPACE_ID);
+      await wait(200);
+      expect(digestRowCount('session-interrupt-recovery')).toBe(0);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+      tam.interrupting.delete('session-interrupt-recovery');
+      tam.processingStates.set('session-interrupt-recovery', 'idle');
+      await wait(1500);
+      expect(digestRowCount('session-interrupt-recovery')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('a throwing event store during a spawn-path requeue does not undo the spawn', async () => {
+      const { run } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'pending',
+        agentSessionId: null,
+        startedAt: null,
+        completedAt: null,
+      });
+      tam.onSpawn = (executionId, sessionId) => {
+        nodeExecutionRepo.update(executionId, {
+          status: 'in_progress',
+          agentSessionId: sessionId,
+          startedAt: Date.now(),
+          completedAt: null,
+        });
+      };
+      const store = eventStore as unknown as {
+        listPendingDeliveries: (workflowRunId?: string) => ExternalEventDeliveryRecord[];
+      };
+      const originalList = store.listPendingDeliveries.bind(eventStore);
+      store.listPendingDeliveries = () => {
+        throw new Error('event store exploded');
+      };
+
+      try {
+        await expect(runtime.executeTick()).resolves.toBeUndefined();
+      } finally {
+        store.listPendingDeliveries = originalList;
+      }
+
+      const spawnedSessionId = `session-${execution.id}`;
+      expect(tam.spawned).toContain(spawnedSessionId);
+      const fresh = nodeExecutionRepo.getById(execution.id)!;
+      expect(fresh.status).toBe('in_progress');
+      expect(fresh.agentSessionId).toBe(spawnedSessionId);
+    });
+
+    test('a freshly spawned node agent pulls the deliveries accrued while it was down', async () => {
+      const { run, task } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'pending',
+        agentSessionId: null,
+        startedAt: null,
+        completedAt: null,
+      });
+      const event = makeEvent({
+        topic: 'github/lsm/neokai/pull_request/42.comment_polled',
+      });
+      await eventService.publish(event);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('pending');
+
+      const spawnedSessionId = `session-${execution.id}`;
+      seedSessionRow(spawnedSessionId);
+      tam.alive.add(spawnedSessionId);
+      tam.processingStates.set(spawnedSessionId, 'idle');
+      tam.onSpawn = (executionId, sessionId) => {
+        nodeExecutionRepo.update(executionId, {
+          status: 'in_progress',
+          agentSessionId: sessionId,
+          startedAt: Date.now(),
+          completedAt: null,
+        });
+      };
+
+      await runtime.executeTick();
+      expect(tam.spawned).toContain(spawnedSessionId);
+      await wait(300);
+
+      expect(digestRowCount(spawnedSessionId)).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+      expect(taskRepo.getTask(task.id)?.status).not.toBe('cancelled');
+    });
+
+    test('a space resume retries that space pending long-horizon deliveries and no other space', async () => {
+      const OTHER_SPACE_ID = `${SPACE_ID}-lh-other`;
+      const seededAt = Date.now();
+      db.prepare(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        OTHER_SPACE_ID,
+        OTHER_SPACE_ID,
+        '/tmp/runtime-events-lh-other',
+        'Other',
+        seededAt,
+        seededAt
+      );
+      const repo = new SpaceLongHorizonAgentRepository(db);
+      const agent = repo.create({
+        id: 'lh-agent-resume-retry',
+        spaceId: SPACE_ID,
+        handle: 'resume-retry',
+        displayName: 'Resume Retry',
+      });
+      const subscription = repo.createSubscription({
+        spaceId: SPACE_ID,
+        agentId: agent.id,
+        source: 'github',
+        topic: DEFAULT_TOPIC,
+      });
+      const otherAgent = repo.create({
+        id: 'lh-agent-resume-other',
+        spaceId: OTHER_SPACE_ID,
+        handle: 'resume-other',
+        displayName: 'Resume Other',
+      });
+      const otherSubscription = repo.createSubscription({
+        spaceId: OTHER_SPACE_ID,
+        agentId: otherAgent.id,
+        source: 'github',
+        topic: DEFAULT_TOPIC,
+      });
+      const event = makeEvent({ id: 'evt-lh-resume-retry' });
+      const otherEvent = makeEvent({ id: 'evt-lh-resume-other' });
+      eventStore.store(event);
+      eventStore.store(otherEvent);
+      const deliveryKey = `lh:${subscription.id}:${event.id}`;
+      eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+        workflowRunId: `long_horizon:${SPACE_ID}`,
+        taskId: subscription.id,
+        nodeId: agent.id,
+        agentName: agent.id,
+      });
+      const otherDeliveryKey = `lh:${otherSubscription.id}:${otherEvent.id}`;
+      eventStore.registerExpectedDelivery(otherEvent.id, otherDeliveryKey, {
+        workflowRunId: `long_horizon:${OTHER_SPACE_ID}`,
+        taskId: otherSubscription.id,
+        nodeId: otherAgent.id,
+        agentName: otherAgent.id,
+      });
+      eventStore.markDeliveryFailed(event.id, deliveryKey, {
+        terminal: false,
+        reason: 'long-horizon agent unavailable',
+      });
+      eventStore.markDeliveryFailed(otherEvent.id, otherDeliveryKey, {
+        terminal: false,
+        reason: 'long-horizon agent unavailable',
+      });
+
+      const runtime2 = new SpaceRuntime({
+        db,
+        spaceManager,
+        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        internalEventBus: bus,
+        commandBus: (runtime as unknown as { config: { commandBus: unknown } }).config
+          .commandBus as never,
+        externalEventStore: eventStore,
+        longHorizonAgentRepo: repo,
+        taskAgentManager: tam as never,
+        deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+          longHorizonMessages.push({ agentId, message, idempotencyKey });
+          return { delivered: true };
+        },
+      });
+
+      runtime2.onSpaceResumed(SPACE_ID);
+      await wait(100);
+
+      expect(longHorizonMessages).toHaveLength(1);
+      expect(longHorizonMessages[0]!.agentId).toBe(agent.id);
+      expect(longHorizonMessages[0]!.idempotencyKey).toBe(deliveryKey);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+      expect(eventStore.listDeliveries(otherEvent.id)[0]!.state).toBe('pending');
     });
   });
 });

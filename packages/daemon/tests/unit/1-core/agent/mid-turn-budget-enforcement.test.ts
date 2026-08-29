@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { buildBatchedDeliveryContent } from '../../../../src/lib/agent/message-delivery.ts';
 import type { QueryLike } from '../../../../src/lib/agent/query-like.ts';
 import type {
   DaemonInternalEventMap,
@@ -526,5 +527,296 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       prepend: true,
     });
     expect(retryMock).toHaveBeenCalledWith(expect.any(String), 'uuid-lru-evicted');
+  });
+
+  it('rebuilds evicted batched survivor content from the active batch', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: (sessionId: string, uuid: string) => string | null;
+          markDeliveryRetryableByUuid: () => string | null;
+          getDeliveryContent: (
+            sessionId: string,
+            uuid: string
+          ) => { content: string; sendStatus: string } | null;
+        };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-batch-1' ? 'kickoff-text' : null,
+      markDeliveryRetryableByUuid: () => null,
+      getDeliveryContent: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-batch-1'
+          ? { content: 'kickoff-text', sendStatus: 'submitted' }
+          : { content: 'member-text', sendStatus: 'submitted' },
+    });
+    (
+      session.db as unknown as {
+        getJobQueueRepo: () => { getActiveDeliveryBatchUuids: () => string[] | null };
+      }
+    ).getJobQueueRepo = () => ({
+      getActiveDeliveryBatchUuids: () => ['uuid-batch-1', 'uuid-batch-2'],
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-batch-1'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy).toHaveBeenCalledWith(
+      'uuid-batch-1',
+      buildBatchedDeliveryContent(['kickoff-text', 'member-text']),
+      false,
+      { durable: true, prepend: true }
+    );
+  });
+
+  it('narrows the recovered batch to the admitted members on a partial rebuild', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    const narrowSpy = mock(() => true);
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: (sessionId: string, uuid: string) => string | null;
+          markDeliveryRetryableByUuid: () => string | null;
+          getDeliveryContent: (
+            sessionId: string,
+            uuid: string
+          ) => { content: string; sendStatus: string } | null;
+        };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-partial' ? 'kickoff-text' : null,
+      markDeliveryRetryableByUuid: () => null,
+      getDeliveryContent: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-partial'
+          ? { content: 'kickoff-text', sendStatus: 'submitted' }
+          : { content: 'member-text', sendStatus: 'deferred' },
+    });
+    (
+      session.db as unknown as {
+        getJobQueueRepo: () => {
+          getActiveDeliveryBatchUuids: () => string[] | null;
+          narrowActiveDeliveryBatchUuids: () => boolean;
+        };
+      }
+    ).getJobQueueRepo = () => ({
+      getActiveDeliveryBatchUuids: () => ['uuid-partial', 'uuid-member-deferred'],
+      narrowActiveDeliveryBatchUuids: narrowSpy,
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-partial'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy).toHaveBeenCalledWith('uuid-partial', 'kickoff-text', false, {
+      durable: true,
+      prepend: true,
+    });
+    expect(narrowSpy).toHaveBeenCalledWith(session.session.id, 'uuid-partial', ['uuid-partial']);
+  });
+
+  it('keeps the requeued kickoff in the narrowed batch when its own row was filtered', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    const narrowSpy = mock(() => true);
+    const reopenSpy = mock(() => 'db-id-kickoff');
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: (sessionId: string, uuid: string) => string | null;
+          markDeliveryRetryableByUuid: () => string | null;
+          reopenDeliveryByUuid: typeof reopenSpy;
+          getDeliveryContent: (
+            sessionId: string,
+            uuid: string
+          ) => { content: string; sendStatus: string } | null;
+        };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-kickoff-filtered' ? 'kickoff-text' : null,
+      markDeliveryRetryableByUuid: () => null,
+      reopenDeliveryByUuid: reopenSpy,
+      getDeliveryContent: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-kickoff-filtered'
+          ? { content: 'kickoff-text', sendStatus: 'failed' }
+          : uuid === 'uuid-member-live'
+            ? { content: 'member-text', sendStatus: 'submitted' }
+            : { content: 'other-text', sendStatus: 'deferred' },
+    });
+    (
+      session.db as unknown as {
+        getJobQueueRepo: () => {
+          getActiveDeliveryBatchUuids: () => string[] | null;
+          narrowActiveDeliveryBatchUuids: () => boolean;
+        };
+      }
+    ).getJobQueueRepo = () => ({
+      getActiveDeliveryBatchUuids: () => [
+        'uuid-kickoff-filtered',
+        'uuid-member-live',
+        'uuid-member-deferred',
+      ],
+      narrowActiveDeliveryBatchUuids: narrowSpy,
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-kickoff-filtered'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy).toHaveBeenCalledWith('uuid-kickoff-filtered', 'kickoff-text', false, {
+      durable: true,
+      prepend: true,
+    });
+    expect(narrowSpy).toHaveBeenCalledWith(session.session.id, 'uuid-kickoff-filtered', [
+      'uuid-kickoff-filtered',
+    ]);
+    expect(reopenSpy).toHaveBeenCalledWith(session.session.id, 'uuid-kickoff-filtered');
+  });
+
+  it('falls back to the recovered kickoff when the batch lookup throws', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: (sessionId: string, uuid: string) => string | null;
+          markDeliveryRetryableByUuid: () => string | null;
+        };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-batch-throw' ? 'kickoff-only' : null,
+      markDeliveryRetryableByUuid: () => null,
+    });
+    const narrowSpy = mock(() => true);
+    (
+      session.db as unknown as {
+        getJobQueueRepo: () => {
+          getActiveDeliveryBatchUuids: () => string[] | null;
+          narrowActiveDeliveryBatchUuids: () => boolean;
+        };
+      }
+    ).getJobQueueRepo = () => ({
+      getActiveDeliveryBatchUuids: () => {
+        throw new Error('sqlite busy');
+      },
+      narrowActiveDeliveryBatchUuids: narrowSpy,
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-batch-throw'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy).toHaveBeenCalledWith('uuid-batch-throw', 'kickoff-only', false, {
+      durable: true,
+      prepend: true,
+    });
+    expect(narrowSpy).toHaveBeenCalledWith(session.session.id, 'uuid-batch-throw', [
+      'uuid-batch-throw',
+    ]);
+  });
+
+  it('declines recovery when the batch narrowing is not applied', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    const narrowSpy = mock(() => false);
+    (
+      session.db as unknown as {
+        getSDKMessageRepo: () => {
+          getUserMessageContentByUuid: (sessionId: string, uuid: string) => string | null;
+          markDeliveryRetryableByUuid: () => string | null;
+          getDeliveryContent: (
+            sessionId: string,
+            uuid: string
+          ) => { content: string; sendStatus: string } | null;
+        };
+      }
+    ).getSDKMessageRepo = () => ({
+      getUserMessageContentByUuid: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-narrow-fail' ? 'kickoff-text' : null,
+      markDeliveryRetryableByUuid: () => null,
+      getDeliveryContent: (_sessionId: string, uuid: string) =>
+        uuid === 'uuid-narrow-fail'
+          ? { content: 'kickoff-text', sendStatus: 'submitted' }
+          : { content: 'member-text', sendStatus: 'deferred' },
+    });
+    (
+      session.db as unknown as {
+        getJobQueueRepo: () => {
+          getActiveDeliveryBatchUuids: () => string[] | null;
+          narrowActiveDeliveryBatchUuids: () => boolean;
+        };
+      }
+    ).getJobQueueRepo = () => ({
+      getActiveDeliveryBatchUuids: () => ['uuid-narrow-fail', 'uuid-member-live'],
+      narrowActiveDeliveryBatchUuids: narrowSpy,
+    });
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-narrow-fail'] }));
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy.mock.calls.some((call) => call[0] === 'uuid-narrow-fail')).toBe(false);
+    expect(narrowSpy).toHaveBeenCalledWith(session.session.id, 'uuid-narrow-fail', [
+      'uuid-narrow-fail',
+    ]);
+  });
+
+  it('aborts the restart when a user stop lands during the usage refresh', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.usageMock.mockImplementation(async () => {
+      session.messageQueue.noteUserInterrupt();
+      return makeUsageResponse();
+    });
+    session.messageQueue.noteInternalCompactionSent({
+      id: 'uuid-refresh-stop',
+      content: 'refresh stop survivor',
+      internal: false,
+    } as never);
+    harness.cancelMock.mockImplementation(async () => false);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-refresh-stop'] }));
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    spyOn(session.lifecycleManager, 'restart').mockImplementation(async (options) => {
+      await options?.beforeStart?.();
+    });
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+    expect(session.messageQueue.hasPendingOrClaimed('uuid-refresh-stop')).toBe(false);
+  });
+
+  it('stands the cycle down when the query object is replaced mid-check', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.usageMock.mockImplementation(async () => {
+      session.queryObject = makeQuery().query;
+      return makeUsageResponse();
+    });
+    harness.cancelMock.mockImplementation(async () => false);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-owns-turn'] }));
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    const restartSpy = spyOn(session.lifecycleManager, 'restart').mockImplementation(
+      async () => {}
+    );
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(restartSpy).not.toHaveBeenCalled();
+    expect(enqueueSpy).not.toHaveBeenCalled();
+    expect(session.messageQueue.hasPendingOrClaimed('uuid-owns-turn')).toBe(false);
   });
 });

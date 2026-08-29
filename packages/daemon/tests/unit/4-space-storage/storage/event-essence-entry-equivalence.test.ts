@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-import {
-  type ExternalEventEssenceEntry,
-  parseDeferredExternalEventText,
-  renderEventBlock,
-} from '../../../../src/lib/external-events/deferred-event-digest.ts';
-import { formatExternalEventEssence } from '../../../../src/lib/external-events/event-essence.ts';
+import { renderEventBlock } from '../../../../src/lib/external-events/deferred-event-digest.ts';
 import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry.ts';
-import type { ExternalEventPublishedPayload as PublishedPayload } from '../../../../src/lib/external-events/external-event-service.ts';
 import {
   normalizeGitHubPollingRow,
   normalizeGitHubReaction,
@@ -153,29 +147,6 @@ function syntheticEvent(
     dedupeKey: 'dk-synthetic',
     ...overrides,
   };
-}
-
-function publishedPayloadOf(event: ExternalEvent): PublishedPayload {
-  return {
-    namespaceId: event.spaceId,
-    spaceId: event.spaceId,
-    eventId: event.id,
-    source: event.source,
-    topic: event.topic,
-    dedupeKey: event.dedupeKey,
-    summary: event.summary,
-    externalUrl: event.externalUrl,
-    payload: event.payload,
-    occurredAt: event.occurredAt,
-    ingestedAt: event.ingestedAt,
-  };
-}
-
-function roundTripEssence(event: ExternalEvent): ExternalEventEssenceEntry | null {
-  const parsed = parseDeferredExternalEventText(
-    formatExternalEventEssence(publishedPayloadOf(event))
-  );
-  return parsed && parsed.kind === 'event' ? parsed.essence : null;
 }
 
 const CASES: Array<{ kind: string; event: ExternalEvent }> = [
@@ -388,23 +359,283 @@ const CASES: Array<{ kind: string; event: ExternalEvent }> = [
   },
 ];
 
-describe('direct record→essence converter equivalence', () => {
-  it('matches the format→parse round trip across the fixture corpus', () => {
-    let nonNull = 0;
+const EXPECTED: Record<string, Record<string, unknown>> = {
+  check_run: {
+    eventType: 'check_run',
+    action: 'failed',
+    actor: 'github-actions[bot]',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+    externalUrl: 'https://github.com/acme/widgets/pull/42',
+    occurredAt: 1787217300000,
+    body: 'build-linux concluded with failure',
+    checkName: 'build-linux',
+    conclusion: 'failure',
+  },
+  review_comment: {
+    eventType: 'pull_request_review_comment',
+    action: 'created',
+    actor: 'codex',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+    externalUrl: 'https://github.com/acme/widgets/pull/42',
+    occurredAt: 1787217600000,
+    body: 'The retry loop double-counts terminal failures.',
+    title: 'PR #42 inline review comment',
+    commentId: '4242',
+    path: 'packages/daemon/src/lib/external-events/delivery.ts',
+    line: 87,
+  },
+  pr_comment: {
+    eventType: 'issue_comment',
+    action: 'created',
+    actor: 'reviewer',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+    externalUrl: 'https://github.com/acme/widgets/pull/42',
+    occurredAt: 1787218500000,
+    body: 'Approving — the requeue guard holds.',
+    title: 'PR #42 comment',
+    commentId: '101',
+  },
+  polled_pr: {
+    eventType: 'pull_request',
+    action: 'polled',
+    actor: 'alice',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+    externalUrl: 'https://github.com/acme/widgets/pull/42',
+    occurredAt: 1787217900000,
+    title: 'Fix delivery flush',
+    state: 'open',
+    merged: false,
+    draft: false,
+  },
+  reaction: {
+    eventType: 'reaction',
+    action: 'added',
+    actor: 'alice',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+    externalUrl: 'https://github.com/acme/widgets/pull/42',
+    occurredAt: 1787218200000,
+    body: '👍',
+  },
+  branch_protection_created: {
+    eventType: 'branch_protection_rule',
+    action: 'created',
+    actor: 'admin',
+    repo: 'acme/widgets',
+    prUrl: 'https://github.com/acme/widgets',
+    externalUrl: 'https://github.com/acme/widgets/settings/branches',
+    occurredAt: 1787218800000,
+    title: 'Branch protection rule "main" created',
+    ruleName: 'main',
+    adminEnforced: true,
+    requiredApprovingReviewCount: 2,
+    requireCodeOwnerReview: true,
+    requiredConversationResolutionLevel: 'everyone',
+    strictRequiredStatusChecksPolicy: true,
+    requiredStatusChecks: ['ci/lint', 'ci/test'],
+  },
+  branch_protection_edited: {
+    eventType: 'branch_protection_rule',
+    action: 'edited',
+    actor: 'admin',
+    repo: 'acme/widgets',
+    prUrl: 'https://github.com/acme/widgets',
+    externalUrl: 'https://github.com/acme/widgets/settings/branches',
+    occurredAt: 1787218800000,
+    title: 'Branch protection rule "main" edited',
+    ruleName: 'main',
+    adminEnforced: true,
+    requiredApprovingReviewCount: 2,
+    requireCodeOwnerReview: true,
+    requiredConversationResolutionLevel: 'everyone',
+    strictRequiredStatusChecksPolicy: true,
+    requiredStatusChecks: ['ci/lint', 'ci/test'],
+  },
+  pull_request_review: {
+    eventType: 'pull_request_review',
+    action: 'submitted',
+    actor: 'devin-ai-integration[bot]',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+    occurredAt: 1755648000000,
+    body: 'No issues found',
+    reviewId: 'rv-1',
+    state: 'approved',
+  },
+  review_thread: {
+    eventType: 'pull_request_review_thread',
+    action: 'resolved',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    occurredAt: 1755648000000,
+    threadId: 'PRRT_kwDOA_thread',
+    path: 'packages/daemon/src/lib/external-events/delivery.ts',
+    line: 87,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  status: {
+    eventType: 'status',
+    action: 'failure',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    occurredAt: 1755648000000,
+    state: 'failure',
+    description: 'build failed',
+    context: 'ci/lint',
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  check_suite: {
+    eventType: 'check_suite',
+    action: 'completed',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    occurredAt: 1755648000000,
+    conclusion: 'failure',
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  merge_group: {
+    eventType: 'merge_group',
+    action: 'checks_requested',
+    repo: 'acme/widgets',
+    prNumber: 123,
+    occurredAt: 1755648000000,
+    prUrl: 'https://github.com/acme/widgets/pull/123',
+  },
+  deployment: {
+    eventType: 'deployment',
+    action: 'created',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    occurredAt: 1755648000000,
+    environment: 'production',
+    description: 'ship it',
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  deployment_status: {
+    eventType: 'deployment_status',
+    action: 'failure',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    occurredAt: 1755648000000,
+    state: 'failure',
+    environment: 'production',
+    description: 'deploy failed',
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  suffix_check_failed: {
+    eventType: 'watch',
+    action: 'started',
+    occurredAt: 1755648000000,
+    checkName: 'build-linux',
+    conclusion: 'failure',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  suffix_suite_failed: {
+    eventType: 'fork',
+    action: 'completed',
+    occurredAt: 1755648000000,
+    conclusion: 'timed_out',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  scope_backfill: {
+    eventType: 'issue_comment',
+    action: 'created',
+    actor: 'reviewer',
+    occurredAt: 1755648000000,
+    body: 'scope comes from the topic',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  zero_pr_number: {
+    eventType: 'pull_request',
+    action: 'polled',
+    repo: 'acme/widgets',
+    occurredAt: 1755648000000,
+    state: 'open',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  empty_strings: {
+    eventType: 'issue_comment',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    occurredAt: 1755648000000,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  non_github_topic: {
+    eventType: 'merge_request',
+    action: 'open',
+    repo: 'acme/widgets',
+    occurredAt: 1755648000000,
+  },
+  nonfinite_occurred_at: {
+    eventType: 'issue_comment',
+    action: 'created',
+    body: 'infinite timestamp',
+    repo: 'acme/widgets',
+    prNumber: 42,
+    prUrl: 'https://github.com/acme/widgets/pull/42',
+  },
+  falsey_scalars: {
+    eventType: 'branch_protection_rule',
+    action: 'edited',
+    repo: 'acme/widgets',
+    occurredAt: 1755648000000,
+    ruleName: 'main',
+    adminEnforced: false,
+    requiredApprovingReviewCount: 0,
+    requireCodeOwnerReview: false,
+    requiredStatusChecks: [],
+    changedFields: ['required_approving_review_count'],
+  },
+};
+
+describe('direct record→essence converter', () => {
+  it('extracts the expected essence fields for each fixture case', () => {
     for (const { kind, event } of CASES) {
-      expect([kind, essenceEntryFromExternalEvent(event)]).toEqual([kind, roundTripEssence(event)]);
-      if (roundTripEssence(event) !== null) nonNull += 1;
+      expect(essenceEntryFromExternalEvent(event)).toMatchObject({
+        eventId: event.id,
+        topic: event.topic,
+        ...EXPECTED[kind],
+      });
     }
-    expect(nonNull).toBe(CASES.length);
   });
 
-  it('returns null exactly where the round trip returns null', () => {
+  it('drops empty strings and non-finite scalars instead of carrying them', () => {
+    const emptyStrings = essenceEntryFromExternalEvent(
+      CASES.find((c) => c.kind === 'empty_strings')!.event
+    )!;
+    expect('action' in emptyStrings).toBe(false);
+    expect('actor' in emptyStrings).toBe(false);
+    expect('body' in emptyStrings).toBe(false);
+    expect('externalUrl' in emptyStrings).toBe(false);
+    const nonfinite = essenceEntryFromExternalEvent(
+      CASES.find((c) => c.kind === 'nonfinite_occurred_at')!.event
+    )!;
+    expect('occurredAt' in nonfinite).toBe(false);
+  });
+
+  it('returns null for records without a usable id or topic', () => {
     for (const event of [
       { ...checkRunEvent(), id: '' },
       { ...checkRunEvent(), topic: '' },
     ]) {
       expect(essenceEntryFromExternalEvent(event)).toBeNull();
-      expect(roundTripEssence(event)).toBeNull();
     }
   });
 

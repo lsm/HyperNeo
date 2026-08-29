@@ -1,4 +1,3 @@
-export { formatExternalEventEssence } from './event-essence.ts';
 export {
   ExternalEventExtensionConfigStore,
   ensureExternalEventExtensionConfigTables,
@@ -11,7 +10,6 @@ export {
   type ExternalEventPublishedPayload,
   type ExternalEventPublisher,
   ExternalEventService,
-  isExternalEventDeliveryV2Enabled,
   type PublishOutcome,
   type PublishResult,
 } from './external-event-service.ts';

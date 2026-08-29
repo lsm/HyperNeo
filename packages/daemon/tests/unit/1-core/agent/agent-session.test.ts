@@ -2347,6 +2347,28 @@ describe('AgentSession', () => {
       expect(handleInterruptSpy).toHaveBeenCalled();
     });
 
+    it('handleInterrupt reports in-progress from entry until the handler completes', async () => {
+      let releaseHandler!: () => void;
+      const handlerGate = new Promise<void>((resolve) => {
+        releaseHandler = resolve;
+      });
+      const handleInterruptSpy = mock(() => handlerGate);
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).interruptHandler = {
+        handleInterrupt: handleInterruptSpy,
+        isInterruptRequested: () => false,
+        getInterruptPromise: () => null,
+      };
+
+      const pending = agentSession.handleInterrupt();
+      expect(agentSession.isInterruptInProgress()).toBe(true);
+
+      releaseHandler();
+      await pending;
+      expect(agentSession.isInterruptInProgress()).toBe(false);
+      expect(handleInterruptSpy).toHaveBeenCalled();
+    });
+
     it('revokePendingDelivery remove accepts deferred (next-turn) rows too (#3744105283)', async () => {
       const deletePendingSpy = mock(() => ({
         dbId: 'db-1',

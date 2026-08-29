@@ -1,8 +1,12 @@
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
-import { setupAuthHandlers } from '../../../../src/lib/rpc-handlers/auth-handlers';
+import {
+  setupAuthHandlers,
+  clearCacheAndNotifyProvidersChanged,
+} from '../../../../src/lib/rpc-handlers/auth-handlers';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { Provider } from '@hyperneo/shared/provider';
+import type { ProviderRepository } from '../../../../src/storage/repositories/provider-repository';
 import { resetProviderRegistry, getProviderRegistry } from '../../../../src/lib/providers/registry';
 import { providerEnvCoordinator } from '../../../../src/lib/providers/provider-env-enrollment';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
@@ -11,6 +15,39 @@ import {
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
 import { KeychainUnavailableError } from '../../../../src/lib/credentials/credential-store';
+
+const baseConfigJson = JSON.stringify({
+  command: 'test-command',
+  discoveredModels: { models: [{ id: 'a' }] },
+});
+const strippedConfigJson = JSON.stringify({ command: 'test-command' });
+
+function makeBus() {
+  return { publishAsync: mock(() => {}) };
+}
+
+function makeRepo(
+  configJson: string | undefined = baseConfigJson,
+  throws = false,
+  readThrows = false
+): ProviderRepository {
+  return {
+    getProviderByProviderId: readThrows
+      ? mock(() => {
+          throw new Error('db read failed');
+        })
+      : mock(() => ({
+          id: 'provider-uuid',
+          providerId: 'test-provider',
+          configJson,
+        })),
+    updateProvider: throws
+      ? mock(() => {
+          throw new Error('db write failed');
+        })
+      : mock(() => null),
+  } as unknown as ProviderRepository;
+}
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -418,6 +455,138 @@ describe('Auth RPC Handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('OAuth failed');
     });
+
+    it('does not reject the login handler when the async OAuth callback strip fails', async () => {
+      const credentialManager = {
+        storeOAuthTokens: mock(async () => {}),
+      };
+      const bus = makeBus();
+      const repo = makeRepo(baseConfigJson, true);
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never,
+        bus as never,
+        repo as never
+      );
+      const credentials = {
+        type: 'oauth' as const,
+        accessToken: 'new-token',
+        refreshToken: 'refresh-token',
+      };
+      let listener: ((credentials: typeof credentials) => void | Promise<void>) | undefined;
+      const mockProvider = createMockProvider({
+        onCredentialsChanged: mock((handler) => {
+          listener = handler as typeof listener;
+          return () => {
+            listener = undefined;
+          };
+        }),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.login');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+      await listener?.(credentials);
+      await Promise.resolve();
+
+      expect(result.success).toBe(true);
+      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', credentials);
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('still invalidates cache when OAuth token storage fails in the async callback', async () => {
+      const credentialManager = {
+        storeOAuthTokens: mock(async () => {
+          throw new Error('token store failed');
+        }),
+      };
+      const bus = makeBus();
+      const repo = makeRepo();
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never,
+        bus as never,
+        repo as never
+      );
+      const credentials = {
+        type: 'oauth' as const,
+        accessToken: 'new-token',
+        refreshToken: 'refresh-token',
+      };
+      let listener: ((credentials: typeof credentials) => void | Promise<void>) | undefined;
+      const mockProvider = createMockProvider({
+        onCredentialsChanged: mock((handler) => {
+          listener = handler as typeof listener;
+          return () => {
+            listener = undefined;
+          };
+        }),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.login');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+      };
+      await listener?.(credentials);
+      await Promise.resolve();
+
+      expect(result.success).toBe(true);
+      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', credentials);
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns error when direct OAuth credential storage fails', async () => {
+      const credentialManager = {
+        storeOAuthTokens: mock(async () => {
+          throw new Error('token store failed');
+        }),
+      };
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never
+      );
+      const mockProvider = createMockProvider({
+        onCredentialsChanged: undefined,
+        getCredentials: mock(() => ({
+          type: 'oauth' as const,
+          accessToken: 'new-token',
+          refreshToken: 'refresh-token',
+        })),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.login');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('token store failed');
+      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', {
+        type: 'oauth',
+        accessToken: 'new-token',
+        refreshToken: 'refresh-token',
+      });
+    });
   });
 
   describe('auth.logout', () => {
@@ -613,16 +782,22 @@ describe('Auth RPC Handlers', () => {
         removeCredentials: mock(async () => {}),
         hasEnvironmentCredentials: mock(() => false),
       };
+      const bus = makeBus();
+      const repo = makeRepo();
       setupAuthHandlers(
         messageHubData.hub,
         mockAuthManager as unknown as AuthManager,
-        credentialManager as never
+        credentialManager as never,
+        bus as never,
+        repo as never
       );
       const mockProvider = createMockProvider({
         logout: mock(async () => {
-          throw new Error(
+          const error = new Error(
             'GitHub Copilot credentials are managed by the COPILOT_GITHUB_TOKEN environment variable. Remove that source to log out.'
           );
+          (error as Error & { logoutRefused?: boolean }).logoutRefused = true;
+          throw error;
         }),
       });
       registry.register(mockProvider);
@@ -638,6 +813,11 @@ describe('Auth RPC Handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('COPILOT_GITHUB_TOKEN');
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(repo.getProviderByProviderId).toHaveBeenCalledWith('test-provider');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
     });
 
     it('surfaces keychain guidance when locked-read returns null and provider has no logout', async () => {
@@ -1032,6 +1212,136 @@ describe('Auth RPC Handlers', () => {
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
     });
 
+    it('strips persisted discovery when refresh failure leaves no credentials', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+      };
+      const bus = makeBus();
+      const repo = makeRepo();
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never,
+        bus as never,
+        repo as never
+      );
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => null),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(repo.getProviderByProviderId).toHaveBeenCalledWith('test-provider');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('strips persisted discovery when refresh read of stored credentials fails', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+        getCredentials: mock(async () => {
+          throw new Error('corrupt row');
+        }),
+      };
+      const bus = makeBus();
+      const repo = makeRepo();
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never,
+        bus as never,
+        repo as never
+      );
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => null),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(repo.getProviderByProviderId).toHaveBeenCalledWith('test-provider');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('strips persisted discovery when refresh failure swaps OAuth identity', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+        storeOAuthTokens: mock(async () => {}),
+      };
+      const bus = makeBus();
+      const repo = makeRepo();
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never,
+        bus as never,
+        repo as never
+      );
+      const previousCredentials = {
+        type: 'oauth' as const,
+        accessToken: 'previous-token',
+        refreshToken: 'previous-refresh',
+      };
+      const replacementCredentials = {
+        type: 'oauth' as const,
+        accessToken: 'replacement-token',
+        refreshToken: 'replacement-refresh',
+      };
+      let calls = 0;
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => {
+          calls += 1;
+          return calls === 1 ? previousCredentials : replacementCredentials;
+        }),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(credentialManager.storeOAuthTokens).toHaveBeenCalledWith('test-provider', {
+        type: 'oauth',
+        accessToken: 'replacement-token',
+        refreshToken: 'replacement-refresh',
+      });
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
     it('restores credential store row on transient refresh failure', async () => {
       const credentialManager = {
         removeCredentials: mock(async () => {}),
@@ -1074,10 +1384,14 @@ describe('Auth RPC Handlers', () => {
         }),
         storeOAuthTokens: mock(async () => {}),
       };
+      const bus = makeBus();
+      const repo = makeRepo();
       setupAuthHandlers(
         messageHubData.hub,
         mockAuthManager as unknown as AuthManager,
-        credentialManager as never
+        credentialManager as never,
+        bus as never,
+        repo as never
       );
       const mockProvider = createMockProvider({
         refreshToken: mock(async () => false),
@@ -1100,6 +1414,52 @@ describe('Auth RPC Handlers', () => {
       expect(result.error).toContain('security unlock-keychain');
       expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
       expect(credentialManager.storeOAuthTokens).not.toHaveBeenCalled();
+      expect(repo.getProviderByProviderId).toHaveBeenCalledWith('test-provider');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('strips persisted discovery when refresh getCredentials throws after cleanup', async () => {
+      const credentialManager = {
+        removeCredentials: mock(async () => {}),
+        storeOAuthTokens: mock(async () => {}),
+      };
+      const bus = makeBus();
+      const repo = makeRepo();
+      setupAuthHandlers(
+        messageHubData.hub,
+        mockAuthManager as unknown as AuthManager,
+        credentialManager as never,
+        bus as never,
+        repo as never
+      );
+      const mockProvider = createMockProvider({
+        refreshToken: mock(async () => false),
+        getCredentials: mock(async () => {
+          throw new Error('credential store unreachable');
+        }),
+      });
+      registry.register(mockProvider);
+
+      const handler = messageHubData.handlers.get('auth.refresh');
+      expect(handler).toBeDefined();
+
+      const result = (await handler!({ providerId: 'test-provider' }, {})) as {
+        success: boolean;
+        error?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('credential store unreachable');
+      expect(credentialManager.removeCredentials).toHaveBeenCalledWith('test-provider');
+      expect(credentialManager.storeOAuthTokens).not.toHaveBeenCalled();
+      expect(repo.getProviderByProviderId).toHaveBeenCalledWith('test-provider');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
     });
 
     it('handles refresh token errors', async () => {
@@ -1120,6 +1480,57 @@ describe('Auth RPC Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Token refresh failed');
+    });
+  });
+
+  describe('clearCacheAndNotifyProvidersChanged', () => {
+    it('strips persisted discovery and updates the provider row', async () => {
+      const bus = makeBus();
+      const repo = makeRepo();
+      await clearCacheAndNotifyProvidersChanged(bus as never, 'test-provider', repo);
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips update when the saved config has no discovery to strip', async () => {
+      const bus = makeBus();
+      const repo = makeRepo(JSON.stringify({ command: 'test-command' }));
+      await clearCacheAndNotifyProvidersChanged(bus as never, 'test-provider', repo);
+      expect(repo.updateProvider).not.toHaveBeenCalled();
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates providerRepo update failure and still invalidates cache and publishes', async () => {
+      const bus = makeBus();
+      const repo = makeRepo(baseConfigJson, true);
+      await expect(
+        clearCacheAndNotifyProvidersChanged(bus as never, 'test-provider', repo)
+      ).rejects.toThrow('db write failed');
+      expect(repo.updateProvider).toHaveBeenCalledWith('provider-uuid', {
+        configJson: strippedConfigJson,
+      });
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates providerRepo read failure and still invalidates cache and publishes', async () => {
+      const bus = makeBus();
+      const repo = makeRepo(baseConfigJson, false, true);
+      await expect(
+        clearCacheAndNotifyProvidersChanged(bus as never, 'test-provider', repo)
+      ).rejects.toThrow('db read failed');
+      expect(repo.updateProvider).not.toHaveBeenCalled();
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not write when stripPersisted is false', async () => {
+      const bus = makeBus();
+      const repo = makeRepo();
+      await clearCacheAndNotifyProvidersChanged(bus as never, 'test-provider', repo, false);
+      expect(repo.getProviderByProviderId).not.toHaveBeenCalled();
+      expect(repo.updateProvider).not.toHaveBeenCalled();
+      expect(bus.publishAsync).toHaveBeenCalledTimes(1);
     });
   });
 });

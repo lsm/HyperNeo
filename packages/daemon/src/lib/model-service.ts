@@ -363,7 +363,7 @@ function shouldWaitForOptionalProviders(registry = getProviderRegistry()): boole
   return process.env.NODE_ENV !== 'test' || registry.has('anthropic-copilot');
 }
 
-interface ProviderLoadFailure {
+export interface ProviderLoadFailure {
   readonly providerId: string;
   readonly errorKind: ProviderFailureErrorKind;
   readonly message: string;
@@ -403,7 +403,7 @@ function pruneSupersededProviders(result: ModelsLoadResult): ModelsLoadResult {
   };
 }
 
-type ProviderModelLoadResult =
+export type ProviderModelLoadResult =
   | { status: 'loaded'; models: ModelInfo[] }
   | { status: 'unavailable'; models: ModelInfo[] }
   | { status: 'failed'; models: ModelInfo[]; error?: unknown };
@@ -1201,6 +1201,12 @@ export async function initializeModels(): Promise<void> {
   const cacheKey = 'global';
 
   if (modelsCache.has(cacheKey)) {
+    return;
+  }
+
+  const inProgress = refreshInProgress.get(cacheKey);
+  if (inProgress) {
+    await inProgress.catch(() => {});
     return;
   }
 

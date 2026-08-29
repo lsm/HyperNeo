@@ -496,7 +496,7 @@ describe('voice RPC handlers', () => {
 
     await expect(
       handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
-    ).rejects.toThrow('Invalid model');
+    ).rejects.toThrow('Invalid model (failed with HTTP 400)');
   });
 
   it('normalizes arbitrary local server errors', async () => {
@@ -506,7 +506,7 @@ describe('voice RPC handlers', () => {
 
     await expect(
       handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
-    ).rejects.toThrow('backend exploded');
+    ).rejects.toThrow('backend exploded (failed with HTTP 500)');
   });
 
   it('rejects concurrent transcription requests from the same client', async () => {
@@ -728,7 +728,11 @@ describe('voice RPC handlers', () => {
             timestamp: new Date().toISOString(),
           }
         )
-      ).rejects.toThrow('Voice transcription daemon-wide rate limit exceeded');
+      ).rejects.toThrow(
+        new Error(
+          'Voice transcription daemon-wide rate limit exceeded; please wait before trying again'
+        )
+      );
     } finally {
       Date.now = originalDateNow;
     }
@@ -977,7 +981,7 @@ describe('voice RPC handlers', () => {
     expect(fetchedUrl).toBe('http://[2606:4700:4700::1111]/v1/audio/transcriptions');
   });
 
-  it('times out transcription requests after 60 seconds', async () => {
+  it('times out transcription requests after 120 seconds', async () => {
     const abortFetch = (_init?: RequestInit) =>
       new Promise((_resolve, reject) => {
         const signal = _init?.signal;
@@ -1003,7 +1007,7 @@ describe('voice RPC handlers', () => {
     try {
       await expect(
         handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
-      ).rejects.toThrow('Voice transcription timed out after 60 seconds');
+      ).rejects.toThrow('Voice transcription timed out after 120 seconds');
     } finally {
       globalThis.setTimeout = originalSetTimeout;
       globalThis.clearTimeout = originalClearTimeout;
@@ -1036,5 +1040,65 @@ describe('voice RPC handlers', () => {
       'https://fcaster.example.com/v1/audio/transcriptions',
       expect.objectContaining({ method: 'POST' })
     );
+  });
+
+  it('rejects non-wav mime types before forwarding', async () => {
+    await expect(
+      handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/mp3' })
+    ).rejects.toThrow(new Error('Voice transcription requires audio/wav input'));
+  });
+
+  it('rejects too many transcription redirects', async () => {
+    globalThis.fetch = mock(
+      async () =>
+        new Response('', {
+          status: 307,
+          headers: { location: 'https://ai0:8090/v1/audio/transcriptions' },
+        })
+    ) as typeof fetch;
+
+    await expect(
+      handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
+    ).rejects.toThrow(new Error('Voice transcription redirected too many times'));
+  });
+
+  it('rejects invalid transcription redirects', async () => {
+    globalThis.fetch = mock(
+      async () => new Response('', { status: 307, headers: { location: 'http://[' } })
+    ) as typeof fetch;
+
+    await expect(
+      handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
+    ).rejects.toThrow(new Error('Voice transcription returned an invalid redirect'));
+  });
+
+  it('rejects transcription redirects with non-HTTP protocols', async () => {
+    globalThis.fetch = mock(
+      async () =>
+        new Response('', { status: 302, headers: { location: 'ftp://example.com/result' } })
+    ) as typeof fetch;
+
+    await expect(
+      handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
+    ).rejects.toThrow(new Error('Voice transcription redirect must use http:// or https://'));
+  });
+
+  it('rejects oversized transcription responses streamed without a content-length', async () => {
+    const oversized = new Uint8Array(256 * 1024 + 1);
+    globalThis.fetch = mock(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(oversized);
+              controller.close();
+            },
+          })
+        )
+    ) as typeof fetch;
+
+    await expect(
+      handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
+    ).rejects.toThrow(new Error('Voice transcription response exceeds the 256 KB limit'));
   });
 });

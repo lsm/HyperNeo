@@ -1,13 +1,4 @@
 import { describe, expect, it } from 'bun:test';
-import { formatExternalEventEssence } from '../../../../src/lib/external-events/event-essence.ts';
-import {
-  parseDeferredExternalEventText,
-  type ExternalEventEssenceEntry,
-} from '../../../../src/lib/external-events/deferred-event-digest.ts';
-import {
-  classifyExternalEventDirectSteer,
-  type DirectSteerEventClass,
-} from '../../../../src/lib/external-events/event-tiers.ts';
 import {
   classifyUrgency,
   type ExternalEventUrgency,
@@ -63,24 +54,11 @@ function publishedEvent(
   };
 }
 
-function essenceFromEvent(event: ExternalEventPublishedPayload): ExternalEventEssenceEntry {
-  const entry = parseDeferredExternalEventText(formatExternalEventEssence(event));
-  if (!entry || entry.kind !== 'event') {
-    throw new Error(`event did not round-trip to an essence: ${event.topic}`);
-  }
-  return entry.essence;
-}
-
 const DECISION_TABLE: Array<
-  [
-    suffix: string,
-    overrides: Record<string, unknown>,
-    expected: ExternalEventUrgency,
-    legacyClass?: DirectSteerEventClass,
-  ]
+  [suffix: string, overrides: Record<string, unknown>, expected: ExternalEventUrgency]
 > = [
-  ['review_submitted', { actor: 'reviewer', state: 'APPROVED' }, 'immediate', 'review'],
-  ['review_submitted', { actor: 'reviewer', state: 'CHANGES_REQUESTED' }, 'immediate', 'review'],
+  ['review_submitted', { actor: 'reviewer', state: 'APPROVED' }, 'immediate'],
+  ['review_submitted', { actor: 'reviewer', state: 'CHANGES_REQUESTED' }, 'immediate'],
   ['review_submitted', { actor: 'reviewer', state: 'COMMENTED' }, 'queued'],
   ['review_submitted', { actor: 'reviewer', state: 'PENDING' }, 'queued'],
   ['review_submitted', { actor: 'reviewer', state: 'approved' }, 'queued'],
@@ -89,30 +67,24 @@ const DECISION_TABLE: Array<
     'review_submitted',
     { actor: 'reviewer', state: 'APPROVED', conclusion: 'success' },
     'immediate',
-    'review',
   ],
-  ['review_comment_polled', { actor: 'codex[bot]', commentId: '4242' }, 'immediate', 'review'],
+  ['review_comment_polled', { actor: 'codex[bot]', commentId: '4242' }, 'immediate'],
   ['review_comment_polled', { actor: 'Codex[Bot]', commentId: '4242' }, 'queued'],
   ['review_comment_polled', { actor: 'alice', commentId: '4242' }, 'queued'],
   ['review_comment_polled', { commentId: '4242' }, 'queued'],
-  [
-    'review_comment_polled',
-    { actor: 'codex[bot]', state: 'CHANGES_REQUESTED' },
-    'immediate',
-    'review',
-  ],
-  ['check_failed', { checkName: 'CI', conclusion: 'failure' }, 'immediate', 'check'],
-  ['check_failed', { checkName: 'CI', conclusion: 'timed_out' }, 'immediate', 'check'],
-  ['check_failed', { checkName: 'CI', conclusion: 'startup_failure' }, 'immediate', 'check'],
-  ['check_failed', { checkName: 'CI', conclusion: 'Failure' }, 'immediate', 'check'],
-  ['check_failed', { checkName: 'CI' }, 'immediate', 'check'],
+  ['review_comment_polled', { actor: 'codex[bot]', state: 'CHANGES_REQUESTED' }, 'immediate'],
+  ['check_failed', { checkName: 'CI', conclusion: 'failure' }, 'immediate'],
+  ['check_failed', { checkName: 'CI', conclusion: 'timed_out' }, 'immediate'],
+  ['check_failed', { checkName: 'CI', conclusion: 'startup_failure' }, 'immediate'],
+  ['check_failed', { checkName: 'CI', conclusion: 'Failure' }, 'immediate'],
+  ['check_failed', { checkName: 'CI' }, 'immediate'],
   ['check_failed', { checkName: 'CI', conclusion: 'cancelled' }, 'queued'],
   ['check_failed', { checkName: 'CI', conclusion: 'canceled' }, 'queued'],
   ['check_failed', { checkName: 'CI', conclusion: 'skipped' }, 'queued'],
   ['check_failed', { checkName: 'CI', conclusion: 'success' }, 'queued'],
   ['check_failed', { checkName: 'CI', conclusion: 'neutral' }, 'queued'],
-  ['merge_conflict', { state: 'conflicting' }, 'immediate', 'merge_conflict'],
-  ['merge_conflict', { state: 'clean' }, 'immediate', 'merge_conflict'],
+  ['merge_conflict', { state: 'conflicting' }, 'immediate'],
+  ['merge_conflict', { state: 'clean' }, 'immediate'],
   ['merge_conflict_resolved', { state: 'clean' }, 'queued'],
   ['review_comment_created', { actor: 'codex[bot]', commentId: '4242' }, 'queued'],
   ['comment_polled', { actor: 'alice', commentId: '101' }, 'queued'],
@@ -126,26 +98,20 @@ const DECISION_TABLE: Array<
   ['made_up_suffix', { actor: 'alice' }, 'queued'],
 ];
 
-describe('classifyUrgency — decision table pinned to the legacy direct-steer classifier', () => {
-  for (const [suffix, overrides, expected, legacyClass] of DECISION_TABLE) {
+describe('classifyUrgency — decision table', () => {
+  for (const [suffix, overrides, expected] of DECISION_TABLE) {
     const spec = Object.entries(overrides)
       .map(([field, value]) => `${field}=${String(value)}`)
       .join(' ');
     it(`${suffix}${spec ? ` ${spec}` : ''} → ${expected}`, () => {
       const event = publishedEvent(`${PR_TOPIC}.${suffix}`, overrides);
       expect(classifyUrgency(event)).toBe(expected);
-      const legacy = classifyExternalEventDirectSteer(essenceFromEvent(event));
-      expect(legacy !== null).toBe(expected === 'immediate');
-      if (expected === 'immediate') {
-        expect(legacy).toBe(legacyClass);
-      }
     });
   }
 
   it('topic without a suffix dot → queued', () => {
     const event = publishedEvent('weird-topic-without-suffix', { actor: 'alice' });
     expect(classifyUrgency(event)).toBe('queued');
-    expect(classifyExternalEventDirectSteer(essenceFromEvent(event))).toBeNull();
   });
 
   it('non-string payload fields are never verdicts, bot logins, or conclusions', () => {
@@ -154,13 +120,11 @@ describe('classifyUrgency — decision table pinned to the legacy direct-steer c
       state: 42,
     });
     expect(classifyUrgency(numericState)).toBe('queued');
-    expect(classifyExternalEventDirectSteer(essenceFromEvent(numericState))).toBeNull();
 
     const objectActor = publishedEvent(`${PR_TOPIC}.review_comment_polled`, {
       actor: { login: 'codex[bot]' },
       commentId: '4242',
     });
     expect(classifyUrgency(objectActor)).toBe('queued');
-    expect(classifyExternalEventDirectSteer(essenceFromEvent(objectActor))).toBeNull();
   });
 });

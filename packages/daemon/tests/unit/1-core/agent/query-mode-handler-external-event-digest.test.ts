@@ -6,63 +6,12 @@ import {
   QueryModeHandler,
   type QueryModeHandlerContext,
 } from '../../../../src/lib/agent/query-mode-handler';
-import { formatExternalEventEssence } from '../../../../src/lib/external-events/event-essence';
-import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service';
 import type { RenderPendingDigestOutcome } from '../../../../src/lib/space/runtime/render-pending-digest-pipeline';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Logger } from '../../../../src/lib/logger';
 import type { Database } from '../../../../src/storage/database';
 
 const SESSION_ID = 'session-digest';
-
-function at(hour: number, minute = 0): number {
-  return Date.UTC(2026, 7, 23, hour, minute);
-}
-
-function essenceText(args: {
-  eventId: string;
-  topic: string;
-  eventType: string;
-  occurredAt: number;
-  actor?: string;
-  body?: string;
-  extra?: Record<string, unknown>;
-}): string {
-  const event: ExternalEventPublishedPayload = {
-    namespaceId: 'ns',
-    spaceId: 'space-1',
-    eventId: args.eventId,
-    source: 'github',
-    topic: args.topic,
-    dedupeKey: args.eventId,
-    summary: 'summary',
-    externalUrl: `https://github.com/lsm/HyperNeo/pull/2828#${args.eventId}`,
-    occurredAt: args.occurredAt,
-    ingestedAt: args.occurredAt,
-    payload: {
-      eventType: args.eventType,
-      action: 'polled',
-      actor: args.actor ?? 'codex[bot]',
-      repoOwner: 'lsm',
-      repoName: 'HyperNeo',
-      prNumber: 2828,
-      prUrl: 'https://github.com/lsm/HyperNeo/pull/2828',
-      body: args.body ?? '',
-      ...args.extra,
-    },
-  };
-  return formatExternalEventEssence(event);
-}
-
-function checkText(eventId: string, occurredAt: number): string {
-  return essenceText({
-    eventId,
-    topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
-    eventType: 'check_run',
-    occurredAt,
-    extra: { checkName: 'Build Binary (linux-x64)', conclusion: 'failure' },
-  });
-}
 
 function deferredRow(
   dbId: string,
@@ -190,58 +139,6 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
     else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = v2Previous;
   });
 
-  it('flushes a mixed deferred external-event backlog as one digest and keeps task input individual', async () => {
-    deferredRows = [
-      deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-      deferredRow('db-check-1', 'uuid-check-1', checkText('chk-1', at(15, 5))),
-      deferredRow('db-check-2', 'uuid-check-2', checkText('chk-2', at(16, 34))),
-      deferredRow(
-        'db-reaction-1',
-        'uuid-reaction-1',
-        essenceText({
-          eventId: 're-1',
-          topic: 'github/lsm/hyperneo/pull_request/2828.reaction_added',
-          eventType: 'reaction',
-          occurredAt: at(15, 10),
-          body: '👍',
-        })
-      ),
-    ];
-
-    const result = await handler.handleQueryTrigger({
-      deliverIndividually: true,
-      skipResetCoordination: true,
-    });
-
-    expect(result.success).toBe(true);
-
-    expect(savedRows).toHaveLength(1);
-    expect(savedRows[0]?.sendStatus).toBe('enqueued');
-    const digestText =
-      (savedRows[0]?.message.message?.content as Array<{ type: string; text?: string }>)[0]?.text ??
-      '';
-    expect(digestText).toContain('External events while you were working (3 events, PR #2828):');
-    expect(digestText).toContain('CI check "Build Binary (linux-x64)": failure ×2');
-    expect(digestText).toContain('latest 16:34 UTC');
-    expect(digestText).toContain('Reactions on PR #2828: ×1');
-
-    expect(statusUpdates).toContainEqual({
-      dbIds: ['db-check-1', 'db-check-2', 'db-reaction-1'],
-      status: 'consumed',
-    });
-    expect(published).toContainEqual({
-      messageIds: ['db-check-1', 'db-check-2', 'db-reaction-1'],
-      status: 'consumed',
-    });
-
-    expect(enqueued).toHaveLength(2);
-    expect(enqueued[0]?.uuid).toBe('uuid-task');
-    expect(enqueued[0]?.content).toBe('─── Message from coder ───');
-    const digestDelivery = enqueued[1]!;
-    expect(digestDelivery.uuid).toBe(savedRows[0]?.message.uuid);
-    expect(String(digestDelivery.content)).toContain('(3 events, PR #2828):');
-  });
-
   it('delivers a subsequent normal deferred message individually without a digest', async () => {
     deferredRows = [deferredRow('db-human', 'uuid-human', 'a human follow-up')];
 
@@ -257,68 +154,12 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
     expect(enqueued[0]?.uuid).toBe('uuid-human');
   });
 
-  it('does not fold the excluded in-flight message even when it is an external event', async () => {
-    deferredRows = [
-      deferredRow('db-kept', 'uuid-kept', checkText('chk-kept', at(15))),
-      deferredRow('db-current', 'uuid-current', checkText('chk-current', at(16))),
-    ];
-
-    const result = await handler.handleQueryTrigger({
-      deliverIndividually: true,
-      excludeMessageUuid: 'uuid-current',
-      skipResetCoordination: true,
-    });
-
-    expect(result.success).toBe(true);
-    expect(savedRows).toHaveLength(1);
-    expect(statusUpdates).toContainEqual({ dbIds: ['db-kept'], status: 'consumed' });
-    expect(statusUpdates.some((update) => update.dbIds.includes('db-current'))).toBe(false);
-  });
-
-  it('folds an early-overflow envelope row into the turn-end digest', async () => {
-    const envelope = JSON.stringify({
-      type: 'external_event_digest',
-      events: [
-        {
-          eventId: 'env-1',
-          topic: 'github/lsm/hyperneo/pull_request/2828.check_failed',
-          repo: 'lsm/HyperNeo',
-          prNumber: 2828,
-          checkName: 'Build Binary (linux-x64)',
-          conclusion: 'failure',
-        },
-      ],
-    });
-    deferredRows = [
-      deferredRow('db-envelope', 'uuid-envelope', envelope),
-      deferredRow('db-fresh', 'uuid-fresh', checkText('chk-fresh', at(16, 34))),
-    ];
-
-    const result = await handler.handleQueryTrigger({ skipResetCoordination: true });
-
-    expect(result.success).toBe(true);
-    expect(savedRows).toHaveLength(1);
-    const digestText =
-      (savedRows[0]?.message.message?.content as Array<{ type: string; text?: string }>)[0]?.text ??
-      '';
-    expect(digestText).toContain('(2 events, PR #2828):');
-    expect(digestText).toContain('failure ×2');
-    expect(statusUpdates).toContainEqual({
-      dbIds: ['db-envelope', 'db-fresh'],
-      status: 'consumed',
-    });
-  });
-
-  describe('events delivery v2 turn-end digest pull', () => {
-    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
-    let previousFlag: string | undefined;
+  describe('turn-end digest pull', () => {
     let pullCalls: string[];
     let pullError: Error | null;
     let pullImpl: () => Promise<RenderPendingDigestOutcome>;
 
     beforeEach(() => {
-      previousFlag = process.env[FLAG_ENV];
-      process.env[FLAG_ENV] = '1';
       pullCalls = [];
       pullError = null;
       pullImpl = async () => {
@@ -346,15 +187,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       };
     });
 
-    afterEach(() => {
-      if (previousFlag === undefined) {
-        delete process.env[FLAG_ENV];
-      } else {
-        process.env[FLAG_ENV] = previousFlag;
-      }
-    });
-
-    it('flag on: appends the pulled digest to the flush batch without touching the task input', async () => {
+    it('appends the pulled digest to the flush batch without touching the task input', async () => {
       deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
 
       const result = await handler.handleQueryTrigger({
@@ -374,7 +207,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       expect(String(digestDelivery.content)).toContain('(2 events, PR #2828):');
     });
 
-    it('flag on: a failing digest pull logs and flushes without the digest', async () => {
+    it('a failing digest pull logs and flushes without the digest', async () => {
       pullError = new Error('ledger unavailable');
       deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
 
@@ -392,7 +225,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       expect(enqueued[0]?.uuid).toBe('uuid-task');
     });
 
-    it('flag on: a failed digest-pull outcome logs and flushes without the digest', async () => {
+    it('a failed digest-pull outcome logs and flushes without the digest', async () => {
       pullImpl = async () => ({
         action: 'failed',
         stage: 'markDeliveries',
@@ -414,61 +247,12 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       expect(enqueued[0]?.uuid).toBe('uuid-task');
     });
 
-    it('flag off: the turn-end flush never asks for a pending digest', async () => {
-      process.env[FLAG_ENV] = '0';
-      deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
-
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
-
-      expect(result.success).toBe(true);
-      expect(pullCalls).toHaveLength(0);
-      expect(enqueued).toHaveLength(1);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
-    });
-  });
-
-  describe('flag-off persisted digest reconcile', () => {
-    const FLAG_ENV = 'HYPERNEO_EXTERNAL_EVENT_DELIVERY_V2';
-    let previousFlag: string | undefined;
-    let reconcileCalls: Array<{ sessionId: string; taskId?: string }>;
-    let reconcileError: Error | null;
-    let reconcileImpl: (() => void) | null;
-    let reconcileVerified: boolean;
-
-    beforeEach(() => {
-      previousFlag = process.env[FLAG_ENV];
-      process.env[FLAG_ENV] = '0';
-      reconcileCalls = [];
-      reconcileError = null;
-      reconcileImpl = null;
-      reconcileVerified = true;
-      handlerContext.reconcilePersistedDigestRows = (sessionId, taskId) => {
-        reconcileCalls.push({ sessionId, taskId });
-        if (reconcileError) throw reconcileError;
-        reconcileImpl?.();
-        return reconcileVerified;
-      };
-    });
-
-    afterEach(() => {
-      if (previousFlag === undefined) {
-        delete process.env[FLAG_ENV];
-      } else {
-        process.env[FLAG_ENV] = previousFlag;
-      }
-    });
-
-    it('flag off: a digest row quarantined by the reconcile bridge is not delivered', async () => {
+    it('a null digest-pull result excludes deterministic digest rows from the flush', async () => {
+      pullImpl = async () => null as unknown as RenderPendingDigestOutcome;
       deferredRows = [
         deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        deferredRow('db-digest-stranded', 'digest-stranded-0001', 'stale digest text'),
+        deferredRow('db-digest', 'digest-00000000-0000-0000-0000-000000000000', 'stale digest'),
       ];
-      reconcileImpl = () => {
-        deferredRows = deferredRows.filter((row) => row.dbId !== 'db-digest-stranded');
-      };
 
       const result = await handler.handleQueryTrigger({
         deliverIndividually: true,
@@ -477,19 +261,26 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(1);
-      expect(reconcileCalls).toEqual([{ sessionId: SESSION_ID, taskId: undefined }]);
+      expect(warnMessages.some((message) => String(message).includes('unavailable'))).toBe(true);
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]?.uuid).toBe('uuid-task');
     });
 
-    it('flag off: an owed digest row that survives the reconcile is delivered by the flush', async () => {
+    it('a delivered outcome only flushes its certified digest row', async () => {
+      pullImpl = async () => ({
+        action: 'delivered',
+        uuid: 'digest-certified-0001',
+        dbId: 'db-certified',
+        text: 'certified digest',
+        eventIds: [],
+        deliveryKeys: [],
+        replayed: false,
+        taskId: 'task-certified',
+      });
       deferredRows = [
         deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        deferredRow(
-          'db-digest-owed',
-          'digest-owed-0002',
-          'External events while you were working (2 events, PR #2828):'
-        ),
+        deferredRow('db-certified', 'digest-certified-0001', 'certified digest'),
+        deferredRow('db-stale', 'digest-stale-0002', 'stale digest'),
       ];
 
       const result = await handler.handleQueryTrigger({
@@ -499,19 +290,67 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(2);
-      expect(reconcileCalls).toHaveLength(1);
       expect(enqueued).toHaveLength(2);
       expect(enqueued[0]?.uuid).toBe('uuid-task');
-      const digestDelivery = enqueued[1]!;
-      expect(digestDelivery.uuid).toBe('digest-owed-0002');
-      expect(String(digestDelivery.content)).toContain('(2 events, PR #2828):');
+      expect(enqueued[1]?.uuid).toBe('digest-certified-0001');
     });
 
-    it('flag off: a failing reconcile excludes digest rows so the digest and the events are not both delivered', async () => {
-      reconcileError = new Error('ledger locked');
+    it('a safe skip outcome flushes deferred digest rows', async () => {
+      pullImpl = async () => ({ action: 'skip', reason: 'no_pending_events' });
       deferredRows = [
         deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        deferredRow('db-digest-x', 'digest-x-0003', 'stale digest text'),
+        deferredRow('db-digest', 'digest-owed-0003', 'owed digest'),
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(2);
+      expect(enqueued).toHaveLength(2);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      expect(enqueued[1]?.uuid).toBe('digest-owed-0003');
+    });
+
+    it('a safe skip scopes flushed digest rows to the admitted task', async () => {
+      pullImpl = async () => ({ action: 'skip', reason: 'no_pending_events' });
+      (handlerContext.session as { context?: { taskId?: string } }).context = {
+        taskId: 'task-admitted',
+      };
+      const scoped = deferredRow('db-scoped', 'digest-scoped-0005', 'scoped digest');
+      (scoped as { externalEventTaskId?: string }).externalEventTaskId = 'task-admitted';
+      const otherTask = deferredRow('db-other', 'digest-other-0006', 'other task digest');
+      (otherTask as { externalEventTaskId?: string }).externalEventTaskId = 'task-other';
+      const legacy = deferredRow('db-legacy', 'digest-legacy-0007', 'legacy digest');
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        scoped,
+        otherTask,
+        legacy,
+      ];
+
+      const result = await handler.handleQueryTrigger({
+        deliverIndividually: true,
+        skipResetCoordination: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.messageCount).toBe(2);
+      expect(enqueued).toHaveLength(2);
+      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      expect(enqueued[1]?.uuid).toBe('digest-scoped-0005');
+    });
+
+    it('an unsafe skip outcome excludes deterministic digest rows', async () => {
+      pullImpl = async () => ({
+        action: 'skip',
+        reason: 'session_interrupted',
+      });
+      deferredRows = [
+        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
+        deferredRow('db-digest', 'digest-00000000-0000-0000-0000-000000000000', 'stale digest'),
       ];
 
       const result = await handler.handleQueryTrigger({
@@ -521,18 +360,21 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(1);
-      expect(
-        warnMessages.some((message) => String(message).includes('flag-off digest reconcile failed'))
-      ).toBe(true);
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]?.uuid).toBe('uuid-task');
     });
 
-    it('flag off: an unverifiable reconcile excludes digest rows and leaves them deferred', async () => {
-      reconcileVerified = false;
+    it('a held outcome excludes deterministic digest rows', async () => {
+      pullImpl = async () => ({
+        action: 'held',
+        reason: 'append_error',
+        uuid: 'digest-held-0004',
+        dbId: 'db-held',
+        error: new Error('mailbox full'),
+      });
       deferredRows = [
         deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        deferredRow('db-digest-u', 'digest-u-0005', 'owed digest text'),
+        deferredRow('db-digest', 'digest-held-0004', 'held digest text'),
       ];
 
       const result = await handler.handleQueryTrigger({
@@ -542,42 +384,6 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(1);
-      expect(reconcileCalls).toHaveLength(1);
-      expect(enqueued).toHaveLength(1);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
-      expect(statusUpdates.some((update) => update.dbIds.includes('db-digest-u'))).toBe(false);
-    });
-
-    it('flag off: without a reconcile bridge the flush excludes digest rows it cannot verify', async () => {
-      handlerContext.reconcilePersistedDigestRows = undefined;
-      deferredRows = [
-        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        deferredRow('db-digest-y', 'digest-y-0004', 'stale digest text'),
-      ];
-
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.messageCount).toBe(1);
-      expect(reconcileCalls).toHaveLength(0);
-      expect(enqueued).toHaveLength(1);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
-    });
-
-    it('flag on: the reconcile bridge is never consulted', async () => {
-      process.env[FLAG_ENV] = '1';
-      deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
-
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
-
-      expect(result.success).toBe(true);
-      expect(reconcileCalls).toHaveLength(0);
       expect(enqueued).toHaveLength(1);
       expect(enqueued[0]?.uuid).toBe('uuid-task');
     });

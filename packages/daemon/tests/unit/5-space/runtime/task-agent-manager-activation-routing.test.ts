@@ -16,6 +16,7 @@ interface ActivationRoutingHarness {
   updates: Array<{ id: string; params: unknown }>;
   activationCalls: () => number;
   spawnCalls: () => number;
+  requeuedRunIds: () => string[];
 }
 
 function makeManager(input: {
@@ -45,9 +46,15 @@ function makeManager(input: {
   const updates: Array<{ id: string; params: unknown }> = [];
   let activationCalls = 0;
   let spawnCalls = 0;
+  const requeuedRunIds: string[] = [];
   const manager = new TaskAgentManager({
     db: { getDatabase: () => db },
     internalEventBus: { subscribe: () => () => {} },
+    spaceRuntimeService: {
+      requeuePendingDeliveriesForRun: (runId: string) => {
+        requeuedRunIds.push(runId);
+      },
+    },
     taskRepo: { getTask: () => task },
     workflowRunRepo: { getRun: () => run },
     spaceWorkflowManager: { getWorkflowForRun: () => workflow },
@@ -87,6 +94,7 @@ function makeManager(input: {
     updates,
     activationCalls: () => activationCalls,
     spawnCalls: () => spawnCalls,
+    requeuedRunIds: () => requeuedRunIds,
   };
 }
 
@@ -149,6 +157,7 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation routing',
     ]);
     expect(harness.activationCalls()).toBe(1);
     expect(harness.spawnCalls()).toBe(1);
+    expect(harness.requeuedRunIds()).toEqual([RUN_ID]);
   });
 
   test('a live session is reused before the node declaration lookup can throw', async () => {
@@ -168,6 +177,7 @@ describe('TaskAgentManager.activateTargetSessionsForMessage activation routing',
     expect(harness.updates).toEqual([]);
     expect(harness.activationCalls()).toBe(0);
     expect(harness.spawnCalls()).toBe(0);
+    expect(harness.requeuedRunIds()).toEqual([]);
   });
 
   test('a live session for an undeclared agent is still reused', async () => {

@@ -27,6 +27,7 @@ describe('InterruptHandler', () => {
   let queueSizeSpy: ReturnType<typeof mock>;
   let queueClearSpy: ReturnType<typeof mock>;
   let queueStopSpy: ReturnType<typeof mock>;
+  let queueNoteUserInterruptSpy: ReturnType<typeof mock>;
   let sdkInterruptSpy: ReturnType<typeof mock>;
   let sdkCancelAsyncMessageSpy: ReturnType<typeof mock>;
   let sdkCloseSpy: ReturnType<typeof mock>;
@@ -61,10 +62,12 @@ describe('InterruptHandler', () => {
     queueSizeSpy = mock(() => 0);
     queueClearSpy = mock(() => {});
     queueStopSpy = mock(() => {});
+    queueNoteUserInterruptSpy = mock(() => {});
     mockMessageQueue = {
       size: queueSizeSpy,
       clear: queueClearSpy,
       stop: queueStopSpy,
+      noteUserInterrupt: queueNoteUserInterruptSpy,
     } as unknown as MessageQueue;
 
     setInterruptedSpy = mock(async () => {});
@@ -150,6 +153,80 @@ describe('InterruptHandler', () => {
     it('should return null when no interrupt is in progress', () => {
       handler = createHandler();
       expect(handler.getInterruptPromise()).toBeNull();
+    });
+  });
+
+  describe('isInterruptRequested', () => {
+    it('marks the interrupt as requested synchronously before the first await', async () => {
+      let releaseInterrupted!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseInterrupted = resolve;
+      });
+      setInterruptedSpy.mockImplementation(() => gate);
+      handler = createHandler();
+
+      const pending = handler.handleInterrupt();
+      expect(handler.isInterruptRequested()).toBe(true);
+
+      releaseInterrupted();
+      await pending;
+      expect(handler.isInterruptRequested()).toBe(false);
+      expect(handler.getInterruptPromise()).toBeNull();
+    });
+
+    it('clears the requested flag on the idle early-return path', async () => {
+      getStateSpy.mockReturnValue({ status: 'idle' });
+      handler = createHandler();
+
+      await handler.handleInterrupt();
+
+      expect(handler.isInterruptRequested()).toBe(false);
+    });
+
+    it('should note the user interrupt before the idle early-return', async () => {
+      getStateSpy.mockReturnValue({ status: 'idle', phase: 'idle' });
+      handler = createHandler();
+
+      await handler.handleInterrupt({ preserveDeliveryJobs: true });
+
+      expect(queueNoteUserInterruptSpy).toHaveBeenCalledTimes(1);
+      expect(setInterruptedSpy).not.toHaveBeenCalled();
+    });
+
+    it('clears the requested flag when delivery cancellation throws', async () => {
+      cancelForSessionSpy.mockImplementation(() => {
+        throw new Error('job queue unavailable');
+      });
+      handler = createHandler();
+
+      await expect(handler.handleInterrupt()).rejects.toThrow('job queue unavailable');
+
+      expect(handler.isInterruptRequested()).toBe(false);
+      expect(handler.getInterruptPromise()).toBeNull();
+    });
+
+    it('keeps the requested flag while an overlapping interrupt is still running', async () => {
+      let releaseFirst!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      setInterruptedSpy.mockImplementation(() => gate);
+      handler = createHandler();
+
+      const first = handler.handleInterrupt();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(setInterruptedSpy).toHaveBeenCalled();
+      expect(handler.isInterruptRequested()).toBe(true);
+
+      cancelForSessionSpy.mockImplementation(() => {
+        throw new Error('job queue unavailable');
+      });
+      await expect(handler.handleInterrupt()).rejects.toThrow('job queue unavailable');
+      expect(handler.isInterruptRequested()).toBe(true);
+
+      releaseFirst();
+      await first;
+      expect(handler.isInterruptRequested()).toBe(false);
     });
   });
 

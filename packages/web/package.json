@@ -43,6 +43,7 @@
     "@types/bun": "1.3.14",
     "@vitest/coverage-v8": "4.1.5",
     "@vitest/ui": "4.1.5",
+    "fake-indexeddb": "6.2.5",
     "happy-dom": "20.9.0",
     "tailwindcss": "4.2.4",
     "typescript": "6.0.3",

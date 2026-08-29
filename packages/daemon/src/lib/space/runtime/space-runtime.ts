@@ -21,7 +21,7 @@ import {
   MIN_SPACE_CONCURRENT_TASKS,
   resolveNodeAgents,
 } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKResultError, isSDKResultSuccess } from '@hyperneo/shared/sdk';
 import { deliverMessage } from '../../agent/message-delivery.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
@@ -42,11 +42,9 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { formatExternalEventEssence } from '../../external-events/event-essence.ts';
-import {
-  type ExternalEventPublishedPayload,
-  isExternalEventDeliveryV2Enabled,
-} from '../../external-events/external-event-service.ts';
+import { renderEventBlock } from '../../external-events/deferred-event-digest.ts';
+import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
+import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
 import { legacyGitHubTopic } from '../../external-events/github-subscription-pattern.ts';
 import { composeLongHorizonSubscriptionPattern } from '../../external-events/long-horizon-subscription-pattern.ts';
@@ -57,7 +55,11 @@ import {
 } from '../../external-events/queue-health-metrics.ts';
 import { TopicTrie } from '../../external-events/topic-trie.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
-import type { ExternalEvent } from '../../external-events/types.ts';
+import type {
+  ExternalEvent,
+  ExternalEventDeliveryRecord,
+  ExternalEventRecord,
+} from '../../external-events/types.ts';
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
 import type {
   DaemonInternalEventMap,
@@ -97,6 +99,7 @@ import {
   DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
   evaluateRequeueTaskLifecycle,
   isPublishedExternalEventExpired,
+  isQueuedExternalEventExpired,
   isWorkflowTargetOwnedBySpace,
   resolveCurrentQueueableOrActiveExecution,
   resolveSubscriptionTarget,
@@ -105,6 +108,15 @@ import {
   deliverImmediateEvent,
   type ImmediateEventDeliveryDeps,
 } from './immediate-event-delivery-pipeline.ts';
+import {
+  type RequeuePendingDeliveryDeps,
+  runRequeuePendingDelivery,
+} from './requeue-pending-delivery-pipeline.ts';
+import {
+  type RestoreIdleSessionsDeps,
+  type RestoreIdleSessionsOutcome,
+  runRestoreIdleSessions,
+} from './restore-idle-sessions-pipeline.ts';
 import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestDeps,
@@ -331,6 +343,7 @@ interface ExternalEventRateLimitState {
 interface DigestPullTriggerState {
   count: number;
   taskId?: string;
+  probe?: boolean;
   idleTimer: Timer | null;
   safetyTimer: Timer | null;
   countTimer: Timer | null;
@@ -368,6 +381,14 @@ interface TerminalErrorContinueState {
   lastRetriedErrorSignature: string | null;
   lastContinueAt: number | null;
   failedInjectionCount: number;
+}
+
+interface ReconciliationGate {
+  generation: number;
+  settled: boolean;
+  failed: boolean;
+  resolvers: Array<() => void>;
+  promise: Promise<void>;
 }
 
 const NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS = 60 * 1000;
@@ -660,9 +681,10 @@ export class SpaceRuntime {
   private readonly turnEndDigestRetryCounts = new Map<string, number>();
   private readonly digestHandoffRetryTimers = new Map<string, Timer>();
   private readonly digestHandoffRetryCounts = new Map<string, number>();
+  private readonly digestHandoffDebt = new Map<string, Set<string>>();
   private readonly digestSupersedeRetryTimers = new Map<string, Timer>();
   private readonly digestSupersedeRetryCounts = new Map<string, number>();
-  private readonly renderPendingDigestsInFlight = new Map<
+  private readonly renderPendingDigestQueues = new Map<
     string,
     Promise<RenderPendingDigestOutcome | null>
   >();
@@ -679,8 +701,58 @@ export class SpaceRuntime {
   private unsubscribeSpaceStopped?: () => void;
   private acceptingExternalEvents = false;
   private runtimeGeneration = 0;
-  private reconciliationDone = true;
+  private currentReconciliation: ReconciliationGate | null = null;
   private isStopped = false;
+
+  private createReconciliationGate(generation: number): ReconciliationGate {
+    const resolvers: Array<() => void> = [];
+    const promise = new Promise<void>((resolve) => resolvers.push(resolve));
+    return { generation, settled: false, failed: false, resolvers, promise };
+  }
+
+  private settleReconciliation(gate: ReconciliationGate, failed: boolean): void {
+    if (gate.settled) return;
+    gate.settled = true;
+    gate.failed = failed;
+    for (const resolve of gate.resolvers) resolve();
+    if (!failed && this.currentReconciliation === gate) {
+      this.currentReconciliation = null;
+    }
+  }
+
+  private settleCurrentReconciliation(failed: boolean): void {
+    if (this.currentReconciliation) {
+      this.settleReconciliation(this.currentReconciliation, failed);
+    }
+  }
+
+  private ensureReconciliationGate(): ReconciliationGate {
+    if (this.currentReconciliation && !this.currentReconciliation.settled) {
+      return this.currentReconciliation;
+    }
+    const generation = this.runtimeGeneration;
+    const gate = this.createReconciliationGate(generation);
+    this.currentReconciliation = gate;
+    return gate;
+  }
+
+  private addDigestHandoffDebt(sessionId: string, uuid: string): void {
+    const uuids = this.digestHandoffDebt.get(sessionId) ?? new Set<string>();
+    uuids.add(uuid);
+    this.digestHandoffDebt.set(sessionId, uuids);
+  }
+
+  private deleteDigestHandoffDebt(sessionId: string, uuid: string): void {
+    const uuids = this.digestHandoffDebt.get(sessionId);
+    if (!uuids) return;
+    uuids.delete(uuid);
+    if (uuids.size === 0) this.digestHandoffDebt.delete(sessionId);
+  }
+
+  private hasDigestHandoffDebt(sessionId: string, uuid: string): boolean {
+    return this.digestHandoffDebt.get(sessionId)?.has(uuid) ?? false;
+  }
+
   private pausedSpaceIds = new Set<string>();
   private externalEventHandlingDepth = 0;
   private retainedEventRedispatchPending = false;
@@ -702,9 +774,13 @@ export class SpaceRuntime {
     this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
     this.subscribeExternalEventPublished();
     this.subscribeSdkToolUseCreated();
-    this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
-      this.onSpaceResumed(spaceId)
-    );
+    this.unsubscribeSpaceResumed = this.config.spaceManager.onSpaceResumedRegister?.((spaceId) => {
+      void this.onSpaceResumed(spaceId).catch((err: unknown) => {
+        log.warn(
+          `SpaceRuntime: space resume handling failed for ${spaceId}: ${formatCommandError(err)}`
+        );
+      });
+    });
     this.unsubscribeSpacePaused = this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
       this.pausedSpaceIds.add(spaceId);
     });
@@ -1449,9 +1525,7 @@ export class SpaceRuntime {
       await this.deliverToLongHorizonAgent(target, payload, deliveryKey);
     }
 
-    const immediateRecord = isExternalEventDeliveryV2Enabled()
-      ? store.getById(payload.eventId)
-      : null;
+    const immediateRecord = store.getById(payload.eventId);
     const routeImmediateTier = immediateRecord?.event.urgency === 'immediate';
 
     for (const { target, deliveryKey } of workflowDeliveries.values()) {
@@ -1560,17 +1634,14 @@ export class SpaceRuntime {
     this.turnEndDigestRetryCounts.set(sessionId, attempts);
     const timer = setTimeout(() => {
       this.turnEndDigestRetryTimers.delete(sessionId);
-      if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+      if (this.isStopped) return;
       if (!this.isTargetSessionLive(sessionId)) {
         this.turnEndDigestRetryCounts.delete(sessionId);
         return;
       }
-      void this.renderPendingDigestForSession(sessionId, taskId)
-        .then((outcome) => {
-          if (outcome?.action === 'delivered') {
-            this.turnEndDigestRetryCounts.delete(sessionId);
-            this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
-          } else if (outcome?.action !== 'failed' && outcome?.action !== 'held') {
+      void this.renderPendingDigestScopesForSession(sessionId, taskId)
+        .then((outcomes) => {
+          if (!outcomes.some((outcome) => this.isDigestOutcomeRetryable(outcome))) {
             this.turnEndDigestRetryCounts.delete(sessionId);
           }
         })
@@ -1592,6 +1663,7 @@ export class SpaceRuntime {
       const role = deliverMessage(this.getJobQueueRepo(), sessionId, messageUuid, {
         origin: 'space_inject',
       });
+      this.deleteDigestHandoffDebt(sessionId, messageUuid);
       if (role !== 'turn') return;
       const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
       if (session?.stateManager) {
@@ -1617,14 +1689,16 @@ export class SpaceRuntime {
     const attempts = (this.digestHandoffRetryCounts.get(key) ?? 0) + 1;
     if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
       this.digestHandoffRetryCounts.delete(key);
+      this.addDigestHandoffDebt(sessionId, messageUuid);
       return;
     }
     this.digestHandoffRetryCounts.set(key, attempts);
     const timer = setTimeout(() => {
       this.digestHandoffRetryTimers.delete(key);
-      if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+      if (this.isStopped) return;
       if (!this.isTargetSessionLive(sessionId)) {
         this.digestHandoffRetryCounts.delete(key);
+        this.addDigestHandoffDebt(sessionId, messageUuid);
         return;
       }
       this.handoffDigestDelivery(sessionId, messageUuid, dbId);
@@ -1632,16 +1706,41 @@ export class SpaceRuntime {
     this.digestHandoffRetryTimers.set(key, timer);
   }
 
-  private scheduleDigestPullForSession(sessionId: string, taskId?: string): void {
-    if (!isExternalEventDeliveryV2Enabled() || this.isStopped || !sessionId) return;
-    const state = this.digestPullTriggers.get(sessionId) ?? {
+  private scheduleInterruptProbeForSession(sessionId: string, taskId?: string): void {
+    if (this.isStopped || !sessionId) return;
+    if (this.digestPullTriggers.has(sessionId)) return;
+    const idleMs = parsePositiveIntegerEnv(
+      'HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS',
+      30_000
+    );
+    this.digestPullTriggers.set(sessionId, {
       count: 0,
-      idleTimer: null,
+      taskId,
+      probe: true,
+      idleTimer: setTimeout(() => this.maybeFlushDigestOnIdle(sessionId), idleMs),
       safetyTimer: null,
       countTimer: null,
-    };
-    state.count += 1;
-    state.taskId = state.taskId ?? taskId;
+    });
+  }
+
+  private scheduleDigestPullForSession(sessionId: string, taskId?: string): void {
+    if (this.isStopped || !sessionId) return;
+    const existing = this.digestPullTriggers.get(sessionId);
+    const state: DigestPullTriggerState = existing
+      ? {
+          ...existing,
+          count: existing.count + 1,
+          probe: false,
+          taskId: existing.taskId ?? taskId,
+        }
+      : {
+          count: 1,
+          taskId,
+          probe: false,
+          idleTimer: null,
+          safetyTimer: null,
+          countTimer: null,
+        };
     this.digestPullTriggers.set(sessionId, state);
     if (state.idleTimer) {
       clearTimeout(state.idleTimer);
@@ -1677,11 +1776,14 @@ export class SpaceRuntime {
       clearTimeout(state.idleTimer);
       state.idleTimer = null;
     }
-    if (state.count === 0 || !isExternalEventDeliveryV2Enabled() || this.isStopped) {
+    if ((state.count === 0 && !state.probe) || this.isStopped) {
       this.clearDigestPullState(sessionId);
       return;
     }
-    if (!this.isTargetSessionLive(sessionId)) return;
+    if (!this.isTargetSessionLive(sessionId)) {
+      this.clearDigestPullState(sessionId);
+      return;
+    }
     if (this.hasUnconsumedDigestForSession(sessionId)) {
       const idleMs = parsePositiveIntegerEnv(
         'HYPERNEO_EXTERNAL_EVENT_DIGEST_IDLE_DEBOUNCE_MS',
@@ -1690,7 +1792,7 @@ export class SpaceRuntime {
       state.idleTimer = setTimeout(() => this.maybeFlushDigestOnIdle(sessionId), idleMs);
       return;
     }
-    void this.triggerDigestPullForSession(sessionId, 'idle');
+    this.triggerDigestPullForSession(sessionId, 'idle');
   }
 
   private hasUnconsumedDigestForSession(sessionId: string): boolean {
@@ -1699,34 +1801,98 @@ export class SpaceRuntime {
       DETERMINISTIC_DIGEST_UUID_PREFIX
     )) {
       const status = row.sendStatus;
-      if (status && status !== 'consumed' && status !== 'failed') return true;
+      if (!status || status === 'consumed' || status === 'failed') continue;
+      const uuid = String(row.uuid);
+      if (this.hasDigestHandoffDebt(sessionId, uuid)) continue;
+      const handoffKey = `${sessionId}:${uuid}`;
+      if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
+      return true;
     }
     return false;
   }
 
-  private async triggerDigestPullForSession(
+  private isDigestOutcomeRetryable(outcome: RenderPendingDigestOutcome | null): boolean {
+    return (
+      outcome?.action === 'failed' ||
+      outcome?.action === 'held' ||
+      (outcome?.action === 'skip' &&
+        (outcome.reason === 'session_interrupted' || outcome.heldDigestInFlight === true))
+    );
+  }
+
+  private listPendingDigestTaskScopes(
+    sessionId: string,
+    fallbackTaskId?: string
+  ): Array<string | undefined> {
+    const store = this.config.externalEventStore;
+    const execution = store ? this.config.nodeExecutionRepo.getByAgentSessionId(sessionId) : null;
+    if (!store || !execution) return [fallbackTaskId];
+    const taskIds = new Set<string>();
+    for (const row of store.listPendingDeliveries(execution.workflowRunId)) {
+      if (row.nodeId === execution.workflowNodeId && row.agentName === execution.agentName) {
+        taskIds.add(row.taskId);
+      }
+    }
+    if (taskIds.size === 0) return [fallbackTaskId];
+    const ordered: Array<string | undefined> = [];
+    if (fallbackTaskId !== undefined && taskIds.has(fallbackTaskId)) {
+      ordered.push(fallbackTaskId);
+      taskIds.delete(fallbackTaskId);
+    }
+    for (const taskId of taskIds) ordered.push(taskId);
+    return ordered;
+  }
+
+  private async renderPendingDigestScopesForSession(
+    sessionId: string,
+    fallbackTaskId?: string
+  ): Promise<Array<RenderPendingDigestOutcome | null>> {
+    const outcomes: Array<RenderPendingDigestOutcome | null> = [];
+    for (const scopeTaskId of this.listPendingDigestTaskScopes(sessionId, fallbackTaskId)) {
+      const outcome = await this.renderPendingDigestForSession(sessionId, scopeTaskId);
+      outcomes.push(outcome);
+      if (outcome?.action === 'delivered') {
+        this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
+      }
+    }
+    return outcomes;
+  }
+
+  private triggerDigestPullForSession(
     sessionId: string,
     trigger: 'count_cap' | 'idle' | 'safety'
-  ): Promise<void> {
+  ): void {
     const state = this.digestPullTriggers.get(sessionId);
     if (!state) return;
     this.clearDigestPullState(sessionId);
-    if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+    if (this.isStopped) return;
     if (!this.isTargetSessionLive(sessionId)) return;
-    try {
-      const outcome = await this.renderPendingDigestForSession(sessionId, state.taskId);
-      if (outcome?.action === 'delivered') {
-        this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
-      } else if (outcome?.action === 'failed' || outcome?.action === 'held') {
+    const generation = this.runtimeGeneration;
+    void this.renderPendingDigestScopesForSession(sessionId, state.taskId)
+      .then((outcomes) => {
+        if (outcomes.some((outcome) => this.isDigestOutcomeRetryable(outcome))) {
+          this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
+          return;
+        }
+        if (
+          outcomes.length > 0 &&
+          outcomes.every((outcome) => outcome === null) &&
+          (generation !== this.runtimeGeneration ||
+            this.currentReconciliation?.failed ||
+            (this.currentReconciliation && !this.currentReconciliation.settled)) &&
+          this.isTargetSessionLive(sessionId) &&
+          !this.isStopped
+        ) {
+          this.scheduleInterruptProbeForSession(sessionId, state.taskId);
+        }
+      })
+      .catch((error) => {
+        log.warn(
+          `SpaceRuntime: ${trigger} digest pull for session ${sessionId} failed: ` +
+            `${formatCommandError(error)}`
+        );
         this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
-      }
-    } catch (error) {
-      log.warn(
-        `SpaceRuntime: ${trigger} digest pull for session ${sessionId} failed: ` +
-          `${formatCommandError(error)}`
-      );
-      this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
-    }
+      });
   }
 
   private clearDigestPullState(sessionId: string): void {
@@ -1742,44 +1908,52 @@ export class SpaceRuntime {
     const rateLimitKey = this.buildRateLimitKey(target);
     const state = this.getExternalEventRateLimitState(rateLimitKey);
     const now = Date.now();
-    state.timestamps = state.timestamps.filter(
+    const timestamps = state.timestamps.filter(
       (timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
     );
-    state.timestamps.push(now);
+    timestamps.push(now);
+    this.externalEventRateLimits.set(rateLimitKey, { timestamps, cleanupTimer: null });
     this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
-    return state.timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN;
+    return timestamps.length <= EXTERNAL_EVENT_RATE_LIMIT_PER_MIN;
   }
 
   async renderPendingDigestForSession(
     sessionId: string,
     taskId?: string
   ): Promise<RenderPendingDigestOutcome | null> {
+    if (this.isStopped) return null;
+    for (;;) {
+      const gate = this.currentReconciliation;
+      if (!gate || gate.settled) break;
+      await gate.promise;
+      if (this.isStopped) return null;
+    }
+    if (this.currentReconciliation?.failed) return null;
     const store = this.config.externalEventStore;
     if (!store) return null;
-    const inFlight = this.renderPendingDigestsInFlight.get(sessionId);
-    if (inFlight) return inFlight;
-    const promise = this.renderPendingDigestForSessionInternal(sessionId, taskId);
-    this.renderPendingDigestsInFlight.set(sessionId, promise);
+    const generation = this.runtimeGeneration;
+    const previous = this.renderPendingDigestQueues.get(sessionId) ?? Promise.resolve(null);
+    const next = previous
+      .catch(() => null)
+      .then(() => this.renderPendingDigestForSessionInternal(sessionId, taskId, generation));
+    this.renderPendingDigestQueues.set(sessionId, next);
     try {
-      return await promise;
+      return await next;
     } finally {
-      this.renderPendingDigestsInFlight.delete(sessionId);
+      if (this.renderPendingDigestQueues.get(sessionId) === next) {
+        this.renderPendingDigestQueues.delete(sessionId);
+      }
     }
-  }
-
-  reconcilePersistedDigestRowsForSession(sessionId: string, taskId?: string): boolean {
-    const store = this.config.externalEventStore;
-    if (!store) return false;
-    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
-    if (!execution) return false;
-    this.dropUncoveredDeferredDigestRows(sessionId, store, taskId);
-    return true;
   }
 
   private async renderPendingDigestForSessionInternal(
     sessionId: string,
-    taskId?: string
+    taskId?: string,
+    generation?: number
   ): Promise<RenderPendingDigestOutcome | null> {
+    if (this.isStopped || (generation !== undefined && this.runtimeGeneration !== generation)) {
+      return null;
+    }
     const store = this.config.externalEventStore!;
     const messages = this.getSdkMessageRepo();
     const deps: RenderPendingDigestDeps = {
@@ -1809,6 +1983,8 @@ export class SpaceRuntime {
         );
         return !!current && current.agentSessionId === targetSessionId;
       },
+      isSessionInterruptInProgress: (targetSessionId) =>
+        this.isTargetSessionInterrupted(targetSessionId),
       isTaskAdmissible: (admissionTaskId) => {
         const task = this.config.taskRepo.getTask(admissionTaskId);
         return (
@@ -1829,8 +2005,6 @@ export class SpaceRuntime {
         const run = this.config.workflowRunRepo.getRun(workflowRunId);
         return !!run && this.pausedSpaceIds.has(run.spaceId);
       },
-      listUserMessagesByStatus: (targetSessionId, status) =>
-        messages.getUserMessagesByStatus(targetSessionId, status).messages,
       listUserMessagesByUuidPrefix: (targetSessionId, prefix) =>
         messages.listUserMessagesByUuidPrefix(targetSessionId, prefix),
       getDeliveryContent: (targetSessionId, uuid) =>
@@ -1862,12 +2036,21 @@ export class SpaceRuntime {
           const existing = messages.getMessageByStatusAndUuid(targetSessionId, status, uuid);
           if (existing) return { dbId: existing.dbId, replayed: true };
         }
-        const dbId = messages.saveUserMessage(targetSessionId, message, 'deferred', 'system');
+        const dbId = await Promise.resolve(
+          messages.saveUserMessage(targetSessionId, message, 'deferred', 'system')
+        );
         return { dbId, replayed: false };
       },
       reopenFailedDigest: (targetSessionId, uuid) => {
         const failedRow = messages.getMessageByStatusAndUuid(targetSessionId, 'failed', uuid);
         if (failedRow) messages.updateMessageStatus([failedRow.dbId], 'deferred');
+      },
+      deleteDigestMessage: (targetSessionId, dbId) => {
+        const row = messages.getMessageByStatusAndDbId(targetSessionId, 'deferred', dbId);
+        if (row && typeof row.uuid === 'string') {
+          this.deleteDigestHandoffDebt(targetSessionId, row.uuid);
+        }
+        messages.deletePendingUserMessage(targetSessionId, dbId, 'deferred');
       },
       appendDigest: async (targetSessionId, message) => {
         const row = messages.getDeliveryContent(targetSessionId, String(message.uuid));
@@ -1879,6 +2062,14 @@ export class SpaceRuntime {
     };
     try {
       const outcome = await runRenderPendingDigest(deps, { sessionId, taskId });
+      const staleLifetime =
+        this.isStopped || (generation !== undefined && this.runtimeGeneration !== generation);
+      if (staleLifetime && outcome.action !== 'delivered') {
+        return null;
+      }
+      if (staleLifetime) {
+        return outcome;
+      }
       if (outcome.action === 'delivered') {
         try {
           this.supersedeObsoleteDigestRows(
@@ -1886,7 +2077,7 @@ export class SpaceRuntime {
             store,
             outcome.uuid,
             outcome.eventIds,
-            taskId
+            outcome.taskId
           );
         } catch (cleanupError) {
           this.scheduleDigestSupersedeRetry(
@@ -1894,30 +2085,30 @@ export class SpaceRuntime {
             store,
             outcome.uuid,
             outcome.eventIds,
-            taskId
+            outcome.taskId
           );
           return { action: 'failed', stage: 'digestSupersede', error: cleanupError };
         }
       } else {
         try {
-          this.dropUncoveredDeferredDigestRows(sessionId, store, taskId);
+          this.dropUncoveredDeferredDigestRows(sessionId, store);
         } catch (cleanupError) {
           if (this.isTargetSessionLive(sessionId)) {
             this.scheduleTurnEndDigestRetry(sessionId, taskId);
           }
           return { action: 'failed', stage: 'digestCleanup', error: cleanupError };
         }
-        if (
-          (outcome.action === 'failed' || outcome.action === 'held') &&
-          this.isTargetSessionLive(sessionId)
-        ) {
+        if (this.isDigestOutcomeRetryable(outcome) && this.isTargetSessionLive(sessionId)) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);
+          if (outcome.action === 'skip' && outcome.reason === 'session_interrupted') {
+            this.scheduleInterruptProbeForSession(sessionId, taskId);
+          }
         }
       }
       return outcome;
     } catch (error) {
       try {
-        this.dropUncoveredDeferredDigestRows(sessionId, store, taskId);
+        this.dropUncoveredDeferredDigestRows(sessionId, store);
       } catch (cleanupError) {
         if (this.isTargetSessionLive(sessionId)) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);
@@ -1936,7 +2127,7 @@ export class SpaceRuntime {
     store: ExternalEventStore,
     deliveredUuid: string,
     deliveredEventIds: string[],
-    taskId?: string
+    currentTaskId?: string
   ): void {
     const key = `supersede:${sessionId}:${deliveredUuid}`;
     if (this.digestSupersedeRetryTimers.has(key)) return;
@@ -1948,14 +2139,14 @@ export class SpaceRuntime {
     this.digestSupersedeRetryCounts.set(key, attempts);
     const timer = setTimeout(() => {
       this.digestSupersedeRetryTimers.delete(key);
-      if (!isExternalEventDeliveryV2Enabled() || this.isStopped) return;
+      if (this.isStopped) return;
       try {
         this.supersedeObsoleteDigestRows(
           sessionId,
           store,
           deliveredUuid,
           deliveredEventIds,
-          taskId
+          currentTaskId
         );
       } catch (error) {
         this.scheduleDigestSupersedeRetry(
@@ -1963,7 +2154,7 @@ export class SpaceRuntime {
           store,
           deliveredUuid,
           deliveredEventIds,
-          taskId
+          currentTaskId
         );
         log.warn(
           `SpaceRuntime: turn-end digest supersede retry for session ${sessionId} failed: ` +
@@ -1974,27 +2165,27 @@ export class SpaceRuntime {
     this.digestSupersedeRetryTimers.set(key, timer);
   }
 
-  private dropUncoveredDeferredDigestRows(
-    sessionId: string,
-    store: ExternalEventStore,
-    taskId?: string
-  ): void {
+  private dropUncoveredDeferredDigestRows(sessionId: string, store: ExternalEventStore): void {
     const messages = this.getSdkMessageRepo();
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     const targetWorkflowRunId = execution?.workflowRunId;
     const targetNodeId = execution?.workflowNodeId;
     const targetAgentName = execution?.agentName;
-    const targetTaskId = taskId ?? (execution as { taskId?: string } | null)?.taskId;
     const rows = messages
       .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
       .filter((row) => row.sendStatus === 'deferred');
     for (const row of rows) {
+      const uuid = String(row.uuid);
+      if (this.hasDigestHandoffDebt(sessionId, uuid)) continue;
+      const handoffKey = `${sessionId}:${uuid}`;
+      if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
       const membership = (row as { externalEventIds?: unknown }).externalEventIds;
       if (!Array.isArray(membership) || membership.length === 0) continue;
       const eventIds = membership.filter(
         (eventId): eventId is string => typeof eventId === 'string'
       );
       if (eventIds.length === 0) continue;
+      const rowTaskId = (row as { externalEventTaskId?: unknown }).externalEventTaskId;
       const allMembersDelivered =
         targetWorkflowRunId !== undefined &&
         targetNodeId !== undefined &&
@@ -2007,7 +2198,7 @@ export class SpaceRuntime {
                 delivery.workflowRunId === targetWorkflowRunId &&
                 delivery.nodeId === targetNodeId &&
                 delivery.agentName === targetAgentName &&
-                (targetTaskId === undefined || delivery.taskId === targetTaskId) &&
+                (rowTaskId === undefined || delivery.taskId === rowTaskId) &&
                 delivery.state === 'delivered'
             )
         );
@@ -2022,7 +2213,7 @@ export class SpaceRuntime {
     store: ExternalEventStore,
     deliveredUuid: string | null,
     deliveredEventIds: string[],
-    taskId?: string
+    currentTaskId?: string
   ): void {
     const messages = this.getSdkMessageRepo();
     const deliveredEventIdSet = new Set(deliveredEventIds);
@@ -2030,7 +2221,6 @@ export class SpaceRuntime {
     const targetWorkflowRunId = execution?.workflowRunId;
     const targetNodeId = execution?.workflowNodeId;
     const targetAgentName = execution?.agentName;
-    const targetTaskId = taskId ?? (execution as { taskId?: string } | null)?.taskId;
     const rows = messages
       .listUserMessagesByUuidPrefix(sessionId, DETERMINISTIC_DIGEST_UUID_PREFIX)
       .filter(
@@ -2039,33 +2229,48 @@ export class SpaceRuntime {
           (deliveredUuid === null || String(row.uuid) !== deliveredUuid)
       );
     for (const row of rows) {
+      const uuid = String(row.uuid);
+      const handoffKey = `${sessionId}:${uuid}`;
+      if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
+      if (this.hasDigestHandoffDebt(sessionId, uuid)) continue;
       const membership = (row as { externalEventIds?: unknown }).externalEventIds;
       if (!Array.isArray(membership) || membership.length === 0) continue;
       const eventIds = membership.filter(
         (eventId): eventId is string => typeof eventId === 'string'
       );
       if (eventIds.length === 0) continue;
+      const rowTaskId = (row as { externalEventTaskId?: unknown }).externalEventTaskId as
+        | string
+        | undefined;
       const isObsolete = eventIds.every((eventId) => {
-        if (deliveredEventIdSet.has(eventId)) return true;
-        if (targetWorkflowRunId && targetNodeId && targetAgentName) {
-          const terminalForTarget = store
+        if (
+          deliveredEventIdSet.has(eventId) &&
+          (rowTaskId === undefined || rowTaskId === currentTaskId)
+        ) {
+          return true;
+        }
+        if (
+          targetWorkflowRunId &&
+          targetNodeId &&
+          targetAgentName &&
+          (rowTaskId === undefined || rowTaskId === currentTaskId)
+        ) {
+          const terminalForTask = store
             .listDeliveries(eventId)
             .some(
               (delivery) =>
                 delivery.workflowRunId === targetWorkflowRunId &&
                 delivery.nodeId === targetNodeId &&
                 delivery.agentName === targetAgentName &&
-                (targetTaskId === undefined || delivery.taskId === targetTaskId) &&
+                (rowTaskId === undefined || delivery.taskId === rowTaskId) &&
                 (delivery.state === 'delivered' || delivery.state === 'failed')
             );
-          if (terminalForTarget) return true;
+          if (terminalForTask) return true;
         }
         const record = store.getById(eventId);
+        if (record === null || record.state === 'failed' || record.state === 'ignored') return true;
         return (
-          record === null ||
-          record.state === 'failed' ||
-          record.state === 'ignored' ||
-          (targetNodeId === undefined && record.state === 'delivered')
+          record.state === 'delivered' && (rowTaskId === undefined || rowTaskId === currentTaskId)
         );
       });
       if (isObsolete) {
@@ -2075,13 +2280,11 @@ export class SpaceRuntime {
   }
 
   private externalEventDeliveryMessage(event: ExternalEventPublishedPayload): string {
-    if (isExternalEventDeliveryV2Enabled()) {
-      const record = this.config.externalEventStore?.getById(event.eventId);
-      if (record?.event.urgency === 'immediate' && record.event.render) {
-        return record.event.render;
-      }
-    }
-    return formatExternalEventEssence(event);
+    const record = this.config.externalEventStore?.getById(event.eventId);
+    if (!record) return '';
+    if (record.event.render) return record.event.render;
+    const entry = essenceEntryFromExternalEvent(record.event);
+    return entry ? renderEventBlock(entry) : '';
   }
 
   private async deliverToLongHorizonAgent(
@@ -2327,8 +2530,7 @@ export class SpaceRuntime {
 
   private isTargetSessionInterrupted(sessionId: string): boolean {
     const session = this.config.taskAgentManager?.getAgentSessionById?.(sessionId);
-    if (session?.getProcessingState().status !== 'interrupted') return false;
-    return session.isInterruptInProgress();
+    return session?.isInterruptInProgress() ?? false;
   }
 
   private getExternalEventRateLimitState(rateLimitKey: string): ExternalEventRateLimitState {
@@ -2336,7 +2538,12 @@ export class SpaceRuntime {
     if (existing) {
       if (existing.cleanupTimer) {
         clearTimeout(existing.cleanupTimer);
-        existing.cleanupTimer = null;
+        const cleared: ExternalEventRateLimitState = {
+          timestamps: existing.timestamps,
+          cleanupTimer: null,
+        };
+        this.externalEventRateLimits.set(rateLimitKey, cleared);
+        return cleared;
       }
       return existing;
     }
@@ -2352,31 +2559,35 @@ export class SpaceRuntime {
     const state = this.externalEventRateLimits.get(rateLimitKey);
     if (!state || state.cleanupTimer) return;
     const now = Date.now();
-    state.timestamps = state.timestamps.filter(
+    const timestamps = state.timestamps.filter(
       (timestamp) => now - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
     );
-    if (state.timestamps.length === 0) {
+    if (timestamps.length === 0) {
       this.externalEventRateLimits.delete(rateLimitKey);
       return;
     }
-    const oldest = Math.min(...state.timestamps);
-    state.cleanupTimer = setTimeout(
+    const oldest = Math.min(...timestamps);
+    const cleanupTimer = setTimeout(
       () => {
         const current = this.externalEventRateLimits.get(rateLimitKey);
         if (!current) return;
-        current.cleanupTimer = null;
         const cleanupNow = Date.now();
-        current.timestamps = current.timestamps.filter(
+        const remaining = current.timestamps.filter(
           (timestamp) => cleanupNow - timestamp < EXTERNAL_EVENT_RATE_WINDOW_MS
         );
-        if (current.timestamps.length === 0) {
+        if (remaining.length === 0) {
           this.externalEventRateLimits.delete(rateLimitKey);
-        } else {
-          this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
+          return;
         }
+        this.externalEventRateLimits.set(rateLimitKey, {
+          timestamps: remaining,
+          cleanupTimer: null,
+        });
+        this.scheduleExternalEventRateLimitCleanup(rateLimitKey);
       },
       Math.max(0, EXTERNAL_EVENT_RATE_WINDOW_MS - (now - oldest) + 1)
     );
+    this.externalEventRateLimits.set(rateLimitKey, { timestamps, cleanupTimer });
   }
 
   private buildRateLimitKey(target: WorkflowSubscriptionTarget): string {
@@ -2917,6 +3128,8 @@ export class SpaceRuntime {
             reason
           );
         }
+      } else if (previous.status === 'stopped') {
+        await this.recoverPendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
       }
       return updated;
     }
@@ -3231,12 +3444,19 @@ export class SpaceRuntime {
 
   start(): void {
     if (this.tickTimer !== null) return;
+    this.runtimeGeneration += 1;
     this.isStopped = false;
 
-    const generation = this.runtimeGeneration;
+    const gate = this.ensureReconciliationGate();
     this.subscribeSdkToolUseCreated();
-    this.unsubscribeSpaceResumed ??= this.config.spaceManager.onSpaceResumedRegister?.((spaceId) =>
-      this.onSpaceResumed(spaceId)
+    this.unsubscribeSpaceResumed ??= this.config.spaceManager.onSpaceResumedRegister?.(
+      (spaceId) => {
+        void this.onSpaceResumed(spaceId).catch((err: unknown) => {
+          log.warn(
+            `SpaceRuntime: space resume handling failed for ${spaceId}: ${formatCommandError(err)}`
+          );
+        });
+      }
     );
     this.unsubscribeSpacePaused ??= this.config.spaceManager.onSpacePausedRegister?.((spaceId) => {
       this.pausedSpaceIds.add(spaceId);
@@ -3254,28 +3474,9 @@ export class SpaceRuntime {
       });
     }, interval);
     if (this.rehydrated) {
-      this.reconciliationDone = false;
       void (async () => {
-        const pausedSpaceIds = new Set<string>();
-        try {
-          for (const space of await this.config.spaceManager.listSpaces(false)) {
-            if (space.paused || space.stopped) {
-              pausedSpaceIds.add(space.id);
-              this.pausedSpaceIds.add(space.id);
-            } else {
-              this.pausedSpaceIds.delete(space.id);
-            }
-          }
-        } catch (err) {
-          log.warn(
-            `SpaceRuntime: start() could not list spaces for paused-deferral: ${formatCommandError(err)}`
-          );
-        }
-        if (generation !== this.runtimeGeneration) return;
-        this.requeuePersistedPendingDeliveries(pausedSpaceIds);
-        this.subscribeExternalEventPublished();
-        this.reconciliationDone = true;
-        this.redispatchRetainedExternalEvents();
+        if (this.isStopped || gate.settled) return;
+        await this.runWarmReconciliation(gate);
         this.executeTick().catch((err: unknown) => {
           log.error('SpaceRuntime: initial tick failed:', err);
         });
@@ -3289,9 +3490,51 @@ export class SpaceRuntime {
     }
   }
 
+  private async runWarmReconciliation(gate: ReconciliationGate): Promise<void> {
+    const pausedSpaceIds = new Set<string>();
+    try {
+      for (const space of await this.config.spaceManager.listSpaces(false)) {
+        if (space.paused || space.stopped) {
+          pausedSpaceIds.add(space.id);
+          this.pausedSpaceIds.add(space.id);
+        } else {
+          this.pausedSpaceIds.delete(space.id);
+        }
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: could not list spaces for paused-deferral: ${formatCommandError(err)}`
+      );
+    }
+    if (gate.generation !== this.runtimeGeneration || this.isStopped) {
+      this.settleReconciliation(gate, false);
+      return;
+    }
+    try {
+      await this.recoverPendingDeliveriesStrict(pausedSpaceIds);
+      if (gate.generation !== this.runtimeGeneration || this.isStopped) {
+        this.settleReconciliation(gate, false);
+        return;
+      }
+      this.rehydrateDigestHandoffDebt();
+      this.subscribeExternalEventPublished();
+      this.settleReconciliation(gate, false);
+      this.redispatchRetainedExternalEvents();
+    } catch (err) {
+      log.error(`SpaceRuntime: warm reconciliation failed: ${formatCommandError(err)}`);
+      this.settleReconciliation(gate, true);
+    }
+  }
+
   async stop(): Promise<void> {
     this.runtimeGeneration += 1;
+    const shutdownGeneration = this.runtimeGeneration;
     this.isStopped = true;
+    if (this.tickTimer !== null) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
+    }
+    this.settleCurrentReconciliation(false);
     this.retainedEventRedispatchPending = false;
     this.unsubscribeExternalEventPublished?.();
     this.unsubscribeExternalEventPublished = undefined;
@@ -3320,26 +3563,55 @@ export class SpaceRuntime {
     }
     this.digestHandoffRetryTimers.clear();
     this.digestHandoffRetryCounts.clear();
-    for (const timer of this.digestSupersedeRetryTimers.values()) {
-      clearTimeout(timer);
+    const staleSupersedeRetryTimers = Array.from(this.digestSupersedeRetryTimers.entries());
+    const staleSupersedeRetryCounts = Array.from(this.digestSupersedeRetryCounts.entries());
+    const stalePullTriggers = Array.from(this.digestPullTriggers.entries());
+    const staleRateLimits = Array.from(this.externalEventRateLimits.entries());
+    const pendingRenders = Array.from(this.renderPendingDigestQueues.values());
+    const renderDrainMs = parsePositiveIntegerEnv(
+      'HYPERNEO_EXTERNAL_EVENT_RENDER_DRAIN_MS',
+      30_000
+    );
+    await new Promise<void>((resolve) => {
+      const deadline = setTimeout(() => {
+        log.warn(
+          `SpaceRuntime: timed out waiting for ${pendingRenders.length} digest render(s) after ` +
+            `${renderDrainMs}ms — proceeding with shutdown`
+        );
+        resolve();
+      }, renderDrainMs);
+      Promise.all(pendingRenders.map((render) => render.catch(() => null))).then(() => {
+        clearTimeout(deadline);
+        resolve();
+      });
+    });
+    for (const [key, timer] of staleSupersedeRetryTimers) {
+      if (this.digestSupersedeRetryTimers.get(key) === timer) {
+        clearTimeout(timer);
+        this.digestSupersedeRetryTimers.delete(key);
+      }
     }
-    this.digestSupersedeRetryTimers.clear();
-    this.digestSupersedeRetryCounts.clear();
-    for (const [sessionId, state] of this.digestPullTriggers) {
-      if (state.idleTimer) clearTimeout(state.idleTimer);
-      if (state.safetyTimer) clearTimeout(state.safetyTimer);
-      if (state.countTimer) clearTimeout(state.countTimer);
-      this.digestPullTriggers.delete(sessionId);
+    for (const [key, count] of staleSupersedeRetryCounts) {
+      if (this.digestSupersedeRetryCounts.get(key) === count) {
+        this.digestSupersedeRetryCounts.delete(key);
+      }
     }
-    for (const state of this.externalEventRateLimits.values()) {
-      if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
+    for (const [sessionId, state] of stalePullTriggers) {
+      if (this.digestPullTriggers.get(sessionId) === state) {
+        if (state.idleTimer) clearTimeout(state.idleTimer);
+        if (state.safetyTimer) clearTimeout(state.safetyTimer);
+        if (state.countTimer) clearTimeout(state.countTimer);
+        this.digestPullTriggers.delete(sessionId);
+      }
     }
-    this.externalEventRateLimits.clear();
+    for (const [key, state] of staleRateLimits) {
+      if (this.externalEventRateLimits.get(key) === state) {
+        if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
+        this.externalEventRateLimits.delete(key);
+      }
+    }
+    if (shutdownGeneration !== this.runtimeGeneration) return;
     this.acceptingExternalEvents = false;
-    if (this.tickTimer !== null) {
-      clearInterval(this.tickTimer);
-      this.tickTimer = null;
-    }
     if (this.tickInFlight) {
       const MAX_TICK_DRAIN_MS = 30_000;
       const start = Date.now();
@@ -3359,11 +3631,28 @@ export class SpaceRuntime {
         check();
       });
     }
+    if (shutdownGeneration !== this.runtimeGeneration) return;
+    this.pruneDigestHandoffDebt();
   }
 
   async executeTick(): Promise<void> {
-    if (this.tickInFlight || !this.reconciliationDone) return;
+    if (this.isStopped) return;
+    if (this.tickInFlight) return;
+    const generation = this.runtimeGeneration;
+    let rehydrating = false;
+    if (!this.rehydrated) {
+      this.ensureReconciliationGate();
+      rehydrating = true;
+    } else {
+      const current = this.currentReconciliation;
+      if (current && !current.settled) return;
+      if (current?.failed) {
+        await this.runWarmReconciliation(this.ensureReconciliationGate());
+        if (this.isStopped || generation !== this.runtimeGeneration) return;
+      }
+    }
     this.tickInFlight = true;
+    let rehydratedGateSettled = false;
     try {
       if (hasSqlExec(this.config.db)) {
         this.toolContinuationRepo.markExpired();
@@ -3374,8 +3663,22 @@ export class SpaceRuntime {
         this.config.taskRepo.clearAllSpawnReservations();
         await this.rehydrateExecutors();
         await this.recoverStalledRuns();
+        if (generation !== this.runtimeGeneration || this.isStopped) {
+          const stale = this.currentReconciliation;
+          if (stale && !stale.settled) {
+            this.settleReconciliation(stale, true);
+          }
+          rehydratedGateSettled = true;
+          return;
+        }
+        this.rehydrateDigestHandoffDebt();
         this.rehydrated = true;
         this.acceptingExternalEvents = true;
+        const pending = this.currentReconciliation;
+        if (pending && !pending.settled) {
+          this.settleReconciliation(pending, false);
+        }
+        rehydratedGateSettled = true;
       }
 
       if (justRehydrated) {
@@ -3393,8 +3696,15 @@ export class SpaceRuntime {
       this.expirePendingExternalEventDeliveriesPastTtl();
 
       this.pruneExpiredCycleEvents();
+      this.pruneDigestHandoffDebt();
     } finally {
       this.tickInFlight = false;
+      if (rehydrating && !rehydratedGateSettled) {
+        const pending = this.currentReconciliation;
+        if (pending && !pending.settled) {
+          this.settleReconciliation(pending, true);
+        }
+      }
     }
   }
 
@@ -3733,6 +4043,7 @@ export class SpaceRuntime {
         );
       }
     }
+    await this.recoverPendingDeliveries(this.pausedSpaceIds, recovered.run.id);
     await this.safeOnWorkflowRunUpdated(
       spaceId,
       this.config.workflowRunRepo.getRun(recovered.run.id)!
@@ -3777,15 +4088,160 @@ export class SpaceRuntime {
     return true;
   }
 
-  private requeuePersistedPendingDeliveries(_pausedSpaceIds: Set<string> = new Set()): void {
+  private async restoreIdleSessionsOwningPendingDeliveries(
+    pausedSpaceIds: Set<string>,
+    workflowRunId?: string
+  ): Promise<RestoreIdleSessionsOutcome[]> {
+    const store = this.config.externalEventStore;
+    const tam = this.config.taskAgentManager;
+    if (!store || !tam || typeof tam.tryResumeNodeAgentSession !== 'function') return [];
+    const deps: RestoreIdleSessionsDeps = {
+      listPendingDeliveries: (scope) =>
+        store
+          .listPendingDeliveries(scope)
+          .filter((delivery) => !longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId)),
+      getEventRecord: (eventId) => store.getById(eventId),
+      isDeliveryInFlight: (deliveryKey) =>
+        this.externalEventDeliveriesInFlight.has(deliveryKey) ||
+        this.immediateDispatchesInFlight.has(deliveryKey),
+      isDeliveryExpired: (createdAt, now) =>
+        isQueuedExternalEventExpired(createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS),
+      getRunSpaceId: (runId) => {
+        const run = this.config.workflowRunRepo.getRun(runId);
+        if (!run) return undefined;
+        if (pausedSpaceIds.has(run.spaceId) || this.pausedSpaceIds.has(run.spaceId))
+          return undefined;
+        return run.spaceId;
+      },
+      isSpacePaused: (spaceId) => this.pausedSpaceIds.has(spaceId),
+      getSpaceState: async (spaceId) => {
+        const space = await this.config.spaceManager.getSpace(spaceId).catch(() => null);
+        return space ? { paused: !!space.paused, stopped: !!space.stopped } : null;
+      },
+      isTargetStillSubscribed: (target, topic) => this.isTargetStillSubscribed(target, topic),
+      isTaskAdmissible: (taskId) => {
+        const task = this.config.taskRepo.getTask(taskId);
+        if (!task) return false;
+        if (
+          task.status === 'rate_limited' ||
+          task.status === 'usage_limited' ||
+          task.status === 'stopped'
+        ) {
+          return false;
+        }
+        return !evaluateRequeueTaskLifecycle(task, { topic: '', source: '' });
+      },
+      findIdleExecutionWithDeadSession: (target) => {
+        const execution = this.config.nodeExecutionRepo
+          .listByNode(target.workflowRunId, target.nodeId)
+          .find(
+            (candidate) =>
+              candidate.agentName === target.agentName &&
+              candidate.status === 'idle' &&
+              !!candidate.agentSessionId &&
+              !this.isTargetSessionLive(candidate.agentSessionId)
+          );
+        return execution?.agentSessionId
+          ? { executionId: execution.id, agentSessionId: execution.agentSessionId }
+          : undefined;
+      },
+      restoreSession: (target) =>
+        tam.tryResumeNodeAgentSession!(target.workflowRunId, target.agentName, target.nodeId),
+      isExecutionRestorable: (execution) => {
+        const fresh = this.config.nodeExecutionRepo.getById(execution.executionId);
+        return (
+          !!fresh && fresh.status === 'idle' && fresh.agentSessionId === execution.agentSessionId
+        );
+      },
+      cancelSession: (sessionId) => tam.cancelBySessionId(sessionId),
+    };
+    const outcomes = await runRestoreIdleSessions(deps, workflowRunId);
+    for (const outcome of outcomes) {
+      if (outcome.action === 'skipped_inactivation') {
+        log.warn(
+          `SpaceRuntime: tore down restored node-agent session ${outcome.sessionId} because its space, task, or execution went inactive during restoration`
+        );
+      }
+    }
+    return outcomes;
+  }
+
+  private async recoverPendingDeliveriesStrict(
+    pausedSpaceIds: Set<string> = new Set(),
+    workflowRunId?: string
+  ): Promise<void> {
+    const generation = this.runtimeGeneration;
+    const outcomes = await this.restoreIdleSessionsOwningPendingDeliveries(
+      pausedSpaceIds,
+      workflowRunId
+    );
+    if (this.isStopped || generation !== this.runtimeGeneration) {
+      for (const outcome of outcomes) {
+        if (outcome.action === 'restored') {
+          this.config.taskAgentManager?.cancelBySessionId(outcome.sessionId);
+        }
+      }
+      return;
+    }
+    this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
+  }
+
+  private async recoverPendingDeliveries(
+    pausedSpaceIds: Set<string> = new Set(),
+    workflowRunId?: string
+  ): Promise<void> {
+    try {
+      await this.recoverPendingDeliveriesStrict(pausedSpaceIds, workflowRunId);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: pending-delivery recovery failed for ${workflowRunId ?? 'all runs'}: ${formatCommandError(err)}`
+      );
+    }
+  }
+
+  requeuePendingDeliveriesForRun(workflowRunId: string): void {
+    void this.recoverPendingDeliveries(this.pausedSpaceIds, workflowRunId);
+  }
+
+  private tryRequeuePendingDeliveries(
+    pausedSpaceIds: Set<string> = new Set(),
+    workflowRunId?: string
+  ): void {
+    try {
+      this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: pending-delivery requeue failed for ${workflowRunId ?? 'all runs'}: ${formatCommandError(err)}`
+      );
+    }
+  }
+
+  private requeuePersistedPendingDeliveries(
+    pausedSpaceIds: Set<string> = new Set(),
+    workflowRunId?: string
+  ): void {
     const store = this.config.externalEventStore;
     if (!store) return;
 
-    for (const delivery of store.listPendingDeliveries()) {
+    for (const delivery of store.listPendingDeliveries(workflowRunId)) {
       const eventRecord = store.getById(delivery.eventId);
       if (!eventRecord || eventRecord.state !== 'published') continue;
       const longHorizonSpaceId = longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId);
-      if (!longHorizonSpaceId) continue;
+      if (!longHorizonSpaceId) {
+        this.requeueWorkflowPendingDelivery(delivery, eventRecord, pausedSpaceIds);
+        continue;
+      }
+      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
+      if (
+        isQueuedExternalEventExpired(eventRecord.createdAt, Date.now(), EXTERNAL_EVENT_QUEUE_TTL_MS)
+      ) {
+        store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
+          terminal: true,
+          reason: 'ttl_expired',
+        });
+        store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
+        continue;
+      }
       const eventPayload = this.externalEventPayloadFromRecord(eventRecord.event);
       const subscription = this.config.longHorizonAgentRepo?.getSubscription(delivery.taskId);
       const agent = subscription
@@ -3833,11 +4289,45 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         continue;
       }
+      if (this.pausedSpaceIds.has(longHorizonSpaceId)) continue;
       void this.deliverToLongHorizonAgent(target, eventPayload, delivery.deliveryKey);
     }
   }
 
-  onSpaceResumed(spaceId: string): void {
+  private requeueWorkflowPendingDelivery(
+    delivery: ExternalEventDeliveryRecord,
+    eventRecord: ExternalEventRecord,
+    pausedSpaceIds: Set<string>
+  ): void {
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    const deps: RequeuePendingDeliveryDeps = {
+      isDeliveryInFlight: (deliveryKey) =>
+        this.externalEventDeliveriesInFlight.has(deliveryKey) ||
+        this.immediateDispatchesInFlight.has(deliveryKey),
+      isDeliveryExpired: (createdAt, now) =>
+        isQueuedExternalEventExpired(createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS),
+      failDeliveryTerminal: (failed, reason) => {
+        store.markDeliveryFailed(failed.eventId, failed.deliveryKey, { terminal: true, reason });
+        store.markEventFailedIfAllDeliveriesTerminal(failed.eventId);
+      },
+      isTargetSpacePaused: (workflowRunId) => {
+        const run = this.config.workflowRunRepo.getRun(workflowRunId);
+        return !run || pausedSpaceIds.has(run.spaceId) || this.pausedSpaceIds.has(run.spaceId);
+      },
+      isTargetStillSubscribed: (target, topic) => this.isTargetStillSubscribed(target, topic),
+      resolveTargetSession: (target) => this.resolveSubscriptionTarget(target).sessionId,
+      isSessionLive: (sessionId) => this.isTargetSessionLive(sessionId),
+      isSessionInterrupted: (sessionId) => this.isTargetSessionInterrupted(sessionId),
+      scheduleDigestPull: (sessionId, taskId) =>
+        this.scheduleDigestPullForSession(sessionId, taskId),
+      scheduleInterruptProbe: (sessionId, taskId) =>
+        this.scheduleInterruptProbeForSession(sessionId, taskId),
+    };
+    runRequeuePendingDelivery(deps, { delivery, eventRecord });
+  }
+
+  async onSpaceResumed(spaceId: string): Promise<void> {
     this.pausedSpaceIds.delete(spaceId);
     try {
       this.config.goalService?.retryQueuedRunsForSpace(spaceId);
@@ -3847,9 +4337,8 @@ export class SpaceRuntime {
       );
     }
 
-    const reactiveRuns = this.config.workflowRunRepo
-      .listBySpace(spaceId)
-      .filter((run) => this.isRunInterestRebuildEligible(run));
+    const resumedRuns = this.config.workflowRunRepo.listBySpace(spaceId);
+    const reactiveRuns = resumedRuns.filter((run) => this.isRunInterestRebuildEligible(run));
     for (const run of reactiveRuns) {
       const staticWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (staticWorkflow) {
@@ -3862,7 +4351,16 @@ export class SpaceRuntime {
         }
       }
     }
-
+    const tasksByRun = new Map<string, SpaceTask[]>();
+    for (const run of resumedRuns) {
+      tasksByRun.set(run.id, this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id));
+    }
+    this.rehydrateWorkflowSubscriptions(spaceId, resumedRuns, tasksByRun);
+    this.rehydrateLongHorizonSubscriptions(spaceId);
+    this.tryRequeuePendingDeliveries(this.pausedSpaceIds, `long_horizon:${spaceId}`);
+    for (const run of resumedRuns) {
+      await this.recoverPendingDeliveries(this.pausedSpaceIds, run.id);
+    }
     this.redispatchRetainedExternalEvents();
   }
 
@@ -4081,11 +4579,101 @@ export class SpaceRuntime {
       }
     }
 
-    this.requeuePersistedPendingDeliveries(pausedSpaceIds);
-
     if (this.config.taskAgentManager) {
       await this.config.taskAgentManager.rehydrate();
     }
+    try {
+      await this.recoverPendingDeliveriesStrict(pausedSpaceIds);
+    } catch (err) {
+      log.error(
+        `SpaceRuntime: pending-delivery recovery during rehydration failed: ${formatCommandError(err)}`
+      );
+      const gate = this.currentReconciliation;
+      if (gate && !gate.settled) {
+        this.settleReconciliation(gate, true);
+      }
+    }
+  }
+
+  private pruneDigestHandoffDebt(): void {
+    for (const [sessionId, uuids] of Array.from(this.digestHandoffDebt)) {
+      for (const uuid of Array.from(uuids)) {
+        const content = this.getSdkMessageRepo().getDeliveryContent(sessionId, uuid);
+        if (!content || (content.sendStatus !== 'deferred' && content.sendStatus !== 'enqueued')) {
+          uuids.delete(uuid);
+        }
+      }
+      if (uuids.size === 0) this.digestHandoffDebt.delete(sessionId);
+    }
+  }
+
+  private rehydrateDigestHandoffDebt(): void {
+    this.pruneDigestHandoffDebt();
+    const store = this.config.externalEventStore;
+    if (!store) return;
+    const rows = this.config.db
+      .prepare(
+        `SELECT id, session_id, sdk_message, task_id FROM sdk_messages
+         WHERE send_status = 'deferred' AND sdk_uuid LIKE ? || '%'`
+      )
+      .all(DETERMINISTIC_DIGEST_UUID_PREFIX) as Array<{
+      id: string;
+      session_id: string;
+      sdk_message: string;
+      task_id: string | null;
+    }>;
+    for (const raw of rows) {
+      const sessionId = raw.session_id;
+      const owningExecutions = this.listExecutionsOwningSession(sessionId);
+      if (owningExecutions.length === 0) continue;
+      let message: SDKUserMessage & { externalEventIds?: unknown; externalEventTaskId?: unknown };
+      try {
+        message = JSON.parse(raw.sdk_message) as SDKUserMessage & {
+          externalEventIds?: unknown;
+          externalEventTaskId?: unknown;
+        };
+      } catch {
+        continue;
+      }
+      const membership = message.externalEventIds;
+      if (!Array.isArray(membership) || membership.length === 0) continue;
+      const eventIds = membership.filter(
+        (eventId): eventId is string => typeof eventId === 'string'
+      );
+      if (eventIds.length === 0) continue;
+      const rowTaskId =
+        (message.externalEventTaskId as string | undefined) ?? raw.task_id ?? undefined;
+      if (rowTaskId === undefined) continue;
+      const allMembersDelivered = owningExecutions.some((execution) =>
+        eventIds.every((eventId) =>
+          store
+            .listDeliveries(eventId)
+            .some(
+              (delivery) =>
+                delivery.taskId === rowTaskId &&
+                delivery.workflowRunId === execution.workflowRunId &&
+                delivery.nodeId === execution.workflowNodeId &&
+                delivery.agentName === execution.agentName &&
+                delivery.state === 'delivered'
+            )
+        )
+      );
+      if (allMembersDelivered) {
+        this.addDigestHandoffDebt(sessionId, String(message.uuid));
+      }
+    }
+  }
+
+  private listExecutionsOwningSession(sessionId: string): NodeExecution[] {
+    const bound = this.config.nodeExecutionRepo.listByAgentSessionId(sessionId);
+    const marker = ':exec:';
+    const markerIndex = sessionId.indexOf(marker);
+    if (markerIndex === -1) return bound;
+    const embeddedId = sessionId.slice(markerIndex + marker.length).split(':')[0];
+    if (!embeddedId) return bound;
+    const embedded = this.config.nodeExecutionRepo.getById(embeddedId);
+    if (!embedded || bound.some((execution) => execution.id === embedded.id)) return bound;
+    return [embedded, ...bound];
   }
 
   private recoveryDone = false;
@@ -5704,6 +6292,7 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
+          this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
           const restartNotice = this.consumeAgentRestartNotice(runId, execution);
           if (restartNotice) {
             void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
@@ -6059,6 +6648,7 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
+          this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
           await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
           recordBlockedFlushFailure(targetAgentName, rowsForTarget);
           for (const row of pending) {

@@ -751,6 +751,22 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       { subscriberName: 'github-polling-settings' }
     );
 
+    internalEventBus.subscribe(
+      'providers.changed',
+      () => {
+        for (const agentSession of sessionManager?.getCachedSessions() ?? []) {
+          agentSession.reevaluateContextBudgetAfterModelSwitch().catch((error) => {
+            logError(
+              `[Daemon] Context budget re-evaluation failed for session ` +
+                `${agentSession.getSessionData().id}:`,
+              error
+            );
+          });
+        }
+      },
+      { subscriberName: 'providers-changed-context-budget' }
+    );
+
     startupTimer.start('external event extensions');
     for (const extension of extensionManager.getAll()) {
       const globalConfig = await extensionContext.config.getGlobalConfig(extension.sourceId);

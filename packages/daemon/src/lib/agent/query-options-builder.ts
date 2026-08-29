@@ -56,8 +56,8 @@ import {
   builtinSkillPluginPath,
   defaultBuiltinSkillPluginRoot,
 } from './builtin-skill-plugin-wrapper.ts';
-import { getCoordinatorAgents } from './coordinator-agents.ts';
 import { autoCompactReserveTokens } from './context-tracker.js';
+import { getCoordinatorAgents } from './coordinator-agents.ts';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
 import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
@@ -196,12 +196,6 @@ export const NATIVE_CONTEXT_WINDOW_PROVIDER_IDS = [
   'anthropic-codex',
   'glm',
 ];
-
-export const PROVIDER_NO_SDK_AUTO_COMPACT: ReadonlySet<string> = new Set();
-
-export function shouldUseHyperNeoCompactFallback(providerId: string): boolean {
-  return PROVIDER_NO_SDK_AUTO_COMPACT.has(providerId);
-}
 
 export function buildProviderSettings(
   providerId: string,

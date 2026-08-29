@@ -12,6 +12,7 @@ import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
 import { isAuthError } from './user-error';
 import { startAutoFlush, stopAutoFlush } from './outbound-queue';
+import { startVoiceAudioOutboxFlush, stopVoiceAudioOutboxFlush } from './voice/voice-audio-outbox';
 import {
   startVoiceTranscriptOutboxFlush,
   stopVoiceTranscriptOutboxFlush,
@@ -165,6 +166,7 @@ export class ConnectionManager {
       if (state === 'error' && error && isAuthError(error)) {
         connectionState.value = 'error';
         stopAutoFlush();
+        stopVoiceAudioOutboxFlush();
         stopVoiceTranscriptOutboxFlush();
         if (this.transport) {
           this.transport.close();
@@ -183,6 +185,7 @@ export class ConnectionManager {
       if (state === 'connected') {
         reconnectAttemptCount.value = 0;
         startAutoFlush();
+        startVoiceAudioOutboxFlush();
         startVoiceTranscriptOutboxFlush();
         this.notifyConnectionHandlers();
       }
@@ -216,6 +219,7 @@ export class ConnectionManager {
 
     this.messageHub.registerTransport(this.transport);
 
+    startVoiceAudioOutboxFlush();
     startVoiceTranscriptOutboxFlush();
 
     await this.transport.initialize();
@@ -273,6 +277,7 @@ export class ConnectionManager {
     this.stopPeriodicStateValidation();
 
     stopAutoFlush();
+    stopVoiceAudioOutboxFlush();
     stopVoiceTranscriptOutboxFlush();
 
     connectionState.value = 'disconnected';

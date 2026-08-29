@@ -3,11 +3,6 @@ import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database.ts';
 import {
-  DEFERRED_FOLD_UUID_PREFIX,
-  foldDeferredExternalEventsAtFlush,
-} from '../external-events/deferred-event-digest.ts';
-import { isExternalEventDeliveryV2Enabled } from '../external-events/external-event-service.ts';
-import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestOutcome,
 } from '../space/runtime/render-pending-digest-pipeline.ts';
@@ -42,7 +37,6 @@ export interface QueryModeHandlerContext {
     sessionId: string,
     taskId?: string
   ): Promise<RenderPendingDigestOutcome | null>;
-  reconcilePersistedDigestRows?(sessionId: string, taskId?: string): boolean;
 
   ensureQueryStarted(): Promise<void>;
 }
@@ -64,71 +58,82 @@ export class QueryModeHandler {
     const { session, db, internalEventBus, logger } = this.ctx;
 
     const runFlush = async (): Promise<number> => {
-      let excludeDigestRows = false;
-      if (isExternalEventDeliveryV2Enabled()) {
-        try {
-          const outcome = await this.ctx.renderPendingDigest?.(session.id, session.context?.taskId);
-          if (outcome && (outcome.action === 'failed' || outcome.action === 'held')) {
-            if (
-              outcome.action === 'failed' &&
-              (outcome.stage === 'digestCleanup' || outcome.stage === 'digestSupersede')
-            ) {
-              logger.warn(
-                `turn-end digest ${outcome.stage} failed for session ${session.id} — ` +
-                  `excluding digest rows from this flush so stale or duplicate digests are not delivered`
-              );
-              excludeDigestRows = true;
-            } else {
-              logger.warn(
-                `turn-end digest pull for session ${session.id} did not deliver ` +
-                  `(action=${outcome.action}${
-                    outcome.action === 'failed'
-                      ? `, stage=${outcome.stage}`
-                      : `, reason=${outcome.reason}`
-                  }) — flushing without the digest`
-              );
-            }
+      type DigestRowFilter = ((row: { uuid: string; taskId?: string }) => boolean) | null;
+      let digestRowFilter: DigestRowFilter = null;
+      const admittedTaskId = session.context?.taskId;
+      const taskScoped = (row: { uuid: string; taskId?: string }): boolean =>
+        admittedTaskId === undefined || (row.taskId !== undefined && row.taskId === admittedTaskId);
+      try {
+        const renderDigest = this.ctx.renderPendingDigest;
+        const outcome = renderDigest
+          ? await renderDigest(session.id, session.context?.taskId)
+          : null;
+        if (outcome == null) {
+          if (renderDigest) {
+            logger.warn(
+              `turn-end digest pull for session ${session.id} was unavailable ` +
+                `(runtime stopped or digest pipeline missing) — flushing without the digest`
+            );
           }
-        } catch (error) {
+        } else if (outcome.action === 'delivered') {
+          digestRowFilter = (row) => row.uuid === outcome.uuid;
+        } else if (outcome.action === 'skip') {
+          if (outcome.heldDigestInFlight) {
+            logger.warn(
+              `turn-end digest pull for session ${session.id} held a digest already in ` +
+                `flight — flushing without the digest`
+            );
+          } else if (
+            outcome.reason === 'session_interrupted' ||
+            outcome.reason === 'session_not_current' ||
+            outcome.reason === 'task_not_admissible' ||
+            outcome.reason === 'space_paused' ||
+            outcome.reason === 'no_execution'
+          ) {
+            logger.warn(
+              `turn-end digest pull for session ${session.id} skipped ` +
+                `(reason=${outcome.reason}) — flushing without the digest`
+            );
+          } else {
+            digestRowFilter = taskScoped;
+          }
+        } else {
           logger.warn(
-            `turn-end digest pull failed for session ${session.id}: ` +
-              `${error instanceof Error ? error.message : String(error)} — flushing without the digest`
+            `turn-end digest pull for session ${session.id} did not deliver ` +
+              `(action=${outcome.action}${
+                outcome.action === 'failed'
+                  ? `, stage=${outcome.stage}`
+                  : `, reason=${outcome.reason}`
+              }) — flushing without the digest`
           );
         }
-      } else if (this.ctx.reconcilePersistedDigestRows) {
-        try {
-          if (!this.ctx.reconcilePersistedDigestRows(session.id, session.context?.taskId)) {
-            excludeDigestRows = true;
-          }
-        } catch (error) {
-          logger.warn(
-            `flag-off digest reconcile failed for session ${session.id}: ` +
-              `${error instanceof Error ? error.message : String(error)} — excluding digest rows ` +
-              `from this flush so the digest and the original events are not both delivered`
-          );
-          excludeDigestRows = true;
-        }
-      } else {
-        excludeDigestRows = true;
+      } catch (error) {
+        logger.warn(
+          `turn-end digest pull failed for session ${session.id}: ` +
+            `${error instanceof Error ? error.message : String(error)} — flushing without the digest`
+        );
       }
-
       const { messages: allDeferred } = db.getUserMessagesByStatus(session.id, 'deferred');
       const backlogBase = options?.excludeMessageUuid
         ? allDeferred.filter((m) => m.uuid !== options.excludeMessageUuid)
         : allDeferred;
-      const backlog = excludeDigestRows
-        ? backlogBase.filter((m) => !String(m.uuid).startsWith(DETERMINISTIC_DIGEST_UUID_PREFIX))
-        : backlogBase;
+      const backlog = backlogBase.filter((m) => {
+        const uuid = String(m.uuid);
+        if (!uuid.startsWith(DETERMINISTIC_DIGEST_UUID_PREFIX)) return true;
+        const rowTaskId = (m as { externalEventTaskId?: unknown }).externalEventTaskId;
+        return (
+          digestRowFilter !== null &&
+          digestRowFilter({ uuid, taskId: typeof rowTaskId === 'string' ? rowTaskId : undefined })
+        );
+      });
 
       if (backlog.length === 0) {
         return 0;
       }
 
-      const deferredMessages = await this.foldDeferredExternalEvents(backlog);
-
-      const dbIds = deferredMessages.map((m) => m.dbId);
+      const dbIds = backlog.map((m) => m.dbId);
       db.updateMessageStatus(dbIds, 'enqueued');
-      const flushMessages = this.toFlushMessages(deferredMessages);
+      const flushMessages = this.toFlushMessages(backlog);
 
       let reDeferredDbIds: string[] = [];
       if (isMessageDeliveryV2Enabled()) {
@@ -155,10 +160,10 @@ export class QueryModeHandler {
       }
 
       if (!isMessageDeliveryV2Enabled()) {
-        await this.deliverRowsViaMemoryQueue(deferredMessages, flushMessages, options);
+        await this.deliverRowsViaMemoryQueue(backlog, flushMessages, options);
       }
 
-      return deferredMessages.length;
+      return backlog.length;
     };
 
     try {
@@ -172,72 +177,6 @@ export class QueryModeHandler {
       logger.error('Failed to trigger query:', error);
       return { success: false, messageCount: 0, error: errorMessage };
     }
-  }
-
-  private async foldDeferredExternalEvents(
-    rows: Array<SDKUserMessage & { dbId: string; timestamp: number }>
-  ): Promise<Array<SDKUserMessage & { dbId: string; timestamp: number }>> {
-    const sessionId = this.ctx.session.id;
-    const result = await foldDeferredExternalEventsAtFlush({
-      sessionId,
-      rows,
-      ops: {
-        findByUuid: async (uuid) => {
-          const repo = this.ctx.db.getSDKMessageRepo();
-          return (
-            repo.getMessageByStatusAndUuid(sessionId, 'enqueued', uuid) ??
-            repo.getMessageByStatusAndUuid(sessionId, 'deferred', uuid)
-          );
-        },
-        supersedeStaleFolds: async (keepUuid) => {
-          const { messages } = this.ctx.db.getUserMessagesByStatus(sessionId, 'enqueued');
-          const staleDbIds = messages
-            .filter(
-              (message) =>
-                typeof message.uuid === 'string' &&
-                message.uuid.startsWith(DEFERRED_FOLD_UUID_PREFIX) &&
-                message.uuid !== keepUuid
-            )
-            .map((message) => message.dbId);
-          if (staleDbIds.length === 0) return;
-          this.ctx.db.updateMessageStatus(staleDbIds, 'consumed');
-          await this.ctx.internalEventBus
-            .publish('messages.statusChanged', {
-              sessionId,
-              messageIds: staleDbIds,
-              status: 'consumed',
-            })
-            .catch(() => {});
-        },
-        saveRow: async (message, sendStatus) => {
-          const dbId = this.ctx.db.saveUserMessage(sessionId, message, sendStatus);
-          await this.ctx.internalEventBus
-            .publish('messages.statusChanged', {
-              sessionId,
-              messageIds: [dbId],
-              status: sendStatus,
-            })
-            .catch(() => {});
-          return dbId;
-        },
-        markSuperseded: async (dbIds) => {
-          this.ctx.db.updateMessageStatus(dbIds, 'consumed');
-          await this.ctx.internalEventBus
-            .publish('messages.statusChanged', {
-              sessionId,
-              messageIds: dbIds,
-              status: 'consumed',
-            })
-            .catch(() => {});
-        },
-      },
-    });
-    if (!result.digestRow) return rows;
-    this.ctx.logger.info(
-      `turn-end flush folded ${result.foldedCount} deferred external events into one digest ` +
-        `for session ${sessionId}`
-    );
-    return [...result.remainder, result.digestRow];
   }
 
   private flushClearBlockedByLiveWork(): boolean {

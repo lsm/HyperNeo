@@ -4,9 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   buildExternalEventDigestMessage,
   buildSyntheticExternalEventMessage,
-  deferredExternalEventEntryEvents,
   type ExternalEventEssenceEntry,
-  parseDeferredDeliveryRow,
 } from '../../external-events/deferred-event-digest.ts';
 import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
 import type {
@@ -51,21 +49,14 @@ export interface RenderPendingDigestSavedDigest {
   replayed: boolean;
 }
 
-export type LegacyDurableScanStatus = 'deferred' | 'enqueued' | 'submitted';
-
 export interface RenderPendingDigestDeps {
   getExecutionByAgentSessionId(sessionId: string): TurnEndExecutionRef | null;
   listPendingDeliveries(scope: RenderPendingDigestScope): ExternalEventDeliveryRecord[];
   ownsCurrentExecution(target: RenderPendingDigestTarget, sessionId: string): boolean;
+  isSessionInterruptInProgress(sessionId: string): boolean;
   isTaskAdmissible(taskId: string): boolean;
   isTaskTerminal(taskId: string): boolean;
   isSpacePaused(workflowRunId: string): boolean;
-  listUserMessagesByStatus(
-    sessionId: string,
-    status: LegacyDurableScanStatus | 'consumed',
-    limit: number,
-    direction: 'asc' | 'desc'
-  ): SDKUserMessage[];
   listUserMessagesByUuidPrefix(
     sessionId: string,
     prefix: string
@@ -89,6 +80,7 @@ export interface RenderPendingDigestDeps {
     message: SDKUserMessage
   ): Promise<RenderPendingDigestSavedDigest>;
   reopenFailedDigest(sessionId: string, uuid: string): void;
+  deleteDigestMessage(sessionId: string, dbId: string): void;
   appendDigest(sessionId: string, message: SDKUserMessage): Promise<boolean>;
   markDeliveriesDelivered(
     target: RenderPendingDigestTarget,
@@ -105,6 +97,7 @@ export type RenderPendingDigestSkipReason =
   | 'no_execution'
   | 'no_pending_events'
   | 'session_not_current'
+  | 'session_interrupted'
   | 'task_not_admissible'
   | 'space_paused'
   | 'no_claimable_events'
@@ -113,6 +106,7 @@ export type RenderPendingDigestSkipReason =
 export interface RenderPendingDigestSkip {
   action: 'skip';
   reason: RenderPendingDigestSkipReason;
+  heldDigestInFlight?: boolean;
 }
 
 export interface RenderPendingDigestHeld {
@@ -137,6 +131,7 @@ export interface RenderPendingDigestDelivered {
   eventIds: string[];
   deliveryKeys: string[];
   replayed: boolean;
+  taskId: string;
 }
 
 export type RenderPendingDigestOutcome =
@@ -150,7 +145,6 @@ export interface RenderPendingDigestCtx extends RenderPendingDigestInput {
   execution?: TurnEndExecutionRef;
   scopedRows?: ExternalEventDeliveryRecord[];
   target?: RenderPendingDigestTarget;
-  legacyDurableEventIds?: Set<string>;
   consumedDurableEventIds?: Set<string>;
   replayDigestMessage?: SDKUserMessage;
   replayEventIds?: Set<string>;
@@ -169,10 +163,6 @@ export const TURN_END_DIGEST_PENDING_ROW_CAP = 200;
 
 export const TURN_END_DIGEST_SCAN_ROW_CAP = TURN_END_DIGEST_PENDING_ROW_CAP * 4;
 
-export const TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP = TURN_END_DIGEST_SCAN_ROW_CAP * 2;
-
-export const LEGACY_DURABLE_SCAN_STATUSES = ['deferred', 'enqueued', 'submitted'] as const;
-
 function eventRecordEssence(record: ExternalEventRecord): ExternalEventEssenceEntry | null {
   return essenceEntryFromExternalEvent(record.event);
 }
@@ -189,6 +179,8 @@ export function resolveTarget(ctx: RenderPendingDigestCtx): RenderPendingDigestC
     agentName: execution.agentName,
   });
   if (scopedRows.length === 0) {
+    const admissionSkip = skipWhenInadmissible(ctx, execution);
+    if (admissionSkip) return admissionSkip;
     return { ...ctx, outcome: { action: 'skip', reason: 'no_pending_events' } };
   }
   const fallbackTaskId = ctx.taskId ?? scopedRows[0].taskId;
@@ -202,6 +194,31 @@ export function resolveTarget(ctx: RenderPendingDigestCtx): RenderPendingDigestC
     agentName: execution.agentName,
   };
   return { ...ctx, execution, scopedRows: targetScopedRows, target };
+}
+
+function skipWhenInadmissible(
+  ctx: RenderPendingDigestCtx,
+  execution: TurnEndExecutionRef
+): RenderPendingDigestCtx | null {
+  const target: RenderPendingDigestTarget = {
+    workflowRunId: execution.workflowRunId,
+    taskId: ctx.taskId ?? '',
+    nodeId: execution.workflowNodeId,
+    agentName: execution.agentName,
+  };
+  if (!ctx.deps.ownsCurrentExecution(target, ctx.sessionId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_not_current' } };
+  }
+  if (ctx.taskId !== undefined && !ctx.deps.isTaskAdmissible(ctx.taskId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'task_not_admissible' } };
+  }
+  if (ctx.deps.isSpacePaused(execution.workflowRunId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'space_paused' } };
+  }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_interrupted' } };
+  }
+  return null;
 }
 
 export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
@@ -237,30 +254,14 @@ export function admitTurnEnd(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   if (ctx.deps.isSpacePaused(target.workflowRunId)) {
     return { ...ctx, outcome: { action: 'skip', reason: 'space_paused' } };
   }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    return { ...ctx, outcome: { action: 'skip', reason: 'session_interrupted' } };
+  }
   return ctx;
 }
 
-function durableRowEventIds(rows: SDKUserMessage[]): string[] {
-  const ids: string[] = [];
-  for (const row of rows) {
-    const entry = parseDeferredDeliveryRow(row);
-    if (!entry) continue;
-    for (const event of deferredExternalEventEntryEvents(entry)) ids.push(event.eventId);
-  }
-  return ids;
-}
-
 function collectConsumedEvidence(ctx: RenderPendingDigestCtx): Set<string> {
-  const ids = new Set(
-    durableRowEventIds(
-      ctx.deps.listUserMessagesByStatus(
-        ctx.sessionId,
-        'consumed',
-        TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
-        'desc'
-      )
-    )
-  );
+  const ids = new Set<string>();
   for (const row of ctx.deps.listUserMessagesByUuidPrefix(
     ctx.sessionId,
     DETERMINISTIC_DIGEST_UUID_PREFIX
@@ -276,28 +277,7 @@ function collectConsumedEvidence(ctx: RenderPendingDigestCtx): Set<string> {
 }
 
 export function reconcileDurable(ctx: RenderPendingDigestCtx): RenderPendingDigestCtx {
-  const legacyDurableEventIds = new Set<string>();
-  for (const status of LEGACY_DURABLE_SCAN_STATUSES) {
-    const rows = ctx.deps.listUserMessagesByStatus(
-      ctx.sessionId,
-      status,
-      TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
-      'desc'
-    );
-    for (const eventId of durableRowEventIds(rows)) legacyDurableEventIds.add(eventId);
-  }
-  const consumedDurableEventIds =
-    ctx.consumedDurableEventIds ??
-    new Set(
-      durableRowEventIds(
-        ctx.deps.listUserMessagesByStatus(
-          ctx.sessionId,
-          'consumed',
-          TURN_END_DIGEST_DURABLE_EVIDENCE_ROW_CAP,
-          'desc'
-        )
-      )
-    );
+  const consumedDurableEventIds = ctx.consumedDurableEventIds ?? new Set<string>();
   const digestMembershipRows: Array<{ message: SDKUserMessage; eventIds: Set<string> }> = [];
   const digestMembershipEventIds = new Set<string>();
   for (const row of ctx.deps.listUserMessagesByUuidPrefix(
@@ -332,7 +312,6 @@ export function reconcileDurable(ctx: RenderPendingDigestCtx): RenderPendingDige
   const replayable = pendingEventIdSet.size > 0 && replayMatch !== undefined;
   return {
     ...ctx,
-    legacyDurableEventIds,
     consumedDurableEventIds,
     digestMembershipEventIds,
     replayDigestMessage: replayMatch?.message,
@@ -361,6 +340,7 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   const target = ctx.target!;
   const claimed: ExternalEventDeliveryRecord[] = [];
   const consumedMarks: RenderPendingDigestLedgerMark[] = [];
+  let heldDigestInFlight = false;
   const candidateRows = (ctx.scopedRows ?? []).slice(0, TURN_END_DIGEST_SCAN_ROW_CAP);
   for (const row of candidateRows) {
     if (claimed.length >= TURN_END_DIGEST_PENDING_ROW_CAP) break;
@@ -369,8 +349,10 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
       consumedMarks.push({ eventId: row.eventId, deliveryKey: row.deliveryKey });
       continue;
     }
-    if (ctx.legacyDurableEventIds?.has(row.eventId)) continue;
-    if (ctx.digestMembershipEventIds?.has(row.eventId)) continue;
+    if (ctx.digestMembershipEventIds?.has(row.eventId)) {
+      heldDigestInFlight = true;
+      continue;
+    }
     const immediate = ctx.deps.getDeliveryContent(
       ctx.sessionId,
       buildImmediateEventMessageUuid(row.eventId, row.deliveryKey)
@@ -399,7 +381,12 @@ export function claimPending(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
     }
   }
   if (claimed.length === 0) {
-    return { ...ctx, outcome: { action: 'skip', reason: 'no_claimable_events' } };
+    return {
+      ...ctx,
+      outcome: heldDigestInFlight
+        ? { action: 'skip', reason: 'no_claimable_events', heldDigestInFlight: true }
+        : { action: 'skip', reason: 'no_claimable_events' },
+    };
   }
   ctx.deps.acquireDeliveryClaims(claimed.map((row) => row.deliveryKey));
   return { ...ctx, pendingRows: claimed };
@@ -473,6 +460,7 @@ export function buildMessage(ctx: RenderPendingDigestCtx): RenderPendingDigestCt
   const digestMessage = {
     ...buildSyntheticExternalEventMessage(ctx.sessionId, ctx.digestText ?? '', digestUuid),
     externalEventIds: eventIds,
+    externalEventTaskId: ctx.target?.taskId,
   } as SDKUserMessage;
   return { ...ctx, digestUuid, digestMessage };
 }
@@ -533,6 +521,20 @@ export async function persistAndAppend(
       outcome: { action: 'held', reason: 'mailbox_rejected', uuid, dbId },
     };
   }
+  if (ctx.deps.isSessionInterruptInProgress(ctx.sessionId)) {
+    if (!saved.replayed) {
+      try {
+        ctx.deps.deleteDigestMessage(ctx.sessionId, dbId);
+      } catch (error) {
+        return { ...ctx, outcome: { action: 'failed', stage: 'digestCleanup', error } };
+      }
+    }
+    return {
+      ...ctx,
+      digestDbId: dbId,
+      outcome: { action: 'skip', reason: 'session_interrupted' },
+    };
+  }
   const marks = survivingRows
     .filter((row) => renderedEventIds.has(row.eventId))
     .map((row) => ({ eventId: row.eventId, deliveryKey: row.deliveryKey }));
@@ -554,6 +556,7 @@ export async function persistAndAppend(
       eventIds: (ctx.essences ?? []).map((essence) => essence.eventId),
       deliveryKeys: marks.map((mark) => mark.deliveryKey),
       replayed: saved.replayed,
+      taskId: ctx.target!.taskId,
     },
   };
 }

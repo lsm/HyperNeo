@@ -423,6 +423,14 @@ export class SessionManager {
     return this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
   }
 
+  getCachedSessions(): AgentSession[] {
+    const sessions: AgentSession[] = [];
+    for (const [, session] of this.sessionCache.entries()) {
+      sessions.push(session);
+    }
+    return sessions;
+  }
+
   setSpaceRuntimeMcpProvider(provider: SpaceRuntimeMcpProvider): void {
     this.spaceRuntimeMcpProvider = provider;
   }
