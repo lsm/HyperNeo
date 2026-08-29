@@ -178,7 +178,10 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
 
   const forgeLessonUpdateAutonomy = async (params: z.infer<typeof UpdateForgeLessonSchema>) => {
     const lesson = config.evolutionEpisodeService?.getLesson(params.lesson_id);
-    if (lesson?.status === 'active') return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    const scope = lesson ? config.evolutionScopeService?.getScope(lesson.scopeId) : null;
+    if (scope?.spaceId === config.spaceId && lesson?.status === 'active') {
+      return DESTRUCTIVE_ACTION_AUTONOMY_LEVEL;
+    }
     return forgeTerminalStatusAutonomy(['active', 'dismissed'])(params);
   };
 

@@ -43,6 +43,7 @@ interface ForgeCtx {
   workflowRunRepo: SpaceWorkflowRunRepository;
   taskRepo: SpaceTaskRepository;
   goalRepo: SpaceGoalRepository;
+  evolutionRepo: EvolutionRepository;
 }
 
 function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): ForgeCtx {
@@ -150,7 +151,7 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): ForgeCtx {
     callerRole: 'coordinator',
     ...overrides,
   };
-  return { db, config, workflowManager, workflowRunRepo, taskRepo, goalRepo };
+  return { db, config, workflowManager, workflowRunRepo, taskRepo, goalRepo, evolutionRepo };
 }
 
 const FORGE_ENTRIES: ReadonlyArray<readonly [string, string, string]> = [
@@ -296,6 +297,31 @@ describe('createSpaceRegistryEntries — forge autonomy', () => {
         SESSION_WRITE_AUTONOMY_LEVEL
       );
       expect(await proposal({ proposal_id: 'pr-1', title: 'Edited' })).toBe(1);
+
+      ctx.db
+        .prepare(
+          `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+           allowed_models, session_ids, slug, status, created_at, updated_at)
+           VALUES ('foreign-space', '/tmp/workspace-foreign', 'foreign-space', '', '', '', '[]', '[]', 'foreign-space', 'active', ?, ?)`
+        )
+        .run(Date.now(), Date.now());
+      const foreignScope = ctx.evolutionRepo.createScope({
+        spaceId: 'foreign-space',
+        kind: 'project',
+        name: 'Foreign scope',
+        objective: 'foreign fixture',
+      });
+      const foreignActiveLesson = ctx.evolutionRepo.createLesson({
+        scopeId: foreignScope.id,
+        status: 'active',
+        rule: 'Foreign rule',
+        why: 'foreign fixture',
+      });
+      expect(await lesson({ lesson_id: foreignActiveLesson.id, rule: 'Cross-space probe' })).toBe(
+        1
+      );
+      expect(await lesson({ lesson_id: 'missing-lesson', rule: 'Probe' })).toBe(1);
+
       expect(byName.get('apply_forge_rollup')?.autonomyRequirement).toBe(
         SESSION_WRITE_AUTONOMY_LEVEL
       );
