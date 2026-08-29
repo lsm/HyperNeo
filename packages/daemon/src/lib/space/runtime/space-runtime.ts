@@ -3954,6 +3954,8 @@ export class SpaceRuntime {
       }
     }
 
+    this.rehydrateLongHorizonSubscriptions(spaceId);
+    this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, `long_horizon:${spaceId}`);
     for (const run of this.config.workflowRunRepo.listBySpace(spaceId)) {
       this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, run.id);
     }

@@ -3128,5 +3128,101 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
       expect(taskRepo.getTask(task.id)?.status).not.toBe('cancelled');
     });
+
+    test('a space resume retries that space pending long-horizon deliveries and no other space', async () => {
+      const OTHER_SPACE_ID = `${SPACE_ID}-lh-other`;
+      const seededAt = Date.now();
+      db.prepare(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        OTHER_SPACE_ID,
+        OTHER_SPACE_ID,
+        '/tmp/runtime-events-lh-other',
+        'Other',
+        seededAt,
+        seededAt
+      );
+      const repo = new SpaceLongHorizonAgentRepository(db);
+      const agent = repo.create({
+        id: 'lh-agent-resume-retry',
+        spaceId: SPACE_ID,
+        handle: 'resume-retry',
+        displayName: 'Resume Retry',
+      });
+      const subscription = repo.createSubscription({
+        spaceId: SPACE_ID,
+        agentId: agent.id,
+        source: 'github',
+        topic: DEFAULT_TOPIC,
+      });
+      const otherAgent = repo.create({
+        id: 'lh-agent-resume-other',
+        spaceId: OTHER_SPACE_ID,
+        handle: 'resume-other',
+        displayName: 'Resume Other',
+      });
+      const otherSubscription = repo.createSubscription({
+        spaceId: OTHER_SPACE_ID,
+        agentId: otherAgent.id,
+        source: 'github',
+        topic: DEFAULT_TOPIC,
+      });
+      const event = makeEvent({ id: 'evt-lh-resume-retry' });
+      const otherEvent = makeEvent({ id: 'evt-lh-resume-other' });
+      eventStore.store(event);
+      eventStore.store(otherEvent);
+      const deliveryKey = `lh:${subscription.id}:${event.id}`;
+      eventStore.registerExpectedDelivery(event.id, deliveryKey, {
+        workflowRunId: `long_horizon:${SPACE_ID}`,
+        taskId: subscription.id,
+        nodeId: agent.id,
+        agentName: agent.id,
+      });
+      const otherDeliveryKey = `lh:${otherSubscription.id}:${otherEvent.id}`;
+      eventStore.registerExpectedDelivery(otherEvent.id, otherDeliveryKey, {
+        workflowRunId: `long_horizon:${OTHER_SPACE_ID}`,
+        taskId: otherSubscription.id,
+        nodeId: otherAgent.id,
+        agentName: otherAgent.id,
+      });
+      eventStore.markDeliveryFailed(event.id, deliveryKey, {
+        terminal: false,
+        reason: 'long-horizon agent unavailable',
+      });
+      eventStore.markDeliveryFailed(otherEvent.id, otherDeliveryKey, {
+        terminal: false,
+        reason: 'long-horizon agent unavailable',
+      });
+
+      const runtime2 = new SpaceRuntime({
+        db,
+        spaceManager,
+        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        internalEventBus: bus,
+        commandBus: (runtime as unknown as { config: { commandBus: unknown } }).config
+          .commandBus as never,
+        externalEventStore: eventStore,
+        longHorizonAgentRepo: repo,
+        taskAgentManager: tam as never,
+        deliverLongHorizonExternalEvent: async ({ agentId, message, idempotencyKey }) => {
+          longHorizonMessages.push({ agentId, message, idempotencyKey });
+          return { delivered: true };
+        },
+      });
+
+      runtime2.onSpaceResumed(SPACE_ID);
+      await wait(100);
+
+      expect(longHorizonMessages).toHaveLength(1);
+      expect(longHorizonMessages[0]!.agentId).toBe(agent.id);
+      expect(longHorizonMessages[0]!.idempotencyKey).toBe(deliveryKey);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+      expect(eventStore.listDeliveries(otherEvent.id)[0]!.state).toBe('pending');
+    });
   });
 });
