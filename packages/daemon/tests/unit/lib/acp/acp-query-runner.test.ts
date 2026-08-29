@@ -2724,6 +2724,43 @@ describe('AcpQueryRunner', () => {
       await ctx.queryPromise;
     }, 5000);
 
+    test('a process exit after a legal empty turn does not kill the idle runner', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+      });
+      let releaseNextTurn: (() => void) | undefined;
+      const { runner, ctx, constructorOptions } = createRunnerFixture({
+        client,
+        messageGenerator: async function* () {
+          yield { message: makeUserMessage('hello'), onSent: mock(() => {}) };
+          await new Promise<void>((resolve) => {
+            releaseNextTurn = resolve;
+          });
+        },
+      });
+
+      await runner.start();
+      await waitFor(
+        () => client.sendPrompt.mock.calls.length > 0 && ctx.startupTimeoutTimer === null,
+        500
+      );
+      constructorOptions[0].onExit?.(0, null);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(ctx.queryAbortController?.signal.aborted).toBe(false);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(client.close).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+      releaseNextTurn?.();
+      await ctx.queryPromise;
+    }, 5000);
+
     test('keeps a slow live agent alive: the nudge-only watch never kills', async () => {
       const previousOldVar = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
       process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
