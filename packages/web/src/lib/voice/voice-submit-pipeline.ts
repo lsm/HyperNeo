@@ -20,6 +20,7 @@ const VOICE_SUBMIT_TRANSCRIBE_TIMEOUT_MS = 125_000;
 export interface VoiceSubmitInput {
   sessionId: string;
   mode?: VoiceSubmitMode;
+  retrySilent?: boolean;
 }
 
 export interface VoiceSubmitDeps {
@@ -113,7 +114,7 @@ async function stopAndEncodeRecording(ctx: VoiceSubmitSnapshotCtx): Promise<Voic
 function gateSilentRecording(ctx: VoiceSubmitEncodedCtx): VoiceSubmitGatedCtx {
   return {
     ...ctx,
-    silentRecording: ctx.recording.peakLevel < VOICE_SUBMIT_SILENCE_PEAK_LEVEL,
+    silentRecording: !ctx.retrySilent && ctx.recording.peakLevel < VOICE_SUBMIT_SILENCE_PEAK_LEVEL,
   };
 }
 
