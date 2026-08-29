@@ -248,6 +248,13 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     });
   });
 
+  test('refuses construction for roles the dispatcher cannot dispatch', () => {
+    expect(() => makeServer({ role: 'legacy_task_agent' })).toThrow(
+      'does not support role "legacy_task_agent"'
+    );
+    expect(() => makeServer({ role: 'outside_space' })).toThrow('does not support role');
+  });
+
   test('rejects tool configs bound to a different space', () => {
     expect(() =>
       makeServer({

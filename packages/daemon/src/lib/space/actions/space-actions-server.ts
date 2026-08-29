@@ -40,9 +40,12 @@ const WORKER_NODE_HOT_FILL = [
 
 const COORDINATOR_ONLY_ACTIONS = new Set(['approve_pending_completion']);
 
-function isCoordinatorAdmittedRole(role: SpaceMcpSessionRole): boolean {
-  return role === 'coordinator' || role === 'legacy_task_agent';
-}
+const DISPATCHABLE_ROLES: ReadonlySet<SpaceMcpSessionRole> = new Set([
+  'coordinator',
+  'ad_hoc_member',
+  'workflow_worker',
+  'long_term_agent',
+]);
 
 function displayLabel(value: string): string {
   return value
@@ -132,6 +135,12 @@ export interface SpaceActionsServerConfig {
 }
 
 export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
+  if (!DISPATCHABLE_ROLES.has(config.role)) {
+    throw new Error(
+      `createSpaceActionsMcpServer does not support role "${config.role}": the dispatcher ` +
+        'admits no action families for it, so no action (including list_actions) could ever run'
+    );
+  }
   if (config.spaceConfig && config.spaceConfig.spaceId !== config.spaceId) {
     throw new Error(
       `spaceConfig.spaceId "${config.spaceConfig.spaceId}" does not match server spaceId "${config.spaceId}"`
@@ -148,7 +157,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   const spaceEntries = spaceConfig ? createSpaceRegistryEntries(spaceConfig) : [];
   const nodeEntries = config.nodeConfig ? createNodeRegistryEntries(config.nodeConfig) : [];
   const isRoleAdmittedEntry = (entry: ActionDefinition) =>
-    isCoordinatorAdmittedRole(config.role) || !COORDINATOR_ONLY_ACTIONS.has(entry.name);
+    config.role === 'coordinator' || !COORDINATOR_ONLY_ACTIONS.has(entry.name);
   let registry: ActionRegistry;
   const metaEntries = createRegistryMetaEntries(() => registry);
   registry = createActionRegistry([
