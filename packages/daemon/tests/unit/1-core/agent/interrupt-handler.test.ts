@@ -27,6 +27,7 @@ describe('InterruptHandler', () => {
   let queueSizeSpy: ReturnType<typeof mock>;
   let queueClearSpy: ReturnType<typeof mock>;
   let queueStopSpy: ReturnType<typeof mock>;
+  let queueNoteUserInterruptSpy: ReturnType<typeof mock>;
   let sdkInterruptSpy: ReturnType<typeof mock>;
   let sdkCancelAsyncMessageSpy: ReturnType<typeof mock>;
   let sdkCloseSpy: ReturnType<typeof mock>;
@@ -61,10 +62,12 @@ describe('InterruptHandler', () => {
     queueSizeSpy = mock(() => 0);
     queueClearSpy = mock(() => {});
     queueStopSpy = mock(() => {});
+    queueNoteUserInterruptSpy = mock(() => {});
     mockMessageQueue = {
       size: queueSizeSpy,
       clear: queueClearSpy,
       stop: queueStopSpy,
+      noteUserInterrupt: queueNoteUserInterruptSpy,
     } as unknown as MessageQueue;
 
     setInterruptedSpy = mock(async () => {});
@@ -178,6 +181,16 @@ describe('InterruptHandler', () => {
       await handler.handleInterrupt();
 
       expect(handler.isInterruptRequested()).toBe(false);
+    });
+
+    it('should note the user interrupt before the idle early-return', async () => {
+      getStateSpy.mockReturnValue({ status: 'idle', phase: 'idle' });
+      handler = createHandler();
+
+      await handler.handleInterrupt({ preserveDeliveryJobs: true });
+
+      expect(queueNoteUserInterruptSpy).toHaveBeenCalledTimes(1);
+      expect(setInterruptedSpy).not.toHaveBeenCalled();
     });
 
     it('clears the requested flag when delivery cancellation throws', async () => {

@@ -1142,6 +1142,37 @@ describe('QueryRunner', () => {
       expect(sentCount.value).toBe(2);
     });
 
+    it('passes the query generation through to the queue generator options', async () => {
+      async function* mockMessageGenerator() {
+        yield {
+          message: { uuid: 'msg-1', content: 'Hello', internal: true },
+          onSent: () => {},
+        };
+      }
+
+      const generatorOptions: Array<{
+        suppressPreYieldCallback?: boolean;
+        queryGeneration?: number;
+      }> = [];
+      const mockQueue = {
+        ...mockMessageQueue,
+        messageGenerator: mock((_sessionId: string, options?: object) => {
+          generatorOptions.push(options as (typeof generatorOptions)[number]);
+          return mockMessageGenerator();
+        }),
+      };
+
+      runner = createRunner({
+        messageQueue: mockQueue as unknown as MessageQueue,
+      });
+
+      const generator = runner.createMessageGeneratorWrapper(7);
+      for await (const _msg of generator) {
+      }
+
+      expect(generatorOptions).toEqual([{ suppressPreYieldCallback: true, queryGeneration: 7 }]);
+    });
+
     it('should set processing state for non-internal messages', async () => {
       async function* mockMessageGenerator() {
         yield {

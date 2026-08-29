@@ -572,10 +572,16 @@ export class SDKMessageHandler {
     }
   }
 
-  private async acknowledgePersistedUserMessage(message: SDKMessage): Promise<boolean> {
-    const { session, db } = this.ctx;
+  private async acknowledgePersistedUserMessage(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<'acknowledged' | 'stale' | 'unmatched'> {
+    const { session, db, messageQueue } = this.ctx;
     if (message.type !== 'user' || !message.uuid) {
-      return false;
+      return 'unmatched';
+    }
+    if (!messageQueue.ownsLastYield(message.uuid, invocationGeneration)) {
+      return 'stale';
     }
 
     const statusRows: Record<
@@ -594,18 +600,18 @@ export class SDKMessageHandler {
       consumed: statusRows.consumed !== null,
     });
     if (selection.action === 'none') {
-      return false;
+      return 'unmatched';
     }
     if (selection.action === 'already_consumed') {
       this.acknowledgedPersistedUserThisTurn = true;
-      return true;
+      return 'acknowledged';
     }
     const persisted = statusRows[selection.status];
     if (!persisted) {
-      return false;
+      return 'unmatched';
     }
     await this.consumePersistedUserMessage(persisted, message);
-    return true;
+    return 'acknowledged';
   }
 
   private async consumePersistedUserMessage(
@@ -645,7 +651,8 @@ export class SDKMessageHandler {
 
   private async acknowledgeOldestQueuedUserOnTurnEnd(
     activeMessageId: string | null,
-    resultUuid: string
+    resultUuid: string,
+    invocationGeneration: number | null
   ): Promise<void> {
     const { session, db, internalEventBus, messageHub, messageQueue } = this.ctx;
     const { messages: enqueuedUsers } = db.getUserMessagesByStatus(session.id, 'enqueued');
@@ -653,6 +660,7 @@ export class SDKMessageHandler {
     let lastConsumedAt = 0;
     for (const enqueuedUser of enqueuedUsers) {
       const messageId = enqueuedUser.uuid ?? '';
+      if (!messageQueue.ownsYieldedGeneration(messageId, invocationGeneration)) continue;
       const durableOwned =
         db.getJobQueueRepo?.()?.activeDeliveryMessageUuids(session.id) ?? new Set();
       const yielded = messageQueue.hasYielded(messageId);
@@ -679,7 +687,7 @@ export class SDKMessageHandler {
         .markDeliveriesConsumedAtTurnEnd(session.id, deliveryUuids, resultUuid);
       const consumedId = consumed.ids[0];
       if (!consumedId) continue;
-      if (messageQueue.acknowledgeYielded(messageId)) {
+      if (messageQueue.acknowledgeYielded(messageId, invocationGeneration ?? undefined)) {
         for (const uuid of consumed.uuids) {
           signalDeliveryConsumed(session.id, uuid);
         }
@@ -1008,7 +1016,18 @@ export class SDKMessageHandler {
       this.lastSdkErrorTag = message.error;
     }
 
-    if (await this.acknowledgePersistedUserMessage(message)) {
+    const persistedUserAck = await this.acknowledgePersistedUserMessage(
+      message,
+      invocationGeneration
+    );
+    if (persistedUserAck === 'stale') {
+      this.logger.info(
+        `discarding stale user echo ${message.uuid} from a superseded query for ` +
+          `${this.ctx.session.id}`
+      );
+      return;
+    }
+    if (persistedUserAck === 'acknowledged') {
       this.maybeRefreshContextOnEvent(message, invocationGeneration);
       return;
     }
@@ -1407,7 +1426,11 @@ export class SDKMessageHandler {
     }
 
     if (!this.acknowledgedPersistedUserThisTurn && !this.suppressIdleOnNextResult) {
-      await this.acknowledgeOldestQueuedUserOnTurnEnd(activeMessageId, message.uuid ?? '');
+      await this.acknowledgeOldestQueuedUserOnTurnEnd(
+        activeMessageId,
+        message.uuid ?? '',
+        invocationGeneration
+      );
     }
     this.acknowledgedPersistedUserThisTurn = false;
 
