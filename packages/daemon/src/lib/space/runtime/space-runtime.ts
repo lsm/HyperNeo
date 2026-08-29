@@ -42,7 +42,8 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { formatExternalEventEssence } from '../../external-events/event-essence.ts';
+import { renderEventBlock } from '../../external-events/deferred-event-digest.ts';
+import { essenceEntryFromExternalEvent } from '../../external-events/event-essence-entry.ts';
 import {
   type ExternalEventPublishedPayload,
   isExternalEventDeliveryV2Enabled,
@@ -2101,13 +2102,11 @@ export class SpaceRuntime {
   }
 
   private externalEventDeliveryMessage(event: ExternalEventPublishedPayload): string {
-    if (isExternalEventDeliveryV2Enabled()) {
-      const record = this.config.externalEventStore?.getById(event.eventId);
-      if (record?.event.urgency === 'immediate' && record.event.render) {
-        return record.event.render;
-      }
-    }
-    return formatExternalEventEssence(event);
+    const record = this.config.externalEventStore?.getById(event.eventId);
+    if (!record) return '';
+    if (record.event.render) return record.event.render;
+    const entry = essenceEntryFromExternalEvent(record.event);
+    return entry ? renderEventBlock(entry) : '';
   }
 
   private async deliverToLongHorizonAgent(

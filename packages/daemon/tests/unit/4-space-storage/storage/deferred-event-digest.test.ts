@@ -4,12 +4,7 @@ import {
   type ExternalEventEssenceEntry,
 } from '../../../../src/lib/external-events/deferred-event-digest';
 import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry';
-import {
-  classifyExternalEventTier,
-  EXTERNAL_EVENT_TOPIC_TIERS,
-  externalEventTopicSuffix,
-} from '../../../../src/lib/external-events/event-tiers';
-import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service';
+import { externalEventTopicSuffix } from '../../../../src/lib/external-events/event-tiers';
 
 const PR_URL = 'https://github.com/lsm/HyperNeo/pull/2828';
 
@@ -64,22 +59,7 @@ function check(eventId: string, occurredAt: number, conclusion: string): Externa
   });
 }
 
-describe('external event tier registry', () => {
-  it('maps the known topic suffixes to the digest tier', () => {
-    expect(EXTERNAL_EVENT_TOPIC_TIERS.review_comment_polled).toBe('digest');
-    expect(EXTERNAL_EVENT_TOPIC_TIERS.check_failed).toBe('digest');
-    expect(EXTERNAL_EVENT_TOPIC_TIERS.polled).toBe('digest');
-    expect(EXTERNAL_EVENT_TOPIC_TIERS.comment_polled).toBe('digest');
-    expect(EXTERNAL_EVENT_TOPIC_TIERS.reaction_added).toBe('digest');
-  });
-
-  it('classifies unknown suffixes as digest', () => {
-    expect(classifyExternalEventTier('github/lsm/hyperneo/pull_request/9.made_up_suffix')).toBe(
-      'digest'
-    );
-    expect(classifyExternalEventTier('weird-topic-without-suffix')).toBe('digest');
-  });
-
+describe('external event topic suffix', () => {
   it('extracts the suffix after the final dot', () => {
     expect(externalEventTopicSuffix('github/lsm/hyperneo/pull_request/2828.check_failed')).toBe(
       'check_failed'

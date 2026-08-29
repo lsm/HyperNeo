@@ -6,16 +6,43 @@ compositions, per ADR 0004 (`docs/adr/0004-superpipe-pipelines.md`).
 
 The target is **planning only**: no source code is changed by this document.
 
+## Shipped design (supersedes parts of this plan)
+
+The external-events delivery redesign (#3013 epic) shipped a different architecture
+than the per-site migration this plan originally described. As shipped:
+
+- **Ingest envelope** — every published event runs the ingest pipeline
+  (`ingest-external-event-pipeline.ts`): `classifyUrgency` stamps
+  `immediate | queued` and `renderEventBlock` stamps a human-readable render onto
+  the stored record. `classifyUrgency` is the one classifier;
+  `renderEventBlock` plus the aggregate digest renderer
+  (`buildExternalEventDigestMessage`) are the render surface.
+- **Immediate push** — immediate-urgency events deliver the record's render
+  directly (`deliverImmediateTierEvent` in `space-runtime.ts`); long-horizon
+  agents likewise receive the record's render on push delivery.
+- **Receptivity pull** — queued-urgency events wait in the store and are
+  rendered as digests when a session becomes receptive
+  (`renderPendingDigestForSession`), replacing the legacy fold/parse-back of
+  essence-JSON message rows.
+
+Deletion slices that removed the superseded machinery: the steer-buffer stack
+(#3025), the V1 defer-delivery writers/engine (#3208/#3209), the fold/parse-back
+stack (`parseDeferredExternalEventText` and the flush fold, #3026), and the
+legacy renderers/tier classifiers (`formatExternalEventEssence`,
+`classifyExternalEventTier`, `classifyExternalEventDirectSteer`, #3027).
+Per-site sections below whose subjects were deleted are marked SUPERSEDED and
+remain for historical reference only.
+
 ## Scope and combinator fit
 
 | Site | Proposed combinator | Rationale |
 | --- | --- | --- |
 | `github/github-normalizer.ts` normalizer family | One raw superpipe ingest pipeline for the webhook business path (`ingest-github-webhook`) with inline self-guarding dispatch stages; `normalizeGitHubPollingRow` stays a plain function | Dispatch and per-kind processing are stages of the single webhook pipeline; projection (`project-external-event`) stays a separate per-space transform at the publish boundary. The polling-row normalizer runs once per endpoint row (pages up to 100 — `github-event-extension.ts:2491-2499`), so a per-row pipeline invocation is the hot-inner-loop pattern ADR 0004 Decision 8 excludes. |
-| `event-essence.ts:formatExternalEventEssence` | Raw superpipe transform | Pure event-object to JSON-string formatting. Conditional field copies become guarded pipeline stages. |
+| `event-essence.ts:formatExternalEventEssence` | **SUPERSEDED** — deleted in #3027; the render surface is `renderEventBlock` at ingest | Pure event-object to JSON-string formatting. Conditional field copies become guarded pipeline stages. |
 | `deferred-event-digest.ts:buildExternalEventDigestMessage` | None — stays a plain function over extracted ordered pure helpers (review correction: both callers sit inside larger business operations — `buildSteerText` is a stage of the `direct-steer-flush` superpipe, and `foldDeferredExternalEventsAtFlush` is an imperative async fold — so a separately-run rendering pipeline would nest inside another runner or split the fold operation) | Sort, group, render, header/footer become unit-tested pure helpers called in order from the plain body. |
 | `deferred-event-digest.ts:renderDigestGroup` | Ordinary pure helper (kind switch) called by the `renderGroups` helper of the plain digest function — review correction: not a separately-run `decisionRun` | One composition boundary per business path; the kind switch stays a private helper inside `buildExternalEventDigestMessage`. |
-| `deferred-event-digest.ts:parseDeferredExternalEventText` | None — stays a plain function (review correction PR #2979: it runs once per row inside the `partitionDeferredExternalEventRows`/`planDeferredExternalEventOverflow` loops; per-row pipeline invocation is the hot-inner-loop pattern ADR 0004 excludes) | Precedence (JSON event → JSON digest → rate-limit forms → `null`) pinned by decision-table tests instead. |
-| `event-tiers.ts:classifyExternalEventDirectSteer` | Ordinary pure helper (review correction: called once per essence from `partitionDirectSteerEssences`, already a stage of `external-event-steer-admission` — converting to `decisionRun` adds a nested runner invocation per buffered event) | A short precedence chain over topic suffixes/state/conclusion/actor. First match wins; fall-through returns `null`. |
+| `deferred-event-digest.ts:parseDeferredExternalEventText` | **SUPERSEDED** — deleted in #3026 with the fold/parse-back stack | Precedence (JSON event → JSON digest → rate-limit forms → `null`) pinned by decision-table tests instead. |
+| `event-tiers.ts:classifyExternalEventDirectSteer` | **SUPERSEDED** — deleted in #3027; `classifyUrgency` is the surviving classifier | A short precedence chain over topic suffixes/state/conclusion/actor. First match wins; fall-through returns `null`. |
 | `github-subscription-pattern.ts:composeGitHubSubscriptionPattern` | `decisionRun` | Validation gates each produce an `invalid` decision and halt; the final gate builds the `ok` pattern. The shell preserves the current throw-on-error contract. |
 | `github/github-event-extension.ts:validateRemoteHook` | `decisionRun` | Each validation rule produces an `invalid` decision and halts; success falls through to a `valid` decision. The shell preserves the `string \| null` contract. |
 
@@ -397,6 +424,11 @@ The normalizer family has no DB/network writes.
 
 ### `event-essence.ts:formatExternalEventEssence`
 
+**SUPERSEDED** — deleted in #3027. The legacy JSON essence renderer is gone;
+agents receive the ingest-stamped `renderEventBlock` render (immediate push and
+long-horizon push) or the aggregate digest (receptivity pull). The section
+below is historical.
+
 #### Current summary
 
 Builds a formatted JSON essence from an `ExternalEventPublishedPayload`.
@@ -518,6 +550,10 @@ check conclusions, deployment state, and all payload-derived detail.
 ---
 
 ### `deferred-event-digest.ts:buildExternalEventDigestMessage`
+
+Note: the `foldDeferredExternalEventsAtFlush` caller named below was deleted in
+#3026; the aggregate renderer now serves the receptivity-pull digest path
+(`renderPendingDigestForSession`). The plain-function decision still stands.
 
 #### Current summary
 
@@ -732,6 +768,10 @@ composition boundary the proposed-combinator section rejects).
 
 ### `deferred-event-digest.ts:parseDeferredExternalEventText`
 
+**SUPERSEDED** — deleted in #3026 together with the fold/parse-back stack;
+external events no longer launder through deferred user-message rows. The
+section below is historical.
+
 #### Current summary
 
 Parses a deferred external-event text back into a `DeferredExternalEventEntry`.
@@ -810,6 +850,10 @@ for unit clarity, but no pipeline is created and no wrapper changes.
 ---
 
 ### `event-tiers.ts:classifyExternalEventDirectSteer`
+
+**SUPERSEDED** — deleted in #3027. `classifyUrgency`
+(`event-urgency.ts`) is the single surviving classifier, applied at ingest.
+The section below is historical.
 
 #### Current summary
 
