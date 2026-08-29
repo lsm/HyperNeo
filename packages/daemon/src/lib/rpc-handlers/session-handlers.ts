@@ -691,7 +691,7 @@ export function setupSessionHandlers(
       sandboxEnabled: boolean;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1298,7 +1298,7 @@ export function setupSessionHandlers(
       throw new Error(`Invalid choice: ${choice}. Must be 'start_fresh' or 'leave_as_is'`);
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
