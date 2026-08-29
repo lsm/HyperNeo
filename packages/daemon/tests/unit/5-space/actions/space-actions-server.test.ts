@@ -686,6 +686,29 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries[0].paramsSummary).not.toContain('confidential-plan');
   });
 
+  test('audits malformed mutating calls even with read auditing off', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+      dispatchDeps: { auditReads: false },
+    });
+    const body = (await dispatch(server, {
+      name: 'update_session_state',
+      params: {},
+    })) as Record<string, unknown>;
+    expect(body).toMatchObject({ error: 'action_denied', reason: 'invalid_params' });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ toolName: 'update_session_state' });
+  });
+
   test('audits autonomy denials', async () => {
     const entries: CreateMcpAuditLogParams[] = [];
     const server = makeServer({

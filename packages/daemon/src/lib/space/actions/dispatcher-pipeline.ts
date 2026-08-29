@@ -118,6 +118,7 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
     const next: DispatchActionCtx = {
       ...ctx,
       action,
+      isMutating: isMutatingSafetyClass(action.safetyClass),
       outcome: deniedOutcome(
         'invalid_params',
         `Invalid parameters for ${action.name}: ${parsed.error.message}`
