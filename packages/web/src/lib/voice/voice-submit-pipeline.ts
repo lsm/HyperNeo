@@ -11,7 +11,9 @@ import {
   voiceRetryPolicy,
 } from './voice-submit-routing.ts';
 
-export const VOICE_SUBMIT_MAX_TRANSCRIBE_ATTEMPTS = 4;
+export const VOICE_SUBMIT_MAX_TRANSCRIBE_ATTEMPTS = 5;
+
+export const VOICE_SUBMIT_SILENCE_PEAK_LEVEL = 0.001;
 
 const VOICE_SUBMIT_TRANSCRIBE_TIMEOUT_MS = 125_000;
 
@@ -39,6 +41,7 @@ export type VoiceSubmitResult =
       recordId: string;
       persisted: boolean;
       dequeued: boolean;
+      hitDurationLimit: boolean;
     }
   | {
       kind: 'transcribe-failed';
@@ -46,7 +49,9 @@ export type VoiceSubmitResult =
       attempts: number;
       recordId: string;
       persisted: boolean;
-    };
+      dequeued: boolean;
+    }
+  | { kind: 'silent-recording'; peakLevel: number };
 
 interface VoiceSubmitSnapshot {
   recordId: string;
@@ -57,13 +62,17 @@ interface VoiceSubmitEncoded extends VoiceSubmitSnapshot {
   recording: VoiceRecording;
 }
 
-interface VoiceSubmitPersisted extends VoiceSubmitEncoded {
+interface VoiceSubmitGated extends VoiceSubmitEncoded {
+  silentRecording?: boolean;
+}
+
+interface VoiceSubmitPersisted extends VoiceSubmitGated {
   persisted: boolean;
 }
 
 interface VoiceSubmitTranscribed extends VoiceSubmitPersisted {
   transcript?: string;
-  failure?: { message: string; attempts: number };
+  failure?: { message: string; attempts: number; retryable: boolean };
 }
 
 interface VoiceSubmitRouted extends VoiceSubmitTranscribed {
@@ -77,13 +86,15 @@ interface VoiceSubmitFinished extends VoiceSubmitRouted {
 type VoiceSubmitCtx = VoiceSubmitInput & { deps: VoiceSubmitDeps };
 type VoiceSubmitSnapshotCtx = VoiceSubmitSnapshot & VoiceSubmitCtx;
 type VoiceSubmitEncodedCtx = VoiceSubmitEncoded & VoiceSubmitCtx;
+type VoiceSubmitGatedCtx = VoiceSubmitGated & VoiceSubmitCtx;
 type VoiceSubmitPersistedCtx = VoiceSubmitPersisted & VoiceSubmitCtx;
 type VoiceSubmitTranscribedCtx = VoiceSubmitTranscribed & VoiceSubmitCtx;
 type VoiceSubmitRoutedCtx = VoiceSubmitRouted & VoiceSubmitCtx;
 type VoiceSubmitFinishedCtx = VoiceSubmitFinished & VoiceSubmitCtx;
 type VoiceSubmitHaltedCtx = VoiceSubmitTranscribedCtx & {
-  failure: { message: string; attempts: number };
+  failure: { message: string; attempts: number; retryable: boolean };
 };
+type VoiceSubmitSilentCtx = VoiceSubmitGatedCtx & { silentRecording: true };
 
 export function isTerminalVoiceSubmitOutcome(outcome: VoiceSubmitOutcome): boolean {
   return outcome.kind === 'insert' || outcome.kind === 'discard-with-reason';
@@ -102,7 +113,14 @@ async function stopAndEncodeRecording(ctx: VoiceSubmitSnapshotCtx): Promise<Voic
   return { ...ctx, recording: await ctx.deps.stopRecording() };
 }
 
-async function persistVoiceAudio(ctx: VoiceSubmitEncodedCtx): Promise<VoiceSubmitPersistedCtx> {
+function gateSilentRecording(ctx: VoiceSubmitEncodedCtx): VoiceSubmitGatedCtx {
+  return {
+    ...ctx,
+    silentRecording: ctx.recording.peakLevel < VOICE_SUBMIT_SILENCE_PEAK_LEVEL,
+  };
+}
+
+async function persistVoiceAudio(ctx: VoiceSubmitGatedCtx): Promise<VoiceSubmitPersistedCtx> {
   const recording = ctx.recording;
   const entry: VoiceRecordEntry = {
     id: ctx.recordId,
@@ -120,6 +138,7 @@ async function transcribeWithRetry(
   ctx: VoiceSubmitPersistedCtx
 ): Promise<VoiceSubmitTranscribedCtx> {
   let attempts = 0;
+  let retryable = true;
   let message = 'Voice transcription failed';
   for (let attempt = 0; attempt < VOICE_SUBMIT_MAX_TRANSCRIBE_ATTEMPTS; attempt++) {
     attempts = attempt + 1;
@@ -129,10 +148,13 @@ async function transcribeWithRetry(
       return { ...ctx, transcript: result.text?.trim() ?? '' };
     } catch (error) {
       message = voiceSubmitErrorMessage(error);
-      if (classifyVoiceSubmitError(error, 'transcribe') !== 'retry') break;
+      if (classifyVoiceSubmitError(error, 'transcribe') !== 'retry') {
+        retryable = false;
+        break;
+      }
     }
   }
-  return { ...ctx, failure: { message, attempts } };
+  return { ...ctx, failure: { message, attempts, retryable } };
 }
 
 function routeSubmitOutcome(ctx: VoiceSubmitTranscribedCtx): VoiceSubmitRoutedCtx {
@@ -155,13 +177,17 @@ async function dequeueTerminalOutcome(ctx: VoiceSubmitRoutedCtx): Promise<VoiceS
 const runVoiceSubmitPipeline = (
   superpipe<{
     failed: (ctx: VoiceSubmitTranscribedCtx) => boolean;
+    isSilent: (ctx: VoiceSubmitGatedCtx) => boolean;
   }>({
     failed: (ctx) => ctx.failure !== undefined,
+    isSilent: (ctx) => ctx.silentRecording === true,
   })('voice-submit') as PipelineAPI
 )
   .input(['ctx'])
   .pipe(snapshotVoiceSubmit, 'ctx', 'ctx')
   .pipe(stopAndEncodeRecording, 'ctx', 'ctx')
+  .pipe(gateSilentRecording, 'ctx', 'ctx')
+  .pipe('!isSilent', 'ctx')
   .pipe(persistVoiceAudio, 'ctx', 'ctx')
   .pipe(transcribeWithRetry, 'ctx', 'ctx')
   .pipe('!failed', 'ctx')
@@ -169,7 +195,7 @@ const runVoiceSubmitPipeline = (
   .pipe(dequeueTerminalOutcome, 'ctx', 'ctx')
   .endAsync('ctx') as (
   ctx: VoiceSubmitCtx
-) => Promise<VoiceSubmitFinishedCtx | VoiceSubmitHaltedCtx>;
+) => Promise<VoiceSubmitFinishedCtx | VoiceSubmitHaltedCtx | VoiceSubmitSilentCtx>;
 
 async function requestVoiceTranscription(recording: VoiceRecording): Promise<{ text?: string }> {
   const hub = connectionManager.getHubIfConnected();
@@ -181,27 +207,32 @@ async function requestVoiceTranscription(recording: VoiceRecording): Promise<{ t
 
 export async function runVoiceSubmit(
   input: VoiceSubmitInput,
-  deps: Partial<VoiceSubmitDeps> = {}
+  deps: Pick<VoiceSubmitDeps, 'isMounted' | 'currentSessionId'> & Partial<VoiceSubmitDeps>
 ): Promise<VoiceSubmitResult> {
   const resolved: VoiceSubmitDeps = {
     stopRecording: deps.stopRecording ?? voiceRecorderStore.stop,
     transcribe: deps.transcribe ?? requestVoiceTranscription,
     putRecord: deps.putRecord ?? putVoiceRecord,
     deleteRecord: deps.deleteRecord ?? deleteVoiceRecord,
-    isMounted: deps.isMounted ?? (() => true),
-    currentSessionId: deps.currentSessionId ?? (() => input.sessionId),
+    isMounted: deps.isMounted,
+    currentSessionId: deps.currentSessionId,
     generateId: deps.generateId ?? generateUUID,
     now: deps.now ?? (() => Date.now()),
     delay: deps.delay ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
   };
   const ctx = await runVoiceSubmitPipeline({ ...input, deps: resolved });
+  if (!('persisted' in ctx)) {
+    return { kind: 'silent-recording', peakLevel: ctx.recording.peakLevel };
+  }
   if (!('outcome' in ctx)) {
+    const dequeued = ctx.failure.retryable ? false : await resolved.deleteRecord(ctx.recordId);
     return {
       kind: 'transcribe-failed',
       message: ctx.failure.message,
       attempts: ctx.failure.attempts,
       recordId: ctx.recordId,
       persisted: ctx.persisted,
+      dequeued,
     };
   }
   return {
@@ -210,5 +241,6 @@ export async function runVoiceSubmit(
     recordId: ctx.recordId,
     persisted: ctx.persisted,
     dequeued: ctx.dequeued,
+    hitDurationLimit: ctx.recording.hitDurationLimit ?? false,
   };
 }

@@ -2,12 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { VoiceRecordEntry } from '../voice-audio-store.ts';
 import type { VoiceRecording } from '../voice-recorder-store.ts';
 import {
-  isTerminalVoiceSubmitOutcome,
   runVoiceSubmit,
   VOICE_SUBMIT_MAX_TRANSCRIBE_ATTEMPTS,
   type VoiceSubmitDeps,
 } from '../voice-submit-pipeline.ts';
-import type { VoiceSubmitOutcome } from '../voice-submit-routing.ts';
 
 function createRecording(overrides: Partial<VoiceRecording> = {}): VoiceRecording {
   return { audioBase64: 'AAAA', mimeType: 'audio/wav', peakLevel: 0.5, ...overrides };
@@ -59,7 +57,7 @@ describe('runVoiceSubmit snapshot → stop → persist', () => {
         return { text: 'hi' };
       },
     });
-    const result = await runVoiceSubmit({ sessionId: 'session-1' }, harness.deps);
+    const result = await runVoiceSubmit({ sessionId: 'session-1', mode: 'send' }, harness.deps);
     expect(order).toEqual(['stop', 'persist', 'transcribe']);
     expect(persistedEntries).toEqual([
       {
@@ -74,11 +72,23 @@ describe('runVoiceSubmit snapshot → stop → persist', () => {
     ]);
     expect(result).toEqual({
       kind: 'routed',
-      outcome: { kind: 'insert', transcript: 'hi', autoSend: false },
+      outcome: { kind: 'insert', transcript: 'hi', autoSend: true },
       recordId: 'record-1',
       persisted: true,
       dequeued: true,
+      hitDurationLimit: true,
     });
+  });
+
+  it('halts silent recordings before persisting or transcribing them', async () => {
+    const harness = createHarness({
+      stopRecording: async () => createRecording({ peakLevel: 0.0005 }),
+    });
+    const result = await runVoiceSubmit({ sessionId: 'session-1' }, harness.deps);
+    expect(result).toEqual({ kind: 'silent-recording', peakLevel: 0.0005 });
+    expect(harness.persisted).toEqual([]);
+    expect(harness.delays).toEqual([]);
+    expect(harness.deleted).toEqual([]);
   });
 
   it('rejects and persists nothing when stopping the recorder fails', async () => {
@@ -94,10 +104,13 @@ describe('runVoiceSubmit snapshot → stop → persist', () => {
     expect(harness.deleted).toEqual([]);
   });
 
-  it('defaults to the recorder store when no deps are provided', async () => {
-    await expect(runVoiceSubmit({ sessionId: 'session-1' })).rejects.toThrow(
-      'Voice recorder is not recording'
-    );
+  it('defaults store-facing deps to the real modules when only lifecycle deps are given', async () => {
+    await expect(
+      runVoiceSubmit(
+        { sessionId: 'session-1' },
+        { isMounted: () => true, currentSessionId: () => 'session-1' }
+      )
+    ).rejects.toThrow('Voice recorder is not recording');
   });
 
   it('continues with an unpersisted recording when the audio store is unavailable', async () => {
@@ -125,11 +138,11 @@ describe('runVoiceSubmit transcribe retry', () => {
     expect(harness.delays).toEqual([5_000]);
     expect(result).toMatchObject({
       kind: 'routed',
-      outcome: { kind: 'insert', transcript: 'recovered' },
+      outcome: { kind: 'insert', transcript: 'recovered', autoSend: false },
     });
   });
 
-  it('fails immediately without retry on deterministic refusals', async () => {
+  it('fails immediately, deletes the record, and never retries on deterministic refusals', async () => {
     let attempts = 0;
     const harness = createHarness({
       transcribe: async () => {
@@ -144,8 +157,25 @@ describe('runVoiceSubmit transcribe retry', () => {
       kind: 'transcribe-failed',
       message: 'Voice transcription requires audio/wav input',
       attempts: 1,
+      dequeued: true,
     });
-    expect(harness.deleted).toEqual([]);
+    expect(harness.deleted).toEqual(['record-1']);
+  });
+
+  it('reports a kept record when deletion of a discarded record fails', async () => {
+    const harness = createHarness({
+      transcribe: async () => {
+        throw new Error('Voice transcription failed with HTTP 413');
+      },
+      deleteRecord: async () => false,
+    });
+    const result = await runVoiceSubmit({ sessionId: 'session-1' }, harness.deps);
+    expect(result).toMatchObject({
+      kind: 'transcribe-failed',
+      attempts: 1,
+      dequeued: false,
+      persisted: true,
+    });
   });
 
   it('exhausts transient retries and keeps the persisted record for resend', async () => {
@@ -158,12 +188,13 @@ describe('runVoiceSubmit transcribe retry', () => {
     });
     const result = await runVoiceSubmit({ sessionId: 'session-1' }, harness.deps);
     expect(attempts).toBe(VOICE_SUBMIT_MAX_TRANSCRIBE_ATTEMPTS);
-    expect(harness.delays).toEqual([5_000, 10_000, 20_000]);
+    expect(harness.delays).toEqual([5_000, 10_000, 20_000, 40_000]);
     expect(result).toMatchObject({
       kind: 'transcribe-failed',
       attempts: VOICE_SUBMIT_MAX_TRANSCRIBE_ATTEMPTS,
       recordId: 'record-1',
       persisted: true,
+      dequeued: false,
     });
     expect(harness.deleted).toEqual([]);
   });
@@ -194,14 +225,6 @@ describe('runVoiceSubmit routing', () => {
     expect(harness.deleted).toEqual(['record-1']);
   });
 
-  it('routes mounted send mode to an auto-send insert', async () => {
-    const harness = createHarness();
-    const result = await runVoiceSubmit({ sessionId: 'session-1', mode: 'send' }, harness.deps);
-    expect(result).toMatchObject({
-      outcome: { kind: 'insert', transcript: 'hello world', autoSend: true },
-    });
-  });
-
   it('returns deliver-unmounted without dequeue when the composer unmounted', async () => {
     const harness = createHarness({ isMounted: () => false });
     const result = await runVoiceSubmit({ sessionId: 'session-1', mode: 'queue' }, harness.deps);
@@ -210,19 +233,5 @@ describe('runVoiceSubmit routing', () => {
       dequeued: false,
     });
     expect(harness.deleted).toEqual([]);
-  });
-});
-
-describe('isTerminalVoiceSubmitOutcome', () => {
-  const cases: [VoiceSubmitOutcome, boolean][] = [
-    [{ kind: 'insert', transcript: 'hi', autoSend: true }, true],
-    [{ kind: 'insert', transcript: 'hi', autoSend: false }, true],
-    [{ kind: 'discard-with-reason', reason: '' }, true],
-    [{ kind: 'deliver-unmounted', transcript: 'hi', mode: 'stay' }, false],
-    [{ kind: 'persist-for-resend', transcript: 'hi', reason: '' }, false],
-  ];
-
-  it.each(cases)('treats %j as terminal=%s', (outcome, expected) => {
-    expect(isTerminalVoiceSubmitOutcome(outcome)).toBe(expected);
   });
 });
