@@ -107,7 +107,7 @@ export function EdgeConfigPanel({
         <select
           id="condition-type-select"
           data-testid="condition-type-select"
-          class="bg-fill-strong border border-line-strong rounded px-2 py-1 text-sm text-accent-fg focus:outline-none focus:border-accent"
+          class="bg-fill-strong border border-line-strong rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent"
           value={condition.type}
           onChange={handleTypeChange}
         >
@@ -128,7 +128,7 @@ export function EdgeConfigPanel({
             id="condition-expression"
             data-testid="condition-expression"
             type="text"
-            class="bg-fill-strong border border-line-strong rounded px-2 py-1 text-sm text-accent-fg font-mono focus:outline-none focus:border-accent"
+            class="bg-fill-strong border border-line-strong rounded px-2 py-1 text-sm text-fg font-mono focus:outline-none focus:border-accent"
             placeholder={
               condition.type === 'task_result' ? 'e.g. passed, failed' : 'e.g. test -f output.txt'
             }

@@ -10,6 +10,9 @@
 		<script>
 			// Theme boot: resolve light/dark before first paint.
 			// Mirrors packages/web/src/lib/theme.ts — keep the logic in sync.
+			// The media listener stands down once the app runtime is up
+			// (lib/theme.ts sets window.__hyperneoThemeReady); this page does
+			// not load it, so the boot listener keeps handling changes here.
 			(function () {
 				var media = window.matchMedia("(prefers-color-scheme: dark)");
 				var explicit = null;
@@ -20,6 +23,7 @@
 				document.documentElement.dataset.theme =
 					explicit || (media.matches ? "dark" : "light");
 				media.addEventListener("change", function () {
+					if (window.__hyperneoThemeReady) return;
 					if (explicit) return;
 					document.documentElement.dataset.theme = media.matches ? "dark" : "light";
 				});

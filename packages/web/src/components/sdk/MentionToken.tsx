@@ -32,7 +32,7 @@ function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
       const d = resolved.data as { title?: string; status?: string; description?: string };
       return (
         <div>
-          {d.title && <div class="font-medium text-accent-fg">{d.title}</div>}
+          {d.title && <div class="font-medium text-fg">{d.title}</div>}
           {d.status && <div class="text-xs text-fg-muted mt-0.5">Status: {d.status}</div>}
           {d.description && (
             <div class="text-xs text-fg-muted mt-1 line-clamp-2">{d.description}</div>
@@ -49,7 +49,7 @@ function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
       };
       return (
         <div>
-          <div class="font-medium text-accent-fg font-mono text-xs truncate">{d.path}</div>
+          <div class="font-medium text-fg font-mono text-xs truncate">{d.path}</div>
           <div class="text-xs text-fg-muted mt-0.5">
             {d.binary ? 'Binary file' : `${Math.round(d.size / 1024)} KB`}
             {d.truncated && ' (truncated)'}
@@ -61,7 +61,7 @@ function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
       const d = resolved.data as { path: string; entries: Array<{ name: string }> };
       return (
         <div>
-          <div class="font-medium text-accent-fg font-mono text-xs truncate">{d.path}</div>
+          <div class="font-medium text-fg font-mono text-xs truncate">{d.path}</div>
           <div class="text-xs text-fg-muted mt-0.5">{d.entries.length} entries</div>
         </div>
       );

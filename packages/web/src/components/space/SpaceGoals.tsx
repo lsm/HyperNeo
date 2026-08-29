@@ -106,7 +106,7 @@ function GoalCard({
         'group relative flex min-h-[12rem] w-full flex-col overflow-hidden rounded-2xl border border-line p-5 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/70',
         'flat-surface',
         selected
-          ? '!border-[rgba(111,177,255,0.72)] bg-[linear-gradient(145deg,rgba(35,82,137,0.44),rgba(13,20,32,0.96)_62%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_20px_48px_rgba(0,0,0,0.3)]'
+          ? '!border-accent/70 bg-accent/10'
           : 'hover:-translate-y-0.5 hover:bg-surface-overlay/95'
       )}
     >

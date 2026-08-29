@@ -11,9 +11,11 @@
       // Theme boot: resolve light/dark before first paint so the semantic
       // tokens in styles.css and the dark: variant never flash the wrong theme.
       // Mirrors packages/web/src/lib/theme.ts — keep the logic in sync.
-      // The media listener must not re-read storage after boot: an explicit
-      // in-memory setting (set via the app when storage is unavailable) wins
-      // over any stale or missing persisted value.
+      // The media listener stands down once the app runtime is up:
+      // lib/theme.ts sets window.__hyperneoThemeReady and its own listener,
+      // which consults the live setting, takes over — so an explicit theme
+      // chosen during the session (or when storage is unavailable) is never
+      // overwritten by an OS appearance change.
       (function () {
         var media = window.matchMedia("(prefers-color-scheme: dark)");
         var explicit = null;
@@ -24,6 +26,7 @@
         document.documentElement.dataset.theme =
           explicit || (media.matches ? "dark" : "light");
         media.addEventListener("change", function () {
+          if (window.__hyperneoThemeReady) return;
           if (explicit) return;
           document.documentElement.dataset.theme = media.matches ? "dark" : "light";
         });

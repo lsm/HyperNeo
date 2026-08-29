@@ -10,7 +10,7 @@ export const RAW_PALETTE_RE =
   /(?:[A-Za-z0-9-]+:)*(?:bg|text|border|ring|from|via|to|divide|outline|placeholder|caret|accent|fill|stroke|decoration|shadow)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}(?:\/\d{1,3})?/g;
 
 export const DARK_SCALE_RE =
-  /(?:[A-Za-z0-9-]+:)*(?:bg|text|border|ring|divide|outline|fill|stroke)-dark-\d{3}(?:\/\d{1,3})?/g;
+  /(?:[A-Za-z0-9-]+:)*(?:bg|text|border|ring|ring-offset|divide|outline|fill|stroke|from|via|to)-dark-\d{3}(?:\/\d{1,3})?/g;
 
 export const WHITE_ALPHA_RE =
   /(?:[A-Za-z0-9-]+:)*(?:bg|text|border|divide|ring|fill|stroke)-(?:white|black)(?:\/(?:\d{1,3}|\[[\d.]+\]))?/g;

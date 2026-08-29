@@ -626,7 +626,7 @@ function PaletteRow({
         onClick={onSelect}
         class={cn(
           'group flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors',
-          active ? 'bg-fill text-accent-fg' : 'text-fg-soft hover:bg-white/[0.07]'
+          active ? 'bg-fill text-fg' : 'text-fg-soft hover:bg-white/[0.07]'
         )}
       >
         <span

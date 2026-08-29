@@ -401,7 +401,7 @@ export function HookEditorPanel({
               placeholder='{"key": "value"}'
               rows={4}
               onInput={(e) => updateTemplateData(e.currentTarget.value)}
-              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed${
+              class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed ${
                 templateDataError
                   ? 'border-danger focus:border-danger'
                   : 'border-line-strong focus:border-accent'
@@ -500,7 +500,7 @@ export function HookEditorPanel({
                     id: e.currentTarget.value as WorkflowHookValidatorId,
                   })
                 }
-                class={`w-full text-xs bg-surface-raised border rounded px-2 py-1 text-fg-soft focus:outline-none opacity-60${
+                class={`w-full text-xs bg-surface-raised border rounded px-2 py-1 text-fg-soft focus:outline-none opacity-60 ${
                   builtInIdError
                     ? 'border-danger focus:border-danger'
                     : 'border-line-strong focus:border-accent'
@@ -545,7 +545,7 @@ export function HookEditorPanel({
                   placeholder="# Enter your script here..."
                   rows={6}
                   onInput={(e) => updateValidator({ source: e.currentTarget.value })}
-                  class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed${
+                  class={`w-full text-xs bg-surface-raised border rounded px-2 py-1.5 text-fg-soft font-mono focus:outline-none placeholder-gray-700 resize-y leading-relaxed ${
                     scriptSourceError
                       ? 'border-danger focus:border-danger'
                       : 'border-line-strong focus:border-accent'

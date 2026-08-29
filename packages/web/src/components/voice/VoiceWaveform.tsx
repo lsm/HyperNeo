@@ -170,7 +170,7 @@ export function VoiceWaveform({
           data-testid="voice-transcribing"
           aria-label="Transcribing"
         >
-          <span class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-red-400/40 border-t-red-400" />
+          <span class="h-2.5 w-2.5 animate-spin rounded-full border-2 border-danger/40 border-t-danger" />
           {!isNarrow && 'Transcribing…'}
         </span>
       ) : isStarting && !isRecording ? (

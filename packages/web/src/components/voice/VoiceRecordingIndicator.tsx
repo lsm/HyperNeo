@@ -97,7 +97,7 @@ export function VoiceRecordingIndicator({ inOverlay = false }: { inOverlay?: boo
       data-testid="voice-recording-elsewhere"
     >
       <span class="relative flex h-2.5 w-2.5">
-        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75" />
         <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-danger" />
       </span>
       <span class="max-w-40 truncate">

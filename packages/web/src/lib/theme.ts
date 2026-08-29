@@ -3,6 +3,12 @@ import { signal } from '@preact/signals';
 export type ThemeSetting = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
 
+declare global {
+  interface Window {
+    __hyperneoThemeReady?: boolean;
+  }
+}
+
 export const THEME_STORAGE_KEY = 'theme';
 
 const darkMedia = window.matchMedia('(prefers-color-scheme: dark)');
@@ -43,3 +49,5 @@ darkMedia.addEventListener('change', () => {
 });
 
 applyToDocument(resolvedTheme.value);
+
+window.__hyperneoThemeReady = true;
