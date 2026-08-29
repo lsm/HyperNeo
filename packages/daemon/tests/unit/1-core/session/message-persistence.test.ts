@@ -390,9 +390,9 @@ describe('MessagePersistence', () => {
   it('opt-out legacy dispatch rolls the enqueued row back to failed on coordination stall', async () => {
     const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
     process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
-    const markDeliveryFailedByUuidSpy = mock(() => 'db-msg-1');
+    const transitionSpy = mock(() => true);
     mockDb.getSDKMessageRepo = mock(() => ({
-      markDeliveryFailedByUuid: markDeliveryFailedByUuidSpy,
+      transitionMessageSendStatus: transitionSpy,
     }));
     mockAgentSession.startQueryAndEnqueue = mock(
       () =>
@@ -414,7 +414,7 @@ describe('MessagePersistence', () => {
       else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
     }
 
-    expect(markDeliveryFailedByUuidSpy).toHaveBeenCalledWith('test-session-id', 'msg-legacy-stall');
+    expect(transitionSpy).toHaveBeenCalledWith('db-msg-1', 'enqueued', 'failed');
     expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
       'messages.statusChanged',
       expect.objectContaining({

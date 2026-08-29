@@ -1207,11 +1207,11 @@ export function setupSessionHandlers(
     const rollbackToDeferred = async () => {
       const rolledBack = db
         .getSDKMessageRepo()
-        .markDeliveryDeferredByUuid(targetSessionId, messageUuid);
+        .transitionMessageSendStatus(message.dbId, 'enqueued', 'deferred');
       if (rolledBack) {
         await internalEventBus.publish('messages.statusChanged', {
           sessionId: targetSessionId,
-          messageIds: [rolledBack],
+          messageIds: [message.dbId],
           status: 'deferred',
         });
       }

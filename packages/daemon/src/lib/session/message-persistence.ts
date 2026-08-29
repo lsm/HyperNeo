@@ -281,12 +281,12 @@ export class MessagePersistence {
           if (err instanceof SessionCoordinationStallError) {
             const flipped = this.db
               .getSDKMessageRepo?.()
-              ?.markDeliveryFailedByUuid?.(sessionId, messageId);
+              ?.transitionMessageSendStatus?.(dbMessageId, 'enqueued', 'failed');
             if (flipped) {
               await this.internalEventBus
                 .publish('messages.statusChanged', {
                   sessionId,
-                  messageIds: [flipped],
+                  messageIds: [dbMessageId],
                   status: 'failed',
                 })
                 .catch(() => {});
