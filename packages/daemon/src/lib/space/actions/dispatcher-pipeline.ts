@@ -237,7 +237,7 @@ export function applyRoleAdmission(ctx: DispatchActionCtx): DispatchActionCtx {
         `Action ${action.name} (family "${action.family}") is not available for role ${ctx.role}.`
       ),
     };
-    writeAuditEntry({ ...next, taskId: undefined, workflowRunId: undefined });
+    writeAuditEntry(denialAuditCtx(next));
     return next;
   }
   return ctx;
@@ -291,7 +291,7 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
     agentLevel,
     outcome: deniedOutcome('autonomy_denied', admission.message),
   };
-  writeAuditEntry({ ...denied, taskId: undefined, workflowRunId: undefined });
+  writeAuditEntry(denialAuditCtx(denied));
   return denied;
 }
 
@@ -323,7 +323,7 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
         agentLevel,
         outcome: deniedOutcome('autonomy_denied', admission.message),
       };
-      writeAuditEntry({ ...denied, taskId: undefined, workflowRunId: undefined });
+      writeAuditEntry(denialAuditCtx(denied));
       return denied;
     }
   }
@@ -343,7 +343,7 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
           `Action ${action.name} is currently rate limited. Please retry later.`
         ),
       };
-      writeAuditEntry({ ...denied, taskId: undefined, workflowRunId: undefined });
+      writeAuditEntry(denialAuditCtx(denied));
       return denied;
     }
   }
@@ -355,6 +355,23 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
     }
   }
   writeAuditEntry(ctx);
+  return ctx;
+}
+
+function hasExplicitTarget(ctx: DispatchActionCtx): boolean {
+  if (typeof ctx.parsedParams !== 'object' || ctx.parsedParams === null) return false;
+  const record = ctx.parsedParams as Record<string, unknown>;
+  return (
+    (typeof record.task_id === 'string' && record.task_id.length > 0) ||
+    typeof record.task_number === 'number' ||
+    typeof record.run_id === 'string' ||
+    typeof record.workflow_run_id === 'string' ||
+    typeof record.workflowRunId === 'string'
+  );
+}
+
+function denialAuditCtx(ctx: DispatchActionCtx): DispatchActionCtx {
+  if (hasExplicitTarget(ctx)) return { ...ctx, taskId: undefined, workflowRunId: undefined };
   return ctx;
 }
 
