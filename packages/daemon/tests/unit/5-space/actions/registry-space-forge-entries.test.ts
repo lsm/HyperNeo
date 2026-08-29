@@ -435,15 +435,6 @@ describe('createSpaceRegistryEntries — forge handler wiring', () => {
         );
       }
 
-      const proposalResolver = byName.get('update_forge_task_proposal')?.autonomyRequirement;
-      expect(typeof proposalResolver).toBe('function');
-      if (typeof proposalResolver === 'function') {
-        expect(await proposalResolver({ proposal_id: proposalId, title: 'Proposed edit' })).toBe(1);
-        expect(await proposalResolver({ proposal_id: proposalId, status: 'accepted' })).toBe(
-          SESSION_WRITE_AUTONOMY_LEVEL
-        );
-      }
-
       const proposal = await call('create_forge_task_proposal', {
         scope_id: scopeId,
         title: 'Registry proposal',
@@ -452,6 +443,15 @@ describe('createSpaceRegistryEntries — forge handler wiring', () => {
       });
       expect(proposal.success).toBe(true);
       const proposalId = (proposal.proposal as { id: string }).id;
+
+      const proposalResolver = byName.get('update_forge_task_proposal')?.autonomyRequirement;
+      expect(typeof proposalResolver).toBe('function');
+      if (typeof proposalResolver === 'function') {
+        expect(await proposalResolver({ proposal_id: proposalId, title: 'Proposed edit' })).toBe(1);
+        expect(await proposalResolver({ proposal_id: proposalId, status: 'accepted' })).toBe(
+          SESSION_WRITE_AUTONOMY_LEVEL
+        );
+      }
 
       const cases: Array<{ name: string; params: Record<string, unknown>; success: boolean }> = [
         { name: 'list_forge_scopes', params: {}, success: true },
