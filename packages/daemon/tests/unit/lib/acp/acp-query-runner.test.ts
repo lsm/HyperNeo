@@ -2495,11 +2495,11 @@ describe('AcpQueryRunner', () => {
 
       await runner.start();
       const firstController = ctx.queryAbortController;
+      firstController?.signal.addEventListener('abort', () => teardownOrder.push('abort'));
       await waitFor(() => ctx.queryObject !== null);
       (ctx.queryObject as unknown as { close: () => void }).close = mock(() => {
         teardownOrder.push('queryObject.close');
       });
-      firstController?.signal.addEventListener('abort', () => teardownOrder.push('abort'));
 
       await new Promise((resolve) => setTimeout(resolve, 120));
 
