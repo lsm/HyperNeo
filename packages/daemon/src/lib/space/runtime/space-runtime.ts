@@ -21,7 +21,7 @@ import {
   MIN_SPACE_CONCURRENT_TASKS,
   resolveNodeAgents,
 } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKResultError, isSDKResultSuccess } from '@hyperneo/shared/sdk';
 import { deliverMessage } from '../../agent/message-delivery.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
@@ -4373,45 +4373,44 @@ export class SpaceRuntime {
   private rehydrateDigestHandoffDebt(): void {
     const store = this.config.externalEventStore;
     if (!store) return;
-    const messages = this.getSdkMessageRepo();
-    const sessionRows = this.config.db
+    const rows = this.config.db
       .prepare(
-        `SELECT DISTINCT session_id FROM sdk_messages
+        `SELECT id, session_id, sdk_message, task_id FROM sdk_messages
          WHERE send_status = 'deferred' AND sdk_uuid LIKE ? || '%'`
       )
-      .all(DETERMINISTIC_DIGEST_UUID_PREFIX) as Array<{ session_id: string }>;
-    for (const { session_id: sessionId } of sessionRows) {
-      const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
-      if (!execution) continue;
-      for (const row of messages.listUserMessagesByUuidPrefix(
-        sessionId,
-        DETERMINISTIC_DIGEST_UUID_PREFIX
-      )) {
-        if (row.sendStatus !== 'deferred') continue;
-        const membership = (row as { externalEventIds?: unknown }).externalEventIds;
-        if (!Array.isArray(membership) || membership.length === 0) continue;
-        const eventIds = membership.filter(
-          (eventId): eventId is string => typeof eventId === 'string'
-        );
-        if (eventIds.length === 0) continue;
-        const rowTaskId = (row as { externalEventTaskId?: unknown }).externalEventTaskId as
-          | string
-          | undefined;
-        const allMembersDelivered = eventIds.every((eventId) =>
-          store
-            .listDeliveries(eventId)
-            .some(
-              (delivery) =>
-                delivery.workflowRunId === execution.workflowRunId &&
-                delivery.nodeId === execution.workflowNodeId &&
-                delivery.agentName === execution.agentName &&
-                (rowTaskId === undefined || delivery.taskId === rowTaskId) &&
-                delivery.state === 'delivered'
-            )
-        );
-        if (allMembersDelivered) {
-          this.digestHandoffDebt.add(`${sessionId}:${String(row.uuid)}`);
-        }
+      .all(DETERMINISTIC_DIGEST_UUID_PREFIX) as Array<{
+      id: string;
+      session_id: string;
+      sdk_message: string;
+      task_id: string | null;
+    }>;
+    for (const raw of rows) {
+      const sessionId = raw.session_id;
+      let message: SDKUserMessage & { externalEventIds?: unknown; externalEventTaskId?: unknown };
+      try {
+        message = JSON.parse(raw.sdk_message) as SDKUserMessage & {
+          externalEventIds?: unknown;
+          externalEventTaskId?: unknown;
+        };
+      } catch {
+        continue;
+      }
+      const membership = message.externalEventIds;
+      if (!Array.isArray(membership) || membership.length === 0) continue;
+      const eventIds = membership.filter(
+        (eventId): eventId is string => typeof eventId === 'string'
+      );
+      if (eventIds.length === 0) continue;
+      const rowTaskId =
+        (message.externalEventTaskId as string | undefined) ?? raw.task_id ?? undefined;
+      if (rowTaskId === undefined) continue;
+      const allMembersDelivered = eventIds.every((eventId) =>
+        store
+          .listDeliveries(eventId)
+          .some((delivery) => delivery.taskId === rowTaskId && delivery.state === 'delivered')
+      );
+      if (allMembersDelivered) {
+        this.digestHandoffDebt.add(`${sessionId}:${String(message.uuid)}`);
       }
     }
   }
