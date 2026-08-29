@@ -187,8 +187,8 @@ function getSubagentColors(subagentType: string) {
       return {
         bg: 'bg-warning/10',
         border: 'border-warning/40',
-        text: 'text-warning',
-        badge: 'bg-warning/15 dark:bg-amber-800/50 text-warning',
+        text: 'text-warning-soft',
+        badge: 'bg-warning/15 dark:bg-amber-800/50 text-warning-soft',
         icon: 'text-warning',
       };
     default:

@@ -134,13 +134,14 @@ export function collectRewrites(
   const changes: string[] = [];
 
   const rewriteLiteral = (node: ts.StringLiteral | ts.NoSubstitutionTemplateLiteral): void => {
-    const result = rewriteClassString(node.text, mapping);
+    const raw = node.getText(sourceFile);
+    const delimiter = raw[0];
+    const result = rewriteClassString(raw.slice(1, -1), mapping);
     if (result.changes.length === 0) return;
-    const quote = sourceText[node.getStart(sourceFile)];
     rewrites.push({
       start: node.getStart(sourceFile),
       end: node.getEnd(),
-      replacement: `${quote}${result.text}${quote}`,
+      replacement: `${delimiter}${result.text}${delimiter}`,
     });
     changes.push(...result.changes);
   };

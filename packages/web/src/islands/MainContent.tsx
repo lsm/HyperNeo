@@ -119,7 +119,7 @@ function SpacesHome() {
             <button
               type="button"
               onClick={() => setCreateSpaceOpen(true)}
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-sm font-medium text-accent-fg transition-colors flex-shrink-0"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-hover hover:bg-accent-hover text-sm font-medium text-accent-fg transition-colors flex-shrink-0"
             >
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
@@ -155,7 +155,7 @@ function SpacesHome() {
               <button
                 type="button"
                 onClick={() => setCreateSpaceOpen(true)}
-                class="mt-6 flex items-center gap-2 px-4 py-2 rounded-lg bg-accent hover:bg-accent-hover text-sm font-medium text-accent-fg transition-colors"
+                class="mt-6 flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-hover hover:bg-accent-hover text-sm font-medium text-accent-fg transition-colors"
               >
                 Create your first Space
               </button>

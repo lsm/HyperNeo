@@ -59,7 +59,7 @@ export function SettingsSelect({ value, onChange, options, disabled }: SettingsS
       onChange={(e) => onChange((e.target as HTMLSelectElement).value)}
       disabled={disabled}
       class={cn(
-        'bg-surface-raised border border-line rounded-lg px-3 py-1.5 text-sm text-fg-soft',
+        'bg-surface-raised border border-line-strong rounded-lg px-3 py-1.5 text-sm text-fg-soft',
         'focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent',
         'disabled:opacity-50 disabled:cursor-not-allowed',
         'min-w-[140px]'

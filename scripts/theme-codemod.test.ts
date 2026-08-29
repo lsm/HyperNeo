@@ -136,6 +136,14 @@ describe('collectRewrites/applyRewrites', () => {
     expect(next).toContain("`p-2 bg-surface-raised ${on ? 'text-fg-muted' : ''} mt-1`");
   });
 
+  it('preserves escaped delimiters when rewriting a class literal', () => {
+    const source = 'const x = cn("bg-dark-800 before:content-[\\"x\\"]");';
+    const { rewrites, changes } = collectRewrites(source, 'sample.tsx', mapping);
+    const next = applyRewrites(source, rewrites);
+    expect(changes.length).toBe(1);
+    expect(next).toContain('"bg-surface-raised before:content-[\\"x\\"]"');
+  });
+
   it('all-strings mode rewrites module-level records', () => {
     const source = "const STYLES = { dot: 'bg-dark-800', label: 'text-gray-400' };";
     const scoped = collectRewrites(source, 'sample.ts', mapping);
@@ -161,6 +169,12 @@ describe('countRawPalette', () => {
   it('counts bracketed-opacity raw palette utilities', () => {
     expect(countRawPalette('bg-cyan-300/[0.08] hover:bg-cyan-300/[0.08]')).toBe(2);
     expect(countRawPalette('bg-dark-800/[0.05]')).toBe(1);
+  });
+
+  it('counts black and white utilities across the full prefix families', () => {
+    expect(
+      countRawPalette('placeholder-white outline-white from-black/50 shadow-black/20 via-white')
+    ).toBe(5);
   });
 });
 

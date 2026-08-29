@@ -125,7 +125,7 @@ function RuntimeControlBar({
             <button
               onClick={onPause}
               disabled={actionLoading}
-              class="px-3 py-1.5 text-xs font-medium text-warning-soft bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-700/40 rounded-lg transition-colors disabled:opacity-40"
+              class="px-3 py-1.5 text-xs font-medium text-warning-soft bg-warning/15 hover:bg-warning/25 border border-warning/40 rounded-lg transition-colors disabled:opacity-40"
             >
               Pause
             </button>

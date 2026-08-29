@@ -955,7 +955,7 @@ export function ProvidersSettings() {
                                 : 'None'}
                           </span>
                           {needsRefresh && (
-                            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-900/40 text-warning-soft">
+                            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-warning/15 text-warning-soft">
                               Refresh Needed
                             </span>
                           )}

@@ -13,7 +13,7 @@ export const DARK_SCALE_RE =
   /(?:[A-Za-z0-9-]+:)*(?:bg|text|border-[trblxy]|border|ring-offset|ring|divide|outline|fill|stroke|from|via|to)-dark-\d{3}(?:\/(?:\d{1,3}|\[[\d.]+\]))?/g;
 
 export const WHITE_ALPHA_RE =
-  /(?:[A-Za-z0-9-]+:)*(?:bg|text|border-[trblxy]|border|divide|ring-offset|ring|fill|stroke)-(?:white|black)(?:\/(?:\d{1,3}|\[[\d.]+\]))?/g;
+  /(?:[A-Za-z0-9-]+:)*(?:bg|text|border-[trblxy]|border|ring-offset|ring|from|via|to|divide|outline|placeholder|caret|accent|fill|stroke|decoration|shadow)-(?:white|black)(?:\/(?:\d{1,3}|\[[\d.]+\]))?/g;
 
 export function countRawPalette(text: string): number {
   return (
