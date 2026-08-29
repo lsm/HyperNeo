@@ -1045,7 +1045,6 @@ export function normalizeGitHubMergeConflict(params: {
   if (!watched.owner || !watched.repo || !prNumber) return null;
   const pr = asObject(params.pullRequest);
   const repo = resolvePollingRepo(watched, pr);
-  const author = userFrom(pr.user);
   const occurredAt = Date.now();
   const action = params.conflicting ? 'merge_conflict' : 'merge_conflict_resolved';
   const canonicalOwner = repo.owner.toLowerCase();
@@ -1065,8 +1064,8 @@ export function normalizeGitHubMergeConflict(params: {
     entityId: String(prNumber),
     prNumber,
     prUrl: prUrl(repo.owner, repo.repo, prNumber),
-    actor: author.login,
-    actorType: author.type,
+    actor: '',
+    actorType: 'Unknown',
     body: '',
     summary,
     externalUrl: getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber)),

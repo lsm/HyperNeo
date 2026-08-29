@@ -11,6 +11,7 @@ import { GitHubEventExtension } from '../../../../src/lib/external-events/github
 import { syncGitHubPollingCapability } from '../../../../src/app';
 import {
   mapEventType,
+  normalizeGitHubMergeConflict,
   normalizeGitHubWebhook,
   type NormalizedGitHubEvent,
   toExternalEvent,
@@ -10843,6 +10844,33 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     expect(res.status).toBe(200);
     expect(((await res.json()) as { spaces: number }).spaces).toBe(2);
     expect(received).toHaveLength(2);
+    await extension.stop();
+  });
+
+  test('merge-conflict events carry no initiator so the self-echo gate admits derived state', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    const { published, ext, context } = publishCapture(extension);
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    const conflictEvent = normalizeGitHubMergeConflict({
+      repo: { owner: 'acme', repo: 'widgets' },
+      pullRequest: { user: { login: 'octocat' }, node_id: 'PR_7', head: { sha: 'abc' } },
+      prNumber: 7,
+      conflicting: true,
+      mergeable: false,
+      mergeableState: 'dirty',
+      sequence: 1,
+      deliveryId: 'poll:merge_conflict:7',
+    });
+    expect(conflictEvent).not.toBeNull();
+    expect(conflictEvent!.actor).toBe('');
+    await ext.publishEvent('space-1', conflictEvent!, context);
+
+    expect(published).toHaveLength(1);
+    expect(published[0].payload.state).toBe('conflicting');
     await extension.stop();
   });
 
