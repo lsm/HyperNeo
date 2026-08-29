@@ -654,7 +654,7 @@ export function SpaceDetailPanel({
           }
           badge={
             actionCount > 0 ? (
-              <span class="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full bg-warning/20 px-1.5 text-xs font-medium tabular-nums text-warning">
+              <span class="flex h-5 min-w-5 flex-shrink-0 items-center justify-center rounded-full bg-warning/15 px-1.5 text-xs font-medium tabular-nums text-warning-soft">
                 {actionCount}
               </span>
             ) : undefined

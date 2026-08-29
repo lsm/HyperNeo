@@ -97,6 +97,12 @@ describe('rewriteClassString', () => {
     expect(result.text).toBe('p-4  text-blue-500');
     expect(result.changes).toEqual([]);
   });
+
+  it('does not treat inherited Object.prototype keys as mapping entries', () => {
+    const result = rewriteClassString('constructor toString hasOwnProperty', mapping);
+    expect(result.text).toBe('constructor toString hasOwnProperty');
+    expect(result.changes).toEqual([]);
+  });
 });
 
 describe('collectRewrites/applyRewrites', () => {
@@ -150,6 +156,11 @@ describe('countRawPalette', () => {
 
   it('does not count semantic tokens', () => {
     expect(countRawPalette('bg-surface text-fg-muted border-line bg-accent/10')).toBe(0);
+  });
+
+  it('counts bracketed-opacity raw palette utilities', () => {
+    expect(countRawPalette('bg-cyan-300/[0.08] hover:bg-cyan-300/[0.08]')).toBe(2);
+    expect(countRawPalette('bg-dark-800/[0.05]')).toBe(1);
   });
 });
 

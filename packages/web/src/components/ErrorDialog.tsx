@@ -13,18 +13,18 @@ export interface ErrorDialogProps {
 }
 
 const ERROR_CATEGORY_COLORS: Record<ErrorCategory, string> = {
-  authentication: 'bg-danger/10 text-danger border-danger/30',
-  connection: 'bg-warning/10 text-warning border-orange-500/30',
-  session: 'bg-warning/10 text-warning border-warning/30',
-  message: 'bg-accent/10 text-accent border-accent/30',
+  authentication: 'bg-danger/10 text-danger-soft border-danger/30',
+  connection: 'bg-warning/10 text-warning-soft border-orange-500/30',
+  session: 'bg-warning/10 text-warning-soft border-warning/30',
+  message: 'bg-accent/10 text-accent-soft border-accent/30',
   model: 'bg-cat-purple/10 text-cat-purple border-cat-purple/30',
   system: 'bg-fg-faint/10 text-fg-muted border-fg-faint/30',
   validation: 'bg-pink-500/10 text-cat-pink border-pink-500/30',
-  timeout: 'bg-warning/10 text-warning border-warning/30',
-  permission: 'bg-danger/10 text-danger border-danger/30',
-  rate_limit: 'bg-warning/10 text-warning border-orange-500/30',
-  provider_auth_error: 'bg-danger/10 text-danger border-danger/30',
-  provider_unavailable: 'bg-warning/10 text-warning border-orange-500/30',
+  timeout: 'bg-warning/10 text-warning-soft border-warning/30',
+  permission: 'bg-danger/10 text-danger-soft border-danger/30',
+  rate_limit: 'bg-warning/10 text-warning-soft border-orange-500/30',
+  provider_auth_error: 'bg-danger/10 text-danger-soft border-danger/30',
+  provider_unavailable: 'bg-warning/10 text-warning-soft border-orange-500/30',
 };
 
 const ERROR_CATEGORY_ICONS: Record<ErrorCategory, string> = {

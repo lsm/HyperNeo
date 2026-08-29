@@ -12,11 +12,11 @@ type InspectBadgeTone =
 
 const toneSoftClasses: Record<InspectBadgeTone, string> = {
   neutral: 'border-fg-faint/30 bg-fg-faint/10 text-fg-muted',
-  info: 'border-accent/30 bg-accent/10 text-accent',
-  progress: 'border-warning/30 bg-warning/10 text-warning',
-  success: 'border-success/30 bg-success/10 text-success',
-  warning: 'border-warning/30 bg-warning/10 text-warning',
-  danger: 'border-danger/30 bg-danger/10 text-danger',
+  info: 'border-accent/30 bg-accent/10 text-accent-soft',
+  progress: 'border-warning/30 bg-warning/10 text-warning-soft',
+  success: 'border-success/30 bg-success/10 text-success-soft',
+  warning: 'border-warning/30 bg-warning/10 text-warning-soft',
+  danger: 'border-danger/30 bg-danger/10 text-danger-soft',
   special: 'border-cat-purple/30 bg-cat-purple/10 text-cat-purple',
 };
 

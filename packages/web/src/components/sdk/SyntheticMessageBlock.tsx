@@ -207,7 +207,7 @@ export function SyntheticMessageBlock({
 
         {needsCollapse && !isExpanded && (
           <div
-            class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-dark-800/60 to-transparent pointer-events-none"
+            class="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-app-content/60 to-transparent pointer-events-none"
             aria-hidden="true"
           />
         )}

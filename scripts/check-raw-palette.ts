@@ -7,10 +7,10 @@ const SRC_ROOT = join(import.meta.dir, '..', 'packages', 'web', 'src');
 const BASELINE_PATH = join(import.meta.dir, 'raw-palette-baseline.json');
 
 export const RAW_PALETTE_RE =
-  /(?:[A-Za-z0-9-]+:)*(?:bg|text|border-[trblxy]|border|ring-offset|ring|from|via|to|divide|outline|placeholder|caret|accent|fill|stroke|decoration|shadow)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}(?:\/\d{1,3})?/g;
+  /(?:[A-Za-z0-9-]+:)*(?:bg|text|border-[trblxy]|border|ring-offset|ring|from|via|to|divide|outline|placeholder|caret|accent|fill|stroke|decoration|shadow)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}(?:\/(?:\d{1,3}|\[[\d.]+\]))?/g;
 
 export const DARK_SCALE_RE =
-  /(?:[A-Za-z0-9-]+:)*(?:bg|text|border-[trblxy]|border|ring-offset|ring|divide|outline|fill|stroke|from|via|to)-dark-\d{3}(?:\/\d{1,3})?/g;
+  /(?:[A-Za-z0-9-]+:)*(?:bg|text|border-[trblxy]|border|ring-offset|ring|divide|outline|fill|stroke|from|via|to)-dark-\d{3}(?:\/(?:\d{1,3}|\[[\d.]+\]))?/g;
 
 export const WHITE_ALPHA_RE =
   /(?:[A-Za-z0-9-]+:)*(?:bg|text|border-[trblxy]|border|divide|ring-offset|ring|fill|stroke)-(?:white|black)(?:\/(?:\d{1,3}|\[[\d.]+\]))?/g;

@@ -110,7 +110,7 @@ export function ChatComposer({
         data-testid={CHAT_COMPOSER_READABILITY_SCRIM_TEST_ID}
         aria-hidden="true"
       >
-        <div class="absolute inset-0 bg-gradient-to-t from-dark-900/90 via-dark-900/40 to-transparent" />
+        <div class="absolute inset-0 bg-gradient-to-t from-app-content/90 via-app-content/40 to-transparent" />
         <div class="absolute inset-0 backdrop-blur-[1px] [mask-image:linear-gradient(to_top,black_0%,black_55%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_top,black_0%,black_55%,transparent_100%)]" />
       </div>
       <div class="relative z-10">

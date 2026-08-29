@@ -23,6 +23,10 @@ export function loadMapping(): ThemeMapping {
   return { utilities: record.utilities ?? {}, pairs: record.pairs ?? {} };
 }
 
+function lookupUtility(mapping: ThemeMapping, key: string): string | undefined {
+  return Object.hasOwn(mapping.utilities, key) ? mapping.utilities[key] : undefined;
+}
+
 export function rewriteClassString(
   text: string,
   mapping: ThemeMapping
@@ -41,7 +45,7 @@ export function rewriteClassString(
   }
 
   const mapped = words.map((token) => {
-    const direct = mapping.utilities[token];
+    const direct = lookupUtility(mapping, token);
     if (direct) {
       changes.push(`${token} -> ${direct}`);
       return direct;
@@ -50,7 +54,7 @@ export function rewriteClassString(
     const head = variantIdx === -1 ? '' : token.slice(0, variantIdx + 1);
     if (head.split(':').includes('dark')) return token;
     const body = variantIdx === -1 ? token : token.slice(variantIdx + 1);
-    const bodyExact = mapping.utilities[body];
+    const bodyExact = lookupUtility(mapping, body);
     if (bodyExact) {
       const next = `${head}${bodyExact}`;
       changes.push(`${token} -> ${next}`);
@@ -59,7 +63,7 @@ export function rewriteClassString(
     const suffixMatch = /^(.*?)(\/\d{1,3}|\/\[[\d.]+\])?$/.exec(body);
     const base = suffixMatch?.[1] ?? body;
     const rawSuffix = suffixMatch?.[2] ?? '';
-    const mappedBase = mapping.utilities[base];
+    const mappedBase = lookupUtility(mapping, base);
     if (!mappedBase) return token;
     const suffix = mappedBase.includes('/') ? '' : rawSuffix;
     const next = `${head}${mappedBase}${suffix}`;
@@ -72,7 +76,7 @@ export function rewriteClassString(
     const body = token.slice(5);
     const suffixMatch = /^(.*?)(\/\d{1,3}|\/\[[\d.]+\])?$/.exec(body);
     const base = suffixMatch?.[1] ?? body;
-    const darkMapped = mapping.utilities[body] ?? mapping.utilities[base];
+    const darkMapped = lookupUtility(mapping, body) ?? lookupUtility(mapping, base);
     const peer = mapped.find(
       (other) =>
         !other.includes(':') &&

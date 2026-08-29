@@ -313,7 +313,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
                 type="button"
                 disabled={actionLoading}
                 onClick={() => void runAction('pause')}
-                class="rounded-lg border border-amber-800/40 bg-warning/20 px-3 py-1.5 text-xs font-medium text-warning disabled:opacity-50"
+                class="rounded-lg border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning-soft disabled:opacity-50"
               >
                 Pause
               </button>
