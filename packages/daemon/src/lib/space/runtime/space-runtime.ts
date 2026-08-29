@@ -1840,6 +1840,7 @@ export class SpaceRuntime {
     sessionId: string,
     taskId?: string
   ): Promise<RenderPendingDigestOutcome | null> {
+    if (this.isStopped) return null;
     const store = this.config.externalEventStore;
     if (!store) return null;
     const previous = this.renderPendingDigestQueues.get(sessionId) ?? Promise.resolve(null);
@@ -1860,6 +1861,7 @@ export class SpaceRuntime {
     sessionId: string,
     taskId?: string
   ): Promise<RenderPendingDigestOutcome | null> {
+    if (this.isStopped) return null;
     const store = this.config.externalEventStore!;
     const messages = this.getSdkMessageRepo();
     const deps: RenderPendingDigestDeps = {
@@ -1992,7 +1994,7 @@ export class SpaceRuntime {
         }
         if (this.isDigestOutcomeRetryable(outcome) && this.isTargetSessionLive(sessionId)) {
           this.scheduleTurnEndDigestRetry(sessionId, taskId);
-          if (outcome.action === 'skip') {
+          if (outcome.action === 'skip' && outcome.reason === 'session_interrupted') {
             this.scheduleDigestProbeForSession(sessionId, taskId);
           }
         }
@@ -3421,7 +3423,7 @@ export class SpaceRuntime {
     }
     this.digestHandoffRetryTimers.clear();
     this.digestHandoffRetryCounts.clear();
-    this.digestHandoffDebt.clear();
+    this.renderPendingDigestQueues.clear();
     for (const timer of this.digestSupersedeRetryTimers.values()) {
       clearTimeout(timer);
     }
