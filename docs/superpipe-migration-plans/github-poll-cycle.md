@@ -61,7 +61,8 @@ pins header parsing and the cooldown/backoff path; the extracted helper modules
 | C1 | `classifyPollResponseStatus` / `classifyPollResponseError` (two-phase) + `resolveRateLimitBackoff` | new `github-poll-response.ts` | ~70 | ~150 | No — plain pure fns |
 | C2 | `resolveEndpointWatermark`, `resolvePullsSeedNeed`, `resolvePullsBacklogCutoff`, `planEndpointPageAdvance` | new `github-poll-watermarks.ts` | ~85 | 0 | No — plain pure fns |
 | C3a | head-ref delta maintenance, tracked-PR reconcile | `github-pr-head-ref-index.ts` | ~75 | 0 | No — explicit-state mutator fns |
-| C3b | cursor GC, check-run pending→committed promotion | new `github-poll-cursor-gc.ts` | ~40 | 0 | No — GC mutators; promotion returns replacement record |
+| C3b | check-run pending→committed promotion | new `github-poll-cursor-gc.ts` | ~15 | 0 | No — returns the replacement pending record |
+| C3c | cursor GC prunes | `github-poll-cursor-gc.ts` | ~27 | 0 | No — in-place mutators |
 | C4 | `resolveCheckRunSupersession` (pure plan w/ set updates), `resolveCheckRunLegacyOwner` | new `github-check-run-dedupe.ts` | ~45 | 0 | No — pure plan + pure fn |
 | C5a/b/c | merge-conflict / review / reaction transition plans (one module, three entry families) | new `github-poll-subscans.ts` | ~80 | 0 | No — pure plans returning cursor-state updates |
 | C6 | `planPollCursorCommit` | new `github-poll-cursor-commit.ts` | ~60 | 0 | No — pure plan, apply stays in class |
@@ -153,20 +154,22 @@ not an extract.
 - Tracked-PR reconcile (:2466–2486, ~20 lines): fresh-open-first merge, drop
   closed, cap at `REACTION_POLL_PR_LIMIT`.
 
-### C3b — cursor GC and check-run promotion
+### C3b — check-run pending→committed promotion
 
-Mixed shapes; its own module because it is a different purpose from index
-maintenance:
+- Promotion (:2758–2767): NOT an in-place mutation — after copying entries
+  the source REASSIGNS `checkRunHeadPendingLastSeenAt = {}` (:2763; the
+  binding is `let` at :2260 for exactly this). The helper returns the
+  replacement pending record for the caller to assign; deleting keys in
+  place instead would change what a mid-scan failure persists before the
+  final cursor write. Its wiring seam is inside the check-run scan.
 
-- Cursor GC (:3119–3145, ~27 lines): prune reaction/merge/review etags by
+### C3c — cursor GC
+
+- GC (:3119–3145, ~27 lines): prune reaction/merge/review etags by
   tracked-PR set, head watermarks by tracked head set, check-run etags by
-  `headRef:` prefix scan — in-place mutators over passed-in cursor structures.
-- Check-run pending→committed promotion (:2758–2767): NOT an in-place
-  mutation — after copying entries the source REASSIGNS
-  `checkRunHeadPendingLastSeenAt = {}` (:2763; the binding is `let` at :2260
-  for exactly this). The helper returns the replacement pending record for
-  the caller to assign; deleting keys in place instead would change what a
-  mid-scan failure persists before the final cursor write.
+  `headRef:` prefix scan — in-place mutators over passed-in cursor
+  structures. Its wiring seam is the cycle tail, separate from the scan.
+  Shares the C3b module; different seam and purpose, so a different slice.
 
 ### C4 — check-run supersession and legacy-owner dedupe
 
@@ -268,34 +271,44 @@ Replaces epic #3346's GH-B3 (`github-poll-cycle` pipeline) and reshapes GH-W1
 (no pipeline swap remains; each extract slice swaps its call sites in place
 under its pins). Budgets are contracts (owner's decomposition playbook:
 ~300 prod-line ceiling, tests ride their slice under their own cap; every
-slice names what it may not touch). All slices are behavior-preserving
-extracts — existing suites must pass unmodified except where the slice's own
-equivalence pins are added.
+slice names what it may not touch). All slices are behavior-preserving —
+extracts and wires swap in place under their pins (existing suites pass
+unmodified except where the slice's own equivalence pins are added), and
+GH-E1a lands additive and unwired per the playbook's build step.
 
 | Slice | Kind | Delivers | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
 | GH-P1a | pin | response-classification decision table (the 429-synthesis, secondary body-sniff, 304, low-remaining dimensions the fake-fetch suites cover only via whole cycles; BOTH 304-vs-limited precedence variants — see C1) | 0 | ≲200 | — |
 | GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × credentialStale × accessible × pollErrorMessage × prior-error presence/value × reactionsFullyPolled × reactionPolledAt × prior cursor.lastReactionPollAt × current token fingerprint × prior cursor.lastPollCredentialFingerprint` — the error fields are load-bearing fallbacks at :3154, :3161–3165, the reaction timestamp reads all three reaction axes at :3196–3198, and the credential fingerprint is written from the current token only when accessible (:3199–3201) — → committed/pending watermarks, error fields, reaction timestamp, credential fingerprint, write split) | 0 | ≲350 | — |
-| GH-E1 | extract | C1 two-phase poll-response classifiers + backoff helper, swapped at the 5 cycle sites ONLY — `githubFetch` keeps its own classification (see open question 1) | ≲120 net (−~150 dup) | ≲300 | GH-P1a |
+| GH-E1a | build | C1 `github-poll-response.ts` two-phase classifiers + precedence + backoff, UNWIRED (cycle contract only; `githubFetch` keeps its own classification — open question 1) | ≲80 | ≲250 | GH-P1a |
+| GH-E1b | wire | swap endpoint scan (limited-first precedence) | ≲40 net | ≲100 | GH-E1a |
+| GH-E1c | wire | swap check-run scan (limited-first) | ≲40 net | ≲100 | GH-E1b |
+| GH-E1d | wire | swap merge-conflict scan (not-modified-first) | ≲30 net | ≲100 | GH-E1c |
+| GH-E1e | wire | swap review scan (not-modified-first) | ≲30 net | ≲100 | GH-E1d |
+| GH-E1f | wire | swap reaction scan (not-modified-first) | ≲30 net | ≲100 | GH-E1e |
 | GH-E2 | extract | C2 watermark/seed/cutoff/page-advance helpers | ≲100 | ≲250 | — |
 | GH-E3a | extract | C3a head-ref delta policy + tracked-PR reconcile (mutator extraction) | ≲90 | ≲200 | GH-E2 |
-| GH-E3b | extract | C3b cursor GC + check-run promotion (mutator extraction) | ≲50 | ≲150 | GH-E3a |
+| GH-E3b | extract | C3b check-run promotion (returns replacement record) | ≲30 | ≲100 | GH-E3a |
+| GH-E3c | extract | C3c cursor GC prunes (same module, different seam) | ≲30 | ≲100 | GH-E3b |
 | GH-E4 | extract | C4 supersession + legacy-owner decisions | ≲80 | ≲200 | — |
 | GH-E5a | extract | C5a merge-conflict transition plan (first into `github-poll-subscans.ts`) | ≲40 | ≲120 | — |
-| GH-E5b | extract | C5b review freshness/etag plan (extends `github-poll-subscans.ts`) | ≲40 | ≲120 | — |
-| GH-E5c | extract | C5c reaction freshness plan (extends `github-poll-subscans.ts`) | ≲30 | ≲100 | — |
+| GH-E5b | extract | C5b review freshness/etag plan (extends `github-poll-subscans.ts`) | ≲40 | ≲120 | GH-E5a |
+| GH-E5c | extract | C5c reaction freshness plan (extends `github-poll-subscans.ts`) | ≲30 | ≲100 | GH-E5b |
 | GH-E6 | extract | C6 `planPollCursorCommit` + write-split decision | ≲90 | ≲300 (decision table) | GH-P1b, GH-E2 |
 
-Each slice: one module + its call-site swaps; may not touch the loops'
-control flow, the class state methods, or the scheduler. Merge contract per
-slice: "verbatim-move extraction, zero behavior change, existing fake-fetch
-suites green" (C3a/C3b: "mutator extraction, zero behavior change" — see the
-purity caveat there). Slice count is an output of measurement — C1 is
-separately sliced from C2–C6 because it deletes duplication across five sites
-while the others are single-cluster moves; C3 splits into C3a/C3b because
-index maintenance and cursor GC are different purposes landing in different
-modules; C5's three sub-scans are three entry families (GH-E5a/b/c) growing
-one shared module across serial slices; no slice mixes clusters or modules.
+Each slice: one module + ONE wiring seam (one entry family per wire slice —
+the five classifier swaps are GH-E1b–f, one per loop, serially chained
+because they edit the same file); may not touch the loops' control flow, the
+class state methods, or the scheduler. Merge contract per slice:
+"verbatim-move extraction, zero behavior change, existing fake-fetch suites
+green" (C3a: "mutator extraction, zero behavior change" — see the purity
+caveat there; GH-E1a: "additive dead code, no call-site changes"). Slice
+count is an output of measurement — C1 deletes duplication across five sites
+so its classifier is built once (E1a) and wired per site (E1b–f); C3 splits
+three ways because index maintenance, promotion, and GC are different
+purposes at different seams; C5's three sub-scans are three entry families
+(GH-E5a/b/c) growing one shared module across serially chained slices; no
+slice mixes clusters or modules.
 
 ## Risks and caveats
 
