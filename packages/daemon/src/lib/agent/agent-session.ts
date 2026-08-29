@@ -1610,6 +1610,7 @@ export class AgentSession
         }
         return kickoff;
       },
+      ownsTurn: () => this.queryObject === queryObject,
     };
     try {
       await runMidTurnBudgetPipeline({

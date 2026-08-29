@@ -771,4 +771,52 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       'uuid-narrow-fail',
     ]);
   });
+
+  it('aborts the restart when a user stop lands during the usage refresh', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.usageMock.mockImplementation(async () => {
+      session.messageQueue.noteUserInterrupt();
+      return makeUsageResponse();
+    });
+    session.messageQueue.noteInternalCompactionSent({
+      id: 'uuid-refresh-stop',
+      content: 'refresh stop survivor',
+      internal: false,
+    } as never);
+    harness.cancelMock.mockImplementation(async () => false);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-refresh-stop'] }));
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    spyOn(session.lifecycleManager, 'restart').mockImplementation(async (options) => {
+      await options?.beforeStart?.();
+    });
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(enqueueSpy.mock.calls.some((call) => call[1] === '/compact')).toBe(false);
+    expect(session.messageQueue.hasPendingOrClaimed('uuid-refresh-stop')).toBe(false);
+  });
+
+  it('stands the cycle down when the query object is replaced mid-check', async () => {
+    const session = createAgentSession();
+    const harness = makeQuery();
+    session.queryObject = harness.query;
+    harness.usageMock.mockImplementation(async () => {
+      session.queryObject = makeQuery().query;
+      return makeUsageResponse();
+    });
+    harness.cancelMock.mockImplementation(async () => false);
+    harness.setInterruptResult(async () => ({ still_queued: ['uuid-owns-turn'] }));
+    const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
+    const restartSpy = spyOn(session.lifecycleManager, 'restart').mockImplementation(
+      async () => {}
+    );
+
+    await session.midTurnContextBudgetCheck();
+
+    expect(restartSpy).not.toHaveBeenCalled();
+    expect(enqueueSpy).not.toHaveBeenCalled();
+    expect(session.messageQueue.hasPendingOrClaimed('uuid-owns-turn')).toBe(false);
+  });
 });

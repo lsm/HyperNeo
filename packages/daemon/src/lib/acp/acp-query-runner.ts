@@ -795,6 +795,7 @@ export class AcpQueryRunner {
 
       for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
         suppressPreYieldCallback: true,
+        queryGeneration,
       })) {
         if (abortController!.signal.aborted) break;
         if (this.ctx.isLimitRecoveryPending?.()) {

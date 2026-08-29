@@ -63,6 +63,7 @@ export class InterruptHandler {
   }): Promise<void> {
     const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
 
+    messageQueue.noteUserInterrupt();
     this.interruptRequests += 1;
     try {
       this.ctx.onInterruptRequested?.();

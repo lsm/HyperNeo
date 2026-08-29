@@ -1821,6 +1821,7 @@ export class QueryRunner {
 
     for await (const { message, onSent } of messageQueue.messageGenerator(session.id, {
       suppressPreYieldCallback: true,
+      queryGeneration,
     })) {
       if (this.ctx.isLimitRecoveryPending?.()) {
         logger.info('Prompt feed: limit recovery engaged; requeueing prompt until the retry.');
