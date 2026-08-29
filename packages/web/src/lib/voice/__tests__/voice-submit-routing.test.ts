@@ -102,6 +102,15 @@ describe('classifyVoiceSubmitError', () => {
     ).toBe('retry');
   });
 
+  it.each([
+    ['Invalid model', 400, 'discard'],
+    ['backend exploded', 500, 'retry'],
+  ])('classifies %s (failed with HTTP %i) as %s', (body, status, expected) => {
+    expect(classifyVoiceSubmitError(new Error(`${body} (failed with HTTP ${status})`))).toBe(
+      expected
+    );
+  });
+
   it('scopes session refusal to draft delivery', () => {
     const error = new Error('Session not found: abc123');
     expect(classifyVoiceSubmitError(error)).toBe('permanent');

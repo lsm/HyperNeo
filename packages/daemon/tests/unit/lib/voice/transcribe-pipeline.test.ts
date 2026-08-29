@@ -200,7 +200,7 @@ describe('voice transcribe pipeline', () => {
     ) as typeof fetch;
     await expect(transcribe(createDeps())).resolves.toEqual({
       action: 'failed',
-      error: 'Invalid model',
+      error: 'Invalid model (failed with HTTP 400)',
     });
   });
 

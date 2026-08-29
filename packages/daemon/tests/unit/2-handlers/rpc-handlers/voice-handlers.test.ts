@@ -496,7 +496,7 @@ describe('voice RPC handlers', () => {
 
     await expect(
       handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
-    ).rejects.toThrow('Invalid model');
+    ).rejects.toThrow('Invalid model (failed with HTTP 400)');
   });
 
   it('normalizes arbitrary local server errors', async () => {
@@ -506,7 +506,7 @@ describe('voice RPC handlers', () => {
 
     await expect(
       handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
-    ).rejects.toThrow('backend exploded');
+    ).rejects.toThrow('backend exploded (failed with HTTP 500)');
   });
 
   it('rejects concurrent transcription requests from the same client', async () => {
