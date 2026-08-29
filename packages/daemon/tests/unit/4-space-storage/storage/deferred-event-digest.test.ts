@@ -219,6 +219,14 @@ describe('buildExternalEventDigestMessage', () => {
         occurredAt: at(16),
       },
     ]);
+    const lines = digest.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe(
+      '- github/o/r/pull_request/7.thread_reopened: ×1 (latest 15:00 UTC) — reopened by marcliu'
+    );
+    expect(lines[2]).toBe(
+      '- github/o/r/pull_request/7.thread_reopened: ×1 (latest 16:00 UTC) — reopened by marcliu'
+    );
   });
 
   it('collapses same-value reaction duplicates but keeps actors distinct', () => {
@@ -282,6 +290,10 @@ describe('buildExternalEventDigestMessage', () => {
         prNumber: 7,
       },
     ]);
+    const lines = digest.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe('- Reactions on PR #7: ×1, latest reaction by unknown at unknown time');
+    expect(lines[2]).toBe('- Reactions on PR #7: ×1, latest reaction by unknown at unknown time');
   });
 
   it('renders branch-protection policy values alongside changed field names', () => {
@@ -443,6 +455,10 @@ describe('buildExternalEventDigestMessage', () => {
         prNumber: 7,
       },
     ]);
+    const lines = digest.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe('- CI check "unknown check": unknown ×1, latest unknown time');
+    expect(lines[2]).toBe('- CI check "unknown check": unknown ×1, latest unknown time');
   });
 
   it('separates submitted reviews by reviewId and statuses by context', () => {
@@ -490,6 +506,8 @@ describe('buildExternalEventDigestMessage', () => {
     ]);
     expect(digest).toContain('submitted by reviewer-a');
     expect(digest).toContain('submitted by reviewer-b');
+    expect(digest).toContain('status_failure: ×1 (latest 15:30 UTC)');
+    expect(digest).toContain('status_failure: ×1 (latest 15:40 UTC)');
   });
 
   it('treats out-of-range occurredAt values as unknown and never ranks them as latest', () => {
@@ -590,6 +608,14 @@ describe('buildExternalEventDigestMessage', () => {
     ]);
     expect(digest).toContain('External events while you were working (2 events, PR #9):');
     expect(digest).toContain('github/o/r/pull_request/9.merge_group_polled: ×1');
+    const lines = digest.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe(
+      '- github/o/r/pull_request/9.merge_group_polled: ×1 (latest unknown time)'
+    );
+    expect(lines[2]).toBe(
+      '- github/o/r/pull_request/9.merge_group_polled: ×1 (latest unknown time)'
+    );
   });
 
   it('preserves actionable payload fields on other-tier lines', () => {
