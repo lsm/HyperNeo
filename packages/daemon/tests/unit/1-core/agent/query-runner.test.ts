@@ -170,6 +170,8 @@ describe('QueryRunner', () => {
       size: sizeSpy,
       getGeneration: mock(() => 0),
       enqueueWithId: enqueueWithIdSpy,
+      hasYielded: mock(() => false),
+      requeueYielded: mock(() => false),
       messageGenerator: mock(async function* () {}),
     } as unknown as MessageQueue;
 
@@ -3428,6 +3430,8 @@ describe('QueryRunner', () => {
               events.push(`enqueue:${messageId}${options?.prepend ? ':prepend' : ''}`);
             }
           ),
+          hasYielded: mock(() => false),
+          requeueYielded: mock(() => false),
           messageGenerator: mock(async function* () {}),
         } as unknown as MessageQueue,
         stateManager: {

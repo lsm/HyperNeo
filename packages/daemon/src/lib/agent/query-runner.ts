@@ -78,6 +78,7 @@ const RETRY_EXIT_TIMEOUT_MS = 5000;
 
 type StartupWatchRace =
   | { kind: 'message'; result: IteratorResult<unknown, void> }
+  | { kind: 'iterator_error'; error: unknown }
   | { kind: 'nudge' }
   | { kind: 'backstop' }
   | { kind: 'drain' }
@@ -1049,7 +1050,10 @@ export class QueryRunner {
           }
 
           const race: Array<Promise<StartupWatchRace>> = [
-            nextPromise.then((result) => ({ kind: 'message' as const, result })),
+            nextPromise.then(
+              (result) => ({ kind: 'message' as const, result }),
+              (error) => ({ kind: 'iterator_error' as const, error })
+            ),
             abortPromise.then(() => ({ kind: 'abort' as const })),
           ];
           if (!firstMessageArrived) {
@@ -1069,6 +1073,19 @@ export class QueryRunner {
 
           if (winner.kind === 'abort') {
             break;
+          }
+
+          if (winner.kind === 'iterator_error') {
+            if (!firstMessageArrived && processExited) {
+              deadReason = 'process_exit';
+              logger.error(
+                `SDK startup liveness: SDK iterator rejected after the process exited ` +
+                  `(code=${processExitInfo.code}, signal=${processExitInfo.signal}). ` +
+                  'Treating as a startup timeout and retrying once if a prompt is available.'
+              );
+              throw new Error('SDK startup timeout - query aborted');
+            }
+            throw winner.error;
           }
 
           if (winner.kind === 'nudge') {
@@ -1178,7 +1195,7 @@ export class QueryRunner {
             const hasUnsentYieldedPrompt = consumedPrompts.some((m) =>
               this.ctx.messageQueue.hasYielded(m.uuid)
             );
-            if (hasUnsentYieldedPrompt || (!processExited && consumedPrompts.length > 0)) {
+            if (hasUnsentYieldedPrompt || consumedPrompts.length > 0 || messageQueue.size() > 0) {
               break;
             }
             const outcome = await runStartupWatch(
@@ -1415,6 +1432,7 @@ export class QueryRunner {
           );
         })();
         logger.warn('Auto-retrying query after startup timeout (1 retry).');
+        runAbortController?.abort();
         return await this.runRetryTeardown(queryGeneration, attemptToken, {
           nextAttempt: 1,
           recoveryState,
