@@ -198,7 +198,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   const description = buildCallActionDescription({
     role: label,
     spaceLevel: config.spaceLevel,
-    agentCeiling: config.agentLevel,
+    agentCeiling: resolveAgentLevel(),
     hotActions:
       config.role === 'workflow_worker' ? [...hotActions, ...WORKER_NODE_HOT_FILL] : hotActions,
     registry,
@@ -234,7 +234,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
         : undefined),
     validateTargets:
       config.dispatchDeps?.validateTargets ??
-      ((params: unknown, spaceId: string) => {
+      ((params: unknown, spaceId: string, action?: RegisteredAction) => {
         if (typeof params !== 'object' || params === null) return undefined;
         const record = params as Record<string, unknown>;
         const runId = explicitRunId(record);
@@ -244,7 +244,14 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
             return `Workflow run ${runId} does not belong to space ${spaceId}`;
           }
         }
-        if (typeof record.task_id === 'string' && record.task_id.length > 0 && taskRepo) {
+        const prefersTaskNumber =
+          action?.taskIdPreference === 'task_number' && typeof record.task_number === 'number';
+        if (
+          !prefersTaskNumber &&
+          typeof record.task_id === 'string' &&
+          record.task_id.length > 0 &&
+          taskRepo
+        ) {
           const task = taskRepo.getTask(record.task_id);
           if (task && task.spaceId !== spaceId) {
             return `Task ${record.task_id} does not belong to space ${spaceId}`;

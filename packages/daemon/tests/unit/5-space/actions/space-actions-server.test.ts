@@ -519,6 +519,41 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(events[0]).toMatchObject({ outcome: 'denied', reason: 'invalid_params' });
   });
 
+  test('prefers a local task_number over a foreign task_id target', async () => {
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        taskRepo: {
+          getTaskByNumber: (_spaceId: string, taskNumber: number) =>
+            taskNumber === 42 ? { id: 'task-42', spaceId: SPACE_ID } : null,
+          getTask: (taskId: string) =>
+            taskId === 'foreign-1' ? { id: taskId, spaceId: 'other-space' } : null,
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    const body = (await dispatch(server, {
+      name: 'get_task_detail',
+      params: { task_number: 42, task_id: 'foreign-1' },
+    })) as Record<string, unknown>;
+    expect(body).not.toMatchObject({ message: 'does not belong to space' });
+  });
+
+  test('reflects the long-term-agent ceiling in the action guidance', () => {
+    const server = makeServer({
+      role: 'long_term_agent',
+      spaceLevel: 5,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        myAgentId: 'lh-agent-1',
+        longHorizonAgentRepo: {
+          getById: () => ({ spaceId: SPACE_ID, autonomyLevel: 1 }),
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    expect(server.description).toContain('autonomy 1');
+    expect(server.description).not.toContain('autonomy 5');
+  });
+
   test('rejects explicit run targets that belong to another space', async () => {
     const events: DispatchTelemetryEvent[] = [];
     const server = makeServer({

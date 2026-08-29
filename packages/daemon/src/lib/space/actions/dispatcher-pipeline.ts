@@ -62,7 +62,8 @@ export interface DispatchActionDeps {
   resolveRunId?: (taskId: string) => string | undefined | Promise<string | undefined>;
   validateTargets?: (
     params: unknown,
-    spaceId: string
+    spaceId: string,
+    action?: RegisteredAction
   ) => string | undefined | Promise<string | undefined>;
 }
 
@@ -170,7 +171,7 @@ export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
 export async function resolveTargets(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
   if (ctx.outcome) return ctx;
   if (ctx.deps.validateTargets) {
-    const message = await ctx.deps.validateTargets(ctx.parsedParams, ctx.spaceId);
+    const message = await ctx.deps.validateTargets(ctx.parsedParams, ctx.spaceId, ctx.action);
     if (message) {
       return { ...ctx, outcome: deniedOutcome('invalid_params', message) };
     }
