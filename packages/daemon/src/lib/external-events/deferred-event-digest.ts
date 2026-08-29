@@ -341,6 +341,21 @@ function digestHeader(
   return `${title ?? 'External events while you were working'} (${total} ${eventWord}${scope}):`;
 }
 
+export function orderEssencesByOccurrence(
+  entries: ExternalEventEssenceEntry[]
+): ExternalEventEssenceEntry[] {
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => {
+      const at = orderTime(a.entry);
+      const bt = orderTime(b.entry);
+      const av = Number.isNaN(at) ? Number.NEGATIVE_INFINITY : at;
+      const bv = Number.isNaN(bt) ? Number.NEGATIVE_INFINITY : bt;
+      return av - bv || a.index - b.index;
+    })
+    .map((item) => item.entry);
+}
+
 export function buildExternalEventDigestMessage(
   events: ExternalEventEssenceEntry[],
   options?: {
@@ -352,16 +367,7 @@ export function buildExternalEventDigestMessage(
 ): string {
   if (events.length === 0) return '';
   const droppedEventCount = options?.droppedEventCount ?? 0;
-  const ordered = events
-    .map((entry, index) => ({ entry, index }))
-    .sort((a, b) => {
-      const at = orderTime(a.entry);
-      const bt = orderTime(b.entry);
-      const av = Number.isNaN(at) ? Number.NEGATIVE_INFINITY : at;
-      const bv = Number.isNaN(bt) ? Number.NEGATIVE_INFINITY : bt;
-      return av - bv || a.index - b.index;
-    })
-    .map((item) => item.entry);
+  const ordered = orderEssencesByOccurrence(events);
   const includeDate =
     new Set(
       ordered
