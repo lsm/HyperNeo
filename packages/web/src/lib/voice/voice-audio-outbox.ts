@@ -86,12 +86,6 @@ export async function flushPendingVoiceAudio(): Promise<void> {
     scheduleFollowUpFlush();
     return;
   }
-  const pending = (await listVoiceRecords()).filter((entry) => !isVoiceAudioBusy(entry.id));
-  if (pending.length === 0) {
-    await refreshPendingVoiceAudio();
-    return;
-  }
-
   flushInProgress = true;
   const deferredSessions = new Set<string>();
   let delivered = 0;
@@ -114,9 +108,18 @@ export async function flushPendingVoiceAudio(): Promise<void> {
     }
   };
   try {
+    const pending = (await listVoiceRecords()).filter((entry) => !isVoiceAudioBusy(entry.id));
+    if (pending.length === 0) {
+      await refreshPendingVoiceAudio();
+      return;
+    }
     for (const entry of pending) {
       if (!connectionManager.getHubIfConnected()) break;
       if (deferredSessions.has(entry.sessionId)) continue;
+      if (interactiveSubmits > 0 || isVoiceAudioBusy(entry.id)) {
+        needsRetry = true;
+        continue;
+      }
       markVoiceAudioBusy(entry.id);
       try {
         const result = await runVoiceSubmit(

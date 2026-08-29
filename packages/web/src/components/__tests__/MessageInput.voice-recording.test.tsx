@@ -579,12 +579,8 @@ describe('MessageInput — recording UI', () => {
           'Recording target changed — recording saved for resend'
         )
       );
-      expect(putVoiceRecord).toHaveBeenCalledTimes(2);
-      expect(deleteVoiceRecord).toHaveBeenCalledTimes(1);
-      const initialPutId = putVoiceRecord.mock.calls[0][0].id;
-      const restoredPutId = putVoiceRecord.mock.calls[1][0].id;
-      expect(restoredPutId).toBe(initialPutId);
-      expect(deleteVoiceRecord).toHaveBeenCalledWith(restoredPutId);
+      expect(putVoiceRecord).toHaveBeenCalledTimes(1);
+      expect(deleteVoiceRecord).not.toHaveBeenCalled();
       expect(draft.value).toBe('');
       expect(onSend).not.toHaveBeenCalled();
       expect(voiceCancel).not.toHaveBeenCalled();
@@ -771,6 +767,32 @@ describe('MessageInput — recording UI', () => {
       await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(draft.value).toBe('hello world'));
       expect(deleteVoiceRecord).toHaveBeenCalledWith('r1');
+    });
+
+    it('Resend keeps the recording when the composer draft cannot hold the transcript', async () => {
+      draft.value = 'x'.repeat(100_000);
+      listVoiceRecords.mockResolvedValue([
+        {
+          id: 'r1',
+          sessionId: 's1',
+          audioBase64: 'aGk=',
+          mimeType: 'audio/wav',
+          peakLevel: 0.5,
+          createdAt: Date.now(),
+        },
+      ]);
+      render(<MessageInput sessionId="s1" onSend={vi.fn()} />);
+      await waitFor(() => expect(screen.getByTestId('pending-voice-audio-tray')).toBeTruthy());
+
+      fireEvent.click(screen.getByLabelText('Resend voice recording'));
+
+      await waitFor(() => expect(transcribeRequest).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(toast.info).toHaveBeenCalledWith(
+          'Composer draft is full — recording kept for resend'
+        )
+      );
+      expect(deleteVoiceRecord).not.toHaveBeenCalled();
     });
 
     it('Delete removes the persisted record', async () => {

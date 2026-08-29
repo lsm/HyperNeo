@@ -390,7 +390,7 @@ export default function MessageInput({
   }, []);
 
   const insertTranscript = useCallback(
-    (transcript: string) => {
+    (transcript: string): boolean => {
       const currentContent = textareaInputRef.current?.value ?? contentRef.current;
       const selectionStart = textareaInputRef.current?.selectionStart ?? lastCursorRef.current;
       const selectionEnd =
@@ -398,13 +398,18 @@ export default function MessageInput({
         Math.max(selectionStart, lastSelectionEndRef.current);
       const before = currentContent.slice(0, selectionStart);
       const after = currentContent.slice(selectionEnd);
-      const { value: nextValue } = buildTranscriptInsertion(before, after, transcript);
+      const { value: nextValue, fullyInserted } = buildTranscriptInsertion(
+        before,
+        after,
+        transcript
+      );
       setContent(nextValue);
       const nextCursor = selectionStart + (nextValue.length - before.length - after.length);
       setTimeout(() => {
         textareaInputRef.current?.focus();
         textareaInputRef.current?.setSelectionRange(nextCursor, nextCursor);
       }, 0);
+      return fullyInserted;
     },
     [setContent]
   );
@@ -568,7 +573,11 @@ export default function MessageInput({
       }
       const outcome = result.outcome;
       if (outcome.kind === 'insert') {
-        insertTranscript(outcome.transcript);
+        const fullyInserted = insertTranscript(outcome.transcript);
+        if (!fullyInserted) {
+          toast.info('Composer draft is full — recording kept for resend');
+          return;
+        }
         if (outcome.autoSend) {
           pendingAutoSendRef.current = {
             sessionId: followUp.targetSessionId,
@@ -598,10 +607,9 @@ export default function MessageInput({
       }
       if (outcome.kind === 'discard-with-reason') {
         if (sessionIdRef.current !== followUp.targetSessionId) {
-          const saved = await saveForResend(result.recordId);
           if (outcome.reason) {
             toast.info(
-              saved
+              result.persisted
                 ? 'Recording target changed — recording saved for resend'
                 : 'Recording target changed — transcript discarded'
             );
@@ -650,25 +658,29 @@ export default function MessageInput({
           { sessionId: targetSessionId, mode },
           {
             stopRecording: async () => stoppedRecording,
+            deleteRecord: async (id) => {
+              if (sessionIdRef.current !== targetSessionId) return true;
+              return deleteVoiceRecord(id);
+            },
             generateId: () => recordId,
             delay: (ms) =>
               new Promise<void>((resolve, reject) => {
-                const fail = () => {
-                  cleanup();
-                  reject(new Error(VOICE_DISCONNECTED_HANDOFF));
-                };
-                const timer = setTimeout(() => {
-                  cleanup();
-                  resolve();
-                }, ms);
-                const unsubscribe = connectionState.subscribe((state) => {
-                  if (state !== 'connected') fail();
-                });
-                const cleanup = () => {
+                let settled = false;
+                let unsubscribe: (() => void) | null = null;
+                const settle = (failed: boolean) => {
+                  if (settled) return;
+                  settled = true;
                   clearTimeout(timer);
-                  unsubscribe();
+                  unsubscribe?.();
+                  if (failed) reject(new Error(VOICE_DISCONNECTED_HANDOFF));
+                  else resolve();
                 };
-                if (!connectionManager.getHubIfConnected()) fail();
+                const timer = setTimeout(() => settle(false), ms);
+                unsubscribe = connectionState.subscribe((state) => {
+                  if (state !== 'connected') settle(true);
+                });
+                if (settled) unsubscribe();
+                if (!connectionManager.getHubIfConnected()) settle(true);
               }),
             isMounted: () => mountedRef.current,
             currentSessionId: () => sessionIdRef.current,
@@ -745,6 +757,10 @@ export default function MessageInput({
           {
             stopRecording: async () => recording,
             putRecord: async () => true,
+            deleteRecord: async (id) => {
+              if (sessionIdRef.current !== entry.sessionId) return true;
+              return deleteVoiceRecord(id);
+            },
             generateId: () => entry.id,
             isMounted: () => mountedRef.current,
             currentSessionId: () => sessionIdRef.current,

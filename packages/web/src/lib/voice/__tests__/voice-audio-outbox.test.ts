@@ -154,6 +154,22 @@ describe('voice audio outbox', () => {
     expect(store.records).toEqual([]);
   });
 
+  it('rechecks claims before processing each snapshot entry', async () => {
+    seedEntry({ id: 'first' });
+    seedEntry({ id: 'second', sessionId: 's2' });
+    hubRequest.mockImplementation(async () => {
+      markVoiceAudioBusy('second');
+      return { text: 'first done' };
+    });
+    await flushPendingVoiceAudio();
+
+    expect(store.records.map((r) => r.id)).toEqual(['second']);
+    expect(hubRequest).toHaveBeenCalledWith(
+      'session.appendVoiceDraft',
+      expect.objectContaining({ sessionId: 's1', dedupId: 'first' })
+    );
+  });
+
   it('keeps a silent record for manual resend without transcribing it', async () => {
     seedEntry({ peakLevel: 0.0004 });
     await flushPendingVoiceAudio();
