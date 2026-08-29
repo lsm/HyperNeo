@@ -172,6 +172,7 @@ describe('QueryRunner', () => {
       enqueueWithId: enqueueWithIdSpy,
       hasYielded: mock(() => false),
       requeueYielded: mock(() => false),
+      hasOutstandingInternalCompaction: mock(() => false),
       messageGenerator: mock(async function* () {}),
     } as unknown as MessageQueue;
 
@@ -6312,6 +6313,137 @@ describe('QueryRunner', () => {
 
       expect(buildSpy).toHaveBeenCalledTimes(2);
       expect(handleErrorSpy).toHaveBeenCalled();
+    }, 15000);
+
+    for (const row of [
+      {
+        name: 'emits a still-working nudge notice with no retry claim',
+        compactionOutstanding: false,
+        expected: 'large context / compaction can take a few minutes',
+      },
+      {
+        name: 'nudge notice says compacting while an internal compaction is outstanding',
+        compactionOutstanding: true,
+        expected: 'compacting',
+      },
+    ]) {
+      it(row.name, async () => {
+        buildSpy
+          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+        queryFactory = hangingStartupTimeoutQuery;
+
+        const ctx = createContext({
+          messageQueue: {
+            ...mockMessageQueue,
+            hasOutstandingInternalCompaction: mock(() => row.compactionOutstanding),
+          } as unknown as MessageQueue,
+        });
+        runner = new QueryRunner(ctx);
+        (
+          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+        )._consumedUserMessages = new Map([
+          [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
+        ]);
+
+        const savedInactivityTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+        process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '60001';
+
+        jest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+          runner.start();
+          let spins = 0;
+          while (ctx.startupTimeoutTimer === null && spins < 100) {
+            await flushMicrotasks();
+            spins++;
+          }
+          jest.advanceTimersByTime(60_000);
+          spins = 0;
+          while (saveSDKMessageSpy.mock.calls.length === 0 && spins < 100) {
+            await flushMicrotasks();
+            spins++;
+          }
+          const nudgeText = saveSDKMessageSpy.mock.calls
+            .map(
+              (call) =>
+                (call[1] as { message?: { content?: Array<{ text?: string }> } })?.message
+                  ?.content?.[0]?.text
+            )
+            .find((text) => typeof text === 'string' && text.includes('Still working'));
+          expect(nudgeText).toContain(row.expected);
+          expect(nudgeText).not.toContain('Retrying');
+          jest.advanceTimersByTime(1);
+          await ctx.queryPromise?.catch(() => {});
+        } finally {
+          jest.useRealTimers();
+          if (savedInactivityTimeout === undefined) {
+            delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+          } else {
+            process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = savedInactivityTimeout;
+          }
+        }
+      }, 15000);
+    }
+
+    it('emits a failed-to-start retry notice when the SDK process exits before any first message', async () => {
+      sizeSpy.mockReturnValue(1);
+      const exitListeners: Array<(code: number | null, signal: string | null) => void> = [];
+      const fakeProc = {
+        pid: 4242,
+        exitCode: null,
+        once: (event: string, listener: (code: number | null, signal: string | null) => void) => {
+          if (event === 'exit') exitListeners.push(listener);
+        },
+      };
+      buildSpy
+        .mockImplementationOnce(async () => ({
+          model: 'claude-sonnet-4-20250514',
+          mcpServers: {},
+          spawnClaudeCodeProcess: () => fakeProc,
+        }))
+        .mockRejectedValueOnce(new Error('stop after retry'));
+      (query as unknown as ReturnType<typeof mock>).mockImplementationOnce(
+        (arg: { options?: Record<string, unknown> }) => {
+          (arg.options?.spawnClaudeCodeProcess as ((opts: unknown) => unknown) | undefined)({});
+          return hangingStartupTimeoutQuery();
+        }
+      );
+      queryFactory = hangingStartupTimeoutQuery;
+
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+
+      jest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        runner.start();
+        let spins = 0;
+        while (exitListeners.length === 0 && spins < 100) {
+          await flushMicrotasks();
+          spins++;
+        }
+        expect(exitListeners.length).toBeGreaterThan(0);
+        exitListeners[0]?.(1, null);
+        await flushMicrotasks(30);
+        jest.advanceTimersByTime(5000);
+        await ctx.queryPromise?.catch(() => {});
+      } finally {
+        jest.useRealTimers();
+      }
+
+      expect(buildSpy).toHaveBeenCalledTimes(2);
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({
+          type: 'assistant',
+          message: expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({
+                text: expect.stringContaining('failed to start — process exited (code 1)'),
+              }),
+            ]),
+          }),
+        })
+      );
     }, 15000);
 
     it('surfaces a startup timeout when the SDK stream ends before any first message', async () => {

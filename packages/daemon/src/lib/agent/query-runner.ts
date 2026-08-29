@@ -1017,9 +1017,16 @@ export class QueryRunner {
         }
       });
 
-      const slowStartNotice = (elapsedMs: number): string =>
-        `⚠️ The AI session is slow to start — no response after ` +
-        `${Math.round(elapsedMs / 1000)}s. Continuing to wait…`;
+      const startupNudgeNotice = (elapsedMs: number): string => {
+        const elapsedSec = Math.round(elapsedMs / 1000);
+        if (messageQueue.hasOutstandingInternalCompaction()) {
+          return `⚠️ Still working — compacting (no response after ${elapsedSec}s)…`;
+        }
+        return (
+          `⚠️ Still working — large context / compaction can take a few minutes ` +
+          `(no response after ${elapsedSec}s)…`
+        );
+      };
 
       const logStartupTimeout = (elapsedMs: number): void => {
         const isRootWorkspace = !session.worktree;
@@ -1102,7 +1109,7 @@ export class QueryRunner {
             );
             if (outcome.action === 'nudge-slow') {
               try {
-                await this.displayErrorAsAssistantMessage(slowStartNotice(nudgeThresholdMs), {
+                await this.displayErrorAsAssistantMessage(startupNudgeNotice(nudgeThresholdMs), {
                   markAsError: false,
                 });
               } catch (err) {
@@ -1265,7 +1272,7 @@ export class QueryRunner {
               clearTimeout(nudgeTimeout);
               try {
                 await this.displayErrorAsAssistantMessage(
-                  slowStartNotice(messageOutcome.inactivity?.elapsedMs ?? elapsed),
+                  startupNudgeNotice(messageOutcome.inactivity?.elapsedMs ?? elapsed),
                   { markAsError: false }
                 );
               } catch (err) {
@@ -1421,10 +1428,10 @@ export class QueryRunner {
             const exitDesc = processExitInfo.signal
               ? `signal ${processExitInfo.signal}`
               : `code ${processExitInfo.code ?? 'unknown'}`;
-            return `⚠️ The AI session ended unexpectedly before responding (process exited with ${exitDesc}). Retrying once…`;
+            return `⚠️ The AI session failed to start — process exited (${exitDesc}); retrying…`;
           }
           if (deadReason === 'stream_closed') {
-            return `⚠️ The AI session ended unexpectedly before responding (SDK stream closed). Retrying once…`;
+            return `⚠️ The AI session failed to start — SDK stream closed; retrying…`;
           }
           return (
             `⚠️ The AI session is slow to start — no response after ` +
