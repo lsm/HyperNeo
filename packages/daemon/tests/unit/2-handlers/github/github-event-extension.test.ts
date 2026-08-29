@@ -10167,6 +10167,12 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }
   });
 
+  let activeExtension: GitHubEventExtension | null = null;
+  afterEach(async () => {
+    await activeExtension?.stop();
+    activeExtension = null;
+  });
+
   test('status webhook extracts commit SHA from nested commit.sha when top-level sha is absent', async () => {
     const db = setupDb();
     db.prepare(
@@ -10180,6 +10186,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         fetchCalls
       ),
     });
+    activeExtension = extension;
     const context = {
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -10203,7 +10210,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     expect(received).toHaveLength(1);
     expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.status_failure');
     expect(received[0].payload.sha).toBe('abc123');
-    await extension.stop();
   });
 
   test('deployment_status webhook falls back to nested deployment_status.deployment when top-level deployment is missing', async () => {
@@ -10212,6 +10218,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: deploymentPrResolutionFetch({ bySha: [prOnBranch(7)] }),
     });
+    activeExtension = extension;
     const context = {
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -10247,7 +10254,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     expect(response.status).toBe(200);
     expect(received).toHaveLength(1);
     expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.deployment_status_success');
-    await extension.stop();
   });
 
   test('deployment_status webhook is dropped before PR resolution when deployment ref and sha are both empty', async () => {
@@ -10260,6 +10266,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
         return new Response('[]', { status: 200 });
       }) as typeof fetch,
     });
+    activeExtension = extension;
     const context = {
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -10294,7 +10301,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     expect(fetchCalls).toHaveLength(0);
     const after = extension.repo.getWatchedRepo('space-1', 'acme', 'widgets')!;
     expect(after.lastWebhookAt).toBeNull();
-    await extension.stop();
   });
 
   test('handleWebhook publishes matching events to every enabled space that shares the repository secret', async () => {
@@ -10307,6 +10313,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     ).run();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db);
+    activeExtension = extension;
     const context = {
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -10336,7 +10343,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     expect(await response.json()).toMatchObject({ spaces: 2 });
     expect(received).toHaveLength(2);
     expect(new Set(received.map((event) => event.spaceId)).size).toBe(2);
-    await extension.stop();
   });
 
   test('pollWatchedRepo reuses ETags and skips unchanged issue and review comment endpoints', async () => {
@@ -10367,6 +10373,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       pollIntervalMs: 60_000,
       fetchImpl,
     });
+    activeExtension = extension;
     const context = {
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -10396,7 +10403,6 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     expect(issueRequests[1]?.ifNoneMatch).toBe('W/"ic-etag"');
     expect(reviewRequests[1]?.ifNoneMatch).toBe('W/"rc-etag"');
     expect(received).toHaveLength(0);
-    await extension.stop();
   });
 
   test('pollOnce returns count 0 and stops the cycle when rate limited', async () => {
@@ -10419,6 +10425,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     }) as typeof fetch;
 
     const extension = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000 });
+    activeExtension = extension;
     const context = {
       publisher: service,
       config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
@@ -10439,12 +10446,12 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
       Date.now() + 60_000
     );
     expect(received).toHaveLength(0);
-    await extension.stop();
   });
 
   test('getNextPollDelayMs boundaries', async () => {
     const db = setupDb();
     const running = new GitHubEventExtension(db, 'token', { pollIntervalMs: 60_000 });
+    activeExtension = running;
     expect(
       (running as unknown as { getNextPollDelayMs: () => number | null }).getNextPollDelayMs()
     ).toBe(60_000);
@@ -10471,6 +10478,5 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
     expect(
       (disabled as unknown as { getNextPollDelayMs: () => number | null }).getNextPollDelayMs()
     ).toBeNull();
-    await running.stop();
   });
 });
