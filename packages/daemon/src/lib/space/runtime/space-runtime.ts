@@ -3836,16 +3836,10 @@ export class SpaceRuntime {
     const tam = this.config.taskAgentManager;
     if (!store || !tam || typeof tam.tryResumeNodeAgentSession !== 'function') return;
     const deps: RestoreIdleSessionsDeps = {
-      listPendingDeliveries: (scope) => {
-        const seen = new Set<string>();
-        return store.listPendingDeliveries(scope).filter((delivery) => {
-          if (longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId)) return false;
-          const key = `${delivery.workflowRunId}:${delivery.nodeId}:${delivery.agentName}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-      },
+      listPendingDeliveries: (scope) =>
+        store
+          .listPendingDeliveries(scope)
+          .filter((delivery) => !longHorizonSpaceIdFromWorkflowRunId(delivery.workflowRunId)),
       getEventRecord: (eventId) => store.getById(eventId),
       isDeliveryInFlight: (deliveryKey) =>
         this.externalEventDeliveriesInFlight.has(deliveryKey) ||

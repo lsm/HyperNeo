@@ -55,6 +55,7 @@ export async function collectAdmissibleCandidates(
     target: RestoreIdleSessionTarget;
     execution: RestoreIdleSessionExecution;
   }> = [];
+  const admittedTargets = new Set<string>();
   const spaceStateById = new Map<string, { paused: boolean; stopped: boolean } | null>();
   const resolveSpaceState = async (
     spaceId: string
@@ -83,6 +84,9 @@ export async function collectAdmissibleCandidates(
     if (!ctx.deps.isTaskAdmissible(delivery.taskId)) continue;
     const execution = ctx.deps.findIdleExecutionWithDeadSession(target);
     if (!execution) continue;
+    const targetKey = `${target.workflowRunId}:${target.nodeId}:${target.agentName}`;
+    if (admittedTargets.has(targetKey)) continue;
+    admittedTargets.add(targetKey);
     candidates.push({ target, execution });
   }
   return { ...ctx, candidates };

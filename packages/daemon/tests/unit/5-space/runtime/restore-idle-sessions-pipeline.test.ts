@@ -140,4 +140,23 @@ describe('runRestoreIdleSessions', () => {
     const outcomes = await runRestoreIdleSessions(makeDeps({ failRestore: true }));
     expect(outcomes).toEqual([{ action: 'failed' }]);
   });
+
+  test('a rejected first delivery does not consume the target dedupe slot', async () => {
+    const expiredRecord = makeEventRecord();
+    expiredRecord.createdAt = 1;
+    const validRecord = makeEventRecord();
+    validRecord.createdAt = Date.now();
+    const deps = makeDeps();
+    const scopedDeps: RestoreIdleSessionsDeps = {
+      ...deps,
+      listPendingDeliveries: () => [
+        { ...DELIVERY, eventId: 'evt-expired', deliveryKey: 'key-expired' },
+        { ...DELIVERY, eventId: 'evt-valid', deliveryKey: 'key-valid' },
+      ],
+      getEventRecord: (eventId) => (eventId === 'evt-expired' ? expiredRecord : validRecord),
+      isDeliveryExpired: (createdAt) => createdAt <= 1,
+    };
+    const outcomes = await runRestoreIdleSessions(scopedDeps);
+    expect(outcomes).toEqual([{ action: 'restored', sessionId: 'session-1' }]);
+  });
 });
