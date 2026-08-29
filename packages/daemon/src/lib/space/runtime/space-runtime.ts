@@ -1864,6 +1864,16 @@ export class SpaceRuntime {
       .then((outcomes) => {
         if (outcomes.some((outcome) => this.isDigestOutcomeRetryable(outcome))) {
           this.scheduleTurnEndDigestRetry(sessionId, state.taskId, true);
+          return;
+        }
+        if (
+          outcomes.length > 0 &&
+          outcomes.every((outcome) => outcome === null) &&
+          (this.currentReconciliation?.failed ||
+            (this.currentReconciliation && !this.currentReconciliation.settled)) &&
+          this.isTargetSessionLive(sessionId)
+        ) {
+          this.scheduleDigestProbeForSession(sessionId, state.taskId);
         }
       })
       .catch((error) => {
@@ -3423,6 +3433,7 @@ export class SpaceRuntime {
 
   start(): void {
     if (this.tickTimer !== null) return;
+    this.runtimeGeneration += 1;
     this.isStopped = false;
 
     const gate = this.ensureReconciliationGate();
@@ -3506,6 +3517,7 @@ export class SpaceRuntime {
 
   async stop(): Promise<void> {
     this.runtimeGeneration += 1;
+    const shutdownGeneration = this.runtimeGeneration;
     this.isStopped = true;
     if (this.tickTimer !== null) {
       clearInterval(this.tickTimer);
@@ -3543,6 +3555,7 @@ export class SpaceRuntime {
     const pendingRenders = Array.from(this.renderPendingDigestQueues.values());
     this.renderPendingDigestQueues.clear();
     await Promise.all(pendingRenders.map((render) => render.catch(() => null)));
+    if (shutdownGeneration !== this.runtimeGeneration) return;
     for (const timer of this.digestSupersedeRetryTimers.values()) {
       clearTimeout(timer);
     }
@@ -3578,12 +3591,14 @@ export class SpaceRuntime {
         check();
       });
     }
+    if (shutdownGeneration !== this.runtimeGeneration) return;
     this.pruneDigestHandoffDebt();
   }
 
   async executeTick(): Promise<void> {
     if (this.isStopped) return;
     if (this.tickInFlight) return;
+    const generation = this.runtimeGeneration;
     let rehydrating = false;
     if (!this.rehydrated) {
       this.ensureReconciliationGate();
@@ -3593,6 +3608,7 @@ export class SpaceRuntime {
       if (current && !current.settled) return;
       if (current?.failed) {
         await this.runWarmReconciliation(this.ensureReconciliationGate());
+        if (this.isStopped || generation !== this.runtimeGeneration) return;
       }
     }
     this.tickInFlight = true;
@@ -4542,6 +4558,8 @@ export class SpaceRuntime {
     }>;
     for (const raw of rows) {
       const sessionId = raw.session_id;
+      const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
+      if (!execution) continue;
       let message: SDKUserMessage & { externalEventIds?: unknown; externalEventTaskId?: unknown };
       try {
         message = JSON.parse(raw.sdk_message) as SDKUserMessage & {
@@ -4563,7 +4581,14 @@ export class SpaceRuntime {
       const allMembersDelivered = eventIds.every((eventId) =>
         store
           .listDeliveries(eventId)
-          .some((delivery) => delivery.taskId === rowTaskId && delivery.state === 'delivered')
+          .some(
+            (delivery) =>
+              delivery.taskId === rowTaskId &&
+              delivery.workflowRunId === execution.workflowRunId &&
+              delivery.nodeId === execution.workflowNodeId &&
+              delivery.agentName === execution.agentName &&
+              delivery.state === 'delivered'
+          )
       );
       if (allMembersDelivered) {
         this.addDigestHandoffDebt(sessionId, String(message.uuid));
