@@ -743,11 +743,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       return Response.json({ error: 'Repository is not watched' }, { status: 404 });
 
     let published = 0;
+    const tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
     for (const repo of validForRepo) {
       if (!repo.enabled) continue;
       const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
       if (spaceConfig && !spaceConfig.enabled) continue;
-      if (await this.publishEvent(repo.spaceId, normalized, this.context)) published++;
+      if (await this.publishEvent(repo.spaceId, normalized, this.context, tokenLoginSnapshot))
+        published++;
       this.repo.markWebhookReceived(repo.id);
     }
 
@@ -834,6 +836,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     let published = 0;
+    const tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
     for (const watched of targets) {
       for (const prNumber of prNumbers) {
         const normalized =
@@ -858,7 +861,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 prNumber,
               });
         if (!normalized) continue;
-        if (await this.publishEvent(watched.spaceId, normalized, this.context)) published++;
+        if (await this.publishEvent(watched.spaceId, normalized, this.context, tokenLoginSnapshot))
+          published++;
       }
       this.repo.markWebhookReceived(watched.id);
     }
@@ -935,6 +939,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     let published = 0;
+    const tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
     for (const watched of targets) {
       for (const prNumber of prNumbers) {
         const normalized = normalizeGitHubStatus({
@@ -947,7 +952,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           sender: root.sender,
         });
         if (!normalized) continue;
-        if (await this.publishEvent(watched.spaceId, normalized, this.context)) published++;
+        if (await this.publishEvent(watched.spaceId, normalized, this.context, tokenLoginSnapshot))
+          published++;
       }
       this.repo.markWebhookReceived(watched.id);
     }
@@ -1361,6 +1367,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private triggerSelfEchoLoginRefresh(): void {
     if (this.selfEchoLoginRefresh) return;
+    if (Date.now() < this.rateLimitedUntil) return;
     this.selfEchoLoginRefresh = this.resolveTokenStatus(false)
       .then(() => undefined)
       .finally(() => {
@@ -1766,7 +1773,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private async publishEvent(
     spaceId: string,
     event: import('./github-normalizer.ts').NormalizedGitHubEvent,
-    context: ExternalEventExtensionContext
+    context: ExternalEventExtensionContext,
+    tokenLoginSnapshot?: string
   ): Promise<boolean> {
     const spaceConfig = await context.config.getSpaceConfig(spaceId, this.sourceId);
     const filterCurrentUser =
@@ -1774,7 +1782,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       false;
     const tokenStatus = this.cachedTokenStatus();
     if (filterCurrentUser && !tokenStatus) this.triggerSelfEchoLoginRefresh();
-    const tokenLogin = tokenStatus?.login ?? '';
+    const tokenLogin = tokenLoginSnapshot ?? tokenStatus?.login ?? '';
     if (
       decideSelfEchoGate({
         initiatorLogin: event.actor,

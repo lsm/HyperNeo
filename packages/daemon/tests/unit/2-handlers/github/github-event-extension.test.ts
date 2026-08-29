@@ -10788,6 +10788,64 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
+  test('publishEvent suppresses the identity refresh while rate-limited', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const rateAware = extension as unknown as { rateLimitedUntil: number };
+    rateAware.rateLimitedUntil = Date.now() + 60_000;
+    const { published, ext, context } = publishCapture(extension);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+
+    expect(published.map((event) => event.payload.actor)).toEqual(['octocat']);
+    await Promise.resolve();
+    expect(userCalls).toBe(0);
+    await extension.stop();
+  });
+
+  test('webhook: a cold identity cache admits consistently across spaces watching the same repo', async () => {
+    const db = setupDb();
+    db.prepare(
+      `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-2', 'space-2', 'Space', '/tmp', 'active', 1, 1)`
+    ).run();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    for (const spaceId of ['space-1', 'space-2']) {
+      extension.repo.upsertWatchedRepo({
+        spaceId,
+        owner: 'acme',
+        repo: 'widgets',
+        webhookSecret: 'secret',
+      });
+    }
+
+    const payload = selfCommentPayload('octocat');
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { spaces: number }).spaces).toBe(2);
+    expect(received).toHaveLength(2);
+    await extension.stop();
+  });
+
   test('getTokenStatus resolves the credential login from /user and caches it for five minutes', async () => {
     const db = setupDb();
     let userCalls = 0;
