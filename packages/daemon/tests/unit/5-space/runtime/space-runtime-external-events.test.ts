@@ -10,7 +10,10 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
 import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/queue-health-metrics';
-import type { ExternalEvent } from '../../../../src/lib/external-events/types';
+import type {
+  ExternalEvent,
+  ExternalEventDeliveryRecord,
+} from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
@@ -2888,6 +2891,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     test('startup rehydrate re-arms a persisted pending delivery as a digest pull', async () => {
       const { event, executionId } = await runWithPendingDelivery();
       bindLiveSession(executionId, 'session-rehydrate-recovery');
+      tam.alive.delete('session-rehydrate-recovery');
+      tam.rehydrate = async () => {
+        tam.alive.add('session-rehydrate-recovery');
+      };
 
       const runtime2 = new SpaceRuntime({
         db,
@@ -3088,6 +3095,46 @@ describe('SpaceRuntime external event subscriptions', () => {
       await wait(1500);
       expect(digestRowCount('session-interrupt-recovery')).toBe(1);
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
+    test('a throwing event store during a spawn-path requeue does not undo the spawn', async () => {
+      const { run } = await startRunWithSubscription(
+        'github/lsm/neokai/pull_request/42.comment_polled'
+      );
+      const execution = nodeExecutionRepo.listByNode(run.id, 'code')[0]!;
+      nodeExecutionRepo.update(execution.id, {
+        status: 'pending',
+        agentSessionId: null,
+        startedAt: null,
+        completedAt: null,
+      });
+      tam.onSpawn = (executionId, sessionId) => {
+        nodeExecutionRepo.update(executionId, {
+          status: 'in_progress',
+          agentSessionId: sessionId,
+          startedAt: Date.now(),
+          completedAt: null,
+        });
+      };
+      const store = eventStore as unknown as {
+        listPendingDeliveries: (workflowRunId?: string) => ExternalEventDeliveryRecord[];
+      };
+      const originalList = store.listPendingDeliveries.bind(eventStore);
+      store.listPendingDeliveries = () => {
+        throw new Error('event store exploded');
+      };
+
+      try {
+        await expect(runtime.executeTick()).resolves.toBeUndefined();
+      } finally {
+        store.listPendingDeliveries = originalList;
+      }
+
+      const spawnedSessionId = `session-${execution.id}`;
+      expect(tam.spawned).toContain(spawnedSessionId);
+      const fresh = nodeExecutionRepo.getById(execution.id)!;
+      expect(fresh.status).toBe('in_progress');
+      expect(fresh.agentSessionId).toBe(spawnedSessionId);
     });
 
     test('a freshly spawned node agent pulls the deliveries accrued while it was down', async () => {

@@ -111,6 +111,10 @@ import {
   type ImmediateEventDeliveryDeps,
 } from './immediate-event-delivery-pipeline.ts';
 import {
+  type RequeuePendingDeliveryDeps,
+  runRequeuePendingDelivery,
+} from './requeue-pending-delivery-pipeline.ts';
+import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestDeps,
   type RenderPendingDigestOutcome,
@@ -2948,7 +2952,7 @@ export class SpaceRuntime {
           );
         }
       } else if (previous.status === 'stopped') {
-        this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
+        this.tryRequeuePendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
       }
       return updated;
     }
@@ -3304,7 +3308,7 @@ export class SpaceRuntime {
           );
         }
         if (generation !== this.runtimeGeneration) return;
-        this.requeuePersistedPendingDeliveries(pausedSpaceIds);
+        this.tryRequeuePendingDeliveries(pausedSpaceIds);
         this.subscribeExternalEventPublished();
         this.reconciliationDone = true;
         this.redispatchRetainedExternalEvents();
@@ -3745,7 +3749,6 @@ export class SpaceRuntime {
     if (recoveredWorkflow) {
       this.registerRunInterestsFromWorkflow(recovered.run, recoveredWorkflow);
     }
-    this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, recovered.run.id);
     for (const sessionId of liveSessionIds) {
       const tam = this.config.taskAgentManager;
       const resumeOutcome: 'retried' | 'respawned' | 'noop' =
@@ -3766,6 +3769,7 @@ export class SpaceRuntime {
         );
       }
     }
+    this.tryRequeuePendingDeliveries(this.pausedSpaceIds, recovered.run.id);
     await this.safeOnWorkflowRunUpdated(
       spaceId,
       this.config.workflowRunRepo.getRun(recovered.run.id)!
@@ -3811,7 +3815,20 @@ export class SpaceRuntime {
   }
 
   requeuePendingDeliveriesForRun(workflowRunId: string): void {
-    this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, workflowRunId);
+    this.tryRequeuePendingDeliveries(this.pausedSpaceIds, workflowRunId);
+  }
+
+  private tryRequeuePendingDeliveries(
+    pausedSpaceIds: Set<string> = new Set(),
+    workflowRunId?: string
+  ): void {
+    try {
+      this.requeuePersistedPendingDeliveries(pausedSpaceIds, workflowRunId);
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: pending-delivery requeue failed for ${workflowRunId ?? 'all runs'}: ${formatCommandError(err)}`
+      );
+    }
   }
 
   private requeuePersistedPendingDeliveries(
@@ -3876,6 +3893,7 @@ export class SpaceRuntime {
         store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
         continue;
       }
+      if (this.externalEventDeliveriesInFlight.has(delivery.deliveryKey)) continue;
       void this.deliverToLongHorizonAgent(target, eventPayload, delivery.deliveryKey);
     }
   }
@@ -3887,45 +3905,30 @@ export class SpaceRuntime {
   ): void {
     const store = this.config.externalEventStore;
     if (!store) return;
-    if (
-      this.externalEventDeliveriesInFlight.has(delivery.deliveryKey) ||
-      this.immediateDispatchesInFlight.has(delivery.deliveryKey)
-    ) {
-      return;
-    }
-    if (
-      isQueuedExternalEventExpired(eventRecord.createdAt, Date.now(), EXTERNAL_EVENT_QUEUE_TTL_MS)
-    ) {
-      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-        terminal: true,
-        reason: 'ttl_expired',
-      });
-      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-      return;
-    }
-    const run = this.config.workflowRunRepo.getRun(delivery.workflowRunId);
-    if (!run || pausedSpaceIds.has(run.spaceId) || this.pausedSpaceIds.has(run.spaceId)) return;
-    const target: WorkflowSubscriptionTarget = {
-      workflowRunId: delivery.workflowRunId,
-      taskId: delivery.taskId,
-      nodeId: delivery.nodeId,
-      agentName: delivery.agentName,
+    const deps: RequeuePendingDeliveryDeps = {
+      isDeliveryInFlight: (deliveryKey) =>
+        this.externalEventDeliveriesInFlight.has(deliveryKey) ||
+        this.immediateDispatchesInFlight.has(deliveryKey),
+      isDeliveryExpired: (createdAt, now) =>
+        isQueuedExternalEventExpired(createdAt, now, EXTERNAL_EVENT_QUEUE_TTL_MS),
+      failDeliveryTerminal: (failed, reason) => {
+        store.markDeliveryFailed(failed.eventId, failed.deliveryKey, { terminal: true, reason });
+        store.markEventFailedIfAllDeliveriesTerminal(failed.eventId);
+      },
+      isTargetSpacePaused: (workflowRunId) => {
+        const run = this.config.workflowRunRepo.getRun(workflowRunId);
+        return !run || pausedSpaceIds.has(run.spaceId) || this.pausedSpaceIds.has(run.spaceId);
+      },
+      isTargetStillSubscribed: (target, topic) => this.isTargetStillSubscribed(target, topic),
+      resolveTargetSession: (target) => this.resolveSubscriptionTarget(target).sessionId,
+      isSessionLive: (sessionId) => this.isTargetSessionLive(sessionId),
+      isSessionInterrupted: (sessionId) => this.isTargetSessionInterrupted(sessionId),
+      scheduleDigestPull: (sessionId, taskId) =>
+        this.scheduleDigestPullForSession(sessionId, taskId),
+      scheduleInterruptProbe: (sessionId, taskId) =>
+        this.scheduleInterruptProbeForSession(sessionId, taskId),
     };
-    if (!this.isTargetStillSubscribed(target, eventRecord.event.topic)) {
-      store.markDeliveryFailed(delivery.eventId, delivery.deliveryKey, {
-        terminal: true,
-        reason: 'subscription_no_longer_active',
-      });
-      store.markEventFailedIfAllDeliveriesTerminal(delivery.eventId);
-      return;
-    }
-    const resolved = this.resolveSubscriptionTarget(target);
-    if (!resolved.sessionId || !this.isTargetSessionLive(resolved.sessionId)) return;
-    if (this.isTargetSessionInterrupted(resolved.sessionId)) {
-      this.scheduleInterruptProbeForSession(resolved.sessionId, delivery.taskId);
-      return;
-    }
-    this.scheduleDigestPullForSession(resolved.sessionId, delivery.taskId);
+    runRequeuePendingDelivery(deps, { delivery, eventRecord });
   }
 
   onSpaceResumed(spaceId: string): void {
@@ -3938,9 +3941,8 @@ export class SpaceRuntime {
       );
     }
 
-    const reactiveRuns = this.config.workflowRunRepo
-      .listBySpace(spaceId)
-      .filter((run) => this.isRunInterestRebuildEligible(run));
+    const resumedRuns = this.config.workflowRunRepo.listBySpace(spaceId);
+    const reactiveRuns = resumedRuns.filter((run) => this.isRunInterestRebuildEligible(run));
     for (const run of reactiveRuns) {
       const staticWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(run);
       if (staticWorkflow) {
@@ -3953,11 +3955,15 @@ export class SpaceRuntime {
         }
       }
     }
-
+    const tasksByRun = new Map<string, SpaceTask[]>();
+    for (const run of resumedRuns) {
+      tasksByRun.set(run.id, this.config.taskRepo.listByWorkflowRunIncludingArchived(run.id));
+    }
+    this.rehydrateWorkflowSubscriptions(spaceId, resumedRuns, tasksByRun);
     this.rehydrateLongHorizonSubscriptions(spaceId);
-    this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, `long_horizon:${spaceId}`);
-    for (const run of this.config.workflowRunRepo.listBySpace(spaceId)) {
-      this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, run.id);
+    this.tryRequeuePendingDeliveries(this.pausedSpaceIds, `long_horizon:${spaceId}`);
+    for (const run of resumedRuns) {
+      this.tryRequeuePendingDeliveries(this.pausedSpaceIds, run.id);
     }
     this.redispatchRetainedExternalEvents();
   }
@@ -4177,11 +4183,10 @@ export class SpaceRuntime {
       }
     }
 
-    this.requeuePersistedPendingDeliveries(pausedSpaceIds);
-
     if (this.config.taskAgentManager) {
       await this.config.taskAgentManager.rehydrate();
     }
+    this.tryRequeuePendingDeliveries(pausedSpaceIds);
   }
 
   private recoveryDone = false;
@@ -5800,7 +5805,7 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
-          this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, runId);
+          this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
           const restartNotice = this.consumeAgentRestartNotice(runId, execution);
           if (restartNotice) {
             void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
@@ -6156,7 +6161,7 @@ export class SpaceRuntime {
             execution,
             { kickoff: true }
           );
-          this.requeuePersistedPendingDeliveries(this.pausedSpaceIds, runId);
+          this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
           await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
           recordBlockedFlushFailure(targetAgentName, rowsForTarget);
           for (const row of pending) {
