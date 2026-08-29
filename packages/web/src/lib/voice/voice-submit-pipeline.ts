@@ -11,7 +11,7 @@ import {
   voiceRetryPolicy,
 } from './voice-submit-routing.ts';
 
-export const VOICE_SUBMIT_MAX_TRANSCRIBE_ATTEMPTS = 5;
+export const VOICE_SUBMIT_MAX_TRANSCRIBE_ATTEMPTS = 6;
 
 export const VOICE_SUBMIT_SILENCE_PEAK_LEVEL = 0.001;
 
@@ -50,8 +50,9 @@ export type VoiceSubmitResult =
       recordId: string;
       persisted: boolean;
       dequeued: boolean;
+      hitDurationLimit: boolean;
     }
-  | { kind: 'silent-recording'; peakLevel: number };
+  | { kind: 'silent-recording'; peakLevel: number; hitDurationLimit: boolean };
 
 interface VoiceSubmitSnapshot {
   recordId: string;
@@ -95,10 +96,6 @@ type VoiceSubmitHaltedCtx = VoiceSubmitTranscribedCtx & {
   failure: { message: string; attempts: number; retryable: boolean };
 };
 type VoiceSubmitSilentCtx = VoiceSubmitGatedCtx & { silentRecording: true };
-
-export function isTerminalVoiceSubmitOutcome(outcome: VoiceSubmitOutcome): boolean {
-  return outcome.kind === 'insert' || outcome.kind === 'discard-with-reason';
-}
 
 function voiceSubmitErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -167,10 +164,9 @@ function routeSubmitOutcome(ctx: VoiceSubmitTranscribedCtx): VoiceSubmitRoutedCt
   return { ...ctx, outcome };
 }
 
-async function dequeueTerminalOutcome(ctx: VoiceSubmitRoutedCtx): Promise<VoiceSubmitFinishedCtx> {
-  const dequeued = isTerminalVoiceSubmitOutcome(ctx.outcome)
-    ? await ctx.deps.deleteRecord(ctx.recordId)
-    : false;
+async function dequeueDiscardedOutcome(ctx: VoiceSubmitRoutedCtx): Promise<VoiceSubmitFinishedCtx> {
+  const dequeued =
+    ctx.outcome.kind === 'discard-with-reason' ? await ctx.deps.deleteRecord(ctx.recordId) : false;
   return { ...ctx, dequeued };
 }
 
@@ -192,7 +188,7 @@ const runVoiceSubmitPipeline = (
   .pipe(transcribeWithRetry, 'ctx', 'ctx')
   .pipe('!failed', 'ctx')
   .pipe(routeSubmitOutcome, 'ctx', 'ctx')
-  .pipe(dequeueTerminalOutcome, 'ctx', 'ctx')
+  .pipe(dequeueDiscardedOutcome, 'ctx', 'ctx')
   .endAsync('ctx') as (
   ctx: VoiceSubmitCtx
 ) => Promise<VoiceSubmitFinishedCtx | VoiceSubmitHaltedCtx | VoiceSubmitSilentCtx>;
@@ -221,8 +217,9 @@ export async function runVoiceSubmit(
     delay: deps.delay ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
   };
   const ctx = await runVoiceSubmitPipeline({ ...input, deps: resolved });
+  const hitDurationLimit = ctx.recording.hitDurationLimit ?? false;
   if (!('persisted' in ctx)) {
-    return { kind: 'silent-recording', peakLevel: ctx.recording.peakLevel };
+    return { kind: 'silent-recording', peakLevel: ctx.recording.peakLevel, hitDurationLimit };
   }
   if (!('outcome' in ctx)) {
     const dequeued = ctx.failure.retryable ? false : await resolved.deleteRecord(ctx.recordId);
@@ -233,6 +230,7 @@ export async function runVoiceSubmit(
       recordId: ctx.recordId,
       persisted: ctx.persisted,
       dequeued,
+      hitDurationLimit,
     };
   }
   return {
@@ -241,6 +239,6 @@ export async function runVoiceSubmit(
     recordId: ctx.recordId,
     persisted: ctx.persisted,
     dequeued: ctx.dequeued,
-    hitDurationLimit: ctx.recording.hitDurationLimit ?? false,
+    hitDurationLimit,
   };
 }

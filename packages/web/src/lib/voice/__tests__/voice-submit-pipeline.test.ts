@@ -75,17 +75,17 @@ describe('runVoiceSubmit snapshot → stop → persist', () => {
       outcome: { kind: 'insert', transcript: 'hi', autoSend: true },
       recordId: 'record-1',
       persisted: true,
-      dequeued: true,
+      dequeued: false,
       hitDurationLimit: true,
     });
   });
 
   it('halts silent recordings before persisting or transcribing them', async () => {
     const harness = createHarness({
-      stopRecording: async () => createRecording({ peakLevel: 0.0005 }),
+      stopRecording: async () => createRecording({ peakLevel: 0.0005, hitDurationLimit: true }),
     });
     const result = await runVoiceSubmit({ sessionId: 'session-1' }, harness.deps);
-    expect(result).toEqual({ kind: 'silent-recording', peakLevel: 0.0005 });
+    expect(result).toEqual({ kind: 'silent-recording', peakLevel: 0.0005, hitDurationLimit: true });
     expect(harness.persisted).toEqual([]);
     expect(harness.delays).toEqual([]);
     expect(harness.deleted).toEqual([]);
@@ -118,8 +118,8 @@ describe('runVoiceSubmit snapshot → stop → persist', () => {
       putRecord: async () => false,
     });
     const result = await runVoiceSubmit({ sessionId: 'session-1' }, harness.deps);
-    expect(result).toMatchObject({ kind: 'routed', persisted: false, dequeued: true });
-    expect(harness.deleted).toEqual(['record-1']);
+    expect(result).toMatchObject({ kind: 'routed', persisted: false, dequeued: false });
+    expect(harness.deleted).toEqual([]);
   });
 });
 
@@ -164,6 +164,7 @@ describe('runVoiceSubmit transcribe retry', () => {
 
   it('reports a kept record when deletion of a discarded record fails', async () => {
     const harness = createHarness({
+      stopRecording: async () => createRecording({ hitDurationLimit: true }),
       transcribe: async () => {
         throw new Error('Voice transcription failed with HTTP 413');
       },
@@ -175,6 +176,7 @@ describe('runVoiceSubmit transcribe retry', () => {
       attempts: 1,
       dequeued: false,
       persisted: true,
+      hitDurationLimit: true,
     });
   });
 
@@ -188,7 +190,7 @@ describe('runVoiceSubmit transcribe retry', () => {
     });
     const result = await runVoiceSubmit({ sessionId: 'session-1' }, harness.deps);
     expect(attempts).toBe(VOICE_SUBMIT_MAX_TRANSCRIBE_ATTEMPTS);
-    expect(harness.delays).toEqual([5_000, 10_000, 20_000, 40_000]);
+    expect(harness.delays).toEqual([5_000, 10_000, 20_000, 40_000, 60_000]);
     expect(result).toMatchObject({
       kind: 'transcribe-failed',
       attempts: VOICE_SUBMIT_MAX_TRANSCRIBE_ATTEMPTS,
