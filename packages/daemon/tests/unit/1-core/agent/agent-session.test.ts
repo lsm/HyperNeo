@@ -14,6 +14,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
+  clearContextClearBoundariesForTest,
   deliverMessage,
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
@@ -21,6 +22,7 @@ import {
   sessionResetCoordinationLocks,
   steerAckTimeoutMs,
   waitForDeliveryConsumption,
+  withContextClearBoundary,
   withSessionLock,
   withSessionResetCoordination,
 } from '../../../../src/lib/agent/message-delivery';
@@ -1009,6 +1011,33 @@ describe('AgentSession', () => {
         mockInternalEventBus,
         mockGetApiKey
       );
+    });
+
+    it('driveDeliveryTurn parks behind a held context-clear boundary instead of racing the context clear', async () => {
+      const previous = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+      process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
+      let releaseHolder!: () => void;
+      const holderGate = new Promise<void>((resolve) => {
+        releaseHolder = resolve;
+      });
+      try {
+        const holder = withContextClearBoundary('test-session-id', () => holderGate);
+        const outcome = await agentSession.driveDeliveryTurn('uuid-gate', 'hello');
+        expect(outcome).toMatchObject({
+          outcome: 'blocked',
+          reason: 'context_clear_boundary',
+        });
+        expect(typeof (outcome as { retryAt?: number }).retryAt).toBe('number');
+
+        releaseHolder();
+        await holder;
+      } finally {
+        if (previous === undefined)
+          delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previous;
+        clearContextClearBoundariesForTest();
+        sessionResetCoordinationLocks.clear();
+      }
     });
 
     it('driveDeliveryTurn reopens a no-result consumed row for retry only while the claim is current', async () => {
@@ -6299,6 +6328,7 @@ describe('AgentSession', () => {
 
       let threw = false;
       let outcome: unknown;
+      clearContextClearBoundariesForTest();
       try {
         outcome = await agentSession.driveDeliveryTurn(uuid, 'hi', null, true);
       } catch (err) {
@@ -6321,6 +6351,7 @@ describe('AgentSession', () => {
         ensureQueryStarted: ensure,
       };
 
+      clearContextClearBoundariesForTest();
       const outcome = await agentSession.driveDeliveryTurn(uuid, 'hi', null, true);
       expect(outcome).toEqual({ outcome: 'turn_terminated' });
       expect(ensure).not.toHaveBeenCalled();

@@ -212,18 +212,16 @@ export class MessagePersistence {
             .catch(() => {});
           throw new Error(`Session ${sessionId} is archived`);
         }
-        const outbox = await withSessionResetCoordination(sessionId, async () =>
-          persistAndEnqueueDelivery({
-            db: this.db.getDatabase(),
-            sdkMessageRepo: this.db.getSDKMessageRepo(),
-            jobQueue: jobQueueRepo,
-            sessionId,
-            message: sdkUserMessage,
-            sendStatus,
-            origin,
-            delivery: { origin: 'chat' },
-          })
-        );
+        const outbox = await persistAndEnqueueDelivery({
+          db: this.db.getDatabase(),
+          sdkMessageRepo: this.db.getSDKMessageRepo(),
+          jobQueue: jobQueueRepo,
+          sessionId,
+          message: sdkUserMessage,
+          sendStatus,
+          origin,
+          delivery: { origin: 'chat' },
+        });
         dbMessageId = outbox.dbMessageId;
         outboxRole = outbox.role;
         if (outboxRole === 'turn') {

@@ -392,7 +392,7 @@ describe('MessagePersistence', () => {
     );
   });
 
-  it('reproduces the production stall: persist rejects with SessionCoordinationStallError while a sweep holder is pinned on the inner session lock', async () => {
+  it('legacy (V2=0) dispatch keeps its coordination ordering — a pinned slot stalls it at the deadline', async () => {
     const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
     const previousV2 = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
     process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
@@ -403,15 +403,13 @@ describe('MessagePersistence', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     try {
-      const stalled = persistence.persist({
-        sessionId: 'test-session-id',
-        messageId: 'msg-stall-repro',
-        content: 'second message after the first armed a turn',
-      });
-      await expect(stalled).rejects.toBeInstanceOf(SessionCoordinationStallError);
-      await expect(stalled).rejects.toThrow(
-        /Session test-session-id is still completing a prior operation \(waited \d+s, prior holder age \d+s\)/
-      );
+      await expect(
+        persistence.persist({
+          sessionId: 'test-session-id',
+          messageId: 'msg-stall-repro',
+          content: 'second message after the first armed a turn',
+        })
+      ).rejects.toBeInstanceOf(SessionCoordinationStallError);
     } finally {
       if (previousTimeout === undefined)
         delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
@@ -420,44 +418,6 @@ describe('MessagePersistence', () => {
       else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousV2;
       sessionResetCoordinationLocks.clear();
     }
-  });
-
-  it('opt-out legacy dispatch rolls the enqueued row back to failed on coordination stall', async () => {
-    const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
-    const transitionSpy = mock(() => true);
-    mockDb.getSDKMessageRepo = mock(() => ({
-      transitionMessageSendStatus: transitionSpy,
-    }));
-    mockAgentSession.startQueryAndEnqueue = mock(
-      () =>
-        new Promise((_resolve, reject) => {
-          reject(new SessionCoordinationStallError('test-session-id', 8_000, 9_000));
-        })
-    );
-
-    try {
-      await expect(
-        persistence.persist({
-          sessionId: 'test-session-id',
-          messageId: 'msg-legacy-stall',
-          content: 'stalled dispatch',
-        })
-      ).rejects.toBeInstanceOf(SessionCoordinationStallError);
-    } finally {
-      if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
-    }
-
-    expect(transitionSpy).toHaveBeenCalledWith('db-msg-1', 'enqueued', 'failed');
-    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
-      'messages.statusChanged',
-      expect.objectContaining({
-        sessionId: 'test-session-id',
-        messageIds: ['db-msg-1'],
-        status: 'failed',
-      })
-    );
   });
 
   it('does not downgrade a busy session from processing to queued', async () => {

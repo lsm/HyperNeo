@@ -1219,15 +1219,13 @@ export function setupSessionHandlers(
 
     try {
       if (isMessageDeliveryV2Enabled()) {
-        await withSessionResetCoordination(targetSessionId, async () =>
-          deliverAndMarkQueued({
-            jobQueue: db.getJobQueueRepo(),
-            stateManager: agentSession.stateManager,
-            sessionId: targetSessionId,
-            messageUuid,
-            origin: 'chat',
-          })
-        );
+        await deliverAndMarkQueued({
+          jobQueue: db.getJobQueueRepo(),
+          stateManager: agentSession.stateManager,
+          sessionId: targetSessionId,
+          messageUuid,
+          origin: 'chat',
+        });
       } else {
         await withSessionResetCoordination(targetSessionId, async () => {
           await agentSession.startQueryAndEnqueue(messageUuid, replayContent);
@@ -1299,15 +1297,13 @@ export function setupSessionHandlers(
       });
 
       if (isMessageDeliveryV2Enabled()) {
-        await withSessionResetCoordination(targetSessionId, async () =>
-          deliverAndMarkQueued({
-            jobQueue: db.getJobQueueRepo(),
-            stateManager: agentSession.stateManager,
-            sessionId: targetSessionId,
-            messageUuid,
-            origin: 'chat',
-          })
-        );
+        await deliverAndMarkQueued({
+          jobQueue: db.getJobQueueRepo(),
+          stateManager: agentSession.stateManager,
+          sessionId: targetSessionId,
+          messageUuid,
+          origin: 'chat',
+        });
       } else {
         const replayContent = toReplayContent(message.message.content);
         if (replayContent) {
