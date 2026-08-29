@@ -1078,6 +1078,9 @@ export class SDKMessageHandler {
         this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
         releaseTurnEndGate?.();
         releaseTurnEndGate = null;
+        if (isTopLevelResult && isSDKResultMessage(message)) {
+          this.ctx.messageQueue.consumeInternalCompactionResultAttribution();
+        }
         if (this.matchesArmedClearResult(message)) {
           this.clearIdleSuppression();
         }

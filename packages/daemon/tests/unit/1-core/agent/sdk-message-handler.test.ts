@@ -3997,6 +3997,20 @@ describe('SDKMessageHandler', () => {
 
       expect(stampSpy).toHaveBeenCalledTimes(1);
     });
+
+    it('consumes the arming without stamping when result persistence fails', async () => {
+      const stampSpy = mock(() => {});
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markResultInternalCompactionTurn: stampSpy,
+      })) as never;
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+      saveSDKMessageSpy.mockImplementation(() => false);
+
+      await handler.handleMessage(makeSuccessResult(0));
+
+      expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+      expect(stampSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('circuit breaker integration', () => {
