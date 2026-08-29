@@ -409,7 +409,11 @@ share the same restored session, and if the owner later fails attach or
 kickoff while the joiner succeeds, owner cleanup must NOT unwind the shared
 streaming — use SHARED-OWNERSHIP / reference tracking so a restored worker's
 streaming stops only when NO successful concurrent caller retains it (the
-owner-fails-joiner-succeeds race row lands with TAM-F1). When
+owner-fails-joiner-succeeds race row lands with TAM-F1). The reference
+tracker SPANS concurrent TAM-F1 runs, so it is MANAGER-OWNED RESOURCE STATE
+like the session indexes and completion callbacks: the class owns its
+lifecycle, and the pipeline reads/writes it through the class boundary (not
+as a stage-local variable). When
 `ensureNodeAgentAttached` or kickoff
 injection rejects after `createSubSession` (:5012–5042), today's catch
 releases only the model-pool reservation and leaves the registered streaming
@@ -540,7 +544,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-PG | Pins for `deliverSpaceAgentPendingRow` restricted to SURVIVING current outcomes: settlement/error behavior AS IT BEHAVES TODAY, injector-rejection locality (later rows still delivered), near-expiry deferral cases — the status-safe race contract CANNOT land here (the primitive arrives with TAM-G) | test-only | 0 | ≲60 | — |
 | TAM-PS | Pins for `mcpSelfHeal`: admissions incl. multi-task owner resolution (non-first-owner case), displaced-session adoption, adoption-before-restart and heal ordering | test-only | 0 | ≲80 | — |
 | TAM-B1 | `create-node-agent-sub-session` stagedRun, unwired (gates + both arms + compensations + session-guarded stale-owner CAS with concurrency pin) | build | ≲250 | ≲250 | TAM-PB |
-| TAM-B3 | Split the spawn flow's `createSpawnedSession` dependency (a single `Promise<string>` seam, spawn-flow.ts :281) into preparation inputs + the create stage group, and compose those stages into the owning stage list — the interface CHANGE is the point: with the monolithic seam unchanged, B3 could only keep the imperative call or nest the B1 runner after B2. LANDS BEFORE TAM-B2 so no intermediate PR leaves every spawn nesting the B1 runner via the still-imperative `createSubSession` | wire | ≲90 | ≲90 | TAM-B1, TAM-B0 |
+| TAM-B3 | Split the spawn flow's `createSpawnedSession` dependency (a single `Promise<string>` seam, spawn-flow.ts :281) into preparation inputs + the create stage group, and compose those stages into the owning stage list — the interface CHANGE is the point: with the monolithic seam unchanged, B3 could only keep the imperative call or nest the B1 runner after B2. LANDS BEFORE TAM-B2 so no intermediate PR leaves every spawn nesting the B1 runner via the still-imperative `createSubSession`. The spawn-flow compensation is made OWNERSHIP-AWARE: it cancels only a CREATED session and leaves a COLD-RESTORED/LIVE-REUSED session (possibly retained elsewhere) intact | wire | ≲90 | ≲90 | TAM-B1, TAM-B0 |
 | TAM-B0 | Extend `rehydrateSubSession` to return a RESTORATION-OWNER token and the B1 create-stage result to carry the THREE-WAY ownership (CREATED / LIVE-REUSED / COLD-RESTORED) — an unwired contract change, landed as its own slice (after the rehydration rewire so it doesn't conflict, before B2/B3 and F1 which consume it), NOT hidden inside TAM-F1 | build | ≲80 | ≲120 | TAM-B1, TAM-D2 |
 | TAM-B2 | Delegate the `createSubSession` method body to the B1 pipeline (the last caller-side transition); the B1 create STAGE GROUP and its three-way created/reused/restored outcome are EXPORTED for direct composition (no runner nesting); the public `Promise<string>` return and both in-file caller signatures stay | wire | ≲70 | ≲60 | TAM-B1, TAM-B3, TAM-B0 |
 | TAM-C1 | `restore-post-approval-worker` stagedRun, unwired (pre-stream registration boundary) | build | ≲180 | ≲150 | TAM-PC |
