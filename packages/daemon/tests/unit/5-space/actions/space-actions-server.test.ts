@@ -198,6 +198,56 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(depEntries).toHaveLength(1);
   });
 
+  test('forwards the configured space autonomy resolver into dispatch', async () => {
+    const queriedSpaceIds: string[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        getSpaceAutonomyLevel: async (spaceId: string) => {
+          queriedSpaceIds.push(spaceId);
+          return 4;
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    const body = (await dispatch(server, {
+      name: 'update_session_state',
+      params: { session_id: 'session-1', processing_state: 'idle' },
+    })) as Record<string, unknown>;
+    expect(queriedSpaceIds).toContain(SPACE_ID);
+    expect(body).not.toMatchObject({ reason: 'autonomy_denied' });
+  });
+
+  test('defaults worker dispatch context from the node config', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      spaceId: SPACE_ID,
+      nodeConfig: {
+        ...stubNodeConfig,
+        taskId: 'task-9',
+        workflowRunId: 'run-9',
+        myAgentName: 'coder-9',
+        mySessionId: 'session-9',
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as NodeAgentToolsConfig,
+    });
+    await dispatch(server, { name: 'send_message', params: { target: 'peer', message: 'hi' } });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      toolName: 'send_message',
+      spaceId: SPACE_ID,
+      taskId: 'task-9',
+      workflowRunId: 'run-9',
+      agentName: 'coder-9',
+      sessionId: 'session-9',
+    });
+  });
+
   test('denies rate-limited dispatches through the configured budget', async () => {
     const server = makeServer({ dispatchDeps: { isWithinRateBudget: () => false } });
     expect(await dispatch(server, { name: 'list_actions' })).toMatchObject({

@@ -116,7 +116,10 @@ export interface SpaceActionsServerConfig {
 }
 
 export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
-  const spaceEntries = config.spaceConfig ? createSpaceRegistryEntries(config.spaceConfig) : [];
+  const spaceConfig = config.spaceConfig
+    ? { ...config.spaceConfig, callerRole: config.role }
+    : undefined;
+  const spaceEntries = spaceConfig ? createSpaceRegistryEntries(spaceConfig) : [];
   const nodeEntries = config.nodeConfig ? createNodeRegistryEntries(config.nodeConfig) : [];
   let registry: ActionRegistry;
   const metaEntries = createRegistryMetaEntries(() => registry);
@@ -139,7 +142,9 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
     auditLogRepo:
       config.dispatchDeps?.auditLogRepo ??
       config.nodeConfig?.auditLogRepo ??
-      config.spaceConfig?.auditLogRepo,
+      spaceConfig?.auditLogRepo,
+    getSpaceAutonomyLevel:
+      config.dispatchDeps?.getSpaceAutonomyLevel ?? spaceConfig?.getSpaceAutonomyLevel,
     registry,
     emitTelemetry: config.dispatchDeps?.emitTelemetry ?? emitActionDispatchedEvent,
     isWithinRateBudget:
@@ -156,10 +161,10 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
         params: args.params ?? {},
         role: config.role,
         spaceId: config.spaceId,
-        taskId: config.taskId ?? undefined,
-        workflowRunId: config.workflowRunId ?? undefined,
-        agentName: config.agentName,
-        sessionId: config.sessionId,
+        taskId: config.taskId ?? config.nodeConfig?.taskId ?? undefined,
+        workflowRunId: config.workflowRunId ?? config.nodeConfig?.workflowRunId ?? undefined,
+        agentName: config.agentName ?? config.nodeConfig?.myAgentName ?? spaceConfig?.myAgentName,
+        sessionId: config.sessionId ?? config.nodeConfig?.mySessionId ?? spaceConfig?.mySessionId,
         spaceLevel: config.spaceLevel,
         agentLevel: config.agentLevel,
       });
