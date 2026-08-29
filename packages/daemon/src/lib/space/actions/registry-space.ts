@@ -786,6 +786,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         'Attach a manual-note evidence item to a Forge scope; returns the evidence record.',
       paramsDoc: 'scope_id, summary, metadata?, created_at?',
       paramsSchema: AddForgeManualNoteSchema,
+      auditRedactKeys: ['summary', 'metadata'],
       handler: (args) => handlers.add_forge_manual_note(args),
     }),
     defineAction({

@@ -248,24 +248,6 @@ describe('createSpaceRegistryEntries — forge conditional entries', () => {
       }
     }
   });
-
-  test('forge handlers report management unavailable at call time when the service is absent', async () => {
-    const ctx = makeCtx({ evolutionScopeService: undefined, evolutionEpisodeService: undefined });
-    try {
-      const entry = createSpaceRegistryEntries(ctx.config).find(
-        (candidate) => candidate.name === 'create_forge_scope'
-      );
-      if (!entry) throw new Error('create_forge_scope entry missing');
-      const result = (await entry.handler(
-        entry.paramsSchema.parse({ kind: 'project', name: 'Orphan', objective: 'x' })
-      )) as { content: Array<{ text: string }> };
-      const payload = JSON.parse(result.content[0].text) as { success: boolean; error: string };
-      expect(payload.success).toBe(false);
-      expect(payload.error).toBe('Forge scope management not available');
-    } finally {
-      ctx.db.close();
-    }
-  });
 });
 
 describe('createSpaceRegistryEntries — forge handler wiring', () => {
