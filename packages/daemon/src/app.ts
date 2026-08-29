@@ -939,9 +939,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
-        getSession: (sessionId: string) =>
+        getSession: async (sessionId: string) =>
           taskAgentManager?.getSubSession(sessionId) ??
-          sessionManager?.getSession(sessionId) ??
+          (await sessionManager?.getSessionAsync(sessionId)) ??
           null,
         getMessageContent: (sessionId: string, messageUuid: string) =>
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
