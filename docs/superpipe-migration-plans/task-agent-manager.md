@@ -130,7 +130,15 @@ mutations :1148–1215, then `withSessionInjectLock` for workspace migration
 accepts an ALREADY-HELD handle from the owning pipeline (or performs its own
 acquisition when standalone) — wrapping the whole group under F1's lock
 deadlocks the non-reentrant promise lock, and leaving it unwrapped puts the
-early mutations outside the terminal fence (pin the full ordering). Fit:
+early mutations outside the terminal fence (pin the full ordering). The
+held-handle protocol must ALSO extend through STARTUP SELF-HEAL:
+`startStreamingQuery` awaits `onMissingWorkflowMcpServers` (query-runner.ts:793–796),
+which calls `mcpSelfHeal`, which independently enters `withSessionInjectLock`
+(:4252) — so a fresh or cold-restored worker starting with a missing required
+MCP server would wait forever on the owner's held reset-coordination lock; the
+self-heal callback must receive the held handle (or the lock is released
+before startup without opening the terminal race), and the missing-MCP
+startup path is pinned. Fit:
 strong `stagedRun` — sync admission
 gates, CAS effects, awaited
 workspace migration, two compensations. The bind step composes the repo
