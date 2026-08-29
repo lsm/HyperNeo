@@ -82,6 +82,15 @@ function isAcpErrorResultMessage(message: SDKMessage): boolean {
   return message.type === 'result' && (message as { is_error?: boolean }).is_error === true;
 }
 
+const ACP_VALID_ERROR_STOP_REASONS = new Set(['max_tokens', 'max_turn_requests', 'refusal']);
+
+function isAcpValidTerminalResult(message: SDKMessage): boolean {
+  if (message.type !== 'result') return false;
+  if (!isAcpErrorResultMessage(message)) return true;
+  const errors = (message as { errors?: string[] }).errors ?? [];
+  return errors.length > 0 && ACP_VALID_ERROR_STOP_REASONS.has(errors[0] ?? '');
+}
+
 function isAcpProviderClassifiedError(message: string): boolean {
   const lower = message.toLowerCase();
   return (
@@ -988,9 +997,10 @@ export class AcpQueryRunner {
               }
             }
             if (!promptMessageReceived) {
-              const isLegalTerminal =
-                acpMessage.type === 'result' && !isAcpErrorResultMessage(acpMessage as SDKMessage);
-              if (isAcpAgentStartupMessage(acpMessage as SDKMessage) || isLegalTerminal) {
+              if (
+                isAcpAgentStartupMessage(acpMessage as SDKMessage) ||
+                isAcpValidTerminalResult(acpMessage as SDKMessage)
+              ) {
                 promptMessageReceived = true;
                 startupWatchFirstMessageSeen = true;
                 receivedAcpMessageDuringRun = true;
@@ -1218,7 +1228,12 @@ export class AcpQueryRunner {
       );
       await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
-      if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
+      if (
+        isStartupTimeout &&
+        createdAcpSessionDuringRun &&
+        !receivedAcpMessageDuringRun &&
+        !(client?.canLoadSession() ?? false)
+      ) {
         this.clearAcpSessionState();
       }
 
@@ -1235,9 +1250,11 @@ export class AcpQueryRunner {
             messageIds: [reopenedId],
             status: 'enqueued',
           });
+          messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
+          this._lastConsumedUserMessage = null;
+        } else if (messageQueue.requeueYielded(lastMsg.uuid)) {
+          this._lastConsumedUserMessage = null;
         }
-        messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
-        this._lastConsumedUserMessage = null;
       }
 
       if (this.ctx.queryObject) {

@@ -219,6 +219,10 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     db: {
       saveSDKMessage: mock(() => {}),
       updateSession: mock(() => {}),
+      getSDKMessageRepo: mock(() => ({
+        reopenDeliveryByUuid: mock(() => 'delivery-row-1'),
+        markDeliveryRetryableByUuid: mock(() => null),
+      })),
       getNodeExecutionRepo: mock(() => ({
         getByAgentSessionId: mock(() => null),
         getById: mock(() => null),
@@ -2799,9 +2803,23 @@ describe('AcpQueryRunner', () => {
         callbacks?.onAccepted?.();
       });
       client.getLastPromptStopReason = mock(() => 'refusal');
-      const { runner, ctx, messageQueue } = createRunnerFixture({ client });
+      let releaseResult: (() => void) | undefined;
+      const { runner, ctx, messageQueue } = createRunnerFixture({
+        client,
+        onSDKMessage: async (message) => {
+          if (message.type === 'result') {
+            await new Promise<void>((resolve) => {
+              releaseResult = resolve;
+            });
+          }
+        },
+      });
 
       await runner.start();
+      await waitFor(() => releaseResult !== undefined && ctx.startupTimeoutTimer === null, 500);
+
+      expect(client.cancel).not.toHaveBeenCalled();
+      releaseResult?.();
       await ctx.queryPromise;
 
       expect(client.sendPrompt).toHaveBeenCalledTimes(1);
@@ -3028,6 +3046,10 @@ describe('AcpQueryRunner', () => {
         return clients.shift() as unknown as AcpClient;
       });
       const runner = new AcpQueryRunner(ctx, createClient);
+      (ctx.db as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        reopenDeliveryByUuid: mock(() => null),
+        markDeliveryRetryableByUuid: mock(() => null),
+      });
       firstClient.setConfigOption = mock(async () => {
         const calls = firstClient.setConfigOption.mock.calls.length;
         if (calls === 2) {
@@ -3044,10 +3066,63 @@ describe('AcpQueryRunner', () => {
       await ctx.queryPromise;
 
       expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.requeueYielded).toHaveBeenCalledWith('user-message-1');
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('preserves a resumable session when a later prompt dies before progress', async () => {
+      const firstClient = createMockClient();
+      firstClient.canLoadSession.mockImplementation(() => true);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        if (firstClient.sendPrompt.mock.calls.length === 1) {
+          yield {
+            sessionId: 'acp-session-1',
+            update: { sessionUpdate: 'plan', entries: [] },
+          };
+          return;
+        }
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({
+        client: firstClient,
+        messages: [makeUserMessage('first'), makeUserMessage('second')],
+      });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await waitFor(() => firstClient.sendPrompt.mock.calls.length >= 2, 500);
+      constructorOptions[0].onExit?.(1, null);
+
+      await ctx.queryPromise;
+
+      expect(ctx.db.updateSession).not.toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+      expect(secondClient.loadSession).toHaveBeenCalledWith(
+        'acp-session-1',
+        expect.any(String),
+        expect.anything()
+      );
+      expect(secondClient.createSession).not.toHaveBeenCalled();
       expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
         { type: 'text', text: 'second' },
       ]);
-      expect(secondClient.sendPrompt).toHaveBeenCalled();
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
     }, 5000);
 
