@@ -232,6 +232,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       description:
         'Update an active run description, or switch it to another workflow (cancels the run and starts a new one); returns the affected run(s).',
       paramsDoc: 'run_id, plus description? and/or workflow_id?/workflow_handle?',
+      auditRedactKeys: ['description'],
       paramsSchema: ChangePlanSchema,
       autonomyRequirement: changePlanAutonomy,
       handler: (args) => handlers.change_plan(args),
@@ -403,6 +404,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
         description:
           "Adjust this agent's inactivity watchdog threshold (ms of idleness before a nag) or nag prompt. Changing either bumps the config revision so a pending nag revalidates against the new settings.",
         paramsDoc: 'threshold_ms? (positive int), prompt? (empty string clears)',
+        auditRedactKeys: ['prompt'],
         paramsSchema: InactivityConfigSetSchema,
         handler: async (args) => {
           const agentId = requireInactivityAgentId();

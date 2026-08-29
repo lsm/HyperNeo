@@ -686,6 +686,72 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries[0].paramsSummary).not.toContain('confidential-plan');
   });
 
+  test('records unknown action attempts in the audit log', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    await dispatch(server, { name: 'definitely_missing' });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ toolName: 'definitely_missing', spaceId: SPACE_ID });
+  });
+
+  test('redacts change_plan descriptions from audits', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceLevel: 5,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    await dispatch(server, {
+      name: 'change_plan',
+      params: { run_id: 'run-1', description: 'confidential-plan' },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].paramsSummary).not.toContain('confidential-plan');
+  });
+
+  test('omits unvalidated targets from early autonomy-denial audits', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      spaceLevel: 1,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        taskRepo: {
+          getTask: (taskId: string) =>
+            taskId === 'foreign-1'
+              ? { id: taskId, spaceId: SPACE_ID, pendingCheckpointType: 'task_completion' }
+              : null,
+        },
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    await dispatch(server, { name: 'archive_task', params: { task_id: 'foreign-1' } });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ toolName: 'archive_task' });
+    expect(entries[0].taskId).toBeNull();
+  });
+
   test('audits malformed mutating calls even with read auditing off', async () => {
     const entries: CreateMcpAuditLogParams[] = [];
     const server = makeServer({

@@ -1273,7 +1273,7 @@ describe('applyRateAndAudit', () => {
     expect(next.workflowRunId).toBeUndefined();
   });
 
-  test('re-denies with standard diagnostics and no audit entry when a state-dependent requirement rises', async () => {
+  test('re-denies with standard diagnostics and an audit entry when a state-dependent requirement rises', async () => {
     let required = 1;
     const stateful = defineAction({
       name: 'update_task',
@@ -1314,7 +1314,8 @@ describe('applyRateAndAudit', () => {
     expect(next.outcome.message).toBe(
       'update_task not permitted: space autonomy level 1 < required level 5. Request human approval.'
     );
-    expect(auditEntries.length).toBe(0);
+    expect(auditEntries.length).toBe(1);
+    expect(auditEntries[0].toolName).toBe('update_task');
   });
 
   test('skips rate admission when the checkpoint recheck denies', async () => {

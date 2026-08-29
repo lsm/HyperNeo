@@ -108,10 +108,12 @@ function failedOutcome(error: string): DispatchActionOutcome {
 export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
   const action = ctx.deps.registry.get(ctx.actionName);
   if (!action) {
-    return {
+    const next: DispatchActionCtx = {
       ...ctx,
       outcome: deniedOutcome('unknown_action', `Action not found: ${ctx.actionName}`),
     };
+    writeAuditEntry(next);
+    return next;
   }
   const parsed = action.paramsSchema.safeParse(ctx.params);
   if (!parsed.success) {
@@ -235,7 +237,7 @@ export function applyRoleAdmission(ctx: DispatchActionCtx): DispatchActionCtx {
         `Action ${action.name} (family "${action.family}") is not available for role ${ctx.role}.`
       ),
     };
-    writeAuditEntry(next);
+    writeAuditEntry({ ...next, taskId: undefined, workflowRunId: undefined });
     return next;
   }
   return ctx;
@@ -289,7 +291,7 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
     agentLevel,
     outcome: deniedOutcome('autonomy_denied', admission.message),
   };
-  writeAuditEntry(denied);
+  writeAuditEntry({ ...denied, taskId: undefined, workflowRunId: undefined });
   return denied;
 }
 
@@ -315,7 +317,14 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       spaceLevel,
     });
     if (admission.action !== 'allow') {
-      return { ...ctx, outcome: deniedOutcome('autonomy_denied', admission.message) };
+      const denied: DispatchActionCtx = {
+        ...ctx,
+        spaceLevel,
+        agentLevel,
+        outcome: deniedOutcome('autonomy_denied', admission.message),
+      };
+      writeAuditEntry({ ...denied, taskId: undefined, workflowRunId: undefined });
+      return denied;
     }
   }
   if (ctx.deps.isWithinRateBudget) {
@@ -334,7 +343,7 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
           `Action ${action.name} is currently rate limited. Please retry later.`
         ),
       };
-      writeAuditEntry(denied);
+      writeAuditEntry({ ...denied, taskId: undefined, workflowRunId: undefined });
       return denied;
     }
   }
@@ -350,18 +359,19 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
 }
 
 function writeAuditEntry(ctx: DispatchActionCtx): void {
-  if (!ctx.deps.auditLogRepo || !ctx.action || ctx.action.auditExempt) return;
+  if (!ctx.deps.auditLogRepo) return;
+  const toolName = ctx.action?.name ?? ctx.actionName;
+  if (ctx.action?.auditExempt) return;
   if (!ctx.isMutating && !ctx.deps.auditReads) return;
-  const action = ctx.action;
   try {
     const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
-    for (const key of action.auditRedactKeys ?? []) {
+    for (const key of ctx.action?.auditRedactKeys ?? []) {
       delete summaryParams[key];
     }
     ctx.deps.auditLogRepo.createEntry({
       agentName: ctx.agentName ?? null,
       sessionId: ctx.sessionId ?? null,
-      toolName: action.name,
+      toolName,
       paramsSummary: JSON.stringify(summaryParams),
       spaceId: ctx.spaceId,
       taskId: ctx.taskId ?? null,
