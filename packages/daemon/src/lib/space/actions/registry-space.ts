@@ -10,11 +10,17 @@ import {
   ApplyForgeRollupSchema,
   ApprovePendingCompletionSchema,
   ApproveTaskSchema,
+  ArchiveAgentSchema,
   ArchiveTaskSchema,
+  AssignAgentToForgeScopeSchema,
+  AssignAgentToGoalSchema,
   AttachForgeTaskEvidenceSchema,
   AttachForgeWorkflowRunEvidenceSchema,
   CancelTaskSchema,
   ChangePlanSchema,
+  CreateAgentFromTemplateSchema,
+  CreateAgentReminderSchema,
+  CreateAgentSchema,
   CreateForgeEpisodeSchema,
   CreateForgeScopeFromGoalSchema,
   CreateForgeScopeSchema,
@@ -24,6 +30,7 @@ import {
   CreateStandaloneTaskSchema,
   CreateTaskFromForgeProposalSchema,
   DeleteScheduledTaskSchema,
+  GetAgentSchema,
   GetExternalEventSchema,
   GetForgeScopeSchema,
   GetForgeTimelineSchema,
@@ -39,6 +46,10 @@ import {
   InactivityConfigSetSchema,
   InactivityRunNowSchema,
   InterruptSessionSchema,
+  ListAgentEventSubscriptionsSchema,
+  ListAgentRemindersSchema,
+  ListAgentsSchema,
+  ListAgentTemplatesSchema,
   ListForgeEvidenceSchema,
   ListForgeLessonsSchema,
   ListForgeMetricSnapshotsSchema,
@@ -53,6 +64,7 @@ import {
   ListTaskMembersSchema,
   ListTasksSchema,
   ListWorkflowsSchema,
+  PauseAgentSchema,
   PauseGoalSchema,
   PauseScheduledTaskSchema,
   PublishTaskSchema,
@@ -64,8 +76,13 @@ import {
   RetryTaskSchema,
   SendMessageToTaskSchema,
   SendSessionMessageSchema,
+  SubscribeAgentEventSchema,
   SuggestWorkflowSchema,
   TriggerGoalTaskSchema,
+  UnassignAgentFromForgeScopeSchema,
+  UnassignAgentFromGoalSchema,
+  UnsubscribeAgentEventSchema,
+  UpdateAgentSchema,
   UpdateForgeEpisodeSchema,
   UpdateForgeLessonSchema,
   UpdateForgeScopeSchema,
@@ -204,6 +221,177 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     }
     return forgeTerminalStatusAutonomy(['accepted', 'dismissed'])(params);
   };
+
+  const agentLifecycleEntries: ActionDefinition[] = [
+    defineAction({
+      name: 'list_agents',
+      family: 'agents',
+      safetyClass: 'read',
+      description:
+        'List long-horizon agents in this space; returns agent records with lifecycle status, model, and tool permissions.',
+      paramsDoc: 'status? (active|paused|disabled|archived), compact?',
+      paramsSchema: ListAgentsSchema,
+      handler: (args) => handlers.list_agents(args),
+    }),
+    defineAction({
+      name: 'get_agent',
+      family: 'agents',
+      safetyClass: 'read',
+      description: 'Get one long-horizon agent by ID; returns the full agent record.',
+      paramsDoc: 'agent_id',
+      paramsSchema: GetAgentSchema,
+      handler: (args) => handlers.get_agent(args),
+    }),
+    defineAction({
+      name: 'create_agent',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        'Create a long-horizon agent with optional model, prompt, and tool-permission overrides (validated against the known allowlist); returns the created agent.',
+      paramsDoc:
+        'name, description?, model?, thinking_level?, provider?, custom_prompt?, tools?, setting_sources?',
+      paramsSchema: CreateAgentSchema,
+      handler: (args) => handlers.create_agent(args),
+    }),
+    defineAction({
+      name: 'create_agent_from_template',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        'Create a long-horizon agent from a worker preset name (Coder, Reviewer, QA, ...) or long-horizon template key, seeding suggested subscriptions and reminders; returns the created agent.',
+      paramsDoc: 'template_name, name?, model?, provider?, thinking_level?',
+      paramsSchema: CreateAgentFromTemplateSchema,
+      handler: (args) => handlers.create_agent_from_template(args),
+    }),
+    defineAction({
+      name: 'list_agent_templates',
+      family: 'agents',
+      safetyClass: 'read',
+      description:
+        'List built-in agent templates available to create_agent_from_template — worker presets and long-horizon templates; returns template descriptors.',
+      paramsDoc: 'none',
+      paramsSchema: ListAgentTemplatesSchema,
+      handler: () => handlers.list_agent_templates(),
+    }),
+    defineAction({
+      name: 'update_agent',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        "Update a long-horizon agent's name, status, model, prompt, or tool permissions; autonomy/tool escalation is limited by manager validation and audited; returns the updated agent.",
+      paramsDoc:
+        'agent_id, plus any of name?, status?, description?, model?, thinking_level?, provider?, custom_prompt?, tools?, setting_sources? (null clears)',
+      paramsSchema: UpdateAgentSchema,
+      handler: (args) => handlers.update_agent(args),
+    }),
+    defineAction({
+      name: 'pause_agent',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description: 'Pause a long-horizon agent without deleting it; returns the updated agent.',
+      paramsDoc: 'agent_id',
+      paramsSchema: PauseAgentSchema,
+      handler: (args) => handlers.pause_agent(args),
+    }),
+    defineAction({
+      name: 'archive_agent',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        'Archive a long-horizon agent, excluding it from active lookups (reversible via update_agent); returns the updated agent.',
+      paramsDoc: 'agent_id',
+      paramsSchema: ArchiveAgentSchema,
+      handler: (args) => handlers.archive_agent(args),
+    }),
+    defineAction({
+      name: 'assign_agent_to_goal',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        'Assign a long-horizon agent to own a goal (admission-checked for coordinator authorization); returns success.',
+      paramsDoc: 'agent_id, goal_id',
+      paramsSchema: AssignAgentToGoalSchema,
+      handler: (args) => handlers.assign_agent_to_goal(args),
+    }),
+    defineAction({
+      name: 'unassign_agent_from_goal',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        'Remove a long-horizon agent goal ownership (admission-checked for coordinator authorization); returns success.',
+      paramsDoc: 'agent_id, goal_id',
+      paramsSchema: UnassignAgentFromGoalSchema,
+      handler: (args) => handlers.unassign_agent_from_goal(args),
+    }),
+    defineAction({
+      name: 'assign_agent_to_forge_scope',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description: 'Assign a long-horizon agent to a Forge scope; returns success.',
+      paramsDoc: 'agent_id, scope_id',
+      paramsSchema: AssignAgentToForgeScopeSchema,
+      handler: (args) => handlers.assign_agent_to_forge_scope(args),
+    }),
+    defineAction({
+      name: 'unassign_agent_from_forge_scope',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description: 'Remove a long-horizon agent Forge scope assignment; returns success.',
+      paramsDoc: 'agent_id, scope_id',
+      paramsSchema: UnassignAgentFromForgeScopeSchema,
+      handler: (args) => handlers.unassign_agent_from_forge_scope(args),
+    }),
+    defineAction({
+      name: 'create_agent_reminder',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        'Create a one-shot reminder delivered to a long-horizon agent at a timestamp; returns the created reminder.',
+      paramsDoc: 'agent_id, message, remind_at (ms since epoch)',
+      paramsSchema: CreateAgentReminderSchema,
+      handler: (args) => handlers.create_agent_reminder(args),
+    }),
+    defineAction({
+      name: 'list_agent_reminders',
+      family: 'agents',
+      safetyClass: 'read',
+      description:
+        'List reminders for a long-horizon agent, optionally filtered by status; returns reminder records.',
+      paramsDoc: 'agent_id, status? (active|done|cancelled)',
+      paramsSchema: ListAgentRemindersSchema,
+      handler: (args) => handlers.list_agent_reminders(args),
+    }),
+    defineAction({
+      name: 'subscribe_agent_event',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        'Record an external-event topic subscription for a long-horizon agent; returns the subscription record.',
+      paramsDoc: 'agent_id, topic_pattern (glob), label?',
+      paramsSchema: SubscribeAgentEventSchema,
+      handler: (args) => handlers.subscribe_agent_event(args),
+    }),
+    defineAction({
+      name: 'unsubscribe_agent_event',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        'Remove an external-event topic subscription from a long-horizon agent; returns success.',
+      paramsDoc: 'agent_id, topic_pattern, label?',
+      paramsSchema: UnsubscribeAgentEventSchema,
+      handler: (args) => handlers.unsubscribe_agent_event(args),
+    }),
+    defineAction({
+      name: 'list_agent_event_subscriptions',
+      family: 'agents',
+      safetyClass: 'read',
+      description:
+        'List external-event subscriptions for a long-horizon agent; returns subscription records.',
+      paramsDoc: 'agent_id',
+      paramsSchema: ListAgentEventSubscriptionsSchema,
+      handler: (args) => handlers.list_agent_event_subscriptions(args),
+    }),
+  ];
 
   const sessionEntries: ActionDefinition[] = [
     defineAction({
@@ -1010,7 +1198,13 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
   ];
 
   const entries = config.db
-    ? [...sessionEntries, ...workflowEntries, ...taskEntries, ...partCEntries]
+    ? [
+        ...agentLifecycleEntries,
+        ...sessionEntries,
+        ...workflowEntries,
+        ...taskEntries,
+        ...partCEntries,
+      ]
     : [...workflowEntries, ...taskEntries, ...partCEntries];
   if (config.goalService) entries.push(...goalEntries);
   if (config.evolutionScopeService && config.evolutionEpisodeService) entries.push(...forgeEntries);
