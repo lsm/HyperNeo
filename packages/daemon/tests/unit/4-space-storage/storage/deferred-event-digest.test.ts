@@ -166,36 +166,33 @@ describe('buildExternalEventDigestMessage', () => {
     expect(lines[1]).toBe(
       '- CI check "Build Binary (linux-x64)": 11 runs (canceled ×6, failure ×5), ' +
         `latest 16:34 UTC (most cancelled, likely superseded by newer pushes) — ` +
-        `${PR_URL}#check-11 (latest eventId: check-11)`
+        `${PR_URL}#check-11`
     );
     expect(lines[2]).toBe(
       '- Review comments on packages/daemon/src/lib/agent/query-mode-handler.ts:L88: ×3, ' +
         `latest by codex[bot] at 16:20 UTC — "latest review body" — ` +
-        `${PR_URL}#rc-3 (commentId: rc-3; latest eventId: rc-3)`
+        `${PR_URL}#rc-3 (latest eventId: rc-3)`
     );
     expect(lines[3]).toBe(
       `- Review comment on packages/web/src/app.tsx:L12: ×1, ` +
         `latest by codex[bot] at 16:25 UTC — "standalone review" — ` +
-        `${PR_URL}#rc-4 (commentId: rc-4; latest eventId: rc-4)`
+        `${PR_URL}#rc-4 (latest eventId: rc-4)`
     );
     for (let i = 0; i < 5; i++) {
       const body = i === 4 ? 'latest pr comment' : `pr comment ${i + 1}`;
       expect(lines[4 + i]).toBe(
         `- PR comment: ×1, latest by marcliu at 15:${30 + i} UTC — "${body}" — ` +
-          `${PR_URL}#pc-${i + 1} (commentId: pc-${i + 1}; latest eventId: pc-${i + 1})`
+          `${PR_URL}#pc-${i + 1} (latest eventId: pc-${i + 1})`
       );
     }
     expect(lines[9]).toBe(
-      `- PR #2828 state: open (latest poll 16:35 UTC, ×8 polls folded) — ` +
-        `${PR_URL}#st-8 (latest eventId: st-8)`
+      `- PR #2828 state: open (latest poll 16:35 UTC, ×8 polls folded) — ` + `${PR_URL}#st-8`
     );
     expect(lines[10]).toBe(
-      `- Reactions on PR #2828: ×1, latest 👍 by marcliu at 15:05 UTC — ` +
-        `${PR_URL}#re-1 (latest eventId: re-1)`
+      `- Reactions on PR #2828: ×1, latest 👍 by marcliu at 15:05 UTC — ` + `${PR_URL}#re-1`
     );
     expect(lines[11]).toBe(
-      `- Reactions on PR #2828: ×1, latest 🚀 by marcliu at 15:10 UTC — ` +
-        `${PR_URL}#re-2 (latest eventId: re-2)`
+      `- Reactions on PR #2828: ×1, latest 🚀 by marcliu at 15:10 UTC — ` + `${PR_URL}#re-2`
     );
   });
 
@@ -222,8 +219,14 @@ describe('buildExternalEventDigestMessage', () => {
         occurredAt: at(16),
       },
     ]);
-    expect(digest).toContain('latest eventId: th-1');
-    expect(digest).toContain('latest eventId: th-2');
+    const lines = digest.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe(
+      '- github/o/r/pull_request/7.thread_reopened: ×1 (latest 15:00 UTC) — reopened by marcliu'
+    );
+    expect(lines[2]).toBe(
+      '- github/o/r/pull_request/7.thread_reopened: ×1 (latest 16:00 UTC) — reopened by marcliu'
+    );
   });
 
   it('collapses same-value reaction duplicates but keeps actors distinct', () => {
@@ -272,7 +275,6 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).toContain('Reactions on PR #7: ×2, latest 👍 by codex[bot] at 16:00 UTC');
     expect(digest).toContain('Reactions on PR #7: ×1, latest 👍 by marcliu at 17:00 UTC');
     expect(digest).toContain('Reactions on PR #7: ×1, latest 🚀 by marcliu at 18:00 UTC');
-    expect(digest).toContain('latest eventId: ra-4');
   });
 
   it('keeps payload-free reactions separate by event', () => {
@@ -288,8 +290,10 @@ describe('buildExternalEventDigestMessage', () => {
         prNumber: 7,
       },
     ]);
-    expect(digest).toContain('latest eventId: pf-1');
-    expect(digest).toContain('latest eventId: pf-2');
+    const lines = digest.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe('- Reactions on PR #7: ×1, latest reaction by unknown at unknown time');
+    expect(lines[2]).toBe('- Reactions on PR #7: ×1, latest reaction by unknown at unknown time');
   });
 
   it('renders branch-protection policy values alongside changed field names', () => {
@@ -451,8 +455,10 @@ describe('buildExternalEventDigestMessage', () => {
         prNumber: 7,
       },
     ]);
-    expect(digest).toContain('latest eventId: rl-check-1');
-    expect(digest).toContain('latest eventId: rl-check-2');
+    const lines = digest.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe('- CI check "unknown check": unknown ×1, latest unknown time');
+    expect(lines[2]).toBe('- CI check "unknown check": unknown ×1, latest unknown time');
   });
 
   it('separates submitted reviews by reviewId and statuses by context', () => {
@@ -500,10 +506,8 @@ describe('buildExternalEventDigestMessage', () => {
     ]);
     expect(digest).toContain('submitted by reviewer-a');
     expect(digest).toContain('submitted by reviewer-b');
-    expect(digest).toContain('latest eventId: rev-1');
-    expect(digest).toContain('latest eventId: rev-2');
-    expect(digest).toContain('latest eventId: st-ctx-1');
-    expect(digest).toContain('latest eventId: st-ctx-2');
+    expect(digest).toContain('status_failure: ×1 (latest 15:30 UTC)');
+    expect(digest).toContain('status_failure: ×1 (latest 15:40 UTC)');
   });
 
   it('treats out-of-range occurredAt values as unknown and never ranks them as latest', () => {
@@ -525,7 +529,6 @@ describe('buildExternalEventDigestMessage', () => {
     ]);
     expect(digest).toContain('failure ×2');
     expect(digest).toContain(`latest 16:00 UTC`);
-    expect(digest).toContain('latest eventId: bad-2');
   });
 
   it('derives per-PR scope from topic-segmented events', () => {
@@ -548,8 +551,6 @@ describe('buildExternalEventDigestMessage', () => {
     const digest = buildExternalEventDigestMessage(essences);
     expect(digest).toContain('PR #7 state: updated');
     expect(digest).toContain('PR #8 state: updated');
-    expect(digest).toContain('latest eventId: rl-7');
-    expect(digest).toContain('latest eventId: rl-8');
   });
 
   it('marks merged, unmerged, and draft PR states distinctly', () => {
@@ -607,8 +608,14 @@ describe('buildExternalEventDigestMessage', () => {
     ]);
     expect(digest).toContain('External events while you were working (2 events, PR #9):');
     expect(digest).toContain('github/o/r/pull_request/9.merge_group_polled: ×1');
-    expect(digest).toContain('latest eventId: u-1');
-    expect(digest).toContain('latest eventId: u-2');
+    const lines = digest.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe(
+      '- github/o/r/pull_request/9.merge_group_polled: ×1 (latest unknown time)'
+    );
+    expect(lines[2]).toBe(
+      '- github/o/r/pull_request/9.merge_group_polled: ×1 (latest unknown time)'
+    );
   });
 
   it('preserves actionable payload fields on other-tier lines', () => {
@@ -626,7 +633,6 @@ describe('buildExternalEventDigestMessage', () => {
     expect(digest).toContain('state: failure');
     expect(digest).toContain('environment: production');
     expect(digest).toContain('"Deploy failed: health check timed out"');
-    expect(digest).toContain('latest eventId: dep-1');
   });
 
   it('collapses a single-conclusion check group without a runs clause', () => {

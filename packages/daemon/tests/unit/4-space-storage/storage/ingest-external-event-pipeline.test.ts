@@ -154,7 +154,7 @@ describe('ingest-external-event pipeline stages', () => {
       const event = makeEvent();
       const ctx = renderIngestEvent(makeCtx(event));
       expect(ctx.render).toBe(
-        `- CI check "build-linux": failure ×1, latest ${hhmm()} UTC — ${PR_URL} (latest eventId: ${event.id})`
+        `- CI check "build-linux": failure ×1, latest ${hhmm()} UTC — ${PR_URL}`
       );
     });
 
@@ -162,7 +162,7 @@ describe('ingest-external-event pipeline stages', () => {
       const event = makePolledEvent();
       const ctx = renderIngestEvent(makeCtx(event));
       expect(ctx.render).toBe(
-        `- PR #42 state: open (latest poll ${hhmm()} UTC, ×1 polls folded) — ${PR_URL} (latest eventId: ${event.id})`
+        `- PR #42 state: open (latest poll ${hhmm()} UTC, ×1 polls folded) — ${PR_URL}`
       );
     });
   });
@@ -233,7 +233,7 @@ describe('ingestExternalEvent end-to-end', () => {
       action: 'ingested',
       eventId: event.id,
       urgency: 'immediate',
-      render: `- CI check "build-linux": failure ×1, latest ${hhmm()} UTC — ${PR_URL} (latest eventId: ${event.id})`,
+      render: `- CI check "build-linux": failure ×1, latest ${hhmm()} UTC — ${PR_URL}`,
     });
     expect(store.writes).toHaveLength(1);
     expect(store.writes[0]).toMatchObject({ id: event.id, urgency: 'immediate' });
