@@ -2306,8 +2306,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(deliveries.filter((delivery) => delivery.state === 'pending')).toHaveLength(1);
       const deliveredRow = deliveries.find((delivery) => delivery.state === 'delivered')!;
       const heldRow = deliveries.find((delivery) => delivery.state === 'pending')!;
-      expect([task.id, secondTask.id]).toContain(deliveredRow.taskId);
-      expect([task.id, secondTask.id]).toContain(heldRow.taskId);
+      expect([deliveredRow.taskId, heldRow.taskId].sort()).toEqual([task.id, secondTask.id].sort());
       expect(digestRows('session-shared-event')).toHaveLength(1);
 
       const digestUuid = digestRows('session-shared-event')[0]!.sdk_uuid;
