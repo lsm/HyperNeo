@@ -1,5 +1,6 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
+import { spawnProcess, type SpawnFn } from '../runtime-spawn/index.ts';
 
 const log = new Logger('dialog-handlers');
 const FOLDER_PICKER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -14,7 +15,10 @@ function normalizePickerTimeout(timeoutMs: unknown): number {
     : FOLDER_PICKER_TIMEOUT_MS;
 }
 
-async function pickFolder(timeoutMs = FOLDER_PICKER_TIMEOUT_MS): Promise<string | null> {
+async function pickFolder(
+  timeoutMs = FOLDER_PICKER_TIMEOUT_MS,
+  spawnImpl: SpawnFn = spawnProcess
+): Promise<string | null> {
   const platform = process.platform;
 
   try {
@@ -22,22 +26,25 @@ async function pickFolder(timeoutMs = FOLDER_PICKER_TIMEOUT_MS): Promise<string 
       const result = await runCommand(
         'osascript',
         ['-e', `POSIX path of (choose folder with prompt "Select a workspace folder:")`],
-        timeoutMs
+        timeoutMs,
+        spawnImpl
       );
       return result?.trim() || null;
     } else if (platform === 'linux') {
-      if (await commandExists('zenity')) {
+      if (await commandExists('zenity', spawnImpl)) {
         const result = await runCommand(
           'zenity',
           ['--file-selection', '--directory', '--title=Select a workspace folder'],
-          timeoutMs
+          timeoutMs,
+          spawnImpl
         );
         return result?.trim() || null;
-      } else if (await commandExists('kdialog')) {
+      } else if (await commandExists('kdialog', spawnImpl)) {
         const result = await runCommand(
           'kdialog',
           ['--getexistingdirectory', '/', 'Select a workspace folder'],
-          timeoutMs
+          timeoutMs,
+          spawnImpl
         );
         return result?.trim() || null;
       } else {
@@ -54,7 +61,7 @@ async function pickFolder(timeoutMs = FOLDER_PICKER_TIMEOUT_MS): Promise<string 
 					$dialog.SelectedPath
 				}
 			`;
-      const result = await runCommand('powershell', ['-Command', psScript], timeoutMs);
+      const result = await runCommand('powershell', ['-Command', psScript], timeoutMs, spawnImpl);
       return result?.trim() || null;
     } else {
       log.warn(`Unsupported platform for folder picker: ${platform}`);
@@ -66,8 +73,13 @@ async function pickFolder(timeoutMs = FOLDER_PICKER_TIMEOUT_MS): Promise<string 
   }
 }
 
-async function runCommand(cmd: string, args: string[], timeoutMs?: number): Promise<string | null> {
-  const proc = Bun.spawn([cmd, ...args], {
+async function runCommand(
+  cmd: string,
+  args: string[],
+  timeoutMs?: number,
+  spawnImpl: SpawnFn = spawnProcess
+): Promise<string | null> {
+  const proc = spawnImpl([cmd, ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
   });
@@ -75,26 +87,21 @@ async function runCommand(cmd: string, args: string[], timeoutMs?: number): Prom
   const stdoutChunks: Uint8Array[] = [];
   const stderrChunks: Uint8Array[] = [];
 
-  const stdoutReader = proc.stdout.getReader();
-  const stderrReader = proc.stderr.getReader();
-
-  const readStdout = async () => {
+  const readInto = async (stream: ReadableStream<Uint8Array> | null, chunks: Uint8Array[]) => {
+    if (!stream) return;
+    const reader = stream.getReader();
     while (true) {
-      const { done, value } = await stdoutReader.read();
+      const { done, value } = await reader.read();
       if (done) break;
-      if (value) stdoutChunks.push(value);
+      if (value) chunks.push(value);
     }
   };
 
-  const readStderr = async () => {
-    while (true) {
-      const { done, value } = await stderrReader.read();
-      if (done) break;
-      if (value) stderrChunks.push(value);
-    }
-  };
-
-  const completion = Promise.all([readStdout(), readStderr(), proc.exited])
+  const completion = Promise.all([
+    readInto(proc.stdout, stdoutChunks),
+    readInto(proc.stderr, stderrChunks),
+    proc.exited,
+  ])
     .then(([, , exitCode]) => ({ status: 'exited' as const, exitCode }))
     .catch((error) => ({ status: 'error' as const, error }));
 
@@ -140,18 +147,21 @@ async function runCommand(cmd: string, args: string[], timeoutMs?: number): Prom
   }
 }
 
-async function commandExists(cmd: string): Promise<boolean> {
+async function commandExists(cmd: string, spawnImpl: SpawnFn = spawnProcess): Promise<boolean> {
   try {
-    const result = await runCommand('which', [cmd]);
+    const result = await runCommand('which', [cmd], undefined, spawnImpl);
     return result !== null && result.trim().length > 0;
   } catch {
     return false;
   }
 }
 
-export function setupDialogHandlers(messageHub: MessageHub): void {
+export function setupDialogHandlers(
+  messageHub: MessageHub,
+  spawnImpl: SpawnFn = spawnProcess
+): void {
   messageHub.onRequest('dialog.pickFolder', async (data: DialogPickFolderRequest | undefined) => {
-    const path = await pickFolder(normalizePickerTimeout(data?.timeoutMs));
+    const path = await pickFolder(normalizePickerTimeout(data?.timeoutMs), spawnImpl);
     return { path };
   });
 }
