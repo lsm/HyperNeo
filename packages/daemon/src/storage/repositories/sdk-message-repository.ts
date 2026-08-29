@@ -1764,13 +1764,15 @@ export class SDKMessageRepository {
   }
 
   markResultInternalCompactionTurn(sessionId: string, sdkUuid: string): void {
-    this.db
-      .prepare(
-        `UPDATE sdk_messages
-            SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)
-          WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
-      )
-      .run(sessionId, sdkUuid);
+    withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE sdk_messages
+              SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)
+            WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
+        )
+        .run(sessionId, sdkUuid)
+    );
   }
 
   hasRecoveryInterceptedResultAfter(sessionId: string, uuid: string): boolean {

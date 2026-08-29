@@ -4011,6 +4011,23 @@ describe('SDKMessageHandler', () => {
       expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
       expect(stampSpy).not.toHaveBeenCalled();
     });
+
+    it('consumes the arming without stamping a success-shaped terminal error result', async () => {
+      const stampSpy = mock(() => {});
+      mockDb.getSDKMessageRepo = mock(() => ({
+        markResultInternalCompactionTurn: stampSpy,
+      })) as never;
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+
+      await handler.handleMessage({
+        ...makeSuccessResult(0),
+        is_error: true,
+        terminal_reason: 'blocking_limit',
+      } as unknown as SDKMessage);
+
+      expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+      expect(stampSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('circuit breaker integration', () => {

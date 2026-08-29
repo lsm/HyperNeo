@@ -1471,6 +1471,7 @@ export class SDKMessageHandler {
     const result = message as SDKResultMessage;
     const armed = this.ctx.messageQueue.consumeInternalCompactionResultAttribution();
     if (result.num_turns !== 0 || !result.uuid || !isSDKResultSuccess(message)) return;
+    if (result.is_error === true) return;
     if (!armed && !this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) return;
     try {
       this.ctx.db
