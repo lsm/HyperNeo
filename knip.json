@@ -62,6 +62,7 @@
     "packages/daemon/src/lib/credentials/credential-identity.ts": ["exports"],
     "packages/daemon/src/lib/providers/discovery-refresh-pipeline.ts": ["exports"],
     "packages/daemon/src/lib/db-query/scope-config.ts": ["exports"],
+    "packages/daemon/src/lib/external-events/github/webhook-routing.ts": ["exports"],
     "packages/daemon/src/lib/external-events/topic-trie.ts": ["exports"],
     "packages/daemon/src/lib/model-service.ts": ["exports"],
     "packages/daemon/src/lib/provider-service.ts": ["exports"],
