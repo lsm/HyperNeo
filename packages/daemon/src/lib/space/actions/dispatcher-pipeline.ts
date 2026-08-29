@@ -377,9 +377,9 @@ function hasExplicitTarget(ctx: DispatchActionCtx): boolean {
   return (
     (typeof record.task_id === 'string' && record.task_id.length > 0) ||
     typeof record.task_number === 'number' ||
-    typeof record.run_id === 'string' ||
-    typeof record.workflow_run_id === 'string' ||
-    typeof record.workflowRunId === 'string'
+    (typeof record.run_id === 'string' && record.run_id.length > 0) ||
+    (typeof record.workflow_run_id === 'string' && record.workflow_run_id.length > 0) ||
+    (typeof record.workflowRunId === 'string' && record.workflowRunId.length > 0)
   );
 }
 

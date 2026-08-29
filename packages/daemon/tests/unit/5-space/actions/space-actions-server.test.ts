@@ -776,6 +776,26 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
     expect(entries[0].taskId).toBe('task-9');
   });
 
+  test('treats an empty run filter as no explicit target in denial audits', async () => {
+    const entries: CreateMcpAuditLogParams[] = [];
+    const server = makeServer({
+      taskId: 'task-9',
+      spaceLevel: 1,
+      spaceConfig: {
+        ...stubSpaceConfig,
+        auditLogRepo: {
+          createEntry: (entry: CreateMcpAuditLogParams) => {
+            entries.push(entry);
+            return null as never;
+          },
+        },
+      } as unknown as SpaceAgentToolsConfig,
+    });
+    await dispatch(server, { name: 'change_plan', params: { run_id: '' } });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].taskId).toBe('task-9');
+  });
+
   test('audits malformed mutating calls even with read auditing off', async () => {
     const entries: CreateMcpAuditLogParams[] = [];
     const server = makeServer({
