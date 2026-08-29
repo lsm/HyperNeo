@@ -10,6 +10,7 @@ import type { ModelInfo } from '@hyperneo/shared';
 import {
   CUSTOM_ENDPOINT_TYPE_CAPABILITY_DEFAULTS,
   DEFAULT_CUSTOM_ENDPOINT_CAPABILITIES,
+  resolveAutoCompactPercent,
   resolveCustomEndpointType,
   THINKING_LEVEL_TOKENS,
   type CustomEndpointConfig,
@@ -29,6 +30,7 @@ import {
 } from './anthropic-messages-bridge/server.js';
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeBaseUrlForProbe } from './shared/credential-probe.js';
 import { applyRecordedFailureToAuthStatus } from './provider-failure-store.js';
+import { autoCompactReserveTokens } from '../agent/context-tracker.js';
 import {
   createOllamaNativeBridgeServer,
   type OllamaNativeBridgeConfig,
@@ -89,6 +91,23 @@ function modelDisplayName(model: CustomEndpointModel): string {
 
 function providerModelStringFor(model: CustomEndpointModel): string {
   return model.providerModelId ?? model.id;
+}
+
+function autoCompactWindowForModel(
+  providerId: string,
+  caps: CustomEndpointModelCapabilities
+): number | undefined {
+  if (!Number.isFinite(caps.maxContextTokens) || caps.maxContextTokens <= 0) {
+    return undefined;
+  }
+  if (typeof caps.autoCompactPercent === 'number' && Number.isFinite(caps.autoCompactPercent)) {
+    return (
+      Math.floor(
+        (caps.maxContextTokens * resolveAutoCompactPercent(caps.autoCompactPercent)) / 100
+      ) + autoCompactReserveTokens(providerId)
+    );
+  }
+  return caps.maxContextTokens;
 }
 
 export class CustomEndpointProvider implements Provider {
@@ -216,7 +235,7 @@ export class CustomEndpointProvider implements Provider {
   buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
     const {
       key,
-      params: { model },
+      params: { model, caps },
     } = this.bridgeParamsFor(modelId, sessionConfig);
     const bridge = this.bridges.get(key);
     if (!bridge) {
@@ -226,6 +245,7 @@ export class CustomEndpointProvider implements Provider {
       );
     }
     const upstreamModel = providerModelStringFor(model);
+    const autoCompactWindow = autoCompactWindowForModel(this.id, caps);
     return {
       envVars: {
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.port}`,
@@ -236,6 +256,9 @@ export class CustomEndpointProvider implements Provider {
         ANTHROPIC_DEFAULT_HAIKU_MODEL: upstreamModel,
         ANTHROPIC_DEFAULT_SONNET_MODEL: upstreamModel,
         ANTHROPIC_DEFAULT_OPUS_MODEL: upstreamModel,
+        ...(autoCompactWindow !== undefined
+          ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(autoCompactWindow) }
+          : {}),
       },
       isAnthropicCompatible: true,
       apiVersion: 'v1',

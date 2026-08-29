@@ -9,6 +9,7 @@ import {
   recordProviderFailure,
   resetProviderFailureStore,
 } from '../../../../src/lib/providers/provider-failure-store';
+import { buildProviderSettings } from '../../../../src/lib/agent/query-options-builder';
 import type { CustomEndpointConfig } from '@hyperneo/shared';
 import type {
   OpenAIChatBridgeConfig,
@@ -285,6 +286,36 @@ describe('CustomEndpointProvider', () => {
       thinkingSupported: false,
       modelContextWindow: 32000,
     });
+  });
+
+  it('arms CLAUDE_CODE_AUTO_COMPACT_WINDOW from model context window and autoCompactPercent', async () => {
+    const fake = makeFakeBridge();
+    const p = new CustomEndpointProvider(baseConfig, { bridgeFactory: fake.factory });
+    await p.ensureBridgeStarted('qwen2.5-7b');
+    const cfg = p.buildSdkConfig('qwen2.5-7b');
+    const settings = buildProviderSettings(p.id, 32_000, 'qwen2.5-7b', 90);
+    expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(String(settings?.autoCompactWindow));
+  });
+
+  it('scales CLAUDE_CODE_AUTO_COMPACT_WINDOW with explicit per-model autoCompactPercent', async () => {
+    const fake = makeFakeBridge();
+    const p = new CustomEndpointProvider(
+      {
+        ...baseConfig,
+        models: [
+          {
+            id: 'pct-model',
+            capabilities: { maxContextTokens: 200_000, autoCompactPercent: 80 },
+          },
+        ],
+        defaultModelId: 'pct-model',
+      },
+      { bridgeFactory: fake.factory }
+    );
+    await p.ensureBridgeStarted('pct-model');
+    const cfg = p.buildSdkConfig('pct-model');
+    const settings = buildProviderSettings(p.id, 200_000, 'pct-model', 80);
+    expect(cfg.envVars.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(String(settings?.autoCompactWindow));
   });
 
   it('forwards per-model capability flags into the bridge', async () => {
