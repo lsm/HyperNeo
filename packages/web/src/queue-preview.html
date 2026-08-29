@@ -27,6 +27,17 @@
 					if (explicit) return;
 					document.documentElement.dataset.theme = media.matches ? "dark" : "light";
 				});
+				// Sync an explicit theme changed in another tab. This page never
+				// loads lib/theme.ts, so it owns storage handling here.
+				window.addEventListener("storage", function (e) {
+					if (e.key !== "theme") return;
+					try {
+						var stored = localStorage.getItem("theme");
+						if (stored === "light" || stored === "dark") explicit = stored;
+					} catch (e2) {}
+					document.documentElement.dataset.theme =
+						explicit || (media.matches ? "dark" : "light");
+				});
 			})();
 		</script>
 	</head>

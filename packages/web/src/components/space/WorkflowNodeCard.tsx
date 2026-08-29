@@ -279,7 +279,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                   class="flex-1 text-xs font-mono bg-surface border border-line rounded px-1.5 py-0.5 text-fg-soft focus:outline-none focus:border-accent placeholder-gray-600 min-w-0"
                 />
                 {hasOverrides && (
-                  <span class="text-xs text-warning bg-warning/40 border border-warning/50 rounded px-1 py-0.5 flex-shrink-0">
+                  <span class="text-xs text-warning bg-warning/15 border border-warning/40 rounded px-1 py-0.5 flex-shrink-0">
                     overrides
                   </span>
                 )}

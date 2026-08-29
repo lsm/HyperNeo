@@ -351,7 +351,7 @@ export function QuestionPrompt({
                   <span
                     class={cn(
                       'inline-flex items-center px-1.5 py-0.5 text-xs rounded',
-                      'bg-cat-rose/30 text-rose-400 border border-rose-700/50'
+                      'bg-cat-rose/15 text-cat-rose border border-cat-rose/40'
                     )}
                   >
                     <svg class="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">

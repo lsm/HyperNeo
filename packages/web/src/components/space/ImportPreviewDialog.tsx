@@ -173,7 +173,7 @@ export function ImportPreviewDialog({
         </div>
 
         {hasValidationErrors && (
-          <div class="rounded-lg border border-danger bg-danger/40 p-3 space-y-1" role="alert">
+          <div class="rounded-lg border border-danger/40 bg-danger/10 p-3 space-y-1" role="alert">
             <p class="text-xs font-semibold text-danger mb-1">Validation errors</p>
             {preview.validationErrors.map((err, i) => (
               <p key={i} class="text-xs text-danger-soft">

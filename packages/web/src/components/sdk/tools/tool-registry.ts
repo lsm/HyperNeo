@@ -205,9 +205,9 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     defaultExpanded: true,
     colors: {
       bg: 'bg-cat-rose/30',
-      text: 'text-rose-200',
+      text: 'text-cat-rose',
       border: 'border-cat-rose/40',
-      iconColor: 'text-rose-400',
+      iconColor: 'text-cat-rose',
       lightText: 'text-cat-rose',
     },
   },
