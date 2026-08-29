@@ -170,6 +170,8 @@ describe('QueryRunner', () => {
       size: sizeSpy,
       getGeneration: mock(() => 0),
       enqueueWithId: enqueueWithIdSpy,
+      hasYielded: mock(() => false),
+      requeueYielded: mock(() => false),
       messageGenerator: mock(async function* () {}),
     } as unknown as MessageQueue;
 
@@ -1818,14 +1820,14 @@ describe('QueryRunner', () => {
         'test-session-id',
         expect.any(Error),
         expect.any(String),
-        expect.stringContaining('HYPERNEO_SDK_STARTUP_TIMEOUT_MS'),
+        expect.stringContaining('HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS'),
         expect.anything(),
         expect.objectContaining({ isRootWorkspace: expect.any(Boolean) }),
         expect.any(Function)
       );
       const userMessage = handleErrorSpy.mock.calls[0][3] as string;
       expect(userMessage).not.toContain('attempt(s)');
-      expect(userMessage).toContain('current: 60000ms');
+      expect(userMessage).toContain('current: 600000ms');
       expect(userMessage).toContain('did not emit its first message within the startup window');
       expect(userMessage).toContain('after one automatic retry');
       expect(userMessage).toContain('bounded by the startup gate');
@@ -3428,6 +3430,8 @@ describe('QueryRunner', () => {
               events.push(`enqueue:${messageId}${options?.prepend ? ':prepend' : ''}`);
             }
           ),
+          hasYielded: mock(() => false),
+          requeueYielded: mock(() => false),
           messageGenerator: mock(async function* () {}),
         } as unknown as MessageQueue,
         stateManager: {
@@ -6265,7 +6269,7 @@ describe('QueryRunner', () => {
       expect(handleErrorSpy).toHaveBeenCalled();
     });
 
-    it('routes a live run with zero messages through startup_timeout_retry (timer-abort bug)', async () => {
+    it('routes a live run with zero messages through startup_timeout_retry (nudge then backstop)', async () => {
       const kickoff = {
         uuid: 'kickoff-uuid',
         content: [{ type: 'text' as const, text: 'K' }],
@@ -6282,6 +6286,9 @@ describe('QueryRunner', () => {
         runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
       )._consumedUserMessages = new Map([[1, [kickoff]]]);
 
+      const savedInactivityTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '60001';
+
       jest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       try {
         runner.start();
@@ -6296,13 +6303,18 @@ describe('QueryRunner', () => {
         await ctx.queryPromise?.catch(() => {});
       } finally {
         jest.useRealTimers();
+        if (savedInactivityTimeout === undefined) {
+          delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+        } else {
+          process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = savedInactivityTimeout;
+        }
       }
 
       expect(buildSpy).toHaveBeenCalledTimes(2);
       expect(handleErrorSpy).toHaveBeenCalled();
     }, 15000);
 
-    it('does not retry when the SDK stream ends before any first message', async () => {
+    it('surfaces a startup timeout when the SDK stream ends before any first message', async () => {
       buildSpy.mockResolvedValue({
         model: 'claude-sonnet-4-20250514',
         mcpServers: {},
@@ -6312,10 +6324,10 @@ describe('QueryRunner', () => {
       const ctx = createContext();
       runner = new QueryRunner(ctx);
       runner.start();
-      await ctx.queryPromise;
+      await ctx.queryPromise?.catch(() => {});
 
       expect(buildSpy).toHaveBeenCalledTimes(1);
-      expect(handleErrorSpy).not.toHaveBeenCalled();
+      expect(handleErrorSpy).toHaveBeenCalled();
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
       expect(stopSpy).toHaveBeenCalled();
     });

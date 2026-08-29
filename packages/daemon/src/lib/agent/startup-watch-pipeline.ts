@@ -8,6 +8,8 @@ import type {
 } from './sdk-start-terminal.ts';
 import { classifySdkStartOutcome } from './sdk-start-terminal.ts';
 
+export type { SdkStartExitInfo, SdkStartInactivity } from './sdk-start-terminal.ts';
+
 export const DEFAULT_SDK_STARTUP_NUDGE_THRESHOLD_MS = 60_000;
 export const DEFAULT_SDK_START_INACTIVITY_BACKSTOP_MS = 600_000;
 

@@ -112,7 +112,7 @@ export async function createDenoDaemonServer(): Promise<DaemonServerContext> {
     OPENAI_API_KEY: '',
     COPILOT_GITHUB_TOKEN: '',
     MINIMAX_API_KEY: '',
-    HYPERNEO_SDK_STARTUP_TIMEOUT_MS: '60000',
+    HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS: '60000',
     HYPERNEO_USE_DEV_PROXY: '0',
   };
 

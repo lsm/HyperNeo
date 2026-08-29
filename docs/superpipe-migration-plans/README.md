@@ -7,6 +7,7 @@ inventory; no source code is changed by these plans.
 | Doc | Area | Sites |
 | --- | --- | --- |
 | `external-events.md` | GitHub normalizers, event tiers, digest rendering | 8 |
+| `github-poll-cycle.md` | GitHub poll-cycle cursor machine (extraction map; no pipeline) | 6 |
 | [storage.md](storage.md) | `sdk-message-repository.ts` save methods and `message-delivery-outbox.ts` delivery turn | 4 |
 | `agent-routing.md` | Agent-layer routing (turn-end, query-retry, delivery, steer, context reset) | 6 |
 | `agent-gates-recovery.md` | Agent-layer gates & recovery (limit errors, loops, breakers, fallbacks, acks) | 11 |

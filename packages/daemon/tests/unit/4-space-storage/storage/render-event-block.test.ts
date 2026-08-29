@@ -51,7 +51,7 @@ const REVIEWS: ExternalEventEssenceEntry[] = REVIEW_SOURCES.map(([eventId, body,
 describe('renderEventBlock', () => {
   it('renders a single check event with its conclusion', () => {
     expect(renderEventBlock(CHECKS[2]!)).toBe(
-      `- CI check "lint": failure ×1, latest 16:34 UTC` + ` — ${PR_URL} (latest eventId: cf-2)`
+      `- CI check "lint": failure ×1, latest 16:34 UTC` + ` — ${PR_URL}`
     );
   });
 
@@ -59,7 +59,7 @@ describe('renderEventBlock', () => {
     expect(renderEventBlock(REVIEWS[2]!, { count: REVIEWS.length, events: REVIEWS })).toBe(
       '- Review comments on packages/daemon/src/lib/agent/query-mode-handler.ts:L88: ×3, ' +
         `latest by codex[bot] at 16:00 UTC — "latest review body" — ${PR_URL}` +
-        ' (commentId: rt-3; latest eventId: rt-3)'
+        ' (latest eventId: rt-3)'
     );
     expect(
       renderEventBlock(REVIEWS[2]!, {
@@ -70,13 +70,13 @@ describe('renderEventBlock', () => {
     ).toBe(
       '- Review comment by codex[bot] at 15:50 UTC ' +
         'on packages/daemon/src/lib/agent/query-mode-handler.ts:L88 ' +
-        `— "review body 1" — ${PR_URL} (commentId: rt-1; latest eventId: rt-1)\n` +
+        `— "review body 1" — ${PR_URL} (latest eventId: rt-1)\n` +
         '- Review comment by codex[bot] at 15:55 UTC ' +
         'on packages/daemon/src/lib/agent/query-mode-handler.ts:L88 ' +
-        `— "review body 2" — ${PR_URL} (commentId: rt-2; latest eventId: rt-2)\n` +
+        `— "review body 2" — ${PR_URL} (latest eventId: rt-2)\n` +
         '- Review comment by codex[bot] at 16:00 UTC ' +
         'on packages/daemon/src/lib/agent/query-mode-handler.ts:L88 ' +
-        `— "latest review body" — ${PR_URL} (commentId: rt-3; latest eventId: rt-3)`
+        `— "latest review body" — ${PR_URL} (latest eventId: rt-3)`
     );
   });
 
@@ -94,7 +94,7 @@ describe('renderEventBlock', () => {
       })
     ).toBe(
       `- PR comment: ×1, latest by marcliu at 15:30 UTC — "pr comment 1" — ${PR_URL}` +
-        ' (commentId: pc-1; latest eventId: pc-1)'
+        ' (latest eventId: pc-1)'
     );
   });
 
@@ -113,10 +113,7 @@ describe('renderEventBlock', () => {
         },
         { count: 8 }
       )
-    ).toBe(
-      `- PR #7 state: open (draft) (latest poll 16:34 UTC, ×8 polls folded) — ${PR_URL}` +
-        ' (latest eventId: st-1)'
-    );
+    ).toBe(`- PR #7 state: open (draft) (latest poll 16:34 UTC, ×8 polls folded) — ${PR_URL}`);
   });
 
   it('renders a reaction with its emoji and actor', () => {
@@ -132,13 +129,10 @@ describe('renderEventBlock', () => {
         occurredAt: at(15, 5),
         prUrl: PR_URL,
       })
-    ).toBe(
-      `- Reactions on PR #7: ×1, latest 👍 by marcliu at 15:05 UTC` +
-        ` — ${PR_URL} (latest eventId: re-1)`
-    );
+    ).toBe(`- Reactions on PR #7: ×1, latest 👍 by marcliu at 15:05 UTC` + ` — ${PR_URL}`);
   });
 
-  it('preserves other-tier payload fields and honors snippet and date options', () => {
+  it('preserves other-tier payload fields and carries the full description', () => {
     expect(
       renderEventBlock(
         {
@@ -151,12 +145,12 @@ describe('renderEventBlock', () => {
           occurredAt: at(16, 5),
           prUrl: 'https://github.com/o/r/pull/9',
         },
-        { snippetMaxChars: 32, includeDate: true }
+        { includeDate: true }
       )
     ).toBe(
       '- github/o/r/pull_request/9.deployment_status_failure: ×1 (latest 08-23 16:05 UTC) — ' +
-        'state: failure — environment: production — "Deploy failed: health check time…" — ' +
-        'https://github.com/o/r/pull/9 (latest eventId: dep-1)'
+        'state: failure — environment: production — "Deploy failed: health check timed out" — ' +
+        'https://github.com/o/r/pull/9'
     );
   });
 

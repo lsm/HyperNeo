@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
-import type { Database } from '../../../../src/storage/database';
+import {
+  SessionCoordinationStallError,
+  sessionResetCoordinationLocks,
+  withSessionLock,
+  withSessionResetCoordination,
+} from '../../../../src/lib/agent/message-delivery';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import {
   MAX_IMAGE_BASE64_SIZE,
@@ -8,6 +13,7 @@ import {
   validateImageSizes,
 } from '../../../../src/lib/session/message-persistence';
 import type { SessionCache } from '../../../../src/lib/session/session-cache';
+import type { Database } from '../../../../src/storage/database';
 
 describe('MessagePersistence', () => {
   let mockSessionCache: SessionCache;
@@ -382,6 +388,74 @@ describe('MessagePersistence', () => {
         sendStatus: 'enqueued',
         deliveryMode: 'immediate',
         skipQueryStart: true,
+      })
+    );
+  });
+
+  it('reproduces the production stall: persist rejects with SessionCoordinationStallError while a sweep holder is pinned on the inner session lock', async () => {
+    const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+    const previousV2 = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+    void withSessionResetCoordination('test-session-id', () =>
+      withSessionLock('test-session-id', () => new Promise<never>(() => {}))
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    try {
+      const stalled = persistence.persist({
+        sessionId: 'test-session-id',
+        messageId: 'msg-stall-repro',
+        content: 'second message after the first armed a turn',
+      });
+      await expect(stalled).rejects.toBeInstanceOf(SessionCoordinationStallError);
+      await expect(stalled).rejects.toThrow(
+        /Session test-session-id is still completing a prior operation \(waited \d+s, prior holder age \d+s\)/
+      );
+    } finally {
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+      else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previousTimeout;
+      if (previousV2 === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousV2;
+      sessionResetCoordinationLocks.clear();
+    }
+  });
+
+  it('opt-out legacy dispatch rolls the enqueued row back to failed on coordination stall', async () => {
+    const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
+    const transitionSpy = mock(() => true);
+    mockDb.getSDKMessageRepo = mock(() => ({
+      transitionMessageSendStatus: transitionSpy,
+    }));
+    mockAgentSession.startQueryAndEnqueue = mock(
+      () =>
+        new Promise((_resolve, reject) => {
+          reject(new SessionCoordinationStallError('test-session-id', 8_000, 9_000));
+        })
+    );
+
+    try {
+      await expect(
+        persistence.persist({
+          sessionId: 'test-session-id',
+          messageId: 'msg-legacy-stall',
+          content: 'stalled dispatch',
+        })
+      ).rejects.toBeInstanceOf(SessionCoordinationStallError);
+    } finally {
+      if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+    }
+
+    expect(transitionSpy).toHaveBeenCalledWith('db-msg-1', 'enqueued', 'failed');
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
+      'messages.statusChanged',
+      expect.objectContaining({
+        sessionId: 'test-session-id',
+        messageIds: ['db-msg-1'],
+        status: 'failed',
       })
     );
   });

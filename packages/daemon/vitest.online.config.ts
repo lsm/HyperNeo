@@ -28,7 +28,7 @@ export default defineConfig({
     testTimeout: 60_000,
     hookTimeout: 60_000,
     env: {
-      HYPERNEO_SDK_STARTUP_TIMEOUT_MS: '30000',
+      HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS: '30000',
     },
     coverage: {
       provider: 'v8',

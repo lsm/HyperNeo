@@ -18,6 +18,7 @@ import {
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   STEER_ACK_TIMEOUT_MS,
+  sessionResetCoordinationLocks,
   steerAckTimeoutMs,
   waitForDeliveryConsumption,
   withSessionLock,
@@ -2108,7 +2109,7 @@ describe('AgentSession', () => {
       }
     });
 
-    it('reconcileStrandedDeliveries waits for the reset-coordination lock before re-enqueueing', async () => {
+    it('reconcileStrandedDeliveries re-enqueues without waiting for the reset-coordination slot', async () => {
       const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
       process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
       try {
@@ -2137,16 +2138,56 @@ describe('AgentSession', () => {
         await settle();
         await settle();
 
-        expect(enqueue).not.toHaveBeenCalled();
+        expect(enqueue).toHaveBeenCalledTimes(1);
 
+        await reconcilePromise;
         release();
         await holder;
-        await reconcilePromise;
-
-        expect(enqueue).toHaveBeenCalledTimes(1);
       } finally {
         if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
         else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
+      }
+    });
+
+    it('reconcileStrandedDeliveries does not pin the coordination slot when setQueuedIfIdle never settles', async () => {
+      const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+      const previousV2 = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+      process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
+      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
+      try {
+        mockDb.getJobQueueRepo = mock(() => ({
+          activeDeliveryMessageUuids: mock(() => new Set<string>()),
+          getActiveDeliveryRole: mock(() => null),
+          enqueue: mock(() => ({})),
+        }));
+        mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
+          status === 'enqueued' ? [{ dbId: 'db-1', uuid: 'uuid-1', timestamp: 1 }] : []
+        );
+        mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid: mock(() => null) }));
+
+        const originalSetQueuedIfIdle = agentSession.stateManager.setQueuedIfIdle.bind(
+          agentSession.stateManager
+        );
+        agentSession.stateManager.setQueuedIfIdle = mock(() => new Promise<boolean>(() => {}));
+
+        const reconcilePromise = agentSession.reconcileStrandedDeliveries();
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+        await settle();
+        await settle();
+
+        const coordinated = withSessionResetCoordination('test-session-id', async () => 'sent');
+        await expect(coordinated).resolves.toBe('sent');
+
+        agentSession.stateManager.setQueuedIfIdle = originalSetQueuedIfIdle;
+        await reconcilePromise.catch(() => {});
+        sessionResetCoordinationLocks.clear();
+      } finally {
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previousTimeout;
+        if (previousV2 === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
+        else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousV2;
+        sessionResetCoordinationLocks.clear();
       }
     });
 

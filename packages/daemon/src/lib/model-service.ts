@@ -24,6 +24,14 @@ import {
 } from './providers/provider-failure-store.js';
 import { getProviderRegistry } from './providers/registry.js';
 import { mergeDiscoveredModels } from './providers/shared/discovery-cache.js';
+import {
+  classifyProviderLoadOutcomes,
+  type ProviderLoadOutcome,
+} from './model-settlement-routing.js';
+import {
+  runSettleProviderLoadOutcome,
+  type SettleProviderLoadOutcomeDeps,
+} from './model-settlement-pipeline.js';
 
 const LEGACY_MODEL_MAPPINGS: Record<string, string> = {
   default: 'sonnet',
@@ -884,51 +892,35 @@ async function loadModelsFromProviders(options?: {
     providers.map((provider) => loadProviderModels(provider, options))
   );
 
+  const cachedModels = modelsCache.get('global') ?? [];
+  const { outcomes, forcedDiscoveryError } = classifyProviderLoadOutcomes(
+    results,
+    providers,
+    loadSeq,
+    { appliedSeq: providerAppliedSeq, cachedModels, forceRemote: options?.forceRemote }
+  );
+
   const allModels: ModelInfo[] = [];
-  const succeededProviderIds: string[] = [];
   const loadedProviderIds: string[] = [];
   const supersededProviderIds: string[] = [];
-  const failures: ProviderLoadFailure[] = [];
   const unavailableProviderIds: string[] = [];
-  let forcedDiscoveryError: unknown;
-  results.forEach((result, index) => {
-    const provider = providers[index];
-    /* v8 ignore next 2 */
-    if (result.status !== 'fulfilled') return;
-    if ((providerAppliedSeq.get(provider.id) ?? 0) > loadSeq) {
-      const cachedSlice =
-        modelsCache.get('global')?.filter((m) => m.provider === provider.id) ?? [];
-      allModels.push(...cachedSlice);
-      supersededProviderIds.push(provider.id);
-      return;
+  const failures: ProviderLoadFailure[] = [];
+  for (const outcome of outcomes) {
+    allModels.push(...outcome.models);
+    if (outcome.kind === 'loaded') {
+      loadedProviderIds.push(outcome.providerId);
+    } else if (outcome.kind === 'superseded') {
+      supersededProviderIds.push(outcome.providerId);
+    } else if (outcome.kind === 'unavailable') {
+      unavailableProviderIds.push(outcome.providerId);
+    } else if (outcome.kind === 'failed' && outcome.failure) {
+      failures.push(outcome.failure);
     }
-    allModels.push(...result.value.models);
-    if (result.value.status === 'failed') {
-      if (result.value.error !== undefined) {
-        failures.push({ providerId: provider.id, ...classifyProviderFailure(result.value.error) });
-        if (
-          options?.forceRemote &&
-          provider.listRemoteModels &&
-          forcedDiscoveryError === undefined
-        ) {
-          forcedDiscoveryError = result.value.error;
-        }
-      }
-      return;
-    }
-    if (result.value.status === 'unavailable') {
-      unavailableProviderIds.push(provider.id);
-      return;
-    }
-    succeededProviderIds.push(provider.id);
-    if (result.value.status === 'loaded') {
-      loadedProviderIds.push(provider.id);
-    }
-  });
+  }
 
   return {
     models: allModels,
-    succeededProviderIds,
+    succeededProviderIds: loadedProviderIds,
     loadedProviderIds,
     supersededProviderIds,
     failures,
@@ -940,38 +932,39 @@ async function loadModelsFromProviders(options?: {
 }
 
 function applyProviderLoadOutcome(result: ModelsLoadResult): void {
-  const registry = getProviderRegistry();
-  for (const failure of getAllProviderFailures()) {
-    if (!registry.has(failure.providerId)) {
-      removeProviderFailure(failure.providerId);
-      clearProviderRetry(failure.providerId);
+  const loaded = new Set(result.loadedProviderIds);
+  const unavailable = new Set(result.unavailableProviderIds);
+  const superseded = new Set(result.supersededProviderIds);
+  const outcomes: ProviderLoadOutcome[] = result.providerIds.map((providerId) => {
+    const models = result.models.filter((model) => model.provider === providerId);
+    if (superseded.has(providerId)) {
+      return { kind: 'superseded', providerId, models };
     }
-  }
-  for (const providerId of result.succeededProviderIds) {
-    providerAppliedSeq.set(providerId, result.loadSeq);
-  }
-  for (const providerId of result.loadedProviderIds) {
-    clearProviderFailure(providerId);
-    clearProviderRetry(providerId);
-  }
-  for (const providerId of result.succeededProviderIds) {
-    if (result.loadedProviderIds.includes(providerId)) continue;
-    if (getProviderFailure(providerId)?.errorKind === 'transient') {
-      armProviderRetryTimer(providerId);
+    if (loaded.has(providerId)) {
+      return { kind: 'loaded', providerId, models };
     }
-  }
-  for (const failure of result.failures) {
-    if (!registry.has(failure.providerId)) {
-      continue;
+    if (unavailable.has(providerId)) {
+      return { kind: 'unavailable', providerId, models };
     }
-    providerAppliedSeq.set(failure.providerId, result.loadSeq);
-    recordClassifiedProviderFailure(failure.providerId, failure);
-    if (failure.errorKind === 'transient') {
-      armProviderRetryTimer(failure.providerId);
-    } else {
-      cancelProviderRetryTimer(failure.providerId);
-    }
-  }
+    const failure = result.failures.find((f) => f.providerId === providerId);
+    return { kind: 'failed', providerId, models, failure };
+  });
+
+  const deps: SettleProviderLoadOutcomeDeps = {
+    getProviderRegistry: () => getProviderRegistry(),
+    getAllProviderFailures,
+    removeProviderFailure,
+    clearProviderRetry,
+    setProviderAppliedSeq: (providerId, loadSeq) => providerAppliedSeq.set(providerId, loadSeq),
+    clearProviderFailure,
+    getProviderFailure,
+    armProviderRetry: armProviderRetryTimer,
+    cancelProviderRetry: cancelProviderRetryTimer,
+    recordClassifiedProviderFailure,
+    emitProviderSettlement: () => {},
+  };
+
+  runSettleProviderLoadOutcome(deps, { outcomes, loadSeq: result.loadSeq });
 }
 
 function getOrCreateProviderRetryEntry(providerId: string): ProviderRetryEntry {

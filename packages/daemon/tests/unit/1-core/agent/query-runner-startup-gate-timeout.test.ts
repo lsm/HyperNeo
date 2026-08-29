@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 const FORCED_STARTUP_TIMEOUT_MS = '60';
-const SAVED_TIMEOUT_ENV = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+const SAVED_TIMEOUT_ENV = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
 const SAVED_MAX_CONCURRENT_ENV = process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT;
 
-process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
+process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = FORCED_STARTUP_TIMEOUT_MS;
 process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT = '1';
 
 let queryFactory: (() => unknown) | null = null;
@@ -242,7 +242,7 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
     }
     throw new Error(
       'Short startup timeout is not active: query-runner was loaded before this ' +
-        'file set HYPERNEO_SDK_STARTUP_TIMEOUT_MS (shared bun test module registry). ' +
+        'file set HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS (shared bun test module registry). ' +
         'Run this file on its own under bun test; vitest (CI shards) isolates ' +
         'module registries per file and is unaffected.'
     );
@@ -319,9 +319,9 @@ describe('QueryRunner startup gate (startup-timeout path)', () => {
 
   afterAll(() => {
     if (SAVED_TIMEOUT_ENV === undefined) {
-      delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
     } else {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = SAVED_TIMEOUT_ENV;
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = SAVED_TIMEOUT_ENV;
     }
     if (SAVED_MAX_CONCURRENT_ENV === undefined) {
       delete process.env.HYPERNEO_SDK_STARTUP_MAX_CONCURRENT;
