@@ -9,6 +9,7 @@ import type {
   MessageContent,
   MessageHub,
   MessageOrigin,
+  ModelInfo,
   Provider,
   QuestionDraftResponse,
   RewindMode,
@@ -136,7 +137,12 @@ import {
   isSDKSessionStateChangedMessage,
 } from '@hyperneo/shared/sdk/type-guards';
 import { AcpQueryRunner } from '../acp/acp-query-runner.ts';
-import { getSessionModelInfo, resolveModelAlias } from '../model-service.ts';
+import {
+  ensureScopedProviderCatalogModels,
+  getSessionModelInfo,
+  initializeModels,
+  resolveModelAlias,
+} from '../model-service.ts';
 import { getProviderRegistry } from '../providers/factory.js';
 import { getProviderService } from '../provider-service.ts';
 import {
@@ -147,6 +153,7 @@ import {
   contextBudgetThreshold,
   decideContextBudgetCompaction,
 } from './context-budget-decision.ts';
+import { runContextBudgetReevaluation } from './context-budget-enforcement.ts';
 import { ContextTracker } from './context-tracker.ts';
 import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
 import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
@@ -219,6 +226,7 @@ import { selectStaleSubmittedDeliveries } from './reconciler-sweep.ts';
 import { RateLimitWatchdog } from './rate-limit-watchdog.ts';
 import { RewindHandler, type RewindHandlerContext, type RewindPoint } from './rewind-handler.ts';
 import {
+  boundedDeliveryGate,
   SDKMessageHandler,
   type SDKMessageHandlerContext,
   type SuppressedResultOutcome,
@@ -349,6 +357,8 @@ export class AgentSession
   private pendingResumeSessionAt: string | undefined;
   private pendingResumeAfterCompaction = false;
   private midTurnBudgetCheckInFlight = false;
+
+  private contextBudgetReevaluationQueue: Promise<void> = Promise.resolve();
   private lastMidTurnUsageRefreshAt = 0;
   private lastMidTurnUsageRefreshKey = '';
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
@@ -555,6 +565,7 @@ export class AgentSession
 
     if (session.metadata?.lastContextInfo) {
       this.contextTracker.restoreFromMetadata(session.metadata.lastContextInfo);
+      void this.reevaluateContextBudgetAfterModelSwitch();
     }
     this.stateManager.restoreFromDatabase();
 
@@ -1466,9 +1477,9 @@ export class AgentSession
     await this.lifecycleManager.restartQuery();
   }
 
-  async restart(): Promise<void> {
+  async restart(options?: { beforeStart?: () => void | Promise<void> }): Promise<void> {
     this.rateLimitWatchdog.cancel();
-    await this.lifecycleManager.restart();
+    await this.lifecycleManager.restart(options);
   }
 
   getRewindPoints(): RewindPoint[] {
@@ -1531,6 +1542,115 @@ export class AgentSession
       `dropping pending post-compaction resume for session ${this.session.id} ` +
         `(no daemon compaction was enqueued)`
     );
+  }
+
+  async reevaluateContextBudgetAfterModelSwitch(opts?: {
+    queueClearEpochAtStart?: number;
+    userInterruptEpochAtStart?: number;
+  }): Promise<void> {
+    this.messageQueue.holdInternalCompactionDelivery();
+    const queueClearEpochAtStart =
+      opts?.queueClearEpochAtStart ?? this.messageQueue.getClearEpoch();
+    const userInterruptEpochAtStart =
+      opts?.userInterruptEpochAtStart ?? this.messageQueue.getUserInterruptEpoch();
+    const decision = this.contextBudgetReevaluationQueue.then(async () => {
+      const trackerInfo = this.contextTracker.getContextInfo();
+      if (!trackerInfo || trackerInfo.totalUsed <= 0) return null;
+      const run = runContextBudgetReevaluation({
+        session: this.session,
+        trackerInfo,
+        resolveModelInfo: () =>
+          this.resolveSessionModelInfoWithRetry(queueClearEpochAtStart, userInterruptEpochAtStart),
+        limitRecoveryPending: this.isLimitRecoveryPending(),
+        contextTracker: this.contextTracker,
+        messageQueue: this.messageQueue,
+        stateManager: this.stateManager,
+        logger: this.logger,
+        resumePendingWork: () => this.resumePendingWorkAfterCompaction(),
+        clearPendingResume: () => this.clearPendingResumeAfterCompaction(),
+        queueClearEpochAtStart,
+        userInterruptEpochAtStart,
+      });
+      this.messageQueue.setDeliveryGate(
+        boundedDeliveryGate(
+          run.then(() => undefined).catch(() => {}),
+          Date.now() + 5000
+        )
+      );
+      return run;
+    });
+    this.contextBudgetReevaluationQueue = decision.then(
+      () => undefined,
+      () => undefined
+    );
+    const reevaluation = decision
+      .then(() => undefined)
+      .catch((error) => {
+        this.logger.warn('post-switch context budget evaluation failed:', error);
+      })
+      .finally(() => {
+        this.messageQueue.releaseInternalCompactionDelivery();
+      });
+    this.messageQueue.setDeliveryGate(boundedDeliveryGate(reevaluation, Date.now() + 5000));
+    await reevaluation;
+  }
+
+  private async resolveSessionModelInfoWithRetry(
+    originQueueClearEpoch: number,
+    originUserInterruptEpoch: number
+  ): Promise<ModelInfo | null> {
+    const deadlineAt = Date.now() + 4_000;
+    const attemptPromise = (async (): Promise<ModelInfo | null> => {
+      for (;;) {
+        const modelInfo = await this.resolveSessionCatalogModelInfo();
+        if (modelInfo) return modelInfo;
+        if (Date.now() >= deadlineAt) return null;
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 250);
+          if (typeof timer.unref === 'function') {
+            timer.unref();
+          }
+        });
+      }
+    })();
+    const bounded = await Promise.race([
+      attemptPromise,
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 4_000);
+        if (typeof timer.unref === 'function') {
+          timer.unref();
+        }
+      }),
+    ]);
+    if (bounded === null) {
+      void attemptPromise
+        .then((lateModelInfo) => {
+          if (lateModelInfo) {
+            void this.reevaluateContextBudgetAfterModelSwitch({
+              queueClearEpochAtStart: originQueueClearEpoch,
+              userInterruptEpochAtStart: originUserInterruptEpoch,
+            });
+          }
+        })
+        .catch(() => {});
+    }
+    return bounded;
+  }
+
+  private async resolveSessionCatalogModelInfo(): Promise<ModelInfo | null> {
+    const providerId = this.session.config.provider;
+    const providerConfig = this.session.config.providerConfig;
+    if (
+      providerId &&
+      (providerConfig?.apiKey || providerConfig?.baseUrl || providerConfig?.region)
+    ) {
+      await ensureScopedProviderCatalogModels(this.session.id, providerId, providerConfig);
+      return getSessionModelInfo(this.session, this.session.id);
+    }
+    const cached = await getSessionModelInfo(this.session);
+    if (cached) return cached;
+    await initializeModels().catch(() => {});
+    return getSessionModelInfo(this.session);
   }
 
   async midTurnContextBudgetCheck(): Promise<void> {

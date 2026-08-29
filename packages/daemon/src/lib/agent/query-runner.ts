@@ -1834,6 +1834,22 @@ export class QueryRunner {
       messageQueue.onMessageYielded?.(message.uuid ?? '', Date.now());
       const queuedMessage = message as typeof message & { internal?: boolean };
       const isInternal = queuedMessage.internal || false;
+      const promptContent = (queuedMessage.message as { content?: unknown } | undefined)?.content;
+      const promptText =
+        typeof promptContent === 'string'
+          ? promptContent
+          : Array.isArray(promptContent) &&
+              promptContent.length === 1 &&
+              (promptContent[0] as { type?: unknown; text?: unknown } | undefined)?.type ===
+                'text' &&
+              typeof (promptContent[0] as { text?: unknown }).text === 'string'
+            ? ((promptContent[0] as { text: string }).text as string)
+            : undefined;
+      const isDaemonCompactCommand = isInternal && promptText === '/compact';
+
+      if (isDaemonCompactCommand && stateManager.getState().status !== 'processing') {
+        await stateManager.setProcessing(queuedMessage.uuid ?? 'unknown', 'initializing');
+      }
 
       if (!isInternal) {
         await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');

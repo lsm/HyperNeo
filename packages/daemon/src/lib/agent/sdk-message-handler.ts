@@ -87,7 +87,7 @@ function assignTurnEndFlag<K extends keyof TurnEndFlags>(
   target[key] = value;
 }
 
-function boundedDeliveryGate(gate: Promise<void>, deadlineAt?: number): Promise<void> {
+export function boundedDeliveryGate(gate: Promise<void>, deadlineAt?: number): Promise<void> {
   const windowMs =
     deadlineAt === undefined ? DELIVERY_GATE_WINDOW_MS : Math.max(0, deadlineAt - Date.now());
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -132,6 +132,8 @@ export interface SDKMessageHandlerContext {
   resumePendingWorkAfterCompaction?(): void;
 
   clearPendingResumeAfterCompaction?(): void;
+
+  reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
 
   onResultLimitError?(
     errorText: string,
@@ -1749,11 +1751,22 @@ export class SDKMessageHandler {
       model: fallbackModel,
     };
     db.updateSession(session.id, { config: session.config });
+    const reevaluation = this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
     await internalEventBus.publish('session.updated', {
       sessionId: session.id,
       source: 'model-refusal-fallback',
       session: { config: session.config },
     });
+    if (reevaluation) {
+      try {
+        await reevaluation;
+      } catch (error) {
+        this.logger.warn(
+          `post-fallback context budget evaluation failed for ${session.id}:`,
+          error
+        );
+      }
+    }
   }
 
   private async resolveConfiguredFallbackModel(

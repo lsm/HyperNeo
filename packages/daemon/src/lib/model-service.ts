@@ -1204,6 +1204,12 @@ export async function initializeModels(): Promise<void> {
     return;
   }
 
+  const inProgress = refreshInProgress.get(cacheKey);
+  if (inProgress) {
+    await inProgress.catch(() => {});
+    return;
+  }
+
   const generationAtStart = cacheGeneration.get(cacheKey) ?? 0;
 
   const refreshPromise = (async () => {

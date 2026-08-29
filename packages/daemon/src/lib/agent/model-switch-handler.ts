@@ -53,6 +53,7 @@ export interface ModelSwitchHandlerContext {
   readonly queryPromise: Promise<void> | null;
   readonly messageQueue: MessageQueue;
   readonly disposeAcpSessions?: typeof disposeAcpSessions;
+  reevaluateContextBudgetAfterModelSwitch?(): Promise<void>;
 }
 
 export interface ModelSwitchResult {
@@ -234,6 +235,7 @@ export class ModelSwitchHandler {
 
         contextTracker.setModel(resolvedModel);
 
+        const reevaluation = this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         await internalEventBus.publish('session.updated', {
           sessionId: session.id,
           source: 'model-switch',
@@ -241,6 +243,14 @@ export class ModelSwitchHandler {
         });
 
         this.stripThinkingBlocksIfNeeded(previousProvider, newProviderInstance.id);
+
+        if (reevaluation) {
+          try {
+            await reevaluation;
+          } catch (error) {
+            logger.warn(`post-switch context budget evaluation failed for ${session.id}:`, error);
+          }
+        }
 
         if (clearAcpSessionId && previousAcpSessionId) {
           await this.disposePreviousAcpSession(
@@ -284,8 +294,11 @@ export class ModelSwitchHandler {
 
         if (this.ctx.queryObject instanceof AcpQueryAdapter && nextProvider === 'acp') {
           await this.ctx.queryObject.setModel(resolvedModel);
+          await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
         } else {
-          await lifecycleManager.restart();
+          await lifecycleManager.restart({
+            beforeStart: () => this.ctx.reevaluateContextBudgetAfterModelSwitch?.(),
+          });
           if (clearAcpSessionId && previousAcpSessionId) {
             await this.disposePreviousAcpSession(
               previousAcpSessionId,
@@ -333,6 +346,7 @@ export class ModelSwitchHandler {
         metadata: previousMetadata,
       });
       contextTracker.setModel(previousModel);
+      await this.ctx.reevaluateContextBudgetAfterModelSwitch?.();
       await internalEventBus.publish('session.updated', {
         sessionId: session.id,
         source: 'model-switch-rollback',

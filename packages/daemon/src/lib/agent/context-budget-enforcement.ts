@@ -1,4 +1,4 @@
-import type { ContextInfo } from '@hyperneo/shared';
+import type { ContextInfo, ModelInfo, Session } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Logger } from '../logger.ts';
 import {
@@ -14,7 +14,7 @@ import { NATIVE_CONTEXT_WINDOW_PROVIDER_IDS } from './query-options-builder.js';
 export interface ContextBudgetEnforcementCtx {
   sessionId: string;
   providerId: string | undefined;
-  reason: 'event-tick' | 'turn-end' | 'compact-boundary';
+  reason: 'event-tick' | 'turn-end' | 'compact-boundary' | 'model-switch';
   contextInfo: ContextInfo;
   fallbackContextWindow: number | undefined;
   clearedDeadCompaction: boolean;
@@ -97,7 +97,8 @@ const runEnforceContextBudget = (
     deadCompactionCleared: (ctx: ContextBudgetEnforcementCtx) => ctx.clearedDeadCompaction,
     userQuestionOutstanding: (ctx: ContextBudgetEnforcementCtx) =>
       ctx.stateManager.getState().status === 'waiting_for_input',
-    queueShutDown: (ctx: ContextBudgetEnforcementCtx) => !ctx.messageQueue.isRunning(),
+    queueShutDown: (ctx: ContextBudgetEnforcementCtx) =>
+      !ctx.messageQueue.isRunning() && ctx.reason !== 'model-switch',
     compactionOutstanding: (ctx: ContextBudgetEnforcementCtx) =>
       ctx.messageQueue.hasOutstandingInternalCompaction(),
     budgetRequiresNoCompaction: (ctx: ContextBudgetEnforcementCtx) =>
@@ -126,4 +127,126 @@ export function enforceContextBudget(
     decision: null,
     compactionEnqueued: false,
   });
+}
+
+export interface ContextBudgetReevaluationCtx {
+  session: Session;
+  trackerInfo: ContextInfo;
+  resolveModelInfo: () => Promise<ModelInfo | null>;
+  limitRecoveryPending: boolean;
+  contextTracker: ContextTracker;
+  messageQueue: MessageQueue;
+  stateManager: ProcessingStateManager;
+  logger: Logger;
+  resumePendingWork: () => void;
+  clearPendingResume: () => void;
+  fenceModel: string;
+  fenceProvider: string | undefined;
+  queueClearEpochAtStart: number;
+  userInterruptEpochAtStart: number;
+  supersededQueued: boolean;
+  modelInfo: ModelInfo | null;
+  compactionEnqueued: boolean;
+}
+
+export type ContextBudgetReevaluationInput = Omit<
+  ContextBudgetReevaluationCtx,
+  'fenceModel' | 'fenceProvider' | 'supersededQueued' | 'modelInfo' | 'compactionEnqueued'
+>;
+
+export function revokeSupersededCompactions(
+  ctx: ContextBudgetReevaluationCtx
+): ContextBudgetReevaluationCtx {
+  const revoked = ctx.messageQueue.removePendingInternalCompactions();
+  if (revoked > 0) {
+    ctx.contextTracker.clearCompactionCooldown();
+  }
+  return { ...ctx, supersededQueued: revoked > 0 };
+}
+
+export async function resolveReevaluationModelInfo(
+  ctx: ContextBudgetReevaluationCtx
+): Promise<ContextBudgetReevaluationCtx> {
+  return { ...ctx, modelInfo: await ctx.resolveModelInfo() };
+}
+
+export function runReevaluationEnforcement(
+  ctx: ContextBudgetReevaluationCtx
+): ContextBudgetReevaluationCtx {
+  const modelInfo = ctx.modelInfo;
+  const trackerInfo = ctx.contextTracker.getContextInfo();
+  if (!trackerInfo || trackerInfo.totalUsed <= 0) {
+    return ctx;
+  }
+  const contextInfo: ContextInfo = {
+    ...trackerInfo,
+    totalCapacity:
+      modelInfo?.contextWindow && modelInfo.contextWindow > 0
+        ? modelInfo.contextWindow
+        : trackerInfo.totalCapacity,
+    autoCompactPercent: modelInfo ? modelInfo.autoCompactPercent : trackerInfo.autoCompactPercent,
+  };
+  const outcome = enforceContextBudget({
+    sessionId: ctx.session.id,
+    providerId: ctx.session.config.provider,
+    reason: 'model-switch',
+    contextInfo,
+    fallbackContextWindow: modelInfo?.contextWindow,
+    clearedDeadCompaction: false,
+    limitRecoveryPending: ctx.limitRecoveryPending,
+    contextTracker: ctx.contextTracker,
+    messageQueue: ctx.messageQueue,
+    stateManager: ctx.stateManager,
+    logger: ctx.logger,
+    onCompactionAbandoned: ctx.clearPendingResume,
+  });
+  return { ...ctx, compactionEnqueued: outcome.compactionEnqueued };
+}
+
+export function settlePendingResumeAfterReevaluation(
+  ctx: ContextBudgetReevaluationCtx
+): ContextBudgetReevaluationCtx {
+  if (ctx.supersededQueued) {
+    ctx.resumePendingWork();
+  } else {
+    ctx.clearPendingResume();
+  }
+  return ctx;
+}
+
+const runReevaluateContextBudget = (
+  superpipe({
+    modelFenceChanged: (ctx: ContextBudgetReevaluationCtx) =>
+      ctx.session.config.model !== ctx.fenceModel ||
+      ctx.session.config.provider !== ctx.fenceProvider,
+    modelInfoUnresolved: (ctx: ContextBudgetReevaluationCtx) => ctx.modelInfo === null,
+    queueClearedDuringEvaluation: (ctx: ContextBudgetReevaluationCtx) =>
+      ctx.messageQueue.getClearEpoch() !== ctx.queueClearEpochAtStart ||
+      ctx.messageQueue.getUserInterruptEpoch() !== ctx.userInterruptEpochAtStart,
+    resumeSettledElsewhere: (ctx: ContextBudgetReevaluationCtx) =>
+      ctx.compactionEnqueued || ctx.messageQueue.hasOutstandingInternalCompaction(),
+  })('reevaluate-context-budget') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(resolveReevaluationModelInfo, 'ctx', 'ctx')
+  .pipe('!modelFenceChanged', 'ctx')
+  .pipe('!modelInfoUnresolved', 'ctx')
+  .pipe('!queueClearedDuringEvaluation', 'ctx')
+  .pipe(revokeSupersededCompactions, 'ctx', 'ctx')
+  .pipe(runReevaluationEnforcement, 'ctx', 'ctx')
+  .pipe('!resumeSettledElsewhere', 'ctx')
+  .pipe(settlePendingResumeAfterReevaluation, 'ctx', 'ctx')
+  .endAsync('ctx');
+
+export function runContextBudgetReevaluation(
+  input: ContextBudgetReevaluationInput
+): Promise<ContextBudgetReevaluationCtx> {
+  return runReevaluateContextBudget({
+    ...input,
+    fenceModel: input.session.config.model,
+    fenceProvider: input.session.config.provider,
+    supersededQueued: false,
+    modelInfo: null,
+    compactionEnqueued: false,
+  }) as Promise<ContextBudgetReevaluationCtx>;
 }

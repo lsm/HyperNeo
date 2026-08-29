@@ -1126,6 +1126,75 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('removePendingInternalCompactions keeps a delivered compaction outstanding', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const sent = q.enqueue('/compact', true, { durable: true });
+      void q.enqueueWithId('compact-queued', '/compact', true, { durable: true });
+      const userMessage = q.enqueueWithId('user-msg', 'finish the deploy', false);
+      const generator = q.messageGenerator(testSessionId);
+      const result = await generator.next();
+      result.value.onSent();
+      await sent;
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      expect(q.hasQueuedInternalCompaction()).toBe(true);
+
+      const removed = q.removePendingInternalCompactions();
+
+      expect(removed).toBe(1);
+      expect(q.hasQueuedInternalCompaction()).toBe(false);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(true);
+      expect(q.hasOutstandingInternalCompaction()).toBe(true);
+      expect(q.hasQueuedMessages()).toBe(true);
+      q.stop();
+      q.clear();
+      await userMessage.catch(() => {});
+    });
+
+    it('a delivery hold keeps a queued compaction from bypassing the gate until released', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const compaction = q.enqueue('/compact', true, { durable: true });
+      expect(q.hasQueuedInternalCompaction()).toBe(true);
+      const generator = q.messageGenerator(testSessionId);
+
+      q.holdInternalCompactionDelivery();
+      let delivered = false;
+      const nextPromise = generator.next().then((result) => {
+        delivered = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(delivered).toBe(false);
+
+      q.releaseInternalCompactionDelivery();
+      const result = await Promise.race([
+        nextPromise,
+        new Promise((resolve) => setTimeout(resolve, 500)).then(() => 'timeout'),
+      ]);
+      expect(result).not.toBe('timeout');
+      (
+        result as unknown as {
+          value: { onSent: () => void };
+        }
+      ).value.onSent();
+      await compaction;
+      q.stop();
+    });
+
+    it('an empty-queue interrupt advances the user-interrupt epoch without a clear', () => {
+      const q = new MessageQueue();
+      q.start();
+      const clearEpochBefore = q.getClearEpoch();
+      const interruptEpochBefore = q.getUserInterruptEpoch();
+
+      q.noteUserInterrupt();
+
+      expect(q.getClearEpoch()).toBe(clearEpochBefore);
+      expect(q.getUserInterruptEpoch()).toBe(interruptEpochBefore + 1);
+      q.stop();
+    });
+
     it('a queue restart clears outstanding compaction state so prompts are not held', async () => {
       const q = new MessageQueue();
       q.start();

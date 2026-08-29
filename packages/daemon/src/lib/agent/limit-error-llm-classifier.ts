@@ -262,11 +262,11 @@ export class LimitErrorLlmClassifier {
           deadline
         );
         if (!providerEnvVars) return null;
-        const query =
-          this.deps.queryForTesting ?? (await import('@anthropic-ai/claude-agent-sdk')).query;
         const mergedEnv = mergeProviderEnvVars(providerEnvVars as Record<string, string>);
         providerService.restoreEnvVars(originalEnv);
         originalEnv = {};
+        const query =
+          this.deps.queryForTesting ?? (await import('@anthropic-ai/claude-agent-sdk')).query;
         const agentQuery = query({
           prompt: buildPrompt(rawText, now),
           options: {
