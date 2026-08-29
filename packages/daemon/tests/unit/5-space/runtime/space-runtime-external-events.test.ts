@@ -2959,6 +2959,26 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
     });
 
+    test('a reopen restores parked idle sessions before re-arming their deliveries', async () => {
+      const { task, event, executionId } = await runWithPendingDelivery({
+        taskStatus: 'stopped',
+      });
+      bindLiveSession(executionId, 'session-reopen-parked', { status: 'idle' });
+      tam.alive.delete('session-reopen-parked');
+      tam.tryResumeNodeAgentSession = async () => {
+        tam.alive.add('session-reopen-parked');
+      };
+
+      const reopened = await runtime.stopWorkflowBackedTaskForStatus(SPACE_ID, task.id, {
+        status: 'open',
+      });
+      expect(reopened?.status).toBe('open');
+      await wait(300);
+
+      expect(digestRowCount('session-reopen-parked')).toBe(1);
+      expect(eventStore.listDeliveries(event.id)[0]!.state).toBe('delivered');
+    });
+
     test('cancelling a stopped task leaves its persisted pending deliveries inert', async () => {
       const { run, task, event } = await runWithPendingDelivery({ taskStatus: 'stopped' });
       bindLiveSession(

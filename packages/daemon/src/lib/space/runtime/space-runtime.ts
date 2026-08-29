@@ -2952,7 +2952,7 @@ export class SpaceRuntime {
           );
         }
       } else if (previous.status === 'stopped') {
-        this.tryRequeuePendingDeliveries(this.pausedSpaceIds, previous.workflowRunId);
+        await this.restoreParkedNodeSessionsAndRequeue(previous.workflowRunId);
       }
       return updated;
     }
@@ -3812,6 +3812,34 @@ export class SpaceRuntime {
       );
     }
     return true;
+  }
+
+  private async restoreParkedNodeSessionsAndRequeue(workflowRunId: string): Promise<void> {
+    const tam = this.config.taskAgentManager;
+    if (tam) {
+      await Promise.all(
+        this.config.nodeExecutionRepo
+          .listByWorkflowRun(workflowRunId)
+          .filter(
+            (execution) =>
+              !!execution.agentSessionId && !this.isTargetSessionLive(execution.agentSessionId)
+          )
+          .map((execution) =>
+            tam
+              .tryResumeNodeAgentSession(
+                workflowRunId,
+                execution.agentName,
+                execution.workflowNodeId ?? undefined
+              )
+              .catch((err: unknown) => {
+                log.warn(
+                  `SpaceRuntime: failed to restore parked node-agent session ${execution.agentSessionId} for run ${workflowRunId}: ${err instanceof Error ? err.message : String(err)}`
+                );
+              })
+          )
+      );
+    }
+    this.tryRequeuePendingDeliveries(this.pausedSpaceIds, workflowRunId);
   }
 
   requeuePendingDeliveriesForRun(workflowRunId: string): void {
