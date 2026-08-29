@@ -981,7 +981,7 @@ describe('voice RPC handlers', () => {
     expect(fetchedUrl).toBe('http://[2606:4700:4700::1111]/v1/audio/transcriptions');
   });
 
-  it('times out transcription requests after 60 seconds', async () => {
+  it('times out transcription requests after 120 seconds', async () => {
     const abortFetch = (_init?: RequestInit) =>
       new Promise((_resolve, reject) => {
         const signal = _init?.signal;
@@ -1007,7 +1007,7 @@ describe('voice RPC handlers', () => {
     try {
       await expect(
         handlers.get('voice.transcribe')?.({ audioBase64: wavBase64(), mimeType: 'audio/wav' })
-      ).rejects.toThrow('Voice transcription timed out after 60 seconds');
+      ).rejects.toThrow('Voice transcription timed out after 120 seconds');
     } finally {
       globalThis.setTimeout = originalSetTimeout;
       globalThis.clearTimeout = originalClearTimeout;
