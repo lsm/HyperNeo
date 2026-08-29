@@ -61,12 +61,17 @@ export class QueryModeHandler {
       type DigestRowFilter = ((uuid: string) => boolean) | null;
       let digestRowFilter: DigestRowFilter = null;
       try {
-        const outcome = await this.ctx.renderPendingDigest?.(session.id, session.context?.taskId);
+        const renderDigest = this.ctx.renderPendingDigest;
+        const outcome = renderDigest
+          ? await renderDigest(session.id, session.context?.taskId)
+          : null;
         if (outcome == null) {
-          logger.warn(
-            `turn-end digest pull for session ${session.id} was unavailable ` +
-              `(runtime stopped or digest pipeline missing) — flushing without the digest`
-          );
+          if (renderDigest) {
+            logger.warn(
+              `turn-end digest pull for session ${session.id} was unavailable ` +
+                `(runtime stopped or digest pipeline missing) — flushing without the digest`
+            );
+          }
         } else if (outcome.action === 'delivered') {
           digestRowFilter = (uuid) => uuid === outcome.uuid;
         } else if (outcome.action === 'skip') {
