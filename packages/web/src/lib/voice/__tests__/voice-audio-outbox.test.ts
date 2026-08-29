@@ -27,6 +27,7 @@ vi.mock('../voice-transcript-outbox.ts', async (importOriginal) => ({
 
 import { connectionManager } from '../../connection-manager.ts';
 import { connectionState } from '../../state.ts';
+import { voiceRecorderStore } from '../voice-recorder-store.ts';
 import {
   beginInteractiveVoiceSubmit,
   endInteractiveVoiceSubmit,
@@ -56,6 +57,8 @@ describe('voice audio outbox', () => {
   beforeEach(() => {
     resetVoiceAudioOutbox();
     store.records = [];
+    voiceRecorderStore.isRecording.value = false;
+    voiceRecorderStore.isStarting.value = false;
     hubRequest.mockReset().mockImplementation(async () => ({ text: 'hello world' }));
     enqueueTranscript.mockReset().mockReturnValue(true);
     vi.mocked(connectionManager.getHubIfConnected)
@@ -127,6 +130,36 @@ describe('voice audio outbox', () => {
     await flushPendingVoiceAudio();
 
     expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', 'rec-1');
+    expect(store.records).toEqual([]);
+  });
+
+  it('hands delivery to the text outbox even when its durable write fails', async () => {
+    seedEntry();
+    hubRequest.mockImplementation(async (method: string) => {
+      if (method === 'session.appendVoiceDraft') {
+        throw new Error('Pending voice draft is at the character limit');
+      }
+      return { text: 'hello world' };
+    });
+    enqueueTranscript.mockReturnValue(false);
+    await flushPendingVoiceAudio();
+
+    expect(enqueueTranscript).toHaveBeenCalledWith('s1', 'hello world', 'rec-1');
+    expect(store.records).toEqual([]);
+  });
+
+  it('defers the flush while a recording is active', async () => {
+    vi.useFakeTimers();
+    seedEntry();
+    voiceRecorderStore.isRecording.value = true;
+    await flushPendingVoiceAudio();
+
+    expect(hubRequest).not.toHaveBeenCalled();
+    expect(store.records).toHaveLength(1);
+
+    voiceRecorderStore.isRecording.value = false;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(hubRequest).toHaveBeenCalled();
     expect(store.records).toEqual([]);
   });
 

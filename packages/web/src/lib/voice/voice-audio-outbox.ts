@@ -7,7 +7,7 @@ import {
   listVoiceRecords,
   type VoiceRecordEntry,
 } from './voice-audio-store.ts';
-import type { VoiceRecording } from './voice-recorder-store.ts';
+import { type VoiceRecording, voiceRecorderStore } from './voice-recorder-store.ts';
 import { runVoiceSubmit } from './voice-submit-pipeline.ts';
 import { enqueueTranscript, isPermanentAppendRefusal } from './voice-transcript-outbox.ts';
 
@@ -57,6 +57,14 @@ export function endInteractiveVoiceSubmit(): void {
   interactiveSubmits = Math.max(0, interactiveSubmits - 1);
 }
 
+function hasInteractiveVoiceActivity(): boolean {
+  return (
+    interactiveSubmits > 0 ||
+    voiceRecorderStore.isRecording.value ||
+    voiceRecorderStore.isStarting.value
+  );
+}
+
 export async function refreshPendingVoiceAudio(): Promise<void> {
   pendingVoiceAudioRecords.value = await listVoiceRecords();
 }
@@ -86,7 +94,7 @@ export async function flushPendingVoiceAudio(): Promise<void> {
   if (flushInProgress) return;
   const hub = connectionManager.getHubIfConnected();
   if (!hub) return;
-  if (interactiveSubmits > 0) {
+  if (hasInteractiveVoiceActivity()) {
     scheduleFollowUpFlush();
     return;
   }
@@ -103,13 +111,10 @@ export async function flushPendingVoiceAudio(): Promise<void> {
     transcript: string,
     error: unknown
   ): Promise<void> => {
-    if (isPermanentAppendRefusal(error)) {
-      await deleteVoiceRecord(entry.id);
-    } else if (enqueueTranscript(entry.sessionId, transcript, entry.id)) {
-      await deleteVoiceRecord(entry.id);
-    } else {
-      defer(entry.sessionId);
+    if (!isPermanentAppendRefusal(error)) {
+      enqueueTranscript(entry.sessionId, transcript, entry.id);
     }
+    await deleteVoiceRecord(entry.id);
   };
   try {
     const pending = (await listVoiceRecords()).filter((entry) => !isVoiceAudioBusy(entry.id));
@@ -120,7 +125,7 @@ export async function flushPendingVoiceAudio(): Promise<void> {
     for (const entry of pending) {
       if (!connectionManager.getHubIfConnected()) break;
       if (deferredSessions.has(entry.sessionId)) continue;
-      if (interactiveSubmits > 0 || isVoiceAudioBusy(entry.id)) {
+      if (hasInteractiveVoiceActivity() || isVoiceAudioBusy(entry.id)) {
         needsRetry = true;
         continue;
       }
