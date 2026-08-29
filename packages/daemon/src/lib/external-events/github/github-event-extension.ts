@@ -35,6 +35,7 @@ import {
 } from './github-pr-head-ref-index.ts';
 import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state.ts';
 import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields.ts';
+import { decideSelfEchoFilter, resolveFilteredLogins } from './github-self-echo.ts';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
@@ -660,6 +661,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         kind: 'watched_repo_changed',
       });
       return { spaceId: params.spaceId, pollingEnabled: params.enabled };
+    });
+
+    hub.onRequest('space.github.setFilterCurrentUser', async (data) => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      const params = data as { spaceId?: string; enabled?: boolean };
+      if (!params.spaceId || typeof params.enabled !== 'boolean') {
+        throw new Error('spaceId and enabled are required');
+      }
+      this.repo.setFilterCurrentUser(params.spaceId, params.enabled);
+      await this.persistSpaceConfig(context, params.spaceId);
+      context.onSourceConfigChanged({
+        source: this.sourceId,
+        spaceId: params.spaceId,
+        kind: 'watched_repo_changed',
+      });
+      return { spaceId: params.spaceId, filterCurrentUser: params.enabled };
     });
   }
 
@@ -1331,15 +1348,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
   }
 
-  private async resolveTokenStatus(lightweight: boolean): Promise<GitHubTokenStatus> {
+  private cachedTokenStatus(): GitHubTokenStatus | null {
     if (
-      lightweight &&
       this.lastTokenStatus !== null &&
       this.lastTokenStatusGeneration === this.credentialGeneration &&
       Date.now() - this.lastTokenStatusAt < TOKEN_STATUS_CACHE_TTL_MS &&
       credentialFingerprint(this.lastResolvedToken) === this.lastTokenStatus.validatedFingerprint
     ) {
       return this.lastTokenStatus;
+    }
+    return null;
+  }
+
+  private async resolveTokenStatus(lightweight: boolean): Promise<GitHubTokenStatus> {
+    if (lightweight) {
+      const cached = this.cachedTokenStatus();
+      if (cached) return cached;
     }
     const generationBefore = this.credentialGeneration;
     const token = await this.getTokenStatus();
@@ -1736,6 +1760,27 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     event: import('./github-normalizer.ts').NormalizedGitHubEvent,
     context: ExternalEventExtensionContext
   ): Promise<void> {
+    const spaceConfig = await context.config.getSpaceConfig(spaceId, this.sourceId);
+    const filterCurrentUser =
+      (spaceConfig?.settings as { filterCurrentUser?: boolean } | undefined)?.filterCurrentUser !==
+      false;
+    const tokenLogin = this.cachedTokenStatus()?.login ?? '';
+    if (
+      decideSelfEchoFilter({
+        initiatorLogin: event.actor,
+        filteredLogins: resolveFilteredLogins({ filterCurrentUser, tokenLogin }),
+        enabled: filterCurrentUser,
+      }) === 'drop'
+    ) {
+      log.debug('GitHub self-echo event dropped before publish', {
+        spaceId,
+        eventType: event.eventType,
+        action: event.action,
+        actor: event.actor,
+        filteredLogin: tokenLogin,
+      });
+      return;
+    }
     await context.publisher.publish(toExternalEvent(spaceId, event));
   }
 
@@ -1750,6 +1795,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       enabled: this.repo.isSpaceEnabled(spaceId),
       settings: {
         pollingIntent: this.repo.getPollingIntent(spaceId),
+        filterCurrentUser: this.repo.getFilterCurrentUser(spaceId),
         watchedRepos: repos.map((repo) => ({
           id: repo.id,
           owner: repo.owner,
