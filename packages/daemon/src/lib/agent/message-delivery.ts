@@ -1,5 +1,6 @@
-import type { MessageContent } from '@hyperneo/shared';
+import { createLogger, type MessageContent } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
@@ -468,7 +469,146 @@ export async function awaitDeliveryConsumption(args: {
 
 const sessionLocks = new Map<string, Promise<unknown>>();
 
+const COORDINATION_LOG = createLogger('hyperneo:daemon:message-delivery.coordination');
+
+const COORDINATION_ACQUIRE_TIMEOUT_MS = 8_000;
+const COORDINATION_LEAK_CEILING_MS = 900_000;
+const COORDINATION_HOLD_WARN_MS = 30_000;
+
+export function getCoordinationAcquireTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number.parseInt(env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS ?? '', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : COORDINATION_ACQUIRE_TIMEOUT_MS;
+}
+
+export function getCoordinationLeakCeilingMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number.parseInt(env.HYPERNEO_DELIVERY_COORDINATION_LEAK_CEILING_MS ?? '', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : COORDINATION_LEAK_CEILING_MS;
+}
+
+export class SessionCoordinationStallError extends Error {
+  constructor(sessionId: string, waitedMs: number, holderAgeMs: number) {
+    super(
+      `Session ${sessionId} is still completing a prior operation ` +
+        `(waited ${Math.round(waitedMs / 1000)}s, prior holder age ` +
+        `${Math.round(holderAgeMs / 1000)}s). Try again shortly.`
+    );
+    this.name = 'SessionCoordinationStallError';
+  }
+}
+
 export const sessionResetCoordinationLocks = new Map<string, Promise<unknown>>();
+
+const sessionResetCoordinationHolderArmedAt = new Map<string, number>();
+
+type CoordinationCtx = {
+  sessionId: string;
+  fn: () => Promise<unknown>;
+  signal?: AbortSignal;
+  prev: Promise<unknown>;
+  release: () => void;
+  armedAt: number;
+  acquired: boolean;
+  timedOut: boolean;
+  holderAgeMs: number;
+  result: unknown;
+};
+
+function armCoordinationTail(sessionId: string): {
+  prev: Promise<unknown>;
+  release: () => void;
+} {
+  const prev = sessionResetCoordinationLocks.get(sessionId) ?? Promise.resolve();
+  let releaseHeld!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseHeld = resolve;
+  });
+  const tail = prev.then(() => held);
+  sessionResetCoordinationLocks.set(sessionId, tail);
+  return {
+    prev,
+    release: () => {
+      releaseHeld();
+      if (sessionResetCoordinationLocks.get(sessionId) === tail) {
+        sessionResetCoordinationLocks.delete(sessionId);
+      }
+    },
+  };
+}
+
+async function awaitCoordinationSlotStage(ctx: CoordinationCtx): Promise<CoordinationCtx> {
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<'deadline'>((resolve) => {
+    deadlineTimer = setTimeout(() => resolve('deadline'), getCoordinationAcquireTimeoutMs());
+  });
+  const aborted = waitForDeliveryAbort(ctx.signal);
+  try {
+    const winner = await Promise.race([
+      ctx.prev.then(() => 'acquired' as const),
+      deadline,
+      aborted.promise.then(() => 'aborted' as const),
+    ]);
+    if (winner === 'deadline') {
+      ctx.timedOut = true;
+      const armedAt = sessionResetCoordinationHolderArmedAt.get(ctx.sessionId);
+      ctx.holderAgeMs =
+        armedAt === undefined ? getCoordinationLeakCeilingMs() : Date.now() - armedAt;
+      return ctx;
+    }
+    throwIfDeliveryAborted(ctx.signal);
+    ctx.acquired = true;
+    ctx.armedAt = Date.now();
+    sessionResetCoordinationHolderArmedAt.set(ctx.sessionId, ctx.armedAt);
+    return ctx;
+  } finally {
+    clearTimeout(deadlineTimer);
+    aborted.cancel();
+  }
+}
+
+async function reclaimLeakedCoordinationStage(ctx: CoordinationCtx): Promise<CoordinationCtx> {
+  if (!ctx.timedOut || ctx.holderAgeMs < getCoordinationLeakCeilingMs()) return ctx;
+  COORDINATION_LOG.error(
+    `delivery-coordination: holder for session ${ctx.sessionId} exceeded ` +
+      `${getCoordinationLeakCeilingMs()}ms (age ${ctx.holderAgeMs}ms); reclaiming the slot`
+  );
+  sessionResetCoordinationLocks.delete(ctx.sessionId);
+  sessionResetCoordinationHolderArmedAt.delete(ctx.sessionId);
+  const armed = armCoordinationTail(ctx.sessionId);
+  ctx.prev = armed.prev;
+  ctx.release = armed.release;
+  ctx.acquired = true;
+  ctx.timedOut = false;
+  ctx.armedAt = Date.now();
+  sessionResetCoordinationHolderArmedAt.set(ctx.sessionId, ctx.armedAt);
+  return ctx;
+}
+
+async function runExclusiveCoordinationStage(ctx: CoordinationCtx): Promise<CoordinationCtx> {
+  const warnTimer = setTimeout(() => {
+    COORDINATION_LOG.warn(
+      `delivery-coordination: session ${ctx.sessionId} has held the slot for ` +
+        `${COORDINATION_HOLD_WARN_MS}ms (notice-only)`
+    );
+  }, COORDINATION_HOLD_WARN_MS);
+  try {
+    ctx.result = await ctx.fn();
+    return ctx;
+  } finally {
+    clearTimeout(warnTimer);
+  }
+}
+
+const runDeliveryCoordination = (
+  superpipe({
+    isTimedOut: (ctx: CoordinationCtx) => ctx.timedOut,
+  })('delivery-coordination') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(awaitCoordinationSlotStage, 'ctx', 'ctx')
+  .pipe(reclaimLeakedCoordinationStage, 'ctx', 'ctx')
+  .pipe('!isTimedOut', 'ctx')
+  .pipe(runExclusiveCoordinationStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: CoordinationCtx) => Promise<CoordinationCtx>;
 
 export async function withSessionResetCoordination<T>(
   sessionId: string,
@@ -476,30 +616,40 @@ export async function withSessionResetCoordination<T>(
   signal?: AbortSignal
 ): Promise<T> {
   throwIfDeliveryAborted(signal);
-  const prev = sessionResetCoordinationLocks.get(sessionId) ?? Promise.resolve();
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const tail = prev.then(() => held);
-  sessionResetCoordinationLocks.set(sessionId, tail);
-  const aborted = waitForDeliveryAbort(signal);
-  let acquired = false;
-  try {
-    await Promise.race([prev, aborted.promise]);
-    throwIfDeliveryAborted(signal);
-    acquired = true;
-    return await fn();
-  } finally {
-    aborted.cancel();
-    const releaseLock = () => {
-      release();
-      if (sessionResetCoordinationLocks.get(sessionId) === tail) {
-        sessionResetCoordinationLocks.delete(sessionId);
+  const armed = armCoordinationTail(sessionId);
+  const ctx: CoordinationCtx = {
+    sessionId,
+    fn,
+    signal,
+    prev: armed.prev,
+    release: () => {
+      armed.release();
+      if (sessionResetCoordinationHolderArmedAt.get(sessionId) === ctx.armedAt) {
+        sessionResetCoordinationHolderArmedAt.delete(sessionId);
       }
-    };
-    if (acquired) releaseLock();
-    else void prev.finally(releaseLock);
+    },
+    armedAt: 0,
+    acquired: false,
+    timedOut: false,
+    holderAgeMs: 0,
+    result: undefined,
+  };
+  try {
+    const settled = (await runDeliveryCoordination(ctx)) as CoordinationCtx;
+    if (settled.timedOut) {
+      throw new SessionCoordinationStallError(
+        sessionId,
+        getCoordinationAcquireTimeoutMs(),
+        settled.holderAgeMs
+      );
+    }
+    return settled.result as T;
+  } finally {
+    if (ctx.acquired) {
+      ctx.release();
+    } else {
+      void ctx.prev.finally(ctx.release);
+    }
   }
 }
 
