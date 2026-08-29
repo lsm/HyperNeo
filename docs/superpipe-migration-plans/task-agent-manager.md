@@ -4,10 +4,10 @@ Measured map of `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`
 (5,065 lines; 365 `if`/`else if` arms + 74 ternaries + switch cases ≈ 405+
 branches) against ADR 0004. Measure-only slice: no source changes are proposed
 here. Child implementation slices are cut by the coordinator after owner review.
-The ladder below is the current 36-row table (pin / build / wire / delete /
-extract) — 35 mandatory slices plus the optional TAM-H non-superpipe
+The ladder below is the current 37-row table (pin / build / wire / delete /
+extract) — 36 mandatory slices plus the optional TAM-H non-superpipe
 extraction, which does not count toward the mandatory ladder; coordinators
-cut child issues from that table, not from any earlier summary of it. The 35
+cut child issues from that table, not from any earlier summary of it. The 36
 mandatory slices form a BROAD DEPENDENCY GRAPH (status writers, rehydration,
 delivery, routing); the owner should validate the coordination cost of this
 ladder before the coordinator cuts child issues.
@@ -641,7 +641,7 @@ tests ride their slice. Exact cut is the coordinator's after owner review.
 | TAM-F2 | Wire `spawnPostApprovalSubSession` | wire | ≲40 | ≲50 | TAM-F1 |
 | TAM-G1 | Status-guarded settlement/error repository primitive (risk 5) — additive, with its race-correctness tests | build | ≲60 | ≲80 | TAM-PG |
 | TAM-G2 | Atomic pending-row claim repository primitive — additive, with its lost-claim race test | build | ≲50 | ≲60 | TAM-PG |
-| TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap), consuming G1 + G2 | build+wire | ≲100 | ≲80 | TAM-G1, TAM-G2 |
+| TAM-G | `deliver-space-agent-pending-row` pipeline — trivial build+wire combined per the stated exception (≲100-line pipeline, one internal call site, few-line swap), consuming G1 + G2 | build+wire | ≲100 | ≲80 | TAM-G1, TAM-G2, TAM-GW, TAM-GR |
 | TAM-GW | REWIRE the late-settlement watcher (:1534–1586) to consume TAM-G1's status-guarded settlement — its `getById(...).status === 'pending'` + blind `markDelivered` (:1553–1555) can otherwise overwrite a row G1's injector-error path already failed as delivered; explicit deps + tests for the read-pending/injector-error/watcher-write interleaving; lands before the old blind-write behavior is removed | wire | ≲40 | ≲60 | TAM-G1 |
 | TAM-GR | REWIRE `reconcileRows` (`space-agent-pending-drain.ts:78–82`) to consume G1's guarded settlement — it retains its own `getById(...pending)` + `markDelivered` + UNCONDITIONAL `onSettled` (:108 error branch uses the unguarded error write), so a concurrent failure makes the repository update a no-op but `onSettled` still emits `space.pendingMessage.delivered`; emit only when the settlement WINS, with the same read-pending/concurrent-failure interleaving | wire | ≲40 | ≲60 | TAM-G1 |
 | TAM-S1 | `self-heal-node-agent` stagedRun, unwired (prologue gates via the TAM-FH fenced repair helper + adoption admission composed in front of the existing heal stages; heal workspace routed through `resolveTaskWorkspace`; adoption at the manager-owned pre-heal boundary) | build | ≲140 | ≲120 | TAM-PS, TAM-FH, TAM-LH (shared lock-handle contract — S1 consumes no E1 delivery behavior, so it depends on the primitive directly, not the delivery build). S1 carries the SELF-HEAL LOCK BOUNDARY: displaced-session adoption finishes BEFORE acquisition, only the heal tail runs while the handle is held, and successful completion EXPLICITLY releases (compensations do not unwind on success) — with a waiter test; wiring the whole runner under the callback-form lock or omitting the success release would move adoption under coordination or permanently block later injection/reset callers |
