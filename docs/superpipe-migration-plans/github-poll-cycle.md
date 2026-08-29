@@ -112,6 +112,10 @@ guard. Each inline occurrence is ~30–45 lines; the five cycle sites total
   real fetch sites, so its parity oracle lives with the classifier build,
   not in GH-P1a (which stays limited to behavior reachable through current
   fetch sites).
+- **The two phases are ONE policy at one loop.** The body read between them
+  is an awaited data dependency inside the policy, not a seam — each
+  GH-E1b–f wire slice installs BOTH phases and may await inside its policy
+  (see the seam contract in the slice ladder).
 - **What stays imperative:** the per-site control flow differs legitimately
   (endpoint scan `continue`s on network error; check-run sets `headSucceeded`;
   reaction clears `reactionsFullyPolled`; review breaks its page loop). The
@@ -326,7 +330,7 @@ GH-E1a lands additive and unwired per the playbook's build step.
 | Slice | Kind | Delivers | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
 | GH-P1a | pin | response-classification pins for the ENDPOINT family only (reachable 429-synthesis, secondary body-sniff, 304, low-remaining through the endpoint scan; synthetic 304-vs-limited cases live in GH-E1a — see C1). The other four families' pins ride their own wire slices (GH-E1c–f) | 0 | ≲150 | — |
-| GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × credentialStale × accessible × pollErrorMessage × prior-error presence/value × reactionsFullyPolled × reactionPolledAt × prior cursor.lastReactionPollAt × current token fingerprint × prior cursor.lastPollCredentialFingerprint` — the error fields are load-bearing fallbacks at :3154, :3161–3165, the reaction timestamp reads all three reaction axes at :3196–3198, and the credential fingerprint is written from the current token only when accessible (:3199–3201) — → committed/pending watermarks, error fields, reaction timestamp, credential fingerprint, write split) | 0 | ≲350 | — |
+| GH-P1b | pin | cursor-commit policy matrix (`partialScan × hasBacklog × deferred × credentialStale × accessible × pollErrorMessage × prior-error presence/value × reactionsFullyPolled × reactionPolledAt × prior cursor.lastReactionPollAt × current token fingerprint × prior cursor.lastPollCredentialFingerprint` — the error fields are load-bearing fallbacks at :3154, :3161–3165, the reaction timestamp reads all three reaction axes at :3196–3198, and the credential fingerprint is written from the current token only when accessible (:3199–3201) — → committed/pending watermarks, error fields, reaction timestamp, credential fingerprint, write split). MUST also assert the COMPLETE payload: every carried cursor field from :3173–3193 (etags, processedPages, recent PR/head indexes, check-run watermarks/etags/legacy PRs, pullsSeedInProgress, seen IDs, merge/review/reaction state, endpoint watermarks) — all `PollCursor` fields are optional, so an extraction that silently drops a carried field would still satisfy the branch outputs and restart pages or republish events | 0 | ≲400 | — |
 | GH-E1a | build | C1 `github-poll-response.ts` two-phase classifiers + precedence + backoff, UNWIRED, incl. synthetic 304-vs-limited decision tests as the precedence parity oracle (cycle contract only; `githubFetch` keeps its own classification — open question 1) | ≲80 | ≲250 | GH-P1a |
 | GH-E1b | wire | swap endpoint scan (limited-first precedence; rides GH-P1a pins) | ≲40 net | ≲120 | GH-E1a, GH-P1a |
 | GH-E1c | wire | swap check-run scan (limited-first; carries its family's pins) | ≲40 net | ≲150 | GH-E1b |
@@ -352,10 +356,16 @@ entry family (a loop) for wire slices, and within one loop a NAMED POLICY
 (not a helper): a slice may swap one policy's helper family at several
 program points of one loop when those points form that single policy
 (GH-E2's watermark/seed/cutoff/advance are one endpoint-watermark policy at
-the pre-fetch, post-decode, and post-publish points of the endpoint loop);
-separate policies in the same loop, different loops, row-vs-scan levels, or
-decisions separated by an effect each get their own slice (E3b vs E3c, E4a
-vs E4b, E5b vs E5c, E1b–f). May not touch the loops' control flow, the class
+the pre-fetch, post-decode, and post-publish points of the endpoint loop).
+Separate POLICIES get their own slice: different loops (E1b–f), separate
+policies in one loop (E3b vs E3c), row-vs-scan levels (E5b vs E5c). An
+awaited effect BETWEEN two policies forces the split (the synchronous store
+lookup between E4a's supersession and E4b's legacy-owner decisions); an
+awaited data dependency WITHIN one policy does not — the two classifier
+phases of response classification sit on either side of
+`await response.text()`, but they are one policy at one loop, so each
+GH-E1b–f wire slice installs both phases and MAY await inside its policy.
+May not touch the loops' control flow, the class
 state methods, or the scheduler. Merge contract per slice:
 "verbatim-move extraction, zero behavior change, existing fake-fetch suites
 green" (C3a–c: "mutator extraction, zero behavior change" — see the purity
