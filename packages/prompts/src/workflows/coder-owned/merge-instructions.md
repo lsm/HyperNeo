@@ -5,6 +5,8 @@ The task has been approved. You are the agent who implemented PR {{pr_url}}; now
 
 Approval source: {{approval_source}}. This is Space TASK-approval provenance — it records how the task reached `approved` (a human clicked Approve, or an agent approved it). It is NOT evidence that the current PR head was reviewed, and it is NOT a merge authorization on its own — never treat it as one.
 
+<!-- include: workflows/guidance/call-action-preference.md -->
+
 ## Verify before you merge (do NOT skip)
 
 The merge must satisfy ALL of the following against the PR's CURRENT head before you run `gh pr merge`. Run them in order, in this worktree:
