@@ -283,6 +283,29 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
   });
 
+  test('a running but unreplayed worker reconciles replay on a later default lookup', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
+    ).config.workflowRunRepo.getRun = () => ({ id: RUN_ID, status: 'in_progress' });
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    (
+      fake.agentSession as unknown as { isQueryActiveOrStarting: () => boolean }
+    ).isQueryActiveOrStarting = () => true;
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fake.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await tam.provisionWorkflowSession(fake.agentSession, { replayPendingMessages: false });
+    expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
+    expect(fake.state.calls.filter((call) => call === 'startStreamingQuery')).toHaveLength(1);
+
+    await tam.provisionWorkflowSession(fake.agentSession, {});
+
+    expect(fake.state.calls.filter((call) => call === 'startStreamingQuery')).toHaveLength(1);
+    expect(fake.state.calls).toContain('replayPendingMessagesForImmediateMode');
+  });
+
   test('starts an indexed idle worker when a later default provisioning requests startup', async () => {
     const { tam } = makeManager();
     (

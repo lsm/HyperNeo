@@ -80,6 +80,7 @@ export class SessionManager {
   >();
   private workflowMcpProvisioned = new WeakSet<AgentSession>();
   private workflowQueryStarted = new WeakSet<AgentSession>();
+  private workflowReplayCompleted = new WeakSet<AgentSession>();
 
   constructor(
     private db: Database,
@@ -458,13 +459,28 @@ export class SessionManager {
     return isWorkflowSubSessionIdentity(session.getSessionData().id);
   }
 
+  private provisioningSatisfies(
+    session: AgentSession,
+    options: { startQuery?: boolean; replayPendingMessages?: boolean }
+  ): boolean {
+    if (options.startQuery !== false && !this.workflowQueryStarted.has(session)) return false;
+    if (
+      options.startQuery !== false &&
+      options.replayPendingMessages !== false &&
+      !this.workflowReplayCompleted.has(session)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
   private async provisionWorkflowMcpServers(
     session: AgentSession,
     options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<void> {
     if (!this.isWorkflowSubSession(session)) return;
     if (this.workflowMcpProvisioned.has(session)) {
-      if (options.startQuery === false || this.workflowQueryStarted.has(session)) return;
+      if (this.provisioningSatisfies(session, options)) return;
     }
     if (session.getSessionData().status === 'archived') return;
 
@@ -476,7 +492,7 @@ export class SessionManager {
     if (existing) {
       if (existing.session === session) {
         await existing.promise;
-        if (options.startQuery === false || this.workflowQueryStarted.has(session)) return;
+        if (this.provisioningSatisfies(session, options)) return;
       } else {
         await existing.promise.catch(() => {});
         const cached = this.getCachedSession(sessionId);
@@ -484,7 +500,7 @@ export class SessionManager {
           if (cached) await this.provisionWorkflowMcpServers(cached, options);
           return;
         }
-        if (options.startQuery === false || this.workflowQueryStarted.has(session)) return;
+        if (this.provisioningSatisfies(session, options)) return;
       }
     }
 
@@ -499,6 +515,9 @@ export class SessionManager {
       this.workflowMcpProvisioned.add(session);
       if (options.startQuery !== false && session.isQueryActiveOrStarting()) {
         this.workflowQueryStarted.add(session);
+      }
+      if (options.startQuery !== false && options.replayPendingMessages !== false) {
+        this.workflowReplayCompleted.add(session);
       }
     }
   }

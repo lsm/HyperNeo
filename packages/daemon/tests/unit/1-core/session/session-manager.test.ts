@@ -421,6 +421,26 @@ describe('SessionManager', () => {
       } as unknown as AgentSession;
     };
 
+    it('reconciles suppressed replay when a later default lookup requests it', async () => {
+      const sessionId = 'space:s1:task:t1:exec:e11';
+      const worker = makeWorkerFake(sessionId);
+      sessionManager.registerSession(worker);
+
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock(async (session: AgentSession) => {
+          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+        }),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      await sessionManager.getSessionAsync(sessionId, { replayPendingMessages: false });
+      await sessionManager.getSessionAsync(sessionId, {});
+      await sessionManager.getSessionAsync(sessionId, {});
+
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(2);
+    });
+
     it('re-requests startup when the provider attaches MCPs without starting', async () => {
       const mockSession: Session = {
         id: 'space:s1:task:t1:post-approval:coder',

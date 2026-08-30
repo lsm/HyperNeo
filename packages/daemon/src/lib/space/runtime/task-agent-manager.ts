@@ -2189,9 +2189,9 @@ export class TaskAgentManager {
       if (indexed && (indexed === suppliedSession || !suppliedSession)) {
         if (options.startQuery !== false && !indexed.isQueryActiveOrStarting()) {
           await indexed.startStreamingQuery();
-          if (options.replayPendingMessages !== false) {
-            await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
-          }
+        }
+        if (options.startQuery !== false && options.replayPendingMessages !== false) {
+          await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
         }
         return identity.sessionId;
       }
@@ -3629,9 +3629,9 @@ export class TaskAgentManager {
       if (indexed && (indexed === suppliedSession || !suppliedSession)) {
         if (options.startQuery !== false && !indexed.isQueryActiveOrStarting()) {
           await indexed.startStreamingQuery();
-          if (options.replayPendingMessages !== false) {
-            await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
-          }
+        }
+        if (options.startQuery !== false && options.replayPendingMessages !== false) {
+          await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
         }
         return indexed;
       }
