@@ -1210,6 +1210,7 @@ export function setupSessionHandlers(
       jobQueue: db.getJobQueueRepo(),
       sessionId: targetSessionId,
       messageUuids: [messageUuid],
+      dbIds: [message.dbId],
       origin: 'chat',
       publishStatusChanged: (messageIds) =>
         internalEventBus.publish('messages.statusChanged', {

@@ -1105,5 +1105,136 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(jobs[0].released).toBe(1);
       expect(jobPayload(db, SESSION, 'claim-released')?.__claimToken).toBe('live-claim');
     });
+
+    it('activatePrompts reuses the active batch job that owns the prompt as a member', async () => {
+      insertStatusRow('batch-member', 'deferred');
+      const batchJob = jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'batch-kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          released: true,
+          batchUuids: ['batch-kickoff', 'batch-member'],
+        },
+      });
+
+      const { activated } = await activatePrompts({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuids: ['batch-member'],
+        origin: 'recovery',
+      });
+
+      expect(activated).toHaveLength(1);
+      expect(activated[0].role).toBe('turn');
+      expect(rowStatus('batch-member')).toBe('enqueued');
+      const allJobs = db
+        .prepare(`SELECT COUNT(*) AS c FROM job_queue WHERE queue = ?`)
+        .get(MESSAGE_DELIVERY) as { c: number };
+      expect(allJobs.c).toBe(1);
+      expect(jobsFor('batch-kickoff')[0].id).toBe(batchJob.id);
+    });
+
+    it('retryPrompt reopens a batch member without disturbing the owning batch job', async () => {
+      insertStatusRow('batch-retry', 'failed');
+      const batchJob = jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'batch-retry-kickoff',
+          role: 'turn',
+          origin: 'recovery',
+          parentToolUseId: null,
+          released: true,
+          batchUuids: ['batch-retry-kickoff', 'batch-retry'],
+        },
+      });
+
+      const retried = await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'batch-retry',
+        origin: 'chat',
+      });
+
+      expect(retried?.role).toBe('turn');
+      expect(rowStatus('batch-retry')).toBe('enqueued');
+      const allJobs = db
+        .prepare(`SELECT COUNT(*) AS c FROM job_queue WHERE queue = ?`)
+        .get(MESSAGE_DELIVERY) as { c: number };
+      expect(allJobs.c).toBe(1);
+      const payload = jobPayload(db, SESSION, 'batch-retry-kickoff');
+      expect(jobsFor('batch-retry-kickoff')[0].id).toBe(batchJob.id);
+      expect(payload?.batchUuids).toEqual(['batch-retry-kickoff', 'batch-retry']);
+    });
+
+    it('retryPrompt revives a released processing claim instead of trusting its skip outcome', async () => {
+      insertStatusRow('retry-live', 'failed');
+      const liveJob = jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'retry-live',
+          role: 'turn',
+          origin: 'chat',
+          parentToolUseId: null,
+          released: true,
+          __claimToken: 'live-claim',
+        },
+        maxRetries: 8,
+      });
+      db.prepare(`UPDATE job_queue SET status = 'processing', retry_count = 5 WHERE id = ?`).run(
+        liveJob.id
+      );
+
+      const retried = await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'retry-live',
+        origin: 'chat',
+      });
+
+      expect(retried?.role).toBe('turn');
+      expect(rowStatus('retry-live')).toBe('enqueued');
+      const jobs = jobsFor('retry-live');
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].id).toBe(liveJob.id);
+      expect(jobs[0].status).toBe('pending');
+      expect(jobs[0].retryCount).toBe(0);
+      expect(jobPayload(db, SESSION, 'retry-live')?.__claimToken).toBeUndefined();
+    });
+
+    it('activatePrompts honors an explicit dbId over oldest-row reselection', async () => {
+      insertStatusRow('dup-db', 'deferred', 'db-dup-old');
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      insertStatusRow('dup-db', 'deferred', 'db-dup-picked');
+
+      const { activated } = await activatePrompts({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuids: ['dup-db'],
+        dbIds: ['db-dup-picked'],
+        origin: 'recovery',
+      });
+
+      expect(activated).toHaveLength(1);
+      expect(activated[0].dbId).toBe('db-dup-picked');
+      const statuses = db
+        .prepare(
+          `SELECT id, send_status FROM sdk_messages WHERE sdk_uuid = ? ORDER BY timestamp ASC, rowid ASC`
+        )
+        .all('dup-db') as Array<{ id: string; send_status: string }>;
+      expect(statuses).toEqual([
+        { id: 'db-dup-old', send_status: 'deferred' },
+        { id: 'db-dup-picked', send_status: 'enqueued' },
+      ]);
+    });
   });
 });

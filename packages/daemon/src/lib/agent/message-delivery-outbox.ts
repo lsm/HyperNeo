@@ -82,6 +82,7 @@ export interface ActivatePromptsArgs {
   jobQueue: JobQueueRepository;
   sessionId: string;
   messageUuids: string[];
+  dbIds?: Array<string | undefined>;
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
   publishStatusChanged?: OutboxStatusPublisher;
@@ -180,6 +181,7 @@ type EnsurePromptAppliedCtx = EnsurePromptSettledCtx & {
 
 type ActivatePromptsCtx = ActivatePromptsArgs & {
   uuids: string[];
+  rowIds: Array<string | undefined>;
 };
 
 type ActivatePromptsCommittedCtx = ActivatePromptsCtx & {
@@ -194,13 +196,23 @@ const DELIVERY_MAX_RETRIES = MESSAGE_DELIVERY_MAX_RETRIES;
 
 const ACTIVE_DELIVERY_JOB_SQL = `SELECT id AS job_id, status AS job_status,
     json_extract(payload, '$.role') AS role,
-    COALESCE(json_extract(payload, '$.released'), 1) AS released
+    COALESCE(json_extract(payload, '$.released'), 1) AS released,
+    CASE WHEN json_extract(payload, '$.messageUuid') = ? THEN 1 ELSE 0 END AS is_kickoff,
+    COALESCE(json_array_length(payload, '$.batchUuids'), 0) AS batch_size
   FROM job_queue
   WHERE queue = 'message_delivery'
     AND json_extract(payload, '$.sessionId') = ?
-    AND json_extract(payload, '$.messageUuid') = ?
     AND status IN ('pending', 'processing')
-  ORDER BY created_at DESC, rowid DESC
+    AND (
+      json_extract(payload, '$.messageUuid') = ?
+      OR EXISTS (
+        SELECT 1 FROM json_each(
+          CASE WHEN json_type(payload, '$.batchUuids') = 'array'
+               THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
+        ) AS je WHERE je.value = ?
+      )
+    )
+  ORDER BY is_kickoff DESC, created_at DESC, rowid DESC
   LIMIT 1`;
 
 const LATEST_DELIVERY_JOB_SQL = `SELECT id AS job_id
@@ -220,7 +232,8 @@ const HOLD_DELIVERY_JOB_SQL = `UPDATE job_queue
   WHERE id = ?`;
 
 const REVIVE_DELIVERY_JOB_SQL = `UPDATE job_queue
-  SET status = 'pending', run_at = ?, retry_count = 0, error = NULL, result = NULL,
+  SET status = 'pending', run_at = ?, retry_count = 0, max_retries = ?, error = NULL,
+      result = NULL,
       started_at = NULL, heartbeat_at = NULL, completed_at = NULL,
       payload = json_remove(
         json_set(
@@ -244,12 +257,13 @@ const REQUEUE_HELD_CLAIM_SQL = `UPDATE job_queue
 
 const ACTIVATE_PROMPT_ROW_SQL = `UPDATE sdk_messages
   SET send_status = 'enqueued'
-  WHERE id = (
+  WHERE id = COALESCE(?, (
     SELECT id FROM sdk_messages
     WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
       AND send_status IN ('deferred', 'enqueued')
     ORDER BY timestamp ASC, rowid ASC LIMIT 1
-  )
+  ))
+  AND send_status IN ('deferred', 'enqueued')
   RETURNING id AS db_id`;
 
 const RETRY_PROMPT_ROW_SQL = `UPDATE sdk_messages
@@ -284,9 +298,18 @@ function findActiveDeliveryJob(
   role: MessageDeliveryRole | null;
   released: boolean;
   processing: boolean;
+  batch: boolean;
 } | null {
-  const row = db.prepare(ACTIVE_DELIVERY_JOB_SQL).get(sessionId, messageUuid) as
-    | { job_id: string; job_status: string; role: unknown; released: number }
+  const row = db
+    .prepare(ACTIVE_DELIVERY_JOB_SQL)
+    .get(messageUuid, sessionId, messageUuid, messageUuid) as
+    | {
+        job_id: string;
+        job_status: string;
+        role: unknown;
+        released: number;
+        batch_size: number;
+      }
     | undefined;
   if (!row) return null;
   return {
@@ -294,6 +317,7 @@ function findActiveDeliveryJob(
     role: asDeliveryRole(row.role),
     released: row.released === 1,
     processing: row.job_status === 'processing',
+    batch: row.batch_size > 0,
   };
 }
 
@@ -340,7 +364,14 @@ function reviveDeliveryJob(
   const reviveAs = (role: MessageDeliveryRole) =>
     db
       .prepare(REVIVE_DELIVERY_JOB_SQL)
-      .run(Date.now(), role, basePayload.origin, basePayload.parentToolUseId ?? null, jobId);
+      .run(
+        Date.now(),
+        DELIVERY_MAX_RETRIES,
+        role,
+        basePayload.origin,
+        basePayload.parentToolUseId ?? null,
+        jobId
+      );
   try {
     if (reviveAs('turn').changes === 0) {
       return enqueueArbitratedDeliveryJob(jobQueue, basePayload);
@@ -399,8 +430,13 @@ function rePendingDeliveryJob(
 ): MessageDeliveryRole {
   const active = findActiveDeliveryJob(db, basePayload.sessionId, basePayload.messageUuid);
   if (active) {
-    if (active.processing) {
-      if (!active.released) return requeueHeldClaim(db, jobQueue, basePayload, active);
+    if (active.batch) {
+      if (active.processing && !active.released) {
+        return requeueHeldClaim(db, jobQueue, basePayload, active);
+      }
+      if (!active.processing && !active.released) {
+        setDeliveryJobReleased(db, active.jobId, true);
+      }
       return active.role ?? 'turn';
     }
     return reviveDeliveryJob(db, jobQueue, basePayload, active.jobId);
@@ -668,22 +704,26 @@ export function ensurePrompt(args: PersistPromptArgs): EnsurePromptResult {
 function normalizeActivateUuids(ctx: ActivatePromptsArgs): ActivatePromptsCtx {
   const seen = new Set<string>();
   const uuids: string[] = [];
-  for (const uuid of ctx.messageUuids) {
-    if (typeof uuid !== 'string' || uuid.length === 0 || seen.has(uuid)) continue;
+  const rowIds: Array<string | undefined> = [];
+  ctx.messageUuids.forEach((uuid, index) => {
+    if (typeof uuid !== 'string' || uuid.length === 0 || seen.has(uuid)) return;
     seen.add(uuid);
     uuids.push(uuid);
-  }
-  return { ...ctx, uuids };
+    rowIds.push(ctx.dbIds?.[index]);
+  });
+  return { ...ctx, uuids, rowIds };
 }
 
 function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommittedCtx {
   const activated: ActivatedPromptEntry[] = [];
   const txn = ctx.db.transaction(() => {
     const rowStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_SQL);
-    for (const messageUuid of ctx.uuids) {
-      const rows = rowStmt.all(ctx.sessionId, messageUuid) as Array<{ db_id: string }>;
+    ctx.uuids.forEach((messageUuid, index) => {
+      const rows = rowStmt.all(ctx.rowIds[index] ?? null, ctx.sessionId, messageUuid) as Array<{
+        db_id: string;
+      }>;
       const row = rows[0];
-      if (!row) continue;
+      if (!row) return;
       const role = ensureReleasedDeliveryJob(
         ctx.db,
         ctx.jobQueue,
@@ -696,7 +736,7 @@ function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommitte
         })
       );
       activated.push({ dbId: row.db_id, messageUuid, role });
-    }
+    });
   }, 'immediate');
   withBusyRetry(() => txn());
   return { ...ctx, activated };
