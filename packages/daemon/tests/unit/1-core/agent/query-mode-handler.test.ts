@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session';
 import {
   admitAcrossContextClearBoundary,
@@ -15,34 +15,94 @@ import {
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Logger } from '../../../../src/lib/logger';
 import type { Database } from '../../../../src/storage/database';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { Database as DatabaseImpl } from '../../../../src/storage/sqlite-compat';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
+import { createTestDb } from '../../../helpers/database';
 
-function byStatusResult(messages: SDKMessage[]): { messages: SDKMessage[]; total: number } {
-  return { messages, total: messages.length };
+const SESSION_ID = 'test-session-id';
+
+interface RecordedStatusEvent {
+  messageIds: string[];
+  status: string;
+}
+
+function userRow(
+  uuid: string,
+  text: string,
+  extra?: { isSynthetic?: boolean; inputKind?: string }
+): SDKUserMessage {
+  return {
+    type: 'user',
+    uuid,
+    session_id: SESSION_ID,
+    parent_tool_use_id: null,
+    isSynthetic: extra?.isSynthetic,
+    inputKind: extra?.inputKind,
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text }],
+    },
+  } as unknown as SDKUserMessage;
 }
 
 describe('QueryModeHandler', () => {
-  let handler: QueryModeHandler;
   let mockSession: Session;
-  let mockDb: Database;
-  let mockDaemonHub: DaemonHub;
-  let mockInternalEventBus: InternalEventBus<any>;
+  let db: Database;
   let mockMessageQueue: MessageQueue;
   let mockLogger: Logger;
-
-  let getUserMessagesByStatusSpy: ReturnType<typeof mock>;
-  let updateMessageStatusSpy: ReturnType<typeof mock>;
-  let emitSpy: ReturnType<typeof mock>;
-  let enqueueWithIdSpy: ReturnType<typeof mock>;
-  let sizeSpy: ReturnType<typeof mock>;
-  let hasPendingOrInFlightSpy: ReturnType<typeof mock>;
+  let statusEvents: RecordedStatusEvent[];
+  let mockInternalEventBus: InternalEventBus<any>;
   let ensureQueryStartedSpy: ReturnType<typeof mock>;
+  let hasPendingOrInFlightImpl: (uuid: string) => boolean;
 
-  beforeEach(() => {
+  function seedRow(
+    uuid: string,
+    text: string,
+    sendStatus: 'deferred' | 'enqueued',
+    extra?: { isSynthetic?: boolean; inputKind?: string }
+  ): string {
+    return db.saveUserMessage(SESSION_ID, userRow(uuid, text, extra), sendStatus);
+  }
+
+  function rawDb() {
+    return db.getDatabase();
+  }
+
+  function sendStatusByUuid(uuid: string): string | undefined {
+    const row = rawDb()
+      .prepare(`SELECT send_status FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
+      .get(SESSION_ID, uuid) as { send_status: string } | undefined;
+    return row?.send_status;
+  }
+
+  function deliveryUuids(): Array<{ uuid: string; role: string }> {
+    return (
+      rawDb()
+        .prepare(
+          `SELECT json_extract(payload, '$.messageUuid') AS uuid,
+                  json_extract(payload, '$.role') AS role
+             FROM job_queue WHERE queue = 'message_delivery'
+            ORDER BY created_at ASC, rowid ASC`
+        )
+        .all() as Array<{ uuid: string | null; role: string | null }>
+    ).map((row) => ({ uuid: row.uuid ?? '', role: row.role ?? '' }));
+  }
+
+  function deliveryPayload(uuid: string): Record<string, unknown> | null {
+    const row = rawDb()
+      .prepare(
+        `SELECT payload FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.messageUuid') = ?
+          LIMIT 1`
+      )
+      .get(uuid) as { payload: string } | undefined;
+    return row ? (JSON.parse(row.payload) as Record<string, unknown>) : null;
+  }
+
+  beforeEach(async () => {
+    db = await createTestDb();
+    statusEvents = [];
     mockSession = {
-      id: 'test-session-id',
+      id: SESSION_ID,
       title: 'Test Session',
       workspacePath: '/test/path',
       createdAt: new Date().toISOString(),
@@ -63,31 +123,25 @@ describe('QueryModeHandler', () => {
       },
     };
 
-    getUserMessagesByStatusSpy = mock(() => ({ messages: [], total: 0 }));
-    updateMessageStatusSpy = mock(() => {});
-    mockDb = {
-      getUserMessagesByStatus: getUserMessagesByStatusSpy,
-      updateMessageStatus: updateMessageStatusSpy,
-      getJobQueueRepo: () => ({ activeDeliveryMessageUuids: () => new Set<string>() }),
-    } as unknown as Database;
-
-    emitSpy = mock(async () => {});
     mockInternalEventBus = {
-      publish: emitSpy,
-      publishAsync: emitSpy,
+      publish: mock(async (event: string, payload: { messageIds?: string[]; status?: string }) => {
+        if (event === 'messages.statusChanged') {
+          statusEvents.push({
+            messageIds: payload.messageIds ?? [],
+            status: payload.status ?? '',
+          });
+        }
+        return { delivered: 1, failures: [] };
+      }),
+      publishAsync: mock(async () => {}),
       subscribe: mock((_: string, __: Function, ___: { subscriberName: string }) => () => {}),
     } as unknown as InternalEventBus<any>;
-    mockDaemonHub = {
-      emit: emitSpy,
-    } as unknown as DaemonHub;
 
-    enqueueWithIdSpy = mock(async () => {});
-    sizeSpy = mock(() => 0);
-    hasPendingOrInFlightSpy = mock(() => false);
+    hasPendingOrInFlightImpl = () => false;
     mockMessageQueue = {
-      enqueueWithId: enqueueWithIdSpy,
-      hasPendingOrInFlight: hasPendingOrInFlightSpy,
-      size: sizeSpy,
+      enqueueWithId: mock(async () => {}),
+      hasPendingOrInFlight: mock((uuid: string) => hasPendingOrInFlightImpl(uuid)),
+      size: mock(() => 0),
     } as unknown as MessageQueue;
 
     mockLogger = {
@@ -101,11 +155,15 @@ describe('QueryModeHandler', () => {
     ensureQueryStartedSpy = mock(async () => {});
   });
 
+  afterEach(async () => {
+    clearContextClearBoundariesForTest();
+    db.getDatabase().close();
+  });
+
   function createContext(): QueryModeHandlerContext {
     return {
       session: mockSession,
-      db: mockDb,
-      daemonHub: mockDaemonHub,
+      db,
       internalEventBus: mockInternalEventBus,
       messageQueue: mockMessageQueue,
       logger: mockLogger,
@@ -113,92 +171,23 @@ describe('QueryModeHandler', () => {
     };
   }
 
-  function createHandler(): QueryModeHandler {
-    return new QueryModeHandler(createContext());
+  function createHandler(context?: Partial<QueryModeHandlerContext>): QueryModeHandler {
+    return new QueryModeHandler({ ...createContext(), ...context });
   }
 
-  describe('constructor', () => {
-    it('should create handler with dependencies', () => {
-      handler = createHandler();
-      expect(handler).toBeDefined();
-    });
-  });
-
   describe('clear_then_flush boundary hold (v2)', () => {
-    let jobQueue: JobQueueRepository;
-    let jobsDb: Database;
-
-    beforeEach(() => {
-      jobsDb = new DatabaseImpl(':memory:');
-      jobsDb.exec(`
-        CREATE TABLE job_queue (
-          id TEXT PRIMARY KEY,
-          queue TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'pending',
-          payload TEXT NOT NULL DEFAULT '{}',
-          result TEXT, error TEXT,
-          priority INTEGER NOT NULL DEFAULT 0,
-          max_retries INTEGER NOT NULL DEFAULT 3,
-          retry_count INTEGER NOT NULL DEFAULT 0,
-          run_at INTEGER NOT NULL,
-          created_at INTEGER NOT NULL,
-          started_at INTEGER,
-          heartbeat_at INTEGER, completed_at INTEGER
-        );
-        CREATE UNIQUE INDEX uq_message_delivery_active_turn
-          ON job_queue (queue, json_extract(payload, '$.sessionId'))
-          WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.role') = 'turn'
-            AND status IN ('pending', 'processing');
-      `);
-      jobQueue = new JobQueueRepository(jobsDb as never);
-      mockDb = {
-        getUserMessagesByStatus: getUserMessagesByStatusSpy,
-        updateMessageStatus: updateMessageStatusSpy,
-        getJobQueueRepo: () => jobQueue,
-      } as unknown as Database;
-    });
-
-    afterEach(() => {
-      jobsDb.close();
-      clearContextClearBoundariesForTest();
-    });
-
     it('defers the flush instead of clearing unprotected when the boundary stays busy', async () => {
       const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
       process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
       try {
-        getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
-          byStatusResult(
-            status === 'deferred'
-              ? [
-                  {
-                    dbId: 'db-task',
-                    uuid: 'uuid-task',
-                    type: 'user',
-                    isSynthetic: true,
-                    inputKind: 'task',
-                    message: { role: 'user', content: 'the older task row' },
-                  },
-                  {
-                    dbId: 'db-human',
-                    uuid: 'uuid-human',
-                    type: 'user',
-                    isSynthetic: false,
-                    inputKind: 'human',
-                    message: { role: 'user', content: 'an ordinary follow-up' },
-                  },
-                ]
-              : []
-          )
-        );
-        const outerHolder = withContextClearBoundary(
-          'test-session-id',
-          () => new Promise<void>(() => {})
-        );
+        seedRow('uuid-task', 'the older task row', 'deferred', {
+          isSynthetic: true,
+          inputKind: 'task',
+        });
+        seedRow('uuid-human', 'an ordinary follow-up', 'deferred');
+        const outerHolder = withContextClearBoundary(SESSION_ID, () => new Promise<void>(() => {}));
         const clearSpy = mock(async () => {});
-        handler = new QueryModeHandler({
-          ...createContext(),
+        const handler = createHandler({
           session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
           slotResetsContext: () => true,
           clearConversationContext: clearSpy,
@@ -207,25 +196,9 @@ describe('QueryModeHandler', () => {
 
         await expect(flushing).resolves.toBeTruthy();
         expect(clearSpy).not.toHaveBeenCalled();
-        expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-task'], 'deferred');
-        expect(
-          jobsDb
-            .prepare(
-              `SELECT COUNT(*) AS n FROM job_queue
-                WHERE queue = 'message_delivery'
-                  AND json_extract(payload, '$.messageUuid') = 'uuid-task'`
-            )
-            .get()
-        ).toEqual({ n: 0 });
-        expect(
-          jobsDb
-            .prepare(
-              `SELECT COUNT(*) AS n FROM job_queue
-                WHERE queue = 'message_delivery'
-                  AND json_extract(payload, '$.messageUuid') = 'uuid-human'`
-            )
-            .get()
-        ).toEqual({ n: 1 });
+        expect(sendStatusByUuid('uuid-task')).toBe('deferred');
+        expect(deliveryUuids().filter((job) => job.uuid === 'uuid-task')).toEqual([]);
+        expect(deliveryUuids().filter((job) => job.uuid === 'uuid-human')).toHaveLength(1);
         void outerHolder;
       } finally {
         if (previousTimeout === undefined)
@@ -239,38 +212,21 @@ describe('QueryModeHandler', () => {
       const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
       process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
       try {
-        getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
-          byStatusResult(
-            status === 'deferred'
-              ? [
-                  {
-                    dbId: 'db-task-a',
-                    uuid: 'uuid-task-a',
-                    type: 'user',
-                    isSynthetic: true,
-                    inputKind: 'task',
-                    message: { role: 'user', content: 'row that acquires its own job' },
-                  },
-                  {
-                    dbId: 'db-task-b',
-                    uuid: 'uuid-task-b',
-                    type: 'user',
-                    isSynthetic: true,
-                    inputKind: 'task',
-                    message: { role: 'user', content: 'row that stays deferred' },
-                  },
-                ]
-              : []
-          )
-        );
+        seedRow('uuid-task-a', 'row that acquires its own job', 'deferred', {
+          isSynthetic: true,
+          inputKind: 'task',
+        });
+        seedRow('uuid-task-b', 'row that stays deferred', 'deferred', {
+          isSynthetic: true,
+          inputKind: 'task',
+        });
         let releaseOuter!: () => void;
         const outerGate = new Promise<void>((resolve) => {
           releaseOuter = resolve;
         });
-        const outerHolder = withContextClearBoundary('test-session-id', () => outerGate);
+        const outerHolder = withContextClearBoundary(SESSION_ID, () => outerGate);
         const clearSpy = mock(async () => {});
-        handler = new QueryModeHandler({
-          ...createContext(),
+        const handler = createHandler({
           session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
           slotResetsContext: () => true,
           clearConversationContext: clearSpy,
@@ -278,10 +234,10 @@ describe('QueryModeHandler', () => {
         const flushing = handler.handleQueryTrigger();
         await new Promise((resolve) => setTimeout(resolve, 10));
 
-        jobQueue.enqueue({
+        db.getJobQueueRepo().enqueue({
           queue: 'message_delivery',
           payload: {
-            sessionId: 'test-session-id',
+            sessionId: SESSION_ID,
             messageUuid: 'uuid-task-a',
             role: 'turn',
             origin: 'space_inject',
@@ -295,11 +251,12 @@ describe('QueryModeHandler', () => {
         await expect(flushing).resolves.toBeTruthy();
 
         expect(clearSpy).not.toHaveBeenCalled();
-        expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-task-b'], 'deferred');
-        const deferredCalls = updateMessageStatusSpy.mock.calls.filter(
-          (call) => call[1] === 'deferred'
-        );
-        expect(deferredCalls).toHaveLength(1);
+        expect(sendStatusByUuid('uuid-task-b')).toBe('deferred');
+        expect(deliveryUuids().filter((job) => job.uuid === 'uuid-task-b')).toEqual([]);
+        expect(deliveryUuids().filter((job) => job.uuid === 'uuid-task-a')).toHaveLength(1);
+        expect(
+          statusEvents.filter((event) => event.status === 'deferred' && event.messageIds.length > 0)
+        ).toEqual([]);
       } finally {
         if (previousTimeout === undefined)
           delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
@@ -308,34 +265,21 @@ describe('QueryModeHandler', () => {
       }
     });
 
-    it('re-defers task deliverables when a delivery job appears during the boundary wait', async () => {
+    it('leaves task deliverables deferred when a delivery job appears during the boundary wait', async () => {
       const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
       process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
       try {
-        getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
-          byStatusResult(
-            status === 'deferred'
-              ? [
-                  {
-                    dbId: 'db-task',
-                    uuid: 'uuid-task',
-                    type: 'user',
-                    isSynthetic: true,
-                    inputKind: 'task',
-                    message: { role: 'user', content: 'the older task row' },
-                  },
-                ]
-              : []
-          )
-        );
+        seedRow('uuid-task', 'the older task row', 'deferred', {
+          isSynthetic: true,
+          inputKind: 'task',
+        });
         let releaseOuter!: () => void;
         const outerGate = new Promise<void>((resolve) => {
           releaseOuter = resolve;
         });
-        const outerHolder = withContextClearBoundary('test-session-id', () => outerGate);
+        const outerHolder = withContextClearBoundary(SESSION_ID, () => outerGate);
         const clearSpy = mock(async () => {});
-        handler = new QueryModeHandler({
-          ...createContext(),
+        const handler = createHandler({
           session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
           slotResetsContext: () => true,
           clearConversationContext: clearSpy,
@@ -343,10 +287,10 @@ describe('QueryModeHandler', () => {
         const flushing = handler.handleQueryTrigger();
         await new Promise((resolve) => setTimeout(resolve, 10));
 
-        jobQueue.enqueue({
+        db.getJobQueueRepo().enqueue({
           queue: 'message_delivery',
           payload: {
-            sessionId: 'test-session-id',
+            sessionId: SESSION_ID,
             messageUuid: 'uuid-chat',
             role: 'turn',
             origin: 'chat',
@@ -360,16 +304,8 @@ describe('QueryModeHandler', () => {
         await expect(flushing).resolves.toBeTruthy();
 
         expect(clearSpy).not.toHaveBeenCalled();
-        expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-task'], 'deferred');
-        expect(
-          jobsDb
-            .prepare(
-              `SELECT COUNT(*) AS n FROM job_queue
-                WHERE queue = 'message_delivery'
-                  AND json_extract(payload, '$.messageUuid') = 'uuid-task'`
-            )
-            .get()
-        ).toEqual({ n: 0 });
+        expect(sendStatusByUuid('uuid-task')).toBe('deferred');
+        expect(deliveryUuids().filter((job) => job.uuid === 'uuid-task')).toEqual([]);
       } finally {
         if (previousTimeout === undefined)
           delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
@@ -382,22 +318,10 @@ describe('QueryModeHandler', () => {
       const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
       process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
       try {
-        getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
-          byStatusResult(
-            status === 'deferred'
-              ? [
-                  {
-                    dbId: 'db-task',
-                    uuid: 'uuid-task',
-                    type: 'user',
-                    isSynthetic: true,
-                    inputKind: 'task',
-                    message: { role: 'user', content: 'the older deferred row' },
-                  },
-                ]
-              : []
-          )
-        );
+        seedRow('uuid-task', 'the older deferred row', 'deferred', {
+          isSynthetic: true,
+          inputKind: 'task',
+        });
         let releaseClear!: () => void;
         const clearGate = new Promise<void>((resolve) => {
           releaseClear = resolve;
@@ -405,8 +329,7 @@ describe('QueryModeHandler', () => {
         const clearSpy = mock(async () => {
           await clearGate;
         });
-        handler = new QueryModeHandler({
-          ...createContext(),
+        const handler = createHandler({
           session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
           slotResetsContext: () => true,
           clearConversationContext: clearSpy,
@@ -415,23 +338,15 @@ describe('QueryModeHandler', () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
 
         await expect(
-          admitAcrossContextClearBoundary('test-session-id', undefined, async () => 'sent')
+          admitAcrossContextClearBoundary(SESSION_ID, undefined, async () => 'sent')
         ).resolves.toEqual({ kind: 'boundary_wait' });
-        expect(
-          jobsDb
-            .prepare(`SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'message_delivery'`)
-            .get()
-        ).toEqual({ n: 0 });
+        expect(deliveryUuids()).toEqual([]);
 
         releaseClear();
         await expect(flushing).resolves.toBeTruthy();
-        expect(
-          jobsDb
-            .prepare(`SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'message_delivery'`)
-            .get()
-        ).toEqual({ n: 1 });
+        expect(deliveryUuids()).toHaveLength(1);
         await expect(
-          admitAcrossContextClearBoundary('test-session-id', undefined, async () => 'sent')
+          admitAcrossContextClearBoundary(SESSION_ID, undefined, async () => 'sent')
         ).resolves.toEqual({ kind: 'admitted', result: 'sent' });
       } finally {
         if (previousTimeout === undefined)
@@ -442,279 +357,158 @@ describe('QueryModeHandler', () => {
     });
   });
 
-  describe('durable delivery (v2 default) — task #861 item 3', () => {
-    let jobQueue: JobQueueRepository;
-    let jobsDb: Database;
+  describe('outbox flush (activate-prompts producer)', () => {
+    it('delivers each deferred message as its own durable job in backlog order', async () => {
+      seedRow('uuid-1', 'one', 'deferred');
+      seedRow('uuid-2', 'two', 'deferred');
+      seedRow('uuid-3', 'three', 'deferred');
 
-    beforeEach(() => {
-      jobsDb = new DatabaseImpl(':memory:');
-      jobsDb.exec(`
-        CREATE TABLE job_queue (
-          id TEXT PRIMARY KEY,
-          queue TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'pending',
-          payload TEXT NOT NULL DEFAULT '{}',
-          result TEXT, error TEXT,
-          priority INTEGER NOT NULL DEFAULT 0,
-          max_retries INTEGER NOT NULL DEFAULT 3,
-          retry_count INTEGER NOT NULL DEFAULT 0,
-          run_at INTEGER NOT NULL,
-          created_at INTEGER NOT NULL,
-          started_at INTEGER,
-          heartbeat_at INTEGER, completed_at INTEGER
-        );
-        CREATE UNIQUE INDEX uq_message_delivery_active_turn
-          ON job_queue (queue, json_extract(payload, '$.sessionId'))
-          WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.role') = 'turn'
-            AND status IN ('pending', 'processing');
-      `);
-      jobQueue = new JobQueueRepository(jobsDb as never);
-      mockDb = {
-        getUserMessagesByStatus: getUserMessagesByStatusSpy,
-        updateMessageStatus: updateMessageStatusSpy,
-        getJobQueueRepo: () => jobQueue,
-      } as unknown as Database;
-    });
-
-    afterEach(() => {
-      jobsDb.close();
-    });
-
-    function deliveryUuids(): Array<{ uuid: string; role: string }> {
-      return jobsDb
-        .prepare(
-          `SELECT json_extract(payload, '$.messageUuid') AS uuid,
-                  json_extract(payload, '$.role') AS role
-             FROM job_queue WHERE queue = 'message_delivery'
-            ORDER BY created_at ASC`
-        )
-        .all() as Array<{ uuid: string; role: string }>;
-    }
-
-    it('handleQueryTrigger coalesces multiple deferred messages into ONE batched turn job', async () => {
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
-          {
-            dbId: 'db-3',
-            uuid: 'uuid-3',
-            type: 'user',
-            message: { role: 'user', content: 'three' },
-          },
-        ] as unknown as SDKMessage[])
-      );
-
-      handler = new QueryModeHandler(createContext());
+      const handler = createHandler();
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 3 });
-      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1', 'db-2', 'db-3'], 'enqueued');
       const jobs = deliveryUuids();
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0].uuid).toBe('uuid-1');
+      expect(jobs.map((job) => job.uuid)).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
       expect(jobs[0].role).toBe('turn');
-      const row = jobsDb
-        .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
-        .get() as { payload: string };
-      expect(JSON.parse(row.payload).batchUuids).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
+      expect(jobs.filter((job) => job.role === 'steer')).toHaveLength(2);
+      expect(jobs.every((job) => deliveryPayload(job.uuid)?.batchUuids === undefined)).toBe(true);
+      for (const uuid of ['uuid-1', 'uuid-2', 'uuid-3']) {
+        expect(sendStatusByUuid(uuid)).toBe('enqueued');
+        expect(deliveryPayload(uuid)?.released).toBe(true);
+      }
+      expect(statusEvents).toEqual([
+        { messageIds: jobs.map(() => expect.any(String)), status: 'enqueued' },
+      ]);
+      expect(statusEvents[0].messageIds).toHaveLength(3);
       expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
-      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
     });
 
-    it('handleQueryTrigger with deliverIndividually sends each deferred message as its own job', async () => {
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
-          {
-            dbId: 'db-3',
-            uuid: 'uuid-3',
-            type: 'user',
-            message: { role: 'user', content: 'three' },
-          },
-        ] as unknown as SDKMessage[])
-      );
+    it('accepts deliverIndividually without changing the per-message delivery', async () => {
+      seedRow('uuid-1', 'one', 'deferred');
+      seedRow('uuid-2', 'two', 'deferred');
 
-      handler = new QueryModeHandler(createContext());
+      const handler = createHandler();
       const result = await handler.handleQueryTrigger({ deliverIndividually: true });
 
-      expect(result).toEqual({ success: true, messageCount: 3 });
-      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1', 'db-2', 'db-3'], 'enqueued');
-      const jobs = deliveryUuids();
-      expect(jobs.map((j) => j.uuid)).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
-      expect(jobs.find((j) => j.uuid === 'uuid-1')?.role).toBe('turn');
-      expect(jobs.filter((j) => j.role === 'steer')).toHaveLength(2);
-      const payloads = jobsDb
-        .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
-        .all() as Array<{ payload: string }>;
-      expect(payloads.every((p) => !('batchUuids' in JSON.parse(p.payload)))).toBe(true);
+      expect(result).toEqual({ success: true, messageCount: 2 });
+      expect(deliveryUuids().map((job) => job.uuid)).toEqual(['uuid-1', 'uuid-2']);
     });
 
-    it('handleQueryTrigger with excludeMessageUuid leaves the excluded row deferred', async () => {
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
-        ] as unknown as SDKMessage[])
-      );
+    it('leaves the excluded row deferred when excludeMessageUuid is set', async () => {
+      seedRow('uuid-1', 'one', 'deferred');
+      seedRow('uuid-2', 'two', 'deferred');
 
-      handler = new QueryModeHandler(createContext());
+      const handler = createHandler();
       const result = await handler.handleQueryTrigger({
         deliverIndividually: true,
         excludeMessageUuid: 'uuid-2',
       });
 
       expect(result).toEqual({ success: true, messageCount: 1 });
-      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'enqueued');
-      const jobs = deliveryUuids();
-      expect(jobs.map((j) => j.uuid)).toEqual(['uuid-1']);
+      expect(deliveryUuids().map((job) => job.uuid)).toEqual(['uuid-1']);
+      expect(sendStatusByUuid('uuid-2')).toBe('deferred');
+      expect(statusEvents[0].messageIds).toHaveLength(1);
     });
 
-    it('handleQueryTrigger creates durable ownership before publishing enqueued status', async () => {
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-        ] as unknown as SDKMessage[])
-      );
-      let ownedWhenPublished = false;
-      emitSpy.mockImplementation(async (event: string) => {
-        if (event === 'messages.statusChanged') {
-          ownedWhenPublished = jobQueue.activeDeliveryMessageUuids('test-session-id').has('uuid-1');
+    it('creates durable ownership before publishing enqueued status', async () => {
+      seedRow('uuid-1', 'one', 'deferred');
+      const publishSpy = mockInternalEventBus.publish as ReturnType<typeof mock>;
+      publishSpy.mockImplementation(
+        async (event: string, payload: { messageIds?: string[]; status?: string }) => {
+          if (event === 'messages.statusChanged') {
+            statusEvents.push({
+              messageIds: payload.messageIds ?? [],
+              status: payload.status ?? '',
+            });
+            if (payload.status === 'enqueued') {
+              expect(
+                db.getJobQueueRepo().activeDeliveryMessageUuids(SESSION_ID).has('uuid-1')
+              ).toBe(true);
+            }
+          }
+          return { delivered: 1, failures: [] };
         }
-      });
+      );
 
-      handler = new QueryModeHandler(createContext());
+      const handler = createHandler();
       await handler.handleQueryTrigger();
 
-      expect(ownedWhenPublished).toBe(true);
+      expect(statusEvents).toHaveLength(1);
     });
 
-    it('handleQueryTrigger publishes enqueued status when durable enqueue fails', async () => {
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-        ] as unknown as SDKMessage[])
-      );
+    it('rolls the activation back whole when the enqueue fails (no stranded row, no status event)', async () => {
+      seedRow('uuid-1', 'one', 'deferred');
+      const jobQueue = db.getJobQueueRepo();
       const enqueue = jobQueue.enqueue.bind(jobQueue);
       jobQueue.enqueue = mock(() => {
         throw new Error('queue unavailable');
       });
 
-      handler = new QueryModeHandler(createContext());
+      const handler = createHandler();
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: false, messageCount: 0, error: 'queue unavailable' });
-      expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
-        sessionId: 'test-session-id',
-        messageIds: ['db-1'],
-        status: 'enqueued',
-      });
+      expect(sendStatusByUuid('uuid-1')).toBe('deferred');
+      expect(deliveryUuids()).toEqual([]);
+      expect(statusEvents).toEqual([]);
       jobQueue.enqueue = enqueue;
     });
 
-    it('handleQueryTrigger falls back to per-message jobs when a turn is already active', async () => {
-      jobQueue.enqueue({
+    it('falls back to steer jobs when a turn is already active', async () => {
+      db.getJobQueueRepo().enqueue({
         queue: 'message_delivery',
         payload: {
-          sessionId: 'test-session-id',
+          sessionId: SESSION_ID,
           messageUuid: 'uuid-active',
           role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
         },
       });
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
-        ] as unknown as SDKMessage[])
-      );
+      seedRow('uuid-1', 'one', 'deferred');
+      seedRow('uuid-2', 'two', 'deferred');
 
-      handler = new QueryModeHandler(createContext());
+      const handler = createHandler();
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 2 });
       const jobs = deliveryUuids();
-      expect(jobs.map((j) => j.uuid).sort()).toEqual(['uuid-1', 'uuid-2', 'uuid-active']);
-      expect(jobs.filter((j) => j.role === 'steer')).toHaveLength(2);
-      const payloads = jobsDb
-        .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
-        .all() as Array<{ payload: string }>;
-      expect(payloads.every((p) => !('batchUuids' in JSON.parse(p.payload)))).toBe(true);
+      expect(jobs.map((job) => job.uuid).sort()).toEqual(['uuid-1', 'uuid-2', 'uuid-active']);
+      expect(jobs.filter((job) => job.role === 'steer')).toHaveLength(2);
+      expect(jobs.every((job) => deliveryPayload(job.uuid)?.batchUuids === undefined)).toBe(true);
     });
 
-    it('handleQueryTrigger does NOT batch a mixed flush (image between texts preserves queue order)', async () => {
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-          {
-            dbId: 'db-2',
-            uuid: 'uuid-2',
-            type: 'user',
-            message: {
-              role: 'user',
-              content: [{ type: 'image', source: { type: 'base64' } }],
-            },
-          },
-          {
-            dbId: 'db-3',
-            uuid: 'uuid-3',
-            type: 'user',
-            message: { role: 'user', content: 'three' },
-          },
-        ] as unknown as SDKMessage[])
-      );
+    it('preserves queue order for a mixed flush (image between texts)', async () => {
+      const imageMessage = {
+        type: 'user',
+        uuid: 'uuid-2',
+        session_id: SESSION_ID,
+        parent_tool_use_id: null,
+        message: {
+          role: 'user',
+          content: [{ type: 'image', source: { type: 'base64' } }],
+        },
+      } as unknown as SDKMessage;
+      db.saveUserMessage(SESSION_ID, imageMessage, 'deferred');
+      seedRow('uuid-1', 'one', 'deferred');
+      seedRow('uuid-3', 'three', 'deferred');
+      const backlog = db.getUserMessagesByStatus(SESSION_ID, 'deferred').messages;
+      expect(backlog.map((row) => row.uuid)).toEqual(['uuid-2', 'uuid-1', 'uuid-3']);
 
-      handler = new QueryModeHandler(createContext());
+      const handler = createHandler();
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 3 });
       const jobs = deliveryUuids();
-      expect(jobs).toHaveLength(3);
-      expect(jobs.find((j) => j.uuid === 'uuid-1')?.role).toBe('turn');
-      expect(jobs.find((j) => j.uuid === 'uuid-2')?.role).toBe('steer');
-      expect(jobs.find((j) => j.uuid === 'uuid-3')?.role).toBe('steer');
-      const payloads = jobsDb
-        .prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`)
-        .all() as Array<{ payload: string }>;
-      expect(payloads.every((p) => !('batchUuids' in JSON.parse(p.payload)))).toBe(true);
+      expect(jobs.map((job) => job.uuid)).toEqual(['uuid-2', 'uuid-1', 'uuid-3']);
+      expect(jobs.every((job) => deliveryPayload(job.uuid)?.batchUuids === undefined)).toBe(true);
     });
 
-    it('handleQueryTrigger does NOT batch a flush containing an SDK slash command', async () => {
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          {
-            dbId: 'db-1',
-            uuid: 'uuid-1',
-            type: 'user',
-            message: { role: 'user', content: '/compact' },
-          },
-          {
-            dbId: 'db-2',
-            uuid: 'uuid-2',
-            type: 'user',
-            message: { role: 'user', content: 'note' },
-          },
-        ] as unknown as SDKMessage[])
-      );
-
-      handler = new QueryModeHandler(createContext());
-      const result = await handler.handleQueryTrigger();
-
-      expect(result).toEqual({ success: true, messageCount: 2 });
-      const jobs = deliveryUuids();
-      expect(jobs).toHaveLength(2);
-      expect(jobs.find((j) => j.uuid === 'uuid-1')?.role).toBe('turn');
-      expect(jobs.find((j) => j.uuid === 'uuid-2')?.role).toBe('steer');
-    });
-
-    it('handleQueryTrigger skips batch-owned members in the per-message fallback (replay race)', async () => {
-      jobQueue.enqueue({
+    it('skips job-queue-owned rows (replay race with an existing batch job)', async () => {
+      db.getJobQueueRepo().enqueue({
         queue: 'message_delivery',
         payload: {
-          sessionId: 'test-session-id',
+          sessionId: SESSION_ID,
           messageUuid: 'uuid-1',
           role: 'turn',
           origin: 'recovery',
@@ -722,180 +516,135 @@ describe('QueryModeHandler', () => {
           batchUuids: ['uuid-1', 'uuid-2', 'uuid-3'],
         },
       });
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-          { dbId: 'db-2', uuid: 'uuid-2', type: 'user', message: { role: 'user', content: 'two' } },
-          {
-            dbId: 'db-3',
-            uuid: 'uuid-3',
-            type: 'user',
-            message: { role: 'user', content: 'three' },
-          },
-        ] as unknown as SDKMessage[])
-      );
+      seedRow('uuid-1', 'one', 'deferred');
+      seedRow('uuid-2', 'two', 'deferred');
+      seedRow('uuid-3', 'three', 'deferred');
 
-      handler = new QueryModeHandler(createContext());
+      const handler = createHandler();
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 3 });
-      const jobs = deliveryUuids();
-      expect(jobs.map((j) => j.uuid)).toEqual(['uuid-1']);
-      expect(jobs[0].role).toBe('turn');
+      expect(deliveryUuids().map((job) => job.uuid)).toEqual(['uuid-1']);
+      expect(deliveryUuids()[0].role).toBe('turn');
+      expect(sendStatusByUuid('uuid-2')).toBe('deferred');
+      expect(statusEvents).toEqual([]);
     });
 
-    it('sendEnqueuedMessagesOnTurnEnd enqueues a durable job per enqueued message', async () => {
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'q' } },
-        ] as unknown as SDKMessage[])
-      );
+    it('sendEnqueuedMessagesOnTurnEnd re-arms a durable job per enqueued message', async () => {
+      seedRow('uuid-1', 'q', 'enqueued');
 
-      handler = new QueryModeHandler(createContext());
-      await handler.sendEnqueuedMessagesOnTurnEnd();
+      const handler = createHandler();
+      const outcome = await handler.sendEnqueuedMessagesOnTurnEnd();
 
+      expect(outcome.replayedWork).toBe(true);
       const jobs = deliveryUuids();
       expect(jobs).toHaveLength(1);
       expect(jobs[0].uuid).toBe('uuid-1');
       expect(jobs[0].role).toBe('turn');
-      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(deliveryPayload('uuid-1')?.released).toBe(true);
+      expect(mockMessageQueue.enqueueWithId).not.toHaveBeenCalled();
     });
 
     it('sendEnqueuedMessagesOnTurnEnd skips v2 delivery owned by the durable queue', async () => {
-      jobQueue.enqueue({
+      db.getJobQueueRepo().enqueue({
         queue: 'message_delivery',
         payload: {
-          sessionId: 'test-session-id',
+          sessionId: SESSION_ID,
           messageUuid: 'uuid-owned',
           role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
         },
       });
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          {
-            dbId: 'db-owned',
-            uuid: 'uuid-owned',
-            type: 'user',
-            message: { role: 'user', content: 'already durable' },
-          },
-        ] as unknown as SDKMessage[])
-      );
+      seedRow('uuid-owned', 'already durable', 'enqueued');
 
-      handler = new QueryModeHandler(createContext());
+      const handler = createHandler();
       await handler.sendEnqueuedMessagesOnTurnEnd();
 
       expect(deliveryUuids()).toEqual([{ uuid: 'uuid-owned', role: 'turn' }]);
-      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(mockMessageQueue.enqueueWithId).not.toHaveBeenCalled();
       expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
     });
 
     it('sendEnqueuedMessagesOnTurnEnd skips v2 delivery owned by the in-memory queue', async () => {
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          {
-            dbId: 'db-owned',
-            uuid: 'uuid-owned',
-            type: 'user',
-            message: { role: 'user', content: 'already admitted' },
-          },
-        ] as unknown as SDKMessage[])
-      );
-      hasPendingOrInFlightSpy.mockImplementation((uuid: string) => uuid === 'uuid-owned');
+      seedRow('uuid-owned', 'already admitted', 'enqueued');
+      hasPendingOrInFlightImpl = (uuid: string) => uuid === 'uuid-owned';
 
-      handler = new QueryModeHandler(createContext());
+      const handler = createHandler();
       await handler.sendEnqueuedMessagesOnTurnEnd();
 
       expect(deliveryUuids()).toEqual([]);
-      expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+      expect(mockMessageQueue.enqueueWithId).not.toHaveBeenCalled();
       expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
     });
 
-    it('excludes re-deferred task rows from the trailing enqueued announce', async () => {
-      jobQueue.enqueue({
+    it('keeps task rows deferred and out of the enqueued announce while a turn is active', async () => {
+      db.getJobQueueRepo().enqueue({
         queue: 'message_delivery',
         payload: {
-          sessionId: 'test-session-id',
+          sessionId: SESSION_ID,
           messageUuid: 'uuid-active',
           role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
         },
       });
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          {
-            dbId: 'db-human',
-            uuid: 'uuid-human',
-            type: 'user',
-            isSynthetic: false,
-            inputKind: 'human',
-            message: { role: 'user', content: 'a human follow-up' },
-          },
-          {
-            dbId: 'db-task',
-            uuid: 'uuid-task',
-            type: 'user',
-            isSynthetic: true,
-            inputKind: 'task',
-            message: { role: 'user', content: 'handoff' },
-          },
-        ] as unknown as SDKMessage[])
-      );
+      seedRow('uuid-human', 'a human follow-up', 'deferred', { inputKind: 'human' });
+      seedRow('uuid-task', 'handoff', 'deferred', { isSynthetic: true, inputKind: 'task' });
 
-      handler = new QueryModeHandler({
-        ...createContext(),
+      const handler = createHandler({
         session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
         slotResetsContext: () => true,
         clearConversationContext: async () => {},
       });
       await handler.handleQueryTrigger();
 
-      const events = emitSpy.mock.calls
-        .filter(([event]) => event === 'messages.statusChanged')
-        .map(([, payload]) => payload as { status: string; messageIds: string[] });
-      const enqueuedIds = events
-        .filter((p) => p.status === 'enqueued')
-        .flatMap((p) => p.messageIds);
-      const deferredIds = events
-        .filter((p) => p.status === 'deferred')
-        .flatMap((p) => p.messageIds);
-      expect(deferredIds).toEqual(['db-task']);
-      expect(enqueuedIds).toContain('db-human');
-      expect(enqueuedIds).not.toContain('db-task');
+      expect(sendStatusByUuid('uuid-task')).toBe('deferred');
+      expect(deliveryUuids().filter((job) => job.uuid === 'uuid-task')).toEqual([]);
+      const enqueuedIds = statusEvents
+        .filter((event) => event.status === 'enqueued')
+        .flatMap((event) => event.messageIds);
+      expect(enqueuedIds).toHaveLength(1);
+      expect(sendStatusByUuid('uuid-human')).toBe('enqueued');
+      expect(
+        statusEvents.filter((event) => event.status === 'deferred' && event.messageIds.length > 0)
+      ).toEqual([]);
+    });
+
+    it('re-defers task rows found in the enqueued lane when a turn is active', async () => {
+      db.getJobQueueRepo().enqueue({
+        queue: 'message_delivery',
+        payload: {
+          sessionId: SESSION_ID,
+          messageUuid: 'uuid-active',
+          role: 'turn',
+          origin: 'chat',
+          parentToolUseId: null,
+        },
+      });
+      seedRow('uuid-task', 'handoff', 'enqueued', { isSynthetic: true, inputKind: 'task' });
+
+      const handler = createHandler({
+        session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
+        slotResetsContext: () => true,
+        clearConversationContext: async () => {},
+      });
+      await handler.sendEnqueuedMessagesOnTurnEnd();
+
+      expect(sendStatusByUuid('uuid-task')).toBe('deferred');
+      expect(deliveryUuids().filter((job) => job.uuid === 'uuid-task')).toEqual([]);
+      expect(statusEvents).toEqual([{ messageIds: [expect.any(String)], status: 'deferred' }]);
     });
 
     it('replay defers the deferred-task pass while the replayed human job is active', async () => {
       const clearSpy = mock(async () => {});
-      getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
-        byStatusResult(
-          status === 'enqueued'
-            ? [
-                {
-                  dbId: 'db-human',
-                  uuid: 'uuid-human',
-                  type: 'user',
-                  isSynthetic: false,
-                  inputKind: 'human',
-                  message: { role: 'user', content: 'a human follow-up' },
-                },
-              ]
-            : [
-                {
-                  dbId: 'db-task',
-                  uuid: 'uuid-task',
-                  type: 'user',
-                  isSynthetic: true,
-                  inputKind: 'task',
-                  message: { role: 'user', content: 'the deferred task' },
-                },
-              ]
-        )
-      );
+      seedRow('uuid-human', 'a human follow-up', 'enqueued', { inputKind: 'human' });
+      seedRow('uuid-task', 'the deferred task', 'deferred', {
+        isSynthetic: true,
+        inputKind: 'task',
+      });
 
-      handler = new QueryModeHandler({
-        ...createContext(),
+      const handler = createHandler({
         session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
         slotResetsContext: () => true,
         clearConversationContext: clearSpy,
@@ -903,49 +652,26 @@ describe('QueryModeHandler', () => {
       await handler.replayPendingMessagesForImmediateMode();
 
       expect(clearSpy).not.toHaveBeenCalled();
-      const jobs = deliveryUuids();
-      expect(jobs).toEqual([{ uuid: 'uuid-human', role: 'turn' }]);
-      expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+      expect(deliveryUuids()).toEqual([{ uuid: 'uuid-human', role: 'turn' }]);
+      expect(sendStatusByUuid('uuid-task')).toBe('deferred');
     });
 
-    it('handleQueryTrigger clears exactly once before the durable batch job is created (#1085)', async () => {
+    it('clears exactly once before the durable jobs are created (#1085)', async () => {
       const order: string[] = [];
       const clearSpy = mock(async () => {
         order.push('clear');
       });
+      const jobQueue = db.getJobQueueRepo();
       const enqueue = jobQueue.enqueue.bind(jobQueue);
       jobQueue.enqueue = mock((...args: Parameters<typeof enqueue>) => {
         order.push('job');
         return enqueue(...args);
       });
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          {
-            dbId: 'db-1',
-            uuid: 'uuid-1',
-            type: 'user',
-            isSynthetic: true,
-            message: { role: 'user', content: 'one' },
-          },
-          {
-            dbId: 'db-2',
-            uuid: 'uuid-2',
-            type: 'user',
-            isSynthetic: true,
-            message: { role: 'user', content: 'two' },
-          },
-          {
-            dbId: 'db-3',
-            uuid: 'uuid-3',
-            type: 'user',
-            isSynthetic: true,
-            message: { role: 'user', content: 'three' },
-          },
-        ] as unknown as SDKMessage[])
-      );
+      seedRow('uuid-1', 'one', 'deferred', { isSynthetic: true });
+      seedRow('uuid-2', 'two', 'deferred', { isSynthetic: true });
+      seedRow('uuid-3', 'three', 'deferred', { isSynthetic: true });
 
-      handler = new QueryModeHandler({
-        ...createContext(),
+      const handler = createHandler({
         session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
         slotResetsContext: () => true,
         clearConversationContext: clearSpy,
@@ -953,10 +679,29 @@ describe('QueryModeHandler', () => {
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 3 });
-      expect(order).toEqual(['clear', 'job']);
+      expect(order[0]).toBe('clear');
+      expect(order.slice(1).every((entry) => entry === 'job')).toBe(true);
       expect(clearSpy).toHaveBeenCalledTimes(1);
-      expect(deliveryUuids()).toHaveLength(1);
+      expect(deliveryUuids()).toHaveLength(3);
       jobQueue.enqueue = enqueue;
+    });
+
+    it('rethrows ClearConversationCancelledError instead of swallowing it as a flush failure', async () => {
+      seedRow('uuid-task', 'the older deferred row', 'deferred', {
+        isSynthetic: true,
+        inputKind: 'task',
+      });
+      const handler = createHandler({
+        session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
+        slotResetsContext: () => true,
+        clearConversationContext: async () => {
+          throw new ClearConversationCancelledError();
+        },
+      });
+
+      await expect(handler.handleQueryTrigger()).rejects.toBeInstanceOf(
+        ClearConversationCancelledError
+      );
     });
   });
 });

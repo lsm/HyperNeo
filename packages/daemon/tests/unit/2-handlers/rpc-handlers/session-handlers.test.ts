@@ -853,16 +853,28 @@ describe('Session RPC Handlers — models.list', () => {
               `UPDATE sdk_messages SET send_status = ? WHERE id IN (${ids.map(() => '?').join(',')})`
             )
             .run(status, ...ids),
+        getDatabase: () => db,
+        getSDKMessageRepo: () => ({
+          transitionMessageSendStatus: () => false,
+        }),
         getJobQueueRepo: () => jobQueue,
       };
       const sessionManager = {
         getSessionAsync: mock(async () => ({
           getSessionData: () => ({ id: 'sess-1', status: 'active' }),
           startQueryAndEnqueue: mock(async () => {}),
+          stateManager: {
+            setQueuedIfIdle: mock(async () => false),
+            getState: () => ({ status: 'idle' }),
+          },
         })),
         getSessionForControl: mock(async () => ({
           getSessionData: () => ({ id: 'sess-1', status: 'active' }),
           startQueryAndEnqueue: mock(async () => {}),
+          stateManager: {
+            setQueuedIfIdle: mock(async () => false),
+            getState: () => ({ status: 'idle' }),
+          },
         })),
         getDatabase: () => dbFacade,
       } as unknown as SessionManager;
@@ -879,7 +891,7 @@ describe('Session RPC Handlers — models.list', () => {
       db.close();
     });
 
-    it('routes the promoted message through deliverMessage (durable owner) under v2', async () => {
+    it('routes the promoted message through the outbox activation (durable owner) under v2', async () => {
       const handler = messageHubData.handlers.get('session.messages.promotePending');
       expect(handler).toBeDefined();
 
@@ -976,33 +988,19 @@ describe('Session RPC Handlers — models.list', () => {
             )
             .run(status, ...ids),
         getJobQueueRepo: () => jobQueue,
+        getDatabase: () => db,
         getSession: (sid: string) => ({ id: sid, status: sessionStatus }),
         getSDKMessageRepo: () => ({
-          reopenDeliveryByUuid: (_sid: string, uuid: string) => {
-            const row = db
-              .prepare(
-                `SELECT id FROM sdk_messages WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ? AND send_status = 'failed'`
-              )
-              .get('sess-1', uuid) as { id: string } | undefined;
-            if (!row) return null;
-            db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(row.id);
-            return row.id;
-          },
-          markDeliveryFailedByUuid: (_sid: string, uuid: string) => {
-            const row = db
-              .prepare(
-                `SELECT id FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ? AND send_status = 'enqueued'`
-              )
-              .get('sess-1', uuid) as { id: string } | undefined;
-            if (!row) return null;
-            db.prepare(`UPDATE sdk_messages SET send_status = 'failed' WHERE id = ?`).run(row.id);
-            return row.id;
-          },
+          transitionMessageSendStatus: () => false,
         }),
       };
       const agentSession = {
         getSessionData: () => ({ id: 'sess-1', status: 'active' }),
         startQueryAndEnqueue: mock(async () => {}),
+        stateManager: {
+          setQueuedIfIdle: mock(async () => false),
+          getState: () => ({ status: 'idle' }),
+        },
       };
       hydrateSpy = mock(async () => agentSession);
       controlSpy = mock(async () => agentSession);
@@ -1024,7 +1022,7 @@ describe('Session RPC Handlers — models.list', () => {
       db.close();
     });
 
-    it('reopens the failed row to enqueued and re-enqueues a durable turn job', async () => {
+    it('reopens the failed row and re-arms a durable turn job through the outbox', async () => {
       const handler = messageHubData.handlers.get('session.messages.retry');
       expect(handler).toBeDefined();
 
@@ -1070,7 +1068,7 @@ describe('Session RPC Handlers — models.list', () => {
       }
     });
 
-    it('rolls the row back to failed when session resolution rejects after reopen', async () => {
+    it('leaves the row failed when session resolution rejects before any mutation', async () => {
       controlSpy.mockRejectedValueOnce(new Error('hydrate failed'));
 
       await expect(
@@ -1086,7 +1084,7 @@ describe('Session RPC Handlers — models.list', () => {
       expect(row.send_status).toBe('failed');
     });
 
-    it('rolls the row back to failed when session resolution returns null after reopen', async () => {
+    it('leaves the row failed when session resolution returns null before any mutation', async () => {
       controlSpy.mockResolvedValueOnce(null);
 
       await expect(
@@ -1102,29 +1100,28 @@ describe('Session RPC Handlers — models.list', () => {
       expect(row.send_status).toBe('failed');
     });
 
-    it('rolls the row back to failed when the post-reopen status broadcast rejects (Codex #5)', async () => {
+    it('keeps the committed retry when the post-commit status broadcast rejects', async () => {
       eventBus.publish = mock(async (event: string) => {
         if (event === 'messages.statusChanged') throw new Error('subscriber rejected');
         return { delivered: 0, failures: [] };
       });
 
-      await expect(
-        messageHubData.handlers.get('session.messages.retry')!(
-          { sessionId: 'sess-1', messageDbId: 'db-failed' },
-          {}
-        )
-      ).rejects.toThrow('subscriber rejected');
+      const result = (await messageHubData.handlers.get('session.messages.retry')!(
+        { sessionId: 'sess-1', messageDbId: 'db-failed' },
+        {}
+      )) as { retried: boolean };
 
+      expect(result.retried).toBe(true);
       const row = db
         .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
         .get('db-failed') as { send_status: string };
-      expect(row.send_status).toBe('failed');
+      expect(row.send_status).toBe('enqueued');
       const job = db
         .prepare(
           `SELECT COUNT(*) AS n FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
         )
         .get(MESSAGE_DELIVERY, 'retry-me') as { n: number };
-      expect(job.n).toBe(0);
+      expect(job.n).toBe(1);
     });
   });
 });
