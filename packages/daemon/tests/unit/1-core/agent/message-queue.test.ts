@@ -1199,19 +1199,14 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
-    it('expires a front user marker at a top-level result but never a daemon marker', () => {
+    it('expires a front user marker at a top-level result only once its compact started, never a daemon marker', () => {
       const q = new MessageQueue();
       q.start();
       q.noteInternalCompactionSent({
-        id: 'user-compact-rejected',
+        id: 'user-compact',
         content: '/compact',
         internal: false,
       } as never);
-      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
-
-      q.expireUserCompactionMarkerAtResult();
-      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
-      q.expireUserCompactionMarkerAtResult();
       expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
 
       q.noteInternalCompactionSent({
@@ -1219,7 +1214,16 @@ describe('MessageQueue', () => {
         content: '/compact',
         internal: true,
       } as never);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+
+      q.expireUserCompactionMarkerAtResult();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+
+      q.noteCompactionStarted();
+      q.expireUserCompactionMarkerAtResult();
       expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+
+      q.noteCompactionStarted();
       q.expireUserCompactionMarkerAtResult();
       expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
       q.stop();

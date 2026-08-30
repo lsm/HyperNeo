@@ -111,6 +111,8 @@ describe('SDKMessageHandler', () => {
   let hasBufferedInternalCompactionSpy: ReturnType<typeof mock>;
   let clearInternalCompactionBufferedSpy: ReturnType<typeof mock>;
   let expireUserCompactionMarkerAtResultSpy: ReturnType<typeof mock>;
+  let noteCompactionStartedSpy: ReturnType<typeof mock>;
+  let resetFrontCompactionStartedSpy: ReturnType<typeof mock>;
   let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
   let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
@@ -229,6 +231,8 @@ describe('SDKMessageHandler', () => {
     hasBufferedInternalCompactionSpy = mock(() => false);
     clearInternalCompactionBufferedSpy = mock(() => {});
     expireUserCompactionMarkerAtResultSpy = mock(() => {});
+    noteCompactionStartedSpy = mock(() => {});
+    resetFrontCompactionStartedSpy = mock(() => {});
     removePendingInternalCompactionsSpy = mock(() => 0);
     clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
@@ -257,6 +261,8 @@ describe('SDKMessageHandler', () => {
       hasBufferedInternalCompaction: hasBufferedInternalCompactionSpy,
       clearInternalCompactionBuffered: clearInternalCompactionBufferedSpy,
       expireUserCompactionMarkerAtResult: expireUserCompactionMarkerAtResultSpy,
+      noteCompactionStarted: noteCompactionStartedSpy,
+      resetFrontCompactionStarted: resetFrontCompactionStartedSpy,
       removePendingInternalCompactions: removePendingInternalCompactionsSpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
       noteBoundaryCompleted: mock(() => {}),
@@ -3923,6 +3929,7 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(message);
 
+      expect(noteCompactionStartedSpy).toHaveBeenCalledTimes(1);
       expect(clearInternalCompactionBufferedSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -4072,6 +4079,14 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(makeSuccessResult(3));
 
       expect(expireUserCompactionMarkerAtResultSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores a stale-generation result so it cannot expire the current user marker', async () => {
+      (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+
+      await handler.handleMessage(makeSuccessResult(3), 3);
+
+      expect(expireUserCompactionMarkerAtResultSpy).not.toHaveBeenCalled();
     });
 
     it('never stamps when no daemon-internal compaction boundary was acknowledged', async () => {

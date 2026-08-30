@@ -134,6 +134,7 @@ export class MessageQueue {
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private internalCompactionResultAttributionArmed: boolean = false;
   private outstandingCompactionBoundaries: Array<{ kind: 'daemon' | 'user'; id?: string }> = [];
+  private frontCompactionStarted: boolean = false;
   private internalCompactionBuffered: boolean = false;
   private nonCompactionSentSinceBoundary: boolean = false;
   private recentSentPrompts: Map<string, string | MessageContent[]> = new Map();
@@ -236,11 +237,23 @@ export class MessageQueue {
 
   consumeCompactionBoundary(): void {
     this.outstandingCompactionBoundaries.shift();
+    this.frontCompactionStarted = false;
+  }
+
+  noteCompactionStarted(): void {
+    if (this.outstandingCompactionBoundaries[0]?.kind === 'user') {
+      this.frontCompactionStarted = true;
+    }
+  }
+
+  resetFrontCompactionStarted(): void {
+    this.frontCompactionStarted = false;
   }
 
   expireUserCompactionMarkerAtResult(): void {
-    if (this.outstandingCompactionBoundaries[0]?.kind === 'user') {
+    if (this.outstandingCompactionBoundaries[0]?.kind === 'user' && this.frontCompactionStarted) {
       this.outstandingCompactionBoundaries.shift();
+      this.frontCompactionStarted = false;
     }
   }
 
