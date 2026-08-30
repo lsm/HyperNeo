@@ -59,6 +59,16 @@ describe('settleMessageDeliveryDeadLetter (onDead → session.error → settle o
     );
   });
 
+  it('does NOT publish session.error for a mid-turn space_inject delivery (auxiliary handoff)', async () => {
+    const { settlement, calls } = recordingSettlement();
+    settlement.isSessionMidTurn = mock(() => true);
+    await settleMessageDeliveryDeadLetter(SPACE_INJECT_PAYLOAD, settlement);
+
+    expect(settlement.publishSessionError).not.toHaveBeenCalled();
+    expect(calls).not.toContain('sessionError');
+    expect(calls).toContain('settle');
+  });
+
   it('for a non-space_inject delivery, does NOT publish session.error (only mark + status + settle)', async () => {
     const { settlement, calls } = recordingSettlement();
     await settleMessageDeliveryDeadLetter(CHAT_PAYLOAD, settlement);

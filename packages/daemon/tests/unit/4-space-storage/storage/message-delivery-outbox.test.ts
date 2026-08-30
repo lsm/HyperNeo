@@ -141,10 +141,11 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     expect(dbMessageId).toBeTruthy();
     const payload = jobPayload(db, SESSION, 'msg-second');
     expect(payload?.sessionId).toBe(SESSION);
-    const ordered = jobQueue
-      .dequeueSessionFifo(MESSAGE_DELIVERY, 2)
-      .map((job) => job.payload.messageUuid);
-    expect(ordered).toEqual(['msg-first', 'msg-second']);
+    const [head] = jobQueue.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
+    expect(head?.payload.messageUuid).toBe('msg-first');
+    jobQueue.complete(head!.id, { ok: true });
+    const [tail] = jobQueue.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
+    expect(tail?.payload.messageUuid).toBe('msg-second');
   });
 
   it('rolls back BOTH writes when the enqueue fails (no stranded row)', () => {

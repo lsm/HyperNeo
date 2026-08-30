@@ -76,10 +76,11 @@ describe('Migration 182/221: uq_message_delivery_active_turn lifecycle', () => {
     const jobs = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 });
     expect(jobs).toHaveLength(2);
     expect(jobs.every((job) => job.payload.role === undefined)).toBe(true);
-    expect(repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2).map((j) => j.payload.messageUuid)).toEqual([
-      'msg-a',
-      'msg-b',
-    ]);
+    const [head] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
+    expect(head?.payload.messageUuid).toBe('msg-a');
+    repo.complete(head!.id, { ok: true });
+    const [tail] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
+    expect(tail?.payload.messageUuid).toBe('msg-b');
   });
 
   test('existing-DB upgrade: runMigration182 creates the index once job_queue exists', () => {

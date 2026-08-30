@@ -123,6 +123,7 @@ class MockTaskAgentManager {
     getProcessingState: () => { status: string };
     isInterruptInProgress: () => boolean;
     normalizeStaleInterruptedState: () => Promise<void>;
+    stateManager: { setQueuedIfIdle: () => Promise<boolean> };
   } | null {
     const status = this.processingStates.get(sessionId);
     if (status === undefined) return null;
@@ -134,6 +135,7 @@ class MockTaskAgentManager {
           this.processingStates.set(sessionId, 'idle');
         }
       },
+      stateManager: { setQueuedIfIdle: async () => false },
     };
   }
 

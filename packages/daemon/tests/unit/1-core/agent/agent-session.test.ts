@@ -2137,6 +2137,26 @@ describe('AgentSession', () => {
       );
     });
 
+    it('deliverChatMessage preserves the watchdog when the message queues behind an active delivery', async () => {
+      const jobQueue = {
+        enqueue: mock(() => ({ id: 'job' })),
+        activeDeliveryMessageUuids: mock(() => new Set(['predecessor-msg'])),
+      };
+      mockDb.getJobQueueRepo = mock(() => jobQueue);
+      const cancelSpy = mock(() => {});
+      // biome-ignore lint: test mock access
+      (agentSession as unknown as Record<string, unknown>).rateLimitWatchdog = {
+        cancel: cancelSpy,
+      };
+      agentSession.stateManager.setQueuedIfIdle = mock(async () => false);
+
+      await agentSession.deliverChatMessage('successor-msg');
+
+      expect(cancelSpy).not.toHaveBeenCalled();
+      expect(jobQueue.enqueue).toHaveBeenCalled();
+      expect(agentSession.stateManager.setQueuedIfIdle).toHaveBeenCalledWith('successor-msg');
+    });
+
     it('deliverChatMessage publishes failed status when the session is archived', async () => {
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
         ...mockSession,
@@ -6635,7 +6655,6 @@ describe('AgentSession', () => {
           null,
           false,
           () => true,
-          undefined,
           undefined,
           { reportStage }
         );

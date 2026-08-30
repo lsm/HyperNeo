@@ -97,9 +97,11 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       deliverMessage(repo, SESSION, 'msg-B', { origin: 'chat' });
       const jobs = jobsFor(repo, SESSION);
       expect(jobs).toHaveLength(2);
-      expect(
-        repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2).map((j) => j.payload.messageUuid)
-      ).toEqual(['msg-A', 'msg-B']);
+      const [head] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
+      expect(head?.payload.messageUuid).toBe('msg-A');
+      repo.complete(head!.id, { ok: true });
+      const [tail] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
+      expect(tail?.payload.messageUuid).toBe('msg-B');
     });
 
     it('propagates enqueue failures to the caller', () => {
@@ -145,8 +147,13 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
         });
       }
       db.prepare(`UPDATE job_queue SET priority = 0, run_at = ?, created_at = ?`).run(now, now);
-      const claimed = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 3);
-      expect(claimed.map((j) => j.payload.messageUuid)).toEqual(['first', 'second', 'third']);
+      const claimed: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const [head] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 3);
+        claimed.push(head!.payload.messageUuid as string);
+        repo.complete(head!.id, { ok: true });
+      }
+      expect(claimed).toEqual(['first', 'second', 'third']);
     });
 
     it('orders same-priority/run_at jobs by created_at ASC', () => {

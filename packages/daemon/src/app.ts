@@ -998,6 +998,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
               internalEventBus.publish('session.error', { sessionId: sid, error }),
             settleSkippedDelivery: (uuid) =>
               session?.settleSkippedDelivery(uuid) ?? Promise.resolve(),
+            isSessionMidTurn: (sid) =>
+              (
+                taskAgentManager?.getSubSession(sid) ?? sessionManager?.getSession(sid)
+              )?.getProcessingState().status === 'processing',
             resetStuckProcessingState: (sid, uuid) =>
               session?.clearStuckProcessingState(uuid) ?? Promise.resolve(),
           }).catch(() => {});

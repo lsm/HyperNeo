@@ -2736,7 +2736,17 @@ export class AgentSession
         }
         throw err;
       }
-      this.rateLimitWatchdog.cancel();
+      const status = this.stateManager.getState().status;
+      if (status === 'rate_limit_cooldown') {
+        this.rateLimitWatchdog.cancel();
+      } else {
+        const activeDeliveries =
+          this.db.getJobQueueRepo?.().activeDeliveryMessageUuids(this.session.id) ??
+          new Set<string>();
+        activeDeliveries.delete(messageUuid);
+        const midTurn = this.messageQueue.isRunning() && status === 'processing';
+        if (!midTurn && activeDeliveries.size === 0) this.rateLimitWatchdog.cancel();
+      }
       try {
         await this.stateManager.setQueuedIfIdle(messageUuid);
       } catch (error) {

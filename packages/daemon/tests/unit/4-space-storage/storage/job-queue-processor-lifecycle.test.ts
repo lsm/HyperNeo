@@ -178,7 +178,6 @@ describe('JobQueueProcessor — lifecycle contracts', () => {
         queue: 'message_delivery',
         sessionId: 'session-1',
         messageUuid: 'message-1',
-        role: 'turn',
         generation: 7,
         stage: 'query_ready',
         aborted: false,

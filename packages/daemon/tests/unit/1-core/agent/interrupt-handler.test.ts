@@ -957,18 +957,19 @@ describe('InterruptHandler', () => {
             sendStatus
           );
         }
-        jobRepo.enqueue({
-          queue: MESSAGE_DELIVERY,
-          payload: {
-            sessionId: 'sess-int-routing',
-            messageUuid: 'msg-int-enqueued',
-            role: 'turn',
-            origin: 'chat',
-            parentToolUseId: null,
-            batchUuids: cases.map(([uuid]) => uuid),
-          },
-          maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
-        });
+        for (const [uuid, sendStatus] of cases) {
+          if (sendStatus === 'consumed') continue;
+          jobRepo.enqueue({
+            queue: MESSAGE_DELIVERY,
+            payload: {
+              sessionId: 'sess-int-routing',
+              messageUuid: uuid,
+              origin: 'chat',
+              parentToolUseId: null,
+            },
+            maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
+          });
+        }
 
         await f.handler.handleInterrupt();
 

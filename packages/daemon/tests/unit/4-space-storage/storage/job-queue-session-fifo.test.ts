@@ -404,7 +404,7 @@ describe('JobQueueProcessor — session-fifo dequeue mode (dark launch)', () => 
       }
     );
     const steerA1 = enqueueDelivery(repo, 'sess-a', { role: 'steer' });
-    enqueueDelivery(repo, 'sess-a', { role: 'turn' });
+    const turn = enqueueDelivery(repo, 'sess-a', { role: 'turn' });
     const steerA2 = enqueueDelivery(repo, 'sess-a', { role: 'steer' });
 
     const firstClaimed = await processor.tick();
@@ -414,7 +414,6 @@ describe('JobQueueProcessor — session-fifo dequeue mode (dark launch)', () => 
     let snapshot = processor.snapshot('message_delivery');
     expect(snapshot.inFlightCapped).toBe(0);
     expect(snapshot.inFlightExempt).toBe(1);
-    expect(snapshot.handlers[0].role).toBe('steer');
     expect(snapshot.handlers[0].slotClass).toBe('exempt');
     expect(repo.getJob(steerA1.id)?.status).toBe('processing');
     expect(repo.getJob(steerA2.id)?.status).toBe('pending');
@@ -428,14 +427,11 @@ describe('JobQueueProcessor — session-fifo dequeue mode (dark launch)', () => 
     snapshot = processor.snapshot('message_delivery');
     expect(snapshot.inFlightCapped).toBe(1);
     expect(snapshot.inFlightExempt).toBe(1);
-    const slotsByRole = new Map(
-      snapshot.handlers.map((handler) => [handler.role, handler.slotClass])
+    const slotsByJob = new Map(
+      snapshot.handlers.map((handler) => [handler.jobId, handler.slotClass])
     );
-    expect(slotsByRole.get('turn')).toBe('capped');
-    expect(slotsByRole.get('steer')).toBe('exempt');
-    for (const handler of snapshot.handlers) {
-      if (handler.role === 'steer') expect(handler.slotClass).not.toBe('capped');
-    }
+    expect(slotsByJob.get(turn.id)).toBe('capped');
+    expect(slotsByJob.get(steerA2.id)).toBe('exempt');
   });
 
   it('rejects session-fifo registrations combining exemptJobs with a releasedPath', () => {

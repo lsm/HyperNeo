@@ -4,6 +4,7 @@ export interface MessageDeliveryDeadLetterSettlement {
   markDeliveryFailedByUuid(sessionId: string, uuid: string): string | null;
   publishStatusChanged(sessionId: string, messageIds: string[]): Promise<unknown>;
   publishSessionError(sessionId: string, error: string): Promise<unknown>;
+  isSessionMidTurn?(sessionId: string): boolean;
   settleSkippedDelivery(messageUuid: string): Promise<unknown>;
   resetStuckProcessingState?(sessionId: string, messageUuid: string): Promise<unknown> | void;
 }
@@ -19,7 +20,10 @@ export async function settleMessageDeliveryDeadLetter(
   if (flipped) {
     void settlement.publishStatusChanged(payload.sessionId, [flipped]).catch(() => {});
   }
-  if (payload.origin === 'space_inject') {
+  if (
+    payload.origin === 'space_inject' &&
+    settlement.isSessionMidTurn?.(payload.sessionId) !== true
+  ) {
     try {
       await settlement.publishSessionError(payload.sessionId, DEAD_LETTER_SESSION_ERROR);
     } catch {}

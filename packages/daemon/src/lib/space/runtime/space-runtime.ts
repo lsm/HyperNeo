@@ -1575,7 +1575,7 @@ export class SpaceRuntime {
         withinRateBudget: () => this.consumeImmediateTierRateBudget(target),
         setQueuedIfIdle: (sessionId, messageUuid) => {
           const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
-          return session
+          return session?.stateManager
             ? session.stateManager.setQueuedIfIdle(messageUuid)
             : Promise.resolve(false);
         },

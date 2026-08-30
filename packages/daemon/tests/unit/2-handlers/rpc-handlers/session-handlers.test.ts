@@ -810,11 +810,6 @@ describe('Session RPC Handlers — models.list', () => {
           run_at INTEGER NOT NULL, created_at INTEGER NOT NULL, started_at INTEGER,
           heartbeat_at INTEGER, completed_at INTEGER
         );
-        CREATE UNIQUE INDEX uq_message_delivery_active_turn
-          ON job_queue (queue, json_extract(payload, '$.sessionId'))
-          WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.role') = 'turn'
-            AND status IN ('pending', 'processing');
       `);
       jobQueue = new JobQueueRepository(db as never);
       db.prepare(
@@ -904,12 +899,16 @@ describe('Session RPC Handlers — models.list', () => {
         send_status: string;
       };
       expect(row.send_status).toBe('enqueued');
-      const job = db
+      const payload = db
         .prepare(
-          `SELECT json_extract(payload, '$.role') AS role FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
+          `SELECT payload FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
         )
-        .get(MESSAGE_DELIVERY, 'promote-me') as { role: string };
-      expect(job.role).toBe('turn');
+        .get(MESSAGE_DELIVERY, 'promote-me') as { payload: string };
+      expect(JSON.parse(payload.payload)).toMatchObject({
+        sessionId: 'sess-1',
+        messageUuid: 'promote-me',
+        released: true,
+      });
     });
   });
 
@@ -944,11 +943,6 @@ describe('Session RPC Handlers — models.list', () => {
           run_at INTEGER NOT NULL, created_at INTEGER NOT NULL, started_at INTEGER,
           heartbeat_at INTEGER, completed_at INTEGER
         );
-        CREATE UNIQUE INDEX uq_message_delivery_active_turn
-          ON job_queue (queue, json_extract(payload, '$.sessionId'))
-          WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.role') = 'turn'
-            AND status IN ('pending', 'processing');
       `);
       jobQueue = new JobQueueRepository(db as never);
       db.prepare(
@@ -1035,12 +1029,16 @@ describe('Session RPC Handlers — models.list', () => {
         .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
         .get('db-failed') as { send_status: string };
       expect(row.send_status).toBe('enqueued');
-      const job = db
+      const payload = db
         .prepare(
-          `SELECT json_extract(payload, '$.role') AS role FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
+          `SELECT payload FROM job_queue WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
         )
-        .get(MESSAGE_DELIVERY, 'retry-me') as { role: string };
-      expect(job.role).toBe('turn');
+        .get(MESSAGE_DELIVERY, 'retry-me') as { payload: string };
+      expect(JSON.parse(payload.payload)).toMatchObject({
+        sessionId: 'sess-1',
+        messageUuid: 'retry-me',
+        released: true,
+      });
     });
 
     it('returns retried:false for a non-failed message (nothing to reopen)', async () => {
