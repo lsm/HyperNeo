@@ -19,7 +19,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../../src/storage/database';
 import type { QueryLike } from '../../../../src/lib/agent/query-like';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import { ErrorCategory, type ErrorManager } from '../../../../src/lib/error-manager';
 import type { Logger } from '../../../../src/lib/logger';
@@ -1371,6 +1371,70 @@ describe('QueryRunner', () => {
         (runner as unknown as { _consumedUserMessages: Map<number, unknown[]> })
           ._consumedUserMessages.size
       ).toBe(0);
+    });
+
+    it('calls onSent only after the SDK consumer pulls past the yield, never at yield time', async () => {
+      const onSentCalls: string[] = [];
+      async function* mockMessageGenerator() {
+        yield {
+          message: { uuid: 'msg-ack-1', content: 'Hello' },
+          onSent: () => {
+            onSentCalls.push('msg-ack-1');
+          },
+        };
+        yield {
+          message: { uuid: 'msg-ack-2', content: 'World' },
+          onSent: () => {
+            onSentCalls.push('msg-ack-2');
+          },
+        };
+      }
+
+      const mockQueue = {
+        ...mockMessageQueue,
+        messageGenerator: mock(() => mockMessageGenerator()),
+      };
+
+      runner = createRunner({
+        messageQueue: mockQueue as unknown as MessageQueue,
+      });
+
+      const generator = runner.createMessageGeneratorWrapper(0);
+      const first = await generator.next();
+      expect((first.value as { uuid?: string }).uuid).toBe('msg-ack-1');
+      expect(onSentCalls).toEqual([]);
+
+      const second = await generator.next();
+      expect((second.value as { uuid?: string }).uuid).toBe('msg-ack-2');
+      expect(onSentCalls).toEqual(['msg-ack-1']);
+
+      const done = await generator.next();
+      expect(done.done).toBe(true);
+      expect(onSentCalls).toEqual(['msg-ack-1', 'msg-ack-2']);
+    });
+
+    it('settles a queued admission only when the SDK consumer advances past the yield (real queue)', async () => {
+      const realQueue = new MessageQueue();
+      realQueue.start();
+      const admission = realQueue.enqueueWithId('msg-real-ack', 'Hello', false, { durable: true });
+      let settled = false;
+      void admission.then(() => {
+        settled = true;
+      });
+
+      runner = createRunner({ messageQueue: realQueue });
+
+      const generator = runner.createMessageGeneratorWrapper(0);
+      const first = await generator.next();
+      expect((first.value as { uuid?: string }).uuid).toBe('msg-real-ack');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(settled).toBe(false);
+
+      realQueue.stop();
+      const done = await generator.next();
+      expect(done.done).toBe(true);
+      await admission;
+      expect(settled).toBe(true);
     });
   });
 

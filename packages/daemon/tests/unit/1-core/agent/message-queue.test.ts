@@ -994,6 +994,97 @@ describe('MessageQueue', () => {
       q.clear();
       expect(await settled).toMatchObject({ message: 'Interrupted by user' });
     });
+
+    it('the durable yield-timeout resolve records the feed as sent in the queue bookkeeping', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(40);
+      q.start();
+      const promise = q.enqueueWithId('msg-timeout-sent-mark', 'hello', false, { durable: true });
+      const generator = q.messageGenerator('test-session');
+      await generator.next();
+      expect(q.getSentPromptContent('msg-timeout-sent-mark')).toBeUndefined();
+      await promise;
+      expect(q.getSentPromptContent('msg-timeout-sent-mark')).toBe('hello');
+      expect(q.hasOutstandingNonCompactionMessages()).toBe(true);
+      q.stop();
+    });
+  });
+
+  describe('SDK transport ack ownership — onSent resolves only the current yield attempt', () => {
+    it('resolves the delivery promise only from the onSent of the current yield, exactly once', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('msg-ack-current', 'hello', false, { durable: true });
+      let settled = 0;
+      void delivered.then(() => {
+        settled += 1;
+      });
+      const generator = q.messageGenerator(testSessionId);
+      const step = await generator.next();
+      expect(step.value.message.uuid).toBe('msg-ack-current');
+      await tick(5);
+      expect(settled).toBe(0);
+      expect(q.hasYielded('msg-ack-current')).toBe(true);
+
+      step.value.onSent();
+      await delivered;
+      expect(settled).toBe(1);
+
+      step.value.onSent();
+      await tick(5);
+      expect(settled).toBe(1);
+      expect(q.hasPendingOrInFlight('msg-ack-current')).toBe(false);
+      q.stop();
+    });
+
+    it('a stale onSent from an evicted yield attempt neither resolves nor marks the entry', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('msg-stale-attempt', 'hello', false, { durable: true });
+      let settled = 0;
+      void delivered.then(() => {
+        settled += 1;
+      });
+      const generator = q.messageGenerator(testSessionId);
+      const firstStep = await generator.next();
+      expect(firstStep.value.message.uuid).toBe('msg-stale-attempt');
+
+      expect(q.requeueYielded('msg-stale-attempt')).toBe(true);
+      const secondStep = await generator.next();
+      expect(secondStep.value.message.uuid).toBe('msg-stale-attempt');
+
+      firstStep.value.onSent();
+      await tick(5);
+      expect(settled).toBe(0);
+      expect(q.getSentPromptContent('msg-stale-attempt')).toBeUndefined();
+      expect(q.hasYielded('msg-stale-attempt')).toBe(true);
+
+      secondStep.value.onSent();
+      await delivered;
+      expect(settled).toBe(1);
+      expect(q.getSentPromptContent('msg-stale-attempt')).toBe('hello');
+      q.stop();
+    });
+
+    it('a late onSent arriving after the durable yield timeout settled the entry changes nothing', async () => {
+      const q = new MessageQueue();
+      q.overrideTimeoutMsForTest(30);
+      q.start();
+      const delivered = q.enqueueWithId('msg-late-onsent', 'hello', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      const step = await generator.next();
+
+      await delivered;
+      expect(q.hasPendingOrInFlight('msg-late-onsent')).toBe(false);
+      expect(q.getSentPromptContent('msg-late-onsent')).toBe('hello');
+
+      step.value.onSent();
+      await tick(5);
+      expect(q.hasPendingOrInFlight('msg-late-onsent')).toBe(false);
+      expect(q.getSentPromptContent('msg-late-onsent')).toBe('hello');
+      expect(q.size()).toBe(0);
+      q.stop();
+    });
   });
 
   describe('delivered-compaction lifecycle', () => {

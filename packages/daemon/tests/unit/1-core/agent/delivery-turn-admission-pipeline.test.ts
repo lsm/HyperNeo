@@ -613,4 +613,44 @@ describe('delivery-turn admission pipeline (A4b)', () => {
       f.db.close();
     }
   });
+
+  it('a durable kickoff settled by the queue yield timeout is marked consumed exactly like a real send acceptance (current behavior)', async () => {
+    const f = await makeFixture();
+    try {
+      const kickoff = 'msg-timeout-acceptance';
+      saveDeliveryRow(f.sdkRepo, kickoff, 'kickoff text');
+      setQueryPromise(f.agentSession);
+      f.agentSession.messageQueue.overrideTimeoutMsForTest(25);
+      const abort = new AbortController();
+
+      const drive = f.agentSession.driveDeliveryTurn(
+        kickoff,
+        'kickoff text',
+        null,
+        false,
+        () => true,
+        undefined,
+        abort.signal
+      );
+      await until(() => f.startup.calls > 0, 'startup reached');
+      f.startup.resolve('started');
+      await until(() => f.admitLog.length > 0, 'admission');
+
+      f.agentSession.messageQueue.start();
+      const transport = f.agentSession.messageQueue.messageGenerator(SESSION, {
+        suppressPreYieldCallback: true,
+        queryGeneration: 1,
+      });
+      const yielded = await transport.next();
+      expect(yielded.value.message.uuid).toBe(kickoff);
+      expect(statusOf(f.db, kickoff)).toBe('enqueued');
+
+      await until(() => statusOf(f.db, kickoff) === 'consumed', 'timeout acceptance flip', 2000);
+
+      abort.abort();
+      await expect(drive).rejects.toBeInstanceOf(Error);
+    } finally {
+      f.db.close();
+    }
+  });
 });
