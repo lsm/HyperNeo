@@ -4187,7 +4187,6 @@ function wrapToolHandlersWithTypedTelemetry(
     }
     const bound = handler.bind(handlers);
     wrapped[name] = async (...args: unknown[]) => {
-      const result = await bound(...args);
       try {
         emitActionTypedEvent({
           actionName: name,
@@ -4197,7 +4196,7 @@ function wrapToolHandlersWithTypedTelemetry(
           timestamp: Date.now(),
         });
       } catch {}
-      return result;
+      return bound(...args);
     };
   }
   return wrapped;
@@ -4209,7 +4208,6 @@ function withTypedTelemetry<TArgs extends unknown[]>(
   handler: (...args: TArgs) => Promise<ToolResult>
 ): (...args: TArgs) => Promise<ToolResult> {
   return async (...args: TArgs) => {
-    const result = await handler(...args);
     try {
       emitActionTypedEvent({
         actionName: name,
@@ -4219,7 +4217,7 @@ function withTypedTelemetry<TArgs extends unknown[]>(
         timestamp: Date.now(),
       });
     } catch {}
-    return result;
+    return handler(...args);
   };
 }
 
