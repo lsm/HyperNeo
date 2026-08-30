@@ -519,9 +519,8 @@ export class AcpQueryRunner {
     let args: string[];
     let acpProcessExit: SdkStartExitInfo | null = null;
     let startupWatchSawErrorResult = false;
-    let startupWatchHasFirstMessage: () => boolean = () => false;
     let startupWatchFirstMessageSeen = false;
-    let startStartupTimer: (hasFirstMessage: () => boolean) => void = () => {};
+    let startStartupTimer: () => void = () => {};
 
     const ownsStartupWatch = () =>
       attemptOwnsRun() &&
@@ -566,7 +565,7 @@ export class AcpQueryRunner {
         attemptOwnsRun() &&
         !this.ctx.isCleaningUp() &&
         this.ctx.startupTimeoutTimer === startupTimer;
-      if (!tickIsCurrent() || startupWatchHasFirstMessage()) {
+      if (!tickIsCurrent()) {
         releaseSlot();
         return;
       }
@@ -713,12 +712,11 @@ export class AcpQueryRunner {
             let restoredMessageEnqueuedHandler = false;
             const previousOnMessageEnqueued = messageQueue.onMessageEnqueued;
 
-            startStartupTimer = (hasFirstMessage: () => boolean) => {
+            startStartupTimer = () => {
               if (!attemptOwnsRun()) return;
               this.clearStartupTimer();
               startupTimeoutReached = false;
               queryStartTime = Date.now();
-              startupWatchHasFirstMessage = hasFirstMessage;
               startupWatchFirstMessageSeen = false;
               startupWatchSawErrorResult = false;
               scheduleStartupWatchTick(
@@ -729,7 +727,7 @@ export class AcpQueryRunner {
             const onMessageEnqueued = (messageId: string, queuedAt: number) => {
               previousOnMessageEnqueued?.(messageId, queuedAt);
               if (!startupHandshakeActive || this.ctx.startupTimeoutTimer) return;
-              startStartupTimer(() => false);
+              startStartupTimer();
             };
 
             restoreMessageEnqueuedHandler = () => {
@@ -825,7 +823,7 @@ export class AcpQueryRunner {
             assertActiveAcpStartup();
 
             if (messageQueue.size() > 0) {
-              startStartupTimer(() => false);
+              startStartupTimer();
             }
 
             if (!client) {
@@ -945,7 +943,6 @@ export class AcpQueryRunner {
         }
         receivedAcpMessageDuringRun = false;
         startupWatchFirstMessageSeen = false;
-        startupWatchHasFirstMessage = () => false;
         startupWatchSawErrorResult = false;
         this._lastConsumedUserMessage = {
           uuid: message.uuid ?? '',
@@ -998,7 +995,7 @@ export class AcpQueryRunner {
 
         this.ctx.firstMessageReceived = false;
         let promptMessageReceived = false;
-        startStartupTimer(() => promptMessageReceived);
+        startStartupTimer();
 
         let messageCount = 0;
         try {
