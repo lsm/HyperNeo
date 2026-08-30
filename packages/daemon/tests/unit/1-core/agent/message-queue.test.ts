@@ -1106,6 +1106,47 @@ describe('MessageQueue', () => {
     });
   });
 
+  describe('admission boundary: interrupts reject durable in-flight admissions', () => {
+    it('clear rejects a yielded durable admission instead of resolving it as sent', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('msg-durable-clear', 'hello', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      await generator.next();
+      expect(q.hasYielded('msg-durable-clear')).toBe(true);
+
+      q.clear();
+      await expect(delivered).rejects.toThrow('Interrupted by user');
+      expect(q.hasPendingOrInFlight('msg-durable-clear')).toBe(false);
+      q.stop();
+    });
+
+    it('clear still resolves a yielded non-durable admission', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('msg-legacy-clear', 'hello');
+      const generator = q.messageGenerator(testSessionId);
+      await generator.next();
+
+      q.clear();
+      await expect(delivered).resolves.toBeUndefined();
+      q.stop();
+    });
+
+    it('stop rejects a yielded durable admission and drops it from the yielded set', async () => {
+      const q = new MessageQueue();
+      q.start();
+      const delivered = q.enqueueWithId('msg-durable-stop', 'hello', false, { durable: true });
+      const generator = q.messageGenerator(testSessionId);
+      await generator.next();
+      expect(q.hasYielded('msg-durable-stop')).toBe(true);
+
+      q.stop();
+      await expect(delivered).rejects.toThrow('Interrupted by user');
+      expect(q.hasYielded('msg-durable-stop')).toBe(false);
+    });
+  });
+
   describe('delivered-compaction lifecycle', () => {
     it('counts a sent internal /compact as awaiting its compact boundary', async () => {
       const q = new MessageQueue();
