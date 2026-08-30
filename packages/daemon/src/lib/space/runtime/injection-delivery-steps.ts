@@ -1,10 +1,9 @@
-import type { MessageContent, MessageOrigin } from '@hyperneo/shared';
+import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
-  type ContextClearBoundaryOwner,
 } from '../../../lib/agent/message-delivery.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 
@@ -88,10 +87,6 @@ export interface InjectionDeliveryTargetSession {
     getState(): { status: string };
   };
   getSessionData?: () => { config?: { provider?: string } };
-  ensureQueryStarted(): Promise<unknown>;
-  messageQueue: {
-    enqueueWithId(messageId: string, content: string | MessageContent[]): Promise<void>;
-  };
 }
 
 export interface InjectDeliveryBranchDeps extends InjectionDeliveryRowDeps {
@@ -103,67 +98,45 @@ export interface DeliverInjectedMessageArgs {
   sessionId: string;
   messageId: string;
   sdkUserMessage: SDKUserMessage;
-  enqueuePayload: string | MessageContent[];
-  deliveryV2Enabled: boolean;
   rowExists: boolean;
   origin?: MessageOrigin;
-  boundaryOwner?: ContextClearBoundaryOwner;
 }
 
 export async function deliverInjectedMessage(
   deps: InjectDeliveryBranchDeps,
   args: DeliverInjectedMessageArgs
 ): Promise<string> {
-  if (args.deliveryV2Enabled) {
-    const dbId = await settleDeliveryRowStatus(deps, {
-      sessionId: args.sessionId,
-      message: args.sdkUserMessage,
-      messageId: args.messageId,
-      rowExists: args.rowExists,
-      status: 'enqueued',
-      origin: args.origin,
-    });
-    await awaitDeliveryConsumption({
-      sessionId: args.sessionId,
-      messageUuid: args.messageId,
-      timeoutMs: deliveryConsumptionTimeoutMs(args.session.getSessionData?.().config?.provider),
-      getSendStatus: () => deps.getDeliverySendStatus(args.sessionId, args.messageId),
-      deliver: async () => {
-        try {
-          await deliverAndMarkQueued({
-            jobQueue: deps.jobQueue,
-            stateManager: args.session.stateManager,
-            sessionId: args.sessionId,
-            messageUuid: args.messageId,
-            origin: 'space_inject',
-            onEnqueueFailure: () => {
-              failDeliveryRowInBackground(deps, args.sessionId, args.messageId);
-            },
-          });
-        } finally {
-          args.boundaryOwner?.release();
-        }
-      },
-      ...(!args.rowExists
-        ? {
-            terminalizeOnTimeout: () => {
-              failDeliveryRowInBackground(deps, args.sessionId, args.messageId);
-            },
-          }
-        : {}),
-    });
-    return dbId;
-  }
-  await args.session.ensureQueryStarted();
   const dbId = await settleDeliveryRowStatus(deps, {
     sessionId: args.sessionId,
     message: args.sdkUserMessage,
     messageId: args.messageId,
-    rowExists: false,
+    rowExists: args.rowExists,
     status: 'enqueued',
     origin: args.origin,
   });
-  await args.session.messageQueue.enqueueWithId(args.messageId, args.enqueuePayload);
-  args.boundaryOwner?.release();
+  await awaitDeliveryConsumption({
+    sessionId: args.sessionId,
+    messageUuid: args.messageId,
+    timeoutMs: deliveryConsumptionTimeoutMs(args.session.getSessionData?.().config?.provider),
+    getSendStatus: () => deps.getDeliverySendStatus(args.sessionId, args.messageId),
+    deliver: () =>
+      deliverAndMarkQueued({
+        jobQueue: deps.jobQueue,
+        stateManager: args.session.stateManager,
+        sessionId: args.sessionId,
+        messageUuid: args.messageId,
+        origin: 'space_inject',
+        onEnqueueFailure: () => {
+          failDeliveryRowInBackground(deps, args.sessionId, args.messageId);
+        },
+      }),
+    ...(!args.rowExists
+      ? {
+          terminalizeOnTimeout: () => {
+            failDeliveryRowInBackground(deps, args.sessionId, args.messageId);
+          },
+        }
+      : {}),
+  });
   return dbId;
 }

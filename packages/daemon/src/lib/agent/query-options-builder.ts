@@ -60,7 +60,6 @@ import { autoCompactReserveTokens } from './context-tracker.js';
 import { getCoordinatorAgents } from './coordinator-agents.ts';
 import { decideFallbackModelCuration } from './fallback-model-curation.ts';
 import { createLoopDetectorHooks } from './loop-detector-hook.ts';
-import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
 import {
   createOutputLimiterPostHook,
   createOutputLimiterPreHook,
@@ -447,7 +446,7 @@ export class QueryOptionsBuilder {
         )
       ),
 
-      includePartialMessages: config.includePartialMessages ?? isMessageDeliveryV2Enabled(),
+      includePartialMessages: config.includePartialMessages ?? true,
 
       enableFileCheckpointing: config.enableFileCheckpointing ?? true,
 

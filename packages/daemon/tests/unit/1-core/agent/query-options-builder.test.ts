@@ -807,37 +807,21 @@ describe('QueryOptionsBuilder', () => {
     });
 
     describe('includePartialMessages (delivery stall-watchdog liveness heartbeat)', () => {
-      const KEY = 'HYPERNEO_MESSAGE_DELIVERY_V2';
-      function withV2(value: string | undefined, fn: () => Promise<void>): Promise<void> {
-        const prev = process.env[KEY];
-        if (value === undefined) delete process.env[KEY];
-        else process.env[KEY] = value;
-        return fn().finally(() => {
-          if (prev === undefined) delete process.env[KEY];
-          else process.env[KEY] = prev;
-        });
-      }
-
       it('is enabled by default (delivery v2 on → stream_event heartbeats flow)', async () => {
-        await withV2(undefined, async () => {
-          const options = await builder.build();
-          expect(options.includePartialMessages).toBe(true);
-        });
+        const options = await builder.build();
+        expect(options.includePartialMessages).toBe(true);
       });
 
-      it('is disabled when delivery v2 is off (no watchdog armed, no heartbeats needed)', async () => {
-        await withV2('0', async () => {
-          const options = await builder.build();
-          expect(options.includePartialMessages).toBe(false);
-        });
+      it('is disabled when the session explicitly disables it', async () => {
+        mockSession.config.includePartialMessages = false;
+        const options = await builder.build();
+        expect(options.includePartialMessages).toBe(false);
       });
 
       it('a per-session override wins over the delivery-v2 default', async () => {
-        await withV2('0', async () => {
-          mockSession.config.includePartialMessages = true;
-          const options = await builder.build();
-          expect(options.includePartialMessages).toBe(true);
-        });
+        mockSession.config.includePartialMessages = true;
+        const options = await builder.build();
+        expect(options.includePartialMessages).toBe(true);
       });
     });
 

@@ -1,5 +1,5 @@
-import type { MessageContent, Session } from '@hyperneo/shared';
-import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database.ts';
 import {
@@ -10,15 +10,10 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Logger } from '../logger.ts';
 import { ClearConversationCancelledError } from './agent-session.ts';
 import {
-  acquireContextClearBoundary,
-  type ContextClearBoundaryOwner,
   deliverAndMarkQueued,
   deliverBatchAndMarkQueued,
   flattenDeliveryText,
-  isMessageDeliveryV2Enabled,
   type MessageDeliveryOrigin,
-  SessionCoordinationStallError,
-  withSessionResetCoordination,
 } from './message-delivery.ts';
 import { decideTurnEndFlush, type TurnEndFlushPlan } from './message-delivery-pipeline.ts';
 import { type FlushMessage, isTaskFlushInput } from './message-ownership-gates.ts';
@@ -35,7 +30,7 @@ export interface QueryModeHandlerContext {
     getState(): { status: string };
   };
   slotResetsContext?(): boolean;
-  clearConversationContext?(boundaryOwner?: ContextClearBoundaryOwner): Promise<void>;
+  clearConversationContext?(): Promise<void>;
   renderPendingDigest?(
     sessionId: string,
     taskId?: string
@@ -51,7 +46,6 @@ export class QueryModeHandler {
     deliverIndividually?: boolean;
     excludeMessageUuid?: string;
     skipContextReset?: boolean;
-    skipResetCoordination?: boolean;
     pendingTaskInput?: boolean;
   }): Promise<{
     success: boolean;
@@ -139,18 +133,16 @@ export class QueryModeHandler {
       const flushMessages = this.toFlushMessages(backlog);
 
       let reDeferredDbIds: string[] = [];
-      if (isMessageDeliveryV2Enabled()) {
-        try {
-          const v2 = await this.deliverFlushUnderV2(flushMessages, 'recovery', options);
-          reDeferredDbIds = v2.reDeferredDbIds;
-        } catch (error) {
-          await internalEventBus.publish('messages.statusChanged', {
-            sessionId: session.id,
-            messageIds: dbIds.filter((id) => !reDeferredDbIds.includes(id)),
-            status: 'enqueued',
-          });
-          throw error;
-        }
+      try {
+        const v2 = await this.deliverFlushUnderV2(flushMessages, 'recovery', options);
+        reDeferredDbIds = v2.reDeferredDbIds;
+      } catch (error) {
+        await internalEventBus.publish('messages.statusChanged', {
+          sessionId: session.id,
+          messageIds: dbIds.filter((id) => !reDeferredDbIds.includes(id)),
+          status: 'enqueued',
+        });
+        throw error;
       }
 
       const admittedDbIds = dbIds.filter((id) => !reDeferredDbIds.includes(id));
@@ -162,17 +154,11 @@ export class QueryModeHandler {
         });
       }
 
-      if (!isMessageDeliveryV2Enabled()) {
-        await this.deliverRowsViaMemoryQueue(backlog, flushMessages, options);
-      }
-
       return backlog.length;
     };
 
     try {
-      const messageCount = options?.skipResetCoordination
-        ? await runFlush()
-        : await withSessionResetCoordination(session.id, runFlush);
+      const messageCount = await runFlush();
       return { success: true, messageCount };
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
@@ -180,83 +166,6 @@ export class QueryModeHandler {
       logger.error('Failed to trigger query:', error);
       return { success: false, messageCount: 0, error: errorMessage };
     }
-  }
-
-  private flushClearBlockedByLiveWork(): boolean {
-    if (this.ctx.messageQueue.size() > 0) return true;
-    const status = this.ctx.stateManager?.getState().status;
-    return status !== undefined && status !== 'idle';
-  }
-
-  private async deliverRowsViaMemoryQueue(
-    messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>,
-    flushMessages: FlushMessage[],
-    options?: { skipContextReset?: boolean; pendingTaskInput?: boolean }
-  ): Promise<boolean> {
-    const session = this.ctx.session;
-    const v2Owned =
-      this.ctx.db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ??
-      new Set<string>();
-    const taskUuids = new Set(
-      flushMessages.filter((message) => message.isTaskInput).map((message) => message.uuid)
-    );
-    const plan = this.planFlush(flushMessages, options);
-    const deferForActiveJob =
-      plan.action !== 'noop' &&
-      plan.contextReset.action === 'flush_without_clear' &&
-      plan.contextReset.reason === 'active_delivery_job';
-    await this.ctx.ensureQueryStarted();
-    let clearAttempted = false;
-    let clearedContext = false;
-    const clearAheadOfTask = async (): Promise<void> => {
-      clearAttempted = true;
-      clearedContext = await this.clearContextAheadOfFlush(flushMessages, options);
-    };
-    for (const msg of messages) {
-      if (typeof msg.uuid !== 'string' || msg.uuid.length === 0) continue;
-      if (v2Owned.has(msg.uuid)) continue;
-      const replayContent = this.toReplayContent(msg.message.content);
-      if (!replayContent) continue;
-      if (!clearAttempted && taskUuids.has(msg.uuid)) {
-        if (this.flushClearBlockedByLiveWork() || deferForActiveJob) {
-          await this.deferRemainingRows(messages, v2Owned, msg.uuid);
-          return clearedContext;
-        }
-        await clearAheadOfTask();
-      }
-      await this.ctx.messageQueue.enqueueWithId(msg.uuid, replayContent);
-    }
-    if (
-      !clearAttempted &&
-      options?.pendingTaskInput === true &&
-      !this.flushClearBlockedByLiveWork()
-    ) {
-      await clearAheadOfTask();
-    }
-    return clearedContext;
-  }
-
-  private async deferRemainingRows(
-    messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>,
-    v2Owned: ReadonlySet<string>,
-    fromUuid: string
-  ): Promise<void> {
-    const dbIds: string[] = [];
-    let delaying = false;
-    for (const msg of messages) {
-      if (!delaying && msg.uuid !== fromUuid) continue;
-      delaying = true;
-      if (typeof msg.uuid !== 'string' || msg.uuid.length === 0) continue;
-      if (v2Owned.has(msg.uuid)) continue;
-      dbIds.push(msg.dbId);
-    }
-    if (dbIds.length === 0) return;
-    this.ctx.db.updateMessageStatus(dbIds, 'deferred');
-    await this.ctx.internalEventBus.publish('messages.statusChanged', {
-      sessionId: this.ctx.session.id,
-      messageIds: dbIds,
-      status: 'deferred',
-    });
   }
 
   private toFlushMessages(
@@ -294,8 +203,7 @@ export class QueryModeHandler {
 
   private async clearContextAheadOfFlush(
     flushMessages: FlushMessage[],
-    options?: { skipContextReset?: boolean; pendingTaskInput?: boolean },
-    boundaryOwner?: ContextClearBoundaryOwner
+    options?: { skipContextReset?: boolean; pendingTaskInput?: boolean }
   ): Promise<boolean> {
     if (options?.skipContextReset) return false;
     if (!this.ctx.clearConversationContext) return false;
@@ -303,7 +211,7 @@ export class QueryModeHandler {
     if (plan.action === 'noop') return false;
     if (plan.contextReset.action !== 'clear_then_flush') return false;
     try {
-      await this.ctx.clearConversationContext(boundaryOwner);
+      await this.ctx.clearConversationContext();
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
       this.ctx.logger.warn(
@@ -346,109 +254,41 @@ export class QueryModeHandler {
     if (plan.action === 'noop') return { clearedContext: false, reDeferredDbIds: [] };
     let clearedContext = false;
     let reDeferredDbIds: string[] = [];
-    let planAction = plan.action;
     let deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
-    let clearBoundaryOwner: ContextClearBoundaryOwner | null = null;
-    try {
-      if (plan.contextReset.action === 'clear_then_flush' && !options?.skipContextReset) {
-        clearBoundaryOwner = await this.acquireClearBoundaryAheadOfFlush();
-        if (clearBoundaryOwner === null) {
-          const refreshed = this.planFlush(flushMessages, options);
-          if (refreshed.action === 'noop') {
-            return { clearedContext: false, reDeferredDbIds };
-          }
-          planAction = refreshed.action;
-          deliverables = refreshed.action === 'batch' ? refreshed.uuids : refreshed.deliver;
-          const deliverableSet = new Set(deliverables);
-          reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
-          deliverables = deliverables.filter((uuid) => {
-            const message = flushMessages.find((entry) => entry.uuid === uuid);
-            return message !== undefined && !message.isTaskInput;
-          });
-          if (deliverables.length === 0) return { clearedContext: false, reDeferredDbIds };
-        } else {
-          clearedContext = await this.clearContextAheadOfFlush(
-            flushMessages,
-            options,
-            clearBoundaryOwner
-          );
-          if (!clearedContext) {
-            const refreshed = this.planFlush(flushMessages, options);
-            if (refreshed.action === 'noop') {
-              return { clearedContext, reDeferredDbIds };
-            }
-            planAction = refreshed.action;
-            deliverables = refreshed.action === 'batch' ? refreshed.uuids : refreshed.deliver;
-            if (
-              refreshed.contextReset.action === 'flush_without_clear' &&
-              refreshed.contextReset.reason === 'active_delivery_job'
-            ) {
-              const deliverableSet = new Set(deliverables);
-              reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
-              deliverables = deliverables.filter((uuid) => {
-                const message = flushMessages.find((entry) => entry.uuid === uuid);
-                return message !== undefined && !message.isTaskInput;
-              });
-              if (deliverables.length === 0) return { clearedContext, reDeferredDbIds };
-            }
-          }
-        }
-      } else if (
-        plan.contextReset.action === 'flush_without_clear' &&
-        plan.contextReset.reason === 'active_delivery_job'
-      ) {
-        const deliverableSet = new Set(deliverables);
-        reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
-        deliverables = deliverables.filter((uuid) => {
-          const message = flushMessages.find((entry) => entry.uuid === uuid);
-          return message !== undefined && !message.isTaskInput;
-        });
-        if (deliverables.length === 0) return { clearedContext, reDeferredDbIds };
-      }
-      if (planAction === 'batch' && !options?.deliverIndividually) {
-        const batched = await deliverBatchAndMarkQueued({
-          jobQueue,
-          stateManager: this.ctx.stateManager,
-          sessionId: this.ctx.session.id,
-          messageUuids: deliverables,
-          origin,
-        });
-        if (batched) return { clearedContext, reDeferredDbIds };
-      }
-      for (const uuid of deliverables) {
-        await deliverAndMarkQueued({
-          jobQueue,
-          stateManager: this.ctx.stateManager,
-          sessionId: this.ctx.session.id,
-          messageUuid: uuid,
-          origin,
-        });
-      }
-      return { clearedContext, reDeferredDbIds };
-    } finally {
-      clearBoundaryOwner?.release();
+    if (plan.contextReset.action === 'clear_then_flush') {
+      clearedContext = await this.clearContextAheadOfFlush(flushMessages, options);
+    } else if (plan.contextReset.reason === 'active_delivery_job') {
+      const deliverableSet = new Set(deliverables);
+      reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
+      deliverables = deliverables.filter((uuid) => {
+        const message = flushMessages.find((entry) => entry.uuid === uuid);
+        return message !== undefined && !message.isTaskInput;
+      });
+      if (deliverables.length === 0) return { clearedContext, reDeferredDbIds };
     }
+    if (plan.action === 'batch' && !options?.deliverIndividually) {
+      const batched = await deliverBatchAndMarkQueued({
+        jobQueue,
+        stateManager: this.ctx.stateManager,
+        sessionId: this.ctx.session.id,
+        messageUuids: deliverables,
+        origin,
+      });
+      if (batched) return { clearedContext, reDeferredDbIds };
+    }
+    for (const uuid of deliverables) {
+      await deliverAndMarkQueued({
+        jobQueue,
+        stateManager: this.ctx.stateManager,
+        sessionId: this.ctx.session.id,
+        messageUuid: uuid,
+        origin,
+      });
+    }
+    return { clearedContext, reDeferredDbIds };
   }
 
-  private async acquireClearBoundaryAheadOfFlush(): Promise<ContextClearBoundaryOwner | null> {
-    try {
-      return await acquireContextClearBoundary(this.ctx.session.id);
-    } catch (error) {
-      if (error instanceof SessionCoordinationStallError) {
-        this.ctx.logger.warn(
-          `turn-end flush context-clear boundary busy for session ${this.ctx.session.id}: ` +
-            `${error.message} — deferring the flush instead of clearing unprotected`
-        );
-        return null;
-      }
-      throw error;
-    }
-  }
-
-  async sendEnqueuedMessagesOnTurnEnd(options?: {
-    pendingTaskInput?: boolean;
-    skipResetCoordination?: boolean;
-  }): Promise<{
+  async sendEnqueuedMessagesOnTurnEnd(options?: { pendingTaskInput?: boolean }): Promise<{
     replayedWork: boolean;
     clearedContext: boolean;
     replayFailed: boolean;
@@ -469,28 +309,14 @@ export class QueryModeHandler {
       }
       replayedWork = true;
 
-      if (isMessageDeliveryV2Enabled()) {
-        const v2 = await this.deliverFlushUnderV2(
-          this.toFlushMessages(pendingMessages),
-          'recovery',
-          { pendingTaskInput: options?.pendingTaskInput }
-        );
-        clearedContext = v2.clearedContext;
-      } else {
-        clearedContext = await this.deliverRowsViaMemoryQueue(
-          pendingMessages,
-          this.toFlushMessages(pendingMessages),
-          { pendingTaskInput: options?.pendingTaskInput }
-        );
-      }
+      const v2 = await this.deliverFlushUnderV2(this.toFlushMessages(pendingMessages), 'recovery', {
+        pendingTaskInput: options?.pendingTaskInput,
+      });
+      clearedContext = v2.clearedContext;
     };
 
     try {
-      if (options?.skipResetCoordination) {
-        await runReplay();
-      } else {
-        await withSessionResetCoordination(session.id, runReplay);
-      }
+      await runReplay();
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
       replayFailed = true;
@@ -540,27 +366,5 @@ export class QueryModeHandler {
         this.postSettlementFlushScheduled = false;
       }
     })();
-  }
-
-  private toReplayContent(
-    content: string | Array<{ type: string; text?: string }>
-  ): string | MessageContent[] | null {
-    if (typeof content === 'string') {
-      return content || null;
-    }
-
-    if (Array.isArray(content)) {
-      if (content.some((block) => block.type !== 'text')) {
-        return content as MessageContent[];
-      }
-
-      const textContent = content
-        .filter((c): c is { type: 'text'; text: string } => c.type === 'text' && !!c.text)
-        .map((c) => c.text)
-        .join('\n');
-      return textContent || null;
-    }
-
-    return null;
   }
 }

@@ -84,10 +84,6 @@ import { SpaceWorkflowRepository } from '../../storage/repositories/space-workfl
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import {
-  isMessageDeliveryV2Enabled,
-  withSessionResetCoordination,
-} from '../agent/message-delivery.ts';
-import {
   deliverSpaceAgentMessage,
   type SpaceAgentInjectionOutcome,
 } from '../space/runtime/space-agent-message-delivery.ts';
@@ -1030,49 +1026,33 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         content: [{ type: 'text' as const, text: message }],
       },
     };
-    if (isMessageDeliveryV2Enabled()) {
-      return await deliverSpaceAgentMessage(
-        {
-          sdkMessageRepo: deps.reactiveDb.db.getSDKMessageRepo(),
-          saveUserMessage: (sid, msg, status) =>
-            deps.reactiveDb.db.saveUserMessage(sid, msg, status),
-          publishStatusChanged: async (sid, dbId, status) => {
-            await deps.internalEventBus
-              .publish('messages.statusChanged', {
-                sessionId: sid,
-                messageIds: [dbId],
-                status,
-              })
-              .catch(() => {});
-          },
-          jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
-          stateManager: session.stateManager,
-          onConsumed: injectorOptions?.onConsumed,
-          lateSettlement: injectorOptions?.lateSettlement,
-          onLateFailure: injectorOptions?.onLateFailure,
-          disposeSignal: injectorOptions?.disposeSignal,
+    return await deliverSpaceAgentMessage(
+      {
+        sdkMessageRepo: deps.reactiveDb.db.getSDKMessageRepo(),
+        saveUserMessage: (sid, msg, status) => deps.reactiveDb.db.saveUserMessage(sid, msg, status),
+        publishStatusChanged: async (sid, dbId, status) => {
+          await deps.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: sid,
+              messageIds: [dbId],
+              status,
+            })
+            .catch(() => {});
         },
-        {
-          sessionId,
-          messageId,
-          sdkUserMessage,
-          provider: session.getSessionData?.().config?.provider,
-        }
-      );
-    }
-    await withSessionResetCoordination(sessionId, async () => {
-      await session.ensureQueryStarted();
-      const dbId = deps.reactiveDb.db.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      await deps.internalEventBus
-        .publish('messages.statusChanged', {
-          sessionId,
-          messageIds: [dbId],
-          status: 'enqueued',
-        })
-        .catch(() => {});
-      await session.messageQueue.enqueueWithId(messageId, message);
-    });
-    return { state: 'delivered', messageId, sessionId };
+        jobQueue: deps.reactiveDb.db.getJobQueueRepo(),
+        stateManager: session.stateManager,
+        onConsumed: injectorOptions?.onConsumed,
+        lateSettlement: injectorOptions?.lateSettlement,
+        onLateFailure: injectorOptions?.onLateFailure,
+        disposeSignal: injectorOptions?.disposeSignal,
+      },
+      {
+        sessionId,
+        messageId,
+        sdkUserMessage,
+        provider: session.getSessionData?.().config?.provider,
+      }
+    );
   };
 
   const taskAgentManager = new TaskAgentManager({

@@ -4,7 +4,6 @@ import type {
   ImageContent,
   ListRuntimeMcpServersRequest,
   ListRuntimeMcpServersResponse,
-  MessageContent,
   MessageDeliveryMode,
   MessageHub,
   MessageImage,
@@ -21,11 +20,7 @@ import {
   normalizeThinkingLevel,
 } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
-import {
-  deliverAndMarkQueued,
-  isMessageDeliveryV2Enabled,
-  withSessionResetCoordination,
-} from '../agent/message-delivery.ts';
+import { deliverAndMarkQueued } from '../agent/message-delivery.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import {
@@ -116,30 +111,6 @@ function extractMessageText(content: unknown): string {
     })
     .filter(Boolean)
     .join('\n');
-}
-
-function toReplayContent(
-  content: string | Array<{ type: string; text?: string }>
-): string | MessageContent[] | null {
-  if (typeof content === 'string') {
-    return content || null;
-  }
-
-  if (Array.isArray(content)) {
-    if (content.some((block) => block.type !== 'text')) {
-      return content as MessageContent[];
-    }
-
-    const textContent = content
-      .filter(
-        (block): block is { type: 'text'; text: string } => block.type === 'text' && !!block.text
-      )
-      .map((block) => block.text)
-      .join('\n');
-    return textContent || null;
-  }
-
-  return null;
 }
 
 export function setupSessionHandlers(
@@ -1191,10 +1162,6 @@ export function setupSessionHandlers(
       return { promoted: false };
     }
 
-    const replayContent = toReplayContent(message.message.content);
-    if (!replayContent) {
-      return { promoted: false };
-    }
     const messageUuid = message.uuid;
 
     db.updateMessageStatus([message.dbId], 'enqueued');
@@ -1218,19 +1185,13 @@ export function setupSessionHandlers(
     };
 
     try {
-      if (isMessageDeliveryV2Enabled()) {
-        await deliverAndMarkQueued({
-          jobQueue: db.getJobQueueRepo(),
-          stateManager: agentSession.stateManager,
-          sessionId: targetSessionId,
-          messageUuid,
-          origin: 'chat',
-        });
-      } else {
-        await withSessionResetCoordination(targetSessionId, async () => {
-          await agentSession.startQueryAndEnqueue(messageUuid, replayContent);
-        });
-      }
+      await deliverAndMarkQueued({
+        jobQueue: db.getJobQueueRepo(),
+        stateManager: agentSession.stateManager,
+        sessionId: targetSessionId,
+        messageUuid,
+        origin: 'chat',
+      });
     } catch (err) {
       await rollbackToDeferred();
       throw err;
@@ -1296,22 +1257,13 @@ export function setupSessionHandlers(
         status: 'enqueued',
       });
 
-      if (isMessageDeliveryV2Enabled()) {
-        await deliverAndMarkQueued({
-          jobQueue: db.getJobQueueRepo(),
-          stateManager: agentSession.stateManager,
-          sessionId: targetSessionId,
-          messageUuid,
-          origin: 'chat',
-        });
-      } else {
-        const replayContent = toReplayContent(message.message.content);
-        if (replayContent) {
-          await withSessionResetCoordination(targetSessionId, async () => {
-            await agentSession.startQueryAndEnqueue(messageUuid, replayContent);
-          });
-        }
-      }
+      await deliverAndMarkQueued({
+        jobQueue: db.getJobQueueRepo(),
+        stateManager: agentSession.stateManager,
+        sessionId: targetSessionId,
+        messageUuid,
+        origin: 'chat',
+      });
     } catch (err) {
       await rollbackToFailed();
       throw err;

@@ -5,11 +5,6 @@ import {
   AgentSession,
   ClearConversationCancelledError,
 } from '../../../../src/lib/agent/agent-session.ts';
-import {
-  clearContextClearBoundariesForTest,
-  SessionCoordinationStallError,
-  withContextClearBoundary,
-} from '../../../../src/lib/agent/message-delivery.ts';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
@@ -520,76 +515,5 @@ describe('AgentSession.clearConversationContext', () => {
     expect(session.session.id).toBe(originalId);
     expect(db.deleteMessagesAfter).not.toHaveBeenCalled();
     expect(db.deleteMessagesAtAndAfter).not.toHaveBeenCalled();
-  });
-
-  it('holds the context-clear boundary through unconfirmed-clear recovery', async () => {
-    const previous = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
-    process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '20';
-    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
-    spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
-    spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
-    spyOn(session.messageHandler, 'armSuppressedResultWait').mockResolvedValue('reset');
-    spyOn(session.messageHandler, 'startSuppressedResultTimer').mockImplementation(() => {});
-    spyOn(session.logger, 'warn').mockImplementation(() => {});
-    let releaseTeardown!: () => void;
-    const teardownGate = new Promise<void>((resolve) => {
-      releaseTeardown = resolve;
-    });
-    spyOn(session, 'resetQuery').mockImplementation(async () => {
-      await teardownGate;
-      return { success: true };
-    });
-    try {
-      const clearing = session.clearConversationContext();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-
-      await expect(
-        withContextClearBoundary(session.session.id, async () => 'never')
-      ).rejects.toBeInstanceOf(SessionCoordinationStallError);
-
-      releaseTeardown();
-      await expect(clearing).resolves.toBeUndefined();
-      await expect(withContextClearBoundary(session.session.id, async () => 'ok')).resolves.toBe(
-        'ok'
-      );
-    } finally {
-      if (previous === undefined)
-        delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
-      else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previous;
-      clearContextClearBoundariesForTest();
-    }
-  });
-
-  it('holds the context-clear boundary across the /clear enqueue', async () => {
-    const previous = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
-    process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '20';
-    const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
-    stubClearExternals(session);
-    let releaseEnqueue!: () => void;
-    const enqueueGate = new Promise<void>((resolve) => {
-      releaseEnqueue = resolve;
-    });
-    spyOn(session.messageQueue, 'enqueueWithId').mockImplementation(async () => {
-      await enqueueGate;
-    });
-    try {
-      const clearing = session.clearConversationContext();
-      await new Promise((resolve) => setTimeout(resolve, 5));
-
-      await expect(
-        withContextClearBoundary(session.session.id, async () => 'never')
-      ).rejects.toBeInstanceOf(SessionCoordinationStallError);
-
-      releaseEnqueue();
-      await expect(clearing).resolves.toBeUndefined();
-      await expect(withContextClearBoundary(session.session.id, async () => 'ok')).resolves.toBe(
-        'ok'
-      );
-    } finally {
-      if (previous === undefined)
-        delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
-      else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previous;
-      clearContextClearBoundariesForTest();
-    }
   });
 });

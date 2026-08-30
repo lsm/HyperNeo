@@ -12,11 +12,6 @@ import { composeDraftWhole } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database.ts';
-import {
-  isMessageDeliveryV2Enabled,
-  SessionCoordinationStallError,
-  withSessionResetCoordination,
-} from '../agent/message-delivery.ts';
 import { persistAndEnqueueDelivery } from '../agent/message-delivery-outbox.ts';
 import {
   buildReferenceContext,
@@ -195,9 +190,8 @@ export class MessagePersistence {
           ? 'deferred'
           : 'enqueued';
 
-      const useV2Delivery = isMessageDeliveryV2Enabled();
       const jobQueueRepo = this.db.getJobQueueRepo?.();
-      const useOutbox = shouldDispatchToQuery && useV2Delivery && !!jobQueueRepo;
+      const useOutbox = shouldDispatchToQuery && !!jobQueueRepo;
       let dbMessageId: string;
       let outboxRole: 'turn' | 'steer' | undefined;
       if (useOutbox) {
@@ -212,7 +206,7 @@ export class MessagePersistence {
             .catch(() => {});
           throw new Error(`Session ${sessionId} is archived`);
         }
-        const outbox = await persistAndEnqueueDelivery({
+        const outbox = persistAndEnqueueDelivery({
           db: this.db.getDatabase(),
           sdkMessageRepo: this.db.getSDKMessageRepo(),
           jobQueue: jobQueueRepo,
@@ -270,29 +264,6 @@ export class MessagePersistence {
           this.logger.warn('[MessagePersistence] statusChanged publish failed:', err)
         );
 
-      if (shouldDispatchToQuery && !useV2Delivery) {
-        try {
-          await withSessionResetCoordination(sessionId, async () => {
-            await agentSession.startQueryAndEnqueue(messageId, messageContent);
-          });
-        } catch (err) {
-          if (err instanceof SessionCoordinationStallError) {
-            const flipped = this.db
-              .getSDKMessageRepo?.()
-              ?.transitionMessageSendStatus?.(dbMessageId, 'enqueued', 'failed');
-            if (flipped) {
-              await this.internalEventBus
-                .publish('messages.statusChanged', {
-                  sessionId,
-                  messageIds: [dbMessageId],
-                  status: 'failed',
-                })
-                .catch(() => {});
-            }
-          }
-          throw err;
-        }
-      }
       if (shouldDispatchToQuery) {
         await this.internalEventBus
           .publish('message.persisted', {
@@ -306,7 +277,7 @@ export class MessagePersistence {
             ...(compositionAtSend ? { voicePendingSent: preSendPending } : {}),
             sendStatus,
             deliveryMode: effectiveDeliveryMode,
-            skipQueryStart: !useV2Delivery || useOutbox,
+            skipQueryStart: useOutbox,
           })
           .catch((err) =>
             this.logger.warn('[MessagePersistence] message.persisted publish failed:', err)

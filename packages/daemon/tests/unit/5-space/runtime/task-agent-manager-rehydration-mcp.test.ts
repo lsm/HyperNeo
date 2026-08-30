@@ -1,9 +1,6 @@
 import { describe, test, expect, afterEach, spyOn } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import {
-  signalDeliveryConsumed,
-  withSessionResetCoordination,
-} from '../../../../src/lib/agent/message-delivery';
+import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
@@ -340,7 +337,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
   });
 
-  test('rejects the injection when the resolved session disappears before the lock', async () => {
+  test('rejects the injection when the resolved session disappears before the inject lock', async () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);
     const config = (
@@ -369,30 +366,28 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     const session = fake.agentSession as unknown as Record<string, unknown>;
     session.handleQueryTrigger = async () => ({ success: true, messageCount: 0 });
     session.ensureQueryStarted = async () => {};
-    session.messageQueue = { enqueueWithId: async () => {}, size: () => 0 };
     const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
       .agentSessionIndex;
     index.set(SUB_SESSION_ID, fake.agentSession);
 
-    let releaseLock!: () => void;
+    let advance!: () => void;
     const gate = new Promise<void>((resolve) => {
-      releaseLock = resolve;
+      advance = resolve;
     });
-    const holder = withSessionResetCoordination(SUB_SESSION_ID, async () => {
+    session.handleQueryTrigger = async () => {
       await gate;
-    });
-    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+      return { success: true, messageCount: 0 };
+    };
+
     const injectPromise = tam.injectSubSessionMessage(SUB_SESSION_ID, 'handoff', true);
-    await settle();
-    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     index.delete(SUB_SESSION_ID);
-    releaseLock();
-    await holder;
+    advance();
     await expect(injectPromise).rejects.toThrow(`Sub-session not found: ${SUB_SESSION_ID}`);
   });
 
-  test('injecting into an uncached sub-session never deadlocks against the reset-coordination lock', async () => {
+  test('injecting into an uncached sub-session never deadlocks while replaying pending messages', async () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);
     const config = (
@@ -423,12 +418,9 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     config.db.saveUserMessage = () => 'db-id';
     config.db.getUserMessageIdsByStatus = () => [];
     const session = fake.agentSession as unknown as Record<string, unknown>;
-    session.replayPendingMessagesForImmediateMode = async () => {
-      await withSessionResetCoordination(SUB_SESSION_ID, async () => {});
-    };
+    session.replayPendingMessagesForImmediateMode = async () => {};
     session.handleQueryTrigger = async () => ({ success: true, messageCount: 0 });
     session.ensureQueryStarted = async () => {};
-    session.messageQueue = { enqueueWithId: async () => {}, isRunning: () => false };
     restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
       (() => fake.agentSession) as unknown as typeof AgentSession.restore
     );

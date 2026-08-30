@@ -256,15 +256,12 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
 }
 
 describe('idle coordinator message consumption (issue #2963)', () => {
-  let savedV2Flag: string | undefined;
   let savedApiKey: string | undefined;
   let harnesses: IdleCoordinatorHarness[];
   let workspaces: string[];
 
   beforeEach(async () => {
-    savedV2Flag = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
     savedApiKey = process.env.ANTHROPIC_API_KEY;
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '1';
     process.env.ANTHROPIC_API_KEY = 'sk-test-key';
 
     resetProviderRegistry();
@@ -280,11 +277,6 @@ describe('idle coordinator message consumption (issue #2963)', () => {
   });
 
   afterEach(async () => {
-    if (savedV2Flag === undefined) {
-      delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-    } else {
-      process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = savedV2Flag;
-    }
     if (savedApiKey === undefined) {
       delete process.env.ANTHROPIC_API_KEY;
     } else {
