@@ -398,7 +398,13 @@ function rePendingDeliveryJob(
   basePayload: ReleasedDeliveryPayload
 ): MessageDeliveryRole {
   const active = findActiveDeliveryJob(db, basePayload.sessionId, basePayload.messageUuid);
-  if (active) return releaseActiveDeliveryJob(db, jobQueue, basePayload, active, true);
+  if (active) {
+    if (active.processing) {
+      if (!active.released) return requeueHeldClaim(db, jobQueue, basePayload, active);
+      return active.role ?? 'turn';
+    }
+    return reviveDeliveryJob(db, jobQueue, basePayload, active.jobId);
+  }
   const latest = db
     .prepare(LATEST_DELIVERY_JOB_SQL)
     .get(basePayload.sessionId, basePayload.messageUuid) as { job_id: string } | undefined;

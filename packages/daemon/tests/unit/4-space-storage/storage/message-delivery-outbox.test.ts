@@ -798,6 +798,49 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(jobs[0].released).toBe(1);
     });
 
+    it('retryPrompt refreshes a pending active job in place with a fresh budget and payload', async () => {
+      insertStatusRow('retry-pending', 'failed');
+      const staleJob = jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'retry-pending',
+          role: 'turn',
+          origin: 'space_inject',
+          parentToolUseId: 'toolu_9',
+          released: true,
+          __parkCount: 4,
+          batchUuids: ['retry-pending', 'retry-member'],
+        },
+        maxRetries: 8,
+      });
+      db.prepare(`UPDATE job_queue SET retry_count = 7, error = 'boom' WHERE id = ?`).run(
+        staleJob.id
+      );
+
+      const retried = await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'retry-pending',
+        origin: 'chat',
+      });
+
+      expect(retried?.role).toBe('turn');
+      expect(rowStatus('retry-pending')).toBe('enqueued');
+      const jobs = jobsFor('retry-pending');
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].id).toBe(staleJob.id);
+      expect(jobs[0].status).toBe('pending');
+      expect(jobs[0].retryCount).toBe(0);
+      const payload = jobPayload(db, SESSION, 'retry-pending');
+      expect(payload?.origin).toBe('chat');
+      expect(payload?.parentToolUseId).toBeNull();
+      expect(payload?.batchUuids).toBeUndefined();
+      expect(payload?.__parkCount).toBeUndefined();
+      expect(payload?.released).toBe(true);
+    });
+
     it('retryPrompt revives as steer when another turn already owns the session', async () => {
       insertStatusRow('retry-steer', 'failed');
       jobQueue.enqueue({
