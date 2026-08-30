@@ -1165,6 +1165,16 @@ export class AgentSession
     this.rateLimitWatchdog.cancel(false);
     if (this.stateManager.getState().status === 'rate_limit_cooldown') {
       void this.stateManager.setIdle();
+    } else {
+      const persistedState = this.db.getSession(this.session.id)?.processingState;
+      try {
+        const parsed = persistedState ? (JSON.parse(persistedState) as { status?: string }) : null;
+        if (parsed?.status === 'rate_limit_cooldown') {
+          void this.stateManager.setIdle();
+        }
+      } catch {
+        this.logger.warn('Failed to inspect the persisted rate-limit cooldown on cancel.');
+      }
     }
     if (episodeMessage) {
       try {

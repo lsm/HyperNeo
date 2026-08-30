@@ -47,6 +47,7 @@ function createMockAgentSession(overrides?: Partial<AgentSession>): AgentSession
 function createMockSessionManager(session: AgentSession | null = null): SessionManager {
   return {
     getSessionAsync: mock(async () => session),
+    getSessionForControl: mock(async () => session),
   } as unknown as SessionManager;
 }
 
@@ -136,7 +137,7 @@ describe('question handlers — session routing', () => {
       expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
     });
 
-    it('falls back to SessionManager when session not in runtime pool', async () => {
+    it('falls back to the control lookup when session not in runtime pool', async () => {
       const sessionManagerSession = createMockAgentSession();
       const sessionManager = createMockSessionManager(sessionManagerSession);
 
@@ -146,7 +147,8 @@ describe('question handlers — session routing', () => {
       const draftResponses = [{ questionId: 'q2', value: 'draft-value' }];
       await handler({ sessionId: 'lobby-session-2', draftResponses });
 
-      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('lobby-session-2');
+      expect(sessionManager.getSessionForControl).toHaveBeenCalledWith('lobby-session-2');
+      expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
       expect(sessionManagerSession.updateQuestionDraft).toHaveBeenCalledWith(draftResponses);
     });
   });

@@ -161,7 +161,7 @@ function makeManager(): {
       getById: () => execution,
       update: () => execution,
     },
-    workflowRunRepo: { getRun: () => null },
+    workflowRunRepo: { getRun: () => ({ id: RUN_ID, status: 'in_progress' }) },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
   } as unknown as TaskAgentManagerConfig);
   return { tam, registered, unregistered };

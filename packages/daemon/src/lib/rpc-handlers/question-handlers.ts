@@ -47,7 +47,8 @@ export function setupQuestionHandlers(
   messageHub.onRequest('question.saveDraft', async (data) => {
     const { sessionId, draftResponses } = data as QuestionSaveDraftPayload;
 
-    const agentSession = await resolveSession(sessionId);
+    const agentSession =
+      getRuntimeSession?.(sessionId) ?? (await sessionManager.getSessionForControl(sessionId));
     if (!agentSession) {
       throw new Error(`Session not found: ${sessionId}`);
     }

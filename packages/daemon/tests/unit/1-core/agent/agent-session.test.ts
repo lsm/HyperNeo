@@ -1230,6 +1230,30 @@ describe('AgentSession', () => {
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
     });
 
+    it('cancelRateLimitRetry clears a persisted cooldown left by a restart', async () => {
+      mockDb.getSession = mock(
+        () =>
+          ({
+            id: 'test-session-id',
+            processingState: JSON.stringify({
+              status: 'rate_limit_cooldown',
+              retryAt: Date.now() + 60_000,
+            }),
+          }) as never
+      );
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
+        getState: mock(() => ({ lastUserMessage: null })),
+      } as never;
+
+      agentSession.cancelRateLimitRetry();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(mockDb.updateSession).toHaveBeenCalledWith('test-session-id', {
+        processingState: JSON.stringify({ status: 'idle' }),
+      });
+    });
+
     it('driveDeliveryTurn makes a terminal turn error non-retryable without reopening', async () => {
       const retrySpy = mock(() => 'db-terminal');
       mockDb.getSDKMessageRepo = mock(() => ({

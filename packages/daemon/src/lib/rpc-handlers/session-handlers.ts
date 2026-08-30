@@ -1041,6 +1041,15 @@ export function setupSessionHandlers(
     if (!agentSession) {
       throw new Error('Session not found');
     }
+    const triggerData = agentSession.getSessionData();
+    if (
+      isWorkflowSubSessionIdentity(triggerData.id) &&
+      !triggerData.config.mcpServers?.['node-agent']
+    ) {
+      throw new Error(
+        `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
+      );
+    }
 
     await agentSession.replayAllPendingMessages();
 
