@@ -1268,6 +1268,7 @@ export function setupSessionHandlers(
       sdkMessageRepo: db.getSDKMessageRepo(),
       sessionId: targetSessionId,
       messageUuid,
+      dbId: message.dbId,
       origin: 'chat',
       publishStatusChanged: (messageIds) =>
         internalEventBus.publish('messages.statusChanged', {

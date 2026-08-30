@@ -810,7 +810,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
           parentToolUseId: 'toolu_9',
           released: true,
           __parkCount: 4,
-          batchUuids: ['retry-pending', 'retry-member'],
         },
         maxRetries: 8,
       });
@@ -1234,6 +1233,88 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(statuses).toEqual([
         { id: 'db-dup-old', send_status: 'deferred' },
         { id: 'db-dup-picked', send_status: 'enqueued' },
+      ]);
+    });
+
+    it('activatePrompts ignores an explicit dbId that belongs to a different prompt', async () => {
+      insertStatusRow('target-uuid', 'deferred', 'db-target');
+      insertStatusRow('other-uuid', 'deferred', 'db-other');
+
+      const { activated } = await activatePrompts({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuids: ['target-uuid'],
+        dbIds: ['db-other'],
+        origin: 'recovery',
+      });
+
+      expect(activated).toHaveLength(1);
+      expect(activated[0].dbId).toBe('db-target');
+      expect(rowStatus('target-uuid')).toBe('enqueued');
+      expect(rowStatus('other-uuid')).toBe('deferred');
+    });
+
+    it('ensurePrompt replays equivalent content whose object keys were built in a different order', () => {
+      persistPrompt({
+        db: db as never,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: {
+          type: 'user',
+          uuid: 'order-uuid',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'same words' }],
+          },
+        } as unknown as SDKMessage,
+        delivery: { origin: 'chat' },
+      });
+
+      const replay = ensurePrompt({
+        db: db as never,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: {
+          message: {
+            content: [{ text: 'same words', type: 'text' }],
+            role: 'user',
+          },
+          uuid: 'order-uuid',
+          type: 'user',
+        } as unknown as SDKMessage,
+        delivery: { origin: 'chat' },
+      });
+
+      expect(replay.created).toBe(false);
+      expect(replay.role).toBe('turn');
+    });
+
+    it('retryPrompt honors an explicit dbId over oldest-row reselection', async () => {
+      insertStatusRow('retry-dup', 'failed', 'db-retry-old');
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      insertStatusRow('retry-dup', 'failed', 'db-retry-picked');
+
+      const retried = await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'retry-dup',
+        dbId: 'db-retry-picked',
+        origin: 'chat',
+      });
+
+      expect(retried?.dbId).toBe('db-retry-picked');
+      const statuses = db
+        .prepare(
+          `SELECT id, send_status FROM sdk_messages WHERE sdk_uuid = ? ORDER BY timestamp ASC, rowid ASC`
+        )
+        .all('retry-dup') as Array<{ id: string; send_status: string }>;
+      expect(statuses).toEqual([
+        { id: 'db-retry-old', send_status: 'failed' },
+        { id: 'db-retry-picked', send_status: 'enqueued' },
       ]);
     });
   });

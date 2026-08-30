@@ -104,6 +104,7 @@ export interface RetryPromptArgs {
   sdkMessageRepo?: SDKMessageRepository;
   sessionId: string;
   messageUuid: string;
+  dbId?: string;
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
   publishStatusChanged?: OutboxStatusPublisher;
@@ -257,23 +258,38 @@ const REQUEUE_HELD_CLAIM_SQL = `UPDATE job_queue
 
 const ACTIVATE_PROMPT_ROW_SQL = `UPDATE sdk_messages
   SET send_status = 'enqueued'
-  WHERE id = COALESCE(?, (
-    SELECT id FROM sdk_messages
-    WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-      AND send_status IN ('deferred', 'enqueued')
-    ORDER BY timestamp ASC, rowid ASC LIMIT 1
-  ))
+  WHERE id = COALESCE(
+    (
+      SELECT id FROM sdk_messages
+      WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+        AND send_status IN ('deferred', 'enqueued')
+    ),
+    (
+      SELECT id FROM sdk_messages
+      WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+        AND send_status IN ('deferred', 'enqueued')
+      ORDER BY timestamp ASC, rowid ASC LIMIT 1
+    )
+  )
   AND send_status IN ('deferred', 'enqueued')
   RETURNING id AS db_id`;
 
 const RETRY_PROMPT_ROW_SQL = `UPDATE sdk_messages
   SET send_status = 'enqueued'
-  WHERE id = (
-    SELECT id FROM sdk_messages
-    WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-      AND send_status = 'failed'
-    ORDER BY timestamp ASC, rowid ASC LIMIT 1
+  WHERE id = COALESCE(
+    (
+      SELECT id FROM sdk_messages
+      WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+        AND send_status = 'failed'
+    ),
+    (
+      SELECT id FROM sdk_messages
+      WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+        AND send_status = 'failed'
+      ORDER BY timestamp ASC, rowid ASC LIMIT 1
+    )
   )
+  AND send_status = 'failed'
   RETURNING id AS db_id`;
 
 const PROMPT_ROW_BY_UUID_SQL = `SELECT id AS "dbId", sdk_message AS "sdkMessage",
@@ -580,12 +596,24 @@ function lookupPromptRow(ctx: PromptValidatedCtx & PersistPromptArgs): EnsurePro
   return { ...ctx, existing: row ?? null };
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .sort(([keyA], [keyB]) => (keyA < keyB ? -1 : keyA > keyB ? 1 : 0))
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${canonicalJson(entryValue)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function checkPromptContent(ctx: EnsurePromptCtx): EnsurePromptSettledCtx {
   if (ctx.existing === null) {
     return { ...ctx, created: true, ensureStatus: ctx.hold === 'manual' ? 'deferred' : 'enqueued' };
   }
   const stored = JSON.parse(ctx.existing.sdkMessage) as SDKMessage;
-  if (JSON.stringify(stored) !== JSON.stringify(ctx.message)) {
+  if (canonicalJson(stored) !== canonicalJson(ctx.message)) {
     throw new Error(
       `ensurePrompt: message ${ctx.messageUuid} in session ${ctx.sessionId} ` +
         'already exists with different content'
@@ -719,9 +747,13 @@ function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommitte
   const txn = ctx.db.transaction(() => {
     const rowStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_SQL);
     ctx.uuids.forEach((messageUuid, index) => {
-      const rows = rowStmt.all(ctx.rowIds[index] ?? null, ctx.sessionId, messageUuid) as Array<{
-        db_id: string;
-      }>;
+      const rows = rowStmt.all(
+        ctx.rowIds[index] ?? null,
+        ctx.sessionId,
+        messageUuid,
+        ctx.sessionId,
+        messageUuid
+      ) as Array<{ db_id: string }>;
       const row = rows[0];
       if (!row) return;
       const role = ensureReleasedDeliveryJob(
@@ -779,7 +811,15 @@ function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
     ctx.db.transaction(() => {
       const rows = ctx.db
         .prepare(RETRY_PROMPT_ROW_SQL)
-        .all(ctx.sessionId, ctx.messageUuid) as Array<{ db_id: string }>;
+        .all(
+          ctx.dbId ?? null,
+          ctx.sessionId,
+          ctx.messageUuid,
+          ctx.sessionId,
+          ctx.messageUuid
+        ) as Array<{
+        db_id: string;
+      }>;
       const row = rows[0];
       if (!row) return null;
       const role = rePendingDeliveryJob(
