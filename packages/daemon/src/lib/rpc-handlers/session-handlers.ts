@@ -1333,13 +1333,22 @@ export function setupSessionHandlers(
     );
 
     try {
-      await sessionManager.getSessionAsync(targetSessionId, { startQuery: false });
-      await agentSession.restart();
-      if (agentSession.getSessionData().config.queryMode !== 'manual') {
-        await agentSession.replayPendingMessagesForImmediateMode();
+      const current = await sessionManager.getSessionAsync(targetSessionId, {
+        startQuery: false,
+      });
+      if (!current) {
+        throw new Error(`Session not found: ${targetSessionId}`);
+      }
+      await current.restart();
+      if (current.getSessionData().config.queryMode !== 'manual') {
+        await current.replayPendingMessagesForImmediateMode();
       }
     } catch (err) {
       log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
 
     return { success: true };
