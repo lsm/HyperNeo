@@ -31,3 +31,16 @@ export function buildPostApprovalSessionId(
 ): string {
   return `space:${spaceId}:task:${taskId}:post-approval:${agentName}`;
 }
+
+export function hasRuntimeNodeAgentServer(
+  config:
+    | {
+        mcpServers?: Record<string, unknown>;
+      }
+    | undefined
+): boolean {
+  const server = config?.mcpServers?.['node-agent'];
+  return (
+    typeof server === 'object' && server !== null && (server as { type?: unknown }).type === 'sdk'
+  );
+}

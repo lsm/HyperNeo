@@ -35,7 +35,7 @@ import {
   SessionLifecycle,
   type SessionLifecycleConfig,
 } from './session-lifecycle.ts';
-import { isWorkflowSubSessionIdentity } from './sub-session-identity.ts';
+import { hasRuntimeNodeAgentServer, isWorkflowSubSessionIdentity } from './sub-session-identity.ts';
 import { ToolsConfigManager } from './tools-config.ts';
 
 export interface SpaceRuntimeMcpProvider {
@@ -528,7 +528,7 @@ export class SessionManager {
     this.workflowMcpProvisioning.set(sessionId, { session, promise: provisioning });
     await provisioning;
     if (this.cleanupState !== CleanupState.IDLE) return;
-    if (session.getSessionData().config.mcpServers?.['node-agent']) {
+    if (hasRuntimeNodeAgentServer(session.getSessionData().config)) {
       this.workflowMcpProvisioned.add(session);
       if (options.startQuery !== false && session.isQueryActiveOrStarting()) {
         this.workflowQueryStarted.add(session);
@@ -551,7 +551,7 @@ export class SessionManager {
     if (!session) return null;
     if (
       this.isWorkflowSubSession(session) &&
-      !session.getSessionData().config.mcpServers?.['node-agent']
+      !hasRuntimeNodeAgentServer(session.getSessionData().config)
     ) {
       return null;
     }

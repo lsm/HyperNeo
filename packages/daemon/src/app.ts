@@ -8,7 +8,10 @@ import {
   abortAgentMemoryEmbeddingModelPrefetch,
 } from './storage/repositories/agent-memory-transformers.ts';
 import { SessionManager } from './lib/session-manager.ts';
-import { isWorkflowSubSessionIdentity } from './lib/session/sub-session-identity.ts';
+import {
+  hasRuntimeNodeAgentServer,
+  isWorkflowSubSessionIdentity,
+} from './lib/session/sub-session-identity.ts';
 import { AuthManager } from './lib/auth-manager.ts';
 import { SettingsManager } from './lib/settings-manager.ts';
 import { StateProjectionService } from './lib/state-projection-service.ts';
@@ -949,7 +952,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           if (
             session &&
             isWorkflowSubSessionIdentity(sessionId) &&
-            !session.getSessionData().config.mcpServers?.['node-agent']
+            !hasRuntimeNodeAgentServer(session.getSessionData().config)
           ) {
             return null;
           }

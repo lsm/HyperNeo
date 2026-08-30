@@ -40,7 +40,10 @@ import {
 } from '../config-validators.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { isWorkflowSubSessionIdentity } from '../session/sub-session-identity.ts';
+import {
+  hasRuntimeNodeAgentServer,
+  isWorkflowSubSessionIdentity,
+} from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
 
 const log = new Logger('config-handlers');
@@ -67,7 +70,7 @@ async function restartQueryForConfig(
     };
   }
   const currentData = current.getSessionData();
-  if (isWorkflowSubSessionIdentity(sessionId) && !currentData.config.mcpServers?.['node-agent']) {
+  if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(currentData.config)) {
     return {
       success: false,
       error: `Session ${sessionId} is not resumable — workflow provisioning skipped`,

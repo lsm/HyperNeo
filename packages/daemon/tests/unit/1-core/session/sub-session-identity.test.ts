@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   buildExecutionBaseSessionId,
   buildPostApprovalSessionId,
+  hasRuntimeNodeAgentServer,
   isWorkflowSubSessionIdentity,
   taskIdFromSubSessionIdentity,
 } from '../../../../src/lib/session/sub-session-identity';
@@ -27,5 +28,21 @@ describe('sub-session identity', () => {
     expect(isWorkflowSubSessionIdentity('space:s:task:t:post-approval:coder')).toBe(true);
     expect(isWorkflowSubSessionIdentity('space:s:task:t')).toBe(false);
     expect(isWorkflowSubSessionIdentity('chat:room-1')).toBe(false);
+  });
+});
+
+describe('hasRuntimeNodeAgentServer', () => {
+  it('accepts the runtime SDK node-agent server', () => {
+    expect(hasRuntimeNodeAgentServer({ mcpServers: { 'node-agent': { type: 'sdk' } } })).toBe(true);
+  });
+
+  it('rejects a user-configured server named node-agent', () => {
+    expect(
+      hasRuntimeNodeAgentServer({
+        mcpServers: { 'node-agent': { type: 'stdio', command: 'npx' } },
+      })
+    ).toBe(false);
+    expect(hasRuntimeNodeAgentServer({ mcpServers: {} })).toBe(false);
+    expect(hasRuntimeNodeAgentServer(undefined)).toBe(false);
   });
 });

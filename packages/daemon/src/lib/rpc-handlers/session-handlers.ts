@@ -37,7 +37,10 @@ import {
   scanSDKSessionFiles,
 } from '../sdk-session-file-manager.ts';
 import { validateImageSizes } from '../session/message-persistence.ts';
-import { isWorkflowSubSessionIdentity } from '../session/sub-session-identity.ts';
+import {
+  hasRuntimeNodeAgentServer,
+  isWorkflowSubSessionIdentity,
+} from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
@@ -955,7 +958,7 @@ export function setupSessionHandlers(
     if (
       restartQuery &&
       isWorkflowSubSessionIdentity(resetData.id) &&
-      !resetData.config.mcpServers?.['node-agent']
+      !hasRuntimeNodeAgentServer(resetData.config)
     ) {
       throw new Error(
         `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
@@ -985,7 +988,7 @@ export function setupSessionHandlers(
     const restartData = agentSession.getSessionData();
     if (
       isWorkflowSubSessionIdentity(restartData.id) &&
-      !restartData.config.mcpServers?.['node-agent']
+      !hasRuntimeNodeAgentServer(restartData.config)
     ) {
       throw new Error(
         `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
@@ -1044,7 +1047,7 @@ export function setupSessionHandlers(
     const triggerData = agentSession.getSessionData();
     if (
       isWorkflowSubSessionIdentity(triggerData.id) &&
-      !triggerData.config.mcpServers?.['node-agent']
+      !hasRuntimeNodeAgentServer(triggerData.config)
     ) {
       throw new Error(
         `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
@@ -1362,7 +1365,7 @@ export function setupSessionHandlers(
       const currentData = current.getSessionData();
       if (
         isWorkflowSubSessionIdentity(currentData.id) &&
-        !currentData.config.mcpServers?.['node-agent']
+        !hasRuntimeNodeAgentServer(currentData.config)
       ) {
         throw new Error(
           `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
