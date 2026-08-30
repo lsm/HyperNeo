@@ -45,7 +45,6 @@ import {
   awaitDeliveryConsumption,
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
-  isMessageDeliveryV2Enabled,
 } from '../../agent/message-delivery.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
@@ -413,21 +412,7 @@ export class SpaceRuntimeService {
       if (row !== null && row !== undefined && row.sendStatus === 'failed') {
         return 'terminal_failure_after_consumption';
       }
-      if (isMessageDeliveryV2Enabled()) return 'consumed';
-      for (let i = 0; i < 10; i++) {
-        const legacyRow = this.config.reactiveDb?.db
-          .getSDKMessageRepo()
-          .getDeliveryContent(sessionId, args.idempotencyKey);
-        if (legacyRow === null || legacyRow === undefined) break;
-        if (legacyRow.sendStatus === 'failed') {
-          return 'terminal_failure_after_consumption';
-        }
-        if (legacyRow.sendStatus === 'consumed') {
-          return 'consumed';
-        }
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      }
-      return 'accepted';
+      return 'consumed';
     } catch {
       const row = this.config.reactiveDb?.db
         .getSDKMessageRepo()
@@ -697,65 +682,49 @@ export class SpaceRuntimeService {
         `injectLongTermAgentMessage: reactiveDb unavailable; cannot deliver to ${sessionId}`
       );
     }
-    if (isMessageDeliveryV2Enabled()) {
-      const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
-      const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
-      const fresh = !existing;
-      if (!existing) {
-        const dbId = reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-        await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
-      } else if (existing.sendStatus === 'consumed') {
-        return id;
-      } else if (existing.sendStatus === 'failed') {
-        const reopenedDbId = sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
-        if (reopenedDbId) {
-          await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
-        }
+    const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
+    const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
+    const fresh = !existing;
+    if (!existing) {
+      const dbId = reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
+      await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
+    } else if (existing.sendStatus === 'consumed') {
+      return id;
+    } else if (existing.sendStatus === 'failed') {
+      const reopenedDbId = sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
+      if (reopenedDbId) {
+        await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
       }
-      await awaitDeliveryConsumption({
-        sessionId,
-        messageUuid: id,
-        timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
-        deliver: () =>
-          deliverAndMarkQueued({
-            jobQueue: reactiveDb.getJobQueueRepo(),
-            stateManager: session.stateManager,
-            sessionId,
-            messageUuid: id,
-            origin: 'long_term_agent',
-            onEnqueueFailure: () => {
+    }
+    await awaitDeliveryConsumption({
+      sessionId,
+      messageUuid: id,
+      timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
+      deliver: () =>
+        deliverAndMarkQueued({
+          jobQueue: reactiveDb.getJobQueueRepo(),
+          stateManager: session.stateManager,
+          sessionId,
+          messageUuid: id,
+          origin: 'long_term_agent',
+          onEnqueueFailure: () => {
+            const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
+            if (failedDbId) {
+              void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+            }
+          },
+        }),
+      ...(fresh && options.terminalizeOnTimeout !== false
+        ? {
+            terminalizeOnTimeout: () => {
               const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
               if (failedDbId) {
                 void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
               }
             },
-          }),
-        ...(fresh && options.terminalizeOnTimeout !== false
-          ? {
-              terminalizeOnTimeout: () => {
-                const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
-                if (failedDbId) {
-                  void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-                }
-              },
-            }
-          : {}),
-      });
-    } else {
-      const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
-      await session.ensureQueryStarted();
-      const dbId = reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
-      try {
-        await session.messageQueue.enqueueWithId(id, message);
-      } catch (err) {
-        const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
-        if (failedDbId) {
-          await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-        }
-        throw err;
-      }
-    }
+          }
+        : {}),
+    });
     return id;
   }
 

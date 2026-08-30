@@ -375,27 +375,6 @@ describe('EventSubscriptionSetup', () => {
         expect(mockContext.startQueryAndEnqueue).not.toHaveBeenCalled();
       });
 
-      it('opt-out (HYPERNEO_MESSAGE_DELIVERY_V2=0) falls back to startQueryAndEnqueue', async () => {
-        const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-        process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
-        try {
-          setup.setup();
-
-          const callback = registeredCallbacks.get('message.persisted')!;
-          await callback({
-            sessionId: 'test-session-id',
-            messageId: 'msg-123',
-            messageContent: 'Hello',
-          });
-        } finally {
-          if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-          else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
-        }
-
-        expect(mockContext.startQueryAndEnqueue).toHaveBeenCalledWith('msg-123', 'Hello');
-        expect(mockContext.deliverChatMessage).not.toHaveBeenCalled();
-      });
-
       it('should skip query start when persistence already delivered synchronously', async () => {
         setup.setup();
 

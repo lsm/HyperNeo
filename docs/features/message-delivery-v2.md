@@ -1,14 +1,14 @@
 # Message Delivery v2 — Durable Delivery on `job_queue`
 
-- **Status:** **Default-on** (opt out with `HYPERNEO_MESSAGE_DELIVERY_V2=0`). Supersedes the incremental approach in [`message-delivery-lifecycle.md`](./message-delivery-lifecycle.md) (task #859 phase 2).
+- **Status:** **Current** — the only delivery mode. Supersedes the incremental approach in [`message-delivery-lifecycle.md`](./message-delivery-lifecycle.md) (task #859 phase 2).
 - **Date:** 2026-08-08
 - **Owners:** Marc Liu; design input from Reviewer pass (rounds 1–28)
 
 ---
 
-## Default-on & rollback
+## Current mode
 
-Message-delivery v2 is the **default** dispatch path. Every primary kickoff —
+Message-delivery v2 is the **only** dispatch path. Every primary kickoff —
 ordinary chat (`message.persisted` → `AgentSession.deliverChatMessage`) and the
 Space / long-term-agent / task-agent injectors — routes through the
 `deliverMessage` chokepoint so each user message becomes one durable
@@ -16,27 +16,10 @@ Space / long-term-agent / task-agent injectors — routes through the
 heartbeat, `reclaimStale` crash recovery, and `(session, UUID)`-scoped
 consumption acknowledgment.
 
-**Roll back without a redeploy** by setting, before daemon start:
-
-```
-HYPERNEO_MESSAGE_DELIVERY_V2=0     # or =false
-```
-
-With the flag off, `isMessageDeliveryV2Enabled()` (read at runtime in
-`packages/daemon/src/lib/agent/message-delivery.ts`) returns false and every
-entry point falls back to the legacy inline path it owned before v2:
-
-- Ordinary chat: `message.persisted` → `startQueryAndEnqueue` (inline
-  `ensureQueryStarted` + `enqueueWithId`) instead of `deliverChatMessage`.
-- Space / long-term-agent / task-agent injectors: `ensureQueryStarted` +
-  `enqueueWithId` instead of `deliverAndMarkQueued`.
-
-The legacy deferred-message replay, UI promote-deferred, and rate-limit
-auto-retry kickoffs stay on the inline path under both modes (they are the
-explicit follow-up migration; `recoverOrphanedConsumedMessages` is retained as
-their crash backstop and carries a `durableOwned` guard so it never fights v2-
-owned messages). The flag is read at runtime (no persisted-config skew), so an
-operator can flip it and restart to recover without a code change.
+The `HYPERNEO_MESSAGE_DELIVERY_V2` runtime toggle and the legacy inline paths
+were removed in task #1685. There is no rollback to the pre-v2 in-memory queue
+delivery; the v2 job queue is the source of truth for all sends, replays,
+deferred promotions, and rate-limit auto-retries.
 
 ---
 

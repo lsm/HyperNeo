@@ -5,7 +5,6 @@ import { Logger as LoggerClass } from '../logger.ts';
 import type { ModelSwitchHandler } from './model-switch-handler.ts';
 import type { InterruptHandler } from './interrupt-handler.ts';
 import type { QueryModeHandler } from './query-mode-handler.ts';
-import { isMessageDeliveryV2Enabled } from './message-delivery.ts';
 
 export interface EventSubscriptionSetupContext {
   readonly session: Session;
@@ -98,7 +97,7 @@ export class EventSubscriptionSetup {
       'message.persisted',
       async (data) => {
         if (data.skipQueryStart) return;
-        if (isMessageDeliveryV2Enabled() && this.ctx.deliverChatMessage) {
+        if (this.ctx.deliverChatMessage) {
           await this.ctx.deliverChatMessage(data.messageId);
           return;
         }

@@ -1,5 +1,5 @@
-import type { MessageContent, Session } from '@hyperneo/shared';
-import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database.ts';
 import {
@@ -15,10 +15,9 @@ import {
   deliverAndMarkQueued,
   deliverBatchAndMarkQueued,
   flattenDeliveryText,
-  isMessageDeliveryV2Enabled,
   type MessageDeliveryOrigin,
   SessionCoordinationStallError,
-  withSessionResetCoordination,
+  withSessionOperationLock,
 } from './message-delivery.ts';
 import { decideTurnEndFlush, type TurnEndFlushPlan } from './message-delivery-pipeline.ts';
 import { type FlushMessage, isTaskFlushInput } from './message-ownership-gates.ts';
@@ -139,18 +138,16 @@ export class QueryModeHandler {
       const flushMessages = this.toFlushMessages(backlog);
 
       let reDeferredDbIds: string[] = [];
-      if (isMessageDeliveryV2Enabled()) {
-        try {
-          const v2 = await this.deliverFlushUnderV2(flushMessages, 'recovery', options);
-          reDeferredDbIds = v2.reDeferredDbIds;
-        } catch (error) {
-          await internalEventBus.publish('messages.statusChanged', {
-            sessionId: session.id,
-            messageIds: dbIds.filter((id) => !reDeferredDbIds.includes(id)),
-            status: 'enqueued',
-          });
-          throw error;
-        }
+      try {
+        const v2 = await this.deliverFlushUnderV2(flushMessages, 'recovery', options);
+        reDeferredDbIds = v2.reDeferredDbIds;
+      } catch (error) {
+        await internalEventBus.publish('messages.statusChanged', {
+          sessionId: session.id,
+          messageIds: dbIds.filter((id) => !reDeferredDbIds.includes(id)),
+          status: 'enqueued',
+        });
+        throw error;
       }
 
       const admittedDbIds = dbIds.filter((id) => !reDeferredDbIds.includes(id));
@@ -162,17 +159,13 @@ export class QueryModeHandler {
         });
       }
 
-      if (!isMessageDeliveryV2Enabled()) {
-        await this.deliverRowsViaMemoryQueue(backlog, flushMessages, options);
-      }
-
       return backlog.length;
     };
 
     try {
       const messageCount = options?.skipResetCoordination
         ? await runFlush()
-        : await withSessionResetCoordination(session.id, runFlush);
+        : await withSessionOperationLock(session.id, runFlush);
       return { success: true, messageCount };
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
@@ -180,83 +173,6 @@ export class QueryModeHandler {
       logger.error('Failed to trigger query:', error);
       return { success: false, messageCount: 0, error: errorMessage };
     }
-  }
-
-  private flushClearBlockedByLiveWork(): boolean {
-    if (this.ctx.messageQueue.size() > 0) return true;
-    const status = this.ctx.stateManager?.getState().status;
-    return status !== undefined && status !== 'idle';
-  }
-
-  private async deliverRowsViaMemoryQueue(
-    messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>,
-    flushMessages: FlushMessage[],
-    options?: { skipContextReset?: boolean; pendingTaskInput?: boolean }
-  ): Promise<boolean> {
-    const session = this.ctx.session;
-    const v2Owned =
-      this.ctx.db.getJobQueueRepo?.()?.activeDeliveryMessageUuids?.(session.id) ??
-      new Set<string>();
-    const taskUuids = new Set(
-      flushMessages.filter((message) => message.isTaskInput).map((message) => message.uuid)
-    );
-    const plan = this.planFlush(flushMessages, options);
-    const deferForActiveJob =
-      plan.action !== 'noop' &&
-      plan.contextReset.action === 'flush_without_clear' &&
-      plan.contextReset.reason === 'active_delivery_job';
-    await this.ctx.ensureQueryStarted();
-    let clearAttempted = false;
-    let clearedContext = false;
-    const clearAheadOfTask = async (): Promise<void> => {
-      clearAttempted = true;
-      clearedContext = await this.clearContextAheadOfFlush(flushMessages, options);
-    };
-    for (const msg of messages) {
-      if (typeof msg.uuid !== 'string' || msg.uuid.length === 0) continue;
-      if (v2Owned.has(msg.uuid)) continue;
-      const replayContent = this.toReplayContent(msg.message.content);
-      if (!replayContent) continue;
-      if (!clearAttempted && taskUuids.has(msg.uuid)) {
-        if (this.flushClearBlockedByLiveWork() || deferForActiveJob) {
-          await this.deferRemainingRows(messages, v2Owned, msg.uuid);
-          return clearedContext;
-        }
-        await clearAheadOfTask();
-      }
-      await this.ctx.messageQueue.enqueueWithId(msg.uuid, replayContent);
-    }
-    if (
-      !clearAttempted &&
-      options?.pendingTaskInput === true &&
-      !this.flushClearBlockedByLiveWork()
-    ) {
-      await clearAheadOfTask();
-    }
-    return clearedContext;
-  }
-
-  private async deferRemainingRows(
-    messages: Array<SDKUserMessage & { dbId: string; timestamp: number }>,
-    v2Owned: ReadonlySet<string>,
-    fromUuid: string
-  ): Promise<void> {
-    const dbIds: string[] = [];
-    let delaying = false;
-    for (const msg of messages) {
-      if (!delaying && msg.uuid !== fromUuid) continue;
-      delaying = true;
-      if (typeof msg.uuid !== 'string' || msg.uuid.length === 0) continue;
-      if (v2Owned.has(msg.uuid)) continue;
-      dbIds.push(msg.dbId);
-    }
-    if (dbIds.length === 0) return;
-    this.ctx.db.updateMessageStatus(dbIds, 'deferred');
-    await this.ctx.internalEventBus.publish('messages.statusChanged', {
-      sessionId: this.ctx.session.id,
-      messageIds: dbIds,
-      status: 'deferred',
-    });
   }
 
   private toFlushMessages(
@@ -469,28 +385,16 @@ export class QueryModeHandler {
       }
       replayedWork = true;
 
-      if (isMessageDeliveryV2Enabled()) {
-        const v2 = await this.deliverFlushUnderV2(
-          this.toFlushMessages(pendingMessages),
-          'recovery',
-          { pendingTaskInput: options?.pendingTaskInput }
-        );
-        clearedContext = v2.clearedContext;
-      } else {
-        clearedContext = await this.deliverRowsViaMemoryQueue(
-          pendingMessages,
-          this.toFlushMessages(pendingMessages),
-          { pendingTaskInput: options?.pendingTaskInput }
-        );
-      }
+      const v2 = await this.deliverFlushUnderV2(this.toFlushMessages(pendingMessages), 'recovery', {
+        pendingTaskInput: options?.pendingTaskInput,
+      });
+      clearedContext = v2.clearedContext;
     };
 
     try {
-      if (options?.skipResetCoordination) {
-        await runReplay();
-      } else {
-        await withSessionResetCoordination(session.id, runReplay);
-      }
+      await (options?.skipResetCoordination
+        ? runReplay()
+        : withSessionOperationLock(this.ctx.session.id, runReplay));
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
       replayFailed = true;
@@ -540,27 +444,5 @@ export class QueryModeHandler {
         this.postSettlementFlushScheduled = false;
       }
     })();
-  }
-
-  private toReplayContent(
-    content: string | Array<{ type: string; text?: string }>
-  ): string | MessageContent[] | null {
-    if (typeof content === 'string') {
-      return content || null;
-    }
-
-    if (Array.isArray(content)) {
-      if (content.some((block) => block.type !== 'text')) {
-        return content as MessageContent[];
-      }
-
-      const textContent = content
-        .filter((c): c is { type: 'text'; text: string } => c.type === 'text' && !!c.text)
-        .map((c) => c.text)
-        .join('\n');
-      return textContent || null;
-    }
-
-    return null;
   }
 }

@@ -21,13 +21,12 @@ import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
 import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
+import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
-  isMessageDeliveryV2Enabled,
-  withSessionResetCoordination,
+  withSessionOperationLock,
 } from '../../../lib/agent/message-delivery.ts';
-import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
 
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import type { Database } from '../../../storage/database.ts';
@@ -1876,7 +1875,7 @@ export class TaskAgentManager {
   }
 
   private withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
-    return withSessionResetCoordination(sessionId, fn);
+    return withSessionOperationLock(sessionId, fn);
   }
 
   private captureNodeAgentServer(session: AgentSession): McpServerConfig | undefined {
@@ -1903,7 +1902,10 @@ export class TaskAgentManager {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const tail = prev.then(() => held);
+    const tail = prev.then(
+      () => held,
+      () => held
+    );
     this.sessionRestoreLocks.set(sessionId, tail);
     await prev;
     try {
@@ -3899,11 +3901,7 @@ export class TaskAgentManager {
       },
     };
 
-    const v2Enabled = isMessageDeliveryV2Enabled();
-    let boundaryOwner: ContextClearBoundaryOwner | null = null;
-    const existing = v2Enabled
-      ? this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)
-      : null;
+    const existing = this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId);
     const inRateLimitCooldown = state.status === 'rate_limit_cooldown';
     const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
     const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
@@ -3930,7 +3928,7 @@ export class TaskAgentManager {
       if (outcome.reopenFailedDelivery) {
         await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
       }
-      if (v2Enabled && existing && existing.sendStatus !== 'deferred') {
+      if (existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
       const deferredDbId = await settleDeliveryRowStatus(deliveryRows, {
@@ -3943,6 +3941,7 @@ export class TaskAgentManager {
       });
       return deferredDbId;
     }
+    let boundaryOwner: ContextClearBoundaryOwner | null = null;
     if (
       outcome.decision.action === 'clear_before_deliver' &&
       !this.hasActiveDeliveryJob(sessionId)
@@ -3997,8 +3996,8 @@ export class TaskAgentManager {
         const replay = await session.handleQueryTrigger({
           deliverIndividually: true,
           excludeMessageUuid: messageId,
-          skipResetCoordination: true,
           skipContextReset: clearedUpstream || boundaryOwner !== null,
+          skipResetCoordination: true,
           pendingTaskInput: clearSuppressedByPendingWork && !clearedUpstream,
         });
         if (!replay.success) {
@@ -4034,8 +4033,6 @@ export class TaskAgentManager {
           sessionId,
           messageId,
           sdkUserMessage,
-          enqueuePayload: hasImages ? sdkContent : message,
-          deliveryV2Enabled: v2Enabled,
           rowExists: !!existing,
           origin,
           boundaryOwner: boundaryOwner ?? undefined,

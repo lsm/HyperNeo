@@ -179,7 +179,6 @@ import {
   deliverMessage,
   type FeedSteerOutcome,
   flattenDeliveryText,
-  isMessageDeliveryV2Enabled,
   MANUAL_RECOVERY_PARK_MS,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliveryAttemptObserver,
@@ -3393,7 +3392,6 @@ export class AgentSession
   }
 
   async reconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
-    if (!isMessageDeliveryV2Enabled()) return 0;
     const jobQueue = this.db.getJobQueueRepo?.();
     if (!jobQueue) return 0;
     const status = this.stateManager.getState().status;

@@ -10,6 +10,8 @@ import type { RenderPendingDigestOutcome } from '../../../../src/lib/space/runti
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Logger } from '../../../../src/lib/logger';
 import type { Database } from '../../../../src/storage/database';
+import { Database as DatabaseImpl } from '../../../../src/storage/sqlite-compat';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 
 const SESSION_ID = 'session-digest';
 
@@ -34,26 +36,53 @@ function deferredRow(
   } as unknown as SDKUserMessage & { dbId: string; timestamp: number };
 }
 
+interface EnqueuedJob {
+  uuid: string;
+  role: string;
+  batchUuids?: string[];
+}
+
 describe('QueryModeHandler deferred external-event digest flush', () => {
   let handler: QueryModeHandler;
   let handlerContext: QueryModeHandlerContext;
   let deferredRows: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
   let savedRows: Array<{ message: SDKUserMessage; sendStatus: string }>;
   let statusUpdates: Array<{ dbIds: string[]; status: string }>;
-  let enqueued: Array<{ uuid: string; content: unknown }>;
   let published: Array<{ messageIds: string[]; status: string }>;
   let warnMessages: unknown[];
-  let v2Previous: string | undefined;
+  let jobsDb: DatabaseImpl;
+  let jobQueue: JobQueueRepository;
 
   beforeEach(() => {
-    v2Previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
     deferredRows = [];
     savedRows = [];
     statusUpdates = [];
-    enqueued = [];
     published = [];
     warnMessages = [];
+
+    jobsDb = new DatabaseImpl(':memory:');
+    jobsDb.exec(`
+      CREATE TABLE job_queue (
+        id TEXT PRIMARY KEY,
+        queue TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        payload TEXT NOT NULL DEFAULT '{}',
+        result TEXT, error TEXT,
+        priority INTEGER NOT NULL DEFAULT 0,
+        max_retries INTEGER NOT NULL DEFAULT 3,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        run_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        heartbeat_at INTEGER, completed_at INTEGER
+      );
+      CREATE UNIQUE INDEX uq_message_delivery_active_turn
+        ON job_queue (queue, json_extract(payload, '$.sessionId'))
+        WHERE queue = 'message_delivery'
+          AND json_extract(payload, '$.role') = 'turn'
+          AND status IN ('pending', 'processing');
+    `);
+    jobQueue = new JobQueueRepository(jobsDb as never);
 
     const session = {
       id: SESSION_ID,
@@ -88,26 +117,11 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       getSDKMessageRepo: () => ({
         getMessageByStatusAndUuid: () => null,
       }),
-      getJobQueueRepo: () => ({
-        activeDeliveryMessageUuids: () => new Set<string>(),
-        hasActiveTurnDeliveryJob: () => false,
-      }),
+      getJobQueueRepo: () => jobQueue,
     } as unknown as Database;
 
-    const internalEventBus = {
-      publish: mock(async (event: string, payload: { messageIds?: string[]; status?: string }) => {
-        if (event === 'messages.statusChanged') {
-          published.push({ messageIds: payload.messageIds ?? [], status: payload.status ?? '' });
-        }
-      }),
-      publishAsync: mock(async () => {}),
-      subscribe: mock(() => () => {}),
-    } as unknown as InternalEventBus<any>;
-
     const messageQueue = {
-      enqueueWithId: mock(async (uuid: string, content: unknown) => {
-        enqueued.push({ uuid, content });
-      }),
+      enqueueWithId: mock(async () => {}),
       hasPendingOrInFlight: mock(() => false),
       size: mock(() => 0),
     } as unknown as MessageQueue;
@@ -125,7 +139,20 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
     const context: QueryModeHandlerContext = {
       session,
       db,
-      internalEventBus,
+      internalEventBus: {
+        publish: mock(
+          async (event: string, payload: { messageIds?: string[]; status?: string }) => {
+            if (event === 'messages.statusChanged') {
+              published.push({
+                messageIds: payload.messageIds ?? [],
+                status: payload.status ?? '',
+              });
+            }
+          }
+        ),
+        publishAsync: mock(async () => {}),
+        subscribe: mock(() => () => {}),
+      } as unknown as InternalEventBus<any>,
       messageQueue,
       logger,
       ensureQueryStarted: mock(async () => {}),
@@ -135,23 +162,44 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
   });
 
   afterEach(() => {
-    if (v2Previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-    else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = v2Previous;
+    jobsDb.close();
   });
 
-  it('delivers a subsequent normal deferred message individually without a digest', async () => {
+  function enqueued(): EnqueuedJob[] {
+    return (
+      jobsDb
+        .prepare(
+          `SELECT json_extract(payload, '$.messageUuid') AS messageUuid,
+                  json_extract(payload, '$.batchUuids') AS batchUuids,
+                  json_extract(payload, '$.role') AS role
+             FROM job_queue
+            WHERE queue = 'message_delivery'
+            ORDER BY created_at ASC`
+        )
+        .all() as Array<{
+        messageUuid: string | null;
+        batchUuids: string | null;
+        role: string | null;
+      }>
+    ).map((row) => ({
+      uuid: row.messageUuid ?? '',
+      role: row.role ?? '',
+      batchUuids: row.batchUuids ? (JSON.parse(row.batchUuids) as string[]) : undefined,
+    }));
+  }
+
+  it('delivers a subsequent normal deferred message without a digest', async () => {
     deferredRows = [deferredRow('db-human', 'uuid-human', 'a human follow-up')];
 
-    const result = await handler.handleQueryTrigger({
-      deliverIndividually: true,
-      skipResetCoordination: true,
-    });
+    const result = await handler.handleQueryTrigger();
 
     expect(result.success).toBe(true);
-    expect(savedRows).toHaveLength(0);
+    expect(result.messageCount).toBe(1);
     expect(statusUpdates).toEqual([{ dbIds: ['db-human'], status: 'enqueued' }]);
-    expect(enqueued).toHaveLength(1);
-    expect(enqueued[0]?.uuid).toBe('uuid-human');
+    const jobs = enqueued();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.uuid).toBe('uuid-human');
+    expect(jobs[0]?.batchUuids).toBeUndefined();
   });
 
   describe('turn-end digest pull', () => {
@@ -190,39 +238,32 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
     it('appends the pulled digest to the flush batch without touching the task input', async () => {
       deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
 
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
+      const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(2);
       expect(pullCalls).toEqual([SESSION_ID]);
       expect(savedRows).toHaveLength(0);
-      expect(enqueued).toHaveLength(2);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
-      expect(enqueued[0]?.content).toBe('─── Message from coder ───');
-      const digestDelivery = enqueued[1]!;
-      expect(digestDelivery.uuid).toBe('uuid-pulled-digest');
-      expect(String(digestDelivery.content)).toContain('(2 events, PR #2828):');
+      const jobs = enqueued();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.uuid).toBe('uuid-task');
+      expect(jobs[0]?.batchUuids).toEqual(['uuid-task', 'uuid-pulled-digest']);
     });
 
     it('a failing digest pull logs and flushes without the digest', async () => {
       pullError = new Error('ledger unavailable');
       deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
 
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
+      const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(1);
       expect(warnMessages.some((message) => String(message).includes('turn-end digest pull'))).toBe(
         true
       );
-      expect(enqueued).toHaveLength(1);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      const jobs = enqueued();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.uuid).toBe('uuid-task');
     });
 
     it('a failed digest-pull outcome logs and flushes without the digest', async () => {
@@ -233,18 +274,16 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       });
       deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
 
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
+      const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(1);
       expect(warnMessages.some((message) => String(message).includes('did not deliver'))).toBe(
         true
       );
-      expect(enqueued).toHaveLength(1);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      const jobs = enqueued();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.uuid).toBe('uuid-task');
     });
 
     it('a null digest-pull result excludes deterministic digest rows from the flush', async () => {
@@ -254,16 +293,14 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         deferredRow('db-digest', 'digest-00000000-0000-0000-0000-000000000000', 'stale digest'),
       ];
 
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
+      const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(1);
       expect(warnMessages.some((message) => String(message).includes('unavailable'))).toBe(true);
-      expect(enqueued).toHaveLength(1);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      const jobs = enqueued();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.uuid).toBe('uuid-task');
     });
 
     it('a delivered outcome only flushes its certified digest row', async () => {
@@ -283,16 +320,14 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         deferredRow('db-stale', 'digest-stale-0002', 'stale digest'),
       ];
 
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
+      const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(2);
-      expect(enqueued).toHaveLength(2);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
-      expect(enqueued[1]?.uuid).toBe('digest-certified-0001');
+      const jobs = enqueued();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.uuid).toBe('uuid-task');
+      expect(jobs[0]?.batchUuids).toEqual(['uuid-task', 'digest-certified-0001']);
     });
 
     it('a safe skip outcome flushes deferred digest rows', async () => {
@@ -302,16 +337,14 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         deferredRow('db-digest', 'digest-owed-0003', 'owed digest'),
       ];
 
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
+      const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(2);
-      expect(enqueued).toHaveLength(2);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
-      expect(enqueued[1]?.uuid).toBe('digest-owed-0003');
+      const jobs = enqueued();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.uuid).toBe('uuid-task');
+      expect(jobs[0]?.batchUuids).toEqual(['uuid-task', 'digest-owed-0003']);
     });
 
     it('a safe skip scopes flushed digest rows to the admitted task', async () => {
@@ -331,16 +364,14 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         legacy,
       ];
 
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
+      const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(2);
-      expect(enqueued).toHaveLength(2);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
-      expect(enqueued[1]?.uuid).toBe('digest-scoped-0005');
+      const jobs = enqueued();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.uuid).toBe('uuid-task');
+      expect(jobs[0]?.batchUuids).toEqual(['uuid-task', 'digest-scoped-0005']);
     });
 
     it('an unsafe skip outcome excludes deterministic digest rows', async () => {
@@ -353,15 +384,13 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         deferredRow('db-digest', 'digest-00000000-0000-0000-0000-000000000000', 'stale digest'),
       ];
 
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
+      const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(1);
-      expect(enqueued).toHaveLength(1);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      const jobs = enqueued();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.uuid).toBe('uuid-task');
     });
 
     it('a held outcome excludes deterministic digest rows', async () => {
@@ -377,15 +406,13 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         deferredRow('db-digest', 'digest-held-0004', 'held digest text'),
       ];
 
-      const result = await handler.handleQueryTrigger({
-        deliverIndividually: true,
-        skipResetCoordination: true,
-      });
+      const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(1);
-      expect(enqueued).toHaveLength(1);
-      expect(enqueued[0]?.uuid).toBe('uuid-task');
+      const jobs = enqueued();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.uuid).toBe('uuid-task');
     });
   });
 });

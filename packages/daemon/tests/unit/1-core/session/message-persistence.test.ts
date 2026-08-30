@@ -1,11 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@hyperneo/shared';
-import {
-  SessionCoordinationStallError,
-  sessionResetCoordinationLocks,
-  withSessionLock,
-  withSessionResetCoordination,
-} from '../../../../src/lib/agent/message-delivery';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import {
   MAX_IMAGE_BASE64_SIZE,
@@ -360,64 +354,6 @@ describe('MessagePersistence', () => {
     expect(mockSessionCache.getAsync).not.toHaveBeenCalled();
     expect(saveUserMessageSpy).not.toHaveBeenCalled();
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
-  });
-
-  it('opt-out (HYPERNEO_MESSAGE_DELIVERY_V2=0) dispatches inline via startQueryAndEnqueue', async () => {
-    const previous = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
-
-    try {
-      await persistence.persist({
-        sessionId: 'test-session-id',
-        messageId: 'msg-legacy',
-        content: 'inline dispatch',
-      });
-    } finally {
-      if (previous === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previous;
-    }
-
-    expect(mockAgentSession.startQueryAndEnqueue).toHaveBeenCalledWith(
-      'msg-legacy',
-      'inline dispatch'
-    );
-    expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
-      'message.persisted',
-      expect.objectContaining({
-        messageId: 'msg-legacy',
-        sendStatus: 'enqueued',
-        deliveryMode: 'immediate',
-        skipQueryStart: true,
-      })
-    );
-  });
-
-  it('legacy (V2=0) dispatch keeps its coordination ordering — a pinned slot stalls it at the deadline', async () => {
-    const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
-    const previousV2 = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-    process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
-    void withSessionResetCoordination('test-session-id', () =>
-      withSessionLock('test-session-id', () => new Promise<never>(() => {}))
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    try {
-      await expect(
-        persistence.persist({
-          sessionId: 'test-session-id',
-          messageId: 'msg-stall-repro',
-          content: 'second message after the first armed a turn',
-        })
-      ).rejects.toBeInstanceOf(SessionCoordinationStallError);
-    } finally {
-      if (previousTimeout === undefined)
-        delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
-      else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previousTimeout;
-      if (previousV2 === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-      else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousV2;
-      sessionResetCoordinationLocks.clear();
-    }
   });
 
   it('does not downgrade a busy session from processing to queued', async () => {

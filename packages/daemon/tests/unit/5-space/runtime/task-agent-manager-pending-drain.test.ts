@@ -950,17 +950,8 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 });
 
 describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
-  const previousFlag = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
   const GUARD_SESSION_ID = 'sub-session-guard';
   const GUARD_RUN_ID = 'run-guard';
-
-  beforeAll(() => {
-    process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = '0';
-  });
-  afterAll(() => {
-    if (previousFlag === undefined) delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-    else process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousFlag;
-  });
 
   function makeGuardManager(
     taskStatus: string | null,
@@ -968,7 +959,7 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
   ): {
     manager: TaskAgentManager;
     saveUserMessage: ReturnType<typeof mock>;
-    enqueueMock: ReturnType<typeof mock>;
+    jobQueueEnqueue: ReturnType<typeof mock>;
   } {
     const execution = {
       id: 'exec-guard',
@@ -981,7 +972,13 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
       updatedAt: 1,
     };
     const saveUserMessage = mock(() => 'db-id');
-    const enqueueMock = mock(async () => {});
+    const jobQueueEnqueue = mock(
+      (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
+        const uuid = args?.payload?.messageUuid;
+        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+        return { id: 'job-1' };
+      }
+    );
     const replayMock = mock(async () => ({ success: true, messageCount: 0 }));
     const workflow = { nodes: [{ id: NODE_ID, name: NODE_NAME, agents: [] }] };
     const session = {
@@ -990,7 +987,6 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
       handleQueryTrigger: replayMock,
       ensureQueryStarted: mock(async () => ({ started: false })),
       clearConversationContext: mock(async () => {}),
-      messageQueue: { enqueueWithId: enqueueMock, size: () => 0 },
     } as unknown as AgentSession;
 
     const manager = new TaskAgentManager({
@@ -1006,7 +1002,7 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
         }),
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => new Set<string>(),
-          enqueue: mock(() => ({ id: 'job-1' })),
+          enqueue: jobQueueEnqueue,
           getActiveDeliveryRole: () => null,
         }),
       },
@@ -1030,7 +1026,7 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
       GUARD_SESSION_ID,
       session
     );
-    return { manager, saveUserMessage, enqueueMock };
+    return { manager, saveUserMessage, jobQueueEnqueue };
   }
 
   it('rejects when the canonical task is cancelled', async () => {
@@ -1054,15 +1050,15 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
     );
   });
 
-  it('lets done task and run states through to the injection shell', async () => {
-    const { manager, saveUserMessage, enqueueMock } = makeGuardManager('done', 'done');
+  it('lets done task and run states through to the durable injection shell', async () => {
+    const { manager, saveUserMessage, jobQueueEnqueue } = makeGuardManager('done', 'done');
 
     const dbId = await manager.injectSubSessionMessage(GUARD_SESSION_ID, 'note', true);
 
     expect(dbId).toBe('db-id');
     expect(saveUserMessage).toHaveBeenCalledTimes(1);
     expect(saveUserMessage.mock.calls[0][2]).toBe('enqueued');
-    expect(enqueueMock).toHaveBeenCalledTimes(1);
+    expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
   });
 
   it('rejects runtime-origin injections when the canonical task is done (#3109)', async () => {
@@ -1075,18 +1071,9 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
 });
 
 describe('pending drain through the v2 injection shell', () => {
-  const previousFlag = process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
   const V2_SESSION_ID = 'sub-session-v2';
   const V2_RUN_ID = 'run-v2';
   const V2_NODE_ID = 'node-coder';
-
-  beforeAll(() => {
-    delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-  });
-  afterAll(() => {
-    if (previousFlag !== undefined) process.env.HYPERNEO_MESSAGE_DELIVERY_V2 = previousFlag;
-    else delete process.env.HYPERNEO_MESSAGE_DELIVERY_V2;
-  });
 
   function makeV2Harness(deliveryContent: { sendStatus: string }): {
     manager: TaskAgentManager;

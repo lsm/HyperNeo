@@ -1,15 +1,15 @@
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import { Logger } from '../../logger.ts';
 import {
   awaitDeliveryConsumptionTolerant,
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
   MESSAGE_DELIVERY_PARK_MS,
-  type MessageDeliveryOrigin,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
+  type MessageDeliveryOrigin,
 } from '../../agent/message-delivery.ts';
-import { Logger } from '../../logger.ts';
 
 const log = new Logger('space-agent-delivery');
 
@@ -136,7 +136,6 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     this.waiters.clear();
   }
 }
-
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 
 export type SpaceAgentInjectionOutcome =

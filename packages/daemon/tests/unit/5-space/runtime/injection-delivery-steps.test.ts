@@ -176,12 +176,16 @@ describe('settleDeliveryRowStatus', () => {
 });
 
 describe('deliverInjectedMessage', () => {
-  function makeJobQueue(throwOnEnqueue = false, signalOnEnqueue = true) {
+  function makeJobQueue(
+    opts: { throwOnEnqueue?: boolean; skipSignal?: boolean } | boolean = false
+  ) {
+    const { throwOnEnqueue = false, skipSignal = false } =
+      typeof opts === 'boolean' ? { throwOnEnqueue: opts } : opts;
     const jobQueueEnqueue = mock(
       (args: { payload?: { sessionId?: string; messageUuid?: string; origin?: string } }) => {
         if (throwOnEnqueue) throw new Error('job queue unavailable');
         const uuid = args?.payload?.messageUuid;
-        if (uuid && signalOnEnqueue) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+        if (uuid && !skipSignal) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
         return { id: 'job-1' };
       }
     );
@@ -195,19 +199,15 @@ describe('deliverInjectedMessage', () => {
   }
 
   function makeTargetSession(provider = 'anthropic') {
-    const ensureQueryStarted = mock(async () => {});
-    const enqueueWithId = mock(async () => {});
     const setQueuedIfIdle = mock(async () => true);
     const session = {
       stateManager: { setQueuedIfIdle, getState: () => ({ status: 'idle' }) },
       getSessionData: () => ({ config: { provider } }),
-      ensureQueryStarted,
-      messageQueue: { enqueueWithId },
     };
-    return { session, ensureQueryStarted, enqueueWithId, setQueuedIfIdle };
+    return { session, setQueuedIfIdle };
   }
 
-  it('v2 fresh row persists enqueued, enqueues a space_inject job, and returns the db id', async () => {
+  it('persists enqueued, enqueues a space_inject job, and returns the db id', async () => {
     const rows = makeRowDeps({ savedDbId: 'saved-db' });
     const { jobQueue, jobQueueEnqueue } = makeJobQueue();
     const target = makeTargetSession();
@@ -219,8 +219,6 @@ describe('deliverInjectedMessage', () => {
         sessionId: SESSION_ID,
         messageId: MESSAGE_ID,
         sdkUserMessage: makeSdkUserMessage(),
-        enqueuePayload: 'shell step',
-        deliveryV2Enabled: true,
         rowExists: false,
       }
     );
@@ -239,10 +237,9 @@ describe('deliverInjectedMessage', () => {
       origin: 'space_inject',
     });
     expect(target.setQueuedIfIdle).toHaveBeenCalledWith(MESSAGE_ID);
-    expect(target.enqueueWithId).not.toHaveBeenCalled();
   });
 
-  it('v2 existing row reuses the message id and still drives the job queue', async () => {
+  it('reuses the message id for an existing row and still drives the job queue', async () => {
     const rows = makeRowDeps();
     const { jobQueue, jobQueueEnqueue } = makeJobQueue();
     const target = makeTargetSession();
@@ -254,8 +251,6 @@ describe('deliverInjectedMessage', () => {
         sessionId: SESSION_ID,
         messageId: MESSAGE_ID,
         sdkUserMessage: makeSdkUserMessage(),
-        enqueuePayload: 'shell step',
-        deliveryV2Enabled: true,
         rowExists: true,
       }
     );
@@ -266,7 +261,7 @@ describe('deliverInjectedMessage', () => {
     expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
   });
 
-  it('v2 enqueue failure marks the row failed and publishes failed', async () => {
+  it('enqueue failure marks the row failed and publishes failed', async () => {
     const rows = makeRowDeps({ failedDbId: 'failed-db' });
     const { jobQueue } = makeJobQueue(true);
     const target = makeTargetSession();
@@ -279,8 +274,6 @@ describe('deliverInjectedMessage', () => {
           sessionId: SESSION_ID,
           messageId: MESSAGE_ID,
           sdkUserMessage: makeSdkUserMessage(),
-          enqueuePayload: 'shell step',
-          deliveryV2Enabled: true,
           rowExists: false,
         }
       )
@@ -292,43 +285,35 @@ describe('deliverInjectedMessage', () => {
     expect(rows.publishStatusChanged).toHaveBeenCalledWith(SESSION_ID, 'failed-db', 'failed');
   });
 
-  it('v1 starts the query, persists enqueued, and enqueues the payload on the session queue', async () => {
-    const rows = makeRowDeps({ savedDbId: 'saved-db' });
-    const { jobQueue, jobQueueEnqueue } = makeJobQueue();
+  it('fresh row timeout marks the row failed and publishes failed', async () => {
+    const rows = makeRowDeps({ savedDbId: 'saved-db', failedDbId: 'failed-db' });
+    const { jobQueue, jobQueueEnqueue } = makeJobQueue({ skipSignal: true });
     const target = makeTargetSession();
-    const order: string[] = [];
-    target.ensureQueryStarted.mockImplementation(async () => {
-      order.push('ensureQueryStarted');
-    });
-    rows.saveUserMessage.mockImplementation(() => {
-      order.push('saveUserMessage');
-      return 'saved-db';
-    });
-    target.enqueueWithId.mockImplementation(async () => {
-      order.push('enqueueWithId');
-    });
 
-    const dbId = await deliverInjectedMessage(
-      { ...rows.deps, jobQueue: jobQueue as never },
-      {
-        session: target.session,
-        sessionId: SESSION_ID,
-        messageId: MESSAGE_ID,
-        sdkUserMessage: makeSdkUserMessage(),
-        enqueuePayload: [{ type: 'text', text: 'shell step' }],
-        deliveryV2Enabled: false,
-        rowExists: false,
-      }
-    );
+    const previousTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '10';
+    try {
+      await expect(
+        deliverInjectedMessage(
+          { ...rows.deps, jobQueue: jobQueue as never },
+          {
+            session: target.session,
+            sessionId: SESSION_ID,
+            messageId: MESSAGE_ID,
+            sdkUserMessage: makeSdkUserMessage(),
+            rowExists: false,
+          }
+        )
+      ).rejects.toThrow('delivery not consumed within timeout');
+    } finally {
+      process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = previousTimeout;
+    }
 
-    expect(dbId).toBe('saved-db');
-    expect(order).toEqual(['ensureQueryStarted', 'saveUserMessage', 'enqueueWithId']);
-    expect(rows.saveUserMessage.mock.calls[0][2]).toBe('enqueued');
-    expect(rows.publishStatusChanged).toHaveBeenCalledWith(SESSION_ID, 'saved-db', 'enqueued');
-    expect(target.enqueueWithId).toHaveBeenCalledWith(MESSAGE_ID, [
-      { type: 'text', text: 'shell step' },
-    ]);
-    expect(jobQueueEnqueue).not.toHaveBeenCalled();
+    expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(rows.markDeliveryFailedByUuid).toHaveBeenCalledWith(SESSION_ID, MESSAGE_ID);
+    expect(rows.publishStatusChanged).toHaveBeenCalledWith(SESSION_ID, 'failed-db', 'failed');
   });
 
   describe('consumption completing before waiter registration', () => {
@@ -355,7 +340,7 @@ describe('deliverInjectedMessage', () => {
     it('default hold path resolves from persisted status instead of timing out', async () => {
       const rows = makeRowDeps({ savedDbId: 'saved-db' });
       armGapConsumption(rows);
-      const { jobQueue, jobQueueEnqueue } = makeJobQueue(false, false);
+      const { jobQueue, jobQueueEnqueue } = makeJobQueue({ skipSignal: true });
       const target = makeTargetSession();
 
       const dbId = await withDeadline(
@@ -366,8 +351,6 @@ describe('deliverInjectedMessage', () => {
             sessionId: SESSION_ID,
             messageId: MESSAGE_ID,
             sdkUserMessage: makeSdkUserMessage(),
-            enqueuePayload: 'shell step',
-            deliveryV2Enabled: true,
             rowExists: false,
           }
         )
@@ -382,7 +365,7 @@ describe('deliverInjectedMessage', () => {
     it('acp hold path resolves from persisted status instead of holding for 12 minutes', async () => {
       const rows = makeRowDeps();
       armGapConsumption(rows);
-      const { jobQueue, jobQueueEnqueue } = makeJobQueue(false, false);
+      const { jobQueue, jobQueueEnqueue } = makeJobQueue({ skipSignal: true });
       const target = makeTargetSession('acp');
 
       const dbId = await withDeadline(
@@ -393,8 +376,6 @@ describe('deliverInjectedMessage', () => {
             sessionId: SESSION_ID,
             messageId: MESSAGE_ID,
             sdkUserMessage: makeSdkUserMessage(),
-            enqueuePayload: 'shell step',
-            deliveryV2Enabled: true,
             rowExists: true,
           }
         )
@@ -418,8 +399,6 @@ describe('deliverInjectedMessage', () => {
           sessionId: SESSION_ID,
           messageId: MESSAGE_ID,
           sdkUserMessage: makeSdkUserMessage(),
-          enqueuePayload: 'shell step',
-          deliveryV2Enabled: true,
           rowExists: true,
         }
       );
