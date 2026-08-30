@@ -1802,7 +1802,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - **Lands**: the complete post-approval route pipeline exists unwired, with its asymmetric compensations.
 - **Excludes**: router wiring (P47).
 - **Tests**: contract rows — concurrent-caller race (second caller halts at `reserve-dispatch`, no session spawned), dead-session replacement, spawn compensation, the RENEW-UNTIL-SETTLED integration row (the lease renews until the bounded spawn settles — exercised HERE where the bounded spawn holder is implemented, per round 29; P44 keeps only primitive-level invariants), and the round-4 conditional release (claim never left durably held with no live session).
-- **Depends on**: P45; TAM-F1 from `task-agent-manager.md` (the spawner's
+- **Depends on**: P45; TAM-F1a/F1b/F1c/F1d from `task-agent-manager.md` (the spawner's
   CREATED/REUSED/COLD-RESTORED ownership + DELIVERED/SKIPPED/DEFERRED delivery outcome contract the bounded spawn
   stage consumes — without it the `{ sessionId }`-only spawner cannot support
   the asymmetric compensations above).
