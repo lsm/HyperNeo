@@ -325,6 +325,8 @@ export class TaskAgentManager {
 
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
 
+  private readonly sessionInjectLocks = new Map<string, Promise<unknown>>();
+
   private readonly rehydrateInFlight = new Map<string, Promise<AgentSession | null>>();
 
   private spawningExecutionIds = new Set<string>();
@@ -1869,8 +1871,23 @@ export class TaskAgentManager {
     return null;
   }
 
-  private withSessionInjectLock<T>(_sessionId: string, fn: () => Promise<T>): Promise<T> {
-    return fn();
+  private async withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.sessionInjectLocks.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = prev.then(() => held);
+    this.sessionInjectLocks.set(sessionId, tail);
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.sessionInjectLocks.get(sessionId) === tail) {
+        this.sessionInjectLocks.delete(sessionId);
+      }
+    }
   }
 
   private captureNodeAgentServer(session: AgentSession): McpServerConfig | undefined {
