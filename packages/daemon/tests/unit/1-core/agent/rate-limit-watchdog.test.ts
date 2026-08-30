@@ -2112,12 +2112,14 @@ describe('RateLimitWatchdog persisted cooldown arming', () => {
   });
 
   it('clears the persisted arm when the timer fires', async () => {
+    const expiry = mock(() => {});
     const watchdog = new RateLimitWatchdog('s', createMockStateManager(), createMockDeps());
-    watchdog.armPersistedCooldown(Date.now() + 20);
+    watchdog.armPersistedCooldown(Date.now() + 20, 'msg-x', expiry);
     await new Promise((resolve) => setTimeout(resolve, 60));
 
     expect(watchdog.getState().retryAt).toBeNull();
     expect(watchdog.getState().persistedCooldown).toBe(false);
+    expect(expiry).toHaveBeenCalledTimes(1);
   });
 
   it('allows an immediate retry while only the persisted arm is active', () => {

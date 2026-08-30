@@ -808,16 +808,26 @@ export class AgentSession
         status?: string;
         retryAt?: unknown;
         messageId?: unknown;
+        retryCount?: unknown;
+        maxRetries?: unknown;
       };
       if (
         parsed.status === 'rate_limit_cooldown' &&
         typeof parsed.retryAt === 'number' &&
         parsed.retryAt > Date.now()
       ) {
-        this.rateLimitWatchdog.armPersistedCooldown(
-          parsed.retryAt,
-          typeof parsed.messageId === 'string' ? parsed.messageId : undefined
-        );
+        const messageId = typeof parsed.messageId === 'string' ? parsed.messageId : undefined;
+        this.rateLimitWatchdog.armPersistedCooldown(parsed.retryAt, messageId, () => {
+          void this.stateManager.setIdle().catch(() => {});
+        });
+        void this.stateManager
+          .setRateLimitCooldown({
+            retryCount: typeof parsed.retryCount === 'number' ? parsed.retryCount : 0,
+            maxRetries: typeof parsed.maxRetries === 'number' ? parsed.maxRetries : 0,
+            retryAt: parsed.retryAt,
+            ...(messageId !== undefined ? { messageId } : {}),
+          })
+          .catch(() => {});
       }
     } catch {
       this.logger.warn('Failed to restore the persisted rate-limit cooldown.');

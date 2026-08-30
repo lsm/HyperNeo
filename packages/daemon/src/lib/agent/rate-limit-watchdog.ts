@@ -106,6 +106,7 @@ export class RateLimitWatchdog {
   private activePauseQueryGeneration: number | undefined = undefined;
   private persistedCooldownArm = false;
   private persistedEpisodeMessageUuid: string | null = null;
+  private persistedExpiryCallback: (() => void) | null = null;
 
   constructor(
     sessionId: string,
@@ -143,17 +144,21 @@ export class RateLimitWatchdog {
     };
   }
 
-  armPersistedCooldown(retryAt: number, messageId?: string): void {
+  armPersistedCooldown(retryAt: number, messageId?: string, onPersistedExpiry?: () => void): void {
     if (this.cooldownTimer !== null) return;
     const remaining = Math.max(0, retryAt - Date.now());
     this.currentRetryAt = retryAt;
     this.persistedCooldownArm = true;
     this.persistedEpisodeMessageUuid = messageId ?? null;
+    this.persistedExpiryCallback = onPersistedExpiry ?? null;
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
       this.currentRetryAt = null;
       this.persistedCooldownArm = false;
       this.persistedEpisodeMessageUuid = null;
+      const expiry = this.persistedExpiryCallback;
+      this.persistedExpiryCallback = null;
+      expiry?.();
       this.notifyResume();
     }, remaining);
     if (
@@ -483,6 +488,7 @@ export class RateLimitWatchdog {
     this.cancelCooldownTimer();
     this.persistedCooldownArm = false;
     this.persistedEpisodeMessageUuid = null;
+    this.persistedExpiryCallback = null;
     this.cooldownQueryGeneration = queryGeneration;
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
@@ -786,6 +792,7 @@ export class RateLimitWatchdog {
       this.currentRetryAt = null;
       this.persistedCooldownArm = false;
       this.persistedEpisodeMessageUuid = null;
+      this.persistedExpiryCallback = null;
       this.cooldownQueryGeneration = undefined;
       this.logger.info('Cancelled pending rate limit cooldown.');
     }
@@ -832,6 +839,7 @@ export class RateLimitWatchdog {
       this.currentRetryAt = null;
       this.persistedCooldownArm = false;
       this.persistedEpisodeMessageUuid = null;
+      this.persistedExpiryCallback = null;
     }
     if (this.startupExhausted) {
       this.startupExhausted = false;

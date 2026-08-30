@@ -1230,6 +1230,39 @@ describe('AgentSession', () => {
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
     });
 
+    it('projects a restored persisted cooldown into the processing state', async () => {
+      mockDb.getSession = mock(
+        () =>
+          ({
+            id: 'test-session-id',
+            processingState: JSON.stringify({
+              status: 'rate_limit_cooldown',
+              retryAt: Date.now() + 60_000,
+              retryCount: 1,
+              maxRetries: 3,
+              messageId: 'msg-persisted-episode',
+            }),
+          }) as never
+      );
+      const arm = (
+        agentSession as unknown as { armPersistedRateLimitCooldown: () => void }
+      ).armPersistedRateLimitCooldown.bind(agentSession);
+
+      arm();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const state = agentSession.stateManager.getState();
+      expect(state.status).toBe('rate_limit_cooldown');
+      if (state.status === 'rate_limit_cooldown') {
+        expect(state.retryAt).toBeGreaterThan(Date.now());
+        expect(state.messageId).toBe('msg-persisted-episode');
+      }
+      (
+        agentSession as unknown as { rateLimitWatchdog: { cancel: () => void } }
+      ).rateLimitWatchdog.cancel();
+      await agentSession.stateManager.setIdle();
+    });
+
     it('retryNowAfterRateLimit releases the parked delivery for a persisted episode', async () => {
       const rescheduleDelivery = mock(() => true);
       mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
