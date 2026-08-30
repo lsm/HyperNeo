@@ -285,7 +285,6 @@ export class QueryModeHandler {
       messages: flushMessages,
       activeInJobQueue:
         jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id) ?? new Set<string>(),
-      pendingInMemoryUuids: new Set<string>(),
       activeTurnInJobQueue: jobQueue?.hasActiveTurnDeliveryJob?.(this.ctx.session.id) ?? false,
       slotResetsContext: this.ctx.slotResetsContext?.() ?? false,
       hasPriorContext: !!(this.ctx.session.sdkSessionId || this.ctx.session.acpSessionId),

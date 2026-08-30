@@ -75,7 +75,6 @@ function makeFlushInput(overrides: Partial<TurnEndFlushInput> = {}): TurnEndFlus
       makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
     ],
     activeInJobQueue: new Set<string>(),
-    pendingInMemoryUuids: new Set<string>(),
     activeTurnInJobQueue: false,
     slotResetsContext: true,
     hasPriorContext: true,
@@ -305,12 +304,8 @@ describe('message turn-end flush decision pipeline', () => {
     [
       'a queue where every message is owned is a noop',
       {
-        messages: [
-          makeFlushMessage({ uuid: 'job-owned' }),
-          makeFlushMessage({ uuid: 'memory-owned' }),
-        ],
+        messages: [makeFlushMessage({ uuid: 'job-owned' })],
         activeInJobQueue: new Set(['job-owned']),
-        pendingInMemoryUuids: new Set(['memory-owned']),
       },
       { action: 'noop' },
     ],
@@ -496,7 +491,6 @@ describe('message turn-end flush decision pipeline', () => {
         planFlushDelivery({
           messages: ctx.messages,
           activeInJobQueue: ctx.activeInJobQueue,
-          pendingInMemoryUuids: ctx.pendingInMemoryUuids,
           activeTurnInJobQueue: ctx.activeTurnInJobQueue,
         })
       );
@@ -549,7 +543,6 @@ describe('message turn-end flush decision pipeline', () => {
         const core = planFlushDelivery({
           messages: input.messages,
           activeInJobQueue: input.activeInJobQueue,
-          pendingInMemoryUuids: input.pendingInMemoryUuids,
           activeTurnInJobQueue: input.activeTurnInJobQueue,
         });
         const deliverables =

@@ -43,28 +43,12 @@ describe('isTaskFlushInput', () => {
 });
 
 describe('resolveMessageOwnership', () => {
-  test('job_queue wins when both queues hold the message', () => {
-    expect(resolveMessageOwnership({ activeInJobQueue: true, pendingInMemory: true })).toBe(
-      'job_queue'
-    );
-  });
-
   test('job_queue alone owns the message', () => {
-    expect(resolveMessageOwnership({ activeInJobQueue: true, pendingInMemory: false })).toBe(
-      'job_queue'
-    );
+    expect(resolveMessageOwnership({ activeInJobQueue: true })).toBe('job_queue');
   });
 
-  test('memory_queue owns the message when no durable job is active', () => {
-    expect(resolveMessageOwnership({ activeInJobQueue: false, pendingInMemory: true })).toBe(
-      'memory_queue'
-    );
-  });
-
-  test('neither flag leaves the message unowned for the flush', () => {
-    expect(resolveMessageOwnership({ activeInJobQueue: false, pendingInMemory: false })).toBe(
-      'unowned'
-    );
+  test('no durable job leaves the message unowned for the flush', () => {
+    expect(resolveMessageOwnership({ activeInJobQueue: false })).toBe('unowned');
   });
 });
 
@@ -74,7 +58,6 @@ describe('planFlushDelivery', () => {
       planFlushDelivery({
         messages: [],
         activeInJobQueue: new Set(),
-        pendingInMemoryUuids: new Set(),
         activeTurnInJobQueue: false,
       })
     ).toEqual({
@@ -84,46 +67,24 @@ describe('planFlushDelivery', () => {
 
   test('flush where every message is owned is a noop', () => {
     const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'job-owned' }),
-        makeFlushMessage({ uuid: 'memory-owned' }),
-      ],
+      messages: [makeFlushMessage({ uuid: 'job-owned' })],
       activeInJobQueue: new Set(['job-owned']),
-      pendingInMemoryUuids: new Set(['memory-owned']),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'noop' });
   });
 
-  test('messages owned by either queue are skipped with their ownership reason', () => {
+  test('messages owned by the job queue are skipped with their ownership reason', () => {
     const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'job-owned' }),
-        makeFlushMessage({ uuid: 'memory-owned' }),
-        makeFlushMessage({ uuid: 'free' }),
-      ],
+      messages: [makeFlushMessage({ uuid: 'job-owned' }), makeFlushMessage({ uuid: 'free' })],
       activeInJobQueue: new Set(['job-owned']),
-      pendingInMemoryUuids: new Set(['memory-owned']),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
       deliver: ['free'],
-      skip: [
-        { uuid: 'job-owned', ownership: 'job_queue' },
-        { uuid: 'memory-owned', ownership: 'memory_queue' },
-      ],
+      skip: [{ uuid: 'job-owned', ownership: 'job_queue' }],
     });
-  });
-
-  test('a message owned by both queues is skipped as job_queue', () => {
-    const result = planFlushDelivery({
-      messages: [makeFlushMessage({ uuid: 'contested' })],
-      activeInJobQueue: new Set(['contested']),
-      pendingInMemoryUuids: new Set(['contested']),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({ action: 'noop' });
   });
 
   test('non-user messages are skipped and do not break batchability of the rest', () => {
@@ -134,7 +95,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
       ],
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
@@ -151,7 +111,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'third', flattenedText: 'three' }),
       ],
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'batch', uuids: ['first', 'second', 'third'] });
@@ -161,7 +120,6 @@ describe('planFlushDelivery', () => {
     const result = planFlushDelivery({
       messages: [makeFlushMessage({ uuid: 'solo' })],
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'each', deliver: ['solo'], skip: [] });
@@ -175,7 +133,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
       ],
       activeInJobQueue: new Set(['job-owned']),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
@@ -192,7 +149,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'plain', flattenedText: 'hello' }),
       ],
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
@@ -209,7 +165,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'a' }),
       ],
       activeInJobQueue: new Set(['job-owned']),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
@@ -227,31 +182,12 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
       ],
       activeInJobQueue: new Set(['owned-slash']),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
       deliver: ['a', 'b'],
       skip: [{ uuid: 'owned-slash', ownership: 'job_queue' }],
-    });
-  });
-
-  test('a message owned by both queues forces per-message delivery despite memory filtering', () => {
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'contested', flattenedText: 'durable' }),
-        makeFlushMessage({ uuid: 'a' }),
-        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
-      ],
-      activeInJobQueue: new Set(['contested']),
-      pendingInMemoryUuids: new Set(['contested']),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({
-      action: 'each',
-      deliver: ['a', 'b'],
-      skip: [{ uuid: 'contested', ownership: 'job_queue' }],
     });
   });
 
@@ -262,7 +198,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
       ],
       activeInJobQueue: new Set(['unrelated-active-turn']),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: true,
     });
     expect(result).toEqual({
@@ -279,35 +214,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
       ],
       activeInJobQueue: new Set(['unrelated-active-steer']),
-      pendingInMemoryUuids: new Set(),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({ action: 'batch', uuids: ['a', 'b'] });
-  });
-
-  test('a memory-queue-owned slash command does not break batching of the rest', () => {
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'owned-slash', flattenedText: '/compact' }),
-        makeFlushMessage({ uuid: 'a' }),
-        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
-      ],
-      activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(['owned-slash']),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({ action: 'batch', uuids: ['a', 'b'] });
-  });
-
-  test('a memory-queue-owned unflattenable message does not break batching of the rest', () => {
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'owned-image', flattenedText: null }),
-        makeFlushMessage({ uuid: 'a' }),
-        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
-      ],
-      activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(['owned-image']),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'batch', uuids: ['a', 'b'] });
@@ -321,7 +227,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
       ],
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
@@ -335,7 +240,6 @@ describe('planFlushDelivery', () => {
     const result = planFlushDelivery({
       messages: [makeFlushMessage({ uuid: 'image-only', flattenedText: null })],
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'each', deliver: ['image-only'], skip: [] });
@@ -349,7 +253,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'big-2', flattenedText: huge }),
       ],
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
@@ -367,7 +270,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'cap-2', flattenedText: 'b'.repeat(Math.floor(budget / 2)) }),
       ],
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'batch', uuids: ['cap-1', 'cap-2'] });
@@ -381,7 +283,6 @@ describe('planFlushDelivery', () => {
     const result = planFlushDelivery({
       messages: texts.map((text, i) => makeFlushMessage({ uuid: `cap-${i}`, flattenedText: text })),
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
@@ -401,7 +302,6 @@ describe('planFlushDelivery', () => {
       const atCap = planFlushDelivery({
         messages: texts.map((text, i) => makeFlushMessage({ uuid: `m-${i}`, flattenedText: text })),
         activeInJobQueue: new Set(),
-        pendingInMemoryUuids: new Set(),
         activeTurnInJobQueue: false,
       });
       expect(atCap).toEqual({
@@ -416,7 +316,6 @@ describe('planFlushDelivery', () => {
           makeFlushMessage({ uuid: 'm-last', flattenedText: `${texts[count - 1]}y` }),
         ],
         activeInJobQueue: new Set(),
-        pendingInMemoryUuids: new Set(),
         activeTurnInJobQueue: false,
       });
       expect(overCap).toEqual({
@@ -435,7 +334,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'cap-2', flattenedText: 'b'.repeat(Math.floor(budget / 2) + 1) }),
       ],
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
@@ -449,22 +347,17 @@ describe('planFlushDelivery', () => {
     const result = planFlushDelivery({
       messages: [
         makeFlushMessage({ uuid: 'a' }),
-        makeFlushMessage({ uuid: 'memory-owned' }),
         makeFlushMessage({ uuid: 'assistant', isUserMessage: false }),
         makeFlushMessage({ uuid: 'unflattenable', flattenedText: null }),
         makeFlushMessage({ uuid: 'slash', flattenedText: '/model' }),
       ],
       activeInJobQueue: new Set(),
-      pendingInMemoryUuids: new Set(['memory-owned']),
       activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
       deliver: ['a', 'unflattenable', 'slash'],
-      skip: [
-        { uuid: 'memory-owned', ownership: 'memory_queue' },
-        { uuid: 'assistant', ownership: 'not_user_message' },
-      ],
+      skip: [{ uuid: 'assistant', ownership: 'not_user_message' }],
     });
   });
 });
