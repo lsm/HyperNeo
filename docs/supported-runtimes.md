@@ -104,6 +104,7 @@ The recommended command deliberately omits `--include` for these and the `--targ
 Acceptance for a smoke binary: HTTP 200 on `/`, `/ws` handshake, migrations, graceful SIGTERM. `scripts/deno-smoke.sh` accepts `DENO_SMOKE_BIN=/path/to/binary` to boot the compiled binary against the same four assertions:
 
 ```bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"  # any directory is fine; the script does not chdir when DENO_SMOKE_BIN is set
 DENO_SMOKE_BIN="$REPO_ROOT/packages/daemon/dist/bin/hyperneo-deno" \
   DENO_SMOKE_PORT=9283 ./scripts/deno-smoke.sh
