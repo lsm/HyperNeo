@@ -766,6 +766,11 @@ describe('JobQueueRepository', () => {
       expect(reclaimedJob!.claimToken).not.toBeNull();
       expect(reclaimedJob!.claimToken).not.toBe(claimed!.claimToken);
       expect(repository.getJob(job.id)?.status).toBe('processing');
+
+      expect(repository.complete(job.id, { ok: true }, claimed!.claimToken)).toBeNull();
+      expect(repository.getJob(job.id)?.status).toBe('processing');
+      const completed = repository.complete(job.id, { ok: true }, reclaimedJob!.claimToken);
+      expect(completed?.status).toBe('completed');
     });
   });
 
