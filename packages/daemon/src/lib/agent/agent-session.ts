@@ -1207,7 +1207,7 @@ export class AgentSession
 
   cancelRateLimitRetry(): void {
     const episodeMessage = this.rateLimitWatchdog.getState().lastUserMessage;
-    const persistedArmMessageId = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
+    const persistedArmMessageId = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid?.() ?? null;
     this.rateLimitWatchdog.cancel(false);
     let persistedEpisodeMessageId: string | undefined = persistedArmMessageId ?? undefined;
     let cooldownClearPending = false;

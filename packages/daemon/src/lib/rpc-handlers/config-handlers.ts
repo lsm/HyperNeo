@@ -58,7 +58,7 @@ async function restartQueryForConfig(
   if (agentSession.isQueryActiveOrStarting()) {
     return agentSession.resetQuery({ restartQuery: true });
   }
-  const current = await sessionManager.getSessionAsync(sessionId);
+  const current = await sessionManager.getSessionAsync(sessionId, { startQuery: false });
   if (current && current !== agentSession) {
     if (applyUserMcpUpdate) await applyUserMcpUpdate(current);
     if (Object.keys(configDelta).length > 0) await current.updateConfig(configDelta);
@@ -76,7 +76,6 @@ async function restartQueryForConfig(
       error: `Session ${sessionId} is not resumable — workflow provisioning skipped`,
     };
   }
-  if (current.isQueryActiveOrStarting()) return { success: true };
   return current.resetQuery({ restartQuery: true });
 }
 

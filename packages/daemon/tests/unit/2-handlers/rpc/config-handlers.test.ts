@@ -332,7 +332,9 @@ describe('SDK Config RPC Handlers', () => {
 
       expect(result).toEqual({ success: true, applied: true });
       expect(mocks.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
-      expect(sessionManagerData.getSessionAsyncMock).toHaveBeenCalledWith('session-123');
+      expect(sessionManagerData.getSessionAsyncMock).toHaveBeenCalledWith('session-123', {
+        startQuery: false,
+      });
     });
 
     it('reports restart failure when workflow provisioning is skipped for a dormant worker', async () => {
