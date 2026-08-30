@@ -96,6 +96,9 @@ import mdworkflowsCoderOwnedQaReviewPrompt from './workflows/coder-owned/qa-revi
 import mdworkflowsCoderOwnedReviewPrompt from './workflows/coder-owned/review-prompt.md' with {
   type: 'text',
 };
+import mdworkflowsGuidanceCallActionPreference from './workflows/guidance/call-action-preference.md' with {
+  type: 'text',
+};
 import mdworkflowsGuidanceCodexReactionApproval from './workflows/guidance/codex-reaction-approval.md' with {
   type: 'text',
 };
@@ -190,6 +193,7 @@ const registry: Record<string, string> = {
   'workflows/coder-owned/qa-prompt.md': mdworkflowsCoderOwnedQaPrompt,
   'workflows/coder-owned/qa-review-prompt.md': mdworkflowsCoderOwnedQaReviewPrompt,
   'workflows/coder-owned/review-prompt.md': mdworkflowsCoderOwnedReviewPrompt,
+  'workflows/guidance/call-action-preference.md': mdworkflowsGuidanceCallActionPreference,
   'workflows/guidance/codex-reaction-approval.md': mdworkflowsGuidanceCodexReactionApproval,
   'workflows/guidance/external-review-bots.md': mdworkflowsGuidanceExternalReviewBots,
   'workflows/guidance/fullstack-coding-nochange.md': mdworkflowsGuidanceFullstackCodingNochange,
@@ -260,6 +264,7 @@ export const {
   CODER_OWNED_QA_PROMPT,
   CODER_OWNED_QA_REVIEW_PROMPT,
   CODER_OWNED_REVIEW_PROMPT,
+  CALL_ACTION_PREFERENCE_GUIDANCE,
   CODEX_REACTION_APPROVAL_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,

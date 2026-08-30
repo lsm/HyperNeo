@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +10,7 @@ import type {
   WorkflowHook,
   WorkflowNode,
 } from '@hyperneo/shared';
+import { CALL_ACTION_PREFERENCE_GUIDANCE } from '@hyperneo/prompts';
 import {
   exportWorkflow,
   validateExportedWorkflow,
@@ -23,6 +25,9 @@ import {
   CODER_ONLY_WORKFLOW,
   CODER_OWNED_MERGE_PROMPT,
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE,
+  CODER_OWNED_QA_PROMPT,
+  CODER_OWNED_QA_REVIEW_PROMPT,
+  CODER_OWNED_REVIEW_PROMPT,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   CODING_WITH_QA_WORKFLOW,
   CODING_WORKFLOW,
@@ -44,6 +49,8 @@ import {
   REVIEW_ONLY_WORKFLOW,
   REVIEW_POLICY_GUIDANCE,
   RESEARCH_PROMPT,
+  RESEARCH_REVIEW_PROMPT,
+  REVIEW_ONLY_REVIEW_PROMPT,
   REVIEWER_ZERO_FINDINGS_GATE,
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
   seedBuiltInWorkflows,
@@ -2080,8 +2087,11 @@ describe('seedBuiltInWorkflows()', () => {
 
     const templatePrompt = codingNode.agents[0].customPrompt!.value;
     expect(templatePrompt).toContain('subscribe_pr_events');
-    const retiredPrompt = templatePrompt.replace(CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '');
+    const retiredPrompt = templatePrompt
+      .replace(CODER_OWNED_PR_SUBSCRIBE_GUIDANCE, '')
+      .replace(`\n${CALL_ACTION_PREFERENCE_GUIDANCE}`, '');
     expect(retiredPrompt).not.toContain('subscribe_pr_events');
+    expect(retiredPrompt).not.toContain('call_action');
 
     manager.updateWorkflow(coding.id, {
       nodes: coding.nodes.map((n) =>
@@ -3953,6 +3963,59 @@ test('patchKnownBuiltInPromptDrift rewrites a persisted legacy Coding-with-QA co
   const mergedCoder = merged.find((n) => n.name === 'Coding')!;
   const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
   expect(mergedPrompt).toBe(legacySeed);
+});
+
+test('persisted pre-call-action prompts migrate to the dispatcher preference templates', () => {
+  const preDispatcherHashes = new Map<string, string>([
+    [CODER_ONLY_PROMPT, '59e2f3db6223d9137e5f7ede73587e9b08f62bc10523253ae642df583fe7f14f'],
+    [CODER_OWNED_MERGE_PROMPT, '812a27c573b15db775f9ccdd4625f21b7cb8aa21e73b2b1b374df310ab55b025'],
+    [CODER_OWNED_REVIEW_PROMPT, 'da51558acb0459acf61beda09a4390557966320dd0ab95d74b115dfd5e940740'],
+    [CODER_OWNED_QA_PROMPT, '662b1e20d219237c8d4dfa4add74d10f54bc9bc1888dc0e7ab267f2ece7f7eb8'],
+    [
+      CODER_OWNED_QA_REVIEW_PROMPT,
+      'f915282840b18893b1200da0d648e2e37032b9488492674ac5d4ed1fefe80f20',
+    ],
+    [RESEARCH_PROMPT, '0f136370ebc4cb6e4016c0d01ff5ed2c7db60ca40bf0f0863b1534f7ff3cb602'],
+    [RESEARCH_REVIEW_PROMPT, '199f7ad7c972d1495f978924a26cff953680c8fddf73f33e25de3b0bb4621c56'],
+    [REVIEW_ONLY_REVIEW_PROMPT, '9e223b7e6c1c306e66288916cc42e2f5f7211b997cfaf3db06f9ecb7033317ee'],
+  ]);
+  const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+  const migratedKeys = new Set<string>();
+
+  for (const workflow of getBuiltInWorkflows()) {
+    for (const node of workflow.nodes) {
+      for (const agent of node.agents) {
+        const value = agent.customPrompt?.value;
+        if (!value?.includes(CALL_ACTION_PREFERENCE_GUIDANCE)) continue;
+        const expectedHash = preDispatcherHashes.get(value);
+        expect(expectedHash, `${workflow.name}/${node.name}/${agent.name}`).toBeDefined();
+        const persisted = [
+          value.replace(`\n${CALL_ACTION_PREFERENCE_GUIDANCE}`, ''),
+          value.replace(CALL_ACTION_PREFERENCE_GUIDANCE, ''),
+        ].find((stripped) => sha(stripped) === expectedHash);
+        expect(persisted, `${workflow.name}/${node.name}/${agent.name}`).toBeDefined();
+        const existingNode: WorkflowNode = {
+          ...node,
+          agents: node.agents.map((candidate) =>
+            candidate === agent ? { ...candidate, customPrompt: { value: persisted! } } : candidate
+          ),
+        };
+        const merged = mergeNodeStructuralFieldsFromTemplate(
+          [existingNode],
+          workflow.nodes,
+          () => 'agent-id'
+        );
+        const mergedNode = merged.find((candidate) => candidate.name === node.name)!;
+        const mergedAgent = mergedNode.agents.find((candidate) => candidate.name === agent.name)!;
+        expect(mergedAgent.customPrompt?.value, `${workflow.name}/${node.name}/${agent.name}`).toBe(
+          value
+        );
+        migratedKeys.add(value);
+      }
+    }
+  }
+
+  expect(migratedKeys.size).toBe(preDispatcherHashes.size);
 });
 
 test('CODING_WITH_QA_WORKFLOW Review node is intermediate and defers final approval to QA', () => {

@@ -5,6 +5,8 @@ The task has been approved. You are the agent who implemented PR {{pr_url}}; now
 
 Approval source: {{approval_source}}. Approval was granted by a human after the review gate passed the current head — the external review bots in your recorded gate set, or your internal fallback review if the gate set was empty — and your informal review recorded a clean gate. The gate artifacts (per-bot verdict evidence, head OID, base ref) were recorded before approval.
 
+<!-- include: workflows/guidance/call-action-preference.md -->
+
 ## Verify before you merge (do NOT skip)
 
 The merge must satisfy ALL of the following against the PR's CURRENT head before you run `gh pr merge`. Run them in order, in this worktree:

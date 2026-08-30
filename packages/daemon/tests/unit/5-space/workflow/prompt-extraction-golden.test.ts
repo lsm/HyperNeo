@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { POST_APPROVAL_COMPLETION_INSTRUCTIONS } from '@hyperneo/prompts';
+import {
+  CALL_ACTION_PREFERENCE_GUIDANCE,
+  POST_APPROVAL_COMPLETION_INSTRUCTIONS,
+} from '@hyperneo/prompts';
 import { createHash } from 'node:crypto';
 import {
   CODEX_REACTION_APPROVAL_GUIDANCE,
@@ -54,24 +57,26 @@ const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:
     'b52db95c407c8c7d8f18d46d745bebaa5d449b8cbbd592627f87c67104aecf22',
   CODER_EXTERNAL_GATE_BLOCK: '404720aba30ff94f9cbe83849ecd737f0e2cd7b9bd75d7083b18c72d40ab0002',
-  CODER_ONLY_MERGE_INSTRUCTIONS: '1133cbeed3b82f1ab4dd8181d898dbbaec5e70d596122b50ec2600bc2fe1262b',
-  CODER_ONLY_PROMPT: '59e2f3db6223d9137e5f7ede73587e9b08f62bc10523253ae642df583fe7f14f',
+  CODER_ONLY_MERGE_INSTRUCTIONS: '70021ee7239f20c53eb174242761ac88356897fb0a79eed659bb2bb328500ab0',
+  CODER_ONLY_PROMPT: '1cdadc61876e45bb97e0b29949b9ddd78a85715d63f0f2db0a0ced5a0ab072a8',
   CODER_OWNED_MERGE_INSTRUCTIONS:
-    '6da57bff54ba767eb87ec7e0590f57571a80d41240f9d916ac3b5a432640b428',
-  CODER_OWNED_MERGE_PROMPT: '812a27c573b15db775f9ccdd4625f21b7cb8aa21e73b2b1b374df310ab55b025',
+    '89548177194eef9ae5c5d8c30dca09afea7e9bdf05a7715fee5385d17372d5c8',
+  CODER_OWNED_MERGE_PROMPT: '6e979240135471a0bb46fb41a350df837fa8856964d461bb00d8f29a049f4f0f',
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE:
     '849ec685a272e0a751689014bd717b5e2103ccfb02d6b5b18e90eaad86bbb6e1',
-  CODER_OWNED_QA_PROMPT: '662b1e20d219237c8d4dfa4add74d10f54bc9bc1888dc0e7ab267f2ece7f7eb8',
-  CODER_OWNED_QA_REVIEW_PROMPT: 'f915282840b18893b1200da0d648e2e37032b9488492674ac5d4ed1fefe80f20',
-  CODER_OWNED_REVIEW_PROMPT: 'da51558acb0459acf61beda09a4390557966320dd0ab95d74b115dfd5e940740',
+  CODER_OWNED_QA_PROMPT: 'c6f0237c984fa5b24d4232a4b0e7c3a1ba1aeff41ec0072aa58c6145beb3ed9a',
+  CODER_OWNED_QA_REVIEW_PROMPT: '8f5a5d06d2dbd5f5e8e13dcfe7d7372f544346db93b58c7abb79a74c031c972b',
+  CODER_OWNED_REVIEW_PROMPT: '605a927dfd09266988f778f779a5a719b2e707ea0d5182c29fe1a8f74e12cd03',
   EXTERNAL_REVIEW_BOTS_GUIDANCE: '7835f588e44a250e35c0869ef1cacb409fb363c37bd2144c526a8788dd875499',
   FULLSTACK_CODING_NOCHANGE_GUIDANCE:
     '86a3ade926943f86121cf6f3779b5fe405f0a9a4793415e608e8902e20250823',
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH:
     '11a9d349054ebcd44dbbb4a5d3918a175446763b108d34c2db0a174fdfdc6e23',
-  RESEARCH_PROMPT: '0f136370ebc4cb6e4016c0d01ff5ed2c7db60ca40bf0f0863b1534f7ff3cb602',
-  RESEARCH_REVIEW_PROMPT: '199f7ad7c972d1495f978924a26cff953680c8fddf73f33e25de3b0bb4621c56',
-  REVIEW_ONLY_REVIEW_PROMPT: '9e223b7e6c1c306e66288916cc42e2f5f7211b997cfaf3db06f9ecb7033317ee',
+  RESEARCH_PROMPT: 'c21fbfd926ca0aa98cbb2d0a0e55ec5f7e9d8c49572fee91aaaf686b79beb4f5',
+  RESEARCH_REVIEW_PROMPT: '7c745458641b56475a18e3c4d2f38c3ffb0b2cbd9b8863bb4e2bb8776443e4dd',
+  REVIEW_ONLY_REVIEW_PROMPT: 'db2f4cc6c11cd60310209d3d6a7d183a935b7556112e546d2fb17fc7cc3ccfe0',
+  CALL_ACTION_PREFERENCE_GUIDANCE:
+    'b762c651902ae11edc0805e24940a632c5ff5c49c00d63b64bf64af1324923ec',
   REVIEW_POLICY_GUIDANCE: '6ba821ea3dd2c230a4bd44cf70f17f24bcecf0741e99f68978a689c7904fddf7',
   REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH:
     'b399387063580e372b016032778074006db391065bb8b80793b701239b45de0c',
@@ -156,6 +161,7 @@ const VALUES: Record<string, string> = {
   CODER_EXTERNAL_GATE_BLOCK,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
   REVIEW_POLICY_GUIDANCE,
+  CALL_ACTION_PREFERENCE_GUIDANCE,
   CODER_OWNED_MERGE_INSTRUCTIONS,
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
@@ -199,6 +205,46 @@ describe('prompt extraction golden hashes', () => {
       }
       const actual = createHash('sha256').update(VALUES[id]!).digest('hex');
       expect(actual, id).toBe(expected);
+    }
+  });
+});
+
+describe('workflow prompts prefer call_action with named-action fallback', () => {
+  const DISPATCHER_PROMPTS: Record<string, string> = {
+    CODER_ONLY_PROMPT,
+    CODER_OWNED_MERGE_PROMPT,
+    CODER_OWNED_REVIEW_PROMPT,
+    CODER_OWNED_QA_PROMPT,
+    CODER_OWNED_QA_REVIEW_PROMPT,
+    RESEARCH_PROMPT,
+    RESEARCH_REVIEW_PROMPT,
+    REVIEW_ONLY_REVIEW_PROMPT,
+    CODER_ONLY_MERGE_INSTRUCTIONS,
+    CODER_OWNED_MERGE_INSTRUCTIONS,
+  };
+
+  test('every workflow role prompt and merge instruction carries the coexistence prose', () => {
+    for (const [id, text] of Object.entries(DISPATCHER_PROMPTS)) {
+      expect(text, id).toContain('prefer `call_action(name, params)`');
+      expect(text, id).toContain('fall back to the typed tool of the same name');
+      expect(text, id).toContain('call_action(name="list_actions")');
+    }
+  });
+
+  test('the preference prose enumerates only typed tool names the prompts already use', () => {
+    for (const name of [
+      'save_artifact',
+      'send_message',
+      'subscribe_pr_events',
+      'approve_task',
+      'submit_for_approval',
+      'mark_complete',
+    ]) {
+      expect(CALL_ACTION_PREFERENCE_GUIDANCE).toContain(`\`${name}\``);
+      const usedBy = Object.entries(DISPATCHER_PROMPTS).filter(([, text]) =>
+        text.replace(CALL_ACTION_PREFERENCE_GUIDANCE, '').includes(name)
+      );
+      expect(usedBy.length, name).toBeGreaterThan(0);
     }
   });
 });
