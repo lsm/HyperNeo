@@ -4,22 +4,26 @@ import {
   admitAcrossContextClearBoundary,
   clearContextClearBoundariesForTest,
   getCoordinationAcquireTimeoutMs,
+  getCoordinationLeakCeilingMs,
   hasContextClearBoundaryForTest,
   SessionCoordinationStallError,
   withContextClearBoundary,
 } from '../../../../src/lib/agent/message-delivery';
 
 const ACQUIRE_ENV = { HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS: '20' };
+const CEILING_ENV = { HYPERNEO_DELIVERY_COORDINATION_LEAK_CEILING_MS: '60' };
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('delivery coordination env overrides', () => {
   it('falls back to defaults when unset', () => {
     expect(getCoordinationAcquireTimeoutMs({})).toBe(8_000);
+    expect(getCoordinationLeakCeilingMs({})).toBe(900_000);
   });
 
   it('reads overrides', () => {
     expect(getCoordinationAcquireTimeoutMs(ACQUIRE_ENV)).toBe(20);
+    expect(getCoordinationLeakCeilingMs(CEILING_ENV)).toBe(60);
   });
 });
 
