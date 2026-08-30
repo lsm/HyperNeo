@@ -633,12 +633,13 @@ adoption outside the lock; pin adoption-before-lock ordering. Fit:
 
 Ordering runs lowest-risk first; every PR targets `dev`, ≤ ~300 prod lines,
 tests ride their slice. Exact cut is the coordinator's after owner review.
-Rows whose Deliverable bundles several contracts (interface + protocol +
-cleanup + wiring + tests) are marked in-row with their internal order; each
-independently landable child is cut as ITS OWN row-level issue with its own
-budget and dependencies derived from the row — a row is never shipped as one
-PR when its bundled contracts exceed a single seam, and no child may invert
-the stated order.
+Every row is ONE independently shippable deliverable — one issue, one PR,
+one seam, with the budget and dependency cells in the table authoritative.
+Where a row's text names several ordered contracts (a protocol, its fences,
+its rollback), that ordering describes the row's internal construction
+sequence within its single seam, NOT multiple PRs: no coordinator-cut
+expansion exists, and if a row cannot land as one PR within its budget the
+row is mis-cut and must be re-split in this map before issues are cut.
 
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
@@ -666,7 +667,7 @@ the stated order.
 | TAM-E4 | Delete the old imperative `injectMessageIntoSession` cascade — removal-only, zero new logic; every caller is converted by then (TAM-E2 origin path, TAM-E3 spawn-flow kickoff, the rewired post-approval arms) | delete | ≲190 | 0 | TAM-E2, TAM-E3, P47 (the LIVE spawner body still calls `injectMessageIntoSession` at :4912/:5041 until P47's swap — TAM-F2 is dead code and converts nothing live, so deleting the cascade after F2 alone would leave production callers unresolved; deletion can only follow P47) |
 | TAM-F0 | Shared TERMINAL-TRANSITION FENCE PRIMITIVE (construction only, additive): the fence/API + its contract tests, so a task/run terminal transition cannot slip between the reuse gate and the end of reuse (the reservation CAS alone cannot fence a terminal transition) — the alternative "complete rollback" needs a concrete reversible protocol (execution-owner writes, config, callback swap, workspace metadata, MCP restart), landed + tested HERE. Depends only on TAM-PF (it consumes no restoration provenance or three-way create result — a TAM-B0 dependency would needlessly block the status-writer wiring and F1 behind the rehydration track) | build | ≲90 | ≲140 | TAM-PF |
 | TAM-F0-W1 | Wire the TASK-CANCEL status writer to honor the TAM-F0 fence | wire | ≲30 | ≲30 | TAM-F0 |
-| TAM-F0-W2 | Wire the TASK-ARCHIVE status writer to honor the TAM-F0 fence | wire | ≲30 | ≲30 | TAM-F0 |
+| TAM-F0-W2 | Wire the TASK-ARCHIVE status writer to honor the TAM-F0 fence, INCLUDING the DIRECT duplicate-reconciliation writer (`SpaceRuntime.archiveDuplicateRunTasks` writes `status: 'archived'` via `updateTaskAndEmit` at space-runtime.ts:3335–3345, bypassing SpaceTaskManager's archive path — an `approved → archived` transition during an in-flight dispatch would otherwise slip the fence and let the kickoff commit for an archived task; duplicate-archive-during-dispatch race row) | wire | ≲30 | ≲40 | TAM-F0 |
 | TAM-F0-W3 | Wire the TASK-STOP status writer (`parkStoppedWorkflowTask` :2998–3006) to honor the TAM-F0 fence | wire | ≲25 | ≲25 | TAM-F0 |
 | TAM-F0-W4 | Wire the RUN-CANCEL status writer (`cancelWorkflowRun` :3142) to honor the TAM-F0 fence | wire | ≲25 | ≲25 | TAM-F0 |
 | TAM-F0-W5 | Wire the WORKFLOW-TERMINAL status writer to honor the TAM-F0 fence | wire | ≲30 | ≲30 | TAM-F0 |
