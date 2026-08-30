@@ -1493,9 +1493,12 @@ export class TaskAgentManager {
               if (repo.getById(row.id)?.status !== 'pending') return;
               repo.markAttemptFailed(row.id, 'mailbox delivery failed for message ' + row.id);
             },
-            getSendStatus: () =>
-              this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)
-                ?.sendStatus,
+            getSendStatus: () => {
+              const sdkRepo = this.config.db.getSDKMessageRepo?.();
+              if (!sdkRepo) return undefined;
+              if (sdkRepo.hasConsumptionEvidence?.(sessionId, row.id)) return 'consumed';
+              return sdkRepo.getDeliveryContent(sessionId, row.id)?.sendStatus;
+            },
           });
           continue;
         }
