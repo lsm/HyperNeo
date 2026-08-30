@@ -1422,6 +1422,43 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('marks a user boundary for a replayed compact stored as content blocks', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'user-compact-replayed',
+        content: [{ type: 'text', text: '/compact preserve the latest errors' }],
+        internal: false,
+      } as never);
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+      q.stop();
+    });
+
+    it('latches buffered recovery evidence until the daemon marker is acknowledged', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      q.noteCompactOutcome();
+      q.noteResultForCompactionRecovery(0);
+      expect(q.canRecoverBufferedCompaction()).toBe(true);
+
+      q.noteResultForCompactionRecovery(3);
+      expect(q.canRecoverBufferedCompaction()).toBe(true);
+
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.canRecoverBufferedCompaction()).toBe(false);
+      q.stop();
+    });
+
     it('keeps a yielded internal compaction outstanding across a compact boundary', async () => {
       const q = new MessageQueue();
       q.start();

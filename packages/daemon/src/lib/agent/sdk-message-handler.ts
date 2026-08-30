@@ -1126,6 +1126,14 @@ export class SDKMessageHandler {
         this.applyCompactBoundaryOwnership(message, invocationGeneration);
       }
 
+      if (
+        isSDKStatusMessage(message) &&
+        (message as { compact_result?: string }).compact_result !== undefined &&
+        !this.isInvocationStale(invocationGeneration)
+      ) {
+        this.ctx.messageQueue.noteCompactOutcome?.();
+      }
+
       const observesArmedClearResult = this.matchesArmedClearResult(message);
       const preRecoveryPlan = isSDKResultMessage(message)
         ? this.routeResultTurnEnd({
@@ -1267,7 +1275,7 @@ export class SDKMessageHandler {
       }
 
       if (isSDKStatusMessage(message)) {
-        await this.handleStatusMessage(message, invocationGeneration);
+        await this.handleStatusMessage(message);
       }
 
       if (isSDKModelRefusalFallbackMessage(message)) {
@@ -1903,20 +1911,12 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleStatusMessage(
-    message: SDKMessage,
-    invocationGeneration: number | null
-  ): Promise<void> {
+  private async handleStatusMessage(message: SDKMessage): Promise<void> {
     const { stateManager } = this.ctx;
 
     if (!isSDKStatusMessage(message)) return;
 
-    const statusMsg = message as { status: string | null; compact_result?: string };
-    if (statusMsg.compact_result !== undefined) {
-      if (!this.isInvocationStale(invocationGeneration)) {
-        this.ctx.messageQueue.noteCompactOutcome?.();
-      }
-    }
+    const statusMsg = message as { status: string | null };
     if (statusMsg.status === 'compacting') {
       await stateManager.setCompacting(true);
     }

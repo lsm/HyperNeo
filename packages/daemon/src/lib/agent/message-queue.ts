@@ -31,8 +31,13 @@ function extractParentToolUseId(content: string | MessageContent[]): string | nu
   return toolResult?.tool_use_id ?? null;
 }
 
-function isUserCompactCommand(content: string): boolean {
-  const command = content.trim().split(/\s+/)[0];
+function isUserCompactCommand(content: string | MessageContent[]): boolean {
+  const text =
+    typeof content === 'string'
+      ? content
+      : (content.find((block) => block.type === 'text')?.text ?? '');
+  if (typeof text !== 'string' || text.length === 0) return false;
+  const command = text.trim().split(/\s+/)[0];
   return command === '/compact';
 }
 
@@ -187,7 +192,7 @@ export class MessageQueue {
           this.recentSentPrompts.delete(oldest);
         }
       }
-      if (typeof message.content === 'string' && isUserCompactCommand(message.content)) {
+      if (isUserCompactCommand(message.content)) {
         this.outstandingCompactionBoundaries.push({ kind: 'user' });
       }
     }
@@ -275,10 +280,13 @@ export class MessageQueue {
   }
 
   noteResultForCompactionRecovery(numTurns: number): void {
-    this.daemonFrontTerminalResult =
+    if (
       numTurns === 0 &&
       this.outstandingCompactionBoundaries[0]?.kind === 'daemon' &&
-      this.unboundedCompactOutcome;
+      this.unboundedCompactOutcome
+    ) {
+      this.daemonFrontTerminalResult = true;
+    }
     this.unboundedCompactOutcome = false;
   }
 
