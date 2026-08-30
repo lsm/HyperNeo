@@ -239,7 +239,10 @@ export class QueryModeHandler {
   ): Promise<void> {
     if (deliverables.length === 0) return;
     const db = this.ctx.db;
-    const dbIdByUuid = new Map(flushMessages.map((message) => [message.uuid, message.dbId]));
+    const dbIdByUuid = new Map<string, string>();
+    for (const message of flushMessages) {
+      if (!dbIdByUuid.has(message.uuid)) dbIdByUuid.set(message.uuid, message.dbId);
+    }
     const { activated } = await activatePrompts({
       db: db.getDatabase(),
       jobQueue: db.getJobQueueRepo(),
