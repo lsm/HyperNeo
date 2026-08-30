@@ -10772,6 +10772,45 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     expect(normalizedBot.payload?.reviewerBot).toBe(true);
   });
 
+  test('webhook: comment deletion compares the sender, not the comment author', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    const moderatorDeletesOwn = {
+      ...selfCommentPayload('octocat'),
+      action: 'deleted',
+      sender: { login: 'moderator', type: 'User' },
+    };
+    expect((await deliverWebhook(extension, 'issue_comment', moderatorDeletesOwn)).spaces).toBe(1);
+    expect(received).toHaveLength(1);
+    expect(received[0].payload.actor).toBe('octocat');
+
+    const tokenDeletesOther = {
+      ...selfCommentPayload('collaborator'),
+      action: 'deleted',
+      sender: { login: 'octocat', type: 'User' },
+      comment: { ...selfCommentPayload('collaborator').comment, id: 102 },
+    };
+    expect((await deliverWebhook(extension, 'issue_comment', tokenDeletesOther)).spaces).toBe(0);
+    expect(received).toHaveLength(1);
+    await extension.stop();
+  });
+
   test("poll: an issue-comment row authored by the token's own login is dropped as self-echo", async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);

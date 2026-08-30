@@ -196,6 +196,7 @@ export function normalizeGitHubWebhook(
   const sender = userFrom(root.sender);
   let prNumber = 0;
   let actor = sender;
+  let initiatorLogin: string | undefined;
   let body = '';
   let externalUrl = '';
   let externalId = `${eventType}:${deliveryId}`;
@@ -210,6 +211,7 @@ export function normalizeGitHubWebhook(
     if (!asObject(issue.pull_request).url) return null;
     const comment = asObject(root.comment);
     actor = userFrom(comment.user ?? root.sender);
+    if (action === 'deleted') initiatorLogin = userFrom(root.sender ?? comment.user).login;
     prNumber = getNumber(issue.number);
     body = getString(comment.body);
     commentId = idString(comment.id);
@@ -254,6 +256,7 @@ export function normalizeGitHubWebhook(
     const pr = asObject(root.pull_request);
     const comment = asObject(root.comment);
     actor = userFrom(comment.user ?? root.sender);
+    if (action === 'deleted') initiatorLogin = userFrom(root.sender ?? comment.user).login;
     prNumber = getNumber(pr.number);
     body = getString(comment.body);
     commentId = idString(comment.in_reply_to_id ?? comment.id);
@@ -349,6 +352,7 @@ export function normalizeGitHubWebhook(
     prUrl: prUrl(repo.owner, repo.repo, prNumber),
     actor: actor.login,
     actorType: actor.type,
+    initiatorLogin,
     body,
     summary: `${title} by ${actor.login}${body ? `: ${truncateBody(body)}` : ''}`,
     externalUrl,
