@@ -554,4 +554,46 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fake.state.calls).toContain('detachRuntimeMcpServer:node-agent');
     expect(fake.state.session.config.mcpServers?.['node-agent']).toBeUndefined();
   });
+
+  test('self-heal rollback restores the previous space-actions dispatcher server too', async () => {
+    const previousFlag = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+    process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
+    try {
+      const { tam } = makeManager();
+      const fake = makeFakeAgentSession(SUB_SESSION_ID);
+      fake.state.session.workspacePath = '/old/workspace';
+      const previousSpaceActions = { __previous: 'space-actions' } as unknown as McpServerConfig;
+      fake.state.session.config = {
+        mcpServers: {
+          'node-agent': { __old: true } as unknown as McpServerConfig,
+          'space-actions': previousSpaceActions,
+        },
+      };
+      fake.agentSession.restartQuery = async () => {
+        throw new Error('restart boom');
+      };
+      const repo = (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo;
+      repo.getTask = () => ({
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: RUN_ID,
+        status: 'in_progress',
+        title: 'Rehydrate MCP task',
+        workspacePath: '/task/heal-late',
+      });
+
+      await expect(tam.mcpSelfHeal(fake.agentSession, ['node-agent'])).rejects.toThrow(
+        'restart boom'
+      );
+
+      expect(fake.state.session.config.mcpServers?.['space-actions']).toBe(previousSpaceActions);
+      expect(fake.state.metadataUpdates).toEqual([
+        { workspacePath: '/task/heal-late' },
+        { workspacePath: '/old/workspace' },
+      ]);
+    } finally {
+      if (previousFlag === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+      else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previousFlag;
+    }
+  });
 });

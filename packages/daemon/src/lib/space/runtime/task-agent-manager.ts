@@ -93,7 +93,13 @@ import {
   createMarkCompleteHandler,
   createPrMergedGate,
 } from '../tools/end-node-handlers.ts';
-import { createNodeAgentMcpServer } from '../tools/node-agent-tools.ts';
+import { createNodeAgentMcpServer, type NodeAgentToolsConfig } from '../tools/node-agent-tools.ts';
+import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
+import {
+  buildWorkerDispatcherContractTools,
+  createSpaceActionsMcpServer,
+  type SpaceActionsMcpServer,
+} from '../actions/space-actions-server.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
@@ -280,6 +286,8 @@ interface RateLimitSessionEntry {
 
 const RATE_LIMIT_FALLBACK_RESET_AT_MS = 60 * 60 * 1000;
 
+const WORKER_REINJECTABLE_MCP_SERVERS = ['node-agent', 'space-actions'] as const;
+
 const VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS = 500;
 
 const VERIFIED_STOP_ESCALATION_FORCE_KILL_MS = 2000;
@@ -347,6 +355,7 @@ export class TaskAgentManager {
   private taskWorktreePaths = new Map<string, string>();
 
   private readonly auditLogRepo: McpAuditLogRepository;
+  private readonly flagManagedDispatcherServers = new WeakSet<object>();
 
   private taskArchiveListenerUnsub: (() => void) | null = null;
   private rateLimitListenerUnsubs: Array<() => void> = [];
@@ -645,6 +654,7 @@ export class TaskAgentManager {
       reservationHeld: boolean;
       reservedExecution: boolean;
       appliedSlot?: WorkflowNodeAgent;
+      dispatcherActionNames?: ReadonlySet<string>;
     } = { reservationHeld: false, reservedExecution: false };
     const outcome = await runSpawnExecutionFlow(this.buildSpawnExecutionFlowDeps(spawnState), {
       task,
@@ -764,6 +774,7 @@ export class TaskAgentManager {
     reservationHeld: boolean;
     reservedExecution: boolean;
     appliedSlot?: WorkflowNodeAgent;
+    dispatcherActionNames?: ReadonlySet<string>;
   }): SpawnExecutionFlowDeps {
     return {
       getFreshTask: (taskId) => this.config.taskRepo.getTask(taskId),
@@ -938,7 +949,7 @@ export class TaskAgentManager {
             throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
           }
 
-          const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+          const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
             request.task.id,
             request.sessionId,
             request.execution.agentName,
@@ -947,11 +958,17 @@ export class TaskAgentManager {
             request.workspacePath,
             request.execution.workflowNodeId
           );
+          const spaceActionsServer = nodeAgentMcpServers['space-actions'] as unknown as
+            | SpaceActionsMcpServer
+            | undefined;
+          spawnState.dispatcherActionNames = spaceActionsServer
+            ? new Set(spaceActionsServer.registry.entries.map((entry) => entry.name))
+            : undefined;
 
           init = assembleNodeAgentSessionInit({
             baseInit: init,
             title: formatWorkflowNodeSessionTitle(request.task, request.execution.agentName),
-            nodeAgentMcpServer: nodeAgentMcpServer as unknown as McpServerConfig,
+            nodeAgentMcpServers,
             agentMemoryMcpServers: this.buildAgentMemoryMcpServers(
               request.space.id,
               request.sessionId
@@ -1079,7 +1096,8 @@ export class TaskAgentManager {
         const runtimeContract = this.buildNodeExecutionRuntimeContract(
           request.workflow,
           request.execution,
-          request.space
+          request.space,
+          spawnState.dispatcherActionNames
         );
         return runtimeContract ? `${initialMessage}\n\n${runtimeContract}` : initialMessage;
       },
@@ -1248,7 +1266,7 @@ export class TaskAgentManager {
                   workflowNodeId: reuseNodeId,
                 };
                 const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
-                const previousNodeAgentServer = this.captureNodeAgentServer(existing);
+                const previousWorkerMcpServers = this.captureWorkerMcpServers(existing);
                 const workspaceChanged =
                   !!reuseWorkspacePath && previousReuseWorkspacePath !== reuseWorkspacePath;
                 if (workspaceChanged) {
@@ -1260,7 +1278,7 @@ export class TaskAgentManager {
                   if (workspaceChanged) {
                     existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
                   }
-                  this.restoreNodeAgentServer(existing, previousNodeAgentServer);
+                  this.restoreWorkerMcpServers(existing, previousWorkerMcpServers);
                   throw err;
                 }
                 await this.ensureRequiredMcpServersAttached(existing, {
@@ -1878,21 +1896,27 @@ export class TaskAgentManager {
     return withSessionOperationLock(sessionId, fn);
   }
 
-  private captureNodeAgentServer(session: AgentSession): McpServerConfig | undefined {
+  private captureWorkerMcpServers(session: AgentSession): Record<string, McpServerConfig> {
     const servers = session.session.config?.mcpServers as
       | Record<string, McpServerConfig>
       | undefined;
-    return servers?.['node-agent'];
+    const captured: Record<string, McpServerConfig> = {};
+    for (const name of WORKER_REINJECTABLE_MCP_SERVERS) {
+      if (servers?.[name]) captured[name] = servers[name];
+    }
+    return captured;
   }
 
-  private restoreNodeAgentServer(
+  private restoreWorkerMcpServers(
     session: AgentSession,
-    previous: McpServerConfig | undefined
+    previous: Record<string, McpServerConfig>
   ): void {
-    if (previous) {
-      session.mergeRuntimeMcpServers({ 'node-agent': previous });
-    } else {
-      session.detachRuntimeMcpServer('node-agent');
+    for (const name of WORKER_REINJECTABLE_MCP_SERVERS) {
+      if (previous[name]) {
+        session.mergeRuntimeMcpServers({ [name]: previous[name] });
+      } else {
+        session.detachRuntimeMcpServer(name);
+      }
     }
   }
 
@@ -2275,7 +2299,7 @@ export class TaskAgentManager {
       agentSession.skillOverrides = slotInit.skillOverrides;
     }
 
-    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+    const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
       taskId,
       sessionId,
       agentName,
@@ -2286,7 +2310,7 @@ export class TaskAgentManager {
     );
     const mergedMcpServers: Record<string, McpServerConfig> = {
       ...slotInit?.mcpServers,
-      'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+      ...nodeAgentMcpServers,
       'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
         space,
         sessionId
@@ -2681,7 +2705,7 @@ export class TaskAgentManager {
               if (!live) return;
               const workspacePath = view.workspacePath!;
               const previousWorkspacePath = live.getSessionData().workspacePath;
-              const previousNodeAgentServer = this.captureNodeAgentServer(live);
+              const previousWorkerMcpServers = this.captureWorkerMcpServers(live);
               live.updateMetadata({ workspacePath });
               try {
                 await this.reinjectNodeAgentMcpServer(live, {
@@ -2697,7 +2721,7 @@ export class TaskAgentManager {
                 if (previousWorkspacePath !== undefined) {
                   live.updateMetadata({ workspacePath: previousWorkspacePath });
                 }
-                this.restoreNodeAgentServer(live, previousNodeAgentServer);
+                this.restoreWorkerMcpServers(live, previousWorkerMcpServers);
                 throw err;
               }
             },
@@ -3202,7 +3226,8 @@ export class TaskAgentManager {
   private buildNodeExecutionRuntimeContract(
     workflow: SpaceWorkflow | null,
     execution: NodeExecution,
-    space: Space | null
+    space: Space | null,
+    dispatcherActionNames?: ReadonlySet<string>
   ): string {
     const isEndNode = this.isTerminalNode(workflow, execution.workflowNodeId);
 
@@ -3228,15 +3253,23 @@ export class TaskAgentManager {
       return lines;
     };
 
-    const fallback = [
-      '## Runtime Execution Contract',
-      `Role: "${execution.agentName}"`,
-      'Tools available:',
+    const dispatcherTools = isSpaceActionsDispatcherEnabled()
+      ? buildWorkerDispatcherContractTools(execution.agentName, dispatcherActionNames)
+      : null;
+    const typedTools = [
       '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
       '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
       ...endNodeContractLines('  '),
       '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
       '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
+    ];
+
+    const fallback = [
+      '## Runtime Execution Contract',
+      `Role: "${execution.agentName}"`,
+      'Tools available:',
+      ...(dispatcherTools ?? []),
+      ...typedTools,
       `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`,
       'Only contact the task-agent via send_message if you are blocked or need human input.',
     ].join('\n');
@@ -3255,6 +3288,7 @@ export class TaskAgentManager {
       `Node: "${node.name}" (${node.id})`,
       `Agent: "${execution.agentName}"`,
       'Tools available:',
+      ...(dispatcherTools ?? []),
       '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
       '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes.',
       '  - list_artifacts ({ nodeId?, type? }) — list artifacts for the current workflow run',
@@ -3615,7 +3649,7 @@ export class TaskAgentManager {
       agentSession.setRuntimeSystemPrompt(currentInit.systemPrompt);
     }
 
-    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+    const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
       taskId,
       subSessionId,
       execution.agentName,
@@ -3626,7 +3660,7 @@ export class TaskAgentManager {
     );
 
     const mergedMcpServers: Record<string, McpServerConfig> = {
-      'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+      ...nodeAgentMcpServers,
       ...this.buildAgentMemoryMcpServers(spaceId, subSessionId),
     };
 
@@ -4314,7 +4348,7 @@ export class TaskAgentManager {
                 agentSession.getSessionData().workspacePath !== healWorkspacePath
               ) {
                 const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
-                const previousNodeAgentServer = this.captureNodeAgentServer(agentSession);
+                const previousWorkerMcpServers = this.captureWorkerMcpServers(agentSession);
                 agentSession.updateMetadata({ workspacePath: healWorkspacePath });
                 try {
                   await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
@@ -4322,7 +4356,7 @@ export class TaskAgentManager {
                   if (previousHealWorkspacePath !== undefined) {
                     agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
                   }
-                  this.restoreNodeAgentServer(agentSession, previousNodeAgentServer);
+                  this.restoreWorkerMcpServers(agentSession, previousWorkerMcpServers);
                   throw err;
                 }
               }
@@ -4367,7 +4401,7 @@ export class TaskAgentManager {
       workflowNodeId: string;
     }
   ): Promise<void> {
-    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+    const rebuilt = this.buildNodeAgentMcpServersForSession(
       ctx.taskId,
       ctx.subSessionId,
       ctx.agentName,
@@ -4376,10 +4410,17 @@ export class TaskAgentManager {
       ctx.workspacePath,
       ctx.workflowNodeId
     );
-
-    session.mergeRuntimeMcpServers({
-      'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-    });
+    session.mergeRuntimeMcpServers(rebuilt);
+    const attachedDispatcher = (
+      session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined
+    )?.['space-actions'];
+    if (
+      !rebuilt['space-actions'] &&
+      attachedDispatcher !== undefined &&
+      this.flagManagedDispatcherServers.has(attachedDispatcher)
+    ) {
+      session.detachRuntimeMcpServer('space-actions');
+    }
 
     await session.restartQuery();
   }
@@ -4405,7 +4446,7 @@ export class TaskAgentManager {
     };
   }
 
-  buildNodeAgentMcpServerForSession(
+  buildNodeAgentMcpServersForSession(
     taskId: string,
     subSessionId: string,
     agentName: string,
@@ -4413,7 +4454,7 @@ export class TaskAgentManager {
     workflowRunId: string,
     workspacePath: string,
     workflowNodeIdHint?: string
-  ) {
+  ): Record<string, McpServerConfig> {
     const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     const bySession = nodeExecutions.find((exec) => exec.agentSessionId === subSessionId);
     const byAgentName = nodeExecutions.find((exec) => exec.agentName === agentName);
@@ -4802,7 +4843,7 @@ export class TaskAgentManager {
       });
     }
 
-    return createNodeAgentMcpServer({
+    const nodeConfig: NodeAgentToolsConfig = {
       mySessionId: subSessionId,
       myAgentName: agentName,
       myAgentNameAliases: agentNameAliases,
@@ -4835,7 +4876,33 @@ export class TaskAgentManager {
         return registry ? registry.get(taskId, fromAgentName) : null;
       },
       hookEngine,
-    });
+    };
+    const nodeAgent = createNodeAgentMcpServer(nodeConfig) as unknown as McpServerConfig;
+    const spaceActions = this.buildSpaceActionsDispatcherServer(nodeConfig);
+    return {
+      'node-agent': nodeAgent,
+      ...(spaceActions ? { 'space-actions': spaceActions } : {}),
+    };
+  }
+
+  buildSpaceActionsDispatcherServer(nodeConfig: NodeAgentToolsConfig): McpServerConfig | null {
+    if (!isSpaceActionsDispatcherEnabled()) return null;
+    const server = createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      nodeRole: nodeConfig.myAgentName,
+      spaceId: nodeConfig.spaceId,
+      taskId: nodeConfig.taskId,
+      workflowRunId: nodeConfig.workflowRunId,
+      agentName: nodeConfig.myAgentName,
+      sessionId: nodeConfig.mySessionId,
+      nodeConfig,
+      dispatchDeps: {
+        getSpaceAutonomyLevel: async (spaceId) =>
+          (await this.config.spaceManager.getSpace(spaceId))?.autonomyLevel ?? 1,
+      },
+    }) as unknown as McpServerConfig;
+    this.flagManagedDispatcherServers.add(server);
+    return server;
   }
 
   async spawnPostApprovalSubSession(args: {
@@ -4903,7 +4970,7 @@ export class TaskAgentManager {
         }).workspacePath;
         if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
           const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
-          const previousNodeAgentServer = this.captureNodeAgentServer(existing);
+          const previousWorkerMcpServers = this.captureWorkerMcpServers(existing);
           existing.updateMetadata({ workspacePath: reuseWorkspacePath });
           try {
             await this.reinjectNodeAgentMcpServer(existing, {
@@ -4919,7 +4986,7 @@ export class TaskAgentManager {
             if (previousReuseWorkspacePath !== undefined) {
               existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
             }
-            this.restoreNodeAgentServer(existing, previousNodeAgentServer);
+            this.restoreWorkerMcpServers(existing, previousWorkerMcpServers);
             throw err;
           }
         }
@@ -5000,7 +5067,7 @@ export class TaskAgentManager {
         agentId: slot.agentId,
       });
 
-      const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+      const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
         taskId,
         sessionId,
         matchedSlot.name,
@@ -5014,7 +5081,7 @@ export class TaskAgentManager {
         title: formatWorkflowNodeSessionTitle(task, matchedSlot.name),
         mcpServers: {
           ...init.mcpServers,
-          'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+          ...nodeAgentMcpServers,
           'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
             space,
             sessionId

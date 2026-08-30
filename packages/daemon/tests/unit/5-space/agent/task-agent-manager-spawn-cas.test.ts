@@ -139,7 +139,7 @@ function makeRealRepoHarness(options: { taskStatus?: string } = {}): RealRepoHar
     registerCompletionCallback: (...args: unknown[]) => void;
     injectMessageIntoSession: (...args: unknown[]) => Promise<string>;
     cancelBySessionId: (id: string) => void;
-    buildNodeAgentMcpServerForSession: (...args: unknown[]) => unknown;
+    buildNodeAgentMcpServersForSession: (...args: unknown[]) => unknown;
   };
   internal.createSubSession = async () => {
     order.push('createSubSession');
@@ -155,7 +155,7 @@ function makeRealRepoHarness(options: { taskStatus?: string } = {}): RealRepoHar
   internal.cancelBySessionId = (id: string) => {
     cancels.push(id);
   };
-  internal.buildNodeAgentMcpServerForSession = () => ({ __role: 'node-agent' });
+  internal.buildNodeAgentMcpServersForSession = () => ({ 'node-agent': { __role: 'node-agent' } });
 
   const task = {
     id: TASK_ID,

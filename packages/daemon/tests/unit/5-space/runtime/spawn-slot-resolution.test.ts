@@ -186,7 +186,9 @@ describe('assembleNodeAgentSessionInit', () => {
     model: 'm1',
     mcpServers: { existing: { type: 'stdio', command: 'x' } as McpServerConfig },
   };
-  const nodeAgentServer = { type: 'stdio', command: 'node-agent' } as unknown as McpServerConfig;
+  const nodeAgentServers = {
+    'node-agent': { type: 'stdio', command: 'node-agent' } as unknown as McpServerConfig,
+  };
   const memoryServers = {
     'agent-memory': { type: 'stdio', command: 'memory' } as McpServerConfig,
   };
@@ -195,7 +197,7 @@ describe('assembleNodeAgentSessionInit', () => {
     const init = assembleNodeAgentSessionInit({
       baseInit: baseInit,
       title: 'Task #9: Pin',
-      nodeAgentMcpServer: nodeAgentServer,
+      nodeAgentMcpServers: nodeAgentServers,
       agentMemoryMcpServers: memoryServers,
     });
     expect(init.sessionId).toBe('session-1');
@@ -208,12 +210,12 @@ describe('assembleNodeAgentSessionInit', () => {
     const init = assembleNodeAgentSessionInit({
       baseInit: baseInit,
       title: 't',
-      nodeAgentMcpServer: nodeAgentServer,
+      nodeAgentMcpServers: nodeAgentServers,
       agentMemoryMcpServers: memoryServers,
     });
     expect(init.mcpServers).toEqual({
       existing: baseInit.mcpServers?.existing,
-      'node-agent': nodeAgentServer,
+      ...nodeAgentServers,
       'agent-memory': memoryServers['agent-memory'],
     });
   });
@@ -222,7 +224,7 @@ describe('assembleNodeAgentSessionInit', () => {
     const init = assembleNodeAgentSessionInit({
       baseInit: baseInit,
       title: 't',
-      nodeAgentMcpServer: nodeAgentServer,
+      nodeAgentMcpServers: nodeAgentServers,
       agentMemoryMcpServers: { 'node-agent': memoryServers['agent-memory'] },
     });
     expect(init.mcpServers?.['node-agent']).toBe(memoryServers['agent-memory']);
@@ -232,11 +234,11 @@ describe('assembleNodeAgentSessionInit', () => {
     const init = assembleNodeAgentSessionInit({
       baseInit: { sessionId: 'session-1', workspacePath: '/wt' },
       title: 't',
-      nodeAgentMcpServer: nodeAgentServer,
+      nodeAgentMcpServers: nodeAgentServers,
       agentMemoryMcpServers: memoryServers,
     });
     expect(init.mcpServers).toEqual({
-      'node-agent': nodeAgentServer,
+      ...nodeAgentServers,
       'agent-memory': memoryServers['agent-memory'],
     });
   });
