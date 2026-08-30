@@ -2,9 +2,11 @@ import { createHash } from 'node:crypto';
 import type { NodeExecution, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
-import { deliverMessage, type MessageDeliveryRole } from '../../agent/message-delivery.ts';
+import { ensurePrompt, retryPrompt } from '../../agent/message-delivery-outbox.ts';
+import type { MessageDeliveryRole } from '../../agent/message-delivery.ts';
 import { buildSyntheticExternalEventMessage } from '../../external-events/deferred-event-digest.ts';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
@@ -30,7 +32,7 @@ export type ImmediateEventDeliveryOutcome =
   | {
       action: 'delivered';
       mechanics: ImmediateEventMechanics;
-      deliveryRole: MessageDeliveryRole;
+      deliveryRole: MessageDeliveryRole | null;
       messageUuid: string;
     }
   | { action: 'error'; stage: 'persistAndEnqueue' | 'markLedger'; error: unknown };
@@ -47,15 +49,13 @@ export interface ImmediateEventDeliveryDeps {
   getSessionStatus(sessionId: string): string;
   withinRateBudget(sessionId: string): boolean;
   setQueuedIfIdle(sessionId: string, messageUuid: string): Promise<boolean>;
-  messages: Pick<
-    SDKMessageRepository,
-    'getDeliveryContent' | 'saveUserMessage' | 'reopenDeliveryByUuid' | 'markDeliveryFailedByUuid'
-  >;
-  jobQueue: Pick<JobQueueRepository, 'getActiveDeliveryRole' | 'enqueue'>;
+  db: BunDatabase;
+  messages: SDKMessageRepository;
+  jobQueue: JobQueueRepository;
   eventStore: Pick<
     ExternalEventStore,
     | 'isDeliveryTerminal'
-    | 'markDeliveryDelivered'
+    | 'markDeliveryMailboxAccepted'
     | 'markDeliveryFailed'
     | 'markEventDeliveredIfAllDeliveriesDelivered'
     | 'markEventFailedIfAllDeliveriesTerminal'
@@ -75,7 +75,7 @@ interface ImmediateEventDeliveryCtx extends ImmediateEventDeliveryInput, Externa
   mechanics?: ImmediateEventMechanics;
   messageUuid?: string;
   message?: SDKUserMessage;
-  deliveryRole?: MessageDeliveryRole;
+  deliveryRole?: MessageDeliveryRole | null;
   outcome?: ImmediateEventDeliveryOutcome;
 }
 
@@ -185,42 +185,40 @@ export function buildHandoff(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeli
 export async function persistAndEnqueue(
   ctx: ImmediateEventDeliveryCtx
 ): Promise<ImmediateEventDeliveryCtx> {
-  let rowOpenedThisAttempt = false;
   try {
-    const existing = ctx.deps.messages.getDeliveryContent(ctx.sessionId!, ctx.messageUuid!);
-    if (!existing) {
-      ctx.deps.messages.saveUserMessage(ctx.sessionId!, ctx.message!, 'enqueued', 'system');
-      rowOpenedThisAttempt = true;
-    } else if (existing.sendStatus === 'failed') {
-      ctx.deps.messages.reopenDeliveryByUuid(ctx.sessionId!, ctx.messageUuid!);
-      rowOpenedThisAttempt = true;
-    }
-    const deliveryRole = deliverMessage(
-      ctx.deps.jobQueue as JobQueueRepository,
-      ctx.sessionId!,
-      ctx.messageUuid!,
-      {
+    const ensured = ensurePrompt({
+      db: ctx.deps.db,
+      sdkMessageRepo: ctx.deps.messages,
+      jobQueue: ctx.deps.jobQueue,
+      sessionId: ctx.sessionId!,
+      message: ctx.message!,
+      origin: 'system',
+      delivery: { origin: 'space_inject' },
+    });
+    let deliveryRole = ensured.role;
+    if (deliveryRole === null && !ensured.created) {
+      const retried = await retryPrompt({
+        db: ctx.deps.db,
+        jobQueue: ctx.deps.jobQueue,
+        sdkMessageRepo: ctx.deps.messages,
+        sessionId: ctx.sessionId!,
+        messageUuid: ctx.messageUuid!,
         origin: 'space_inject',
-        ...(ctx.mechanics === 'steer' ? { role: 'steer' as const } : {}),
-      }
-    );
+      });
+      deliveryRole = retried?.role ?? null;
+    }
     if (deliveryRole === 'turn') {
       await ctx.deps.setQueuedIfIdle(ctx.sessionId!, ctx.messageUuid!).catch(() => {});
     }
     return { ...ctx, deliveryRole };
   } catch (error) {
-    if (rowOpenedThisAttempt) {
-      try {
-        ctx.deps.messages.markDeliveryFailedByUuid(ctx.sessionId!, ctx.messageUuid!);
-      } catch {}
-    }
     return settled(ctx, { action: 'error', stage: 'persistAndEnqueue', error });
   }
 }
 
 export function markLedger(ctx: ImmediateEventDeliveryCtx): ImmediateEventDeliveryCtx {
   try {
-    ctx.deps.eventStore.markDeliveryDelivered(ctx.event.eventId, ctx.deliveryKey);
+    ctx.deps.eventStore.markDeliveryMailboxAccepted(ctx.event.eventId, ctx.deliveryKey);
     ctx.deps.eventStore.markEventDeliveredIfAllDeliveriesDelivered(ctx.event.eventId);
     ctx.deps.eventStore.markEventFailedIfAllDeliveriesTerminal(ctx.event.eventId);
   } catch (error) {
@@ -229,7 +227,7 @@ export function markLedger(ctx: ImmediateEventDeliveryCtx): ImmediateEventDelive
   return settled(ctx, {
     action: 'delivered',
     mechanics: ctx.mechanics!,
-    deliveryRole: ctx.deliveryRole!,
+    deliveryRole: ctx.deliveryRole ?? null,
     messageUuid: ctx.messageUuid!,
   });
 }

@@ -313,7 +313,7 @@ describe('registerExpectedDelivery', () => {
       nodeId: 'node-2',
       agentName: 'reviewer',
     });
-    store.markDeliveryDelivered('evt-a', 'dk-delivered');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-delivered');
 
     const pending = store.listDeliveryLog({
       spaceId: SPACE_ID,
@@ -358,7 +358,7 @@ describe('registerExpectedDelivery', () => {
     expect(store.registerExpectedDelivery('evt-a', 'dk-1', target)).toBe(true);
     expect(store.registerExpectedDelivery('evt-a', 'dk-1', target)).toBe(false);
 
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     expect(store.registerExpectedDelivery('evt-a', 'dk-1', target)).toBe(false);
   });
 
@@ -371,7 +371,7 @@ describe('registerExpectedDelivery', () => {
       agentName: 'coder',
     };
     store.registerExpectedDelivery('evt-a', 'dk-1', target);
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     store.registerExpectedDelivery('evt-a', 'dk-1', target);
 
     const d = store.getDelivery('evt-a', 'dk-1');
@@ -543,7 +543,7 @@ describe('isDeliveryTerminal', () => {
       nodeId: 'node-1',
       agentName: 'coder',
     });
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     expect(store.isDeliveryTerminal('evt-a', 'dk-1')).toBe(true);
   });
 
@@ -581,7 +581,7 @@ describe('getEventIdForDeliveryKey', () => {
   });
 });
 
-describe('markDeliveryDelivered', () => {
+describe('markDeliveryMailboxAccepted', () => {
   test('advances pending → delivered', () => {
     store.store(EVENT_A);
     store.registerExpectedDelivery('evt-a', 'dk-1', {
@@ -590,7 +590,7 @@ describe('markDeliveryDelivered', () => {
       nodeId: 'node-1',
       agentName: 'coder',
     });
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     const d = store.getDelivery('evt-a', 'dk-1');
     expect(d!.state).toBe('delivered');
     expect(d!.deliveredAt).not.toBeNull();
@@ -604,9 +604,9 @@ describe('markDeliveryDelivered', () => {
       nodeId: 'node-1',
       agentName: 'coder',
     });
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     const before = store.getDelivery('evt-a', 'dk-1')!;
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     const after = store.getDelivery('evt-a', 'dk-1')!;
     expect(after.deliveredAt).toBe(before.deliveredAt);
   });
@@ -620,7 +620,7 @@ describe('markDeliveryDelivered', () => {
       agentName: 'coder',
     });
     store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'boom' });
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     const d = store.getDelivery('evt-a', 'dk-1');
     expect(d!.state).toBe('failed');
   });
@@ -751,7 +751,7 @@ describe('markPendingDeliveriesFailedBefore', () => {
     store.registerExpectedDelivery('evt-a', 'dk-1', TARGET);
     store.registerExpectedDelivery('evt-a', 'dk-2', TARGET);
     store.registerExpectedDelivery('evt-a', 'dk-3', TARGET);
-    store.markDeliveryDelivered('evt-a', 'dk-3');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-3');
     hookCalls.length = 0;
 
     const now = Date.now();
@@ -863,11 +863,11 @@ describe('markEventDeliveredIfAllDeliveriesDelivered', () => {
       agentName: 'reviewer',
     });
 
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     store.markEventDeliveredIfAllDeliveriesDelivered('evt-a');
     expect(store.getById('evt-a')!.state).toBe('published');
 
-    store.markDeliveryDelivered('evt-a', 'dk-2');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-2');
     store.markEventDeliveredIfAllDeliveriesDelivered('evt-a');
     expect(store.getById('evt-a')!.state).toBe('delivered');
   });
@@ -886,7 +886,7 @@ describe('markEventDeliveredIfAllDeliveriesDelivered', () => {
       nodeId: 'node-2',
       agentName: 'reviewer',
     });
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     store.markEventDeliveredIfAllDeliveriesDelivered('evt-a');
     expect(store.getById('evt-a')!.state).toBe('published');
   });
@@ -906,7 +906,7 @@ describe('markEventDeliveredIfAllDeliveriesDelivered', () => {
       nodeId: 'node-1',
       agentName: 'coder',
     });
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     store.markEventDeliveredIfAllDeliveriesDelivered('evt-a');
     expect(store.getById('evt-a')!.state).toBe('ignored');
   });
@@ -941,7 +941,7 @@ describe('markEventFailedIfAnyDeliveryTerminalFailed', () => {
       nodeId: 'node-1',
       agentName: 'coder',
     });
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     store.markEventFailedIfAnyDeliveryTerminalFailed('evt-a');
     expect(store.getById('evt-a')!.state).toBe('published');
   });
@@ -971,7 +971,7 @@ describe('markEventFailedIfAllDeliveriesTerminal', () => {
     });
 
     store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'boom' });
-    store.markDeliveryDelivered('evt-a', 'dk-2');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-2');
     store.markEventFailedIfAllDeliveriesTerminal('evt-a');
     expect(store.getById('evt-a')!.state).toBe('failed');
   });
@@ -990,8 +990,8 @@ describe('markEventFailedIfAllDeliveriesTerminal', () => {
       nodeId: 'node-2',
       agentName: 'reviewer',
     });
-    store.markDeliveryDelivered('evt-a', 'dk-1');
-    store.markDeliveryDelivered('evt-a', 'dk-2');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-2');
     store.markEventFailedIfAllDeliveriesTerminal('evt-a');
     expect(store.getById('evt-a')!.state).toBe('published');
   });
@@ -1083,7 +1083,7 @@ describe('cross-event isolation', () => {
       agentName: 'coder',
     });
 
-    store.markDeliveryDelivered('evt-a', 'dk-a');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-a');
     expect(store.getDelivery('evt-a', 'dk-a')!.state).toBe('delivered');
     expect(store.getDelivery('evt-b', 'dk-b')!.state).toBe('pending');
   });
@@ -1106,7 +1106,7 @@ describe('delivery-terminal hook', () => {
       events.push({ outcome: event.outcome, reason: event.reason })
     );
     registerPending();
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
 
     expect(events).toEqual([{ outcome: 'delivered', reason: null }]);
   });
@@ -1133,8 +1133,8 @@ describe('delivery-terminal hook', () => {
     store.setDeliveryTerminalHook((event) => events.push(event.outcome));
     registerPending();
 
-    store.markDeliveryDelivered('evt-a', 'dk-1');
-    store.markDeliveryDelivered('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
+    store.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     store.markDeliveryFailed('evt-a', 'dk-1', { terminal: true, reason: 'late' });
 
     expect(events).toEqual(['delivered']);
@@ -1182,7 +1182,7 @@ describe('summarizePendingDeliveries', () => {
     expect(summary!.avgMs).toBeLessThanOrEqual(46_000);
     expect(summary!.p95Ms).toBe(summary!.maxMs);
 
-    store.markDeliveryDelivered('evt-b', 'dk-b');
+    store.markDeliveryMailboxAccepted('evt-b', 'dk-b');
     const afterDeliver = store.summarizePendingDeliveries(now);
     expect(afterDeliver!.count).toBe(1);
     expect(afterDeliver!.minMs).toBe(afterDeliver!.maxMs);
@@ -1284,13 +1284,13 @@ describe('reactive invalidation', () => {
     expect(calls).toContain('space_external_event_deliveries');
   });
 
-  test('markDeliveryDelivered() notifies both tables', () => {
+  test('markDeliveryMailboxAccepted() notifies both tables', () => {
     const { reactiveDb, calls } = makeReactiveSpy();
     const s = new ExternalEventStore(db, reactiveDb);
     s.store(EVENT_A);
     s.registerExpectedDelivery('evt-a', 'dk-1', deliveryTarget());
     calls.length = 0;
-    s.markDeliveryDelivered('evt-a', 'dk-1');
+    s.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     expect(calls).toContain('space_external_event_deliveries');
     expect(calls).toContain('space_external_events');
   });
@@ -1315,7 +1315,7 @@ describe('reactive invalidation', () => {
     expect(() => {
       s.store(EVENT_A);
       s.registerExpectedDelivery('evt-a', 'dk-1', deliveryTarget());
-      s.markDeliveryDelivered('evt-a', 'dk-1');
+      s.markDeliveryMailboxAccepted('evt-a', 'dk-1');
     }).not.toThrow();
   });
 });
