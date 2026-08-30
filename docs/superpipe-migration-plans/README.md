@@ -12,7 +12,12 @@ inventory; no source code is changed by these plans.
 | `agent-routing.md` | Agent-layer routing (turn-end, query-retry, delivery, steer, context reset) | 6 |
 | `agent-gates-recovery.md` | Agent-layer gates & recovery (limit errors, loops, breakers, fallbacks, acks) | 11 |
 | `space-runtime-tools-goals.md` | Space runtime staged flows, tools/RPC unification, goals | 18 |
+| [task-agent-manager.md](task-agent-manager.md) | `task-agent-manager.ts` cluster map, slice ladder, ADR-0004 risks | 19 |
 | `web.md` | Web routing/parsers/status helpers and `useSendMessage` | 13 |
+
+"Sites" counts measured clusters/flow groups per area (the inventory's unit
+of analysis), not pipeline candidates — several clusters stay plain or remain
+class-owned, and each plan's candidate table is the authoritative split.
 
 Each plan records the named business-operation pipelines, per-site input/output
 and pure-core designs, shell/effect wiring, tests, risks, migration order, and
