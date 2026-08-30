@@ -2612,7 +2612,18 @@ export class AgentSession
               return { outcome: 'aborted' };
             }
             consumedUuids = rebuilt.admittedUuids ?? [messageUuid];
+          }
 
+          const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
+          if (
+            existing &&
+            this.messageQueue.hasYielded?.(messageUuid) &&
+            !this.deliveryContentMatches(existing.content, feedContent)
+          ) {
+            return { outcome: 'aborted' };
+          }
+
+          if (batchUuids && batchUuids.length > 1) {
             const jobQueue = this.db.getJobQueueRepo?.();
             if (jobQueue) {
               let narrowed: boolean;
@@ -2645,12 +2656,9 @@ export class AgentSession
             }
           }
 
-          const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
           let acknowledgment: Promise<void>;
           if (existing && this.deliveryContentMatches(existing.content, feedContent)) {
             acknowledgment = existing.acknowledgment;
-          } else if (existing && this.messageQueue.hasYielded(messageUuid)) {
-            return { outcome: 'aborted' };
           } else {
             if (existing) {
               this.messageQueue.remove(messageUuid);
@@ -2689,6 +2697,7 @@ export class AgentSession
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const aborted = waitForDeliveryAbort(signal);
     const consumption = waitForDeliveryConsumption(this.session.id, messageUuid);
+    let failedPoll: ReturnType<typeof setInterval> | undefined;
     const admissionTimeout = (): Promise<never> =>
       new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -2701,12 +2710,35 @@ export class AgentSession
           );
         }, timeoutMs);
       });
+    const failedBeforeAcceptance = (): Promise<never> =>
+      new Promise<never>((_, reject) => {
+        failedPoll = setInterval(() => {
+          const current = this.db
+            .getSDKMessageRepo()
+            .getDeliveryContent(this.session.id, messageUuid);
+          if (current?.sendStatus === 'failed' || current?.sendStatus === 'deferred') {
+            clearInterval(failedPoll);
+            failedPoll = undefined;
+            reject(
+              new MessageDeliveryRecoverableTurnError(
+                'Delivery failed before acceptance',
+                'admission_failed'
+              )
+            );
+          }
+        }, 500);
+      });
     try {
       await Promise.race([admission.acknowledgment, admissionTimeout(), aborted.promise]);
       if (this.session.config.provider === 'acp') {
         clearTimeout(timeoutId);
         timeoutId = undefined;
-        await Promise.race([consumption.promise, admissionTimeout(), aborted.promise]);
+        await Promise.race([
+          consumption.promise,
+          failedBeforeAcceptance(),
+          admissionTimeout(),
+          aborted.promise,
+        ]);
       }
       deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'acknowledged');
     } catch (error) {
@@ -2719,12 +2751,14 @@ export class AgentSession
       throw error;
     } finally {
       clearTimeout(timeoutId);
+      if (failedPoll !== undefined) clearInterval(failedPoll);
       consumption.cancel();
       aborted.cancel();
     }
 
     await withSessionLock(this.session.id, async () => {
       this.markDeliveryBatchConsumed(admission.consumedUuids);
+      this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
       for (const uuid of admission.consumedUuids) {
         signalDeliveryConsumed(this.session.id, uuid);
       }
@@ -2736,6 +2770,24 @@ export class AgentSession
 
     observer?.reportStage('sdk_admitted', { generation: this.getQueryGeneration() });
     return { outcome: 'completed' };
+  }
+
+  private async publishToolResultConsumed(sessionId: string, uuids: string[]): Promise<void> {
+    for (const uuid of uuids) {
+      const row = this.db.getMessageByStatusAndUuid?.(sessionId, 'consumed', uuid);
+      if (!row || row.type !== 'user') continue;
+      const content = Array.isArray(row.message.content) ? row.message.content : [];
+      for (const block of content) {
+        if (block.type !== 'tool_result') continue;
+        await this.internalEventBus
+          .publish('sdk.toolUse.consumed', {
+            sessionId,
+            toolUseId: block.tool_use_id,
+            timestamp: Date.now(),
+          })
+          .catch(() => {});
+      }
+    }
   }
 
   async settleSkippedDelivery(messageUuid: string): Promise<void> {
