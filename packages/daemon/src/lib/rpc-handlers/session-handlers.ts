@@ -731,7 +731,7 @@ export function setupSessionHandlers(
       level: string;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -757,7 +757,7 @@ export function setupSessionHandlers(
   messageHub.onRequest('session.thinking.get', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
