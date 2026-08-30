@@ -654,6 +654,21 @@ export class JobQueueRepository {
     return row != null;
   }
 
+  getActiveTurnDeliveryMessageUuid(sessionId: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.messageUuid') AS uuid
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.role') = 'turn'
+            AND status IN ('pending', 'processing')
+          LIMIT 1`
+      )
+      .get(sessionId) as { uuid: string | null } | undefined | null;
+    return row?.uuid ?? null;
+  }
+
   activeDeliveryMessageUuids(sessionId: string): Set<string> {
     const rows = this.db
       .prepare(

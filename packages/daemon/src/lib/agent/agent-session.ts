@@ -1180,10 +1180,18 @@ export class AgentSession
         this.logger.warn('Failed to inspect the persisted rate-limit cooldown on cancel.');
       }
     }
+    const jobQueue = this.db.getJobQueueRepo();
     const episodeMessageId = episodeMessage?.uuid ?? persistedEpisodeMessageId;
-    if (episodeMessageId) {
+    const episodeIsSteer =
+      episodeMessageId !== undefined &&
+      jobQueue?.getActiveDeliveryRole?.(this.session.id, episodeMessageId) === 'steer';
+    const owningTurnMessageId =
+      episodeMessageId !== undefined && !episodeIsSteer
+        ? episodeMessageId
+        : (jobQueue?.getActiveTurnDeliveryMessageUuid?.(this.session.id) ?? episodeMessageId);
+    if (owningTurnMessageId) {
       try {
-        this.db.getJobQueueRepo()?.cancelDelivery(this.session.id, episodeMessageId);
+        jobQueue?.cancelDelivery(this.session.id, owningTurnMessageId);
       } catch (error) {
         this.logger.warn('Failed to cancel the parked delivery for the retry episode:', error);
       }
