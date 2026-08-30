@@ -4363,6 +4363,9 @@ export class TaskAgentManager {
           !clearedUpstream &&
           (backlogReplayFailed || !replay.success || this.clearStillBlocked(session))
         ) {
+          if (outcome.reopenFailedDelivery) {
+            await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
+          }
           if (existing) {
             const flippedDbId = await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
             return flippedDbId ?? messageId;
