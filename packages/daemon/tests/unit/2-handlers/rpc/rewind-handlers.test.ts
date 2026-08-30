@@ -320,6 +320,32 @@ describe('Rewind RPC Handlers', () => {
       expect(result.result.success).toBe(false);
       expect(result.result.error).toBe('Session not found');
     });
+
+    it('reconciles pending messages after a failed rewind', async () => {
+      const handler = messageHubData.handlers.get('rewind.execute');
+      expect(handler).toBeDefined();
+
+      const { mocks } = createMockAgentSession();
+      mocks.executeRewind.mockResolvedValueOnce({
+        success: false,
+        error: 'stale checkpoint',
+        filesReverted: [],
+      });
+      const replay = mock(async () => {});
+      sessionManagerData.getSessionAsyncMock.mockResolvedValue({
+        ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: replay,
+      } as unknown as AgentSession);
+
+      const result = (await handler!(
+        { sessionId: 'session-123', checkpointId: 'checkpoint-1' },
+        {}
+      )) as { result: { success: boolean } };
+
+      expect(result.result.success).toBe(false);
+      expect(replay).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('rewind.previewSelective', () => {

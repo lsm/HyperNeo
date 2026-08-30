@@ -69,7 +69,7 @@ export function setupRewindHandlers(
     const result = await withSessionResetCoordination(sessionId, () =>
       agentSession.executeRewind(checkpointId, mode)
     );
-    if (result.success && agentSession.getSessionData().config.queryMode !== 'manual') {
+    if (agentSession.getSessionData().config.queryMode !== 'manual') {
       await agentSession.replayPendingMessagesForImmediateMode();
     }
     return { result };
@@ -142,7 +142,7 @@ export function setupRewindHandlers(
     const result = await withSessionResetCoordination(sessionId, () =>
       agentSession.executeSelectiveRewind(messageIds, mode)
     );
-    if (result.success && agentSession.getSessionData().config.queryMode !== 'manual') {
+    if (agentSession.getSessionData().config.queryMode !== 'manual') {
       await agentSession.replayPendingMessagesForImmediateMode();
     }
     return { result };

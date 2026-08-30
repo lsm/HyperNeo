@@ -2342,3 +2342,62 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
     });
   });
 });
+
+describe('Session RPC Handlers — session.resetQuery', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let getSessionAsync: ReturnType<typeof mock>;
+  let getSessionForControl: ReturnType<typeof mock>;
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    getSessionAsync = mock(async () => null);
+    getSessionForControl = mock(async () => null);
+    const sessionManager = {
+      getSessionAsync,
+      getSessionForControl,
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+  });
+
+  it('rejects a restarting reset for an unprovisioned workflow worker', async () => {
+    const handler = messageHubData.handlers.get('session.resetQuery');
+    expect(handler).toBeDefined();
+    const resetQuery = mock(async () => ({ success: true }));
+    getSessionAsync.mockResolvedValue({
+      getSessionData: () => ({ id: 'space:s1:task:t1:exec:e1', config: {} }),
+      resetQuery,
+    } as unknown as Awaited<ReturnType<SessionManager['getSessionAsync']>>);
+
+    await expect(handler!({ sessionId: 'space:s1:task:t1:exec:e1' }, {})).rejects.toThrow(
+      'not resumable'
+    );
+    expect(resetQuery).not.toHaveBeenCalled();
+    expect(getSessionForControl).not.toHaveBeenCalled();
+  });
+
+  it('performs a no-restart reset through the control lookup', async () => {
+    const handler = messageHubData.handlers.get('session.resetQuery');
+    expect(handler).toBeDefined();
+    const resetQuery = mock(async () => ({ success: true }));
+    getSessionForControl.mockResolvedValue({
+      getSessionData: () => ({ id: 'session-1', config: {} }),
+      resetQuery,
+    } as unknown as Awaited<ReturnType<SessionManager['getSessionAsync']>>);
+
+    const result = (await handler!({ sessionId: 'session-1', restartQuery: false }, {})) as {
+      success: boolean;
+    };
+
+    expect(result).toEqual({ success: true });
+    expect(resetQuery).toHaveBeenCalledWith({ restartQuery: false, hardReset: true });
+    expect(getSessionAsync).not.toHaveBeenCalled();
+  });
+});

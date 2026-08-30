@@ -492,8 +492,9 @@ export class SessionManager {
     if (!provider?.provisionWorkflowSession) return;
 
     const sessionId = session.getSessionData().id;
-    const existing = this.workflowMcpProvisioning.get(sessionId);
-    if (existing) {
+    for (;;) {
+      const existing = this.workflowMcpProvisioning.get(sessionId);
+      if (!existing) break;
       if (existing.session === session) {
         await existing.promise;
         if (this.provisioningSatisfies(session, options)) return;
@@ -506,6 +507,7 @@ export class SessionManager {
         }
         if (this.provisioningSatisfies(session, options)) return;
       }
+      if (this.cleanupState !== CleanupState.IDLE) return;
     }
 
     if (this.cleanupState !== CleanupState.IDLE) return;

@@ -946,9 +946,21 @@ export function setupSessionHandlers(
       restartQuery?: boolean;
     };
 
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
+    const agentSession = restartQuery
+      ? await sessionManager.getSessionAsync(targetSessionId, { startQuery: false })
+      : await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
+    }
+    const resetData = agentSession.getSessionData();
+    if (
+      restartQuery &&
+      isWorkflowSubSessionIdentity(resetData.id) &&
+      !resetData.config.mcpServers?.['node-agent']
+    ) {
+      throw new Error(
+        `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
+      );
     }
 
     const result = await agentSession.resetQuery({ restartQuery, hardReset: true });
