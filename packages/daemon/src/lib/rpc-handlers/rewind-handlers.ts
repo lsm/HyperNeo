@@ -1,4 +1,5 @@
 import type { MessageHub } from '@hyperneo/shared';
+import { withSessionResetCoordination } from '../agent/message-delivery.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { RewindMode, SelectiveRewindRequest } from '@hyperneo/shared';
@@ -63,7 +64,9 @@ export function setupRewindHandlers(
       };
     }
 
-    const result = await agentSession.executeRewind(checkpointId, mode);
+    const result = await withSessionResetCoordination(sessionId, () =>
+      agentSession.executeRewind(checkpointId, mode)
+    );
     if (result.success && agentSession.getSessionData().config.queryMode !== 'manual') {
       await agentSession.replayPendingMessagesForImmediateMode();
     }
@@ -132,7 +135,9 @@ export function setupRewindHandlers(
       };
     }
 
-    const result = await agentSession.executeSelectiveRewind(messageIds, mode);
+    const result = await withSessionResetCoordination(sessionId, () =>
+      agentSession.executeSelectiveRewind(messageIds, mode)
+    );
     if (result.success && agentSession.getSessionData().config.queryMode !== 'manual') {
       await agentSession.replayPendingMessagesForImmediateMode();
     }
