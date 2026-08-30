@@ -2670,6 +2670,47 @@ describe('SpaceRuntimeService', () => {
       );
       db.close();
     });
+
+    test('treats a dead-lettered overwrite of a consumed row as delivered', async () => {
+      const { reactiveDb, db } = await buildDurableDeliveryReactiveDb();
+      seedSessionForDelivery(db, sessionId);
+      const inboxRepo = makeInboxRepo([makeInboxRow()]);
+      db.saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid: 'wake-1',
+          session_id: sessionId,
+          parent_tool_use_id: null,
+          isSynthetic: true,
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'catch up on the rolling goal' }],
+          },
+        },
+        'enqueued'
+      );
+      const sdkRepo = db.getSDKMessageRepo();
+      const enqueued = sdkRepo.getMessageByStatusAndUuid(sessionId, 'enqueued', 'wake-1');
+      if (!enqueued) throw new Error('expected an enqueued SDK row for wake-1');
+      sdkRepo.updateMessageStatus([enqueued.dbId], 'consumed');
+      sdkRepo.updateMessageStatus([enqueued.dbId], 'failed');
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        spaceAgentInboxRepo:
+          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
+      });
+
+      await runFlush(svc);
+
+      expect(sdkRepo.hasConsumptionEvidence(sessionId, 'wake-1')).toBe(true);
+      expect(inboxRepo.markDelivered).toHaveBeenCalledTimes(1);
+      expect(inboxRepo.markDelivered).toHaveBeenCalledWith('inbox-1', sessionId);
+      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
+      db.close();
+    });
   });
 
   describe('attachSpaceToolsToMemberSession()', () => {

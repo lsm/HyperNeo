@@ -678,9 +678,7 @@ export class SpaceRuntimeService {
   ): 'consumed' | 'pending' | 'dead' {
     const sdkMessageRepo = this.config.reactiveDb?.db.getSDKMessageRepo();
     if (!sdkMessageRepo) return 'pending';
-    if (sdkMessageRepo.getMessageByStatusAndUuid(sessionId, 'consumed', messageId)) {
-      return 'consumed';
-    }
+    if (sdkMessageRepo.hasConsumptionEvidence(sessionId, messageId)) return 'consumed';
     if (sdkMessageRepo.getMessageByStatusAndUuid(sessionId, 'failed', messageId)) return 'dead';
     const sendStatus = sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
     if (sendStatus === 'failed') return 'dead';
