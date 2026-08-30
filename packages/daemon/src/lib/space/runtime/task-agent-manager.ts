@@ -131,6 +131,7 @@ import {
 } from './pending-envelope.ts';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
+import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
 import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
 import {
@@ -2209,39 +2210,35 @@ export class TaskAgentManager {
     taskId: string,
     options: { settleReplayProvisioning?: boolean } = {}
   ): Promise<boolean> {
-    if (
-      !options.settleReplayProvisioning &&
-      session.getSessionData().config?.queryMode === 'manual'
-    ) {
-      return false;
-    }
-    if (this.sessionManagerCleaningUp()) return false;
+    const settleReplayProvisioning = options.settleReplayProvisioning ?? false;
     const task = this.config.taskRepo.getTask(taskId);
-    if (!task?.workflowRunId) return false;
-    if (task.status === 'cancelled' || task.status === 'archived') return false;
-    const workflowRun = this.config.workflowRunRepo.getRun(task.workflowRunId);
-    if (!workflowRun || workflowRun.status === 'cancelled') return false;
-    const space = await this.config.spaceManager.getSpace(task.spaceId);
-    const sessionStatus = session.getSessionData().status;
-    if (sessionStatus === 'archived' || sessionStatus === 'ended') return false;
-    if (!space || space.stopped || space.paused || space.status === 'archived') return false;
+    const workflowRun = task?.workflowRunId
+      ? this.config.workflowRunRepo.getRun(task.workflowRunId)
+      : null;
+    const space = task ? await this.config.spaceManager.getSpace(task.spaceId) : null;
     const sessionId = session.getSessionData().id;
-    if (sessionId.includes(':post-approval:')) {
-      return task.status === 'approved';
-    }
-    if (isCanonicalTaskTerminalForSpawn(task.status) || workflowRun.status === 'done') {
-      return false;
-    }
-    const execution = this.resolveNodeExecutionForSubSession(sessionId);
-    if (!execution) return false;
-    if (
-      execution.status !== 'in_progress' &&
-      execution.status !== 'blocked' &&
-      !this.hasQueuedRetryableHookAction(execution.workflowRunId, execution)
-    ) {
-      return false;
-    }
-    return true;
+    let execution: NodeExecution | null | undefined;
+    const resolveExecution = (): NodeExecution | null => {
+      if (execution === undefined) execution = this.resolveNodeExecutionForSubSession(sessionId);
+      return execution;
+    };
+    return decideRestoredWorkerAdmission({
+      settleReplayProvisioning,
+      queryMode: settleReplayProvisioning ? undefined : session.getSessionData().config?.queryMode,
+      daemonCleaningUp: this.sessionManagerCleaningUp(),
+      task,
+      workflowRun,
+      space,
+      sessionId,
+      sessionStatus: () => session.getSessionData().status,
+      execution: resolveExecution,
+      hasQueuedRetryableHookAction: () => {
+        const resolved = resolveExecution();
+        return (
+          resolved !== null && this.hasQueuedRetryableHookAction(resolved.workflowRunId, resolved)
+        );
+      },
+    });
   }
 
   getRestoredRateLimitRetryAt(sessionId: string): number | null {
