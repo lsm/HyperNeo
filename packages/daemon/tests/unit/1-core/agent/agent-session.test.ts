@@ -1435,8 +1435,7 @@ describe('AgentSession', () => {
       (agentSession as unknown as { queryRunner: unknown }).queryRunner = { start } as never;
       (agentSession as unknown as { session: { status: string } }).session.status = 'archived';
 
-      await agentSession.startStreamingQuery();
-
+      await expect(agentSession.startStreamingQuery()).rejects.toThrow('archived');
       expect(start).not.toHaveBeenCalled();
     });
 
@@ -1445,8 +1444,7 @@ describe('AgentSession', () => {
       (agentSession as unknown as { queryRunner: unknown }).queryRunner = { start } as never;
       (agentSession as unknown as { session: { status: string } }).session.status = 'ended';
 
-      await agentSession.startStreamingQuery();
-
+      await expect(agentSession.startStreamingQuery()).rejects.toThrow('ended');
       expect(start).not.toHaveBeenCalled();
     });
 

@@ -786,10 +786,9 @@ export class AgentSession
 
   async startStreamingQuery(): Promise<void> {
     if (this.session.status === 'archived' || this.session.status === 'ended') {
-      this.logger.warn(
-        `startStreamingQuery refused: session ${this.session.id} is ${this.session.status}`
+      throw new Error(
+        `Session ${this.session.id} is ${this.session.status}; refusing to start the query`
       );
-      return;
     }
     const wantsAcp = this.session.config.provider === 'acp';
     const hasAcpRunner = this.queryRunner instanceof AcpQueryRunner;
