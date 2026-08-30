@@ -135,7 +135,6 @@ import {
 } from './spawn-flow.ts';
 import {
   assembleNodeAgentSessionInit,
-  buildExecutionBaseSessionId,
   buildSlotOverrides,
   findAvailableSessionId,
   explicitTaskWorkspace,
@@ -143,7 +142,11 @@ import {
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution.ts';
-import { taskIdFromSubSessionIdentity } from '../../session/sub-session-identity.ts';
+import {
+  buildExecutionBaseSessionId,
+  buildPostApprovalSessionId,
+  taskIdFromSubSessionIdentity,
+} from '../../session/sub-session-identity.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
 import { stagedRun } from './staged-run.ts';
 import {
@@ -5138,7 +5141,11 @@ export class TaskAgentManager {
         ...(poolProvider ? { provider: poolProvider } : {}),
       };
 
-      const baseSessionId = `space:${spaceId}:task:${taskId}:post-approval:${this.sanitizeAgentNameForId(slot.name)}`;
+      const baseSessionId = buildPostApprovalSessionId(
+        spaceId,
+        taskId,
+        this.sanitizeAgentNameForId(slot.name)
+      );
       const sessionId = this.resolveSessionId(baseSessionId);
 
       let init = resolveAgentInit({

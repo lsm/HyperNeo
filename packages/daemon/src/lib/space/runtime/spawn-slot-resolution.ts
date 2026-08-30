@@ -86,14 +86,6 @@ export function buildSlotOverrides(
   };
 }
 
-export function buildExecutionBaseSessionId(
-  spaceId: string,
-  taskId: string,
-  executionId: string
-): string {
-  return `space:${spaceId}:task:${taskId}:exec:${executionId}`;
-}
-
 export function findAvailableSessionId(
   baseId: string,
   isTaken: (sessionId: string) => boolean

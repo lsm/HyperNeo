@@ -15,3 +15,19 @@ export function isWorkflowSubSessionIdentity(sessionId: string): boolean {
     segments.includes('task') && (segments.includes('exec') || segments.includes('post-approval'))
   );
 }
+
+export function buildExecutionBaseSessionId(
+  spaceId: string,
+  taskId: string,
+  executionId: string
+): string {
+  return `space:${spaceId}:task:${taskId}:exec:${executionId}`;
+}
+
+export function buildPostApprovalSessionId(
+  spaceId: string,
+  taskId: string,
+  agentName: string
+): string {
+  return `space:${spaceId}:task:${taskId}:post-approval:${agentName}`;
+}
