@@ -817,14 +817,14 @@ describe('SpaceRuntimeService', () => {
         else process.env[FLAG] = previous;
       });
 
-      test('coordinator: no space-actions by default; attaches alongside when the flag is on', async () => {
+      test('coordinator: attaches space-actions by default; omits it when the flag is off', async () => {
         const session = makeSession();
         const sessionManager = makeSessionManager(session);
         const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
 
-        delete process.env[FLAG];
+        process.env[FLAG] = '0';
         await svc.setupSpaceAgentSession(mockSpace);
-        process.env[FLAG] = '1';
+        delete process.env[FLAG];
         await svc.setupSpaceAgentSession(mockSpace);
 
         const mergeMock = session.mergeRuntimeMcpServers as Mock<
@@ -2545,14 +2545,14 @@ describe('SpaceRuntimeService', () => {
         else process.env[FLAG] = previous;
       });
 
-      test('member session: no space-actions by default; attaches alongside when the flag is on', async () => {
+      test('member session: attaches space-actions by default; omits it when the flag is off', async () => {
         const agent = makeMemberAgentSession();
         const sessionManager = makeSessionManager(agent);
         const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
 
-        delete process.env[FLAG];
+        process.env[FLAG] = '0';
         await svc.attachSpaceToolsToMemberSession(makeMemberSession());
-        process.env[FLAG] = '1';
+        delete process.env[FLAG];
         await svc.attachSpaceToolsToMemberSession(makeMemberSession());
 
         const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
@@ -2925,42 +2925,51 @@ describe('SpaceRuntimeService', () => {
     });
 
     test('long-term agent reattach preserves existing runtime MCP servers and avoids duplicate server names', async () => {
-      const preservedServer = { type: 'sdk', name: 'external-runtime' } as McpServerConfig;
-      const agent = makeMemberAgentSession({
-        id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
-        config: {
-          tools: {},
-          mcpServers: {
-            'external-runtime': preservedServer,
+      const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+      process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '0';
+      try {
+        const preservedServer = { type: 'sdk', name: 'external-runtime' } as McpServerConfig;
+        const agent = makeMemberAgentSession({
+          id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+          config: {
+            tools: {},
+            mcpServers: {
+              'external-runtime': preservedServer,
+            },
           },
-        },
-        metadata: {
-          promptProvenance: {
-            source: 'test',
-            hash: 'hash',
-            agentId: 'agent-1',
-            agentName: 'Long Term',
+          metadata: {
+            promptProvenance: {
+              source: 'test',
+              hash: 'hash',
+              agentId: 'agent-1',
+              agentName: 'Long Term',
+            },
           },
-        },
-      });
-      const sessionManager = makeSessionManager(agent);
-      const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+        });
+        const sessionManager = makeSessionManager(agent);
+        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
 
-      await (
-        svc as unknown as {
-          attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
-        }
-      ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
-      await (
-        svc as unknown as {
-          attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
-        }
-      ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+        await (
+          svc as unknown as {
+            attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+          }
+        ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+        await (
+          svc as unknown as {
+            attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+          }
+        ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
 
-      expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
-      const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
-      expect(serverNames.sort()).toEqual(['external-runtime', 'space-agent-tools']);
-      expect(agent.getSessionData().config.mcpServers?.['external-runtime']).toBe(preservedServer);
+        expect(agent.mergeRuntimeMcpServers).toHaveBeenCalledTimes(2);
+        const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
+        expect(serverNames.sort()).toEqual(['external-runtime', 'space-agent-tools']);
+        expect(agent.getSessionData().config.mcpServers?.['external-runtime']).toBe(
+          preservedServer
+        );
+      } finally {
+        if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+        else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
+      }
     });
 
     test('long-term agent reactivation resolves the LH handle alias so @handle delegation survives restart', async () => {

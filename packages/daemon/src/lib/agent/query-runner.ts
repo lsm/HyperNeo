@@ -19,7 +19,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Logger } from '../logger.ts';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
-import { isSpaceActionsDispatcherEnabled } from '../space/actions/space-actions-server.ts';
+import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,

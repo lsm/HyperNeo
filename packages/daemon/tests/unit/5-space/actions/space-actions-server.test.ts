@@ -1,5 +1,5 @@
 /// <reference types="bun" />
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import {
   GENERAL_HOT_ACTIONS,
   ROLE_HOT_ACTIONS,
@@ -7,7 +7,6 @@ import {
 import type { DispatchTelemetryEvent } from '../../../../src/lib/space/actions/dispatcher-pipeline.ts';
 import {
   createSpaceActionsMcpServer,
-  isSpaceActionsDispatcherEnabled,
   resolveRoleHotActionView,
   type SpaceActionsMcpServer,
   type SpaceActionsServerConfig,
@@ -47,31 +46,6 @@ async function dispatch(
   };
   return JSON.parse(result.content[0].text);
 }
-
-describe('isSpaceActionsDispatcherEnabled', () => {
-  const FLAG = 'HYPERNEO_SPACE_ACTIONS_DISPATCHER';
-  const previous = process.env[FLAG];
-  afterEach(() => {
-    if (previous === undefined) delete process.env[FLAG];
-    else process.env[FLAG] = previous;
-  });
-
-  test('defaults to off when the flag is unset', () => {
-    delete process.env[FLAG];
-    expect(isSpaceActionsDispatcherEnabled()).toBe(false);
-  });
-
-  test('enables only for explicit 1/true values', () => {
-    for (const value of ['1', 'true']) {
-      process.env[FLAG] = value;
-      expect(isSpaceActionsDispatcherEnabled()).toBe(true);
-    }
-    for (const value of ['0', 'false', 'yes', '']) {
-      process.env[FLAG] = value;
-      expect(isSpaceActionsDispatcherEnabled()).toBe(false);
-    }
-  });
-});
 
 describe('resolveRoleHotActionView', () => {
   test('maps each workflow node role to its preset hot list', () => {

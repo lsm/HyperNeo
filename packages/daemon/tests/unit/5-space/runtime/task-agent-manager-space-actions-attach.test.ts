@@ -118,7 +118,7 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
   const previousFlag = process.env[FLAG];
 
   beforeEach(() => {
-    delete process.env[FLAG];
+    process.env[FLAG] = '0';
   });
 
   afterEach(() => {
@@ -126,9 +126,15 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     else process.env[FLAG] = previousFlag;
   });
 
-  test('flag off (default): worker servers contain only node-agent', () => {
+  test('flag off: worker servers contain only node-agent', () => {
     const servers = buildServers(makeManager());
     expect(Object.keys(servers)).toEqual(['node-agent']);
+  });
+
+  test('flag unset: worker servers attach space-actions alongside node-agent', () => {
+    delete process.env[FLAG];
+    const servers = buildServers(makeManager());
+    expect(Object.keys(servers).sort()).toEqual(['node-agent', 'space-actions']);
   });
 
   test('flag on: worker servers attach space-actions alongside node-agent', () => {
@@ -174,7 +180,7 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     };
     process.env[FLAG] = '1';
     const built = buildServers(tam);
-    delete process.env[FLAG];
+    process.env[FLAG] = '0';
 
     const userProvided = makeFakeSession();
     userProvided.agentSession.mergeRuntimeMcpServers({
