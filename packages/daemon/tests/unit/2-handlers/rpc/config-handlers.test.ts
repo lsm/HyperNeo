@@ -82,6 +82,7 @@ function createMockAgentSession(configOverrides: Partial<Session['config']> = {}
     setPermissionMode: ReturnType<typeof mock>;
     updateConfig: ReturnType<typeof mock>;
     updateUserMcpServers: ReturnType<typeof mock>;
+    isQueryActiveOrStarting: ReturnType<typeof mock>;
     resetQuery: ReturnType<typeof mock>;
     getMcpServerStatus: ReturnType<typeof mock>;
   };
@@ -316,7 +317,7 @@ describe('SDK Config RPC Handlers', () => {
       expect(handler).toBeDefined();
 
       const { agentSession, mocks } = createMockAgentSession();
-      mocks.isQueryActiveOrStarting.mockReturnValueOnce(false);
+      mocks.isQueryActiveOrStarting.mockReturnValue(false);
       sessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
       sessionManagerData.getSessionAsyncMock.mockClear();
 
