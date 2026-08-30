@@ -1470,6 +1470,7 @@ describe('AgentSession', () => {
 
     it('cancelRateLimitRetry cancels the owning turn when a steer caused the persisted cooldown', async () => {
       const cancelDelivery = mock(() => true);
+      const markDeliveryFailedByUuid = mock(() => 'db-owning');
       mockDb.getJobQueueRepo = mock(
         () =>
           ({
@@ -1478,6 +1479,7 @@ describe('AgentSession', () => {
             getActiveTurnDeliveryMessageUuid: mock(() => 'msg-owning-turn'),
           }) as never
       );
+      mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }) as never);
       mockDb.getSession = mock(
         () =>
           ({
@@ -1501,6 +1503,31 @@ describe('AgentSession', () => {
         processingState: JSON.stringify({ status: 'idle' }),
       });
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
+      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
+    });
+
+    it('retryNowAfterRateLimit releases every parked delivery for the session', async () => {
+      const rescheduleSessionDeliveries = mock(() => true);
+      mockDb.getJobQueueRepo = mock(
+        () =>
+          ({
+            rescheduleSessionDeliveries,
+          }) as never
+      );
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
+        retryNow: mock(() => true),
+        isPersistedCooldownArmed: () => true,
+        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
+      } as never;
+
+      const resumed = await agentSession.retryNowAfterRateLimit();
+
+      expect(resumed).toBe(true);
+      expect(rescheduleSessionDeliveries).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.any(Number)
+      );
     });
 
     it('driveDeliveryTurn makes a terminal turn error non-retryable without reopening', async () => {
