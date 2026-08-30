@@ -117,7 +117,6 @@ describe('SDKMessageHandler', () => {
   let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
   let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
-  let bumpDeliveryTurnActivitySpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     resetProviderRegistry();
@@ -283,8 +282,6 @@ describe('SDKMessageHandler', () => {
       stop: lifecycleStopSpy,
     } as unknown as QueryLifecycleManager;
 
-    bumpDeliveryTurnActivitySpy = mock(() => {});
-
     mockContext = {
       session: mockSession,
       db: mockDb,
@@ -300,8 +297,6 @@ describe('SDKMessageHandler', () => {
       queryPromise: null,
       onInitSlashCommands: mock(async () => {}),
       onCommandsChanged: mock(async () => {}),
-      bumpDeliveryTurnActivity: bumpDeliveryTurnActivitySpy,
-      onDeliveryTurnAccepted: mock(() => {}),
     };
 
     handler = new SDKMessageHandler(mockContext);
@@ -345,7 +340,7 @@ describe('SDKMessageHandler', () => {
       expect(detectPhaseFromMessageSpy).toHaveBeenCalledWith(message);
     });
 
-    describe('stream_event liveness heartbeat', () => {
+    describe('stream_event phase detection', () => {
       const makeStreamEvent = (): SDKMessage =>
         ({
           type: 'stream_event',
@@ -355,13 +350,15 @@ describe('SDKMessageHandler', () => {
           session_id: 'test-session-id',
         }) as unknown as SDKMessage;
 
-      it('bumps the delivery-turn stall watchdog (liveness) on every token delta', async () => {
-        bumpDeliveryTurnActivitySpy.mockClear();
+      it('only detects the streaming phase and returns for a token delta', async () => {
         const delta = makeStreamEvent();
 
         await handler.handleMessage(delta);
 
-        expect(bumpDeliveryTurnActivitySpy).toHaveBeenCalledTimes(1);
+        expect(detectPhaseFromMessageSpy).toHaveBeenCalledTimes(1);
+        expect(detectPhaseFromMessageSpy).toHaveBeenCalledWith(delta);
+        expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+        expect(publishSpy).not.toHaveBeenCalled();
       });
 
       it('never persists or broadcasts partial tokens (avoids DB bloat)', async () => {
@@ -381,12 +378,11 @@ describe('SDKMessageHandler', () => {
         expect(detectPhaseFromMessageSpy).toHaveBeenCalledWith(delta);
       });
 
-      it('a stream_event heartbeating past the no-activity window keeps the watchdog alive', async () => {
-        bumpDeliveryTurnActivitySpy.mockClear();
+      it('keeps detecting the streaming phase for every token delta', async () => {
         for (let i = 0; i < 5; i++) {
           await handler.handleMessage(makeStreamEvent());
         }
-        expect(bumpDeliveryTurnActivitySpy).toHaveBeenCalledTimes(5);
+        expect(detectPhaseFromMessageSpy).toHaveBeenCalledTimes(5);
         expect(saveSDKMessageSpy).not.toHaveBeenCalled();
       });
     });
@@ -6185,11 +6181,86 @@ describe('SDKMessageHandler', () => {
       waiter.cancel();
     });
 
-    it('notifies the delivery layer when a consumed ACP kickoff is accepted (Codex P1)', () => {
-      const onDeliveryTurnAccepted = mockContext.onDeliveryTurnAccepted as ReturnType<typeof mock>;
-      getMessageByStatusAndUuidSpy.mockImplementation(() => ({ id: 'db-consumed' }));
+    it('flips a submitted ACP kickoff to consumed at acceptance even while a delivery job owns it', async () => {
+      (mockSession as { config: { provider?: string } }).config.provider = 'acp';
+      let consumed = false;
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sessionId: string, status: string, uuid: string) =>
+          uuid !== 'msg-acp'
+            ? null
+            : status === (consumed ? 'consumed' : 'submitted')
+              ? {
+                  dbId: 'db-acp',
+                  uuid: 'msg-acp',
+                  type: 'user',
+                  timestamp: 1,
+                  message: { role: 'user', content: [{ type: 'text', text: 'acp' }] },
+                }
+              : null
+      );
+      updateMessageStatusSpy.mockImplementation((ids: string[], status: string) => {
+        if (status === 'consumed') consumed = true;
+      });
+      mockDb.getJobQueueRepo = mock(() => ({
+        getActiveDeliveryRole: () => 'turn',
+      })) as never;
+      const waiter = waitForDeliveryConsumption(mockSession.id, 'msg-acp');
+      handler.markMessageAccepted('msg-acp');
+      await expect(waiter.promise).resolves.toBeUndefined();
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-acp'], 'consumed');
+      waiter.cancel();
+      delete (mockSession as { config: { provider?: string } }).config.provider;
+    });
+
+    it('signals delivery waiters when a consumed ACP kickoff is accepted', async () => {
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sessionId: string, status: string, uuid: string) =>
+          status === 'consumed' && uuid === 'msg-accepted'
+            ? {
+                dbId: 'db-consumed',
+                uuid: 'msg-accepted',
+                type: 'user',
+                timestamp: 1,
+                message: { role: 'user', content: [{ type: 'text', text: 'acp' }] },
+              }
+            : null
+      );
+      const waiter = waitForDeliveryConsumption(mockSession.id, 'msg-accepted');
       handler.markMessageAccepted('msg-accepted');
-      expect(onDeliveryTurnAccepted).toHaveBeenCalled();
+      await expect(waiter.promise).resolves.toBeUndefined();
+      waiter.cancel();
+    });
+  });
+
+  describe('markMessageSubmitted (ACP delivery kickoff)', () => {
+    it('is idempotent: transitions enqueued then accepts an already-submitted row', () => {
+      let persisted = false;
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sessionId: string, status: string, uuid: string) => {
+          if (uuid !== 'msg-submitted' || status !== (persisted ? 'submitted' : 'enqueued')) {
+            return null;
+          }
+          return {
+            dbId: 'db-submitted',
+            uuid: 'msg-submitted',
+            type: 'user',
+            timestamp: 1,
+            message: { role: 'user', content: [{ type: 'text', text: 'acp' }] },
+          };
+        }
+      );
+      mockDb.getJobQueueRepo = mock(() => ({
+        getActiveDeliveryBatchUuids: () => null,
+      })) as never;
+
+      expect(handler.markMessageSubmitted('msg-submitted')).toBe(true);
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-submitted'], 'submitted');
+
+      persisted = true;
+      updateMessageStatusSpy.mockClear();
+
+      expect(handler.markMessageSubmitted('msg-submitted')).toBe(true);
+      expect(updateMessageStatusSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -6960,6 +7031,25 @@ describe('SDKMessageHandler', () => {
         getUserMessagesByStatusSpy.mockClear();
         await handler.handleMessage(ackResult);
         expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
+      });
+
+      it('publishes but does not consume a message owned by an active delivery role', async () => {
+        statusSpy('enqueued');
+        mockDb.getJobQueueRepo = mock(() => ({
+          getActiveDeliveryRole: () => 'coordinator',
+        })) as never;
+        mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
+        expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
+        expect(publishSpy).toHaveBeenCalledWith(
+          'state.sdkMessages.delta',
+          expect.objectContaining({
+            added: expect.arrayContaining([
+              expect.objectContaining({ uuid: ackUuid, timestamp: yieldAt }),
+            ]),
+            timestamp: yieldAt,
+          }),
+          { channel: 'session:test-session-id' }
+        );
       });
     });
 

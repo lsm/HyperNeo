@@ -247,20 +247,17 @@ export function steerAckTimeoutMs(): number {
   return STEER_ACK_TIMEOUT_MS;
 }
 
-export type DriveTurnOutcome =
+export type DeliveryOutcome =
   | { outcome: 'completed' }
-  | { outcome: 'blocked'; retryAt: number; reason?: 'sdk_resume_choice' | 'context_clear_boundary' }
-  | { outcome: 'recovery_pending'; retryAt: number }
   | { outcome: 'aborted' }
-  | { outcome: 'turn_terminated' };
+  | {
+      outcome: 'blocked';
+      retryAt: number;
+      reason?: 'sdk_resume_choice' | 'context_clear_boundary' | 'limit_recovery';
+    };
 
-export type FeedSteerOutcome =
-  | { outcome: 'consumed' }
-  | { outcome: 'awaiting_acceptance' }
-  | { outcome: 'promote' }
-  | { outcome: 'park' }
-  | { outcome: 'aborted' }
-  | { outcome: 'ack_timeout' };
+export type DriveTurnOutcome = DeliveryOutcome;
+export type FeedSteerOutcome = DeliveryOutcome;
 
 export interface MessageDeliveryAttemptObserver {
   reportStage(
@@ -350,7 +347,9 @@ export function deliveryConsumptionTimeoutMs(provider?: string): number | undefi
 }
 
 export function deliveryConsumptionTimeoutOrDefault(timeoutMs?: number): number {
-  return timeoutMs ?? (Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000);
+  const explicit = timeoutMs ?? Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  return 30_000;
 }
 
 export async function awaitDeliveryConsumptionTolerant(args: {

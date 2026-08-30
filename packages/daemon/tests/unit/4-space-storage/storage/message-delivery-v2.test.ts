@@ -3,6 +3,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   awaitDeliveryConsumption,
+  deliveryConsumptionTimeoutOrDefault,
   buildBatchedDeliveryContent,
   type DriveTurnOutcome,
   deliverAndMarkQueued,
@@ -649,7 +650,7 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
 
 class MockSession implements MessageDeliverySession {
   driveResult: DriveTurnOutcome = { outcome: 'completed' };
-  feedResult: FeedSteerOutcome = { outcome: 'consumed' };
+  feedResult: FeedSteerOutcome = { outcome: 'completed' };
   driveOutcomeByUuid?: Record<string, DriveTurnOutcome>;
   shouldThrow = false;
   driveCalls = 0;
@@ -834,7 +835,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
     expect(repo.getJob(job.id)?.status).toBe('processing');
   });
 
-  it('steer consumed → handler returns consumed (§9: completion = SDK consume)', async () => {
+  it('steer admitted → handler returns completed (§9: completion = SDK admission)', async () => {
     const session = new MockSession();
     const job = steerJob(repo, 'msg-steer');
     const handler = createMessageDeliveryHandler({
@@ -843,30 +844,9 @@ describe('message-delivery v2 — handler (conformance)', () => {
       getMessageContent: () => ({ content: 'steer-content', sendStatus: 'enqueued' }),
     });
     const result = await handler(job);
-    expect(result).toEqual({ outcome: 'consumed' });
+    expect(result).toEqual({ outcome: 'completed' });
     expect(session.feedCalls).toBe(1);
     expect((job.payload as { role: string }).role).toBe('steer');
-  });
-
-  it('steer whose turn ended → promoted to a fresh turn (§8: promote)', async () => {
-    const session = new MockSession();
-    session.feedResult = { outcome: 'promote' };
-    const job = steerJob(repo, 'msg-promote');
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'steer-content', sendStatus: 'enqueued' }),
-    });
-    const result = await handler(job);
-    expect(result).toMatchObject({ outcome: 'superseded', promoted: 'turn' });
-    const after = repo.getJob(job.id);
-    expect(after?.status).toBe('pending');
-    expect((after?.payload as { role: string }).role).toBe('turn');
-    expect(
-      jobsFor(repo, SESSION).filter(
-        (j) => (j.payload as { messageUuid: string }).messageUuid === 'msg-promote'
-      )
-    ).toHaveLength(1);
   });
 
   it('session gone → handler rejects (so reclaimStale/processor re-drives it)', async () => {
@@ -902,7 +882,7 @@ describe('handler — status-aware delivery (§8)', () => {
   });
   afterEach(() => db.close());
 
-  it('consumed kickoff is NOT re-fed — turn driven with alreadyConsumed (#2592)', async () => {
+  it('a consumed row completes without re-feeding the SDK (#2592)', async () => {
     const session = new MockSession();
     const job = turnJob(repo, 'msg-consumed');
     const handler = createMessageDeliveryHandler({
@@ -912,33 +892,12 @@ describe('handler — status-aware delivery (§8)', () => {
     });
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'completed' });
-    expect(session.driveCalls).toBe(1);
-    expect(session.lastAlreadyConsumed).toBe(true);
+    expect(session.driveCalls).toBe(0);
   });
 
-  it('a consumed turn whose turn already terminated is completed, not re-driven', async () => {
+  it('end-to-end: stale reclaimed consumed-turn completes without driving, then the steer feeds', async () => {
     const session = new MockSession();
-    session.driveResult = { outcome: 'turn_terminated' };
-    const metrics = new DeliveryMetrics();
-    const job = turnJob(repo, 'msg-terminated');
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'hello', sendStatus: 'consumed' }),
-      metrics,
-    });
-    const result = await handler(job);
-    expect(result).toEqual({ outcome: 'completed', skipped: 'turn_terminated' });
-    expect(session.driveCalls).toBe(1);
-    expect(session.settleCalls).toEqual(['msg-terminated']);
-    expect(metrics.snapshot().reclaimSkips.turn_terminated).toBe(1);
-  });
-
-  it('end-to-end: stale reclaimed consumed-turn with terminal result unblocks a parked steer', async () => {
-    const session = new MockSession();
-    session.feedResult = { outcome: 'promote' };
     const statuses: Record<string, string> = { 'zombie-turn': 'consumed' };
-    session.driveOutcomeByUuid = { 'zombie-turn': { outcome: 'turn_terminated' } };
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
@@ -968,28 +927,20 @@ describe('handler — status-aware delivery (§8)', () => {
     const [reclaimed] = repo.dequeue(MESSAGE_DELIVERY, 1);
     expect((reclaimed.payload as { role: string }).role).toBe('turn');
     const zombieResult = await handler(reclaimed);
-    expect(zombieResult).toEqual({ outcome: 'completed', skipped: 'turn_terminated' });
-    expect(session.driveCalls).toBe(1);
-    expect(session.settleCalls).toContain('zombie-turn');
+    expect(zombieResult).toEqual({ outcome: 'completed' });
+    expect(session.driveCalls).toBe(0);
     repo.complete(reclaimed.id, { ok: true });
 
     const [steer] = repo.dequeue(MESSAGE_DELIVERY, 1);
     expect((steer.payload as { role: string }).role).toBe('steer');
     const steerResult = await handler(steer);
-    expect(steerResult).toMatchObject({ outcome: 'superseded', promoted: 'turn' });
-    expect(repo.getJob(steer.id)?.status).toBe('pending');
-    expect((repo.getJob(steer.id)?.payload as { role: string }).role).toBe('turn');
+    expect(steerResult).toEqual({ outcome: 'completed' });
+    expect(session.feedCalls).toBe(1);
     const active = repo.activeDeliveryMessageUuids(SESSION);
     expect(active.has('zombie-turn')).toBe(false);
-    expect(active.has('new-msg')).toBe(true);
-
-    const [promoted] = repo.dequeue(MESSAGE_DELIVERY, 1);
-    const promotedResult = await handler(promoted);
-    expect(promotedResult).toEqual({ outcome: 'completed' });
-    expect(session.driveCalls).toBe(2);
   });
 
-  it('records reclaim-skip counters via the injected metrics sink (review P2.2a)', async () => {
+  it('a consumed row observes no feed through the injected metrics sink (review P2.2a)', async () => {
     const session = new MockSession();
     const metrics = new DeliveryMetrics();
     const job = turnJob(repo, 'msg-consumed-m');
@@ -999,27 +950,26 @@ describe('handler — status-aware delivery (§8)', () => {
       getMessageContent: () => ({ content: 'hello', sendStatus: 'consumed' }),
       metrics,
     });
-    await handler(job);
-    expect(metrics.snapshot().reclaimSkips.alreadyConsumed).toBe(1);
+    const result = await handler(job);
+    expect(result).toEqual({ outcome: 'completed' });
+    expect(session.driveCalls).toBe(0);
     expect(metrics.snapshot().feedsObserved).toBe(0);
   });
 
-  it('a submitted row re-claimed records alreadySubmitted + skips (review P2.2a)', async () => {
+  it('a submitted row is re-admitted, not skipped (review P2.2a)', async () => {
     const session = new MockSession();
-    const metrics = new DeliveryMetrics();
     const job = turnJob(repo, 'msg-submitted-m');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
       getMessageContent: () => ({ content: 'hello', sendStatus: 'submitted' }),
-      metrics,
     });
     const result = await handler(job);
-    expect(result).toMatchObject({ outcome: 'skipped', sendStatus: 'submitted' });
-    expect(metrics.snapshot().reclaimSkips.alreadySubmitted).toBe(1);
+    expect(result).toEqual({ outcome: 'completed' });
+    expect(session.driveCalls).toBe(1);
   });
 
-  it('a submitted ACP STEER keeps parking until accepted (not skip-completed)', async () => {
+  it('a submitted ACP STEER is fed toward acceptance', async () => {
     const session = new MockSession();
     const job = steerJob(repo, 'msg-submitted-steer');
     const handler = createMessageDeliveryHandler({
@@ -1027,13 +977,9 @@ describe('handler — status-aware delivery (§8)', () => {
       getSession: () => session,
       getMessageContent: () => ({ content: 'steer', sendStatus: 'submitted' }),
     });
-    const before = Date.now();
     const result = await handler(job);
-    expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
-    const after = repo.getJob(job.id);
-    expect(after?.status).toBe('pending');
-    expect(after?.runAt ?? 0).toBeGreaterThan(before);
-    expect(session.feedCalls).toBe(0);
+    expect(result).toEqual({ outcome: 'completed' });
+    expect(session.feedCalls).toBe(1);
   });
 
   it('deferred message is skipped, not force-fed into the turn (#2597)', async () => {
@@ -1062,7 +1008,7 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(session.driveCalls).toBe(0);
   });
 
-  it('consumed steer is not re-fed (already_consumed)', async () => {
+  it('a consumed steer is not re-fed', async () => {
     const session = new MockSession();
     const job = steerJob(repo, 'msg-steer-consumed');
     const handler = createMessageDeliveryHandler({
@@ -1071,7 +1017,7 @@ describe('handler — status-aware delivery (§8)', () => {
       getMessageContent: () => ({ content: 'steer', sendStatus: 'consumed' }),
     });
     const result = await handler(job);
-    expect(result).toEqual({ outcome: 'already_consumed' });
+    expect(result).toEqual({ outcome: 'completed' });
     expect(session.feedCalls).toBe(0);
   });
 
@@ -1092,39 +1038,25 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(session.driveCalls).toBe(0);
   });
 
-  it('a steer whose owning turn is parked (queued) is PARKED with a delay, not hot-looped (#3683)', async () => {
+  it('a blocked steer is requeued with a delay, not hot-looped (#3683)', async () => {
     const session = new MockSession();
-    session.feedResult = { outcome: 'park' };
+    const sessionRetryAt = Date.now() + 60_000;
+    session.feedResult = {
+      outcome: 'blocked',
+      retryAt: sessionRetryAt,
+      reason: 'sdk_resume_choice',
+    };
     const job = steerJob(repo, 'msg-park');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
       getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
     });
-    const before = Date.now();
     const result = await handler(job);
-    expect(result).toMatchObject({ parked: 'turn_blocked' });
+    expect(result).toMatchObject({ parked: 'sdk_resume_choice', retryAt: sessionRetryAt });
     const after = repo.getJob(job.id);
     expect(after?.status).toBe('pending');
-    expect(after?.runAt ?? 0).toBeGreaterThan(before);
-  });
-
-  it('an ACP steer awaiting acceptance is PARKED (kept alive), not auto-completed', async () => {
-    const session = new MockSession();
-    session.feedResult = { outcome: 'awaiting_acceptance' };
-    const job = steerJob(repo, 'msg-acp-accept');
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
-    });
-    const before = Date.now();
-    const result = await handler(job);
-    expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
-    const after = repo.getJob(job.id);
-    expect(after?.status).toBe('pending');
-    expect(after?.runAt ?? 0).toBeGreaterThan(before);
-    expect(session.feedCalls).toBe(1);
+    expect(after?.runAt).toBe(sessionRetryAt);
   });
 
   it('turn aborted (archive/removePending at feed time) → completes without feeding (#3742774841/#3696)', async () => {
@@ -1447,7 +1379,7 @@ describe('awaitDeliveryConsumption — lost wakeup (persisted sendStatus re-chec
   });
 });
 
-describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_PARKS)', () => {
+describe('message-delivery v2 — blocked steer requeue bound', () => {
   let db: Database;
   let repo: JobQueueRepository;
 
@@ -1456,108 +1388,57 @@ describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_
   });
   afterEach(() => db.close());
 
-  it('parks up to the budget, then throws DeadLetterImmediatelyError', async () => {
+  it('a blocked steer requeues as pending at the session retryAt without burning retries', async () => {
     const session = new MockSession();
-    session.feedResult = { outcome: 'park' };
+    session.feedResult = { outcome: 'blocked', retryAt: 4321, reason: 'sdk_resume_choice' };
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
       getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
     });
 
-    let current = steerJob(repo, 'msg-park-bound');
-
-    for (let i = 0; i < MAX_STEER_PARKS; i++) {
+    let current = steerJob(repo, 'msg-blocked-bound');
+    for (let i = 0; i < 3; i++) {
       const result = await handler(current);
-      expect(result).toMatchObject({ parked: 'turn_blocked' });
+      expect(result).toMatchObject({ parked: 'sdk_resume_choice', retryAt: 4321 });
       expect(repo.getJob(current.id)?.retryCount).toBe(0);
+      expect(repo.getJob(current.id)?.status).toBe('pending');
       db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
       const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
       expect(next).toBeTruthy();
       current = next!;
     }
-    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_STEER_PARKS);
+  });
+});
 
-    await expect(handler(current)).rejects.toThrow(/parked past its budget/);
+describe('deliveryConsumptionTimeoutOrDefault — timeout validation', () => {
+  const prev = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+
+  afterEach(() => {
+    if (prev === undefined) delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = prev;
   });
 
-  it('ACP awaiting-acceptance parks up to the budget, then dead-letters', async () => {
-    expect(MAX_ACP_STEER_PARKS * MESSAGE_DELIVERY_PARK_MS).toBeGreaterThanOrEqual(
-      ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS
-    );
-    const session = new MockSession();
-    session.feedResult = { outcome: 'awaiting_acceptance' };
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
-    });
-
-    let current = steerJob(repo, 'msg-acp-accept-bound');
-    for (let i = 0; i < MAX_ACP_STEER_PARKS; i++) {
-      const result = await handler(current);
-      expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
-      expect(repo.getJob(current.id)?.retryCount).toBe(0);
-      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
-      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      expect(next).toBeTruthy();
-      current = next!;
-    }
-    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_ACP_STEER_PARKS);
-    await expect(handler(current)).rejects.toThrow(/awaited acceptance past its budget/);
+  it('defaults to 30s when unset', () => {
+    delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    expect(deliveryConsumptionTimeoutOrDefault()).toBe(30_000);
   });
 
-  it('a persisted-submitted ACP steer parks to the same acceptance-sized budget, then dead-letters', async () => {
-    const session = new MockSession();
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'steer', sendStatus: 'submitted' }),
-    });
-
-    let current = steerJob(repo, 'msg-acp-submitted-bound');
-    for (let i = 0; i < MAX_ACP_STEER_PARKS; i++) {
-      const result = await handler(current);
-      expect(result).toMatchObject({ parked: 'acp_awaiting_acceptance' });
-      expect(session.feedCalls).toBe(0);
-      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
-      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      current = next!;
-    }
-    expect(repo.getParkCount(current.id)).toBeGreaterThanOrEqual(MAX_ACP_STEER_PARKS);
-    await expect(handler(current)).rejects.toThrow(/awaited acceptance past its budget/);
+  it('honors a positive explicit value', () => {
+    expect(deliveryConsumptionTimeoutOrDefault(1234)).toBe(1234);
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '5000';
+    expect(deliveryConsumptionTimeoutOrDefault()).toBe(5000);
   });
 
-  it('a steer parked behind an OPEN human gate keeps parking past the budget (Codex #11)', async () => {
-    const session = new MockSession();
-    session.feedResult = { outcome: 'park' };
-    session.waitingForInput = true;
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
-    });
-
-    let current = steerJob(repo, 'msg-gate-open');
-    for (let i = 0; i < MAX_STEER_PARKS + 5; i++) {
-      const result = await handler(current);
-      expect(result).toMatchObject({ parked: 'turn_blocked_gate_open' });
-      expect(repo.getJob(current.id)?.retryCount).toBe(0);
-      expect(repo.getParkCount(current.id)).toBe(0);
-      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
-      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      expect(next).toBeTruthy();
-      current = next!;
-    }
-    session.waitingForInput = false;
-    for (let i = 0; i < MAX_STEER_PARKS; i++) {
-      const result = await handler(current);
-      expect(result).toMatchObject({ parked: 'turn_blocked' });
-      db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(current.id);
-      const [next] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      current = next!;
-    }
-    await expect(handler(current)).rejects.toThrow(/parked past its budget/);
+  it('rejects negative, zero, and non-finite values and falls back to 30s', () => {
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '-5';
+    expect(deliveryConsumptionTimeoutOrDefault()).toBe(30_000);
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '0';
+    expect(deliveryConsumptionTimeoutOrDefault()).toBe(30_000);
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = 'not-a-number';
+    expect(deliveryConsumptionTimeoutOrDefault()).toBe(30_000);
+    expect(deliveryConsumptionTimeoutOrDefault(-1)).toBe(30_000);
+    expect(deliveryConsumptionTimeoutOrDefault(Number.NaN)).toBe(30_000);
   });
 });
 

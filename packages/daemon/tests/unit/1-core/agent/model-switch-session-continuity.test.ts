@@ -516,7 +516,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
   );
 
   it(
-    'TODO(message-delivery redesign, #1686): a model-switch restart currently re-feeds a UUID whose durable consumed marker exists — flip refedToTransport to false when the redesign fixes it',
+    'a model-switch restart does NOT re-feed a UUID whose durable consumed marker exists',
     async () => {
       const db = await createTestDb();
       try {
@@ -563,7 +563,7 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
         const refedToTransport = !(
           secondSubmission.done === true && secondSubmission.value === undefined
         );
-        expect(refedToTransport).toBe(true);
+        expect(refedToTransport).toBe(false);
       } finally {
         db.close();
       }

@@ -13,7 +13,6 @@ import {
   applyFlushOwnershipGate,
   applyInjectContextResetGate,
   applyInjectFinalGate,
-  classifyTurnCompletion,
   decideInjectDelivery,
   decideReconcileAdmission,
   decideTurnEndFlush,
@@ -21,7 +20,6 @@ import {
   type InjectDeliveryDecision,
   type InjectDeliveryInput,
   selectStrandedDeliveries,
-  shouldRearmSpuriousTurnEnd,
   type TurnEndFlushCtx,
   type TurnEndFlushInput,
   type TurnEndFlushPlan,
@@ -32,10 +30,8 @@ import {
   planFlushDelivery,
 } from '../../../../src/lib/agent/message-ownership-gates';
 import {
-  classifyTurnCompletion as coreClassifyTurnCompletion,
   decideReconcileAdmission as coreDecideReconcileAdmission,
   selectStrandedDeliveries as coreSelectStrandedDeliveries,
-  shouldRearmSpuriousTurnEnd as coreShouldRearmSpuriousTurnEnd,
 } from '../../../../src/lib/agent/turn-outcome-classification';
 
 function makeInjectInput(overrides: Partial<InjectDeliveryInput> = {}): InjectDeliveryInput {
@@ -569,10 +565,8 @@ describe('message turn-end flush decision pipeline', () => {
   });
 });
 
-describe('turn-outcome point decisions re-exported for one import site', () => {
+describe('reconcile helpers re-exported for one import site', () => {
   test('re-exports alias the core implementations', () => {
-    expect(classifyTurnCompletion).toBe(coreClassifyTurnCompletion);
-    expect(shouldRearmSpuriousTurnEnd).toBe(coreShouldRearmSpuriousTurnEnd);
     expect(decideReconcileAdmission).toBe(coreDecideReconcileAdmission);
     expect(selectStrandedDeliveries).toBe(coreSelectStrandedDeliveries);
   });

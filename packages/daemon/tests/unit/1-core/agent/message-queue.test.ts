@@ -226,6 +226,25 @@ describe('MessageQueue', () => {
     });
   });
 
+  describe('pruneYielded', () => {
+    it('settles the acknowledgment of a pruned consumed entry instead of orphaning it', async () => {
+      const admission = queue.enqueueWithId('prune-consumed', 'hello', false, { durable: true });
+      const waiter = queue.waitForPendingOrInFlight('prune-consumed');
+      queue.start();
+      const generator = queue.messageGenerator(testSessionId);
+      await generator.next();
+      expect(queue.hasYielded('prune-consumed')).toBe(true);
+
+      const removed = queue.pruneYielded((id) => id === 'prune-consumed');
+      expect(removed).toEqual(['prune-consumed']);
+      await admission;
+      await waiter?.acknowledgment;
+      expect(queue.hasYielded('prune-consumed')).toBe(false);
+      expect(queue.size()).toBe(0);
+      queue.stop();
+    });
+  });
+
   describe('hasPendingOrInFlight', () => {
     it('reports false for an unknown id and true while queued/claimed/yielded', async () => {
       expect(queue.hasPendingOrInFlight('nope')).toBe(false);

@@ -911,7 +911,7 @@ describe('InterruptHandler', () => {
       return { db, queue, handler, published, sendStatusOf };
     }
 
-    it('rejects pending entries and settles yielded in-flight entries when the interrupt clears the queue', async () => {
+    it('rejects pending and yielded in-flight entries when the interrupt clears the queue', async () => {
       const f = await makeRealFixture('sess-int-queue');
       try {
         f.queue.start();
@@ -927,7 +927,7 @@ describe('InterruptHandler', () => {
 
         await f.handler.handleInterrupt();
 
-        await expect(inFlight).resolves.toBeUndefined();
+        await expect(inFlight).rejects.toThrow('Interrupted by user');
         expect(await queuedOutcome).toBe('Interrupted by user');
         expect(f.queue.size()).toBe(0);
       } finally {

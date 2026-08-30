@@ -1,158 +1,43 @@
-import {
-  type DriveTurnOutcome,
-  type FeedSteerOutcome,
-  isUniqueConstraintError,
-  MAX_ACP_STEER_PARKS,
-  MAX_STEER_PARKS,
-  MESSAGE_DELIVERY_PARK_MS,
-} from './message-delivery.ts';
+import type { DeliveryOutcome } from './message-delivery.ts';
 
 export type HandlerJobResult =
-  | { outcome: 'completed'; skipped?: 'turn_terminated' }
+  | { outcome: 'completed' }
   | { outcome: 'aborted' }
-  | { outcome: 'consumed' }
-  | { outcome: 'superseded'; promoted: 'turn' | 'steer' }
-  | {
-      parked:
-        | 'sdk_resume_choice'
-        | 'context_clear_boundary'
-        | 'limit_recovery'
-        | 'turn_blocked'
-        | 'turn_blocked_gate_open'
-        | 'acp_awaiting_acceptance'
-        | 'steer_ack_timeout'
-        | 'stuck_initializing';
-      retryAt: number;
-    };
+  | { parked: string; retryAt: number };
 
 export type HandlerOutcomeRoute =
   | { deadLetter: string }
   | {
-      mutation: 'none' | 'requeue' | 'requeueParked' | 'requeueAs';
+      mutation: 'none' | 'requeue';
       retryAt?: number;
-      requeueRole?: 'turn' | 'steer';
       settleSkipped: boolean;
-      reclaimSkip?: 'turn_terminated';
       result: HandlerJobResult;
     };
 
-export function routeDriveTurnOutcome(result: DriveTurnOutcome): HandlerOutcomeRoute {
-  if (result.outcome === 'blocked') {
-    return {
-      mutation: 'requeue',
-      retryAt: result.retryAt,
-      settleSkipped: false,
-      result: {
-        parked:
-          result.reason === 'context_clear_boundary'
-            ? 'context_clear_boundary'
-            : 'sdk_resume_choice',
-        retryAt: result.retryAt,
-      },
-    };
-  }
-  if (result.outcome === 'recovery_pending') {
-    return {
-      mutation: 'requeue',
-      retryAt: result.retryAt,
-      settleSkipped: false,
-      result: { parked: 'limit_recovery', retryAt: result.retryAt },
-    };
+export function routeDriveTurnOutcome(result: DeliveryOutcome): HandlerOutcomeRoute {
+  if (result.outcome === 'completed') {
+    return { mutation: 'none', settleSkipped: false, result: { outcome: 'completed' } };
   }
   if (result.outcome === 'aborted') {
     return { mutation: 'none', settleSkipped: true, result: { outcome: 'aborted' } };
   }
-  if (result.outcome === 'turn_terminated') {
+  if (result.outcome === 'blocked') {
+    const parked =
+      result.reason === 'context_clear_boundary'
+        ? 'context_clear_boundary'
+        : result.reason === 'limit_recovery'
+          ? 'limit_recovery'
+          : 'sdk_resume_choice';
     return {
-      mutation: 'none',
-      settleSkipped: true,
-      reclaimSkip: 'turn_terminated',
-      result: { outcome: 'completed', skipped: 'turn_terminated' },
+      mutation: 'requeue',
+      retryAt: result.retryAt,
+      settleSkipped: false,
+      result: { parked, retryAt: result.retryAt },
     };
   }
   return { mutation: 'none', settleSkipped: false, result: { outcome: 'completed' } };
 }
 
-export function routeFeedSteerOutcome(
-  result: FeedSteerOutcome,
-  args: { parkCount: number; waitingForInput: boolean; now: number }
-): HandlerOutcomeRoute {
-  if (result.outcome === 'aborted') {
-    return { mutation: 'none', settleSkipped: true, result: { outcome: 'aborted' } };
-  }
-  if (result.outcome === 'park') {
-    if (args.waitingForInput) {
-      const retryAt = args.now + MESSAGE_DELIVERY_PARK_MS;
-      return {
-        mutation: 'requeue',
-        retryAt,
-        settleSkipped: false,
-        result: { parked: 'turn_blocked_gate_open', retryAt },
-      };
-    }
-    if (args.parkCount >= MAX_STEER_PARKS) {
-      return { deadLetter: 'Steer parked past its budget — owning turn never unblocked' };
-    }
-    const retryAt = args.now + MESSAGE_DELIVERY_PARK_MS;
-    return {
-      mutation: 'requeueParked',
-      retryAt,
-      settleSkipped: false,
-      result: { parked: 'turn_blocked', retryAt },
-    };
-  }
-  if (result.outcome === 'awaiting_acceptance') {
-    if (args.parkCount >= MAX_ACP_STEER_PARKS) {
-      return {
-        deadLetter: 'ACP steer awaited acceptance past its budget — subprocess never accepted',
-      };
-    }
-    const retryAt = args.now + MESSAGE_DELIVERY_PARK_MS;
-    return {
-      mutation: 'requeueParked',
-      retryAt,
-      settleSkipped: false,
-      result: { parked: 'acp_awaiting_acceptance', retryAt },
-    };
-  }
-  if (result.outcome === 'ack_timeout') {
-    if (args.parkCount >= MAX_STEER_PARKS) {
-      return {
-        deadLetter:
-          'Steer acknowledgment timed out past its budget — query never consumed the steer',
-      };
-    }
-    const retryAt = args.now + MESSAGE_DELIVERY_PARK_MS;
-    return {
-      mutation: 'requeueParked',
-      retryAt,
-      settleSkipped: false,
-      result: { parked: 'steer_ack_timeout', retryAt },
-    };
-  }
-  if (result.outcome === 'promote') {
-    return {
-      mutation: 'requeueAs',
-      requeueRole: 'turn',
-      retryAt: args.now,
-      settleSkipped: false,
-      result: { outcome: 'superseded', promoted: 'turn' },
-    };
-  }
-  return { mutation: 'none', settleSkipped: false, result: { outcome: 'consumed' } };
-}
-
-export function routeSteerPromoteFallback(
-  err: unknown,
-  args: { now: number }
-): HandlerOutcomeRoute | null {
-  if (!isUniqueConstraintError(err)) return null;
-  const retryAt = args.now + MESSAGE_DELIVERY_PARK_MS;
-  return {
-    mutation: 'requeueAs',
-    requeueRole: 'steer',
-    retryAt,
-    settleSkipped: false,
-    result: { outcome: 'superseded', promoted: 'steer' },
-  };
+export function routeFeedSteerOutcome(result: DeliveryOutcome): HandlerOutcomeRoute {
+  return routeDriveTurnOutcome(result);
 }
