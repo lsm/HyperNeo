@@ -95,42 +95,39 @@ export function applyAdmitGate(ctx: RestoredWorkerAdmissionCtx): RestoredWorkerA
   return decided(ctx, true);
 }
 
-type AdmissionGate = (
-  ctx: RestoredWorkerAdmissionCtx
-) => RestoredWorkerAdmissionCtx | Promise<RestoredWorkerAdmissionCtx>;
-
-function admissionRun(
-  name: string,
-  gates: ReadonlyArray<AdmissionGate>
-): (input: Omit<RestoredWorkerAdmissionCtx, 'decision'>) => Promise<RestoredWorkerAdmissionCtx> {
-  let pipeline = (
-    superpipe<{ hasDecided: (ctx: RestoredWorkerAdmissionCtx) => boolean }>({
-      hasDecided: (ctx: RestoredWorkerAdmissionCtx): boolean => ctx.decision !== null,
-    })(name) as PipelineAPI
-  ).input(['ctx']);
-  for (const gate of gates) {
-    pipeline = pipeline.pipe(gate, 'ctx', 'ctx').pipe('!hasDecided', 'ctx');
-  }
-  const run = pipeline.endAsync('ctx');
-  return async (input) => (await run({ ...input, decision: null })) as RestoredWorkerAdmissionCtx;
-}
-
-const restoredWorkerAdmissionRun = admissionRun('restored-worker-start-admission', [
-  applyManualQueryModeGate,
-  applyDaemonCleanupGate,
-  applyTaskGate,
-  applyWorkflowRunGate,
-  applySpaceLookupGate,
-  applySessionStatusGate,
-  applyPostApprovalGate,
-  applyTerminalForSpawnGate,
-  applyExecutionGate,
-  applyAdmitGate,
-]);
+const restoredWorkerAdmissionRun = (
+  superpipe<{ hasDecided: (ctx: RestoredWorkerAdmissionCtx) => boolean }>({
+    hasDecided: (ctx: RestoredWorkerAdmissionCtx): boolean => ctx.decision !== null,
+  })('restored-worker-start-admission') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(applyManualQueryModeGate, 'ctx', 'ctx')
+  .pipe('!hasDecided', 'ctx')
+  .pipe(applyDaemonCleanupGate, 'ctx', 'ctx')
+  .pipe('!hasDecided', 'ctx')
+  .pipe(applyTaskGate, 'ctx', 'ctx')
+  .pipe('!hasDecided', 'ctx')
+  .pipe(applyWorkflowRunGate, 'ctx', 'ctx')
+  .pipe('!hasDecided', 'ctx')
+  .pipe(applySpaceLookupGate, 'ctx', 'ctx')
+  .pipe('!hasDecided', 'ctx')
+  .pipe(applySessionStatusGate, 'ctx', 'ctx')
+  .pipe('!hasDecided', 'ctx')
+  .pipe(applyPostApprovalGate, 'ctx', 'ctx')
+  .pipe('!hasDecided', 'ctx')
+  .pipe(applyTerminalForSpawnGate, 'ctx', 'ctx')
+  .pipe('!hasDecided', 'ctx')
+  .pipe(applyExecutionGate, 'ctx', 'ctx')
+  .pipe('!hasDecided', 'ctx')
+  .pipe(applyAdmitGate, 'ctx', 'ctx')
+  .endAsync('ctx');
 
 export async function decideRestoredWorkerAdmission(
   input: RestoredWorkerAdmissionInput
 ): Promise<boolean> {
-  const ctx = await restoredWorkerAdmissionRun(input);
+  const ctx = (await restoredWorkerAdmissionRun({
+    ...input,
+    decision: null,
+  })) as RestoredWorkerAdmissionCtx;
   return ctx.decision ?? false;
 }
