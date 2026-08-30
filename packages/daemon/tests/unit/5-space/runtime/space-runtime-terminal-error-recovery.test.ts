@@ -155,12 +155,13 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
         }
         return SESSION;
       },
-      injectRuntimeRecoveryMessage:
-        overrides.injectRuntimeRecoveryMessage ??
-        (async (sessionId: string, message: string) => {
-          injected.push({ sessionId, message });
-          return `continue-msg:${injected.length}`;
-        }),
+      injectRuntimeRecoveryMessage: async (sessionId: string, message: string) => {
+        injected.push({ sessionId, message });
+        if (overrides.injectRuntimeRecoveryMessage) {
+          return overrides.injectRuntimeRecoveryMessage(sessionId, message);
+        }
+        return `continue-msg:${injected.length}`;
+      },
       injectIntoTaskAgent: async () => ({ injected: false, reason: 'no-session' }),
       _injected: injected,
       _cancelled: cancelled,
@@ -796,6 +797,95 @@ describe('SpaceRuntime — terminal-error idle recovery (#673)', () => {
     expect(nodeExecutionRepo.getById(executionId)?.agentSessionId).toBeNull();
     expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
     expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+  });
+
+  test('an accepted-but-unconsumed continue prompt does not escalate after the grace period', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'error_during_execution',
+      errors: ['Codex 400 invalid_request_error'],
+    });
+    const promptDbId = 'continue-prompt-parked';
+    const seedPromptRow = (status: 'enqueued' | 'failed') =>
+      db
+        .prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
+           VALUES (?, ?, 'user', ?, ?, ?, 'system', 1, 0)`
+        )
+        .run(
+          promptDbId,
+          SESSION,
+          JSON.stringify({ type: 'user' }),
+          new Date().toISOString(),
+          status
+        );
+    seedPromptRow('enqueued');
+    const tam = makeTam({
+      injectRuntimeRecoveryMessage: async () => promptDbId,
+    });
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    resumeToIdle(executionId, {
+      subtype: 'error_during_execution',
+      errors: ['Codex 400 invalid_request_error'],
+    });
+    seedPromptRow('enqueued');
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+  });
+
+  test('a dead-lettered continue prompt escalates to blocked at the failure cap', async () => {
+    const { runId, taskId, executionId } = seedIdleErrorRun({
+      subtype: 'error_during_execution',
+      errors: ['Codex 400 invalid_request_error'],
+    });
+    const promptDbId = 'continue-prompt-dead';
+    const seedPromptRow = () =>
+      db
+        .prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, origin, is_renderable, is_terminal)
+           VALUES (?, ?, 'user', ?, ?, 'failed', 'system', 1, 0)`
+        )
+        .run(
+          promptDbId,
+          SESSION,
+          JSON.stringify({ type: 'user' }),
+          new Date(Date.now() - 60_000).toISOString()
+        );
+    seedPromptRow();
+    const tam = makeTam({
+      injectRuntimeRecoveryMessage: async () => promptDbId,
+    });
+    const rt = new SpaceRuntime(buildConfig(tam));
+    (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+
+    await rt.executeTick();
+    expect(tam._injected).toHaveLength(1);
+
+    resumeToIdle(executionId, {
+      subtype: 'error_during_execution',
+      errors: ['Codex 400 invalid_request_error'],
+    });
+    seedPromptRow();
+
+    await rt.executeTick();
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('idle');
+
+    await rt.executeTick();
+
+    expect(tam._injected).toHaveLength(1);
+    expect(nodeExecutionRepo.getById(executionId)?.status).toBe('blocked');
+    expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
+    expect(taskRepo.getTask(taskId)?.status).toBe('blocked');
+    expect(taskRepo.getTask(taskId)?.result).toContain('dead-lettered');
   });
 
   test('identical api-error signature recurrence escalates to blocked', async () => {

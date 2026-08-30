@@ -381,6 +381,7 @@ interface TerminalErrorContinueState {
   lastRetriedErrorSignature: string | null;
   lastContinueAt: number | null;
   failedInjectionCount: number;
+  lastContinueMessageId: string | null;
 }
 
 interface ReconciliationGate {
@@ -7146,6 +7147,7 @@ export class SpaceRuntime {
           lastRetriedErrorSignature: null,
           lastContinueAt: null,
           failedInjectionCount: 0,
+          lastContinueMessageId: null,
         } satisfies TerminalErrorContinueState);
       this.terminalErrorContinueStates.set(key, state);
 
@@ -7155,11 +7157,44 @@ export class SpaceRuntime {
         state.lastRetriedErrorSignature = null;
         state.lastContinueAt = null;
         state.failedInjectionCount = 0;
+        state.lastContinueMessageId = null;
       }
 
       const signature = this.computeTerminalErrorSignature(lastMessage);
 
       if (state.lastContinueAt !== null && now - state.lastContinueAt < graceMs) {
+        continue;
+      }
+
+      const lastPromptDelivery = this.classifyLastContinuePrompt(state);
+      if (lastPromptDelivery === 'pending') {
+        log.debug(
+          `Node ${execution.workflowNodeId} runtime-continue prompt is still awaiting consumption ` +
+            `(execution=${execution.id}); not classifying the terminal result as recurrent yet`
+        );
+        continue;
+      }
+      if (lastPromptDelivery === 'dead') {
+        state.failedInjectionCount += 1;
+        state.lastContinueAt = now;
+        if (state.failedInjectionCount >= MAX_TERMINAL_ERROR_CONTINUE_RETRIES) {
+          await this.escalateTerminalErrorToBlocked(
+            runId,
+            spaceId,
+            canonicalTask,
+            execution,
+            lastMessage,
+            tam,
+            `runtime continue prompt dead-lettered ${state.failedInjectionCount} time(s) without being consumed (${signature})`
+          );
+          return 'blocked';
+        }
+        log.warn(
+          `Runtime-continue prompt for terminal-error idle node ${execution.workflowNodeId} ` +
+            `dead-lettered without being consumed ` +
+            `(failure ${state.failedInjectionCount}/${MAX_TERMINAL_ERROR_CONTINUE_RETRIES}); ` +
+            `escalating unless it clears: execution=${execution.id} signature=${signature}`
+        );
         continue;
       }
 
@@ -7207,7 +7242,7 @@ export class SpaceRuntime {
       }
 
       try {
-        await tam.injectRuntimeRecoveryMessage(
+        const continueMessageId = await tam.injectRuntimeRecoveryMessage(
           sessionId,
           this.buildTerminalErrorContinueMessage(execution, lastMessage)
         );
@@ -7215,6 +7250,7 @@ export class SpaceRuntime {
         state.lastContinueAt = now;
         state.lastRetriedErrorSignature = signature;
         state.failedInjectionCount = 0;
+        state.lastContinueMessageId = continueMessageId;
         log.warn(
           `Node ${execution.workflowNodeId} ended idle on a terminal error result; ` +
             `sent runtime continue ${state.continueCount}/${MAX_TERMINAL_ERROR_CONTINUE_RETRIES}: ` +
@@ -7233,6 +7269,21 @@ export class SpaceRuntime {
       }
     }
     return 'none';
+  }
+
+  private classifyLastContinuePrompt(
+    state: TerminalErrorContinueState
+  ): 'consumed' | 'pending' | 'dead' {
+    if (state.lastContinueMessageId === null || state.lastSessionId === null) return 'consumed';
+    const repo = this.getSdkMessageRepo();
+    const sessionId = state.lastSessionId;
+    const dbId = state.lastContinueMessageId;
+    if (repo.getMessageByStatusAndDbId(sessionId, 'consumed', dbId)) return 'consumed';
+    if (repo.getMessageByStatusAndDbId(sessionId, 'failed', dbId)) return 'dead';
+    for (const pending of ['enqueued', 'submitted', 'deferred'] as const) {
+      if (repo.getMessageByStatusAndDbId(sessionId, pending, dbId)) return 'pending';
+    }
+    return 'consumed';
   }
 
   private detectSilentStallForAttention(
