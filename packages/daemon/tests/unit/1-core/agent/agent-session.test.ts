@@ -1249,6 +1249,44 @@ describe('AgentSession', () => {
       );
     });
 
+    it('retryNowAfterRateLimit releases the owning turn behind a steer episode', async () => {
+      const rescheduleDelivery = mock(() => true);
+      mockDb.getJobQueueRepo = mock(
+        () =>
+          ({
+            rescheduleDelivery,
+            getActiveDeliveryRole: mock(() => 'steer'),
+            getActiveTurnDeliveryMessageUuid: mock(() => 'msg-owning-turn'),
+          }) as never
+      );
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        retryNow: mock(() => true),
+        getPersistedEpisodeMessageUuid: () => 'msg-steer-episode',
+      } as never;
+
+      const resumed = await agentSession.retryNowAfterRateLimit();
+
+      expect(resumed).toBe(true);
+      expect(rescheduleDelivery).toHaveBeenCalledWith(
+        'test-session-id',
+        'msg-owning-turn',
+        expect.any(Number)
+      );
+    });
+
+    it('retryNowAfterRateLimit reports failure when the parked delivery is gone', async () => {
+      const rescheduleDelivery = mock(() => false);
+      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        retryNow: mock(() => true),
+        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
+      } as never;
+
+      const resumed = await agentSession.retryNowAfterRateLimit();
+
+      expect(resumed).toBe(false);
+    });
+
     it('startStreamingQuery refuses to start an archived session', async () => {
       const start = mock(async () => {});
       (agentSession as unknown as { queryRunner: unknown }).queryRunner = { start } as never;

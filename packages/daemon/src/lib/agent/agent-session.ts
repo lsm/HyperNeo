@@ -1209,22 +1209,28 @@ export class AgentSession
         this.logger.warn('Failed to inspect the persisted rate-limit cooldown on cancel.');
       }
     }
-    const jobQueue = this.db.getJobQueueRepo();
     const episodeMessageId = episodeMessage?.uuid ?? persistedEpisodeMessageId;
-    const episodeIsSteer =
-      episodeMessageId !== undefined &&
-      jobQueue?.getActiveDeliveryRole?.(this.session.id, episodeMessageId) === 'steer';
-    const owningTurnMessageId =
-      episodeMessageId !== undefined && !episodeIsSteer
-        ? episodeMessageId
-        : (jobQueue?.getActiveTurnDeliveryMessageUuid?.(this.session.id) ?? episodeMessageId);
+    const owningTurnMessageId = this.resolveRateLimitEpisodeDeliveryUuid(episodeMessageId);
     if (owningTurnMessageId) {
       try {
-        jobQueue?.cancelDelivery(this.session.id, owningTurnMessageId);
+        this.db.getJobQueueRepo()?.cancelDelivery(this.session.id, owningTurnMessageId);
       } catch (error) {
         this.logger.warn('Failed to cancel the parked delivery for the retry episode:', error);
       }
     }
+  }
+
+  private resolveRateLimitEpisodeDeliveryUuid(
+    episodeMessageId: string | undefined
+  ): string | undefined {
+    const jobQueue = this.db.getJobQueueRepo();
+    if (episodeMessageId === undefined) {
+      return jobQueue?.getActiveTurnDeliveryMessageUuid?.(this.session.id) ?? undefined;
+    }
+    if (jobQueue?.getActiveDeliveryRole?.(this.session.id, episodeMessageId) === 'steer') {
+      return jobQueue?.getActiveTurnDeliveryMessageUuid?.(this.session.id) ?? episodeMessageId;
+    }
+    return episodeMessageId;
   }
 
   async retryNowAfterRateLimit(): Promise<boolean> {
@@ -1235,15 +1241,27 @@ export class AgentSession
       return false;
     }
     if (persistedEpisodeMessageUuid !== null) {
-      try {
-        this.db
-          .getJobQueueRepo()
-          ?.rescheduleDelivery?.(this.session.id, persistedEpisodeMessageUuid, Date.now());
-      } catch (error) {
-        this.logger.warn(
-          'Failed to release the parked delivery for the persisted cooldown retry:',
-          error
-        );
+      const owningTurnMessageId = this.resolveRateLimitEpisodeDeliveryUuid(
+        persistedEpisodeMessageUuid
+      );
+      if (owningTurnMessageId) {
+        try {
+          const released = this.db
+            .getJobQueueRepo()
+            ?.rescheduleDelivery?.(this.session.id, owningTurnMessageId, Date.now());
+          if (released === false) {
+            this.logger.warn(
+              'retryNowAfterRateLimit: the parked delivery for the persisted episode is gone.'
+            );
+            return false;
+          }
+        } catch (error) {
+          this.logger.warn(
+            'Failed to release the parked delivery for the persisted cooldown retry:',
+            error
+          );
+          return false;
+        }
       }
     }
     return true;
