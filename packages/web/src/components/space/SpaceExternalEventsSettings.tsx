@@ -768,7 +768,7 @@ export function SpaceExternalEventsSettings({
             <div class="mt-3 flex flex-wrap items-center gap-3">
               <label
                 class={cn(
-                  'flex items-center gap-2 text-xs text-gray-300',
+                  'flex items-center gap-2 text-xs text-fg-soft',
                   (disabled ||
                     !githubControlsEnabled ||
                     busy === 'github:self-echo' ||
@@ -783,12 +783,12 @@ export function SpaceExternalEventsSettings({
                     disabled || !githubControlsEnabled || busy === 'github:self-echo' || panelBusy
                   }
                   onChange={() => setFilterCurrentUser(!spaceFilterCurrentUser)}
-                  class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                  class="h-4 w-4 rounded border-line-strong bg-fill-strong text-accent focus:ring-accent focus:ring-offset-surface"
                 />
                 Filter events by current login user
               </label>
               {tokenStatus?.login && (
-                <span class="text-xs text-gray-400">current login: {tokenStatus.login}</span>
+                <span class="text-xs text-fg-muted">current login: {tokenStatus.login}</span>
               )}
             </div>
 
