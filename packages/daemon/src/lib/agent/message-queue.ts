@@ -141,6 +141,7 @@ export class MessageQueue {
   private outstandingCompactionBoundaries: Array<{ kind: 'daemon' | 'user'; id?: string }> = [];
   private unboundedCompactOutcome: boolean = false;
   private internalCompactionBuffered: boolean = false;
+  private daemonFrontTerminalResult: boolean = false;
   private nonCompactionSentSinceBoundary: boolean = false;
   private recentSentPrompts: Map<string, string | MessageContent[]> = new Map();
 
@@ -221,7 +222,11 @@ export class MessageQueue {
       }
       this.outstandingCompactionBoundaries.shift();
       this.unboundedCompactOutcome = false;
+      if (this.internalCompactionsAwaitingBoundary === 0) {
+        this.internalCompactionBuffered = false;
+      }
     }
+    this.daemonFrontTerminalResult = false;
     this.removePendingInternalCompactions();
     this.recentSentPrompts.clear();
     this.wakeWaiters();
@@ -269,14 +274,13 @@ export class MessageQueue {
     return this.internalCompactionBuffered;
   }
 
-  clearInternalCompactionBuffered(): void {
-    this.internalCompactionBuffered = false;
+  noteResultForCompactionRecovery(numTurns: number): void {
+    this.daemonFrontTerminalResult =
+      numTurns === 0 && this.outstandingCompactionBoundaries[0]?.kind === 'daemon';
   }
 
-  restoreInternalCompactionBuffered(): void {
-    if (this.internalCompactionsAwaitingBoundary > 0) {
-      this.internalCompactionBuffered = true;
-    }
+  canRecoverBufferedCompaction(): boolean {
+    return this.daemonFrontTerminalResult;
   }
 
   removePendingInternalCompactions(): number {
@@ -508,6 +512,7 @@ export class MessageQueue {
     this.internalCompactionResultAttributionArmed = false;
     this.outstandingCompactionBoundaries = [];
     this.unboundedCompactOutcome = false;
+    this.daemonFrontTerminalResult = false;
     this.internalCompactionBuffered = false;
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
@@ -733,6 +738,7 @@ export class MessageQueue {
     this.internalCompactionResultAttributionArmed = false;
     this.outstandingCompactionBoundaries = [];
     this.unboundedCompactOutcome = false;
+    this.daemonFrontTerminalResult = false;
     this.internalCompactionBuffered = false;
     this.nonCompactionSentSinceBoundary = false;
     this.cancelInternalCompactionEntries(true, true);

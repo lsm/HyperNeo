@@ -1071,9 +1071,9 @@ export class SDKMessageHandler {
         isSDKResultMessage(message) &&
         !this.isInvocationStale(invocationGeneration)
       ) {
-        this.ctx.messageQueue.expireUserCompactionMarkerAtResult?.(
-          (message as SDKResultMessage).num_turns
-        );
+        const numTurns = (message as SDKResultMessage).num_turns;
+        this.ctx.messageQueue.expireUserCompactionMarkerAtResult?.(numTurns);
+        this.ctx.messageQueue.noteResultForCompactionRecovery?.(numTurns);
       }
       const stampsInternalCompactionTurn =
         isTopLevelResult &&
@@ -1101,6 +1101,13 @@ export class SDKMessageHandler {
         releaseTurnEndGate = null;
         if (isSDKCompactBoundary(message)) {
           this.applyCompactBoundaryOwnership(message, invocationGeneration);
+        }
+        if (
+          isSDKStatusMessage(message) &&
+          (message as { compact_result?: string }).compact_result !== undefined &&
+          !this.isInvocationStale(invocationGeneration)
+        ) {
+          this.ctx.messageQueue.noteCompactOutcome?.();
         }
         if (this.matchesArmedClearResult(message)) {
           this.clearIdleSuppression();
@@ -1907,13 +1914,6 @@ export class SDKMessageHandler {
       }
     }
     if (statusMsg.status === 'compacting') {
-      if (
-        !this.isInvocationStale(invocationGeneration) &&
-        this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
-        this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()
-      ) {
-        this.ctx.messageQueue.clearInternalCompactionBuffered();
-      }
       await stateManager.setCompacting(true);
     }
   }
@@ -1936,12 +1936,6 @@ export class SDKMessageHandler {
       this.ctx.messageQueue.consumeCompactionBoundary();
     } else {
       this.ctx.messageQueue.resetCompactOutcome?.();
-      if (
-        this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
-        this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()
-      ) {
-        this.ctx.messageQueue.restoreInternalCompactionBuffered?.();
-      }
     }
   }
 
@@ -2067,7 +2061,8 @@ export class SDKMessageHandler {
           this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
           !this.ctx.messageQueue.hasQueuedInternalCompaction() &&
           !this.ctx.messageQueue.hasInFlightInternalCompaction() &&
-          !this.ctx.messageQueue.hasBufferedInternalCompaction() &&
+          (!this.ctx.messageQueue.hasBufferedInternalCompaction() ||
+            (this.ctx.messageQueue.canRecoverBufferedCompaction?.() ?? false)) &&
           !this.ctx.stateManager.getIsCompacting();
         if (this.compactionEnqueuedMidTurnGeneration !== undefined) {
           const deferralOwnsThisTurn =
