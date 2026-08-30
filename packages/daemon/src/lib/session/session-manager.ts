@@ -576,14 +576,14 @@ export class SessionManager {
   }
 
   async getSessionForControl(sessionId: string): Promise<AgentSession | null> {
-    const session = await this.sessionCache.getAsync(sessionId);
-    if (!session) return null;
-    const inFlight = this.workflowMcpProvisioning.get(sessionId);
-    if (inFlight) {
+    let session = await this.sessionCache.getAsync(sessionId);
+    while (session) {
+      const inFlight = this.workflowMcpProvisioning.get(sessionId);
+      if (!inFlight) return session;
       await inFlight.promise.catch(() => {});
-      return this.sessionCache.getAsync(sessionId);
+      session = await this.sessionCache.getAsync(sessionId);
     }
-    return session;
+    return null;
   }
 
   registerSession(agentSession: AgentSession): void {

@@ -2177,9 +2177,7 @@ export class TaskAgentManager {
   }
 
   private sessionManagerCleaningUp(): boolean {
-    const getCleanupState = (this.config.sessionManager as { getCleanupState?: () => CleanupState })
-      .getCleanupState;
-    const state = getCleanupState?.();
+    const state = this.config.sessionManager.getCleanupState?.();
     return state !== undefined && state !== CleanupState.IDLE;
   }
 

@@ -622,6 +622,65 @@ describe('SessionManager', () => {
       expect(firstSession).toBe(instanceB);
     });
 
+    it('holds the control barrier until replacement provisioning settles', async () => {
+      const sessionId = 'space:s1:task:t1:exec:e15';
+      const instanceA = makeWorkerFake(sessionId);
+      const instanceB = makeWorkerFake(sessionId);
+      sessionManager.registerSession(instanceA);
+
+      let signalFirstStarted: () => void = () => {};
+      const firstStarted = new Promise<void>((resolve) => {
+        signalFirstStarted = resolve;
+      });
+      let releaseFirst: () => void = () => {};
+      let releaseSecond: () => void = () => {};
+      let providerCalls = 0;
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock(
+          (session: AgentSession, options?: { onReplaySettled?: (succeeded: boolean) => void }) =>
+            new Promise<void>((resolve) => {
+              providerCalls += 1;
+              if (providerCalls === 1) {
+                signalFirstStarted();
+                releaseFirst = resolve;
+                return;
+              }
+              session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+              options?.onReplaySettled?.(true);
+              if (providerCalls === 2) {
+                releaseSecond = resolve;
+                return;
+              }
+              resolve();
+            })
+        ),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const first = sessionManager.getSessionAsync(sessionId);
+      await firstStarted;
+      const control = sessionManager.getSessionForControl(sessionId);
+      sessionManager.registerSession(instanceB);
+      const second = sessionManager.getSessionAsync(sessionId);
+      releaseFirst();
+
+      const winner = await Promise.race([
+        control.then((session) => ({ session })),
+        new Promise<{ timeout: true }>((resolve) => {
+          setTimeout(() => resolve({ timeout: true }), 20);
+        }),
+      ]);
+      expect(winner).toEqual({ timeout: true });
+
+      releaseSecond();
+      await expect(control).resolves.toBe(instanceB);
+      const [firstSession, secondSession] = await Promise.all([first, second]);
+      expect(firstSession).toBe(instanceB);
+      expect(secondSession).toBe(instanceB);
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(2);
+    });
+
     it('provisions the cache-current instance when the requested instance is displaced mid-await', async () => {
       const sessionId = 'space:s1:task:t1:exec:e6';
       const instanceA = makeWorkerFake(sessionId);

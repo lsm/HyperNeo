@@ -176,8 +176,11 @@ function makeRestoreManager(input: { queryMode?: string; cleanupState?: string }
   Object.defineProperty(manager, 'config', {
     value: {
       sessionManager: {
+        cleanupState: input.cleanupState,
         getCachedSession: () => session,
-        getCleanupState: () => input.cleanupState,
+        getCleanupState(): string | undefined {
+          return this.cleanupState;
+        },
       },
     },
   });
@@ -243,13 +246,13 @@ function makeCooldownManager(input: { watchdogRetryAt?: number | null }) {
 
 describe('TaskAgentManager restored rate-limit cooldown lookup', () => {
   it('returns the persisted retry time when no live watchdog owns the cooldown', () => {
-    const { manager } = makeCooldownManager({});
+    const manager = makeCooldownManager({});
 
     expect(manager.getRestoredRateLimitRetryAt(SESSION_ID)).toBe(1234);
   });
 
   it('returns null while a live watchdog cooldown is armed', () => {
-    const { manager } = makeCooldownManager({ watchdogRetryAt: 5678 });
+    const manager = makeCooldownManager({ watchdogRetryAt: 5678 });
 
     expect(manager.getRestoredRateLimitRetryAt(SESSION_ID)).toBeNull();
   });
