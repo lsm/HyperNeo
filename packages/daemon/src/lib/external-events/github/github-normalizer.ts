@@ -226,10 +226,8 @@ export function normalizeGitHubWebhook(
   } else if (eventType === 'pull_request_review') {
     const pr = asObject(root.pull_request);
     const review = asObject(root.review);
-    actor =
-      action === 'dismissed'
-        ? userFrom(root.sender ?? review.user)
-        : userFrom(review.user ?? root.sender);
+    const reviewer = userFrom(review.user ?? root.sender);
+    actor = action === 'dismissed' ? userFrom(root.sender ?? review.user) : reviewer;
     prNumber = getNumber(pr.number);
     body = getString(review.body);
     const reviewId = idString(review.id);
@@ -246,8 +244,8 @@ export function normalizeGitHubWebhook(
       reviewId,
       reviewNodeId: nodeId,
       state: getString(review.state).toUpperCase(),
-      reviewer: actor.login,
-      reviewerBot: isBotActor(actor.login, actor.type),
+      reviewer: reviewer.login,
+      reviewerBot: isBotActor(reviewer.login, reviewer.type),
       submittedAt: getString(review.submitted_at),
       commitId: getString(review.commit_id) || undefined,
     };

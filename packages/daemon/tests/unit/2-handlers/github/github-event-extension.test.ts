@@ -10744,6 +10744,33 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
+  test('normalizer keeps the causal sender as actor and the review author as reviewer on dismissal', async () => {
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review',
+      'delivery-review',
+      reviewWebhookPayload('dismissed', 'octocat', 'collaborator')
+    )!;
+    expect(normalized.actor).toBe('collaborator');
+    expect(normalized.payload?.reviewer).toBe('octocat');
+    expect(normalized.payload?.reviewerBot).toBe(false);
+
+    const botReview = {
+      ...reviewWebhookPayload('dismissed', 'octocat', 'collaborator'),
+      review: {
+        ...reviewWebhookPayload('dismissed', 'octocat', 'collaborator').review,
+        user: { login: 'dependabot[bot]', type: 'Bot' },
+      },
+    };
+    const normalizedBot = normalizeGitHubWebhook(
+      'pull_request_review',
+      'delivery-review-2',
+      botReview
+    )!;
+    expect(normalizedBot.actor).toBe('collaborator');
+    expect(normalizedBot.payload?.reviewer).toBe('dependabot[bot]');
+    expect(normalizedBot.payload?.reviewerBot).toBe(true);
+  });
+
   test("poll: an issue-comment row authored by the token's own login is dropped as self-echo", async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
