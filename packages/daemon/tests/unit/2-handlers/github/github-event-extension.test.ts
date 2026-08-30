@@ -12,6 +12,7 @@ import { syncGitHubPollingCapability } from '../../../../src/app';
 import {
   mapEventType,
   normalizeGitHubMergeConflict,
+  normalizeGitHubPollingRow,
   normalizeGitHubWebhook,
   type NormalizedGitHubEvent,
   toExternalEvent,
@@ -10995,6 +10996,72 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
 
     expect(published).toHaveLength(1);
     expect(published[0].payload.state).toBe('conflicting');
+    await extension.stop();
+  });
+
+  test('pulls polling rows carry no initiator so the gate admits updates by other users', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    const { published, ext, context } = publishCapture(extension);
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    const pullsRow = normalizeGitHubPollingRow(
+      { owner: 'acme', repo: 'widgets' },
+      {
+        url: 'https://api.github.com/repos/acme/widgets/pulls/7',
+        id: 77,
+        number: 7,
+        title: 'Update widgets',
+        state: 'open',
+        user: { login: 'octocat', type: 'User' },
+        updated_at: '2026-08-01T00:00:00Z',
+        head: { sha: 'abc123' },
+      },
+      'pulls'
+    )!;
+    expect(pullsRow.actor).toBe('');
+    await ext.publishEvent('space-1', pullsRow, context);
+
+    expect(published).toHaveLength(1);
+    expect(published[0].payload.title).toBe('Update widgets');
+    await extension.stop();
+  });
+
+  test('a rate-limited refresh keeps the last known login for the gate', async () => {
+    const db = setupDb();
+    let rateLimited = false;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          if (rateLimited) {
+            return new Response('{"message": "rate limited"}', {
+              status: 429,
+              headers: { 'X-RateLimit-Remaining': '0', 'Retry-After': '60' },
+            });
+          }
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      lastTokenStatusAt: number;
+      rateLimitedUntil: number;
+      selfEchoLoginRefresh: Promise<void> | null;
+    };
+    const { published, ext, context } = publishCapture(extension);
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    aware.lastTokenStatusAt = Date.now() - (5 * 60 * 1000 + 1_000);
+    rateLimited = true;
+    await ext.publishEvent('space-1', selfCommentEvent('unrelated-user'), context);
+    await aware.selfEchoLoginRefresh;
+    expect(aware.rateLimitedUntil).toBeGreaterThan(Date.now());
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    expect(published.map((event) => event.payload.actor)).toEqual(['unrelated-user']);
     await extension.stop();
   });
 

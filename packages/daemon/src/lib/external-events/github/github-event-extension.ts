@@ -1397,7 +1397,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       this.lastTokenStatus = token;
       this.lastTokenStatusGeneration = generationBefore;
       this.lastTokenStatusAt = Date.now();
-    } else {
+    } else if (!token.error?.includes('(rate limited)')) {
       this.lastTokenStatus = null;
     }
     return token;

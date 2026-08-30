@@ -383,6 +383,7 @@ export function normalizeGitHubPollingRow(
   if (!prNumber) return null;
   const repo = resolvePollingRepo(watched, obj);
   const user = userFrom(obj.user);
+  const causalInitiator = endpointKey !== 'pulls';
   let eventType: GitHubEventKind = 'pull_request';
   if (endpointKey === 'issue_comments') eventType = 'issue_comment';
   if (endpointKey === 'review_comments') eventType = 'pull_request_review_comment';
@@ -414,8 +415,8 @@ export function normalizeGitHubPollingRow(
     entityId: String(prNumber),
     prNumber,
     prUrl: prUrl(repo.owner, repo.repo, prNumber),
-    actor: user.login,
-    actorType: user.type,
+    actor: causalInitiator ? user.login : '',
+    actorType: causalInitiator ? user.type : 'Unknown',
     body: getString(obj.body),
     summary: `PR #${prNumber} ${eventType} by ${user.login}: ${truncateBody(getString(obj.body, getString(obj.title)))}`,
     externalUrl: htmlUrl || prUrl(repo.owner, repo.repo, prNumber),
