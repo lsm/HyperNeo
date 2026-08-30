@@ -123,6 +123,7 @@ export function buildJobQueueCandidateSelection(
 export interface SessionFifoDequeueOptions {
   sessionIdPath?: string;
   releasedPath?: string;
+  exclude?: PayloadMatch;
   excludeIds?: string[];
 }
 
@@ -132,6 +133,7 @@ export interface JobQueueSessionFifoSelectionInput {
   limit: number;
   sessionIdPath?: string;
   releasedPath?: string;
+  exclude?: PayloadMatch;
   excludeIds?: string[];
 }
 
@@ -139,22 +141,35 @@ export function buildJobQueueSessionFifoSelection(
   input: JobQueueSessionFifoSelectionInput
 ): JobQueueCandidateSelection {
   const sessionIdPath = input.sessionIdPath ?? '$.sessionId';
-  let sql = `SELECT candidate.* FROM job_queue candidate
+  const defaultSessionPath = sessionIdPath === '$.sessionId';
+  const sessionKeySql = defaultSessionPath
+    ? `json_extract(payload, '$.sessionId')`
+    : `json_extract(payload, ?)`;
+  let sql = `WITH session_heads AS (
+      SELECT rid FROM (
+        SELECT rowid AS rid,
+               ROW_NUMBER() OVER (
+                 PARTITION BY COALESCE(${sessionKeySql}, 'rowid:' || rowid)
+                 ORDER BY created_at ASC, rowid ASC
+               ) AS rn
+          FROM job_queue
+         WHERE queue = ? AND status IN ('pending', 'processing')
+      ) WHERE rn = 1
+    )
+    SELECT candidate.* FROM job_queue candidate
+      JOIN session_heads ON session_heads.rid = candidate.rowid
      WHERE candidate.queue = ? AND candidate.status = 'pending' AND candidate.run_at <= ?`;
-  const params: Array<string | number> = [input.queue, input.now];
+  const params: Array<string | number> = [];
+  if (!defaultSessionPath) params.push(sessionIdPath);
+  params.push(input.queue, input.queue, input.now);
   if (input.releasedPath) {
     sql += ` AND COALESCE(json_extract(candidate.payload, ?), 1) = 1`;
     params.push(input.releasedPath);
   }
-  sql += ` AND NOT EXISTS (
-        SELECT 1 FROM job_queue earlier
-         WHERE earlier.queue = candidate.queue
-           AND json_extract(earlier.payload, ?) = json_extract(candidate.payload, ?)
-           AND earlier.status IN ('pending', 'processing')
-           AND (earlier.created_at < candidate.created_at
-             OR (earlier.created_at = candidate.created_at AND earlier.rowid < candidate.rowid))
-      )`;
-  params.push(sessionIdPath, sessionIdPath);
+  if (input.exclude) {
+    sql += ` AND COALESCE(json_extract(candidate.payload, ?), '') != ?`;
+    params.push(input.exclude.path, input.exclude.equals);
+  }
   const excludeIds = input.excludeIds ?? [];
   if (excludeIds.length > 0) {
     sql += ` AND candidate.id NOT IN (${excludeIds.map(() => '?').join(',')})`;
@@ -265,6 +280,7 @@ export class JobQueueRepository {
         limit,
         sessionIdPath: options?.sessionIdPath,
         releasedPath: options?.releasedPath,
+        exclude: options?.exclude,
         excludeIds: options?.excludeIds,
       });
       const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];

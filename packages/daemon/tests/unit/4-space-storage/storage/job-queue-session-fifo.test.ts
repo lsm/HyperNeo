@@ -191,6 +191,23 @@ describe('JobQueueRepository — dequeueSessionFifo (dark launch)', () => {
     expect(repo.getJob(second.id)?.status).toBe('pending');
   });
 
+  it('excludes payload-matched jobs from selection while an excluded predecessor still blocks its session', () => {
+    const steer = enqueueDelivery(repo, 'sess-a', { role: 'steer' });
+    const otherTurn = enqueueDelivery(repo, 'sess-b', { role: 'turn' });
+    const exclude = { path: '$.role', equals: 'steer' };
+
+    const claimed = repo.dequeueSessionFifo('message_delivery', 5, { exclude });
+
+    expect(claimed.map((job) => job.id)).toEqual([otherTurn.id]);
+    expect(repo.getJob(steer.id)?.status).toBe('pending');
+
+    const sameSessionTurn = enqueueDelivery(repo, 'sess-a', { role: 'turn' });
+    const blocked = repo.dequeueSessionFifo('message_delivery', 5, { exclude });
+
+    expect(blocked).toHaveLength(0);
+    expect(repo.getJob(sameSessionTurn.id)?.status).toBe('pending');
+  });
+
   it('groups FIFO lanes by the configured sessionIdPath', () => {
     const c1First = repo.enqueue({ queue: 'chat_out', payload: { chat: 'c1', n: 1 } });
     const c1Second = repo.enqueue({ queue: 'chat_out', payload: { chat: 'c1', n: 2 } });
@@ -321,6 +338,53 @@ describe('JobQueueProcessor — session-fifo dequeue mode (dark launch)', () => 
 
     expect(claimed).toBe(1);
     expect(claimedIds).toEqual([held.id]);
+  });
+
+  it('preserves exempt-job isolation when session-fifo mode and exemptJobs combine', async () => {
+    processor.register(
+      'message_delivery',
+      () =>
+        new Promise<void>((resolve) => {
+          resolvers.push(resolve);
+        }),
+      {
+        exemptJobs: { path: '$.role', equals: 'steer' },
+        dequeueMode: { kind: 'session-fifo' },
+      }
+    );
+    const steerA1 = enqueueDelivery(repo, 'sess-a', { role: 'steer' });
+    enqueueDelivery(repo, 'sess-a', { role: 'turn' });
+    const steerA2 = enqueueDelivery(repo, 'sess-a', { role: 'steer' });
+
+    const firstClaimed = await processor.tick();
+    await flush();
+
+    expect(firstClaimed).toBe(1);
+    let snapshot = processor.snapshot('message_delivery');
+    expect(snapshot.inFlightCapped).toBe(0);
+    expect(snapshot.inFlightExempt).toBe(1);
+    expect(snapshot.handlers[0].role).toBe('steer');
+    expect(snapshot.handlers[0].slotClass).toBe('exempt');
+    expect(repo.getJob(steerA1.id)?.status).toBe('processing');
+    expect(repo.getJob(steerA2.id)?.status).toBe('pending');
+
+    resolvers[0]();
+    await flush();
+    const secondClaimed = await processor.tick();
+    await flush();
+
+    expect(secondClaimed).toBe(2);
+    snapshot = processor.snapshot('message_delivery');
+    expect(snapshot.inFlightCapped).toBe(1);
+    expect(snapshot.inFlightExempt).toBe(1);
+    const slotsByRole = new Map(
+      snapshot.handlers.map((handler) => [handler.role, handler.slotClass])
+    );
+    expect(slotsByRole.get('turn')).toBe('capped');
+    expect(slotsByRole.get('steer')).toBe('exempt');
+    for (const handler of snapshot.handlers) {
+      if (handler.role === 'steer') expect(handler.slotClass).not.toBe('capped');
+    }
   });
 
   it('two concurrent ticks cannot double-claim the same session job', async () => {

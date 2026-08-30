@@ -288,6 +288,7 @@ export class JobQueueProcessor {
                 ? this.repo.dequeueSessionFifo(queue, cappedSlots, {
                     sessionIdPath: dequeueMode.sessionIdPath,
                     releasedPath: dequeueMode.releasedPath,
+                    exclude: reg.exemptJobs,
                     excludeIds,
                   })
                 : this.repo.dequeue(queue, cappedSlots, reg.exemptJobs, excludeIds);
