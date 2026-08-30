@@ -11050,6 +11050,75 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
+  test('stop() awaits an in-flight identity refresh before completing', async () => {
+    const db = setupDb();
+    let releaseUser!: (response: Response) => void;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          return new Promise<Response>((resolve) => {
+            releaseUser = resolve;
+          });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    await extension.start({
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    const { ext, context } = publishCapture(extension);
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+
+    let stopped = false;
+    const stopPromise = extension.stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+
+    releaseUser(new Response(JSON.stringify({ login: 'octocat' }), { status: 200 }));
+    await stopPromise;
+    expect(stopped).toBe(true);
+  });
+
+  test('an overlapping stale validation failure does not clear a newer cached login', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    let releaseFailure!: (response: Response) => void;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          if (userCalls === 1) {
+            return new Promise<Response>((resolve) => {
+              releaseFailure = resolve;
+            });
+          }
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      resolveTokenStatus(lightweight: boolean): Promise<{ login?: string; error?: string }>;
+    };
+    const { published, ext, context } = publishCapture(extension);
+
+    const stale = aware.resolveTokenStatus(false);
+    const fresh = await aware.resolveTokenStatus(false);
+    expect(fresh.login).toBe('octocat');
+
+    releaseFailure(new Response('{"message": "server error"}', { status: 500 }));
+    await stale;
+
+    expect((await aware.resolveTokenStatus(true)).login).toBe('octocat');
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    expect(published).toHaveLength(0);
+    await extension.stop();
+  });
+
   test('publishEvent suppresses the identity refresh while rate-limited', async () => {
     const db = setupDb();
     let userCalls = 0;

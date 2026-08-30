@@ -300,6 +300,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private lastTokenStatus: GitHubTokenStatus | null = null;
   private lastTokenStatusGeneration = -1;
   private lastTokenStatusAt = 0;
+  private tokenValidationSequence = 0;
   private credentialGeneration = 0;
   private pollCycleCredentialGeneration: number | null = null;
   private pollCycleCredentialFingerprint: string | null = null;
@@ -341,6 +342,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.pollTimer = null;
     await this.activePollCycle;
     if (this.reconcileSweepPromise) await this.reconcileSweepPromise;
+    if (this.selfEchoLoginRefresh) await this.selfEchoLoginRefresh;
   }
 
   registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void {
@@ -1384,6 +1386,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         this.selfEchoLoginRetryAt = status.login ? 0 : Date.now() + SELF_ECHO_LOGIN_RETRY_MS;
         this.selfEchoLoginRetryGeneration = status.login ? -1 : generationBefore;
       })
+      .catch(() => undefined)
       .finally(() => {
         this.selfEchoLoginRefresh = null;
       });
@@ -1395,7 +1398,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       if (cached) return cached;
     }
     const generationBefore = this.credentialGeneration;
+    const sequenceBefore = ++this.tokenValidationSequence;
     const token = await this.getTokenStatus();
+    if (this.tokenValidationSequence !== sequenceBefore) return token;
     if (this.credentialGeneration !== generationBefore) {
       this.lastTokenStatus = null;
       return {
