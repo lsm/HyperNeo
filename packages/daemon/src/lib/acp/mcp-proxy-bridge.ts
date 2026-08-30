@@ -39,6 +39,7 @@ type ProxyRequest = {
 
 const PROXIED_SERVER_NAMES = new Set([
   'space-agent-tools',
+  'space-actions',
   'node-agent',
   'node-agent-tools',
   'agent-memory',

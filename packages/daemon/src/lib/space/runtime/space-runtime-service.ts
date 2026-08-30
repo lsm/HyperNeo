@@ -59,6 +59,11 @@ import { Logger } from '../../logger.ts';
 import { findInModels, getAvailableModels } from '../../model-service.ts';
 import { inferPersistableProviderForModel } from '../../providers/registry.ts';
 import type { SessionManager } from '../../session-manager.ts';
+import {
+  createSpaceActionsMcpServer,
+  isSpaceActionsDispatcherEnabled,
+  type SpaceActionsServerConfig,
+} from '../actions/space-actions-server.ts';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent.ts';
 import {
@@ -75,7 +80,10 @@ import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 import { SpaceMessageResolver } from '../messaging-adapter.ts';
 import { createAgentMemoryMcpServer } from '../tools/agent-memory-tools.ts';
-import { createSpaceAgentMcpServer } from '../tools/space-agent-tools.ts';
+import {
+  createSpaceAgentMcpServer,
+  type SpaceAgentToolsConfig,
+} from '../tools/space-agent-tools.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { ChannelRouter } from './channel-router.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
@@ -1099,16 +1107,24 @@ export class SpaceRuntimeService {
     agentId: string | null,
     agentHandleAliases?: string[]
   ): void {
+    const spaceToolsConfig = this.buildLongTermAgentSpaceToolsConfig(
+      space,
+      agentName,
+      sessionId,
+      agent,
+      agentId,
+      agentHandleAliases
+    );
     const mcpServers: Record<string, McpServerConfig> = {
-      'space-agent-tools': this.buildLongTermAgentMcpServer(
-        space,
-        agentName,
-        sessionId,
-        agent,
-        agentId,
-        agentHandleAliases
+      'space-agent-tools': createSpaceAgentMcpServer(
+        spaceToolsConfig
       ) as unknown as McpServerConfig,
     };
+    this.attachSpaceActionsMcpServer(mcpServers, () => ({
+      role: 'long_term_agent',
+      spaceId: space.id,
+      spaceConfig: spaceToolsConfig,
+    }));
     if (this.config.memoryRepo) {
       mcpServers['agent-memory'] = createAgentMemoryMcpServer({
         spaceId: space.id,
@@ -1129,6 +1145,16 @@ export class SpaceRuntimeService {
     session.mergeRuntimeMcpServers(mcpServers);
   }
 
+  private attachSpaceActionsMcpServer(
+    mcpServers: Record<string, McpServerConfig>,
+    buildConfig: () => SpaceActionsServerConfig
+  ): void {
+    if (!isSpaceActionsDispatcherEnabled()) return;
+    mcpServers['space-actions'] = createSpaceActionsMcpServer(
+      buildConfig()
+    ) as unknown as McpServerConfig;
+  }
+
   private missingLongTermAgentMcpServers(session: { getSessionData(): Session }): boolean {
     const current = session.getSessionData().config?.mcpServers;
     return !current?.['space-agent-tools'];
@@ -1145,18 +1171,18 @@ export class SpaceRuntimeService {
     this.longTermAgentDbQueryServers.delete(sessionId);
   }
 
-  private buildLongTermAgentMcpServer(
+  private buildLongTermAgentSpaceToolsConfig(
     space: Space,
     agentName: string,
     sessionId: string,
     agent: SpaceWorkerAgent | null,
     agentId: string | null,
     agentHandleAliases?: string[]
-  ) {
+  ): SpaceAgentToolsConfig {
     const agents = this.config.spaceAgentManager.listBySpaceId(space.id);
     const agentHandle = agent ? canonicalAgentHandle(agents, agent) : undefined;
     const aliases = agentHandleAliases ?? (agentHandle ? [agentHandle] : undefined);
-    return createSpaceAgentMcpServer({
+    return {
       spaceId: space.id,
       db: this.config.db,
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
@@ -1220,7 +1246,7 @@ export class SpaceRuntimeService {
         agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
           ? this.config.inactivityRunNow
           : undefined,
-    });
+    };
   }
 
   registerSubscription(
@@ -1740,8 +1766,14 @@ export class SpaceRuntimeService {
   }
 
   buildMemberSpaceToolsMcpServer(space: Space, sessionId: string): McpServerConfig {
+    return createSpaceAgentMcpServer(
+      this.buildMemberSpaceToolsConfig(space, sessionId)
+    ) as unknown as McpServerConfig;
+  }
+
+  private buildMemberSpaceToolsConfig(space: Space, sessionId: string): SpaceAgentToolsConfig {
     const spaceManagerForApproval = this.config.spaceManager;
-    return createSpaceAgentMcpServer({
+    return {
       spaceId: space.id,
       db: this.config.db,
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
@@ -1790,7 +1822,7 @@ export class SpaceRuntimeService {
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
       externalEventStore: this.config.externalEventStore,
-    }) as unknown as McpServerConfig;
+    };
   }
 
   async attachSpaceToolsToMemberSession(
@@ -1844,6 +1876,12 @@ export class SpaceRuntimeService {
       this.memberSessionDbQueryServers.set(session.id, dbQueryServer);
       additional['db-query'] = dbQueryServer as unknown as McpServerConfig;
     }
+
+    this.attachSpaceActionsMcpServer(additional, () => ({
+      role: 'ad_hoc_member',
+      spaceId: space.id,
+      spaceConfig: this.buildMemberSpaceToolsConfig(space, session.id),
+    }));
 
     agentSession.mergeRuntimeMcpServers(additional);
 
@@ -1919,7 +1957,7 @@ export class SpaceRuntimeService {
     const workflows = spaceWorkflowManager.listWorkflows(space.id);
 
     const spaceManagerForApproval = this.config.spaceManager;
-    const mcpServer = createSpaceAgentMcpServer({
+    const spaceToolsConfig: SpaceAgentToolsConfig = {
       spaceId: space.id,
       db: this.config.db,
       longHorizonAgentRepo: this.config.longHorizonAgentRepo,
@@ -1977,7 +2015,8 @@ export class SpaceRuntimeService {
       inactivityConfigRepo: coordinator ? this.config.inactivityConfigRepo : undefined,
       inactivityClaimRepo: coordinator ? this.config.inactivityClaimRepo : undefined,
       inactivityRunNow: coordinator ? this.config.inactivityRunNow : undefined,
-    });
+    };
+    const mcpServer = createSpaceAgentMcpServer(spaceToolsConfig);
 
     const existingDbQueryServer = this.spaceDbQueryServers.get(space.id);
     if (existingDbQueryServer) {
@@ -2007,6 +2046,11 @@ export class SpaceRuntimeService {
       this.spaceDbQueryServers.set(space.id, dbQueryServer);
       mcpServers['db-query'] = dbQueryServer as unknown as McpServerConfig;
     }
+    this.attachSpaceActionsMcpServer(mcpServers, () => ({
+      role: 'coordinator',
+      spaceId: space.id,
+      spaceConfig: spaceToolsConfig,
+    }));
 
     session.mergeRuntimeMcpServers(mcpServers);
     session.onMissingSpaceChatMcpServers = async (_sessionId, missing) => {

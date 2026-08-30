@@ -19,6 +19,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Logger } from '../logger.ts';
 import type { OriginalEnvVars, ProviderEnvVars } from '../provider-service.ts';
 import { NON_ANTHROPIC_PREFIX_PROVIDER_VARS } from '../provider-service.ts';
+import { isSpaceActionsDispatcherEnabled } from '../space/actions/space-actions-server.ts';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
@@ -1719,6 +1720,14 @@ export class QueryRunner {
     if (session.type !== 'space_chat') return queryOptions;
 
     const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
+    if (isSpaceActionsDispatcherEnabled() && !serverNames.includes('space-actions')) {
+      logger.warn(
+        `[MCP invariant, soft] Space chat session ${session.id} is missing the space-actions ` +
+          `dispatcher server while HYPERNEO_SPACE_ACTIONS_DISPATCHER is enabled; proceeding ` +
+          `log-only — the typed tool surface remains authoritative. ` +
+          `Present: [${serverNames.join(', ')}].`
+      );
+    }
     const missingServers = REQUIRED_SPACE_CHAT_MCP_SERVERS.filter(
       (name) => !serverNames.includes(name)
     );
@@ -1783,6 +1792,14 @@ export class QueryRunner {
     if (!policy.attachGenericSpaceTools && !policy.attachLongTermAgentTools) return queryOptions;
 
     const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
+    if (isSpaceActionsDispatcherEnabled() && !serverNames.includes('space-actions')) {
+      logger.warn(
+        `[MCP invariant, soft] Space member session ${session.id} (role ${policy.role}) is ` +
+          `missing the space-actions dispatcher server while HYPERNEO_SPACE_ACTIONS_DISPATCHER ` +
+          `is enabled; proceeding log-only — the typed tool surface remains authoritative. ` +
+          `Present: [${serverNames.join(', ')}].`
+      );
+    }
     const missingServers = missingMcpServers(
       queryOptions.mcpServers as Record<string, unknown> | undefined,
       policy.requiredServers

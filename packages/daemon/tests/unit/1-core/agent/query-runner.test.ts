@@ -774,6 +774,80 @@ describe('QueryRunner', () => {
       });
     });
 
+    it('warns log-only when the dispatcher flag is on but space-actions is missing (member)', async () => {
+      await withAnthropicApiKey(async () => {
+        const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+        process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
+        try {
+          mockSession.id = 'worker-session-1';
+          mockSession.workspacePath = tmpdir();
+          mockSession.type = 'worker';
+          mockSession.context = { spaceId: 's1' };
+          const servers = {
+            'space-agent-tools': {
+              type: 'sdk',
+              name: 'space-agent-tools',
+              instance: {},
+            },
+          };
+          mockSession.config.mcpServers = servers as unknown as Session['config']['mcpServers'];
+          buildSpy.mockResolvedValueOnce({
+            model: 'claude-sonnet-4-20250514',
+            mcpServers: servers,
+          });
+          const onMissingMemberSpaceMcpServers = mock(async () => {});
+
+          const ctx = createContext({ onMissingMemberSpaceMcpServers });
+          runner = new QueryRunner(ctx);
+          runner.start();
+          await ctx.queryPromise?.catch(() => {});
+
+          expect(onMissingMemberSpaceMcpServers).not.toHaveBeenCalled();
+          expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
+        } finally {
+          if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+          else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
+        }
+      });
+    });
+
+    it('warns log-only when the dispatcher flag is on but space-actions is missing (space chat)', async () => {
+      await withAnthropicApiKey(async () => {
+        const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+        process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
+        try {
+          mockSession.id = 'space:chat:s1';
+          mockSession.workspacePath = tmpdir();
+          mockSession.type = 'space_chat';
+          mockSession.context = { spaceId: 's1' };
+          const servers = {
+            'space-agent-tools': {
+              type: 'sdk',
+              name: 'space-agent-tools',
+              instance: {},
+            },
+          };
+          mockSession.config.mcpServers = servers as unknown as Session['config']['mcpServers'];
+          buildSpy.mockResolvedValueOnce({
+            model: 'claude-sonnet-4-20250514',
+            mcpServers: servers,
+          });
+          const onMissingSpaceChatMcpServers = mock(async () => {});
+
+          const ctx = createContext({ onMissingSpaceChatMcpServers });
+          runner = new QueryRunner(ctx);
+          runner.start();
+          await ctx.queryPromise?.catch(() => {});
+
+          expect(onMissingSpaceChatMcpServers).not.toHaveBeenCalled();
+          expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
+        } finally {
+          if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+          else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
+        }
+      });
+    });
+
     it('throws when member Space MCP still missing after self-heal callback', async () => {
       await withAnthropicApiKey(async () => {
         mockSession.id = 'worker-session-1';

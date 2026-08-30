@@ -527,6 +527,29 @@ describe('AcpQueryRunner', () => {
     expect(callback).toHaveBeenCalledWith({ title: 'Task' });
   });
 
+  test('collects tools from the space-actions dispatcher server', () => {
+    const mcpServers = {
+      'space-actions': {
+        type: 'sdk',
+        name: 'space-actions',
+        instance: {
+          _registeredTools: {
+            call_action: {
+              description: 'Dispatch a Space action',
+              inputSchema: { name: z.string() },
+              handler: mock(async () => ({ content: [{ type: 'text', text: 'ok' }] })),
+            },
+          },
+        },
+      },
+    } as never;
+    const bridge = new AcpMcpProxyBridge(mcpServers);
+
+    expect(bridge.getToolsForServer('space-actions')).toEqual([
+      expect.objectContaining({ name: 'call_action' }),
+    ]);
+  });
+
   test('collects tools from production tools array fallback', () => {
     const mcpServers = {
       'space-agent-tools': {
