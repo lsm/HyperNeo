@@ -524,6 +524,75 @@ describe('TaskAgentManager restored rate-limit cooldown lookup', () => {
   });
 });
 
+describe('TaskAgentManager startup rehydration cooldowns', () => {
+  function makeStartupManager(input: { cooldown?: boolean }) {
+    const rehydrateSubSession = mock(async () => null);
+    const manager = Object.create(TaskAgentManager.prototype) as TaskAgentManager;
+    Object.defineProperty(manager, 'config', {
+      value: {
+        taskRepo: { listByWorkflowRun: () => [] },
+        nodeExecutionRepo: {
+          listByWorkflowRun: () => [
+            {
+              id: 'exec-1',
+              workflowRunId: 'run-1',
+              agentSessionId: 'space:space-1:task:task-1:exec:e1',
+              status: 'in_progress',
+            },
+          ],
+        },
+      },
+    });
+    Object.defineProperty(manager, 'agentSessionIndex', { value: new Map() });
+    Object.defineProperty(manager, 'hasQueuedRetryableHookAction', {
+      value: () => false,
+    });
+    Object.defineProperty(manager, 'rehydrateSubSession', {
+      value: rehydrateSubSession,
+    });
+    if (input.cooldown) {
+      Object.defineProperty(manager, 'readPersistedRateLimitCooldown', {
+        value: () => ({ retryAt: Date.now() + 60_000 }),
+      });
+    }
+    return { manager, rehydrateSubSession };
+  }
+
+  it('rehydrates a cooling-down worker without starting its query at startup', async () => {
+    const { manager, rehydrateSubSession } = makeStartupManager({ cooldown: true });
+    const run = (
+      manager as unknown as {
+        rehydrateSubSessionsForRun: (runId: string) => Promise<void>;
+      }
+    ).rehydrateSubSessionsForRun.bind(manager);
+
+    await run('run-1');
+
+    expect(rehydrateSubSession).toHaveBeenCalledWith(
+      'space:space-1:task:task-1:exec:e1',
+      undefined,
+      { startQuery: false }
+    );
+  });
+
+  it('rehydrates workers with default options outside cooldowns at startup', async () => {
+    const { manager, rehydrateSubSession } = makeStartupManager({});
+    const run = (
+      manager as unknown as {
+        rehydrateSubSessionsForRun: (runId: string) => Promise<void>;
+      }
+    ).rehydrateSubSessionsForRun.bind(manager);
+
+    await run('run-1');
+
+    expect(rehydrateSubSession).toHaveBeenCalledWith(
+      'space:space-1:task:task-1:exec:e1',
+      undefined,
+      {}
+    );
+  });
+});
+
 describe('TaskAgentManager indexed rehydrate revalidation', () => {
   it('starts and replays an admitted indexed worker after acquiring the lock', async () => {
     const fixture = makeIndexedRehydrateManager({ taskStatus: 'in_progress' });

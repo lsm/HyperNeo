@@ -3535,7 +3535,10 @@ export class TaskAgentManager {
       if (this.agentSessionIndex.has(subSessionId)) continue;
 
       try {
-        await this.rehydrateSubSession(subSessionId);
+        const rehydrateOptions = this.readPersistedRateLimitCooldown(subSessionId)
+          ? { startQuery: false }
+          : {};
+        await this.rehydrateSubSession(subSessionId, undefined, rehydrateOptions);
       } catch (err) {
         log.warn(
           `TaskAgentManager.rehydrateSubSessionsForRun: failed to rehydrate sub-session ${subSessionId} ` +

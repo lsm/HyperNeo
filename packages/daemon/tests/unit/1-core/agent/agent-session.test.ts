@@ -1268,17 +1268,22 @@ describe('AgentSession', () => {
       mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
       const cancel = mock(() => {});
       const retryNow = mock(() => true);
+      const capturedUuids: Array<string | null> = [];
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel,
         retryNow,
         isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
+        getPersistedEpisodeMessageUuid: () => {
+          capturedUuids.push(cancel.mock.calls.length === 0 ? 'msg-persisted-episode' : null);
+          return capturedUuids[capturedUuids.length - 1] ?? null;
+        },
       } as never;
 
       const resumed = await agentSession.retryNowAfterRateLimit();
 
       expect(resumed).toBe(true);
       expect(retryNow).not.toHaveBeenCalled();
+      expect(capturedUuids[0]).toBe('msg-persisted-episode');
       expect(rescheduleDelivery).toHaveBeenCalledWith(
         'test-session-id',
         'msg-persisted-episode',

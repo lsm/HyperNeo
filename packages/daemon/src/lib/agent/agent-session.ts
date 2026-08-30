@@ -1239,12 +1239,13 @@ export class AgentSession
   }
 
   async retryNowAfterRateLimit(): Promise<boolean> {
+    const persistedEpisodeMessageUuid = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
     if (this.rateLimitWatchdog.isPersistedCooldownArmed()) {
       this.rateLimitWatchdog.cancel();
       return await runRateLimitManualRetry({
         db: this.db,
         sessionId: this.session.id,
-        episodeMessageUuid: this.rateLimitWatchdog.getPersistedEpisodeMessageUuid() ?? undefined,
+        episodeMessageUuid: persistedEpisodeMessageUuid ?? undefined,
         clearCooldown: () => this.stateManager.setIdle(),
       });
     }
