@@ -66,8 +66,8 @@ async function releaseOwningDeliveryStage(
   const jobQueue = ctx.db.getJobQueueRepo?.();
   if (jobQueue?.rescheduleSessionDeliveries) {
     try {
-      jobQueue.rescheduleSessionDeliveries(ctx.sessionId, Date.now());
-      return { ...ctx, released: true };
+      const released = jobQueue.rescheduleSessionDeliveries(ctx.sessionId, Date.now());
+      return { ...ctx, released };
     } catch {
       return { ...ctx, released: false };
     }

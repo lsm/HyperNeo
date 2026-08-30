@@ -1562,6 +1562,26 @@ describe('AgentSession', () => {
       expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-bundled');
     });
 
+    it('retryNowAfterRateLimit reports failure when the session-wide release misses', async () => {
+      const rescheduleSessionDeliveries = mock(() => false);
+      mockDb.getJobQueueRepo = mock(
+        () =>
+          ({
+            rescheduleSessionDeliveries,
+          }) as never
+      );
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
+        retryNow: mock(() => true),
+        isPersistedCooldownArmed: () => true,
+        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
+      } as never;
+
+      const resumed = await agentSession.retryNowAfterRateLimit();
+
+      expect(resumed).toBe(false);
+    });
+
     it('retryNowAfterRateLimit releases every parked delivery for the session', async () => {
       const rescheduleSessionDeliveries = mock(() => true);
       mockDb.getJobQueueRepo = mock(

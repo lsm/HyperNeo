@@ -406,7 +406,7 @@ export class JobQueueRepository {
         )
         .run(runAt, sessionId)
     );
-    return result.changes >= 0;
+    return result.changes > 0;
   }
 
   rescheduleDelivery(sessionId: string, messageUuid: string, runAt: number): boolean {
