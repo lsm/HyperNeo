@@ -134,7 +134,10 @@ import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
-import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
+import {
+  LATE_SETTLE_HORIZON_MS,
+  SpaceAgentLateSettlements,
+} from './space-agent-message-delivery.ts';
 import {
   collectActiveSpaceDeliveryIds,
   runSpaceAgentPendingDrain,
@@ -1500,6 +1503,7 @@ export class TaskAgentManager {
               return sdkRepo.getDeliveryContent(sessionId, row.id)?.sendStatus;
             },
           });
+          repo.deferExpiration([row.id], LATE_SETTLE_HORIZON_MS + 60_000);
           continue;
         }
         repo.markDelivered(row.id, sessionId);

@@ -5406,7 +5406,8 @@ export class SpaceRuntime {
       state.awaitingContinue &&
       state.awaitingContinueAfterDbId !== null &&
       lastMessageDbId !== state.awaitingContinueAfterDbId &&
-      (lastMessageIsResult || overflowed)
+      (lastMessageIsResult || overflowed) &&
+      this.classifyRecoveryPromptDelivery(sessionId, state.awaitingContinueMessageId) === 'consumed'
     ) {
       state.awaitingContinue = false;
       state.awaitingContinueAfterDbId = null;
@@ -5424,7 +5425,8 @@ export class SpaceRuntime {
     if (state.awaitingResume && state.awaitingResumeAfterDbId !== null) {
       if (
         lastMessageDbId !== state.awaitingResumeAfterDbId &&
-        (lastMessageIsResult || overflowed)
+        (lastMessageIsResult || overflowed) &&
+        this.classifyRecoveryPromptDelivery(sessionId, state.awaitingResumeMessageId) === 'consumed'
       ) {
         state.awaitingResume = false;
         state.awaitingResumeAfterDbId = null;
