@@ -1236,7 +1236,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       ]);
     });
 
-    it('activatePrompts ignores an explicit dbId that belongs to a different prompt', async () => {
+    it('activatePrompts skips activation when an explicit dbId belongs to a different prompt', async () => {
       insertStatusRow('target-uuid', 'deferred', 'db-target');
       insertStatusRow('other-uuid', 'deferred', 'db-other');
 
@@ -1249,9 +1249,8 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         origin: 'recovery',
       });
 
-      expect(activated).toHaveLength(1);
-      expect(activated[0].dbId).toBe('db-target');
-      expect(rowStatus('target-uuid')).toBe('enqueued');
+      expect(activated).toEqual([]);
+      expect(rowStatus('target-uuid')).toBe('deferred');
       expect(rowStatus('other-uuid')).toBe('deferred');
     });
 
