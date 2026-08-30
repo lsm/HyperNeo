@@ -1450,6 +1450,27 @@ describe('AgentSession', () => {
       expect(start).not.toHaveBeenCalled();
     });
 
+    it('cancelRateLimitRetry uses the restored episode id from the persisted arm', async () => {
+      const cancelDelivery = mock(() => true);
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
+        getState: mock(() => ({ lastUserMessage: null })),
+        getPersistedEpisodeMessageUuid: () => 'msg-arm-episode',
+      } as never;
+      await agentSession.stateManager.setRateLimitCooldown({
+        retryCount: 0,
+        maxRetries: 3,
+        retryAt: Date.now() + 60_000,
+        messageId: 'msg-arm-episode',
+      });
+
+      agentSession.cancelRateLimitRetry();
+
+      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-arm-episode');
+      await agentSession.stateManager.setIdle();
+    });
+
     it('cancelRateLimitRetry clears a persisted cooldown left by a restart', async () => {
       const cancelDelivery = mock(() => true);
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);

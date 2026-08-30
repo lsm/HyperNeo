@@ -1207,24 +1207,24 @@ export class AgentSession
 
   cancelRateLimitRetry(): void {
     const episodeMessage = this.rateLimitWatchdog.getState().lastUserMessage;
+    const persistedArmMessageId = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
     this.rateLimitWatchdog.cancel(false);
-    let persistedEpisodeMessageId: string | undefined;
+    let persistedEpisodeMessageId: string | undefined = persistedArmMessageId ?? undefined;
     let cooldownClearPending = false;
-    if (this.stateManager.getState().status === 'rate_limit_cooldown') {
-      cooldownClearPending = true;
-    } else {
-      const persistedState = this.db.getSession(this.session.id)?.processingState;
-      try {
-        const parsed = persistedState
-          ? (JSON.parse(persistedState) as { status?: string; messageId?: string })
-          : null;
-        if (parsed?.status === 'rate_limit_cooldown') {
-          persistedEpisodeMessageId = parsed.messageId;
-          cooldownClearPending = true;
-        }
-      } catch {
-        this.logger.warn('Failed to inspect the persisted rate-limit cooldown on cancel.');
+    const inMemoryCooldown = this.stateManager.getState().status === 'rate_limit_cooldown';
+    const persistedState = this.db.getSession(this.session.id)?.processingState;
+    try {
+      const parsed = persistedState
+        ? (JSON.parse(persistedState) as { status?: string; messageId?: string })
+        : null;
+      const persistedCooldown = parsed?.status === 'rate_limit_cooldown';
+      if (persistedCooldown && !persistedEpisodeMessageId && parsed?.messageId) {
+        persistedEpisodeMessageId = parsed.messageId;
       }
+      cooldownClearPending = inMemoryCooldown || persistedCooldown;
+    } catch {
+      cooldownClearPending = inMemoryCooldown;
+      this.logger.warn('Failed to inspect the persisted rate-limit cooldown on cancel.');
     }
     const episodeMessageId = episodeMessage?.uuid ?? persistedEpisodeMessageId;
     const owningTurnMessageId = resolveRateLimitEpisodeDeliveryUuid(
