@@ -69,8 +69,30 @@ The daemon avoids runtime-specific APIs at the seams, so each runtime plugs in a
 - No `deno compile` pipeline — release binaries remain Bun-compiled.
 - Dev and prod defaults stay on Bun (`make dev`, `make run`, `make compile`).
 
+## `deno compile` smoke (non-release)
+
+A `deno compile` of `packages/daemon/main.ts` is runnable for smoke checks; the resulting binary is not part of the release pipeline (Bun stays the pinned release runtime, see above). It needs three things the regular `deno run` boot does not:
+
+1. **Static imports only** — the computed dynamic import at `packages/daemon/src/lib/providers/factory.ts:298` (`import(`./anthropic-copilot/index.js?retry=${n}`)`) is replaced by a static specifier; the retry semantics are kept at the factory level (`copilotProviderModule = null` between attempts plus the existing `COPILOT_IMPORT_RETRY_BACKOFF_MS` window). Without the static specifier the bundler bails on `factory.ts` and the binary dies at runtime with `Module not found: .../providers/factory.js`.
+2. **`@types/node` available for typecheck** — `deno compile` resolves `node:` built-ins through `@types/node`. The dev-time choice was an `npm:@types/node` devDep in `packages/daemon/package.json` (Deno discovers it via the bun-installed `node_modules` BYONM; Bun's `tsconfig.json` `types: ["bun"]` keeps it out of Bun typechecks). `packages/daemon/deno.json` exists solely to layer a `compilerOptions` slice on top of the daemon `tsconfig.json` (DOM lib for `console`/`crypto` globals, `types: ["bun", "node"]`, the `@hyperneo/*` paths) — it does **not** change module resolution and the existing `package.json` exports remain authoritative.
+3. **`--bundle` + pruned embed** — without `--bundle`, the binary references per-file temp-dir paths that the runtime cannot resolve; with `--bundle`, every reachable module collapses into one `.deno_compile_bundle_*.mjs` and the binary boots cleanly. Size reduction then comes from excluding `node_modules` (`--exclude=node_modules --exclude=.deno`), which drops the binary from 1.7 GB to ~292 MB on the current macOS-x64 spike (vs. the 83 MB Bun reference; the gap is the Deno runtime + the unavoidably embedded daemon/web bundles).
+
+Recommended command:
+
+```bash
+cd packages/daemon
+deno install --entrypoint main.ts                 # populate node_modules/.deno for resolution
+deno compile --bundle --no-check -A \
+  --exclude=node_modules --exclude=.deno \
+  --output=dist/bin/hyperneo-deno-darwin-x64 main.ts
+```
+
+Acceptance for a smoke binary: HTTP 200 on `/`, `/ws` handshake, migrations, graceful SIGTERM (`scripts/deno-smoke.sh` adapted to the binary path). The `--no-check` flag is forced by pre-existing typecheck errors that are out of the slice's merge contract (which limits changes to the factory.ts restructure + build tooling/config).
+
 ## Future work
 
 - `deno check` type coverage in CI (the `bun-types` vs Deno types gap is real and untested).
 - Port the remaining direct `Bun.spawn` call sites — the dialog folder picker above — onto `runtime-spawn`.
 - Flip `deno-boot-smoke` from `continue-on-error` to a required check once it has been green for a sustained stretch.
+- Resolving the remaining `deno compile` typecheck errors so `--no-check` can be dropped (currently blocked by pre-existing `override` / `URL` / `BlobPart` issues in the daemon and shared packages).
+- Closing the Deno-binary vs. Bun-binary size gap (the Deno runtime alone is ~80 MB, leaving little headroom under a 2x-of-Bun budget once the daemon + web bundles are embedded).

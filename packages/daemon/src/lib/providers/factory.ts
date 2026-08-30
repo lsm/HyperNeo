@@ -290,22 +290,13 @@ type CopilotProviderModule = typeof import('./anthropic-copilot/index.js');
 
 const COPILOT_IMPORT_RETRY_BACKOFF_MS = 60_000;
 
-const defaultCopilotModuleImporter = async (attempt: number): Promise<CopilotProviderModule> => {
-  if (attempt === 0) {
-    return import('./anthropic-copilot/index.js');
-  }
-  try {
-    return (await import(`./anthropic-copilot/index.js?retry=${attempt}`)) as CopilotProviderModule;
-  } catch {
-    return import('./anthropic-copilot/index.js');
-  }
+const defaultCopilotModuleImporter = async (): Promise<CopilotProviderModule> => {
+  return import('./anthropic-copilot/index.js');
 };
 
 let importCopilotProviderModule = defaultCopilotModuleImporter;
 
 let copilotProviderModule: Promise<CopilotProviderModule | null> | null = null;
-
-let copilotImportAttempts = 0;
 
 let copilotImportRetryNotBefore = 0;
 
@@ -314,9 +305,7 @@ function loadCopilotProviderModule(force: boolean): Promise<CopilotProviderModul
     if (!force && Date.now() < copilotImportRetryNotBefore) {
       return Promise.resolve(null);
     }
-    const attempt = copilotImportAttempts;
-    copilotImportAttempts += 1;
-    copilotProviderModule = importCopilotProviderModule(attempt).catch((err) => {
+    copilotProviderModule = importCopilotProviderModule().catch((err) => {
       logger.warn(`Anthropic Copilot provider import failed; retry on next registration: ${err}`);
       copilotProviderModule = null;
       copilotImportRetryNotBefore = Date.now() + COPILOT_IMPORT_RETRY_BACKOFF_MS;
@@ -328,7 +317,7 @@ function loadCopilotProviderModule(force: boolean): Promise<CopilotProviderModul
 
 /** @public */
 export function setCopilotProviderModuleImporter(
-  importer: (attempt: number) => Promise<CopilotProviderModule>
+  importer: () => Promise<CopilotProviderModule>
 ): void {
   importCopilotProviderModule = importer;
 }
@@ -348,7 +337,6 @@ export function resetProviderFactory(): void {
   initialized = false;
   copilotProviderModule = null;
   importCopilotProviderModule = defaultCopilotModuleImporter;
-  copilotImportAttempts = 0;
   copilotImportRetryNotBefore = 0;
   lastSyncedConfigByProviderId.clear();
   disabledBuiltInProviderIds.clear();
