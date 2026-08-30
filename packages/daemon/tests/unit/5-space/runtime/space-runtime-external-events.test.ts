@@ -2765,7 +2765,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       await runtime.stop();
     });
 
-    test('flag on: a failed outbox handoff records handoff debt and keeps the digest deferred', async () => {
+    test('flag on: abandoning a handoff retry for a dead session records handoff debt', async () => {
       const sessionId = 'session-abandon-debt';
       const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
       db.prepare(
@@ -2793,6 +2793,7 @@ describe('SpaceRuntime external event subscriptions', () => {
           handoffDigestDelivery: (sessionId: string, uuid: string, dbId: string) => Promise<void>;
         }
       ).handoffDigestDelivery(sessionId, 'digest-abandon-owed', String(row.id));
+      await wait(1200);
 
       const runtimeInternals = runtime as unknown as {
         digestHandoffDebt: Map<string, Set<string>>;

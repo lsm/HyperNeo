@@ -679,6 +679,8 @@ export class SpaceRuntime {
   private readonly immediateDispatchesInFlight = new Set<string>();
   private readonly turnEndDigestRetryTimers = new Map<string, Timer>();
   private readonly turnEndDigestRetryCounts = new Map<string, number>();
+  private readonly digestHandoffRetryTimers = new Map<string, Timer>();
+  private readonly digestHandoffRetryCounts = new Map<string, number>();
   private readonly digestHandoffDebt = new Map<string, Set<string>>();
   private readonly digestSupersedeRetryTimers = new Map<string, Timer>();
   private readonly digestSupersedeRetryCounts = new Map<string, number>();
@@ -1681,8 +1683,31 @@ export class SpaceRuntime {
         `SpaceRuntime: turn-end digest handoff for session ${sessionId} failed, ` +
           `row stays deferred in the outbox: ${formatCommandError(error)}`
       );
-      this.addDigestHandoffDebt(sessionId, messageUuid);
+      this.scheduleDigestHandoffRetry(sessionId, messageUuid, dbId);
     }
+  }
+
+  private scheduleDigestHandoffRetry(sessionId: string, messageUuid: string, dbId: string): void {
+    const key = `${sessionId}:${messageUuid}`;
+    if (this.digestHandoffRetryTimers.has(key)) return;
+    const attempts = (this.digestHandoffRetryCounts.get(key) ?? 0) + 1;
+    if (attempts > EXTERNAL_EVENT_RETRY_MAX_ATTEMPTS) {
+      this.digestHandoffRetryCounts.delete(key);
+      this.addDigestHandoffDebt(sessionId, messageUuid);
+      return;
+    }
+    this.digestHandoffRetryCounts.set(key, attempts);
+    const timer = setTimeout(() => {
+      this.digestHandoffRetryTimers.delete(key);
+      if (this.isStopped) return;
+      if (!this.isTargetSessionLive(sessionId)) {
+        this.digestHandoffRetryCounts.delete(key);
+        this.addDigestHandoffDebt(sessionId, messageUuid);
+        return;
+      }
+      void this.handoffDigestDelivery(sessionId, messageUuid, dbId);
+    }, EXTERNAL_EVENT_RETRY_DELAY_MS);
+    this.digestHandoffRetryTimers.set(key, timer);
   }
 
   private scheduleInterruptProbeForSession(sessionId: string, taskId?: string): void {
@@ -1783,6 +1808,8 @@ export class SpaceRuntime {
       if (!status || status === 'consumed' || status === 'failed') continue;
       const uuid = String(row.uuid);
       if (this.hasDigestHandoffDebt(sessionId, uuid)) continue;
+      const handoffKey = `${sessionId}:${uuid}`;
+      if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
       return true;
     }
     return false;
@@ -2154,6 +2181,8 @@ export class SpaceRuntime {
     for (const row of rows) {
       const uuid = String(row.uuid);
       if (this.hasDigestHandoffDebt(sessionId, uuid)) continue;
+      const handoffKey = `${sessionId}:${uuid}`;
+      if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
       const membership = (row as { externalEventIds?: unknown }).externalEventIds;
       if (!Array.isArray(membership) || membership.length === 0) continue;
       const eventIds = membership.filter(
@@ -2205,6 +2234,8 @@ export class SpaceRuntime {
       );
     for (const row of rows) {
       const uuid = String(row.uuid);
+      const handoffKey = `${sessionId}:${uuid}`;
+      if (this.digestHandoffRetryTimers.has(handoffKey)) continue;
       if (this.hasDigestHandoffDebt(sessionId, uuid)) continue;
       const membership = (row as { externalEventIds?: unknown }).externalEventIds;
       if (!Array.isArray(membership) || membership.length === 0) continue;
@@ -3531,6 +3562,11 @@ export class SpaceRuntime {
     }
     this.turnEndDigestRetryTimers.clear();
     this.turnEndDigestRetryCounts.clear();
+    for (const timer of this.digestHandoffRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.digestHandoffRetryTimers.clear();
+    this.digestHandoffRetryCounts.clear();
     const staleSupersedeRetryTimers = Array.from(this.digestSupersedeRetryTimers.entries());
     const staleSupersedeRetryCounts = Array.from(this.digestSupersedeRetryCounts.entries());
     const stalePullTriggers = Array.from(this.digestPullTriggers.entries());
