@@ -228,7 +228,7 @@ function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
     registerCompletionCallback: (...args: unknown[]) => void;
     injectMessageIntoSession: (...args: unknown[]) => Promise<string>;
     cancelBySessionId: (id: string) => void;
-    buildNodeAgentMcpServerForSession: (...args: unknown[]) => unknown;
+    buildNodeAgentMcpServersForSession: (...args: unknown[]) => unknown;
   };
   internal.createSubSession = async () => {
     order.push('createSubSession');
@@ -250,7 +250,7 @@ function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
   internal.cancelBySessionId = (id: string) => {
     cancels.push(id);
   };
-  internal.buildNodeAgentMcpServerForSession = () => ({ __role: 'node-agent' });
+  internal.buildNodeAgentMcpServersForSession = () => ({ 'node-agent': { __role: 'node-agent' } });
 
   const task = options.callerTask ?? makeTask(taskStatus);
   const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as unknown as Space;

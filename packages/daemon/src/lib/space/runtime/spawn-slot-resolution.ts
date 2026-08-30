@@ -153,7 +153,7 @@ export function resolveTaskWorkspace(
 export function assembleNodeAgentSessionInit(input: {
   baseInit: AgentSessionInit;
   title: string;
-  nodeAgentMcpServer: McpServerConfig;
+  nodeAgentMcpServers: Record<string, McpServerConfig>;
   agentMemoryMcpServers: Record<string, McpServerConfig>;
 }): AgentSessionInit {
   return {
@@ -161,7 +161,7 @@ export function assembleNodeAgentSessionInit(input: {
     title: input.title,
     mcpServers: {
       ...input.baseInit.mcpServers,
-      'node-agent': input.nodeAgentMcpServer,
+      ...input.nodeAgentMcpServers,
       ...input.agentMemoryMcpServers,
     },
   };

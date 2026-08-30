@@ -92,7 +92,12 @@ import {
   createMarkCompleteHandler,
   createPrMergedGate,
 } from '../tools/end-node-handlers.ts';
-import { createNodeAgentMcpServer } from '../tools/node-agent-tools.ts';
+import { createNodeAgentMcpServer, type NodeAgentToolsConfig } from '../tools/node-agent-tools.ts';
+import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
+import {
+  buildWorkerDispatcherContractTools,
+  createSpaceActionsMcpServer,
+} from '../actions/space-actions-server.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
@@ -937,7 +942,7 @@ export class TaskAgentManager {
             throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
           }
 
-          const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+          const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
             request.task.id,
             request.sessionId,
             request.execution.agentName,
@@ -950,7 +955,7 @@ export class TaskAgentManager {
           init = assembleNodeAgentSessionInit({
             baseInit: init,
             title: formatWorkflowNodeSessionTitle(request.task, request.execution.agentName),
-            nodeAgentMcpServer: nodeAgentMcpServer as unknown as McpServerConfig,
+            nodeAgentMcpServers,
             agentMemoryMcpServers: this.buildAgentMemoryMcpServers(
               request.space.id,
               request.sessionId
@@ -2271,7 +2276,7 @@ export class TaskAgentManager {
       agentSession.skillOverrides = slotInit.skillOverrides;
     }
 
-    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+    const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
       taskId,
       sessionId,
       agentName,
@@ -2282,7 +2287,7 @@ export class TaskAgentManager {
     );
     const mergedMcpServers: Record<string, McpServerConfig> = {
       ...slotInit?.mcpServers,
-      'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+      ...nodeAgentMcpServers,
       'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
         space,
         sessionId
@@ -3224,15 +3229,23 @@ export class TaskAgentManager {
       return lines;
     };
 
+    const dispatcherTools = isSpaceActionsDispatcherEnabled()
+      ? buildWorkerDispatcherContractTools(execution.agentName)
+      : null;
+
     const fallback = [
       '## Runtime Execution Contract',
       `Role: "${execution.agentName}"`,
       'Tools available:',
-      '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
-      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
-      ...endNodeContractLines('  '),
-      '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
-      '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
+      ...(dispatcherTools
+        ? [...dispatcherTools, ...endNodeContractLines('  ')]
+        : [
+            '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
+            '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
+            ...endNodeContractLines('  '),
+            '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
+            '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
+          ]),
       `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`,
       'Only contact the task-agent via send_message if you are blocked or need human input.',
     ].join('\n');
@@ -3251,11 +3264,13 @@ export class TaskAgentManager {
       `Node: "${node.name}" (${node.id})`,
       `Agent: "${execution.agentName}"`,
       'Tools available:',
-      '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
-      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes.',
-      '  - list_artifacts ({ nodeId?, type? }) — list artifacts for the current workflow run',
-      '  - list_peers / list_reachable_agents — discovery',
-      '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
+      ...(dispatcherTools ?? [
+        '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
+        '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes.',
+        '  - list_artifacts ({ nodeId?, type? }) — list artifacts for the current workflow run',
+        '  - list_peers / list_reachable_agents — discovery',
+        '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
+      ]),
     ];
 
     lines.push(
@@ -3611,7 +3626,7 @@ export class TaskAgentManager {
       agentSession.setRuntimeSystemPrompt(currentInit.systemPrompt);
     }
 
-    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+    const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
       taskId,
       subSessionId,
       execution.agentName,
@@ -3622,7 +3637,7 @@ export class TaskAgentManager {
     );
 
     const mergedMcpServers: Record<string, McpServerConfig> = {
-      'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+      ...nodeAgentMcpServers,
       ...this.buildAgentMemoryMcpServers(spaceId, subSessionId),
     };
 
@@ -4353,19 +4368,17 @@ export class TaskAgentManager {
       workflowNodeId: string;
     }
   ): Promise<void> {
-    const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
-      ctx.taskId,
-      ctx.subSessionId,
-      ctx.agentName,
-      ctx.spaceId,
-      ctx.workflowRunId,
-      ctx.workspacePath,
-      ctx.workflowNodeId
+    session.mergeRuntimeMcpServers(
+      this.buildNodeAgentMcpServersForSession(
+        ctx.taskId,
+        ctx.subSessionId,
+        ctx.agentName,
+        ctx.spaceId,
+        ctx.workflowRunId,
+        ctx.workspacePath,
+        ctx.workflowNodeId
+      )
     );
-
-    session.mergeRuntimeMcpServers({
-      'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
-    });
 
     await session.restartQuery();
   }
@@ -4391,7 +4404,7 @@ export class TaskAgentManager {
     };
   }
 
-  buildNodeAgentMcpServerForSession(
+  buildNodeAgentMcpServersForSession(
     taskId: string,
     subSessionId: string,
     agentName: string,
@@ -4399,7 +4412,7 @@ export class TaskAgentManager {
     workflowRunId: string,
     workspacePath: string,
     workflowNodeIdHint?: string
-  ) {
+  ): Record<string, McpServerConfig> {
     const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     const bySession = nodeExecutions.find((exec) => exec.agentSessionId === subSessionId);
     const byAgentName = nodeExecutions.find((exec) => exec.agentName === agentName);
@@ -4788,7 +4801,7 @@ export class TaskAgentManager {
       });
     }
 
-    return createNodeAgentMcpServer({
+    const nodeConfig: NodeAgentToolsConfig = {
       mySessionId: subSessionId,
       myAgentName: agentName,
       myAgentNameAliases: agentNameAliases,
@@ -4821,7 +4834,30 @@ export class TaskAgentManager {
         return registry ? registry.get(taskId, fromAgentName) : null;
       },
       hookEngine,
-    });
+    };
+    const spaceActions = this.buildSpaceActionsDispatcherServer(nodeConfig);
+    return {
+      'node-agent': createNodeAgentMcpServer(nodeConfig) as unknown as McpServerConfig,
+      ...(spaceActions ? { 'space-actions': spaceActions } : {}),
+    };
+  }
+
+  buildSpaceActionsDispatcherServer(nodeConfig: NodeAgentToolsConfig): McpServerConfig | null {
+    if (!isSpaceActionsDispatcherEnabled()) return null;
+    return createSpaceActionsMcpServer({
+      role: 'workflow_worker',
+      nodeRole: nodeConfig.myAgentName,
+      spaceId: nodeConfig.spaceId,
+      taskId: nodeConfig.taskId,
+      workflowRunId: nodeConfig.workflowRunId,
+      agentName: nodeConfig.myAgentName,
+      sessionId: nodeConfig.mySessionId,
+      nodeConfig,
+      dispatchDeps: {
+        getSpaceAutonomyLevel: async (spaceId) =>
+          (await this.config.spaceManager.getSpace(spaceId))?.autonomyLevel ?? 1,
+      },
+    }) as unknown as McpServerConfig;
   }
 
   async spawnPostApprovalSubSession(args: {
@@ -4986,7 +5022,7 @@ export class TaskAgentManager {
         agentId: slot.agentId,
       });
 
-      const nodeAgentMcpServer = this.buildNodeAgentMcpServerForSession(
+      const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
         taskId,
         sessionId,
         matchedSlot.name,
@@ -5000,7 +5036,7 @@ export class TaskAgentManager {
         title: formatWorkflowNodeSessionTitle(task, matchedSlot.name),
         mcpServers: {
           ...init.mcpServers,
-          'node-agent': nodeAgentMcpServer as unknown as McpServerConfig,
+          ...nodeAgentMcpServers,
           'space-agent-tools': this.config.spaceRuntimeService.buildMemberSpaceToolsMcpServer(
             space,
             sessionId

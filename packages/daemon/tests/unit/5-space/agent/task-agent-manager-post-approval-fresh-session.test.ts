@@ -528,8 +528,8 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       reattachMemberSpaceTools: async () => {},
     };
     (
-      tam as unknown as { buildNodeAgentMcpServerForSession: () => unknown }
-    ).buildNodeAgentMcpServerForSession = () => ({});
+      tam as unknown as { buildNodeAgentMcpServersForSession: () => unknown }
+    ).buildNodeAgentMcpServersForSession = () => ({});
     (
       tam as unknown as { ensureNodeAgentAttached: (...a: unknown[]) => Promise<void> }
     ).ensureNodeAgentAttached = async () => {};
@@ -698,8 +698,8 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
       },
     };
     (
-      tam as unknown as { buildNodeAgentMcpServerForSession: () => unknown }
-    ).buildNodeAgentMcpServerForSession = () => ({ __role: 'node-agent' });
+      tam as unknown as { buildNodeAgentMcpServersForSession: () => unknown }
+    ).buildNodeAgentMcpServersForSession = () => ({ 'node-agent': { __role: 'node-agent' } });
     (
       tam as unknown as { ensureNodeAgentAttached: (...a: unknown[]) => Promise<void> }
     ).ensureNodeAgentAttached = async () => {};
