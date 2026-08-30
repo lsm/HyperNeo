@@ -36,6 +36,12 @@ import { AcpProvider } from '../providers/acp-provider.ts';
 import { TRANSIENT_CONNECTION_ERROR_SUBSTRINGS } from '../agent/transient-error-patterns.ts';
 import { drainDeliveryWaitersOnTerminalSDKMessage } from '../agent/message-delivery.ts';
 import { assessLimitError } from '../agent/limit-error-classifier.ts';
+import { isMeaningfulSdkStartupProgress } from '../agent/sdk-startup-progress.ts';
+import type { SdkStartExitInfo } from '../agent/sdk-start-terminal.ts';
+import {
+  getSdkStartInactivityBackstopMs,
+  runStartupWatch,
+} from '../agent/startup-watch-pipeline.ts';
 import type { AgentSession } from '../agent/agent-session.ts';
 import { QueryAttemptRegistry, type QueryAttemptToken } from '../agent/query-attempt-token.ts';
 import {
@@ -62,17 +68,65 @@ import {
 import { AcpTerminalManager } from './acp-terminal-manager.ts';
 import { AcpMcpProxyBridge, shouldProxy } from './mcp-proxy-bridge.ts';
 
-const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+const ACP_STARTUP_NUDGE_THRESHOLD_MS = 15_000;
 const RETRY_EXIT_TIMEOUT_MS = 5000;
 const MAX_FS_READ_BYTES = 4 * 1024 * 1024;
 const MAX_POST_ABORT_DRAIN_MESSAGES = 256;
 const POST_ABORT_DRAIN_TIMEOUT_MS = 1000;
 
-function getStartupTimeoutMs(): number {
-  const raw = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-  if (!raw) return DEFAULT_STARTUP_TIMEOUT_MS;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
+function isAcpAgentStartupMessage(message: SDKMessage): boolean {
+  return message.type !== 'result' && isMeaningfulSdkStartupProgress(message);
+}
+
+function isAcpErrorResultMessage(message: SDKMessage): boolean {
+  return message.type === 'result' && (message as { is_error?: boolean }).is_error === true;
+}
+
+const ACP_VALID_ERROR_STOP_REASONS = new Set([
+  'max_tokens',
+  'max_turn_requests',
+  'refusal',
+  'cancelled',
+]);
+
+function isAcpValidTerminalResult(message: SDKMessage): boolean {
+  if (message.type !== 'result') return false;
+  if (!isAcpErrorResultMessage(message)) return true;
+  const errors = (message as { errors?: string[] }).errors ?? [];
+  return errors.length > 0 && ACP_VALID_ERROR_STOP_REASONS.has(errors[0] ?? '');
+}
+
+function isAcpProviderClassifiedError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    assessLimitError({ rawText: message }).isLimit ||
+    TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) => message.includes(substr)) ||
+    /\b401\b/.test(message) ||
+    /\b403\b/.test(message) ||
+    lower.includes('unauthorized') ||
+    lower.includes('not authenticated') ||
+    message.includes('ECONNREFUSED') ||
+    message.includes('ENOTFOUND') ||
+    message.includes('EHOSTUNREACH') ||
+    lower.includes('service unavailable') ||
+    /\b503\b/.test(message) ||
+    /\b502\b/.test(message) ||
+    lower.includes('rate limit') ||
+    lower.includes('timeout') ||
+    lower.includes('permission')
+  );
+}
+
+function isAcpAuthOrLimitError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    assessLimitError({ rawText: message }).isLimit ||
+    /\b401\b/.test(message) ||
+    /\b403\b/.test(message) ||
+    lower.includes('unauthorized') ||
+    lower.includes('not authenticated') ||
+    lower.includes('rate limit')
+  );
 }
 
 function getAcpContextWindow(): number {
@@ -463,8 +517,91 @@ export class AcpQueryRunner {
     let startupHandshakeActive = true;
     let command: string;
     let args: string[];
-    let startupTimeoutMs: number;
+    let acpProcessExit: SdkStartExitInfo | null = null;
+    let startupWatchSawErrorResult = false;
+    let startupWatchHasFirstMessage: () => boolean = () => false;
+    let startupWatchFirstMessageSeen = false;
     let startStartupTimer: (hasFirstMessage: () => boolean) => void = () => {};
+
+    const ownsStartupWatch = () =>
+      attemptOwnsRun() &&
+      !runAbortController.signal.aborted &&
+      !this.ctx.isCleaningUp() &&
+      stateManager.getState().status !== 'interrupted';
+
+    const killAcpStartupWatch = (detail: string) => {
+      startupTimeoutReached = true;
+      const elapsed = Date.now() - queryStartTime;
+      logger.error(
+        `ACP startup failure: ${detail} after ${elapsed}ms without a first agent message; ` +
+          `backstop ${getSdkStartInactivityBackstopMs()}ms, command: ${command}, workspace: ${cwd}`
+      );
+      abortController?.abort();
+      try {
+        client?.cancel();
+        if (client?.canCloseSession()) {
+          client.closeSession().catch(() => {});
+        }
+      } catch {}
+      this.ctx.queryObject?.close();
+      client?.close();
+    };
+
+    const scheduleStartupWatchTick = (delayMs: number) => {
+      const startupTimer = setTimeout(() => {
+        void handleStartupWatchTick(startupTimer);
+      }, delayMs);
+      this.ctx.startupTimeoutTimer = startupTimer;
+    };
+
+    const handleStartupWatchTick = async (
+      startupTimer: ReturnType<typeof setTimeout>
+    ): Promise<void> => {
+      const releaseSlot = () => {
+        if (this.ctx.startupTimeoutTimer === startupTimer) {
+          this.ctx.startupTimeoutTimer = null;
+        }
+      };
+      const tickIsCurrent = () =>
+        attemptOwnsRun() &&
+        !this.ctx.isCleaningUp() &&
+        this.ctx.startupTimeoutTimer === startupTimer;
+      if (!tickIsCurrent() || startupWatchHasFirstMessage()) {
+        releaseSlot();
+        return;
+      }
+      const backstopMs = getSdkStartInactivityBackstopMs();
+      const outcome = await runStartupWatch(
+        { nudgeThresholdMs: ACP_STARTUP_NUDGE_THRESHOLD_MS },
+        {
+          processExit: acpProcessExit,
+          streamClosed: false,
+          messages: [],
+          inactivity: { elapsedMs: Date.now() - queryStartTime, lastActivityAt: null },
+        }
+      );
+      if (!tickIsCurrent()) {
+        releaseSlot();
+        return;
+      }
+      if (outcome.action === 'retry-dead' || outcome.action === 'abort-backstop') {
+        releaseSlot();
+        const exitInfo = outcome.action === 'retry-dead' ? outcome.exitInfo : null;
+        const detail =
+          outcome.action === 'abort-backstop'
+            ? `inactivity backstop reached after ${outcome.inactivity.elapsedMs}ms`
+            : `agent terminated (code=${exitInfo?.code ?? '?'}, signal=${exitInfo?.signal ?? '?'})`;
+        killAcpStartupWatch(detail);
+        return;
+      }
+      if (outcome.action === 'nudge-slow') {
+        logger.warn(
+          `ACP startup watch: no first agent message after ${outcome.inactivity.elapsedMs}ms; ` +
+            `still waiting (inactivity backstop ${backstopMs}ms).`
+        );
+      }
+      scheduleStartupWatchTick(Math.max(1, backstopMs - (Date.now() - queryStartTime)));
+    };
 
     try {
       const { initializeProviders, waitForOptionalProviderRegistration } = await import(
@@ -566,7 +703,6 @@ export class AcpQueryRunner {
             );
             const workspace = getAcpWorkspacePath(session, queryOptions);
             cwd = workspace ?? process.cwd();
-            startupTimeoutMs = getStartupTimeoutMs();
             assertActiveAcpStartup();
             instructionBlocks = acpInstructionBlocks(queryOptions);
             const hasInstructionBlocks = instructionBlocks.length > 0;
@@ -582,33 +718,12 @@ export class AcpQueryRunner {
               this.clearStartupTimer();
               startupTimeoutReached = false;
               queryStartTime = Date.now();
-              const startupTimer = setTimeout(() => {
-                if (!attemptOwnsRun()) {
-                  if (this.ctx.startupTimeoutTimer === startupTimer) {
-                    this.ctx.startupTimeoutTimer = null;
-                  }
-                  return;
-                }
-                if (!hasFirstMessage()) {
-                  startupTimeoutReached = true;
-                  const elapsed = Date.now() - queryStartTime;
-                  logger.error(
-                    `ACP startup timeout: ACP agent did not respond within ${elapsed}ms. ` +
-                      `Command: ${command}, workspace: ${cwd} ` +
-                      `(Hint: set HYPERNEO_SDK_STARTUP_TIMEOUT_MS to increase timeout, currently ${startupTimeoutMs}ms)`
-                  );
-                  abortController?.abort();
-                  try {
-                    client?.cancel();
-                    if (client?.canCloseSession()) {
-                      client.closeSession().catch(() => {});
-                    }
-                  } catch {}
-                  this.ctx.queryObject?.close();
-                  client?.close();
-                }
-              }, startupTimeoutMs);
-              this.ctx.startupTimeoutTimer = startupTimer;
+              startupWatchHasFirstMessage = hasFirstMessage;
+              startupWatchFirstMessageSeen = false;
+              startupWatchSawErrorResult = false;
+              scheduleStartupWatchTick(
+                Math.min(ACP_STARTUP_NUDGE_THRESHOLD_MS, getSdkStartInactivityBackstopMs())
+              );
             };
 
             const onMessageEnqueued = (messageId: string, queuedAt: number) => {
@@ -692,6 +807,9 @@ export class AcpQueryRunner {
               onProcessSpawn: (proc) =>
                 this.ctx.trackAgentProcess(proc as unknown as TrackedAgentProcess),
               onStderr: (data) => logger.warn(`ACP agent stderr: ${data.trimEnd()}`),
+              onExit: (code, signal) => {
+                acpProcessExit = { code, signal };
+              },
               onPermissionRequest: async (params: AcpPermissionRequest) => {
                 if (!attemptToken.isLive()) {
                   logger.warn(
@@ -820,11 +938,19 @@ export class AcpQueryRunner {
             requeueYieldedPrompt(message);
             break;
           }
-          this._lastConsumedUserMessage = {
-            uuid: message.uuid ?? '',
-            content: (message.message?.content ?? '') as unknown as string | MessageContent[],
-          };
         }
+        if (!attemptOwnsRun()) {
+          requeueYieldedPrompt(message);
+          break;
+        }
+        receivedAcpMessageDuringRun = false;
+        startupWatchFirstMessageSeen = false;
+        startupWatchHasFirstMessage = () => false;
+        startupWatchSawErrorResult = false;
+        this._lastConsumedUserMessage = {
+          uuid: message.uuid ?? '',
+          content: (message.message?.content ?? '') as unknown as string | MessageContent[],
+        };
 
         await this.applyStoredAcpThinkingLevel(acpClient, ownsSessionWrite);
         if (!attemptOwnsRun()) {
@@ -880,18 +1006,26 @@ export class AcpQueryRunner {
             adapter,
             abortController!.signal
           )) {
-            if (startupTimeoutReached && messageCount === 0) {
+            if (startupTimeoutReached) {
               throw new Error('ACP startup timeout - query aborted');
             }
 
             messageCount++;
-            if (messageCount === 1) {
-              promptMessageReceived = true;
-              receivedAcpMessageDuringRun = true;
-              if (shouldPersistInstructionsSent) {
-                this.persistAcpInstructionsSent();
+            if (!promptMessageReceived) {
+              if (
+                isAcpAgentStartupMessage(acpMessage as SDKMessage) ||
+                isAcpValidTerminalResult(acpMessage as SDKMessage)
+              ) {
+                promptMessageReceived = true;
+                startupWatchFirstMessageSeen = true;
+                receivedAcpMessageDuringRun = true;
+                if (shouldPersistInstructionsSent) {
+                  this.persistAcpInstructionsSent();
+                }
+                this.clearStartupTimer();
+              } else if (isAcpErrorResultMessage(acpMessage as SDKMessage)) {
+                startupWatchSawErrorResult = true;
               }
-              this.clearStartupTimer();
             }
             this.ctx.firstMessageReceived = true;
 
@@ -930,7 +1064,30 @@ export class AcpQueryRunner {
             }
           }
 
-          if (startupTimeoutReached && messageCount === 0) {
+          if (!promptMessageReceived && messageCount === 0 && ownsStartupWatch()) {
+            const outcome = await runStartupWatch(
+              { nudgeThresholdMs: ACP_STARTUP_NUDGE_THRESHOLD_MS },
+              {
+                processExit: acpProcessExit,
+                streamClosed: true,
+                messages: [],
+                inactivity: { elapsedMs: Date.now() - queryStartTime, lastActivityAt: null },
+              }
+            );
+            if (outcome.action === 'retry-dead' || outcome.action === 'abort-backstop') {
+              logger.warn(
+                `ACP startup watch: stream ended before the first agent message ` +
+                  `(reason: ${outcome.action === 'retry-dead' ? outcome.reason : 'inactivity'}); retrying.`
+              );
+              throw new Error('ACP startup timeout - query aborted');
+            }
+          }
+
+          if (attemptOwnsRun()) {
+            this.clearStartupTimer();
+          }
+
+          if (startupTimeoutReached) {
             throw new Error('ACP startup timeout - query aborted');
           }
         } finally {
@@ -949,8 +1106,14 @@ export class AcpQueryRunner {
       restoreMessageEnqueuedHandler?.();
       (terminalManager as AcpTerminalManager | null)?.dispose();
       terminalManager = null;
+      const errorText = String(error);
+      const startupFailedByErrorResult =
+        !startupWatchFirstMessageSeen &&
+        (acpProcessExit !== null
+          ? !isAcpAuthOrLimitError(errorText)
+          : !isAcpProviderClassifiedError(errorText) && startupWatchSawErrorResult);
       const effectiveError =
-        startupTimeoutReached && !this.ctx.firstMessageReceived
+        startupTimeoutReached || startupFailedByErrorResult
           ? new Error('ACP startup timeout - query aborted')
           : error;
       await this.handleRunError(
@@ -1085,14 +1248,42 @@ export class AcpQueryRunner {
       );
       await stateManager.setIdle({ suppressDeliveryWaiters: true });
 
-      if (isStartupTimeout && createdAcpSessionDuringRun && !receivedAcpMessageDuringRun) {
+      if (
+        isStartupTimeout &&
+        createdAcpSessionDuringRun &&
+        !receivedAcpMessageDuringRun &&
+        !(client?.canLoadSession() ?? false)
+      ) {
         this.clearAcpSessionState();
       }
 
       const lastMsg = this._lastConsumedUserMessage;
       if (lastMsg && (isStartupTimeout || isTransientConnectionError)) {
-        messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
-        this._lastConsumedUserMessage = null;
+        const deliveryRepo = this.ctx.db.getSDKMessageRepo?.();
+        const batchMembers =
+          this.ctx.db
+            .getJobQueueRepo?.()
+            ?.getActiveDeliveryBatchUuids?.(session.id, lastMsg.uuid) ?? [];
+        const uuidsToRestore = [lastMsg.uuid, ...batchMembers.filter((u) => u !== lastMsg.uuid)];
+        const restoredIds: string[] = [];
+        for (const uuid of uuidsToRestore) {
+          const restoredId =
+            deliveryRepo?.reopenDeliveryByUuid(session.id, uuid) ??
+            deliveryRepo?.markDeliveryRetryableByUuid(session.id, uuid) ??
+            null;
+          if (restoredId) restoredIds.push(restoredId);
+        }
+        if (restoredIds.length > 0) {
+          this.ctx.internalEventBus.publishAsync('messages.statusChanged', {
+            sessionId: session.id,
+            messageIds: restoredIds,
+            status: 'enqueued',
+          });
+          messageQueue.enqueueWithId(lastMsg.uuid, lastMsg.content).catch(() => {});
+          this._lastConsumedUserMessage = null;
+        } else if (messageQueue.requeueYielded(lastMsg.uuid)) {
+          this._lastConsumedUserMessage = null;
+        }
       }
 
       if (this.ctx.queryObject) {
@@ -1190,7 +1381,7 @@ export class AcpQueryRunner {
               queueSize: messageQueue.size(),
               providerId: 'acp',
               workspacePath: session.workspacePath ?? undefined,
-              startupTimeoutMs: getStartupTimeoutMs(),
+              inactivityBackstopMs: getSdkStartInactivityBackstopMs(),
             },
             publishGuard
           );

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { z } from 'zod';
 import type {
   AcpConfigOption,
   MessageContent,
@@ -11,35 +10,36 @@ import type {
   Session,
 } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { Database } from '../../../../src/storage/database';
-import type { ErrorManager } from '../../../../src/lib/error-manager';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
-import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
-import type { Logger } from '../../../../src/lib/logger';
-import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
-import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
-import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
-import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
+import { z } from 'zod';
 import type { AcpClient, AcpClientOptions } from '../../../../src/lib/acp/acp-client';
-import { AcpQueryAdapter } from '../../../../src/lib/acp/acp-query-adapter';
 import { getAcpCommandIdentityDigest } from '../../../../src/lib/acp/acp-command';
+import { AcpQueryAdapter } from '../../../../src/lib/acp/acp-query-adapter';
 import {
   AcpQueryRunner,
   convertMcpServersForAcp,
   parseAcpCommand,
 } from '../../../../src/lib/acp/acp-query-runner';
-import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { readFileWithinWorkspace } from '../../../../src/lib/acp/acp-safe-fs';
+import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
+import type { AskUserQuestionHandler } from '../../../../src/lib/agent/ask-user-question-handler';
+import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
+import { QueryAttemptRegistry } from '../../../../src/lib/agent/query-attempt-token';
+import type { QueryOptionsBuilder } from '../../../../src/lib/agent/query-options-builder';
+import type { QueryRunnerContext } from '../../../../src/lib/agent/query-runner';
+import type { ErrorManager } from '../../../../src/lib/error-manager';
+import type { Logger } from '../../../../src/lib/logger';
 import {
   clearModelsCache,
   getAvailableModels,
   getModelsCache,
   setModelsCache,
 } from '../../../../src/lib/model-service';
-import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { AcpProvider } from '../../../../src/lib/providers/acp-provider';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { providerEnvCoordinator } from '../../../../src/lib/providers/provider-env-enrollment';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import type { Database } from '../../../../src/storage/database';
 
 function createMockClient() {
   return {
@@ -219,6 +219,10 @@ function createRunnerFixture(overrides: RunnerFixtureOverrides = {}) {
     db: {
       saveSDKMessage: mock(() => {}),
       updateSession: mock(() => {}),
+      getSDKMessageRepo: mock(() => ({
+        reopenDeliveryByUuid: mock(() => 'delivery-row-1'),
+        markDeliveryRetryableByUuid: mock(() => null),
+      })),
       getNodeExecutionRepo: mock(() => ({
         getByAgentSessionId: mock(() => null),
         getById: mock(() => null),
@@ -923,8 +927,8 @@ describe('AcpQueryRunner', () => {
       const { ctx } = createRunnerFixture({ client, queueSize: 1 });
       const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
 
-      const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
       try {
         await runner.start();
         for (let i = 0; i < 100 && !ctx.startupTimeoutTimer; i++) {
@@ -944,8 +948,9 @@ describe('AcpQueryRunner', () => {
         releaseInitialize?.();
         await ctx.queryPromise;
       } finally {
-        if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
       }
     }, 1000);
 
@@ -1065,6 +1070,7 @@ describe('AcpQueryRunner', () => {
 
       expect(messageQueue.requeueYielded).toHaveBeenCalledWith('user-message-1');
       expect(onSent).not.toHaveBeenCalled();
+      expect(runner.lastConsumedUserMessage).toBeNull();
     }, 1000);
 
     test('a stale handshake skips persisting session results after a replacement', async () => {
@@ -1147,8 +1153,8 @@ describe('AcpQueryRunner', () => {
       const { ctx } = createRunnerFixture({ client, queueSize: 1 });
       const runner = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
 
-      const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
       try {
         await runner.start();
         for (let i = 0; i < 100 && !ctx.startupTimeoutTimer; i++) {
@@ -1169,8 +1175,9 @@ describe('AcpQueryRunner', () => {
         releaseInitialize?.();
         await ctx.queryPromise;
       } finally {
-        if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
       }
     }, 1000);
   });
@@ -2205,8 +2212,8 @@ describe('AcpQueryRunner', () => {
     };
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
     try {
       await runner.start();
       await ctx.queryPromise;
@@ -2216,8 +2223,9 @@ describe('AcpQueryRunner', () => {
       expect(secondClient.sendPrompt).toHaveBeenCalled();
       expect(messageQueue.onMessageEnqueued).toBe(previousOnMessageEnqueued);
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
     }
   }, 1000);
 
@@ -2236,8 +2244,8 @@ describe('AcpQueryRunner', () => {
     const { ctx } = createRunnerFixture({ client: firstClient, queueSize: 1 });
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
     try {
       await runner.start();
       await ctx.queryPromise;
@@ -2245,8 +2253,9 @@ describe('AcpQueryRunner', () => {
       expect(firstClient.close).toHaveBeenCalled();
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
     }
   }, 1000);
 
@@ -2279,8 +2288,8 @@ describe('AcpQueryRunner', () => {
     });
     const runner = new AcpQueryRunner(ctx, () => clients.shift() as unknown as AcpClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
     try {
       await runner.start();
       await ctx.queryPromise;
@@ -2294,8 +2303,9 @@ describe('AcpQueryRunner', () => {
         acpSessionId: undefined,
       });
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
     }
   }, 1000);
 
@@ -2319,8 +2329,8 @@ describe('AcpQueryRunner', () => {
     });
     const retryRunner = new AcpQueryRunner(ctx, createClient);
 
-    const previousTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-    process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+    const previousTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+    process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
     try {
       await retryRunner.start();
       await ctx.queryPromise;
@@ -2332,8 +2342,9 @@ describe('AcpQueryRunner', () => {
       ]);
       expect(secondClient.sendPrompt).toHaveBeenCalled();
     } finally {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousTimeout;
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousTimeout;
     }
   }, 1000);
 
@@ -2341,13 +2352,14 @@ describe('AcpQueryRunner', () => {
     let previousStartupTimeout: string | undefined;
 
     beforeEach(() => {
-      previousStartupTimeout = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      previousStartupTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
     });
 
     afterEach(() => {
-      if (previousStartupTimeout === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-      else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousStartupTimeout;
+      if (previousStartupTimeout === undefined)
+        delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = previousStartupTimeout;
     });
 
     async function waitFor(ready: () => boolean, spins = 100): Promise<void> {
@@ -2394,8 +2406,8 @@ describe('AcpQueryRunner', () => {
         ['not-a-number', 15000],
       ];
       for (const [envValue, expectedMs] of cases) {
-        if (envValue === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
-        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = envValue;
+        if (envValue === undefined) delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = envValue;
 
         const client = createMockClient();
         const releaseInitialize = holdInitialize(client);
@@ -2412,7 +2424,7 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('re-arms a fresh watchdog at prompt-send after the queued-kickoff arm', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '5000';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '5000';
       const client = createMockClient();
       const releaseInitialize = holdInitialize(client);
       const releasePrompt = holdPrompt(client);
@@ -2441,7 +2453,7 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('disarms the watchdog when the first ACP message arrives', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '200';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '200';
       const client = createMockClient();
       let releaseFirstUpdate: (() => void) | undefined;
       client.sendPrompt = mock(async function* () {
@@ -2481,7 +2493,7 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('timeout invokes the teardown sequence in order and surfaces the startup-timeout abort', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '50';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '50';
       const firstClient = createMockClient();
       firstClient.canCloseSession.mockImplementation(() => true);
       const releasePrompt = holdPrompt(firstClient);
@@ -2501,7 +2513,7 @@ describe('AcpQueryRunner', () => {
       });
       const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
       const originalAdapterClose = AcpQueryAdapter.prototype.close;
-      AcpQueryAdapter.prototype.close = function () {
+      AcpQueryAdapter.prototype.close = () => {
         teardownOrder.push('queryObject.close');
       };
 
@@ -2534,7 +2546,7 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('skips session/close on timeout when the agent cannot close sessions', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '50';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '50';
       const firstClient = createMockClient();
       holdPrompt(firstClient);
       const secondClient = createMockClient();
@@ -2580,7 +2592,7 @@ describe('AcpQueryRunner', () => {
     }, 5000);
 
     test('retries a startup timeout once, then surfaces the failed startup', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
       const firstClient = createMockClient();
       holdPrompt(firstClient);
       const secondClient = createMockClient();
@@ -2602,13 +2614,13 @@ describe('AcpQueryRunner', () => {
         'timeout',
         expect.stringContaining('The ACP agent failed to start'),
         expect.any(Object),
-        expect.objectContaining({ providerId: 'acp', startupTimeoutMs: 20 }),
+        expect.objectContaining({ providerId: 'acp', inactivityBackstopMs: 20 }),
         expect.any(Function)
       );
     }, 5000);
 
     test('clears ACP session state when a startup timeout hits before any message', async () => {
-      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '20';
       const firstClient = createMockClient();
       holdPrompt(firstClient);
       const secondClient = createMockClient();
@@ -2678,6 +2690,1075 @@ describe('AcpQueryRunner', () => {
       for (const call of updateSession.mock.calls) {
         expect(call[1]).not.toMatchObject({ acpSessionId: undefined });
       }
+    }, 5000);
+
+    test('an idle result-only turn does not arm the backstop against a healthy agent', async () => {
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '500';
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+      });
+      let releaseNextTurn: (() => void) | undefined;
+      const { runner, ctx } = createRunnerFixture({
+        client,
+        messageGenerator: async function* () {
+          yield { message: makeUserMessage('hello'), onSent: mock(() => {}) };
+          await new Promise<void>((resolve) => {
+            releaseNextTurn = resolve;
+          });
+        },
+      });
+
+      await runner.start();
+      await waitFor(
+        () => client.sendPrompt.mock.calls.length > 0 && ctx.startupTimeoutTimer === null,
+        500
+      );
+      await new Promise((resolve) => setTimeout(resolve, 700));
+
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(client.close).not.toHaveBeenCalled();
+      expect(ctx.queryAbortController?.signal.aborted).toBe(false);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+      releaseNextTurn?.();
+      await ctx.queryPromise;
+    }, 5000);
+
+    test('a process exit after a legal empty turn does not kill the idle runner', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+      });
+      let releaseNextTurn: (() => void) | undefined;
+      const { runner, ctx, constructorOptions } = createRunnerFixture({
+        client,
+        messageGenerator: async function* () {
+          yield { message: makeUserMessage('hello'), onSent: mock(() => {}) };
+          await new Promise<void>((resolve) => {
+            releaseNextTurn = resolve;
+          });
+        },
+      });
+
+      await runner.start();
+      await waitFor(
+        () => client.sendPrompt.mock.calls.length > 0 && ctx.startupTimeoutTimer === null,
+        500
+      );
+      constructorOptions[0].onExit?.(0, null);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(ctx.queryAbortController?.signal.aborted).toBe(false);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(client.close).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+      releaseNextTurn?.();
+      await ctx.queryPromise;
+    }, 5000);
+
+    test('keeps a slow live agent alive: the nudge-only watch never kills', async () => {
+      const previousOldVar = process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = '20';
+      try {
+        const client = createMockClient();
+        holdPrompt(client);
+        const { runner, ctx } = createRunnerFixture({ client });
+
+        await runner.start();
+        await waitFor(() => ctx.startupTimeoutTimer !== null, 500);
+        expect(ctx.startupTimeoutTimer).not.toBeNull();
+        expect(timerDelayMs(ctx.startupTimeoutTimer)).toBe(15000);
+
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(ctx.queryAbortController?.signal.aborted).toBe(false);
+        expect(client.cancel).not.toHaveBeenCalled();
+        expect(client.close).not.toHaveBeenCalled();
+        expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+        ctx.queryAbortController?.abort();
+        client.close();
+        await ctx.queryPromise;
+      } finally {
+        if (previousOldVar === undefined) delete process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS;
+        else process.env.HYPERNEO_SDK_STARTUP_TIMEOUT_MS = previousOldVar;
+      }
+    }, 5000);
+
+    test('a valid refusal stop reason is a terminal turn, not a startup failure', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+      });
+      client.getLastPromptStopReason = mock(() => 'refusal');
+      let releaseResult: (() => void) | undefined;
+      const { runner, ctx, messageQueue } = createRunnerFixture({
+        client,
+        onSDKMessage: async (message) => {
+          if (message.type === 'result') {
+            await new Promise<void>((resolve) => {
+              releaseResult = resolve;
+            });
+          }
+        },
+      });
+
+      await runner.start();
+      await waitFor(() => releaseResult !== undefined && ctx.startupTimeoutTimer === null, 500);
+
+      expect(client.cancel).not.toHaveBeenCalled();
+      releaseResult?.();
+      await ctx.queryPromise;
+
+      expect(client.sendPrompt).toHaveBeenCalledTimes(1);
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      expect(ctx.db.updateSession).not.toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+    }, 5000);
+
+    test('an agent-originated cancellation is a terminal turn, not a startup failure', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+      });
+      client.getLastPromptStopReason = mock(() => 'cancelled');
+      const { runner, ctx, messageQueue } = createRunnerFixture({ client });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(client.sendPrompt).toHaveBeenCalledTimes(1);
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      expect(ctx.db.updateSession).not.toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+    }, 5000);
+
+    test('an internal prompt that fails before progress is requeued, not the prior user turn', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        if (JSON.stringify(prompt).includes('/clear')) {
+          throw new Error('ACP agent process exited');
+        }
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'plan', entries: [] },
+        };
+      });
+      const secondClient = createMockClient();
+      const clients = [firstClient, secondClient];
+      const internalClear = {
+        ...makeUserMessage('/clear'),
+        uuid: 'internal-clear-1' as SDKUserMessage['uuid'],
+        internal: true,
+      } as SDKUserMessage & { internal: boolean };
+      let generatorRun = 0;
+      const { runner, ctx, messageQueue } = createRunnerFixture({
+        client: firstClient,
+        messageGenerator: async function* () {
+          generatorRun++;
+          if (generatorRun === 1) {
+            yield { message: makeUserMessage('first'), onSent: mock(() => {}) };
+          }
+          yield { message: internalClear, onSent: mock(() => {}) };
+        },
+      });
+      (ctx.db as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        reopenDeliveryByUuid: mock(() => null),
+        markDeliveryRetryableByUuid: mock(() => null),
+      });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const acpRunner = new AcpQueryRunner(ctx, createClient);
+
+      await acpRunner.start();
+      await ctx.queryPromise;
+
+      expect(messageQueue.requeueYielded).toHaveBeenCalledWith('internal-clear-1');
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('persists instructions when metadata precedes the first real reply', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'available_commands_update', availableCommands: [] },
+        };
+      });
+      const { runner, ctx } = createRunnerFixture({
+        client,
+        queryOptions: {
+          cwd: '/tmp/acp-session',
+          mcpServers: {},
+          systemPrompt: 'SYSTEM-PROMPT',
+        },
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(ctx.db.updateSession).toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({
+          metadata: expect.objectContaining({ acpInstructionsSent: true }),
+        })
+      );
+    }, 5000);
+
+    test('metadata before a startup failure does not mark instructions delivered', async () => {
+      const firstClient = createMockClient();
+      firstClient.canLoadSession.mockImplementation(() => true);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'available_commands_update', availableCommands: [] },
+        };
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { runner, ctx } = createRunnerFixture({
+        client: firstClient,
+        queryOptions: {
+          cwd: '/tmp/acp-session',
+          mcpServers: {},
+          systemPrompt: 'SYSTEM-PROMPT',
+        },
+      });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const acpRunner = new AcpQueryRunner(ctx, createClient);
+
+      await acpRunner.start();
+      await ctx.queryPromise;
+
+      const retryPrompt = secondClient.sendPrompt.mock.calls[0][0] as { text?: string }[];
+      expect(JSON.stringify(retryPrompt)).toContain('SYSTEM-PROMPT');
+      expect(secondClient.loadSession).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('preserves instruction blocks across a pre-submission retry', async () => {
+      const firstClient = createMockClient();
+      firstClient.canLoadSession.mockImplementation(() => true);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { runner, ctx, messageQueue } = createRunnerFixture({
+        client: firstClient,
+        queryOptions: {
+          cwd: '/tmp/acp-session',
+          mcpServers: {},
+          systemPrompt: 'SYSTEM-PROMPT',
+        },
+      });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const acpRunner = new AcpQueryRunner(ctx, createClient);
+
+      await acpRunner.start();
+      await ctx.queryPromise;
+
+      const retryPrompt = secondClient.sendPrompt.mock.calls[0][0] as { text?: string }[];
+      expect(JSON.stringify(retryPrompt)).toContain('SYSTEM-PROMPT');
+      expect(secondClient.loadSession).toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a transient error followed by a process exit clears the dead session and retries', async () => {
+      const firstClient = createMockClient();
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        constructorOptions[0]?.onExit?.(1, null);
+        throw new Error('TypeError: fetch failed');
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(ctx.db.updateSession).toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+      expect(secondClient.createSession).toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('an auth failure with a process exit keeps its provider path, not a startup retry', async () => {
+      const firstClient = createMockClient();
+      const { ctx } = createRunnerFixture({ client: firstClient });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return firstClient as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        constructorOptions[0]?.onExit?.(1, null);
+        throw new Error('401 Unauthorized');
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(ctx.errorManager.handleError).toHaveBeenCalledWith(
+        'session-1',
+        expect.any(Error),
+        'provider_auth_error',
+        undefined,
+        expect.any(Object),
+        expect.objectContaining({ providerId: 'acp' }),
+        expect.any(Function)
+      );
+    }, 5000);
+
+    test('a process exit with an unrelated numeric substring still routes through the startup retry', async () => {
+      const firstClient = createMockClient();
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        constructorOptions[0]?.onExit?.(1, null);
+        throw new Error('failed to connect to port 14010');
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a pre-progress failure with an unrelated numeric substring routes through the startup retry', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('request failed near port 1503');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a rate limit with a process exit keeps its cooldown, not a startup retry', async () => {
+      const firstClient = createMockClient();
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return firstClient as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      ctx.onRateLimitExhausted = mock(async () => true);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        constructorOptions[0]?.onExit?.(1, null);
+        throw new Error('Too Many Requests');
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(ctx.onRateLimitExhausted).toHaveBeenCalledTimes(1);
+      expect(createClient).toHaveBeenCalledTimes(1);
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a startup retry restores every active delivery batch member', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      (ctx.db as unknown as { getJobQueueRepo: () => unknown }).getJobQueueRepo = () => ({
+        getActiveDeliveryBatchUuids: mock(() => ['user-message-1', 'member-2']),
+      });
+      const reopenDeliveryByUuid = mock((_sessionId: string, uuid: string) => `row-${uuid}`);
+      const markDeliveryRetryableByUuid = mock(() => null);
+      (ctx.db as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        reopenDeliveryByUuid,
+        markDeliveryRetryableByUuid,
+      });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith('session-1', 'user-message-1');
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith('session-1', 'member-2');
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('retries when the abortable query stream ends without delivering any message', async () => {
+      const firstClient = createMockClient();
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+      const originalIterator = AcpQueryAdapter.prototype[Symbol.asyncIterator];
+      AcpQueryAdapter.prototype[Symbol.asyncIterator] = async function* () {};
+
+      try {
+        await runner.start();
+        await ctx.queryPromise;
+
+        expect(createClient).toHaveBeenCalledTimes(2);
+        expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+          { type: 'text', text: 'hello' },
+        ]);
+        expect(ctx.errorManager.handleError).toHaveBeenCalledTimes(1);
+      } finally {
+        AcpQueryAdapter.prototype[Symbol.asyncIterator] = originalIterator;
+      }
+    }, 5000);
+
+    test('retries when the agent process exits pre-first-message and the stream drains empty', async () => {
+      const firstClient = createMockClient();
+      let releasePrompt: (() => void) | undefined;
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        await new Promise<void>((resolve) => {
+          releasePrompt = resolve;
+        });
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await waitFor(() => firstClient.sendPrompt.mock.calls.length > 0, 500);
+      constructorOptions[0].onExit?.(1, null);
+      releasePrompt?.();
+
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a buffered legal result delivered after the process exit is not retried', async () => {
+      const client = createMockClient();
+      const { runner, ctx, constructorOptions } = createRunnerFixture({ client });
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        constructorOptions[0].onExit?.(0, null);
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'plan', entries: [] },
+        };
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(client.sendPrompt).toHaveBeenCalledTimes(1);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+      expect(ctx.db.updateSession).not.toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+    }, 5000);
+
+    test('reopens the persisted delivery row before the startup retry re-submits it', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        throw new Error('session/prompt failed');
+      });
+      const secondClient = createMockClient();
+      const clients = [firstClient, secondClient];
+      const { ctx } = createRunnerFixture({ client: firstClient });
+      const reopenDeliveryByUuid = mock(() => 'db-id-1');
+      (ctx.db as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        reopenDeliveryByUuid,
+      });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith('session-1', 'user-message-1');
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+    }, 5000);
+
+    test('restores an accepted (consumed) delivery row for the startup retry', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const reopenDeliveryByUuid = mock(() => null);
+      const markDeliveryRetryableByUuid = mock(() => 'db-id-2');
+      (ctx.db as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        reopenDeliveryByUuid,
+        markDeliveryRetryableByUuid,
+      });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(reopenDeliveryByUuid).toHaveBeenCalledWith('session-1', 'user-message-1');
+      expect(markDeliveryRetryableByUuid).toHaveBeenCalledWith('session-1', 'user-message-1');
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('an exit during per-turn configuration after prior progress enters the startup retry', async () => {
+      const firstClient = createMockClient();
+      firstClient.getConfigOptions = mock(() => [
+        {
+          id: 'thought',
+          name: 'Thought',
+          type: 'select',
+          category: 'thought_level',
+          currentValue: 'off',
+          options: [{ name: 'Medium', value: 'medium' }],
+        },
+      ]);
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({
+        client: firstClient,
+        messages: [makeUserMessage('first'), makeUserMessage('second')],
+        session: { config: { thinkingLevel: 'think8k' } } as Partial<Session>,
+      });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+      (ctx.db as unknown as { getSDKMessageRepo: () => unknown }).getSDKMessageRepo = () => ({
+        reopenDeliveryByUuid: mock(() => null),
+        markDeliveryRetryableByUuid: mock(() => null),
+      });
+      firstClient.setConfigOption = mock(async () => {
+        const calls = firstClient.setConfigOption.mock.calls.length;
+        if (calls === 2) {
+          constructorOptions[0]?.onExit?.(1, null);
+          return [];
+        }
+        if (calls >= 3) {
+          throw new Error('ACP agent process exited');
+        }
+        return [];
+      });
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.requeueYielded).toHaveBeenCalledWith('user-message-1');
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('preserves a resumable session when a later prompt dies before progress', async () => {
+      const firstClient = createMockClient();
+      firstClient.canLoadSession.mockImplementation(() => true);
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        if (firstClient.sendPrompt.mock.calls.length === 1) {
+          yield {
+            sessionId: 'acp-session-1',
+            update: { sessionUpdate: 'plan', entries: [] },
+          };
+          return;
+        }
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({
+        client: firstClient,
+        messages: [makeUserMessage('first'), makeUserMessage('second')],
+      });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await waitFor(() => firstClient.sendPrompt.mock.calls.length >= 2, 500);
+      constructorOptions[0].onExit?.(1, null);
+
+      await ctx.queryPromise;
+
+      expect(ctx.db.updateSession).not.toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+      expect(secondClient.loadSession).toHaveBeenCalledWith(
+        'acp-session-1',
+        expect.any(String),
+        expect.anything()
+      );
+      expect(secondClient.createSession).not.toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'second' },
+      ]);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('clears the dead new session when a later prompt dies before meaningful progress', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        if (firstClient.sendPrompt.mock.calls.length === 1) {
+          yield {
+            sessionId: 'acp-session-1',
+            update: { sessionUpdate: 'plan', entries: [] },
+          };
+          return;
+        }
+        throw new Error('ACP agent process exited');
+      });
+      const secondClient = createMockClient();
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({
+        client: firstClient,
+        messages: [makeUserMessage('first'), makeUserMessage('second')],
+      });
+      const constructorOptions: AcpClientOptions[] = [];
+      const createClient = mock((options: AcpClientOptions) => {
+        constructorOptions.push(options);
+        return clients.shift() as unknown as AcpClient;
+      });
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await waitFor(() => firstClient.sendPrompt.mock.calls.length >= 2, 500);
+      constructorOptions[0].onExit?.(1, null);
+
+      await ctx.queryPromise;
+
+      expect(ctx.db.updateSession).toHaveBeenCalledWith(
+        'session-1',
+        expect.objectContaining({ acpSessionId: undefined })
+      );
+      expect(secondClient.createSession).toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'second' },
+      ]);
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('ambient metadata does not disarm the watch: a hanging agent hits the backstop and retries', async () => {
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '300';
+      const firstClient = createMockClient();
+      let releaseAmbient: (() => void) | undefined;
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'available_commands_update', availableCommands: [] },
+        };
+        await new Promise<void>((resolve) => {
+          releaseAmbient = resolve;
+        });
+      });
+      firstClient.close.mockImplementation(() => {
+        releaseAmbient?.();
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { runner, ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const acpRunner = new AcpQueryRunner(ctx, createClient);
+      const loggerError = (ctx.logger as unknown as { error: ReturnType<typeof mock> }).error;
+
+      await acpRunner.start();
+      await waitFor(() => ctx.queryAbortController?.signal.aborted === true, 2000);
+      expect(firstClient.cancel).toHaveBeenCalled();
+      expect(
+        loggerError.mock.calls.some(([message]) =>
+          String(message).includes('ACP startup failure: inactivity backstop')
+        )
+      ).toBe(true);
+
+      await ctx.queryPromise;
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('retries when the startup stream throws with an error result before any agent message', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('session/prompt failed');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { runner, ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const acpRunner = new AcpQueryRunner(ctx, createClient);
+
+      await acpRunner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a pre-first-message rate limit keeps its cooldown instead of the startup retry', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('429 Too Many Requests');
+      });
+      const { ctx, messageQueue } = createRunnerFixture({ client });
+      const runner2 = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+      ctx.onRateLimitExhausted = mock(async () => true);
+
+      await runner2.start();
+      await ctx.queryPromise;
+
+      expect(ctx.onRateLimitExhausted).toHaveBeenCalledTimes(1);
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a pre-first-message text-only limit keeps its cooldown instead of the startup retry', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('Too Many Requests');
+      });
+      const { ctx, messageQueue } = createRunnerFixture({ client });
+      const runner2 = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+      ctx.onRateLimitExhausted = mock(async () => true);
+
+      await runner2.start();
+      await ctx.queryPromise;
+
+      expect(ctx.onRateLimitExhausted).toHaveBeenCalledTimes(1);
+      expect(messageQueue.enqueueWithId).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a startup retry clears the new session after only an error result, resuming via createSession', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('session/prompt failed');
+      });
+      const secondClient = createMockClient();
+      const clients = [firstClient, secondClient];
+      const { runner, ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const acpRunner = new AcpQueryRunner(ctx, createClient);
+
+      await acpRunner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(ctx.db.updateSession).toHaveBeenCalledWith('session-1', {
+        acpSessionId: undefined,
+        metadata: expect.objectContaining({
+          acpInstructionsSent: undefined,
+          acpContextUsageEstimate: undefined,
+        }),
+      });
+      expect(secondClient.createSession).toHaveBeenCalled();
+      expect(secondClient.loadSession).not.toHaveBeenCalled();
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
+    test('a legal terminal result disarms the watch before the result handler runs', async () => {
+      const client = createMockClient();
+      let releaseResult: (() => void) | undefined;
+      const { runner, ctx, constructorOptions } = createRunnerFixture({
+        client,
+        onSDKMessage: async (message) => {
+          if (message.type === 'result') {
+            await new Promise<void>((resolve) => {
+              releaseResult = resolve;
+            });
+          }
+        },
+      });
+
+      await runner.start();
+      await waitFor(() => releaseResult !== undefined && ctx.startupTimeoutTimer === null, 500);
+      constructorOptions[0].onExit?.(0, null);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(ctx.queryAbortController?.signal.aborted).toBe(false);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(client.close).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+      releaseResult?.();
+      await ctx.queryPromise;
+    }, 5000);
+
+    test('a pre-first-message auth error surfaces as an auth failure, not a startup timeout', async () => {
+      const client = createMockClient();
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('401 Unauthorized');
+      });
+      const { ctx } = createRunnerFixture({ client });
+      const runner2 = new AcpQueryRunner(ctx, () => client as unknown as AcpClient);
+
+      await runner2.start();
+      await ctx.queryPromise;
+
+      expect(ctx.errorManager.handleError).toHaveBeenCalledWith(
+        'session-1',
+        expect.any(Error),
+        'provider_auth_error',
+        undefined,
+        expect.any(Object),
+        expect.objectContaining({ providerId: 'acp' }),
+        expect.any(Function)
+      );
+    }, 5000);
+
+    test('a process exit after the first agent message does not trigger the startup kill', async () => {
+      const client = createMockClient();
+      let releasePrompt: (() => void) | undefined;
+      client.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        yield {
+          sessionId: 'acp-session-1',
+          update: { sessionUpdate: 'plan', entries: [] },
+        };
+        await new Promise<void>((resolve) => {
+          releasePrompt = resolve;
+        });
+      });
+      const { runner, ctx, constructorOptions } = createRunnerFixture({ client });
+
+      await runner.start();
+      await waitFor(
+        () => client.sendPrompt.mock.calls.length > 0 && ctx.startupTimeoutTimer === null,
+        500
+      );
+      constructorOptions[0].onExit?.(0, null);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(ctx.queryAbortController?.signal.aborted).toBe(false);
+      expect(client.cancel).not.toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+
+      releasePrompt?.();
+      await ctx.queryPromise;
+      expect(client.cancel).not.toHaveBeenCalled();
     }, 5000);
   });
 
