@@ -1,5 +1,5 @@
 import { decisionRun } from '../space/runtime/decision-pipeline.ts';
-import { composeTurnEndDeliveryUuids, isTurnEndAckEligible } from './ack-selection.ts';
+import { isTurnEndAckEligible } from './ack-selection.ts';
 import type { TurnEndEvent, TurnEndFlags, TurnEndPlan } from './turn-end-routing.ts';
 import { routeTurnEnd } from './turn-end-routing.ts';
 import type { ResultUsage, UsageAccountingState } from './usage-accounting.ts';
@@ -10,7 +10,6 @@ export type TurnEndAckRow = {
   durableOwned: boolean;
   yielded: boolean;
   pendingOrClaimed: boolean;
-  batchUuids: ReadonlyArray<string> | null;
 };
 
 export type TurnEndAckSelection = { messageId: string; deliveryUuids: string[] };
@@ -70,11 +69,7 @@ export function selectTurnEndAckRow(
   }
   return {
     messageId: row.uuid,
-    deliveryUuids: composeTurnEndDeliveryUuids({
-      messageId: row.uuid,
-      yielded: row.yielded,
-      batchUuids: row.batchUuids,
-    }),
+    deliveryUuids: [row.uuid],
   };
 }
 

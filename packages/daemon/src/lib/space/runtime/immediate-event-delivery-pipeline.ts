@@ -6,7 +6,6 @@ import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts'
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import { ensurePrompt, retryPrompt } from '../../agent/message-delivery-outbox.ts';
-import type { MessageDeliveryRole } from '../../agent/message-delivery.ts';
 import { buildSyntheticExternalEventMessage } from '../../external-events/deferred-event-digest.ts';
 import type { ExternalEventPublishedPayload } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
@@ -32,7 +31,6 @@ export type ImmediateEventDeliveryOutcome =
   | {
       action: 'delivered';
       mechanics: ImmediateEventMechanics;
-      deliveryRole: MessageDeliveryRole | null;
       messageUuid: string;
     }
   | { action: 'error'; stage: 'persistAndEnqueue' | 'markLedger'; error: unknown };
@@ -75,7 +73,6 @@ interface ImmediateEventDeliveryCtx extends ImmediateEventDeliveryInput, Externa
   mechanics?: ImmediateEventMechanics;
   messageUuid?: string;
   message?: SDKUserMessage;
-  deliveryRole?: MessageDeliveryRole | null;
   outcome?: ImmediateEventDeliveryOutcome;
 }
 
@@ -186,7 +183,6 @@ export async function persistAndEnqueue(
   ctx: ImmediateEventDeliveryCtx
 ): Promise<ImmediateEventDeliveryCtx> {
   try {
-    const steer = ctx.mechanics === 'steer';
     const ensured = ensurePrompt({
       db: ctx.deps.db,
       sdkMessageRepo: ctx.deps.messages,
@@ -196,11 +192,11 @@ export async function persistAndEnqueue(
       origin: 'system',
       delivery: {
         origin: 'space_inject',
-        ...(steer ? { requestedRole: 'steer' as const } : {}),
+        ...(ctx.mechanics === 'steer' ? { injectedMidTurn: true } : {}),
       },
     });
-    let deliveryRole = ensured.role;
-    if (deliveryRole === null && !ensured.created) {
+    let activated = ensured.activated;
+    if (!activated && !ensured.created) {
       const retried = await retryPrompt({
         db: ctx.deps.db,
         jobQueue: ctx.deps.jobQueue,
@@ -208,14 +204,14 @@ export async function persistAndEnqueue(
         sessionId: ctx.sessionId!,
         messageUuid: ctx.messageUuid!,
         origin: 'space_inject',
-        ...(steer ? { requestedRole: 'steer' as const } : {}),
+        ...(ctx.mechanics === 'steer' ? { injectedMidTurn: true } : {}),
       });
-      deliveryRole = retried?.role ?? null;
+      activated = retried !== null;
     }
-    if (deliveryRole === 'turn') {
+    if (activated) {
       await ctx.deps.setQueuedIfIdle(ctx.sessionId!, ctx.messageUuid!).catch(() => {});
     }
-    return { ...ctx, deliveryRole };
+    return ctx;
   } catch (error) {
     return settled(ctx, { action: 'error', stage: 'persistAndEnqueue', error });
   }
@@ -232,7 +228,6 @@ export function markLedger(ctx: ImmediateEventDeliveryCtx): ImmediateEventDelive
   return settled(ctx, {
     action: 'delivered',
     mechanics: ctx.mechanics!,
-    deliveryRole: ctx.deliveryRole ?? null,
     messageUuid: ctx.messageUuid!,
   });
 }

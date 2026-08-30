@@ -2,7 +2,6 @@ import { describe, expect, it } from 'bun:test';
 import {
   type HandlerOutcomeRoute,
   routeDriveTurnOutcome,
-  routeFeedSteerOutcome,
 } from '../../../../src/lib/agent/handler-outcome-routing';
 import {
   type DeliveryOutcome,
@@ -65,41 +64,6 @@ describe('routeDriveTurnOutcome', () => {
 
   it.each(DRIVE_OUTCOMES.map((row) => [row.label, row] as const))('%s', (_label, row) => {
     const route = routeDriveTurnOutcome(row.drive);
-    noDeadLetter(route);
-    expect(route).toEqual(row.expected);
-  });
-});
-
-describe('routeFeedSteerOutcome', () => {
-  const FEED_OUTCOMES: Array<{
-    label: string;
-    feed: DeliveryOutcome;
-    expected: HandlerOutcomeRoute;
-  }> = [
-    {
-      label: 'completed',
-      feed: { outcome: 'completed' },
-      expected: { mutation: 'none', settleSkipped: false, result: { outcome: 'completed' } },
-    },
-    {
-      label: 'aborted',
-      feed: { outcome: 'aborted' },
-      expected: { mutation: 'none', settleSkipped: true, result: { outcome: 'aborted' } },
-    },
-    {
-      label: 'blocked',
-      feed: { outcome: 'blocked', retryAt: 1234, reason: 'sdk_resume_choice' },
-      expected: {
-        mutation: 'requeue',
-        retryAt: 1234,
-        settleSkipped: false,
-        result: { parked: 'sdk_resume_choice', retryAt: 1234 },
-      },
-    },
-  ];
-
-  it.each(FEED_OUTCOMES.map((row) => [row.label, row] as const))('%s', (_label, row) => {
-    const route = routeFeedSteerOutcome(row.feed);
     noDeadLetter(route);
     expect(route).toEqual(row.expected);
   });

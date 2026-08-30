@@ -48,28 +48,24 @@ const ACK_ROWS: TurnEndAckRow[] = [
     durableOwned: false,
     yielded: false,
     pendingOrClaimed: false,
-    batchUuids: null,
   },
   {
     uuid: 'owned-2',
     durableOwned: true,
     yielded: false,
     pendingOrClaimed: false,
-    batchUuids: null,
   },
   {
     uuid: 'active-3',
     durableOwned: true,
     yielded: true,
     pendingOrClaimed: false,
-    batchUuids: ['active-3', 'batch-1', 'batch-2'],
   },
   {
     uuid: 'pending-4',
     durableOwned: false,
     yielded: false,
     pendingOrClaimed: true,
-    batchUuids: null,
   },
 ];
 
@@ -92,7 +88,7 @@ describe('decideTurnEnd', () => {
       usage: recordResultUsage(usageState, resultUsage),
       ackSelection: [
         { messageId: 'free-1', deliveryUuids: ['free-1'] },
-        { messageId: 'active-3', deliveryUuids: ['active-3', 'batch-1', 'batch-2'] },
+        { messageId: 'active-3', deliveryUuids: ['active-3'] },
       ],
       plan: routeTurnEnd(resetTurnEndFlags, resultEvent(), { queryMode: 'immediate' }),
     });
@@ -165,7 +161,7 @@ describe('selectTurnEndAckRow', () => {
   it('a row that gains a durable owner mid-loop revalidates to no selection', () => {
     expect(selectTurnEndAckRow(ACK_ROWS[2], 'active-3')).toEqual({
       messageId: 'active-3',
-      deliveryUuids: ['active-3', 'batch-1', 'batch-2'],
+      deliveryUuids: ['active-3'],
     });
     const resnapshotted: TurnEndAckRow = { ...ACK_ROWS[2], pendingOrClaimed: true };
     expect(selectTurnEndAckRow(resnapshotted, 'active-3')).toEqual(null);

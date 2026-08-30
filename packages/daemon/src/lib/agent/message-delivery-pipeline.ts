@@ -97,7 +97,6 @@ export function decideInjectDelivery(input: InjectDeliveryInput): InjectDelivery
 
 export type TurnEndFlushPlan =
   | { action: 'noop' }
-  | { action: 'batch'; uuids: string[]; contextReset: TurnEndFlushContextResetPlan }
   | {
       action: 'each';
       deliver: string[];
@@ -108,7 +107,6 @@ export type TurnEndFlushPlan =
 export interface TurnEndFlushCtx {
   messages: FlushMessage[];
   activeInJobQueue: ReadonlySet<string>;
-  activeTurnInJobQueue: boolean;
   slotResetsContext: boolean;
   hasPriorContext: boolean;
   pendingTaskInput: boolean;
@@ -129,19 +127,13 @@ export function applyFlushOwnershipGate(ctx: TurnEndFlushCtx): TurnEndFlushCtx {
     flushPlan: planFlushDelivery({
       messages: ctx.messages,
       activeInJobQueue: ctx.activeInJobQueue,
-      activeTurnInJobQueue: ctx.activeTurnInJobQueue,
     }),
   };
 }
 
 export function applyFlushContextResetGate(ctx: TurnEndFlushCtx): TurnEndFlushCtx {
   const flushPlan: FlushDeliveryPlan = ctx.flushPlan ?? { action: 'noop' };
-  const deliverables =
-    flushPlan.action === 'batch'
-      ? flushPlan.uuids
-      : flushPlan.action === 'each'
-        ? flushPlan.deliver
-        : [];
+  const deliverables = flushPlan.action === 'each' ? flushPlan.deliver : [];
   const deliverableSet = new Set(deliverables);
   const taskDeliverableCount =
     ctx.messages.filter((message) => deliverableSet.has(message.uuid) && message.isTaskInput)
@@ -162,9 +154,6 @@ export function applyFlushFinalGate(ctx: TurnEndFlushCtx): TurnEndFlushCtx {
   const contextReset: TurnEndFlushContextResetPlan = ctx.contextReset ?? {
     action: 'flush_without_clear',
   };
-  if (flushPlan.action === 'batch') {
-    return decided(ctx, { action: 'batch', uuids: flushPlan.uuids, contextReset });
-  }
   if (flushPlan.action === 'each') {
     return decided(ctx, {
       action: 'each',

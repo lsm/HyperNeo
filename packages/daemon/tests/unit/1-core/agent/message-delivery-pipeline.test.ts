@@ -57,6 +57,7 @@ function makeInjectCtx(overrides: Partial<InjectDeliveryInput> = {}): InjectDeli
 function makeFlushMessage(overrides: Partial<FlushMessage> = {}): FlushMessage {
   return {
     uuid: 'uuid-1',
+    dbId: 'db-1',
     isUserMessage: true,
     isTaskInput: true,
     flattenedText: 'hello',
@@ -71,7 +72,6 @@ function makeFlushInput(overrides: Partial<TurnEndFlushInput> = {}): TurnEndFlus
       makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
     ],
     activeInJobQueue: new Set<string>(),
-    activeTurnInJobQueue: false,
     slotResetsContext: true,
     hasPriorContext: true,
     pendingTaskInput: false,
@@ -306,14 +306,24 @@ describe('message turn-end flush decision pipeline', () => {
       { action: 'noop' },
     ],
     [
-      'two batchable messages on a non-reset slot batch without a context clear',
+      'two deliverable messages on a non-reset slot flush without a context clear',
       { slotResetsContext: false },
-      { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'flush_without_clear' } },
+      {
+        action: 'each',
+        deliver: ['a', 'b'],
+        skip: [],
+        contextReset: { action: 'flush_without_clear' },
+      },
     ],
     [
-      'a batch of deliverables on a reset slot plans exactly one clear ahead of the batch (#1085)',
+      'deliverables on a reset slot plan exactly one clear ahead of the flush (#1085)',
       {},
-      { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'clear_then_flush' } },
+      {
+        action: 'each',
+        deliver: ['a', 'b'],
+        skip: [],
+        contextReset: { action: 'clear_then_flush' },
+      },
     ],
     [
       'owned and non-user messages are skipped alongside per-message delivery',
@@ -346,16 +356,6 @@ describe('message turn-end flush decision pipeline', () => {
       {
         action: 'each',
         deliver: ['solo'],
-        skip: [],
-        contextReset: { action: 'flush_without_clear' },
-      },
-    ],
-    [
-      'an active turn in the job queue forces per-message delivery',
-      { slotResetsContext: false, activeTurnInJobQueue: true },
-      {
-        action: 'each',
-        deliver: ['a', 'b'],
         skip: [],
         contextReset: { action: 'flush_without_clear' },
       },
@@ -400,8 +400,9 @@ describe('message turn-end flush decision pipeline', () => {
         ],
       },
       {
-        action: 'batch',
-        uuids: ['human-1', 'human-2'],
+        action: 'each',
+        deliver: ['human-1', 'human-2'],
+        skip: [],
         contextReset: { action: 'flush_without_clear' },
       },
     ],
@@ -414,27 +415,34 @@ describe('message turn-end flush decision pipeline', () => {
         ],
       },
       {
-        action: 'batch',
-        uuids: ['human-1', 'task-1'],
+        action: 'each',
+        deliver: ['human-1', 'task-1'],
+        skip: [],
         contextReset: { action: 'clear_then_flush' },
       },
     ],
     [
       'a session without prior context flushes without a clear on the first turn',
       { hasPriorContext: false },
-      { action: 'batch', uuids: ['a', 'b'], contextReset: { action: 'flush_without_clear' } },
+      {
+        action: 'each',
+        deliver: ['a', 'b'],
+        skip: [],
+        contextReset: { action: 'flush_without_clear' },
+      },
     ],
     [
       'an active delivery job suppresses the flush clear and defers the reset',
       { activeInJobQueue: new Set(['uuid-active']) },
       {
-        action: 'batch',
-        uuids: ['a', 'b'],
+        action: 'each',
+        deliver: ['a', 'b'],
+        skip: [],
         contextReset: { action: 'flush_without_clear', reason: 'active_delivery_job' },
       },
     ],
     [
-      'a pending task input behind a human-only backlog plans one clear ahead of the batch',
+      'a pending task input behind a human-only backlog plans one clear ahead of the flush',
       {
         messages: [
           makeFlushMessage({ uuid: 'human-1', isTaskInput: false }),
@@ -443,8 +451,9 @@ describe('message turn-end flush decision pipeline', () => {
         pendingTaskInput: true,
       },
       {
-        action: 'batch',
-        uuids: ['human-1', 'human-2'],
+        action: 'each',
+        deliver: ['human-1', 'human-2'],
+        skip: [],
         contextReset: { action: 'clear_then_flush' },
       },
     ],
@@ -461,7 +470,6 @@ describe('message turn-end flush decision pipeline', () => {
       const plan = decideTurnEndFlush(
         makeFlushInput({
           messages: [],
-          activeTurnInJobQueue: true,
           activeInJobQueue: new Set(['ghost']),
         })
       );
@@ -482,12 +490,11 @@ describe('message turn-end flush decision pipeline', () => {
     });
 
     test('the ownership gate annotates the core flush plan without deciding', () => {
-      const ctx = applyFlushOwnershipGate(makeFlushCtx({ activeTurnInJobQueue: true }));
+      const ctx = applyFlushOwnershipGate(makeFlushCtx({}));
       expect(ctx.flushPlan).toEqual(
         planFlushDelivery({
           messages: ctx.messages,
           activeInJobQueue: ctx.activeInJobQueue,
-          activeTurnInJobQueue: ctx.activeTurnInJobQueue,
         })
       );
       expect(ctx.decision).toBeNull();
@@ -513,17 +520,6 @@ describe('message turn-end flush decision pipeline', () => {
         applyFlushFinalGate(applyFlushContextResetGate(applyFlushOwnershipGate(makeFlushCtx({}))))
           .decision
       ).toEqual({
-        action: 'batch',
-        uuids: ['a', 'b'],
-        contextReset: { action: 'clear_then_flush' },
-      });
-      expect(
-        applyFlushFinalGate(
-          applyFlushContextResetGate(
-            applyFlushOwnershipGate(makeFlushCtx({ activeTurnInJobQueue: true }))
-          )
-        ).decision
-      ).toEqual({
         action: 'each',
         deliver: ['a', 'b'],
         skip: [],
@@ -539,10 +535,8 @@ describe('message turn-end flush decision pipeline', () => {
         const core = planFlushDelivery({
           messages: input.messages,
           activeInJobQueue: input.activeInJobQueue,
-          activeTurnInJobQueue: input.activeTurnInJobQueue,
         });
-        const deliverables =
-          core.action === 'batch' ? core.uuids : core.action === 'each' ? core.deliver : [];
+        const deliverables = core.action === 'each' ? core.deliver : [];
         const deliverableSet = new Set(deliverables);
         const taskDeliverableCount = input.messages.filter(
           (message) => deliverableSet.has(message.uuid) && message.isTaskInput

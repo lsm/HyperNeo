@@ -16,13 +16,10 @@ import {
 } from '../../storage/repositories/sdk-message-admission.ts';
 import { extractSdkUuid } from '../../storage/repositories/sdk-message-repository.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
-import { planDeliveryRoleArbitration } from './delivery-turn-routing.ts';
 import {
-  isUniqueConstraintError,
   MESSAGE_DELIVERY_MAX_RETRIES,
   type MessageDeliveryOrigin,
   type MessageDeliveryPayload,
-  type MessageDeliveryRole,
 } from './message-delivery.ts';
 
 export type PromptHold = 'immediate' | 'manual';
@@ -39,7 +36,7 @@ interface PromptInput {
   delivery: {
     origin: MessageDeliveryOrigin;
     parentToolUseId?: string | null;
-    requestedRole?: MessageDeliveryRole;
+    injectedMidTurn?: boolean;
   };
 }
 
@@ -51,7 +48,6 @@ export interface PersistPromptArgs extends PromptInput {
 
 export interface PersistPromptResult {
   dbMessageId: string;
-  role: MessageDeliveryRole;
   released: boolean;
 }
 
@@ -71,12 +67,11 @@ export interface PersistAndEnqueueDeliveryArgs extends PersistAndEnqueueDelivery
 
 export interface PersistAndEnqueueDeliveryResult {
   dbMessageId: string;
-  role: MessageDeliveryRole;
 }
 
 export interface EnsurePromptResult {
   dbMessageId: string;
-  role: MessageDeliveryRole | null;
+  activated: boolean;
   released: boolean;
   created: boolean;
 }
@@ -95,7 +90,6 @@ export interface ActivatePromptsArgs {
 export interface ActivatedPromptEntry {
   dbId: string;
   messageUuid: string;
-  role: MessageDeliveryRole;
 }
 
 export interface ActivatePromptsResult {
@@ -111,21 +105,19 @@ export interface RetryPromptArgs {
   dbId?: string;
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
-  requestedRole?: MessageDeliveryRole;
+  injectedMidTurn?: boolean;
   publishStatusChanged?: OutboxStatusPublisher;
 }
 
 export interface RetryPromptResult {
   dbId: string;
   messageUuid: string;
-  role: MessageDeliveryRole;
 }
 
 interface PromptDeps {
   persistAdmittedPrompt(ctx: PersistPromptAdmitted): {
     dbMessageId: string;
     countsTowardsBadge: boolean;
-    role: MessageDeliveryRole;
   };
   runPostSaveSideEffects(sessionId: string, id: string, countsTowardsBadge: boolean): void;
 }
@@ -158,7 +150,6 @@ type PersistPromptAdmitted = PromptPayloadCtx & {
 type PersistPromptEnqueued = PersistPromptAdmitted & {
   dbMessageId: string;
   countsTowardsBadge: boolean;
-  role: MessageDeliveryRole;
 };
 
 type EnsurePromptCtx = PromptValidatedCtx &
@@ -181,7 +172,7 @@ type EnsurePromptSettledCtx = EnsurePromptCtx & {
 type EnsurePromptAppliedCtx = EnsurePromptSettledCtx & {
   dbMessageId: string;
   countsTowardsBadge: boolean;
-  role: MessageDeliveryRole | null;
+  activated: boolean;
   released: boolean;
 };
 
@@ -200,26 +191,14 @@ type RetryPromptCtx = RetryPromptArgs & {
 
 const DELIVERY_MAX_RETRIES = MESSAGE_DELIVERY_MAX_RETRIES;
 
-const ACTIVE_DELIVERY_JOB_SQL = `SELECT id AS job_id, status AS job_status,
-    json_extract(payload, '$.role') AS role,
-    COALESCE(json_extract(payload, '$.released'), 1) AS released,
-    CASE WHEN json_extract(payload, '$.messageUuid') = ? THEN 1 ELSE 0 END AS is_kickoff,
-    COALESCE(json_array_length(payload, '$.batchUuids'), 0) AS batch_size
+const ACTIVE_DELIVERY_JOBS_SQL = `SELECT id AS job_id, status AS job_status,
+    COALESCE(json_extract(payload, '$.released'), 1) AS released
   FROM job_queue
   WHERE queue = 'message_delivery'
     AND json_extract(payload, '$.sessionId') = ?
+    AND json_extract(payload, '$.messageUuid') = ?
     AND status IN ('pending', 'processing')
-    AND (
-      json_extract(payload, '$.messageUuid') = ?
-      OR EXISTS (
-        SELECT 1 FROM json_each(
-          CASE WHEN json_type(payload, '$.batchUuids') = 'array'
-               THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
-        ) AS je WHERE je.value = ?
-      )
-    )
-  ORDER BY is_kickoff DESC, created_at DESC, rowid DESC
-  LIMIT 1`;
+  ORDER BY created_at ASC, rowid ASC`;
 
 const LATEST_DELIVERY_JOB_SQL = `SELECT id AS job_id
   FROM job_queue
@@ -244,12 +223,16 @@ const REVIVE_DELIVERY_JOB_SQL = `UPDATE job_queue
       payload = json_remove(
         json_set(
           json_set(
-            json_set(json_set(payload, '$.role', ?), '$.released', json('true')),
-            '$.origin', ?
+            json_set(
+              json_set(payload, '$.released', json('true')),
+              '$.origin', ?
+            ),
+            '$.parentToolUseId', ?
           ),
-          '$.parentToolUseId', ?
+          '$.injectedMidTurn',
+          CASE WHEN ? THEN json('true') ELSE json('null') END
         ),
-        '$.__claimToken', '$.__parkCount', '$.batchUuids', '$.droppedBatchUuids'
+        '$.__claimToken', '$.__parkCount'
       )
   WHERE id = ?`;
 
@@ -312,124 +295,82 @@ const PROMPT_ROW_BY_UUID_SQL = `SELECT id AS "dbId", sdk_message AS "sdkMessage"
 
 const ENSURABLE_PROMPT_STATUSES: readonly SendStatus[] = ['deferred', 'enqueued', 'submitted'];
 
-function asDeliveryRole(value: unknown): MessageDeliveryRole | null {
-  return value === 'turn' || value === 'steer' ? value : null;
+interface ActiveDeliveryJob {
+  jobId: string;
+  released: boolean;
+  processing: boolean;
+}
+
+function listActiveDeliveryJobs(
+  db: BunDatabase,
+  sessionId: string,
+  messageUuid: string
+): ActiveDeliveryJob[] {
+  const rows = db.prepare(ACTIVE_DELIVERY_JOBS_SQL).all(sessionId, messageUuid) as Array<{
+    job_id: string;
+    job_status: string;
+    released: number;
+  }>;
+  return rows.map((row) => ({
+    jobId: row.job_id,
+    released: row.released === 1,
+    processing: row.job_status === 'processing',
+  }));
 }
 
 function findActiveDeliveryJob(
   db: BunDatabase,
   sessionId: string,
   messageUuid: string
-): {
-  jobId: string;
-  role: MessageDeliveryRole | null;
-  released: boolean;
-  processing: boolean;
-  batch: boolean;
-} | null {
-  const row = db
-    .prepare(ACTIVE_DELIVERY_JOB_SQL)
-    .get(messageUuid, sessionId, messageUuid, messageUuid) as
-    | {
-        job_id: string;
-        job_status: string;
-        role: unknown;
-        released: number;
-        batch_size: number;
-      }
-    | undefined;
-  if (!row) return null;
-  return {
-    jobId: row.job_id,
-    role: asDeliveryRole(row.role),
-    released: row.released === 1,
-    processing: row.job_status === 'processing',
-    batch: row.batch_size > 0,
-  };
+): ActiveDeliveryJob | null {
+  return listActiveDeliveryJobs(db, sessionId, messageUuid)[0] ?? null;
 }
 
 function setDeliveryJobReleased(db: BunDatabase, jobId: string, released: boolean): void {
   db.prepare(released ? RELEASE_DELIVERY_JOB_SQL : HOLD_DELIVERY_JOB_SQL).run(jobId);
 }
 
-function enqueueArbitratedDeliveryJob(
+function enqueueDeliveryJob(
   jobQueue: JobQueueRepository,
-  basePayload: ReleasedDeliveryPayload,
-  requestedRole?: MessageDeliveryRole
-): MessageDeliveryRole {
-  const arbitration = planDeliveryRoleArbitration({
-    existingActiveRole: null,
-    requestedRole,
+  basePayload: ReleasedDeliveryPayload
+): void {
+  jobQueue.enqueue({
+    queue: MESSAGE_DELIVERY,
+    payload: { ...basePayload },
+    maxRetries: DELIVERY_MAX_RETRIES,
   });
-  if (arbitration.action === 'reuse') {
-    throw new Error('message-delivery-outbox: arbitration returned reuse without an active role');
-  }
-  try {
-    jobQueue.enqueue({
-      queue: MESSAGE_DELIVERY,
-      payload: { ...basePayload, role: arbitration.role },
-      maxRetries: DELIVERY_MAX_RETRIES,
-    });
-    return arbitration.role;
-  } catch (err) {
-    if (!isUniqueConstraintError(err)) throw err;
-    if (arbitration.uniqueConstraintFallback === null) throw err;
-    jobQueue.enqueue({
-      queue: MESSAGE_DELIVERY,
-      payload: { ...basePayload, role: arbitration.uniqueConstraintFallback },
-      maxRetries: DELIVERY_MAX_RETRIES,
-    });
-    return arbitration.uniqueConstraintFallback;
-  }
 }
 
 function reviveDeliveryJob(
   db: BunDatabase,
   jobQueue: JobQueueRepository,
   basePayload: ReleasedDeliveryPayload,
-  jobId: string,
-  requestedRole?: MessageDeliveryRole
-): MessageDeliveryRole {
-  const reviveAs = (role: MessageDeliveryRole) =>
-    db
-      .prepare(REVIVE_DELIVERY_JOB_SQL)
-      .run(
-        Date.now(),
-        DELIVERY_MAX_RETRIES,
-        role,
-        basePayload.origin,
-        basePayload.parentToolUseId ?? null,
-        jobId
-      );
-  if (requestedRole !== undefined) {
-    if (reviveAs(requestedRole).changes === 0) {
-      return enqueueArbitratedDeliveryJob(jobQueue, basePayload, requestedRole);
-    }
-    return requestedRole;
-  }
-  try {
-    if (reviveAs('turn').changes === 0) {
-      return enqueueArbitratedDeliveryJob(jobQueue, basePayload);
-    }
-    return 'turn';
-  } catch (err) {
-    if (!isUniqueConstraintError(err)) throw err;
-    if (reviveAs('steer').changes === 0) {
-      return enqueueArbitratedDeliveryJob(jobQueue, basePayload);
-    }
-    return 'steer';
-  }
+  jobId: string
+): boolean {
+  const res = db
+    .prepare(REVIVE_DELIVERY_JOB_SQL)
+    .run(
+      Date.now(),
+      DELIVERY_MAX_RETRIES,
+      basePayload.origin,
+      basePayload.parentToolUseId ?? null,
+      basePayload.injectedMidTurn === true ? 1 : 0,
+      jobId
+    );
+  if (res.changes > 0) return true;
+  enqueueDeliveryJob(jobQueue, basePayload);
+  return true;
 }
 
 function requeueHeldClaim(
   db: BunDatabase,
   jobQueue: JobQueueRepository,
   basePayload: ReleasedDeliveryPayload,
-  active: { jobId: string; role: MessageDeliveryRole | null }
-): MessageDeliveryRole {
+  active: { jobId: string }
+): void {
   const res = db.prepare(REQUEUE_HELD_CLAIM_SQL).run(Date.now(), active.jobId);
-  if (res.changes > 0) return active.role ?? 'turn';
-  return enqueueArbitratedDeliveryJob(jobQueue, basePayload);
+  if (res.changes > 0) return;
+  enqueueDeliveryJob(jobQueue, basePayload);
 }
 
 function releaseActiveDeliveryJob(
@@ -438,50 +379,54 @@ function releaseActiveDeliveryJob(
   basePayload: ReleasedDeliveryPayload,
   active: NonNullable<ReturnType<typeof findActiveDeliveryJob>>,
   desiredReleased: boolean
-): MessageDeliveryRole {
+): void {
   if (active.processing && !active.released) {
-    return requeueHeldClaim(db, jobQueue, basePayload, active);
+    requeueHeldClaim(db, jobQueue, basePayload, active);
+    return;
   }
-  if (active.processing) return active.role ?? 'turn';
+  if (active.processing) return;
   if (active.released !== desiredReleased)
     setDeliveryJobReleased(db, active.jobId, desiredReleased);
-  return active.role ?? 'turn';
+}
+
+function releaseActiveDeliveryJobs(
+  db: BunDatabase,
+  jobQueue: JobQueueRepository,
+  basePayload: ReleasedDeliveryPayload,
+  desiredReleased: boolean
+): void {
+  for (const job of listActiveDeliveryJobs(db, basePayload.sessionId, basePayload.messageUuid)) {
+    releaseActiveDeliveryJob(db, jobQueue, basePayload, job, desiredReleased);
+  }
 }
 
 function ensureReleasedDeliveryJob(
   db: BunDatabase,
   jobQueue: JobQueueRepository,
   basePayload: ReleasedDeliveryPayload
-): MessageDeliveryRole {
-  const active = findActiveDeliveryJob(db, basePayload.sessionId, basePayload.messageUuid);
-  if (active) return releaseActiveDeliveryJob(db, jobQueue, basePayload, active, true);
-  return enqueueArbitratedDeliveryJob(jobQueue, basePayload);
+): void {
+  if (findActiveDeliveryJob(db, basePayload.sessionId, basePayload.messageUuid) !== null) {
+    releaseActiveDeliveryJobs(db, jobQueue, basePayload, true);
+    return;
+  }
+  enqueueDeliveryJob(jobQueue, basePayload);
 }
 
 function rePendingDeliveryJob(
   db: BunDatabase,
   jobQueue: JobQueueRepository,
-  basePayload: ReleasedDeliveryPayload,
-  requestedRole?: MessageDeliveryRole
-): MessageDeliveryRole {
+  basePayload: ReleasedDeliveryPayload
+): boolean {
   const active = findActiveDeliveryJob(db, basePayload.sessionId, basePayload.messageUuid);
   if (active) {
-    if (active.batch) {
-      if (active.processing && !active.released) {
-        return requeueHeldClaim(db, jobQueue, basePayload, active);
-      }
-      if (!active.processing && !active.released) {
-        setDeliveryJobReleased(db, active.jobId, true);
-      }
-      return active.role ?? 'turn';
-    }
-    return reviveDeliveryJob(db, jobQueue, basePayload, active.jobId, requestedRole);
+    return reviveDeliveryJob(db, jobQueue, basePayload, active.jobId);
   }
   const latest = db
     .prepare(LATEST_DELIVERY_JOB_SQL)
     .get(basePayload.sessionId, basePayload.messageUuid) as { job_id: string } | undefined;
-  if (latest) return reviveDeliveryJob(db, jobQueue, basePayload, latest.job_id, requestedRole);
-  return enqueueArbitratedDeliveryJob(jobQueue, basePayload, requestedRole);
+  if (latest) return reviveDeliveryJob(db, jobQueue, basePayload, latest.job_id);
+  enqueueDeliveryJob(jobQueue, basePayload);
+  return true;
 }
 
 function buildReleasedPayload(args: {
@@ -490,14 +435,15 @@ function buildReleasedPayload(args: {
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
   released: boolean;
+  injectedMidTurn?: boolean;
 }): ReleasedDeliveryPayload {
   return {
     sessionId: args.sessionId,
     messageUuid: args.messageUuid,
-    role: 'turn',
     origin: args.origin,
     parentToolUseId: args.parentToolUseId ?? null,
     released: args.released,
+    ...(args.injectedMidTurn === true ? { injectedMidTurn: true } : {}),
   };
 }
 
@@ -543,7 +489,7 @@ function admitPromptMessage(ctx: PromptPayloadCtx): PersistPromptAdmitted {
 function persistAdmittedPrompt(
   args: PersistPromptArgs,
   ctx: PersistPromptAdmitted
-): { dbMessageId: string; countsTowardsBadge: boolean; role: MessageDeliveryRole } {
+): { dbMessageId: string; countsTowardsBadge: boolean } {
   return args.db.transaction(() => {
     const core = args.sdkMessageRepo.saveUserMessageCoreWithAdmission(
       ctx.sessionId,
@@ -553,18 +499,14 @@ function persistAdmittedPrompt(
       ctx.origin,
       ctx.admission
     );
-    const role = enqueueArbitratedDeliveryJob(
-      args.jobQueue,
-      ctx.basePayload,
-      ctx.delivery.requestedRole
-    );
-    return { dbMessageId: core.id, countsTowardsBadge: core.countsTowardsBadge, role };
+    enqueueDeliveryJob(args.jobQueue, ctx.basePayload);
+    return { dbMessageId: core.id, countsTowardsBadge: core.countsTowardsBadge };
   })();
 }
 
 function persistPromptAtomic(ctx: PersistPromptAdmitted): PersistPromptEnqueued {
-  const { dbMessageId, countsTowardsBadge, role } = ctx.deps.persistAdmittedPrompt(ctx);
-  return { ...ctx, dbMessageId, countsTowardsBadge, role };
+  const { dbMessageId, countsTowardsBadge } = ctx.deps.persistAdmittedPrompt(ctx);
+  return { ...ctx, dbMessageId, countsTowardsBadge };
 }
 
 function publishPromptMessage(ctx: PersistPromptEnqueued): PersistPromptEnqueued {
@@ -599,7 +541,7 @@ export function persistPrompt(args: PersistPromptArgs): PersistPromptResult {
     delivery: args.delivery,
     deps,
   });
-  return { dbMessageId: ctx.dbMessageId, role: ctx.role, released: ctx.released };
+  return { dbMessageId: ctx.dbMessageId, released: ctx.released };
 }
 
 export function persistAndEnqueueDelivery(
@@ -610,7 +552,7 @@ export function persistAndEnqueueDelivery(
     ...rest,
     hold: sendStatus === 'deferred' ? 'manual' : 'immediate',
   });
-  return { dbMessageId: result.dbMessageId, role: result.role };
+  return { dbMessageId: result.dbMessageId };
 }
 
 function lookupPromptRow(ctx: PromptValidatedCtx & PersistPromptArgs): EnsurePromptCtx {
@@ -651,11 +593,11 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
     if (ctx.existing !== null) {
       const released = ctx.ensureStatus !== 'deferred';
       if (!ENSURABLE_PROMPT_STATUSES.includes(ctx.ensureStatus)) {
-        return { dbId: ctx.existing.dbId, role: null, released, countsTowardsBadge: false };
+        return { dbId: ctx.existing.dbId, activated: false, released, countsTowardsBadge: false };
       }
       const active = findActiveDeliveryJob(ctx.db, ctx.sessionId, ctx.messageUuid);
       if (active === null) {
-        const role = enqueueArbitratedDeliveryJob(
+        enqueueDeliveryJob(
           ctx.jobQueue,
           buildReleasedPayload({
             sessionId: ctx.sessionId,
@@ -663,21 +605,33 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
             origin: ctx.delivery.origin,
             parentToolUseId: ctx.delivery.parentToolUseId,
             released,
-          }),
-          ctx.delivery.requestedRole
+            injectedMidTurn: ctx.delivery.injectedMidTurn,
+          })
         );
-        return { dbId: ctx.existing.dbId, role, released, countsTowardsBadge: false };
+        return { dbId: ctx.existing.dbId, activated: true, released, countsTowardsBadge: false };
       }
       if (active.processing) {
         return {
           dbId: ctx.existing.dbId,
-          role: active.role,
+          activated: true,
           released: active.released,
           countsTowardsBadge: false,
         };
       }
-      if (active.released !== released) setDeliveryJobReleased(ctx.db, active.jobId, released);
-      return { dbId: ctx.existing.dbId, role: active.role, released, countsTowardsBadge: false };
+      releaseActiveDeliveryJobs(
+        ctx.db,
+        ctx.jobQueue,
+        buildReleasedPayload({
+          sessionId: ctx.sessionId,
+          messageUuid: ctx.messageUuid,
+          origin: ctx.delivery.origin,
+          parentToolUseId: ctx.delivery.parentToolUseId,
+          released,
+          injectedMidTurn: ctx.delivery.injectedMidTurn,
+        }),
+        released
+      );
+      return { dbId: ctx.existing.dbId, activated: true, released, countsTowardsBadge: false };
     }
     const admission = decideMessageAdmission(normalizeMessageAdmissionInput(ctx.message), {
       variant: 'user',
@@ -692,7 +646,7 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
       ctx.origin,
       admission
     );
-    const role = enqueueArbitratedDeliveryJob(
+    enqueueDeliveryJob(
       ctx.jobQueue,
       buildReleasedPayload({
         sessionId: ctx.sessionId,
@@ -700,12 +654,12 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
         origin: ctx.delivery.origin,
         parentToolUseId: ctx.delivery.parentToolUseId,
         released: ctx.ensureStatus !== 'deferred',
-      }),
-      ctx.delivery.requestedRole
+        injectedMidTurn: ctx.delivery.injectedMidTurn,
+      })
     );
     return {
       dbId: core.id,
-      role,
+      activated: true,
       released: ctx.ensureStatus !== 'deferred',
       countsTowardsBadge: core.countsTowardsBadge,
     };
@@ -713,7 +667,7 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
   return {
     ...ctx,
     dbMessageId: outcome.dbId,
-    role: outcome.role,
+    activated: outcome.activated,
     released: outcome.released,
     countsTowardsBadge: outcome.countsTowardsBadge,
   };
@@ -749,7 +703,7 @@ export function ensurePrompt(args: PersistPromptArgs): EnsurePromptResult {
   });
   return {
     dbMessageId: ctx.dbMessageId,
-    role: ctx.role,
+    activated: ctx.activated,
     released: ctx.released,
     created: ctx.created,
   };
@@ -782,7 +736,7 @@ function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommitte
       ) as Array<{ db_id: string }>;
       const row = rows[0];
       if (!row) return;
-      const role = ensureReleasedDeliveryJob(
+      ensureReleasedDeliveryJob(
         ctx.db,
         ctx.jobQueue,
         buildReleasedPayload({
@@ -793,7 +747,7 @@ function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommitte
           released: true,
         })
       );
-      activated.push({ dbId: row.db_id, messageUuid, role });
+      activated.push({ dbId: row.db_id, messageUuid });
     });
   }, 'immediate');
   withBusyRetry(() => txn());
@@ -844,7 +798,7 @@ function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
       }>;
       const row = rows[0];
       if (!row) return null;
-      const role = rePendingDeliveryJob(
+      rePendingDeliveryJob(
         ctx.db,
         ctx.jobQueue,
         buildReleasedPayload({
@@ -853,11 +807,11 @@ function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
           origin: ctx.origin,
           parentToolUseId: ctx.parentToolUseId,
           released: true,
-        }),
-        ctx.requestedRole
+          injectedMidTurn: ctx.injectedMidTurn,
+        })
       );
       ctx.sdkMessageRepo?.updateMessageStatus([row.db_id], 'enqueued');
-      return { dbId: row.db_id, messageUuid: ctx.messageUuid, role };
+      return { dbId: row.db_id, messageUuid: ctx.messageUuid };
     }, 'immediate')()
   );
   return { ...ctx, retried };

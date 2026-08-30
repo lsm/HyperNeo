@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { createTables } from '../../../../../src/storage/schema';
 import { runMigration182, runMigration194 } from '../../../../../src/storage/schema/migrations';
+import { runMigration221 } from '../../../../../src/storage/schema/m221-drop-message-delivery-active-turn-index';
 import { JobQueueRepository } from '../../../../../src/storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../../../../../src/lib/job-queue-constants';
 import { deliverMessage } from '../../../../../src/lib/agent/message-delivery';
@@ -57,7 +58,7 @@ describe('Migration 194: job_queue heartbeat_at', () => {
   });
 });
 
-describe('Migration 181: uq_message_delivery_active_turn', () => {
+describe('Migration 182/221: uq_message_delivery_active_turn lifecycle', () => {
   let db: BunDatabase;
 
   beforeEach(() => {
@@ -65,18 +66,21 @@ describe('Migration 181: uq_message_delivery_active_turn', () => {
   });
   afterEach(() => db.close());
 
-  test('FRESH-DB path: createTables creates the index (#3742693688)', () => {
+  test('FRESH-DB path: createTables no longer creates the role-arbiter index (FIFO)', () => {
     createTables(db);
-    expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(true);
+    expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(false);
 
     const repo = new JobQueueRepository(db as never);
     deliverMessage(repo, 'sess-fresh', 'msg-a', { origin: 'chat' });
     deliverMessage(repo, 'sess-fresh', 'msg-b', { origin: 'chat' });
-    const roles = repo
-      .listJobs({ queue: MESSAGE_DELIVERY, limit: 10 })
-      .map((j) => (j.payload as { role: string }).role)
-      .sort();
-    expect(roles).toEqual(['steer', 'turn']);
+    const jobs = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 });
+    expect(jobs).toHaveLength(2);
+    expect(jobs.every((job) => job.payload.role === undefined)).toBe(true);
+    const [head] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
+    expect(head?.payload.messageUuid).toBe('msg-a');
+    repo.complete(head!.id, { ok: true });
+    const [tail] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
+    expect(tail?.payload.messageUuid).toBe('msg-b');
   });
 
   test('existing-DB upgrade: runMigration182 creates the index once job_queue exists', () => {
@@ -95,6 +99,20 @@ describe('Migration 181: uq_message_delivery_active_turn', () => {
 
   test('runMigration182 is a guarded no-op before the table exists (fresh-DB migration order)', () => {
     expect(() => runMigration182(db)).not.toThrow();
+    expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(false);
+  });
+
+  test('runMigration221 drops the historical index on an upgraded database', () => {
+    makeJobQueue(db);
+    runMigration182(db);
+    expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(true);
+    runMigration221(db);
+    expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(false);
+  });
+
+  test('runMigration221 is idempotent and safe before the index ever existed', () => {
+    expect(() => runMigration221(db)).not.toThrow();
+    expect(() => runMigration221(db)).not.toThrow();
     expect(indexExists(db, 'uq_message_delivery_active_turn')).toBe(false);
   });
 });

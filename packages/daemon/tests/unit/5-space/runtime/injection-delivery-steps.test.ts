@@ -192,7 +192,6 @@ describe('deliverInjectedMessage', () => {
     return {
       jobQueue: {
         enqueue: jobQueueEnqueue,
-        getActiveDeliveryRole: mock(() => null),
       },
       jobQueueEnqueue,
     };

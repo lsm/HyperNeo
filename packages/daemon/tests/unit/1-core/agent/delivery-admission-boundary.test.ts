@@ -186,7 +186,7 @@ describe('delivery admission boundary (MDR 3/N)', () => {
     });
   });
 
-  describe('feedDeliverySteer completes at SDK admission', () => {
+  describe('unified admission completes at SDK admission (steer-shaped)', () => {
     it('completes on the yield attempt onSent while the target turn keeps running', async () => {
       const sessionId = 'sess-boundary-steer-completed';
       const messageUuid = 'msg-boundary-steer';
@@ -200,7 +200,13 @@ describe('delivery admission boundary (MDR 3/N)', () => {
         agentSession.messageQueue.start();
         const generator = agentSession.messageQueue.messageGenerator(sessionId);
 
-        const steerPromise = agentSession.feedDeliverySteer(messageUuid, content, null, () => true);
+        const steerPromise = agentSession.driveDeliveryTurn(
+          messageUuid,
+          content,
+          null,
+          false,
+          () => true
+        );
         const yielded = await generator.next();
         if (!yielded.value) throw new Error('message not yielded');
         yielded.value.onSent();
@@ -225,7 +231,13 @@ describe('delivery admission boundary (MDR 3/N)', () => {
         saveUserMessage(repo, sessionId, messageUuid, 'enqueued', content);
         const ensureQueryStarted = stubLifecycleManager(agentSession, 'started');
 
-        const steerPromise = agentSession.feedDeliverySteer(messageUuid, content, null, () => true);
+        const steerPromise = agentSession.driveDeliveryTurn(
+          messageUuid,
+          content,
+          null,
+          false,
+          () => true
+        );
         for (let i = 0; i < 100; i += 1) {
           if (agentSession.messageQueue.hasPendingOrClaimed(messageUuid)) break;
           await Promise.resolve();
@@ -302,7 +314,6 @@ describe('delivery admission boundary (MDR 3/N)', () => {
         expect(jobs[0].payload).toMatchObject({
           sessionId,
           messageUuid: survivorUuid,
-          role: 'turn',
           origin: 'recovery',
           parentToolUseId: null,
         });

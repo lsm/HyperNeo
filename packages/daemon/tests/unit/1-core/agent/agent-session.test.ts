@@ -19,8 +19,6 @@ import {
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   signalDeliveryConsumed,
-  STEER_ACK_TIMEOUT_MS,
-  steerAckTimeoutMs,
   waitForDeliveryConsumption,
   withContextClearBoundary,
   withSessionLock,
@@ -1206,21 +1204,14 @@ describe('AgentSession', () => {
       );
     });
 
-    it('retryNowAfterRateLimit releases the owning turn behind a steer episode', async () => {
+    it('retryNowAfterRateLimit releases the episode delivery directly', async () => {
       const rescheduleDelivery = mock(() => true);
-      mockDb.getJobQueueRepo = mock(
-        () =>
-          ({
-            rescheduleDelivery,
-            getActiveDeliveryRole: mock(() => 'steer'),
-            getActiveTurnDeliveryMessageUuid: mock(() => 'msg-owning-turn'),
-          }) as never
-      );
+      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         retryNow: mock(() => true),
         isPersistedCooldownArmed: () => true,
-        getPersistedEpisodeMessageUuid: () => 'msg-steer-episode',
+        getPersistedEpisodeMessageUuid: () => 'msg-episode',
       } as never;
 
       const resumed = await agentSession.retryNowAfterRateLimit();
@@ -1228,7 +1219,7 @@ describe('AgentSession', () => {
       expect(resumed).toBe(true);
       expect(rescheduleDelivery).toHaveBeenCalledWith(
         'test-session-id',
-        'msg-owning-turn',
+        'msg-episode',
         expect.any(Number)
       );
     });
@@ -1277,13 +1268,13 @@ describe('AgentSession', () => {
       expect(order).toEqual(['persist-idle', 'reschedule']);
     });
 
-    it('retryNowAfterRateLimit releases the active turn for a legacy persisted cooldown', async () => {
+    it('retryNowAfterRateLimit releases the active delivery for a legacy persisted cooldown', async () => {
       const rescheduleDelivery = mock(() => true);
       mockDb.getJobQueueRepo = mock(
         () =>
           ({
             rescheduleDelivery,
-            getActiveTurnDeliveryMessageUuid: mock(() => 'msg-owning-turn'),
+            getActiveDeliveryMessageUuid: mock(() => 'msg-active'),
           }) as never
       );
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
@@ -1298,7 +1289,7 @@ describe('AgentSession', () => {
       expect(resumed).toBe(true);
       expect(rescheduleDelivery).toHaveBeenCalledWith(
         'test-session-id',
-        'msg-owning-turn',
+        'msg-active',
         expect.any(Number)
       );
     });
@@ -1412,17 +1403,10 @@ describe('AgentSession', () => {
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-persisted-episode');
     });
 
-    it('cancelRateLimitRetry cancels the owning turn when a steer caused the persisted cooldown', async () => {
+    it('cancelRateLimitRetry cancels the episode delivery behind a persisted cooldown', async () => {
       const cancelDelivery = mock(() => true);
-      const markDeliveryFailedByUuid = mock(() => 'db-owning');
-      mockDb.getJobQueueRepo = mock(
-        () =>
-          ({
-            cancelDelivery,
-            getActiveDeliveryRole: mock(() => 'steer'),
-            getActiveTurnDeliveryMessageUuid: mock(() => 'msg-owning-turn'),
-          }) as never
-      );
+      const markDeliveryFailedByUuid = mock(() => 'db-episode');
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
       mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }) as never);
       mockDb.getSession = mock(
         () =>
@@ -1431,7 +1415,7 @@ describe('AgentSession', () => {
             processingState: JSON.stringify({
               status: 'rate_limit_cooldown',
               retryAt: Date.now() + 60_000,
-              messageId: 'msg-steer-episode',
+              messageId: 'msg-episode',
             }),
           }) as never
       );
@@ -1446,11 +1430,11 @@ describe('AgentSession', () => {
       expect(mockDb.updateSession).toHaveBeenCalledWith('test-session-id', {
         processingState: JSON.stringify({ status: 'idle' }),
       });
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
-      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
+      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-episode');
     });
 
-    it('cancelRateLimitRetry settles every bundled message of a batched turn', async () => {
+    it('cancelRateLimitRetry settles the episode message and reschedules the session', async () => {
       const cancelDelivery = mock(() => true);
       const rescheduleSessionDeliveries = mock(() => true);
       const markDeliveryFailedByUuid = mock((uuid: string) => `db-${uuid}`);
@@ -1459,22 +1443,21 @@ describe('AgentSession', () => {
           ({
             cancelDelivery,
             rescheduleSessionDeliveries,
-            getActiveDeliveryBatchUuids: mock(() => ['msg-owning-turn', 'msg-bundled']),
           }) as never
       );
       mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }) as never);
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         getState: mock(() => ({
-          lastUserMessage: { uuid: 'msg-owning-turn', content: 'hi' },
+          lastUserMessage: { uuid: 'msg-episode', content: 'hi' },
         })),
       } as never;
 
       agentSession.cancelRateLimitRetry();
 
-      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
-      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
-      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-bundled');
+      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+      expect(markDeliveryFailedByUuid).toHaveBeenCalledTimes(1);
+      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-episode');
       expect(rescheduleSessionDeliveries).toHaveBeenCalledWith(
         'test-session-id',
         expect.any(Number)
@@ -1622,56 +1605,10 @@ describe('AgentSession', () => {
       await expect(drive).resolves.toEqual({ outcome: 'completed' });
     });
 
-    it('driveDeliveryTurn aborts when fresh batch rebuild omits the kickoff', async () => {
+    it('driveDeliveryTurn reuses a pending admission acknowledgment on retry', async () => {
+      const markConsumedSpy = mock(() => ['db-pending']);
       mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sessionId: string, uuid: string) =>
-          uuid === 'kickoff-omitted'
-            ? {
-                content: [
-                  {
-                    type: 'image',
-                    source: { type: 'base64', media_type: 'image/png', data: 'x' },
-                  },
-                ],
-                sendStatus: 'enqueued',
-              }
-            : { content: 'member', sendStatus: 'enqueued' }
-        ),
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({}));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      const admitSpy = mock(() => Promise.resolve());
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: admitSpy,
-        getPendingOrInFlightContent: mock(() => null),
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => true),
-        size: mock(() => 0),
-      };
-
-      const result = await agentSession.driveDeliveryTurn(
-        'kickoff-omitted',
-        'before startup',
-        null,
-        false,
-        () => true,
-        ['kickoff-omitted', 'member-kept']
-      );
-
-      expect(result).toEqual({ outcome: 'aborted' });
-      expect(admitSpy).not.toHaveBeenCalled();
-    });
-
-    it('driveDeliveryTurn reuses a pending batch acknowledgment on retry', async () => {
-      const markConsumedSpy = mock(() => ['db-pending', 'db-member']);
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sessionId: string, uuid: string) => ({
-          content: uuid === 'uuid-pending' ? 'kickoff' : 'member',
-          sendStatus: 'enqueued',
-        })),
+        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus: 'enqueued' })),
         markDeliveryConsumedByUuids: markConsumedSpy,
       }));
       mockDb.getJobQueueRepo = mock(() => ({
@@ -1685,28 +1622,22 @@ describe('AgentSession', () => {
       const existing = Promise.withResolvers<void>();
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
         admitWithId: admitSpy,
-        waitForPendingOrInFlight: mock((uuid: string) =>
-          uuid === 'uuid-pending'
-            ? {
-                acknowledgment: existing.promise,
-                content: '--- message 1 of 2 ---\nkickoff\n\n--- message 2 of 2 ---\nmember',
-              }
-            : null
-        ),
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: existing.promise,
+          content: 'hello',
+        })),
         isRunning: mock(() => false),
         size: mock(() => 1),
       };
 
       await agentSession.stateManager.setProcessing('uuid-pending');
       const kickoffConsumed = waitForDeliveryConsumption('test-session-id', 'uuid-pending');
-      const memberConsumed = waitForDeliveryConsumption('test-session-id', 'uuid-member');
       const drive = agentSession.driveDeliveryTurn(
         'uuid-pending',
         'hello',
         null,
         false,
-        () => true,
-        ['uuid-pending', 'uuid-member']
+        () => true
       );
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(admitSpy).not.toHaveBeenCalled();
@@ -1714,25 +1645,17 @@ describe('AgentSession', () => {
 
       existing.resolve();
       await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(markConsumedSpy).toHaveBeenCalledWith('test-session-id', [
-        'uuid-pending',
-        'uuid-member',
-      ]);
+      expect(markConsumedSpy).toHaveBeenCalledWith('test-session-id', ['uuid-pending']);
       await expect(kickoffConsumed.promise).resolves.toBeUndefined();
-      await expect(memberConsumed.promise).resolves.toBeUndefined();
       await expect(drive).resolves.toEqual({ outcome: 'completed' });
       kickoffConsumed.cancel();
-      memberConsumed.cancel();
     });
 
-    it('driveDeliveryTurn replaces mismatched pending content with the rebuilt batch', async () => {
-      const markSubmittedSpy = mock(() => ['db-member']);
-      const markConsumedSpy = mock(() => ['db-pending', 'db-member']);
+    it('driveDeliveryTurn replaces mismatched pending content with the fresh content', async () => {
+      const markSubmittedSpy = mock(() => ['db-pending']);
+      const markConsumedSpy = mock(() => ['db-pending']);
       mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sessionId: string, uuid: string) => ({
-          content: uuid === 'uuid-pending' ? 'kickoff' : 'member',
-          sendStatus: 'enqueued',
-        })),
+        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus: 'enqueued' })),
         hasTerminalResultAfter: mock(() => false),
         getErrorTerminalResultSubtypeAfter: mock(() => null),
         recordDeliveryTurnEnd: mock(() => {}),
@@ -1754,7 +1677,7 @@ describe('AgentSession', () => {
         admitWithId: admitSpy,
         waitForPendingOrInFlight: mock(() => ({
           acknowledgment: new Promise<void>(() => {}),
-          content: 'kickoff',
+          content: 'stale pending content',
         })),
         hasYielded: mock(() => false),
         remove: removeSpy,
@@ -1769,37 +1692,25 @@ describe('AgentSession', () => {
         'hello',
         null,
         false,
-        () => true,
-        ['uuid-pending', 'uuid-member']
+        () => true
       );
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(removeSpy).toHaveBeenCalledWith('uuid-pending');
       expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('uuid-pending', expect.any(Number));
-      expect(admitSpy).toHaveBeenCalledWith(
-        'uuid-pending',
-        '--- message 1 of 2 ---\nkickoff\n\n--- message 2 of 2 ---\nmember',
-        false,
-        { durable: true }
-      );
+      expect(admitSpy).toHaveBeenCalledWith('uuid-pending', 'hello', false, { durable: true });
       expect(markSubmittedSpy).not.toHaveBeenCalled();
       expect(markConsumedSpy).not.toHaveBeenCalled();
 
       admitPromise.resolve();
       await expect(drive).resolves.toEqual({ outcome: 'completed' });
-      expect(markConsumedSpy).toHaveBeenCalledWith('test-session-id', [
-        'uuid-pending',
-        'uuid-member',
-      ]);
+      expect(markConsumedSpy).toHaveBeenCalledWith('test-session-id', ['uuid-pending']);
     });
 
-    it('driveDeliveryTurn preserves yielded content that does not match a rebuilt batch', async () => {
+    it('driveDeliveryTurn preserves yielded content that does not match the fresh content', async () => {
       const removeSpy = mock(() => true);
       mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sessionId: string, uuid: string) => ({
-          content: uuid === 'uuid-yielded' ? 'kickoff' : 'member',
-          sendStatus: 'enqueued',
-        })),
+        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus: 'enqueued' })),
       }));
       mockDb.getJobQueueRepo = mock(() => ({}));
       agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
@@ -1819,11 +1730,10 @@ describe('AgentSession', () => {
 
       const result = await agentSession.driveDeliveryTurn(
         'uuid-yielded',
-        'hello',
+        'replacing content',
         null,
         false,
-        () => true,
-        ['uuid-yielded', 'uuid-member']
+        () => true
       );
 
       expect(result).toEqual({ outcome: 'aborted' });
@@ -1867,7 +1777,6 @@ describe('AgentSession', () => {
         null,
         false,
         () => true,
-        undefined,
         controller.signal
       );
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1918,354 +1827,6 @@ describe('AgentSession', () => {
 
       await expect(drive).rejects.toThrow('Interrupted by user');
       expect(markConsumedSpy).not.toHaveBeenCalled();
-    });
-
-    it('driveDeliveryTurn narrows the batch payload even when only the kickoff is admitted', async () => {
-      const narrowSpy = mock(() => true);
-      const contents: Record<string, { content: string; sendStatus: string }> = {
-        'kick-only': { content: 'first and only fitting message', sendStatus: 'enqueued' },
-        'tail-member': { content: 'deferred out before delivery', sendStatus: 'deferred' },
-      };
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sid: string, uuid: string) => contents[uuid] ?? null),
-        hasTerminalResultAfter: mock(() => false),
-        hasDeliveryTurnEnd: mock(() => false),
-        clearDeliveryTurnEnd: mock(() => {}),
-        getErrorTerminalResultSubtypeAfter: mock(() => null),
-        recordDeliveryTurnEnd: mock(() => {}),
-        markDeliveryConsumedByUuids: mock(() => []),
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-        narrowActiveDeliveryBatchUuids: narrowSpy,
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: mock(() => new Promise<void>(() => {})),
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => false),
-        size: mock(() => 0),
-      };
-
-      await agentSession.stateManager.setProcessing('kick-only');
-      void agentSession
-        .driveDeliveryTurn('kick-only', 'estimate', null, false, () => true, [
-          'kick-only',
-          'tail-member',
-        ])
-        .catch(() => {});
-      await new Promise((resolve) => setTimeout(resolve, 20));
-
-      expect(narrowSpy).toHaveBeenCalledTimes(1);
-      expect(narrowSpy.mock.calls[0]).toEqual(['test-session-id', 'kick-only', ['kick-only']]);
-    });
-
-    it('an ACP batch publishes tool-result consumption for trailing members but not the kickoff', async () => {
-      const toolResultContent = [{ type: 'tool_result', tool_use_id: 'toolu-01', content: 'ok' }];
-      const plainText = [{ type: 'text', text: 'member text' }];
-      const rows: Record<string, unknown> = {};
-      const getMessageByStatusAndUuid = mock((_sessionId: string, status: string, uuid: string) =>
-        status === 'consumed' && rows[uuid] ? rows[uuid] : null
-      );
-      mockDb.getMessageByStatusAndUuid = getMessageByStatusAndUuid;
-      const published: Array<Record<string, unknown>> = [];
-      mockInternalEventBus = {
-        publish: mock(async (topic: string, payload: Record<string, unknown>) => {
-          if (topic === 'sdk.toolUse.consumed') published.push(payload);
-        }),
-        publishAsync: mock(() => {}),
-        subscribe: mock(() => () => {}),
-      } as unknown as InternalEventBus<any>;
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sid: string, uuid: string) => ({
-          content: uuid === 'kick-acp' ? 'kickoff' : 'member text',
-          sendStatus: 'enqueued',
-        })),
-        markDeliveryConsumedByUuids: mock((_sessionId: string, uuids: string[]) => {
-          for (const uuid of uuids) {
-            rows[uuid] = {
-              dbId: `db-${uuid}`,
-              uuid,
-              type: 'user',
-              timestamp: 1,
-              message: {
-                role: 'user',
-                content: uuid === 'member-acp-tool' ? toolResultContent : plainText,
-              },
-            };
-          }
-          return uuids.map((uuid) => `db-${uuid}`);
-        }),
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        updateDeliveryBatchUuidsFenced: mock(() => ({
-          applied: true,
-          priorBatchUuids: ['kick-acp', 'member-acp-tool'],
-          priorDroppedBatchUuids: [],
-        })),
-      }));
-      const acpSession = new AgentSession(
-        { ...mockSession, config: { ...mockSession.config, provider: 'acp' } as SessionConfig },
-        mockDb,
-        mockMessageHub,
-        mockInternalEventBus,
-        mockGetApiKey,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        { autoReplayPendingMessages: false }
-      );
-      acpSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (acpSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      const kickoffAck = Promise.withResolvers<void>();
-      const memberToolMessage = {
-        dbId: 'db-member-acp-tool',
-        uuid: 'member-acp-tool',
-        type: 'user',
-        timestamp: 1,
-        message: { role: 'user', content: toolResultContent },
-      };
-      rows['kick-acp'] = {
-        dbId: 'db-kick-acp',
-        uuid: 'kick-acp',
-        type: 'user',
-        timestamp: 1,
-        message: { role: 'user', content: plainText },
-      };
-      (acpSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: mock(() => Promise.resolve()),
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => false),
-        size: mock(() => 0),
-      };
-
-      let driveError: unknown = null;
-      const drive = acpSession
-        .driveDeliveryTurn(
-          'kick-acp',
-          'estimate',
-          null,
-          false,
-          () => true,
-          ['kick-acp', 'member-acp-tool'],
-          undefined,
-          undefined,
-          'claim-acp-1'
-        )
-        .catch((error: unknown) => {
-          driveError = error;
-        });
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      rows['member-acp-tool'] = memberToolMessage;
-      kickoffAck.resolve();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      signalDeliveryConsumed('test-session-id', 'kick-acp');
-      await drive;
-      expect(driveError).toBeNull();
-
-      const toolUseIds = published.map((p) => p.toolUseId);
-      expect(toolUseIds).toContain('toolu-01');
-      expect(toolUseIds.filter((id) => id === 'toolu-01')).toHaveLength(1);
-    });
-
-    it('driveDeliveryTurn narrows the batch claim-fenced when a delivery claim token is present', async () => {
-      const fencedSpy = mock(() => ({
-        applied: true,
-        priorBatchUuids: ['kick-fence', 'member-fence'],
-        priorDroppedBatchUuids: [],
-      }));
-      const legacySpy = mock(() => true);
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sid: string, uuid: string) => ({
-          content: uuid === 'kick-fence' ? 'kickoff' : 'member',
-          sendStatus: 'enqueued',
-        })),
-        markDeliveryConsumedByUuids: mock(() => ['db-kick-fence', 'db-member-fence']),
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        updateDeliveryBatchUuidsFenced: fencedSpy,
-        narrowActiveDeliveryBatchUuids: legacySpy,
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      const existing = Promise.withResolvers<void>();
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: mock(() => Promise.resolve()),
-        waitForPendingOrInFlight: mock(() => ({
-          acknowledgment: existing.promise,
-          content: '--- message 1 of 2 ---\nkickoff\n\n--- message 2 of 2 ---\nmember',
-        })),
-        isRunning: mock(() => false),
-        size: mock(() => 1),
-      };
-
-      const drive = agentSession.driveDeliveryTurn(
-        'kick-fence',
-        'estimate',
-        null,
-        false,
-        () => true,
-        ['kick-fence', 'member-fence'],
-        undefined,
-        undefined,
-        'claim-token-1'
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      expect(fencedSpy).toHaveBeenCalledTimes(1);
-      expect(fencedSpy.mock.calls[0]).toEqual([
-        {
-          sessionId: 'test-session-id',
-          kickoffUuid: 'kick-fence',
-          claimToken: 'claim-token-1',
-          expectedBatchUuids: ['kick-fence', 'member-fence'],
-          batchUuids: ['kick-fence', 'member-fence'],
-        },
-      ]);
-      expect(legacySpy).not.toHaveBeenCalled();
-
-      existing.resolve();
-      await expect(drive).resolves.toEqual({ outcome: 'completed' });
-    });
-
-    it('driveDeliveryTurn aborts when the fenced batch write reports a stale claim or moved batch', async () => {
-      const fencedSpy = mock(() => ({
-        applied: false,
-        priorBatchUuids: ['kick-stale', 'member-stale'],
-        priorDroppedBatchUuids: [],
-      }));
-      const admitSpy = mock(() => new Promise<void>(() => {}));
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sid: string, uuid: string) => ({
-          content: uuid === 'kick-stale' ? 'kickoff' : 'member',
-          sendStatus: 'enqueued',
-        })),
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        updateDeliveryBatchUuidsFenced: fencedSpy,
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: admitSpy,
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => false),
-        size: mock(() => 0),
-      };
-
-      const outcome = await agentSession.driveDeliveryTurn(
-        'kick-stale',
-        'estimate',
-        null,
-        false,
-        () => true,
-        ['kick-stale', 'member-stale'],
-        undefined,
-        undefined,
-        'claim-token-stale'
-      );
-
-      expect(fencedSpy).toHaveBeenCalledTimes(1);
-      expect(outcome).toEqual({ outcome: 'aborted' });
-      expect(admitSpy).not.toHaveBeenCalled();
-    });
-
-    it('driveDeliveryTurn removes the stale pending entry when batch narrowing aborts', async () => {
-      const catchSpy = mock(() => Promise.resolve());
-      const removeSpy = mock(() => true);
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sid: string, uuid: string) =>
-          uuid === 'kick-reused'
-            ? { content: 'kickoff', sendStatus: 'enqueued' }
-            : uuid === 'member-reused'
-              ? { content: 'member', sendStatus: 'deferred' }
-              : null
-        ),
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        narrowActiveDeliveryBatchUuids: mock(() => false),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        waitForPendingOrInFlight: mock(() => ({
-          acknowledgment: { catch: catchSpy } as unknown as Promise<void>,
-          content: 'kickoff',
-        })),
-        hasYielded: mock(() => false),
-        remove: removeSpy,
-        isRunning: mock(() => false),
-        size: mock(() => 1),
-      };
-
-      const outcome = await agentSession.driveDeliveryTurn(
-        'kick-reused',
-        'estimate',
-        null,
-        false,
-        () => true,
-        ['kick-reused', 'member-reused']
-      );
-
-      expect(outcome).toEqual({ outcome: 'aborted' });
-      expect(removeSpy).toHaveBeenCalledWith('kick-reused');
-      expect(catchSpy).not.toHaveBeenCalled();
-    });
-
-    it('driveDeliveryTurn refuses to feed a reduced batch when narrowing cannot persist', async () => {
-      const admitSpy = mock(() => new Promise<void>(() => {}));
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sid: string, uuid: string) =>
-          uuid === 'kick-2'
-            ? { content: 'kickoff', sendStatus: 'enqueued' }
-            : uuid === 'member-2'
-              ? { content: 'member', sendStatus: 'deferred' }
-              : null
-        ),
-        hasTerminalResultAfter: mock(() => false),
-        hasDeliveryTurnEnd: mock(() => false),
-        clearDeliveryTurnEnd: mock(() => {}),
-        getErrorTerminalResultSubtypeAfter: mock(() => null),
-        recordDeliveryTurnEnd: mock(() => {}),
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-        narrowActiveDeliveryBatchUuids: mock(() => false),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: admitSpy,
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => false),
-        size: mock(() => 0),
-      };
-
-      await agentSession.stateManager.setProcessing('kick-2');
-      const outcome = await agentSession.driveDeliveryTurn(
-        'kick-2',
-        'estimate',
-        null,
-        false,
-        () => true,
-        ['kick-2', 'member-2']
-      );
-      expect(outcome).toEqual({ outcome: 'aborted' });
-      expect(admitSpy).not.toHaveBeenCalled();
     });
 
     it('isWaitingForInput sees an unresolved sdk_resume_choice even while parked as queued', async () => {
@@ -2376,7 +1937,6 @@ describe('AgentSession', () => {
       const markDeliveryFailedByUuid = mock(() => 'db-2');
       mockDb.getJobQueueRepo = mock(() => ({
         activeDeliveryMessageUuids: mock(() => new Set<string>()),
-        getActiveDeliveryRole: mock(() => null),
         enqueue,
       }));
       mockDb.getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
@@ -2528,7 +2088,6 @@ describe('AgentSession', () => {
     it('deliverChatMessage preserves a legacy-owned processing turn', async () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),
-        getActiveDeliveryRole: mock(() => null),
       };
       mockDb.getJobQueueRepo = mock(() => jobQueue);
       const setQueuedIfIdle = mock(async () => false);
@@ -2543,7 +2102,6 @@ describe('AgentSession', () => {
     it('deliverChatMessage treats queued publication failure as non-fatal after insertion', async () => {
       const jobQueue = {
         enqueue: mock(() => ({ id: 'job' })),
-        getActiveDeliveryRole: mock(() => null),
       };
       mockDb.getJobQueueRepo = mock(() => jobQueue);
       agentSession.stateManager.setQueuedIfIdle = mock(async () => {
@@ -2554,17 +2112,9 @@ describe('AgentSession', () => {
       expect(jobQueue.enqueue).toHaveBeenCalled();
     });
 
-    it('deliverChatMessage cancels a rate-limit cooldown for a replacement chat even when classified as a steer', async () => {
-      let turnAttempt = 0;
+    it('deliverChatMessage cancels a pending rate-limit cooldown for a replacement chat', async () => {
       const jobQueue = {
-        enqueue: mock(() => {
-          turnAttempt++;
-          if (turnAttempt === 1) {
-            throw new Error('UNIQUE constraint failed: job_queue.uq_message_delivery_active_turn');
-          }
-          return { id: 'job' };
-        }),
-        getActiveDeliveryRole: mock(() => null),
+        enqueue: mock(() => ({ id: 'job' })),
       };
       mockDb.getJobQueueRepo = mock(() => jobQueue);
       const cancelSpy = mock(() => {});
@@ -2582,20 +2132,15 @@ describe('AgentSession', () => {
       await agentSession.deliverChatMessage('cooldown-replacement');
 
       expect(cancelSpy).toHaveBeenCalledTimes(1);
-      expect(agentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
+      expect(agentSession.stateManager.setQueuedIfIdle).toHaveBeenCalledWith(
+        'cooldown-replacement'
+      );
     });
 
-    it('deliverChatMessage does NOT bump the watchdog generation for a steer into a live turn', async () => {
-      let turnAttempt = 0;
+    it('deliverChatMessage preserves the watchdog when the message queues behind an active delivery', async () => {
       const jobQueue = {
-        enqueue: mock(() => {
-          turnAttempt++;
-          if (turnAttempt === 1) {
-            throw new Error('UNIQUE constraint failed: job_queue.uq_message_delivery_active_turn');
-          }
-          return { id: 'job' };
-        }),
-        getActiveDeliveryRole: mock(() => null),
+        enqueue: mock(() => ({ id: 'job' })),
+        activeDeliveryMessageUuids: mock(() => new Set(['predecessor-msg'])),
       };
       mockDb.getJobQueueRepo = mock(() => jobQueue);
       const cancelSpy = mock(() => {});
@@ -2605,9 +2150,11 @@ describe('AgentSession', () => {
       };
       agentSession.stateManager.setQueuedIfIdle = mock(async () => false);
 
-      await agentSession.deliverChatMessage('live-steer');
+      await agentSession.deliverChatMessage('successor-msg');
 
       expect(cancelSpy).not.toHaveBeenCalled();
+      expect(jobQueue.enqueue).toHaveBeenCalled();
+      expect(agentSession.stateManager.setQueuedIfIdle).toHaveBeenCalledWith('successor-msg');
     });
 
     it('deliverChatMessage publishes failed status when the session is archived', async () => {
@@ -2632,7 +2179,6 @@ describe('AgentSession', () => {
 
     it('deliverChatMessage publishes failed status when durable enqueue fails', async () => {
       mockDb.getJobQueueRepo = mock(() => ({
-        getActiveDeliveryRole: mock(() => null),
         enqueue: mock(() => {
           throw new Error('delivery enqueue failure');
         }),
@@ -6071,7 +5617,7 @@ describe('AgentSession', () => {
     });
   });
 
-  describe('feedDeliverySteer — admission decision table (A1c)', () => {
+  describe('driveDeliveryTurn — admission decision table (A1c)', () => {
     const steerUuid = 'steer-msg-uuid';
     const steerContent = 'steer-content';
     const sessionId = 'sess-steer-a1c';
@@ -6161,10 +5707,11 @@ describe('AgentSession', () => {
       (queue as unknown as { admitWithId: MessageQueue['admitWithId'] }).admitWithId = admitWithId;
       agentSession.queryPromise = new Promise<void>(() => {});
       const claimGuard = row.claimGuard === 'held' ? () => true : () => false;
-      const steerPromise = agentSession.feedDeliverySteer(
+      const steerPromise = agentSession.driveDeliveryTurn(
         steerUuid,
         steerContent,
         null,
+        false,
         claimGuard
       );
       if (row.pending) {
@@ -6218,15 +5765,6 @@ describe('AgentSession', () => {
         claimGuard: 'held',
         waitingForInput: true,
         lifecycle: 'started',
-        expected: 'blocked',
-      },
-      {
-        name: 'a steer behind an already queued turn blocks instead of jumping ahead',
-        delivery: 'enqueued',
-        pending: false,
-        claimGuard: 'held',
-        lifecycle: 'started',
-        queued: true,
         expected: 'blocked',
       },
       {
@@ -6350,7 +5888,7 @@ describe('AgentSession', () => {
         );
         agentSession.queryPromise = new Promise<void>(() => {});
         await expect(
-          agentSession.feedDeliverySteer(steerUuid, steerContent, null, () => true)
+          agentSession.driveDeliveryTurn(steerUuid, steerContent, null, false, () => true)
         ).rejects.toThrow('Session is archived');
       } finally {
         db.close();
@@ -6386,10 +5924,11 @@ describe('AgentSession', () => {
         );
         agentSession.queryPromise = new Promise<void>(() => {});
         agentSession.setCleaningUp(true);
-        const outcome = await agentSession.feedDeliverySteer(
+        const outcome = await agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => true
         );
         expect(outcome).toEqual({ outcome: 'aborted' });
@@ -6444,10 +5983,11 @@ describe('AgentSession', () => {
         const admitSpy = mock(originalAdmit);
         (queue as unknown as { admitWithId: MessageQueue['admitWithId'] }).admitWithId = admitSpy;
         (queue as unknown as { isRunning: () => boolean }).isRunning = mock(() => false);
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => true
         );
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -6500,10 +6040,11 @@ describe('AgentSession', () => {
         });
         const hold = withSessionLock(sessionId, () => held);
         let claimHeld = true;
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => claimHeld
         );
         claimHeld = false;
@@ -6557,10 +6098,11 @@ describe('AgentSession', () => {
         const generator = queue.messageGenerator(sessionId, { suppressPreYieldCallback: true });
         await generator.next();
         expect(queue.hasYielded(steerUuid)).toBe(true);
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => true
         );
         for (let i = 0; i < 100; i++) {
@@ -6617,10 +6159,11 @@ describe('AgentSession', () => {
           executeDeferredRestartIfPending: mock(async () => {}),
         };
         const queue = agentSession.messageQueue;
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => true
         );
         await waitForQueueEntry(queue);
@@ -6673,10 +6216,11 @@ describe('AgentSession', () => {
         };
         const queue = agentSession.messageQueue;
         queue.overrideTimeoutMsForTest(25);
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => true
         );
         await waitForQueueEntry(queue);
@@ -6734,10 +6278,11 @@ describe('AgentSession', () => {
           executeDeferredRestartIfPending: mock(async () => {}),
         };
         const queue = agentSession.messageQueue;
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => true
         );
         await waitForQueueEntry(queue);
@@ -6751,34 +6296,6 @@ describe('AgentSession', () => {
         else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = previousTimeout;
         db.close();
       }
-    });
-  });
-
-  describe('steerAckTimeoutMs — override validation', () => {
-    const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
-
-    afterEach(() => {
-      if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
-      else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
-    });
-
-    it('falls back to the default when the override is unset or unparseable', () => {
-      delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
-      expect(steerAckTimeoutMs()).toBe(STEER_ACK_TIMEOUT_MS);
-      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = 'not-a-number';
-      expect(steerAckTimeoutMs()).toBe(STEER_ACK_TIMEOUT_MS);
-    });
-
-    it('falls back to the default when the override is outside the supported timer range', () => {
-      for (const invalid of ['0', '-1', 'Infinity', '9999999999999']) {
-        process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = invalid;
-        expect(steerAckTimeoutMs()).toBe(STEER_ACK_TIMEOUT_MS);
-      }
-    });
-
-    it('accepts a positive finite override within the supported timer range', () => {
-      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '250';
-      expect(steerAckTimeoutMs()).toBe(250);
     });
   });
 
@@ -6833,10 +6350,11 @@ describe('AgentSession', () => {
       try {
         const queue = agentSession.messageQueue;
         agentSession.queryPromise = new Promise<void>(() => {});
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           hardUuid,
           hardContent,
           null,
+          false,
           () => true
         );
         await waitForQueueEntry(queue);
@@ -6864,10 +6382,11 @@ describe('AgentSession', () => {
         const queue = agentSession.messageQueue;
         agentSession.queryPromise = new Promise<void>(() => {});
         let claimHeld = true;
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           hardUuid,
           hardContent,
           null,
+          false,
           () => claimHeld
         );
         await waitForQueueEntry(queue);
@@ -6918,10 +6437,11 @@ describe('AgentSession', () => {
       try {
         const queue = agentSession.messageQueue;
         agentSession.queryPromise = new Promise<void>(() => {});
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           hardUuid,
           hardContent,
           null,
+          false,
           () => true
         );
         await waitForQueueEntry(queue);
@@ -6947,10 +6467,11 @@ describe('AgentSession', () => {
       try {
         const queue = agentSession.messageQueue;
         agentSession.queryPromise = new Promise<void>(() => {});
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           hardUuid,
           hardContent,
           null,
+          false,
           () => true
         );
         await waitForQueueEntry(queue);
@@ -7134,7 +6655,6 @@ describe('AgentSession', () => {
           null,
           false,
           () => true,
-          undefined,
           undefined,
           { reportStage }
         );

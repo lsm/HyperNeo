@@ -42,7 +42,6 @@ export interface InFlightJobSnapshot {
   slotClass: 'capped' | 'exempt';
   sessionId?: string;
   messageUuid?: string;
-  role?: string;
   generation?: number;
   stage: string;
   ageMs: number;
@@ -625,7 +624,6 @@ export class JobQueueProcessor {
           slotClass: record.slotClass,
           sessionId: stringPayload(record.job, 'sessionId'),
           messageUuid: stringPayload(record.job, 'messageUuid'),
-          role: stringPayload(record.job, 'role'),
           generation: record.generation,
           stage: record.stage,
           ageMs: Math.max(0, now - record.startedAt),
@@ -670,7 +668,6 @@ export class JobQueueProcessor {
       slotClass,
       sessionId: stringPayload(job, 'sessionId'),
       messageUuid: stringPayload(job, 'messageUuid'),
-      role: stringPayload(job, 'role'),
       ...details,
     });
   }
@@ -737,7 +734,6 @@ function jobFromReclaimedClaim(claim: ReclaimedJobClaim): Job {
     payload: {
       ...(claim.sessionId ? { sessionId: claim.sessionId } : {}),
       ...(claim.messageUuid ? { messageUuid: claim.messageUuid } : {}),
-      ...(claim.role ? { role: claim.role } : {}),
     },
     result: null,
     error: null,

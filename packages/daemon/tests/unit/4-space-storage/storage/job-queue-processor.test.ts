@@ -266,31 +266,23 @@ describe('JobQueueProcessor', () => {
     });
   });
 
-  describe('steer park accounting (requeueParked / getParkCount)', () => {
-    it('getParkCount is 0 for a fresh job and after plain requeue', () => {
-      const job = repo.enqueue({ queue: 'steer-q', payload: { role: 'steer' } });
-      const [claimed] = repo.dequeue('steer-q', 1);
-      expect(claimed).toBeTruthy();
-      expect(repo.getParkCount(claimed!.id)).toBe(0);
-    });
-
-    it('requeueParked bumps __parkCount without touching retry_count, and getParkCount reads it', () => {
-      const job = repo.enqueue({ queue: 'steer-q', payload: { role: 'steer' }, maxRetries: 8 });
-      const [claimed] = repo.dequeue('steer-q', 1);
+  describe('park accounting (requeueParked)', () => {
+    it('requeueParked returns a processing job to pending without touching retry_count', () => {
+      repo.enqueue({ queue: 'delivery-q', payload: { sessionId: 's1' }, maxRetries: 8 });
+      const [claimed] = repo.dequeue('delivery-q', 1);
       const token = claimed!.claimToken;
 
       repo.requeueParked(claimed!.id, Date.now() + 5000, token);
-      expect(repo.getParkCount(claimed!.id)).toBe(1);
-      let updated = repo.getJob(claimed!.id);
+      const updated = repo.getJob(claimed!.id);
       expect(updated?.status).toBe('pending');
       expect(updated?.retryCount).toBe(0);
 
       db.prepare(`UPDATE job_queue SET run_at = 0 WHERE id = ?`).run(claimed!.id);
-      const [r2] = repo.dequeue('steer-q', 1);
+      const [r2] = repo.dequeue('delivery-q', 1);
       repo.requeueParked(r2!.id, Date.now() + 5000, r2!.claimToken);
-      expect(repo.getParkCount(claimed!.id)).toBe(2);
-      updated = repo.getJob(claimed!.id);
-      expect(updated?.retryCount).toBe(0);
+      const reParked = repo.getJob(claimed!.id);
+      expect(reParked?.status).toBe('pending');
+      expect(reParked?.retryCount).toBe(0);
     });
   });
 

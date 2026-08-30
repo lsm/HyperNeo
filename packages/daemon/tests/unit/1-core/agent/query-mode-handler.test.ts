@@ -73,17 +73,16 @@ describe('QueryModeHandler', () => {
     return row?.send_status;
   }
 
-  function deliveryUuids(): Array<{ uuid: string; role: string }> {
+  function deliveryUuids(): Array<{ uuid: string }> {
     return (
       rawDb()
         .prepare(
-          `SELECT json_extract(payload, '$.messageUuid') AS uuid,
-                  json_extract(payload, '$.role') AS role
+          `SELECT json_extract(payload, '$.messageUuid') AS uuid
              FROM job_queue WHERE queue = 'message_delivery'
             ORDER BY created_at ASC, rowid ASC`
         )
-        .all() as Array<{ uuid: string | null; role: string | null }>
-    ).map((row) => ({ uuid: row.uuid ?? '', role: row.role ?? '' }));
+        .all() as Array<{ uuid: string | null }>
+    ).map((row) => ({ uuid: row.uuid ?? '' }));
   }
 
   function deliveryPayload(uuid: string): Record<string, unknown> | null {
@@ -240,7 +239,6 @@ describe('QueryModeHandler', () => {
           payload: {
             sessionId: SESSION_ID,
             messageUuid: 'uuid-task-a',
-            role: 'turn',
             origin: 'space_inject',
             parentToolUseId: null,
           },
@@ -293,7 +291,6 @@ describe('QueryModeHandler', () => {
           payload: {
             sessionId: SESSION_ID,
             messageUuid: 'uuid-chat',
-            role: 'turn',
             origin: 'chat',
             parentToolUseId: null,
           },
@@ -370,8 +367,7 @@ describe('QueryModeHandler', () => {
       expect(result).toEqual({ success: true, messageCount: 3 });
       const jobs = deliveryUuids();
       expect(jobs.map((job) => job.uuid)).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
-      expect(jobs[0].role).toBe('turn');
-      expect(jobs.filter((job) => job.role === 'steer')).toHaveLength(2);
+      expect(jobs.every((job) => deliveryPayload(job.uuid)?.role === undefined)).toBe(true);
       expect(jobs.every((job) => deliveryPayload(job.uuid)?.batchUuids === undefined)).toBe(true);
       for (const uuid of ['uuid-1', 'uuid-2', 'uuid-3']) {
         expect(sendStatusByUuid(uuid)).toBe('enqueued');
@@ -458,13 +454,12 @@ describe('QueryModeHandler', () => {
       jobQueue.enqueue = enqueue;
     });
 
-    it('falls back to steer jobs when a turn is already active', async () => {
+    it('enqueues FIFO siblings when a delivery job is already active', async () => {
       db.getJobQueueRepo().enqueue({
         queue: 'message_delivery',
         payload: {
           sessionId: SESSION_ID,
           messageUuid: 'uuid-active',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
         },
@@ -478,7 +473,7 @@ describe('QueryModeHandler', () => {
       expect(result).toEqual({ success: true, messageCount: 2 });
       const jobs = deliveryUuids();
       expect(jobs.map((job) => job.uuid).sort()).toEqual(['uuid-1', 'uuid-2', 'uuid-active']);
-      expect(jobs.filter((job) => job.role === 'steer')).toHaveLength(2);
+      expect(jobs.every((job) => deliveryPayload(job.uuid)?.role === undefined)).toBe(true);
       expect(jobs.every((job) => deliveryPayload(job.uuid)?.batchUuids === undefined)).toBe(true);
     });
 
@@ -508,16 +503,23 @@ describe('QueryModeHandler', () => {
       expect(jobs.every((job) => deliveryPayload(job.uuid)?.batchUuids === undefined)).toBe(true);
     });
 
-    it('skips job-queue-owned rows (replay race with an existing batch job)', async () => {
+    it('skips job-queue-owned rows (replay race with existing delivery jobs)', async () => {
       db.getJobQueueRepo().enqueue({
         queue: 'message_delivery',
         payload: {
           sessionId: SESSION_ID,
           messageUuid: 'uuid-1',
-          role: 'turn',
           origin: 'recovery',
           parentToolUseId: null,
-          batchUuids: ['uuid-1', 'uuid-2', 'uuid-3'],
+        },
+      });
+      db.getJobQueueRepo().enqueue({
+        queue: 'message_delivery',
+        payload: {
+          sessionId: SESSION_ID,
+          messageUuid: 'uuid-2',
+          origin: 'recovery',
+          parentToolUseId: null,
         },
       });
       seedRow('uuid-1', 'one', 'deferred');
@@ -528,10 +530,9 @@ describe('QueryModeHandler', () => {
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 3 });
-      expect(deliveryUuids().map((job) => job.uuid)).toEqual(['uuid-1']);
-      expect(deliveryUuids()[0].role).toBe('turn');
-      expect(sendStatusByUuid('uuid-2')).toBe('deferred');
-      expect(statusEvents).toEqual([]);
+      expect(deliveryUuids().map((job) => job.uuid)).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
+      expect(sendStatusByUuid('uuid-3')).toBe('enqueued');
+      expect(statusEvents).toEqual([{ messageIds: [expect.any(String)], status: 'enqueued' }]);
     });
 
     it('sendEnqueuedMessagesOnTurnEnd re-arms a durable job per enqueued message', async () => {
@@ -544,7 +545,6 @@ describe('QueryModeHandler', () => {
       const jobs = deliveryUuids();
       expect(jobs).toHaveLength(1);
       expect(jobs[0].uuid).toBe('uuid-1');
-      expect(jobs[0].role).toBe('turn');
       expect(deliveryPayload('uuid-1')?.released).toBe(true);
       expect(mockMessageQueue.enqueueWithId).not.toHaveBeenCalled();
     });
@@ -555,7 +555,6 @@ describe('QueryModeHandler', () => {
         payload: {
           sessionId: SESSION_ID,
           messageUuid: 'uuid-owned',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
         },
@@ -565,7 +564,7 @@ describe('QueryModeHandler', () => {
       const handler = createHandler();
       await handler.sendEnqueuedMessagesOnTurnEnd();
 
-      expect(deliveryUuids()).toEqual([{ uuid: 'uuid-owned', role: 'turn' }]);
+      expect(deliveryUuids()).toEqual([{ uuid: 'uuid-owned' }]);
       expect(mockMessageQueue.enqueueWithId).not.toHaveBeenCalled();
       expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
     });
@@ -588,7 +587,6 @@ describe('QueryModeHandler', () => {
         payload: {
           sessionId: SESSION_ID,
           messageUuid: 'uuid-active',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
         },
@@ -621,7 +619,6 @@ describe('QueryModeHandler', () => {
         payload: {
           sessionId: SESSION_ID,
           messageUuid: 'uuid-active',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
         },
@@ -656,7 +653,7 @@ describe('QueryModeHandler', () => {
       await handler.replayPendingMessagesForImmediateMode();
 
       expect(clearSpy).not.toHaveBeenCalled();
-      expect(deliveryUuids()).toEqual([{ uuid: 'uuid-human', role: 'turn' }]);
+      expect(deliveryUuids()).toEqual([{ uuid: 'uuid-human' }]);
       expect(sendStatusByUuid('uuid-task')).toBe('deferred');
     });
 

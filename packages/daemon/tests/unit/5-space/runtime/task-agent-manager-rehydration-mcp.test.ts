@@ -485,8 +485,6 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     });
     config.db.getJobQueueRepo = () => ({
       activeDeliveryMessageUuids: () => new Set<string>(),
-      hasActiveTurnDeliveryJob: () => false,
-      getActiveDeliveryRole: () => null,
       enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
         const uuid = args?.payload?.messageUuid;
         if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
@@ -544,8 +542,6 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     });
     config.db.getJobQueueRepo = () => ({
       activeDeliveryMessageUuids: () => new Set<string>(),
-      hasActiveTurnDeliveryJob: () => false,
-      getActiveDeliveryRole: () => null,
       enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
         const uuid = args?.payload?.messageUuid;
         if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);

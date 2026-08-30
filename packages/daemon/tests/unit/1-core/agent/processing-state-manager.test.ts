@@ -1341,38 +1341,6 @@ describe('ProcessingStateManager', () => {
     });
   });
 
-  describe('stuckInitializingMs (delivery admission probe)', () => {
-    test('is null while idle', () => {
-      expect(manager.stuckInitializingMs()).toBeNull();
-    });
-
-    test('measures the current initializing phase from setProcessing', async () => {
-      const startedAt = Date.now();
-      await manager.setProcessing('msg-1');
-      expect(manager.stuckInitializingMs(startedAt + 500)).toBeGreaterThanOrEqual(500);
-      expect(manager.stuckInitializingMs(startedAt + 130_000)).toBeGreaterThanOrEqual(130_000);
-    });
-
-    test('is null once the phase leaves initializing', async () => {
-      await manager.setProcessing('msg-1');
-      await manager.updatePhase('thinking');
-      expect(manager.stuckInitializingMs()).toBeNull();
-    });
-
-    test('is null after the session goes idle', async () => {
-      await manager.setProcessing('msg-1');
-      await manager.setIdle();
-      expect(manager.stuckInitializingMs()).toBeNull();
-    });
-
-    test('is null while queued or waiting for input', async () => {
-      await manager.setQueued('msg-1');
-      expect(manager.stuckInitializingMs()).toBeNull();
-      await manager.setWaitingForInput({} as PendingUserQuestion);
-      expect(manager.stuckInitializingMs()).toBeNull();
-    });
-  });
-
   describe('initialization-duration metrics', () => {
     let recorded: Array<{ ms: number; outcome: 'progressed' | 'never_progressed' }>;
     let original: (ms: number, outcome: 'progressed' | 'never_progressed') => void;

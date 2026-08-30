@@ -773,7 +773,6 @@ describe('SpaceRuntimeService', () => {
             reopenDeliveryByUuid: () => null,
           }),
           getJobQueueRepo: () => ({
-            getActiveDeliveryRole: () => null,
             enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
               const uuid = args?.payload?.messageUuid;
               if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
@@ -1759,7 +1758,6 @@ describe('SpaceRuntimeService', () => {
             reopenDeliveryByUuid: () => null,
           }),
           getJobQueueRepo: () => ({
-            getActiveDeliveryRole: () => null,
             enqueue: () => {
               throw new Error('sqlite locked');
             },
@@ -1843,7 +1841,7 @@ describe('SpaceRuntimeService', () => {
             markDeliveryFailedByUuid: () => null,
             reopenDeliveryByUuid,
           }),
-          getJobQueueRepo: () => ({ getActiveDeliveryRole: () => null, enqueue }),
+          getJobQueueRepo: () => ({ enqueue }),
         },
       } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
 
@@ -1928,7 +1926,7 @@ describe('SpaceRuntimeService', () => {
             markDeliveryFailedByUuid: () => null,
             reopenDeliveryByUuid,
           }),
-          getJobQueueRepo: () => ({ getActiveDeliveryRole: () => null, enqueue }),
+          getJobQueueRepo: () => ({ enqueue }),
         },
       } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
 
@@ -2006,7 +2004,6 @@ describe('SpaceRuntimeService', () => {
             reopenDeliveryByUuid: () => null,
           }),
           getJobQueueRepo: () => ({
-            getActiveDeliveryRole: () => null,
             enqueue: () => ({ id: 'job-1' }),
           }),
         },
@@ -2306,7 +2303,6 @@ describe('SpaceRuntimeService', () => {
             reopenDeliveryByUuid: () => null,
           }),
           getJobQueueRepo: () => ({
-            getActiveDeliveryRole: () => null,
             enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
               const uuid = args?.payload?.messageUuid;
               if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);

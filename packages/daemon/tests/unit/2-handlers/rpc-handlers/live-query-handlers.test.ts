@@ -1174,7 +1174,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       }
     });
 
-    test('spaceTaskMessages.byTask retrying resolves via batch uuids, nonzero retries, and active jobs only', () => {
+    test('spaceTaskMessages.byTask retrying resolves via own delivery jobs, nonzero retries, and active jobs only', () => {
       const workflowRunId = 'wr-stm-retry-shapes';
       const sessionIdValue = 'session-stm-retry-shapes';
       const taskId = insertSpaceTask({
@@ -1223,15 +1223,13 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const jobs: Array<{
         id: string;
         messageUuid: string;
-        batchUuids?: string[];
         retryCount: number;
         status: 'pending' | 'processing' | 'completed';
         role: 'turn' | 'steer';
       }> = [
         {
           id: 'job-stm-batch-owner',
-          messageUuid: 'u-stm-kickoff',
-          batchUuids: ['u-stm-batch-owned'],
+          messageUuid: 'u-stm-batch-owned',
           retryCount: 2,
           status: 'pending',
           role: 'turn',
@@ -1282,7 +1280,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           JSON.stringify({
             sessionId: sessionIdValue,
             messageUuid: j.messageUuid,
-            batchUuids: j.batchUuids,
             role: j.role,
             origin: 'space_inject',
           }),
@@ -3530,7 +3527,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         }
       });
 
-      test('retrying resolves via batch uuids, nonzero retries, and active jobs only (compact feed)', () => {
+      test('retrying resolves via own delivery jobs, nonzero retries, and active jobs only (compact feed)', () => {
         const taskId = insertSpaceTask({ taskAgentSessionId: sessionId });
         insertSession(sessionId, 'space_task_agent', '{"status":"processing"}');
         const userPayload = (uuid: string) => ({
@@ -3555,14 +3552,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
         const jobs: Array<{
           id: string;
           messageUuid: string;
-          batchUuids?: string[];
           retryCount: number;
           role: 'turn' | 'steer';
         }> = [
           {
             id: 'job-c-batch-owner',
-            messageUuid: 'u-c-kickoff',
-            batchUuids: ['u-c-batch-owned'],
+            messageUuid: 'u-c-batch-owned',
             retryCount: 2,
             role: 'turn',
           },
@@ -3577,7 +3572,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
             JSON.stringify({
               sessionId,
               messageUuid: j.messageUuid,
-              batchUuids: j.batchUuids,
               role: j.role,
               origin: 'space_inject',
             }),

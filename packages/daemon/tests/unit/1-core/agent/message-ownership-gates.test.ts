@@ -1,20 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  BATCH_DELIVERY_MAX_CHARS,
-  buildBatchedDeliveryContent,
-} from '../../../../src/lib/agent/message-delivery';
-import {
   decideDeferAdmission,
   type FlushMessage,
   isTaskFlushInput,
   planFlushDelivery,
-  resolveDeliveryRole,
   resolveMessageOwnership,
 } from '../../../../src/lib/agent/message-ownership-gates';
 
 function makeFlushMessage(overrides: Partial<FlushMessage> = {}): FlushMessage {
   return {
     uuid: 'uuid-1',
+    dbId: 'db-1',
     isUserMessage: true,
     isTaskInput: true,
     flattenedText: 'hello',
@@ -54,13 +50,7 @@ describe('resolveMessageOwnership', () => {
 
 describe('planFlushDelivery', () => {
   test('empty flush is a noop', () => {
-    expect(
-      planFlushDelivery({
-        messages: [],
-        activeInJobQueue: new Set(),
-        activeTurnInJobQueue: false,
-      })
-    ).toEqual({
+    expect(planFlushDelivery({ messages: [], activeInJobQueue: new Set() })).toEqual({
       action: 'noop',
     });
   });
@@ -69,7 +59,6 @@ describe('planFlushDelivery', () => {
     const result = planFlushDelivery({
       messages: [makeFlushMessage({ uuid: 'job-owned' })],
       activeInJobQueue: new Set(['job-owned']),
-      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'noop' });
   });
@@ -78,7 +67,6 @@ describe('planFlushDelivery', () => {
     const result = planFlushDelivery({
       messages: [makeFlushMessage({ uuid: 'job-owned' }), makeFlushMessage({ uuid: 'free' })],
       activeInJobQueue: new Set(['job-owned']),
-      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
@@ -87,7 +75,7 @@ describe('planFlushDelivery', () => {
     });
   });
 
-  test('non-user messages are skipped and do not break batchability of the rest', () => {
+  test('every unowned user message is delivered per message under session FIFO', () => {
     const result = planFlushDelivery({
       messages: [
         makeFlushMessage({ uuid: 'assistant', isUserMessage: false, flattenedText: null }),
@@ -95,61 +83,29 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
       ],
       activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
-      action: 'batch',
-      uuids: ['a', 'b'],
+      action: 'each',
+      deliver: ['a', 'b'],
+      skip: [{ uuid: 'assistant', ownership: 'not_user_message' }],
     });
-  });
-
-  test('flattenable user messages beyond a single candidate batch in order', () => {
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'first', flattenedText: 'one' }),
-        makeFlushMessage({ uuid: 'second', flattenedText: 'two' }),
-        makeFlushMessage({ uuid: 'third', flattenedText: 'three' }),
-      ],
-      activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({ action: 'batch', uuids: ['first', 'second', 'third'] });
   });
 
   test('a single deliverable candidate is delivered per message', () => {
     const result = planFlushDelivery({
       messages: [makeFlushMessage({ uuid: 'solo' })],
       activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'each', deliver: ['solo'], skip: [] });
   });
 
-  test('a job-queue-owned message forces per-message delivery for the rest', () => {
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'job-owned', flattenedText: 'durable' }),
-        makeFlushMessage({ uuid: 'a' }),
-        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
-      ],
-      activeInJobQueue: new Set(['job-owned']),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({
-      action: 'each',
-      deliver: ['a', 'b'],
-      skip: [{ uuid: 'job-owned', ownership: 'job_queue' }],
-    });
-  });
-
-  test('a slash command forces per-message delivery and is delivered itself', () => {
+  test('a slash command is delivered itself alongside the rest', () => {
     const result = planFlushDelivery({
       messages: [
         makeFlushMessage({ uuid: 'slash', flattenedText: '/compact' }),
         makeFlushMessage({ uuid: 'plain', flattenedText: 'hello' }),
       ],
       activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
@@ -158,68 +114,7 @@ describe('planFlushDelivery', () => {
     });
   });
 
-  test('a job-queue-owned flattenable message alone already blocks batching', () => {
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'job-owned', flattenedText: 'durable' }),
-        makeFlushMessage({ uuid: 'a' }),
-      ],
-      activeInJobQueue: new Set(['job-owned']),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({
-      action: 'each',
-      deliver: ['a'],
-      skip: [{ uuid: 'job-owned', ownership: 'job_queue' }],
-    });
-  });
-
-  test('a job-queue-owned slash command still forces per-message delivery for the rest', () => {
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'owned-slash', flattenedText: '/compact' }),
-        makeFlushMessage({ uuid: 'a' }),
-        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
-      ],
-      activeInJobQueue: new Set(['owned-slash']),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({
-      action: 'each',
-      deliver: ['a', 'b'],
-      skip: [{ uuid: 'owned-slash', ownership: 'job_queue' }],
-    });
-  });
-
-  test('an active turn outside the flush forces per-message delivery', () => {
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'a' }),
-        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
-      ],
-      activeInJobQueue: new Set(['unrelated-active-turn']),
-      activeTurnInJobQueue: true,
-    });
-    expect(result).toEqual({
-      action: 'each',
-      deliver: ['a', 'b'],
-      skip: [],
-    });
-  });
-
-  test('an active steer outside the flush does not block batching', () => {
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'a' }),
-        makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
-      ],
-      activeInJobQueue: new Set(['unrelated-active-steer']),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({ action: 'batch', uuids: ['a', 'b'] });
-  });
-
-  test('mixed content forces per-message delivery and delivers the unflattenable message', () => {
+  test('unflattenable user messages are still delivered per message', () => {
     const result = planFlushDelivery({
       messages: [
         makeFlushMessage({ uuid: 'unflattenable', flattenedText: null }),
@@ -227,7 +122,6 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'b', flattenedText: 'world' }),
       ],
       activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
@@ -240,107 +134,8 @@ describe('planFlushDelivery', () => {
     const result = planFlushDelivery({
       messages: [makeFlushMessage({ uuid: 'image-only', flattenedText: null })],
       activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({ action: 'each', deliver: ['image-only'], skip: [] });
-  });
-
-  test('combined batched content over the char cap forces per-message delivery', () => {
-    const huge = 'x'.repeat(150_000);
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'big-1', flattenedText: huge }),
-        makeFlushMessage({ uuid: 'big-2', flattenedText: huge }),
-      ],
-      activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({
-      action: 'each',
-      deliver: ['big-1', 'big-2'],
-      skip: [],
-    });
-  });
-
-  test('combined content exactly at the execution-time batch budget still batches', () => {
-    const budget = BATCH_DELIVERY_MAX_CHARS - 2 * 32;
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'cap-1', flattenedText: 'a'.repeat(Math.ceil(budget / 2)) }),
-        makeFlushMessage({ uuid: 'cap-2', flattenedText: 'b'.repeat(Math.floor(budget / 2)) }),
-      ],
-      activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({ action: 'batch', uuids: ['cap-1', 'cap-2'] });
-  });
-
-  test('content inside the exact wrapper size but over the execution budget forces each', () => {
-    const wrapper = buildBatchedDeliveryContent(['', '']).length;
-    const perText = Math.floor((BATCH_DELIVERY_MAX_CHARS - wrapper) / 2);
-    const texts = ['a'.repeat(perText), 'b'.repeat(perText)];
-    expect(buildBatchedDeliveryContent(texts).length).toBeLessThanOrEqual(BATCH_DELIVERY_MAX_CHARS);
-    const result = planFlushDelivery({
-      messages: texts.map((text, i) => makeFlushMessage({ uuid: `cap-${i}`, flattenedText: text })),
-      activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({
-      action: 'each',
-      deliver: ['cap-0', 'cap-1'],
-      skip: [],
-    });
-  });
-
-  test('budget sizing holds across message counts', () => {
-    for (const count of [2, 9, 10, 11, 101]) {
-      const budget = BATCH_DELIVERY_MAX_CHARS - count * 32;
-      const base = Math.floor(budget / count);
-      const texts = Array.from({ length: count }, (_, i) =>
-        'x'.repeat(i === count - 1 ? budget - base * (count - 1) : base)
-      );
-      const atCap = planFlushDelivery({
-        messages: texts.map((text, i) => makeFlushMessage({ uuid: `m-${i}`, flattenedText: text })),
-        activeInJobQueue: new Set(),
-        activeTurnInJobQueue: false,
-      });
-      expect(atCap).toEqual({
-        action: 'batch',
-        uuids: texts.map((_, i) => `m-${i}`),
-      });
-      const overCap = planFlushDelivery({
-        messages: [
-          ...texts
-            .slice(0, -1)
-            .map((text, i) => makeFlushMessage({ uuid: `m-${i}`, flattenedText: text })),
-          makeFlushMessage({ uuid: 'm-last', flattenedText: `${texts[count - 1]}y` }),
-        ],
-        activeInJobQueue: new Set(),
-        activeTurnInJobQueue: false,
-      });
-      expect(overCap).toEqual({
-        action: 'each',
-        deliver: texts.map((_, i) => (i === count - 1 ? 'm-last' : `m-${i}`)),
-        skip: [],
-      });
-    }
-  });
-
-  test('combined content one char over the execution-time budget forces per-message delivery', () => {
-    const budget = BATCH_DELIVERY_MAX_CHARS - 2 * 32;
-    const result = planFlushDelivery({
-      messages: [
-        makeFlushMessage({ uuid: 'cap-1', flattenedText: 'a'.repeat(Math.ceil(budget / 2)) }),
-        makeFlushMessage({ uuid: 'cap-2', flattenedText: 'b'.repeat(Math.floor(budget / 2) + 1) }),
-      ],
-      activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
-    });
-    expect(result).toEqual({
-      action: 'each',
-      deliver: ['cap-1', 'cap-2'],
-      skip: [],
-    });
   });
 
   test('skips keep input order alongside per-message delivery', () => {
@@ -352,87 +147,12 @@ describe('planFlushDelivery', () => {
         makeFlushMessage({ uuid: 'slash', flattenedText: '/model' }),
       ],
       activeInJobQueue: new Set(),
-      activeTurnInJobQueue: false,
     });
     expect(result).toEqual({
       action: 'each',
       deliver: ['a', 'unflattenable', 'slash'],
       skip: [{ uuid: 'assistant', ownership: 'not_user_message' }],
     });
-  });
-});
-
-describe('resolveDeliveryRole', () => {
-  test('an existing active role is reused over every other input', () => {
-    expect(
-      resolveDeliveryRole({
-        existingActiveRole: 'steer',
-        requestedRole: 'turn',
-        uniqueConstraintHit: true,
-      })
-    ).toBe('steer');
-    expect(
-      resolveDeliveryRole({
-        existingActiveRole: 'turn',
-        requestedRole: 'steer',
-        uniqueConstraintHit: true,
-      })
-    ).toBe('turn');
-  });
-
-  test('an explicit requested role is returned when no constraint hits', () => {
-    expect(
-      resolveDeliveryRole({
-        existingActiveRole: null,
-        requestedRole: 'steer',
-        uniqueConstraintHit: false,
-      })
-    ).toBe('steer');
-    expect(
-      resolveDeliveryRole({
-        existingActiveRole: null,
-        requestedRole: 'turn',
-        uniqueConstraintHit: false,
-      })
-    ).toBe('turn');
-  });
-
-  test('an explicit requested turn under a unique-constraint hit is rejected, not returned', () => {
-    expect(
-      resolveDeliveryRole({
-        existingActiveRole: null,
-        requestedRole: 'turn',
-        uniqueConstraintHit: true,
-      })
-    ).toBe('explicit_role_rejected');
-  });
-
-  test('an explicit requested steer under a unique-constraint hit is still returned', () => {
-    expect(
-      resolveDeliveryRole({
-        existingActiveRole: null,
-        requestedRole: 'steer',
-        uniqueConstraintHit: true,
-      })
-    ).toBe('steer');
-  });
-
-  test('a unique-constraint hit with no existing or requested role falls back to steer', () => {
-    expect(
-      resolveDeliveryRole({
-        existingActiveRole: null,
-        uniqueConstraintHit: true,
-      })
-    ).toBe('steer');
-  });
-
-  test('a fresh delivery with no constraints takes the turn role', () => {
-    expect(
-      resolveDeliveryRole({
-        existingActiveRole: null,
-        uniqueConstraintHit: false,
-      })
-    ).toBe('turn');
   });
 });
 

@@ -33,7 +33,6 @@ function deferredRow(
 
 interface EnqueuedJob {
   uuid: string;
-  role: string;
 }
 
 describe('QueryModeHandler deferred external-event digest flush', () => {
@@ -52,14 +51,13 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       db
         .getDatabase()
         .prepare(
-          `SELECT json_extract(payload, '$.messageUuid') AS messageUuid,
-                  json_extract(payload, '$.role') AS role
+          `SELECT json_extract(payload, '$.messageUuid') AS messageUuid
              FROM job_queue
             WHERE queue = 'message_delivery'
             ORDER BY created_at ASC, rowid ASC`
         )
-        .all() as Array<{ messageUuid: string | null; role: string | null }>
-    ).map((row) => ({ uuid: row.messageUuid ?? '', role: row.role ?? '' }));
+        .all() as Array<{ messageUuid: string | null }>
+    ).map((row) => ({ uuid: row.messageUuid ?? '' }));
   }
 
   function sendStatusByUuid(uuid: string): string | undefined {
@@ -150,7 +148,6 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
     const jobs = enqueued();
     expect(jobs).toHaveLength(1);
     expect(jobs[0]?.uuid).toBe('uuid-human');
-    expect(jobs[0]?.role).toBe('turn');
     expect(published).toEqual([{ messageIds: [expect.any(String)], status: 'enqueued' }]);
   });
 
@@ -198,9 +195,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       const jobs = enqueued();
       expect(jobs).toHaveLength(2);
       expect(jobs[0]?.uuid).toBe('uuid-task');
-      expect(jobs[0]?.role).toBe('turn');
       expect(jobs[1]?.uuid).toBe('uuid-pulled-digest');
-      expect(jobs[1]?.role).toBe('steer');
       expect(sendStatusByUuid('uuid-pulled-digest')).toBe('enqueued');
     });
 

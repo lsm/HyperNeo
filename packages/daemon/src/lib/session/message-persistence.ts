@@ -196,7 +196,6 @@ export class MessagePersistence {
       const jobQueueRepo = this.db.getJobQueueRepo?.();
       const useOutbox = shouldDispatchToQuery && !!jobQueueRepo;
       let dbMessageId: string;
-      let outboxRole: 'turn' | 'steer' | undefined;
       if (useOutbox) {
         if (this.db.getSession?.(sessionId)?.status === 'archived') {
           dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, 'failed', origin);
@@ -220,10 +219,7 @@ export class MessagePersistence {
           delivery: { origin: 'chat' },
         });
         dbMessageId = outbox.dbMessageId;
-        outboxRole = outbox.role;
-        if (outboxRole === 'turn') {
-          await agentSession.stateManager.setQueuedIfIdle(messageId).catch(() => {});
-        }
+        await agentSession.stateManager.setQueuedIfIdle(messageId).catch(() => {});
       } else {
         dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);
       }

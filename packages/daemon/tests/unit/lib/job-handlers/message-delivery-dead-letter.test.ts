@@ -4,7 +4,10 @@ import {
   settleMessageDeliveryDeadLetter,
   type MessageDeliveryDeadLetterSettlement,
 } from '../../../../src/lib/job-handlers/message-delivery-dead-letter';
-import type { MessageDeliveryPayload } from '../../../../src/lib/agent/message-delivery';
+import {
+  asMessageDeliveryPayload,
+  type MessageDeliveryPayload,
+} from '../../../../src/lib/agent/message-delivery';
 
 function recordingSettlement(markFailedResult: string | null = 'db-1'): {
   settlement: MessageDeliveryDeadLetterSettlement;
@@ -32,7 +35,6 @@ function recordingSettlement(markFailedResult: string | null = 'db-1'): {
 const SPACE_INJECT_PAYLOAD: MessageDeliveryPayload = {
   sessionId: 'sess-1',
   messageUuid: 'uuid-1',
-  role: 'turn',
   origin: 'space_inject',
   parentToolUseId: null,
 };
@@ -40,21 +42,20 @@ const SPACE_INJECT_PAYLOAD: MessageDeliveryPayload = {
 const CHAT_PAYLOAD: MessageDeliveryPayload = {
   sessionId: 'sess-1',
   messageUuid: 'uuid-2',
-  role: 'turn',
   origin: 'chat',
   parentToolUseId: null,
 };
 
-const SPACE_INJECT_STEER_PAYLOAD: MessageDeliveryPayload = {
+const MID_TURN_INJECT_PAYLOAD: MessageDeliveryPayload = {
   sessionId: 'sess-1',
   messageUuid: 'uuid-3',
-  role: 'steer',
   origin: 'space_inject',
   parentToolUseId: null,
+  injectedMidTurn: true,
 };
 
 describe('settleMessageDeliveryDeadLetter (onDead → session.error → settle ordering)', () => {
-  it('for a space_inject kickoff, publishes session.error BEFORE settling the queued marker', async () => {
+  it('for a space_inject delivery, publishes session.error BEFORE settling the queued marker', async () => {
     const { settlement, calls } = recordingSettlement();
     await settleMessageDeliveryDeadLetter(SPACE_INJECT_PAYLOAD, settlement);
 
@@ -69,21 +70,50 @@ describe('settleMessageDeliveryDeadLetter (onDead → session.error → settle o
     );
   });
 
+  it('does NOT publish session.error for a mid-turn space_inject delivery (auxiliary handoff)', async () => {
+    const { settlement, calls } = recordingSettlement();
+    await settleMessageDeliveryDeadLetter(MID_TURN_INJECT_PAYLOAD, settlement);
+
+    expect(settlement.publishSessionError).not.toHaveBeenCalled();
+    expect(calls).not.toContain('sessionError');
+    expect(calls).toContain('settle');
+  });
+
+  it('treats a legacy role-carrying steer payload as a mid-turn injection (upgrade drain)', async () => {
+    const { settlement, calls } = recordingSettlement();
+    const legacySteer: Record<string, unknown> = {
+      sessionId: 'sess-1',
+      messageUuid: 'uuid-legacy',
+      role: 'steer',
+      origin: 'space_inject',
+      parentToolUseId: null,
+    };
+    const parsed = asMessageDeliveryPayload(legacySteer);
+    expect(parsed?.injectedMidTurn).toBe(true);
+    await settleMessageDeliveryDeadLetter(parsed!, settlement);
+
+    expect(settlement.publishSessionError).not.toHaveBeenCalled();
+    expect(calls).not.toContain('sessionError');
+    expect(calls).toContain('settle');
+  });
+
+  it('still publishes session.error for a space_inject kickoff that dead-letters while its query hangs', async () => {
+    const { settlement, calls } = recordingSettlement();
+    await settleMessageDeliveryDeadLetter(SPACE_INJECT_PAYLOAD, settlement);
+
+    expect(settlement.publishSessionError).toHaveBeenCalledWith(
+      'sess-1',
+      DEAD_LETTER_SESSION_ERROR
+    );
+    expect(calls).toContain('sessionError');
+  });
+
   it('for a non-space_inject delivery, does NOT publish session.error (only mark + status + settle)', async () => {
     const { settlement, calls } = recordingSettlement();
     await settleMessageDeliveryDeadLetter(CHAT_PAYLOAD, settlement);
 
     expect(calls).not.toContain('sessionError');
     expect(settlement.publishSessionError).not.toHaveBeenCalled();
-    expect(calls).toContain('settle');
-  });
-
-  it('does NOT publish session.error for a space_inject STEER (mid-turn handoff, not the kickoff)', async () => {
-    const { settlement, calls } = recordingSettlement();
-    await settleMessageDeliveryDeadLetter(SPACE_INJECT_STEER_PAYLOAD, settlement);
-
-    expect(settlement.publishSessionError).not.toHaveBeenCalled();
-    expect(calls).not.toContain('sessionError');
     expect(calls).toContain('settle');
   });
 
@@ -102,24 +132,6 @@ describe('settleMessageDeliveryDeadLetter (onDead → session.error → settle o
 
     expect(settlement.publishStatusChanged).not.toHaveBeenCalled();
     expect(calls).toEqual(['markFailed', 'sessionError', 'settle']);
-  });
-
-  it('terminalizes every batch member alongside the kickoff (batch-aware)', async () => {
-    const { settlement } = recordingSettlement('db-flip');
-    const payload: MessageDeliveryPayload = {
-      ...CHAT_PAYLOAD,
-      batchUuids: ['uuid-2', 'member-a', 'member-b'],
-    };
-    await settleMessageDeliveryDeadLetter(payload, settlement);
-
-    expect(settlement.markDeliveryFailedByUuid).toHaveBeenCalledWith('sess-1', 'uuid-2');
-    expect(settlement.markDeliveryFailedByUuid).toHaveBeenCalledWith('sess-1', 'member-a');
-    expect(settlement.markDeliveryFailedByUuid).toHaveBeenCalledWith('sess-1', 'member-b');
-    expect(settlement.publishStatusChanged).toHaveBeenCalledWith('sess-1', [
-      'db-flip',
-      'db-flip',
-      'db-flip',
-    ]);
   });
 
   it('resets a stuck processing state for the dead-lettered message before settling', async () => {

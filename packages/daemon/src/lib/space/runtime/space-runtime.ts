@@ -1575,7 +1575,7 @@ export class SpaceRuntime {
         withinRateBudget: () => this.consumeImmediateTierRateBudget(target),
         setQueuedIfIdle: (sessionId, messageUuid) => {
           const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
-          return session
+          return session?.stateManager
             ? session.stateManager.setQueuedIfIdle(messageUuid)
             : Promise.resolve(false);
         },
@@ -1674,7 +1674,7 @@ export class SpaceRuntime {
       this.deleteDigestHandoffDebt(sessionId, messageUuid);
       this.digestHandoffRetryCounts.delete(`${sessionId}:${messageUuid}`);
       const entry = activated[0];
-      if (!entry || entry.role !== 'turn') return;
+      if (!entry) return;
       const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
       if (session?.stateManager) {
         void session.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});

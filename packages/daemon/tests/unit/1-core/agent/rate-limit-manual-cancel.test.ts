@@ -134,7 +134,7 @@ describe('captureEpisodeStage', () => {
 });
 
 describe('settleOwningDeliveryStage', () => {
-  test('a steer episode cancels and settles the owning turn delivery', () => {
+  test('an episode cancels and settles the episode delivery', () => {
     const cancelDelivery = mock(() => true);
     const markDeliveryFailedByUuid = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
     const publishStatusesFailed = mock((_messageIds: string[]) => {});
@@ -144,21 +144,19 @@ describe('settleOwningDeliveryStage', () => {
           getSession: () => null,
           getJobQueueRepo: () => ({
             cancelDelivery,
-            getActiveDeliveryRole: () => 'steer',
-            getActiveTurnDeliveryMessageUuid: () => 'msg-owning-turn',
           }),
           getSDKMessageRepo: () => ({ markDeliveryFailedByUuid }),
         },
-        episodeMessageUuid: 'msg-steer-episode',
+        episodeMessageUuid: 'msg-episode',
         publishStatusesFailed,
       })
     );
-    expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
-    expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
-    expect(publishStatusesFailed).toHaveBeenCalledWith(['db-msg-owning-turn']);
+    expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+    expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-episode');
+    expect(publishStatusesFailed).toHaveBeenCalledWith(['db-msg-episode']);
   });
 
-  test('settles every bundled message of a batched turn in one publish', () => {
+  test('reschedules the remaining session deliveries after settling', () => {
     const markDeliveryFailedByUuid = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
     const publishStatusesFailed = mock((_messageIds: string[]) => {});
     const rescheduleSessionDeliveries = mock(() => true);
@@ -168,18 +166,17 @@ describe('settleOwningDeliveryStage', () => {
           getSession: () => null,
           getJobQueueRepo: () => ({
             cancelDelivery: () => true,
-            getActiveDeliveryBatchUuids: () => ['msg-owning-turn', 'msg-bundled'],
             rescheduleSessionDeliveries,
           }),
           getSDKMessageRepo: () => ({ markDeliveryFailedByUuid }),
         },
-        episodeMessageUuid: 'msg-owning-turn',
+        episodeMessageUuid: 'msg-episode',
         publishStatusesFailed,
       })
     );
-    expect(markDeliveryFailedByUuid).toHaveBeenCalledTimes(2);
+    expect(markDeliveryFailedByUuid).toHaveBeenCalledTimes(1);
     expect(publishStatusesFailed).toHaveBeenCalledTimes(1);
-    expect(publishStatusesFailed).toHaveBeenCalledWith(['db-msg-owning-turn', 'db-msg-bundled']);
+    expect(publishStatusesFailed).toHaveBeenCalledWith(['db-msg-episode']);
     expect(rescheduleSessionDeliveries).toHaveBeenCalledWith('test-session-id', expect.any(Number));
   });
 
@@ -208,7 +205,7 @@ describe('settleOwningDeliveryStage', () => {
           getSession: () => null,
           getJobQueueRepo: () => ({
             cancelDelivery,
-            getActiveTurnDeliveryMessageUuid: () => null,
+            getActiveDeliveryMessageUuid: () => null,
           }),
         },
         episodeMessageUuid: undefined,
@@ -257,21 +254,18 @@ describe('clearCooldownStage', () => {
 });
 
 describe('runRateLimitManualCancel', () => {
-  test('runs capture, settle, and clear synchronously for a persisted steer cooldown', () => {
+  test('runs capture, settle, and clear synchronously for a persisted cooldown', () => {
     const effects: string[] = [];
     runRateLimitManualCancel({
       db: {
         getSession: () => ({
           processingState: JSON.stringify({
             status: 'rate_limit_cooldown',
-            messageId: 'msg-steer-episode',
+            messageId: 'msg-episode',
           }),
         }),
         getJobQueueRepo: () => ({
           cancelDelivery: () => true,
-          getActiveDeliveryRole: () => 'steer',
-          getActiveTurnDeliveryMessageUuid: () => 'msg-owning-turn',
-          getActiveDeliveryBatchUuids: () => ['msg-owning-turn', 'msg-bundled'],
           rescheduleSessionDeliveries: () => true,
         }),
         getSDKMessageRepo: () => ({
@@ -298,10 +292,6 @@ describe('runRateLimitManualCancel', () => {
         effects.push('settleError');
       },
     });
-    expect(effects).toEqual([
-      'cancelWatchdog',
-      'publish:db-msg-owning-turn,db-msg-bundled',
-      'clearCooldown',
-    ]);
+    expect(effects).toEqual(['cancelWatchdog', 'publish:db-msg-episode', 'clearCooldown']);
   });
 });

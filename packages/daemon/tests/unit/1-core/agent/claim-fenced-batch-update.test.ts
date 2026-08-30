@@ -5,7 +5,7 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 const SESSION = 'session-1';
 const KICKOFF = 'kickoff-1';
 
-describe('claim-fenced batch-update + admission reservation primitives', () => {
+describe('claim-fenced status transitions + admission reservation primitives', () => {
   let db: Database;
   let repository: JobQueueRepository;
 
@@ -80,101 +80,6 @@ describe('claim-fenced batch-update + admission reservation primitives', () => {
 
   afterEach(() => {
     db.close();
-  });
-
-  it('narrows the active batch under a live claim and reports prior state', () => {
-    insertMessage('m1', 'enqueued');
-    insertMessage('m2', 'enqueued');
-    const { jobId, claimToken } = claimDeliveryJob([KICKOFF, 'm1', 'm2']);
-    const result = repository.updateDeliveryBatchUuidsFenced({
-      sessionId: SESSION,
-      kickoffUuid: KICKOFF,
-      claimToken,
-      expectedBatchUuids: [KICKOFF, 'm1', 'm2'],
-      batchUuids: [KICKOFF, 'm1'],
-    });
-    expect(result.applied).toBe(true);
-    expect(result.priorBatchUuids).toEqual([KICKOFF, 'm1', 'm2']);
-    expect(result.priorDroppedBatchUuids).toEqual([]);
-    expect(repository.getActiveDeliveryBatchUuids(SESSION, KICKOFF)).toEqual([KICKOFF, 'm1']);
-    expect(payloadOf(jobId).droppedBatchUuids).toEqual(['m2']);
-  });
-
-  it('rejects the batch write when the claim is superseded', () => {
-    claimDeliveryJob([KICKOFF, 'm1']);
-    const result = repository.updateDeliveryBatchUuidsFenced({
-      sessionId: SESSION,
-      kickoffUuid: KICKOFF,
-      claimToken: 'superseded-claim',
-      expectedBatchUuids: [KICKOFF, 'm1'],
-      batchUuids: [KICKOFF],
-    });
-    expect(result.applied).toBe(false);
-    expect(result.priorBatchUuids).toBeNull();
-    expect(repository.getActiveDeliveryBatchUuids(SESSION, KICKOFF)).toEqual([KICKOFF, 'm1']);
-  });
-
-  it('rejects the batch write when the payload batch no longer matches the expectation', () => {
-    const { claimToken } = claimDeliveryJob([KICKOFF, 'm1']);
-    const result = repository.updateDeliveryBatchUuidsFenced({
-      sessionId: SESSION,
-      kickoffUuid: KICKOFF,
-      claimToken,
-      expectedBatchUuids: [KICKOFF, 'm1', 'm2'],
-      batchUuids: [KICKOFF],
-    });
-    expect(result.applied).toBe(false);
-    expect(result.priorBatchUuids).toEqual([KICKOFF, 'm1']);
-    expect(repository.getActiveDeliveryBatchUuids(SESSION, KICKOFF)).toEqual([KICKOFF, 'm1']);
-  });
-
-  it('restores the prior batch and dropped list through the same fenced write', () => {
-    insertMessage('m1', 'enqueued');
-    insertMessage('m2', 'enqueued');
-    const { claimToken } = claimDeliveryJob([KICKOFF, 'm1', 'm2']);
-    const narrowed = repository.updateDeliveryBatchUuidsFenced({
-      sessionId: SESSION,
-      kickoffUuid: KICKOFF,
-      claimToken,
-      expectedBatchUuids: [KICKOFF, 'm1', 'm2'],
-      batchUuids: [KICKOFF, 'm1'],
-    });
-    expect(narrowed.applied).toBe(true);
-    const restored = repository.updateDeliveryBatchUuidsFenced({
-      sessionId: SESSION,
-      kickoffUuid: KICKOFF,
-      claimToken,
-      expectedBatchUuids: [KICKOFF, 'm1'],
-      batchUuids: narrowed.priorBatchUuids as string[],
-      droppedBatchUuids: narrowed.priorDroppedBatchUuids,
-    });
-    expect(restored.applied).toBe(true);
-    expect(repository.getActiveDeliveryBatchUuids(SESSION, KICKOFF)).toEqual([KICKOFF, 'm1', 'm2']);
-  });
-
-  it('refuses the compensation restore once the claim is superseded', () => {
-    insertMessage('m1', 'enqueued');
-    const { jobId, claimToken } = claimDeliveryJob([KICKOFF, 'm1']);
-    const narrowed = repository.updateDeliveryBatchUuidsFenced({
-      sessionId: SESSION,
-      kickoffUuid: KICKOFF,
-      claimToken,
-      expectedBatchUuids: [KICKOFF, 'm1'],
-      batchUuids: [KICKOFF],
-    });
-    expect(narrowed.applied).toBe(true);
-    repository.requeue(jobId, Date.now() - 1000, claimToken);
-    repository.dequeue('message_delivery');
-    const restored = repository.updateDeliveryBatchUuidsFenced({
-      sessionId: SESSION,
-      kickoffUuid: KICKOFF,
-      claimToken,
-      expectedBatchUuids: [KICKOFF],
-      batchUuids: narrowed.priorBatchUuids as string[],
-      droppedBatchUuids: narrowed.priorDroppedBatchUuids,
-    });
-    expect(restored.applied).toBe(false);
-    expect(repository.getActiveDeliveryBatchUuids(SESSION, KICKOFF)).toEqual([KICKOFF]);
   });
 
   it('flips only enqueued user rows under a live claim', () => {

@@ -3,7 +3,6 @@ import type {
   DeliveryOutcome,
   MessageDeliverySession,
 } from '../../../../src/lib/agent/message-delivery';
-import { MAX_STEER_PARKS } from '../../../../src/lib/agent/message-delivery';
 import type { DeliveryMetrics } from '../../../../src/lib/agent/message-delivery-metrics';
 import {
   createMessageDeliveryHandler,
@@ -14,18 +13,18 @@ import type {
   JobQueueRepository,
 } from '../../../../src/storage/repositories/job-queue-repository';
 
-const TURN_PAYLOAD: Record<string, unknown> = {
+const CHAT_PAYLOAD: Record<string, unknown> = {
   sessionId: 'sess-1',
   messageUuid: 'uuid-1',
-  role: 'turn',
   origin: 'chat',
 };
 
-const STEER_PAYLOAD: Record<string, unknown> = {
+const LEGACY_PAYLOAD: Record<string, unknown> = {
   sessionId: 'sess-1',
   messageUuid: 'uuid-1',
-  role: 'steer',
   origin: 'chat',
+  role: 'steer',
+  batchUuids: ['uuid-1', 'uuid-2'],
 };
 
 function makeJob(payload: Record<string, unknown>): Job {
@@ -34,17 +33,10 @@ function makeJob(payload: Record<string, unknown>): Job {
 
 class MockSession implements MessageDeliverySession {
   driveResult: DeliveryOutcome = { outcome: 'completed' };
-  feedResult: DeliveryOutcome = { outcome: 'completed' };
   waitingForInput = false;
-  stuckMs: number | null = null;
   driveCalls = 0;
-  feedCalls = 0;
   settleCalls: string[] = [];
   lastUuid?: string;
-
-  stuckInitializingMs(): number | null {
-    return this.stuckMs;
-  }
 
   async driveDeliveryTurn(
     messageUuid: string,
@@ -52,27 +44,12 @@ class MockSession implements MessageDeliverySession {
     _parentToolUseId?: string | null,
     _alreadyConsumed?: boolean,
     _claimGuard?: () => boolean,
-    _batchUuids?: string[],
     _signal?: AbortSignal,
-    _observer?: unknown,
-    _deliveryClaimToken?: string | null
+    _observer?: unknown
   ): Promise<DeliveryOutcome> {
     this.driveCalls++;
     this.lastUuid = messageUuid;
     return this.driveResult;
-  }
-
-  async feedDeliverySteer(
-    messageUuid: string,
-    _content: unknown,
-    _parentToolUseId?: string | null,
-    _claimGuard?: () => boolean,
-    _signal?: AbortSignal,
-    _observer?: unknown
-  ): Promise<DeliveryOutcome> {
-    this.feedCalls++;
-    this.lastUuid = messageUuid;
-    return this.feedResult;
   }
 
   async settleSkippedDelivery(messageUuid: string): Promise<void> {
@@ -86,23 +63,19 @@ class MockSession implements MessageDeliverySession {
 
 function makeHarness(
   extra: Partial<MessageDeliveryHandlerDeps> = {},
-  payload: Record<string, unknown> = TURN_PAYLOAD
+  payload: Record<string, unknown> = CHAT_PAYLOAD
 ) {
   const session = new MockSession();
   const jobQueue = {
     isClaimCurrent: mock((_id: string, _token: string | null) => true),
-    getParkCount: mock((_id: string) => 0),
     requeue: mock((_id: string, _runAt: number, _token: string | null) => null),
     requeueParked: mock((_id: string, _runAt: number, _token: string | null) => null),
-    requeueAs: mock((_id: string, _role: string, _runAt: number, _token: string | null) => null),
-    getActiveDeliveryBatchUuids: mock(() => null),
   };
   const getSession = mock(() => session);
   const getMessageContent = mock(() => ({ content: 'hello', sendStatus: 'enqueued' }));
   const isSessionArchived = mock(() => false);
   const metrics = {
     recordReclaimSkip: mock(() => {}),
-    recordStuckInitializingRefusal: mock(() => {}),
   };
   const deps: MessageDeliveryHandlerDeps = {
     jobQueue: jobQueue as unknown as JobQueueRepository,
@@ -211,41 +184,43 @@ describe('createMessageDeliveryHandler', () => {
       expect(session.settleCalls).toEqual(['uuid-1']);
     });
 
-    it('marks every batch member failed and settles for an archived session', async () => {
+    it('marks the message failed and settles for an archived session', async () => {
       const markFailedSpy = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
       const publishSpy = mock(async () => {});
       const { handler, session, isSessionArchived, job } = makeHarness(
         { markDeliveryFailed: markFailedSpy, publishStatusChanged: publishSpy },
-        {
-          sessionId: 'sess-1',
-          messageUuid: 'uuid-1',
-          role: 'turn',
-          origin: 'chat',
-          batchUuids: ['uuid-1', 'uuid-2'],
-        }
+        CHAT_PAYLOAD
       );
       isSessionArchived.mockImplementation(() => true);
       const result = await handler(job, {});
       expect(result).toEqual({ outcome: 'archived' });
       expect(markFailedSpy).toHaveBeenCalledWith('sess-1', 'uuid-1');
-      expect(markFailedSpy).toHaveBeenCalledWith('sess-1', 'uuid-2');
-      expect(publishSpy).toHaveBeenCalledWith('sess-1', ['db-uuid-1', 'db-uuid-2']);
+      expect(publishSpy).toHaveBeenCalledWith('sess-1', ['db-uuid-1']);
       expect(session.settleCalls).toEqual(['uuid-1']);
     });
   });
 
-  describe('role × sendStatus gates', () => {
-    it('a consumed row returns completed without driving/feeding', async () => {
-      const { handler, session, getMessageContent, job } = makeHarness({}, STEER_PAYLOAD);
-      getMessageContent.mockImplementation(() => ({ content: 'steer', sendStatus: 'consumed' }));
+  describe('unknown payload fields are ignorable (pre-FIFO queued jobs)', () => {
+    it('a legacy payload carrying role and batchUuids parses and drives the turn', async () => {
+      const { handler, session, job } = makeHarness({}, LEGACY_PAYLOAD);
       const result = await handler(job, {});
       expect(result).toEqual({ outcome: 'completed' });
-      expect(session.feedCalls).toBe(0);
+      expect(session.driveCalls).toBe(1);
+      expect(session.lastUuid).toBe('uuid-1');
+    });
+  });
+
+  describe('sendStatus gates', () => {
+    it('a consumed row returns completed without driving', async () => {
+      const { handler, session, getMessageContent, job } = makeHarness();
+      getMessageContent.mockImplementation(() => ({ content: 'hello', sendStatus: 'consumed' }));
+      const result = await handler(job, {});
+      expect(result).toEqual({ outcome: 'completed' });
       expect(session.driveCalls).toBe(0);
       expect(session.settleCalls).toEqual([]);
     });
 
-    it('a deferred turn settles as skipped', async () => {
+    it('a deferred row settles as skipped', async () => {
       const { handler, session, getMessageContent, job } = makeHarness();
       getMessageContent.mockImplementation(() => ({ content: 'x', sendStatus: 'deferred' }));
       const result = await handler(job, {});
@@ -254,101 +229,29 @@ describe('createMessageDeliveryHandler', () => {
       expect(session.driveCalls).toBe(0);
     });
 
-    it('a failed steer settles as skipped', async () => {
-      const { handler, session, getMessageContent, job } = makeHarness({}, STEER_PAYLOAD);
+    it('a failed row settles as skipped', async () => {
+      const { handler, session, getMessageContent, job } = makeHarness();
       getMessageContent.mockImplementation(() => ({ content: 'x', sendStatus: 'failed' }));
       const result = await handler(job, {});
       expect(result).toEqual({ outcome: 'skipped', sendStatus: 'failed' });
       expect(session.settleCalls).toEqual(['uuid-1']);
-      expect(session.feedCalls).toBe(0);
+      expect(session.driveCalls).toBe(0);
     });
 
     it('a submitted row is still admitted', async () => {
-      const { handler, session, getMessageContent, job } = makeHarness({}, STEER_PAYLOAD);
-      getMessageContent.mockImplementation(() => ({ content: 'steer', sendStatus: 'submitted' }));
+      const { handler, session, getMessageContent, job } = makeHarness();
+      getMessageContent.mockImplementation(() => ({ content: 'hello', sendStatus: 'submitted' }));
       const result = await handler(job, {});
       expect(result).toEqual({ outcome: 'completed' });
-      expect(session.feedCalls).toBe(1);
+      expect(session.driveCalls).toBe(1);
       expect(session.settleCalls).toEqual([]);
     });
   });
 
-  describe('stuck-initializing admission gate', () => {
-    it('refuses a turn for a session stuck initializing past the threshold', async () => {
-      const { handler, session, jobQueue, metrics, job } = makeHarness();
-      session.stuckMs = 200_000;
-      const result = await handler(job, {});
-      expect(result).toMatchObject({ parked: 'stuck_initializing' });
-      expect(result.retryAt).toBeGreaterThan(Date.now());
-      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
-      expect(metrics.recordStuckInitializingRefusal).toHaveBeenCalledWith(200_000);
-      expect(session.driveCalls).toBe(0);
-      expect(session.feedCalls).toBe(0);
-      expect(session.settleCalls).toEqual([]);
-    });
-
-    it('refuses a steer the same way without feeding it', async () => {
-      const { handler, session, jobQueue, job } = makeHarness({}, STEER_PAYLOAD);
-      session.stuckMs = 200_000;
-      const result = await handler(job, {});
-      expect(result).toMatchObject({ parked: 'stuck_initializing' });
-      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', result.retryAt, 'claim-1');
-      expect(session.feedCalls).toBe(0);
-    });
-
-    it('an already-consumed row skips the stuck gate', async () => {
-      const { handler, session, jobQueue, metrics, getMessageContent, job } = makeHarness(
-        {},
-        STEER_PAYLOAD
-      );
-      session.stuckMs = 200_000;
-      getMessageContent.mockImplementation(() => ({ content: 'steer', sendStatus: 'consumed' }));
-      const result = await handler(job, {});
-      expect(result).toEqual({ outcome: 'completed' });
-      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
-      expect(metrics.recordStuckInitializingRefusal).not.toHaveBeenCalled();
-      expect(session.feedCalls).toBe(0);
-    });
-
-    it('admits when the session has been initializing only briefly', async () => {
-      const { handler, session, jobQueue, job } = makeHarness();
-      session.stuckMs = 1_000;
-      const result = await handler(job, {});
-      expect(result).toEqual({ outcome: 'completed' });
-      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
-      expect(session.driveCalls).toBe(1);
-    });
-
-    it('admits when the session does not expose the probe', async () => {
-      const { handler, session, job } = makeHarness();
-      delete (session as Partial<MockSession>).stuckInitializingMs;
-      const result = await handler(job, {});
-      expect(result).toEqual({ outcome: 'completed' });
-      expect(session.driveCalls).toBe(1);
-    });
-
-    it('dead-letters a refused delivery that exhausted its park budget', async () => {
-      const { handler, session, jobQueue, job } = makeHarness();
-      session.stuckMs = 200_000;
-      jobQueue.getParkCount.mockImplementation(() => MAX_STEER_PARKS);
-      await expect(handler(job, {})).rejects.toThrow('stuck initializing');
-      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('drive/feed outcome → requeue', () => {
-    it('blocked turn requeues at the session retryAt', async () => {
+  describe('drive outcome → requeue', () => {
+    it('blocked requeues at the session retryAt', async () => {
       const { handler, session, jobQueue, job } = makeHarness();
       session.driveResult = { outcome: 'blocked', retryAt: 1234 };
-      const result = await handler(job, {});
-      expect(result).toEqual({ parked: 'sdk_resume_choice', retryAt: 1234 });
-      expect(jobQueue.requeue).toHaveBeenCalledWith('job-1', 1234, 'claim-1');
-      expect(session.settleCalls).toEqual([]);
-    });
-
-    it('blocked steer requeues at the session retryAt', async () => {
-      const { handler, session, jobQueue, job } = makeHarness({}, STEER_PAYLOAD);
-      session.feedResult = { outcome: 'blocked', retryAt: 1234 };
       const result = await handler(job, {});
       expect(result).toEqual({ parked: 'sdk_resume_choice', retryAt: 1234 });
       expect(jobQueue.requeue).toHaveBeenCalledWith('job-1', 1234, 'claim-1');
