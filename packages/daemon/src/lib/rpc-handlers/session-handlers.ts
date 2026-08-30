@@ -1013,7 +1013,9 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.retryNowAfterRateLimit', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId, {
+      startQuery: false,
+    });
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1249,17 +1251,11 @@ export function setupSessionHandlers(
       return { retried: false };
     }
     const messageUuid = message.uuid;
-    const agentSession = isMessageDeliveryV2Enabled()
-      ? await sessionManager.getSessionForControl(targetSessionId)
-      : await sessionManager.getSessionAsync(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
 
     const rollbackToFailed = async () => {
       const rolledBack = db
         .getSDKMessageRepo()
-        .markDeliveryFailedByUuid(targetSessionId, message.uuid!);
+        .markDeliveryFailedByUuid(targetSessionId, messageUuid);
       if (rolledBack) {
         await internalEventBus.publish('messages.statusChanged', {
           sessionId: targetSessionId,
@@ -1270,6 +1266,13 @@ export function setupSessionHandlers(
     };
 
     try {
+      const agentSession = isMessageDeliveryV2Enabled()
+        ? await sessionManager.getSessionForControl(targetSessionId)
+        : await sessionManager.getSessionAsync(targetSessionId);
+      if (!agentSession) {
+        throw new Error('Session not found');
+      }
+
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: targetSessionId,
         messageIds: [reopenedId],
@@ -1326,6 +1329,13 @@ export function setupSessionHandlers(
       timestamp: Date.now(),
     };
 
+    let identityRollback:
+      | {
+          session: Session;
+          sdkSessionId: string | undefined;
+          sdkOriginPath: string | undefined;
+        }
+      | undefined;
     try {
       const current = await sessionManager.getSessionAsync(targetSessionId, {
         startQuery: false,
@@ -1343,15 +1353,34 @@ export function setupSessionHandlers(
         );
       }
       if (choice === 'start_fresh') {
-        db.updateSession(targetSessionId, { sdkSessionId: undefined, sdkOriginPath: undefined });
-        currentData.sdkSessionId = undefined;
-        currentData.sdkOriginPath = undefined;
+        identityRollback = {
+          session: currentData,
+          sdkSessionId: currentData.sdkSessionId,
+          sdkOriginPath: currentData.sdkOriginPath,
+        };
       }
-      await current.restart();
+      await current.restart({
+        beforeStart: () => {
+          if (!identityRollback) return;
+          db.updateSession(targetSessionId, {
+            sdkSessionId: undefined,
+            sdkOriginPath: undefined,
+          });
+          currentData.sdkSessionId = undefined;
+          currentData.sdkOriginPath = undefined;
+        },
+      });
+      identityRollback = undefined;
       if (currentData.config.queryMode !== 'manual') {
         await current.replayPendingMessagesForImmediateMode();
       }
     } catch (err) {
+      if (identityRollback) {
+        const { session, sdkSessionId, sdkOriginPath } = identityRollback;
+        db.updateSession(targetSessionId, { sdkSessionId, sdkOriginPath });
+        session.sdkSessionId = sdkSessionId;
+        session.sdkOriginPath = sdkOriginPath;
+      }
       log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
       const errorText = err instanceof Error ? err.message : String(err);
       const failedMessage: HyperNeoActionMessage = {

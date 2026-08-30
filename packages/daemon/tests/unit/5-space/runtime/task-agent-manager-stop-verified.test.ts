@@ -80,8 +80,10 @@ function makeFakeSession(options: FakeSessionOptions = {}): FakeSessionControlle
     session: null as unknown as AgentSession,
   };
   let interruptCalls = 0;
+  const sessionData = { id: 'session', status: 'active' as const };
   controller.session = {
     processExitedPromise: options.processExitedPromise ?? null,
+    getSessionData: () => sessionData,
     handleInterrupt: async (interruptOptions?: FakeInterruptOptions) => {
       calls.interruptOptions.push(interruptOptions);
       note('interrupt-enter');

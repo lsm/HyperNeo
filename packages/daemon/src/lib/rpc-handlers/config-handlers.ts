@@ -60,17 +60,21 @@ async function restartQueryForConfig(
     if (applyUserMcpUpdate) await applyUserMcpUpdate(current);
     if (Object.keys(configDelta).length > 0) await current.updateConfig(configDelta);
   }
-  const currentData = current?.getSessionData();
-  if (
-    !currentData ||
-    (isWorkflowSubSessionIdentity(sessionId) && !currentData.config.mcpServers?.['node-agent'])
-  ) {
+  if (!current) {
     return {
       success: false,
       error: `Session ${sessionId} is not resumable — workflow provisioning skipped`,
     };
   }
-  return { success: true };
+  const currentData = current.getSessionData();
+  if (isWorkflowSubSessionIdentity(sessionId) && !currentData.config.mcpServers?.['node-agent']) {
+    return {
+      success: false,
+      error: `Session ${sessionId} is not resumable — workflow provisioning skipped`,
+    };
+  }
+  if (current.isQueryActiveOrStarting()) return { success: true };
+  return current.resetQuery({ restartQuery: true });
 }
 
 export function setupConfigHandlers(

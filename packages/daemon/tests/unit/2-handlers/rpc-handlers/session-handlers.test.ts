@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
 import type { ModelInfo } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
+import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type {
@@ -1022,6 +1023,7 @@ describe('Session RPC Handlers — models.list', () => {
     let jobQueue: JobQueueRepository;
     let sessionStatus: string;
     let hydrateSpy: ReturnType<typeof mock>;
+    let controlSpy: ReturnType<typeof mock>;
 
     beforeEach(async () => {
       messageHubData = createMockMessageHub();
@@ -1113,16 +1115,15 @@ describe('Session RPC Handlers — models.list', () => {
           },
         }),
       };
+      const agentSession = {
+        getSessionData: () => ({ id: 'sess-1', status: 'active' }),
+        startQueryAndEnqueue: mock(async () => {}),
+      };
+      hydrateSpy = mock(async () => agentSession);
+      controlSpy = mock(async () => agentSession);
       const sessionManager = {
-        // biome-ignore lint: test mock assignment — hydrateSpy captured for the
-        getSessionAsync: (hydrateSpy = mock(async () => ({
-          getSessionData: () => ({ id: 'sess-1', status: 'active' }),
-          startQueryAndEnqueue: mock(async () => {}),
-        }))),
-        getSessionForControl: mock(async () => ({
-          getSessionData: () => ({ id: 'sess-1', status: 'active' }),
-          startQueryAndEnqueue: mock(async () => {}),
-        })),
+        getSessionAsync: hydrateSpy,
+        getSessionForControl: controlSpy,
         getDatabase: () => dbFacade,
       } as unknown as SessionManager;
 
@@ -1182,6 +1183,38 @@ describe('Session RPC Handlers — models.list', () => {
           .get('db-failed') as { send_status: string };
         expect(row.send_status).toBe('failed');
       }
+    });
+
+    it('rolls the row back to failed when session resolution rejects after reopen', async () => {
+      controlSpy.mockRejectedValueOnce(new Error('hydrate failed'));
+
+      await expect(
+        messageHubData.handlers.get('session.messages.retry')!(
+          { sessionId: 'sess-1', messageDbId: 'db-failed' },
+          {}
+        )
+      ).rejects.toThrow('hydrate failed');
+
+      const row = db
+        .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
+        .get('db-failed') as { send_status: string };
+      expect(row.send_status).toBe('failed');
+    });
+
+    it('rolls the row back to failed when session resolution returns null after reopen', async () => {
+      controlSpy.mockResolvedValueOnce(null);
+
+      await expect(
+        messageHubData.handlers.get('session.messages.retry')!(
+          { sessionId: 'sess-1', messageDbId: 'db-failed' },
+          {}
+        )
+      ).rejects.toThrow('Session not found');
+
+      const row = db
+        .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
+        .get('db-failed') as { send_status: string };
+      expect(row.send_status).toBe('failed');
     });
 
     it('rolls the row back to failed when the post-reopen status broadcast rejects (Codex #5)', async () => {
@@ -2021,6 +2054,38 @@ describe('Session RPC Handlers — session.clearInputDraftIf', () => {
   });
 });
 
+describe('Session RPC Handlers — session.retryNowAfterRateLimit', () => {
+  it('provisions without starting before firing a manual cooldown retry', async () => {
+    const retryNowAfterRateLimit = mock(async () => true);
+    const session = { retryNowAfterRateLimit } as unknown as AgentSession;
+    const getSessionAsync = mock(async () => session);
+    const sessionManager = {
+      getSessionAsync,
+    } as unknown as SessionManager;
+    const messageHubData = createMockMessageHub();
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+
+    const result = await messageHubData.handlers.get('session.retryNowAfterRateLimit')!(
+      { sessionId: 'space:s1:task:t1:post-approval:worker' },
+      {}
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(getSessionAsync).toHaveBeenCalledWith('space:s1:task:t1:post-approval:worker', {
+      startQuery: false,
+    });
+    expect(retryNowAfterRateLimit).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('Session RPC Handlers — session.sdkResumeChoice', () => {
   function makeResumeFake(id: string) {
     const calls: string[] = [];
@@ -2029,7 +2094,8 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
       session: {
         id,
         getSessionData: () => ({ id, config: {}, status: 'active' }),
-        restart: mock(async () => {
+        restart: mock(async (options?: { beforeStart?: () => void | Promise<void> }) => {
+          await options?.beforeStart?.();
           calls.push('restart');
         }),
         replayPendingMessagesForImmediateMode: mock(async () => {
@@ -2180,6 +2246,58 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
     ).rejects.toThrow('not resumable');
     expect(db.updateSession).not.toHaveBeenCalled();
     expect(data.sdkSessionId).toBe('sdk-old');
+  });
+
+  it('restores the sdk identity when start_fresh restart fails', async () => {
+    const replacement = makeResumeFake('resume-session');
+    const data: Record<string, unknown> = {
+      id: 'resume-session',
+      config: {},
+      status: 'active',
+      sdkSessionId: 'sdk-old',
+      sdkOriginPath: '/old/origin',
+    };
+    replacement.session.getSessionData = () => data as never;
+    replacement.session.restart = mock(
+      async (options?: { beforeStart?: () => void | Promise<void> }) => {
+        await options?.beforeStart?.();
+        throw new Error('restart failed');
+      }
+    );
+    const db = makeResumeDb();
+    const sessionManager = {
+      getSessionForControl: mock(async () => makeResumeFake('resume-session').session),
+      getSessionAsync: mock(async () => replacement.session),
+      getDatabase: () => db,
+    } as unknown as SessionManager;
+    const messageHubData = createMockMessageHub();
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+
+    await expect(
+      messageHubData.handlers.get('session.sdkResumeChoice')!(
+        { sessionId: 'resume-session', choice: 'start_fresh', messageUuid: 'uuid-6' },
+        {}
+      )
+    ).rejects.toThrow('restart failed');
+
+    expect(data.sdkSessionId).toBe('sdk-old');
+    expect(data.sdkOriginPath).toBe('/old/origin');
+    expect(db.updateSession).toHaveBeenNthCalledWith(1, 'resume-session', {
+      sdkSessionId: undefined,
+      sdkOriginPath: undefined,
+    });
+    expect(db.updateSession).toHaveBeenNthCalledWith(2, 'resume-session', {
+      sdkSessionId: 'sdk-old',
+      sdkOriginPath: '/old/origin',
+    });
   });
 
   it('clears the sdk identity on the provisioned instance for start_fresh', async () => {

@@ -2234,7 +2234,7 @@ export class TaskAgentManager {
     if (workflowRun?.status === 'cancelled') return null;
 
     const cooldown = this.readPersistedRateLimitCooldown(sessionId);
-    if (cooldown) {
+    if (cooldown && options.startQuery !== false) {
       throw new Error(
         `Post-approval worker "${agentName}" is rate-limited until ${new Date(cooldown.retryAt).toISOString()}; retry after the cooldown expires.`
       );
@@ -3529,7 +3529,7 @@ export class TaskAgentManager {
               if (task.status !== 'approved') {
                 return { decision: 'post-approval-not-active', skip: true };
               }
-              if (this.readPersistedRateLimitCooldown(sessionId)) {
+              if (this.readPersistedRateLimitCooldown(sessionId) && options.startQuery !== false) {
                 return { decision: 'cooling-down', skip: true };
               }
               return { decision: 'restore-post-approval', postApproval: true };

@@ -130,6 +130,19 @@ describe('TaskAgentManager workflow session provisioning', () => {
     expect(restorePostApprovalWorkerSession).not.toHaveBeenCalled();
   });
 
+  it('provisions a cooling-down post-approval worker for a non-starting retry lookup', async () => {
+    const { manager, restorePostApprovalWorkerSession } = makeManager({ cooldown: true });
+
+    await manager.provisionWorkflowSession(workflowSession(), { startQuery: false });
+
+    expect(restorePostApprovalWorkerSession).toHaveBeenCalledWith(
+      TASK_ID,
+      SESSION_ID,
+      expect.anything(),
+      { startQuery: false }
+    );
+  });
+
   it('rejects the lookup when workflow provisioning fails', async () => {
     const { manager } = makeManager({ spaceError: new Error('space lookup failed') });
 

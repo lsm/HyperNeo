@@ -330,7 +330,7 @@ describe('SDK Config RPC Handlers', () => {
       );
 
       expect(result).toEqual({ success: true, applied: true });
-      expect(mocks.resetQuery).not.toHaveBeenCalled();
+      expect(mocks.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
       expect(sessionManagerData.getSessionAsyncMock).toHaveBeenCalledWith('session-123');
     });
 
