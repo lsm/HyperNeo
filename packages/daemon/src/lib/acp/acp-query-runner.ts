@@ -101,17 +101,16 @@ function isAcpProviderClassifiedError(message: string): boolean {
   return (
     assessLimitError({ rawText: message }).isLimit ||
     TRANSIENT_CONNECTION_ERROR_SUBSTRINGS.some((substr) => message.includes(substr)) ||
-    message.includes('401') ||
-    message.includes('403') ||
+    /\b401\b/.test(message) ||
+    /\b403\b/.test(message) ||
     lower.includes('unauthorized') ||
     lower.includes('not authenticated') ||
     message.includes('ECONNREFUSED') ||
     message.includes('ENOTFOUND') ||
     message.includes('EHOSTUNREACH') ||
     lower.includes('service unavailable') ||
-    message.includes('503') ||
-    message.includes('502') ||
-    message.includes('429') ||
+    /\b503\b/.test(message) ||
+    /\b502\b/.test(message) ||
     lower.includes('rate limit') ||
     lower.includes('timeout') ||
     lower.includes('permission')

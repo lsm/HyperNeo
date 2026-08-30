@@ -3116,6 +3116,34 @@ describe('AcpQueryRunner', () => {
       expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
     }, 5000);
 
+    test('a pre-progress failure with an unrelated numeric substring routes through the startup retry', async () => {
+      const firstClient = createMockClient();
+      firstClient.sendPrompt = mock(async function* (
+        _prompt: unknown,
+        callbacks?: { onSubmitted?: () => void; onAccepted?: () => void }
+      ) {
+        callbacks?.onSubmitted?.();
+        callbacks?.onAccepted?.();
+        throw new Error('request failed near port 1503');
+      });
+      const secondClient = createMockClient();
+      secondClient.canLoadSession.mockImplementation(() => true);
+      const clients = [firstClient, secondClient];
+      const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
+      const createClient = mock(() => clients.shift() as unknown as AcpClient);
+      const runner = new AcpQueryRunner(ctx, createClient);
+
+      await runner.start();
+      await ctx.queryPromise;
+
+      expect(createClient).toHaveBeenCalledTimes(2);
+      expect(messageQueue.enqueueWithId).toHaveBeenCalledWith('user-message-1', [
+        { type: 'text', text: 'hello' },
+      ]);
+      expect(secondClient.sendPrompt).toHaveBeenCalled();
+      expect(ctx.errorManager.handleError).not.toHaveBeenCalled();
+    }, 5000);
+
     test('a rate limit with a process exit keeps its cooldown, not a startup retry', async () => {
       const firstClient = createMockClient();
       const { ctx, messageQueue } = createRunnerFixture({ client: firstClient });
