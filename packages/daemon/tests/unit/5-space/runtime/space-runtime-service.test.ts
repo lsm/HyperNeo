@@ -1915,6 +1915,7 @@ describe('SpaceRuntimeService', () => {
           uuid: 'delivery-1',
           session_id: sessionId,
           parent_tool_use_id: null,
+          isSynthetic: true,
           message: { role: 'user', content: [{ type: 'text', text: 'event payload' }] },
         },
         'enqueued'
