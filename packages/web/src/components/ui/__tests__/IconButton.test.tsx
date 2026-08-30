@@ -45,7 +45,7 @@ describe('IconButton', () => {
         </IconButton>
       );
       const button = container.querySelector('button');
-      expect(button?.className).toContain('hover:bg-dark-800');
+      expect(button?.className).toContain('hover:bg-surface-raised');
     });
 
     it('should render solid variant', () => {
@@ -55,7 +55,7 @@ describe('IconButton', () => {
         </IconButton>
       );
       const button = container.querySelector('button');
-      expect(button?.className).toContain('bg-dark-800');
+      expect(button?.className).toContain('bg-surface-raised');
     });
 
     it('should render default variant', () => {
@@ -65,7 +65,7 @@ describe('IconButton', () => {
         </IconButton>
       );
       const button = container.querySelector('button');
-      expect(button?.className).toContain('bg-dark-800');
+      expect(button?.className).toContain('bg-surface-raised');
     });
 
     it('should render danger variant', () => {
@@ -75,8 +75,8 @@ describe('IconButton', () => {
         </IconButton>
       );
       const button = container.querySelector('button');
-      expect(button?.className).toContain('text-red-400');
-      expect(button?.className).toContain('hover:bg-red-500/10');
+      expect(button?.className).toContain('text-danger');
+      expect(button?.className).toContain('hover:bg-danger/10');
     });
   });
 
@@ -88,7 +88,7 @@ describe('IconButton', () => {
         </IconButton>
       );
       const button = container.querySelector('button');
-      expect(button?.className).not.toContain('bg-indigo-500/20');
+      expect(button?.className).not.toContain('bg-accent-hover/20');
     });
 
     it('should apply accent styles when active', () => {
@@ -98,8 +98,8 @@ describe('IconButton', () => {
         </IconButton>
       );
       const button = container.querySelector('button');
-      expect(button?.className).toContain('bg-indigo-500/20');
-      expect(button?.className).toContain('text-indigo-400');
+      expect(button?.className).toContain('bg-accent-hover/20');
+      expect(button?.className).toContain('text-cat-indigo');
     });
   });
 

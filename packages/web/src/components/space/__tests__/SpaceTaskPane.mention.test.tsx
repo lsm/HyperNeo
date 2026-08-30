@@ -100,12 +100,6 @@ vi.mock('../../../lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
-vi.mock('../../../lib/design-tokens', () => ({
-  borderColors: {
-    ui: { default: 'border-dark-700' },
-  },
-}));
-
 mockTasks = signal<SpaceTask[]>([]);
 mockAgents = signal<SpaceWorkerAgent[]>([]);
 mockWorkflows = signal<SpaceWorkflow[]>([]);
@@ -938,13 +932,13 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
     });
 
     const itemsBefore = container.getAllByTestId('mention-item');
-    expect(itemsBefore[0].className).toContain('bg-blue-500/20');
+    expect(itemsBefore[0].className).toContain('bg-accent/20');
 
     fireEvent.keyDown(textarea, { key: 'ArrowDown' });
 
     await waitFor(() => {
       const items = container.getAllByTestId('mention-item');
-      expect(items[1].className).toContain('bg-blue-500/20');
+      expect(items[1].className).toContain('bg-accent/20');
     });
   });
 
@@ -982,14 +976,14 @@ describe('SpaceTaskPane — @mention autocomplete', () => {
 
     await waitFor(() => {
       const items = container.getAllByTestId('mention-item');
-      expect(items[1].className).toContain('bg-blue-500/20');
+      expect(items[1].className).toContain('bg-accent/20');
     });
 
     fireEvent.keyDown(textarea, { key: 'ArrowUp' });
 
     await waitFor(() => {
       const items = container.getAllByTestId('mention-item');
-      expect(items[0].className).toContain('bg-blue-500/20');
+      expect(items[0].className).toContain('bg-accent/20');
     });
   });
 

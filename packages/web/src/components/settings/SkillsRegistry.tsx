@@ -12,9 +12,9 @@ import { EditSkillDialog } from './EditSkillDialog';
 import { InstallSkillFromGitDialog } from './InstallSkillFromGitDialog';
 
 const SOURCE_TYPE_STYLES: Record<string, string> = {
-  builtin: 'bg-green-500/20 text-green-400',
-  plugin: 'bg-blue-500/20 text-blue-400',
-  mcp_server: 'bg-purple-500/20 text-purple-400',
+  builtin: 'bg-success/20 text-success',
+  plugin: 'bg-accent/20 text-accent',
+  mcp_server: 'bg-cat-purple/20 text-cat-purple',
 };
 
 const SOURCE_TYPE_LABELS: Record<string, string> = {
@@ -66,7 +66,7 @@ export function SkillsRegistry() {
   if (isLoadingVal && skillsList.length === 0) {
     return (
       <SettingsSection title="Skills">
-        <div class="text-sm text-gray-500 py-2">Loading skills...</div>
+        <div class="text-sm text-fg-faint py-2">Loading skills...</div>
       </SettingsSection>
     );
   }
@@ -74,7 +74,7 @@ export function SkillsRegistry() {
   if (errorVal) {
     return (
       <SettingsSection title="Skills">
-        <div class="text-sm text-red-400 py-2">Error: {errorVal}</div>
+        <div class="text-sm text-danger py-2">Error: {errorVal}</div>
       </SettingsSection>
     );
   }
@@ -83,7 +83,7 @@ export function SkillsRegistry() {
     <>
       <SettingsSection title="Skills">
         <div class="mb-4">
-          <p class="text-xs text-gray-500 mb-3">
+          <p class="text-xs text-fg-faint mb-3">
             Application-level skills are available to any space or session. Built-in skills ship
             with HyperNeo; plugin and MCP server skills can be added from external sources.
           </p>
@@ -98,7 +98,7 @@ export function SkillsRegistry() {
         </div>
 
         {skillsList.length === 0 ? (
-          <div class="text-sm text-gray-500 py-4">No skills added yet. Add your first skill.</div>
+          <div class="text-sm text-fg-faint py-4">No skills added yet. Add your first skill.</div>
         ) : (
           <div class="space-y-2">
             {skillsList.map((skill) => (
@@ -106,30 +106,28 @@ export function SkillsRegistry() {
                 key={skill.id}
                 class={cn(
                   'flex items-center justify-between gap-3 py-3 px-3',
-                  'bg-dark-800/50 rounded-lg border border-dark-700'
+                  'bg-surface-raised/50 rounded-lg border border-line'
                 )}
               >
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
-                    <div class="text-sm text-gray-200 font-medium truncate">
-                      {skill.displayName}
-                    </div>
+                    <div class="text-sm text-fg-soft font-medium truncate">{skill.displayName}</div>
                     <span
                       class={cn(
                         'px-1.5 py-0.5 rounded text-[10px] uppercase font-medium',
-                        SOURCE_TYPE_STYLES[skill.sourceType] ?? 'bg-gray-500/20 text-gray-400'
+                        SOURCE_TYPE_STYLES[skill.sourceType] ?? 'bg-fg-faint/20 text-fg-muted'
                       )}
                     >
                       {SOURCE_TYPE_LABELS[skill.sourceType] ?? skill.sourceType}
                     </span>
                     {skill.builtIn && (
-                      <span class="px-1.5 py-0.5 rounded text-[10px] bg-yellow-500/20 text-yellow-400 uppercase font-medium">
+                      <span class="px-1.5 py-0.5 rounded text-[10px] bg-warning/20 text-warning uppercase font-medium">
                         system
                       </span>
                     )}
                   </div>
                   {skill.description && (
-                    <div class="text-xs text-gray-500 mt-1 truncate">{skill.description}</div>
+                    <div class="text-xs text-fg-faint mt-1 truncate">{skill.description}</div>
                   )}
                 </div>
 
@@ -137,7 +135,7 @@ export function SkillsRegistry() {
                   {!skill.builtIn && (
                     <button
                       onClick={() => setEditingSkill(skill)}
-                      class="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-dark-700 rounded transition-colors"
+                      class="p-1.5 text-fg-muted hover:text-fg-soft hover:bg-fill-strong rounded transition-colors"
                       title="Edit"
                     >
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -156,7 +154,7 @@ export function SkillsRegistry() {
                         setDeletingSkill(skill);
                         setShowDeleteConfirm(true);
                       }}
-                      class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-dark-700 rounded transition-colors"
+                      class="p-1.5 text-fg-muted hover:text-danger hover:bg-fill-strong rounded transition-colors"
                       title="Delete"
                     >
                       <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

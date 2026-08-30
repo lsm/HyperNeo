@@ -1,0 +1,15 @@
+{
+  "allowlist": [],
+  "areas": {
+    "(root)": 1,
+    "components": 77,
+    "components/sdk": 48,
+    "components/settings": 10,
+    "components/space": 159,
+    "components/ui": 13,
+    "components/voice": 1,
+    "hooks": 2,
+    "islands": 21,
+    "lib": 9
+  }
+}

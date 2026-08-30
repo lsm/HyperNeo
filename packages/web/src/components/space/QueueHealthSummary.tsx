@@ -40,10 +40,10 @@ function Metric({
   hint?: string;
 }): preact.JSX.Element {
   return (
-    <div class="rounded-lg border border-dark-600 bg-dark-850 px-3 py-2">
-      <div class="text-[11px] uppercase tracking-wide text-gray-500">{label}</div>
-      <div class="mt-0.5 text-sm font-medium text-gray-100">{value}</div>
-      {hint ? <div class="mt-0.5 text-[11px] text-gray-500">{hint}</div> : null}
+    <div class="rounded-lg border border-line-strong bg-surface-overlay px-3 py-2">
+      <div class="text-[11px] uppercase tracking-wide text-fg-faint">{label}</div>
+      <div class="mt-0.5 text-sm font-medium text-fg">{value}</div>
+      {hint ? <div class="mt-0.5 text-[11px] text-fg-faint">{hint}</div> : null}
     </div>
   );
 }
@@ -59,17 +59,17 @@ function Breakdown({
 }): preact.JSX.Element {
   return (
     <div>
-      <div class="text-[11px] uppercase tracking-wide text-gray-500">{title}</div>
+      <div class="text-[11px] uppercase tracking-wide text-fg-faint">{title}</div>
       {entries.length === 0 ? (
-        <div class="mt-1 text-xs text-gray-600">{emptyHint}</div>
+        <div class="mt-1 text-xs text-fg-faint">{emptyHint}</div>
       ) : (
-        <ul class="mt-1 space-y-0.5 text-xs text-gray-300">
+        <ul class="mt-1 space-y-0.5 text-xs text-fg-soft">
           {entries.map((entry) => (
             <li key={entry.key} class="flex items-center justify-between gap-2">
-              <span class="truncate font-mono text-[11px] text-gray-400" title={entry.key}>
+              <span class="truncate font-mono text-[11px] text-fg-muted" title={entry.key}>
                 {entry.key}
               </span>
-              <span class="tabular-nums text-gray-200">{entry.value}</span>
+              <span class="tabular-nums text-fg-soft">{entry.value}</span>
             </li>
           ))}
         </ul>
@@ -111,13 +111,13 @@ export function QueueHealthSummary(): preact.JSX.Element {
 
   return (
     <div
-      class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-3"
+      class="rounded-lg border border-line bg-surface-raised px-3 py-3"
       data-testid="queue-health-summary"
     >
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div class="text-sm font-medium text-gray-200">Queue health</div>
-          <p class="mt-0.5 text-xs text-gray-400">
+          <div class="text-sm font-medium text-fg-soft">Queue health</div>
+          <p class="mt-0.5 text-xs text-fg-muted">
             Daemon-wide pending external-event delivery queue.{' '}
             {snapshot ? `Counting since ${formatRelative(snapshot.counters.since)}` : ''}
             {snapshot ? ` · updated ${formatRelative(snapshot.collectedAt)}.` : ''}
@@ -129,13 +129,13 @@ export function QueueHealthSummary(): preact.JSX.Element {
       </div>
 
       {error ? (
-        <div class="mt-3 rounded-lg border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+        <div class="mt-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger-soft">
           Failed to load queue health: {error}
         </div>
       ) : null}
 
       {!snapshot && !error ? (
-        <div class="mt-3 text-xs text-gray-500">
+        <div class="mt-3 text-xs text-fg-faint">
           {loading ? 'Loading…' : 'No data yet. Click Refresh.'}
         </div>
       ) : null}
@@ -204,7 +204,7 @@ export function QueueHealthSummary(): preact.JSX.Element {
             />
           </div>
 
-          <div class="text-[11px] text-gray-600">
+          <div class="text-[11px] text-fg-faint">
             Persisted pending age: {ageStats(gauges.persistedAgeMs)}
           </div>
         </div>

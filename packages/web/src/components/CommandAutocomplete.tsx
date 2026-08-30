@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
-import { borderColors } from '../lib/design-tokens.ts';
 
 export interface CommandAutocompleteProps {
   commands: string[];
@@ -57,7 +56,7 @@ export default function CommandAutocomplete({
     <div
       ref={listRef}
       class={cn(
-        `absolute z-50 bg-dark-800 border ${borderColors.ui.default} rounded-lg shadow-xl`,
+        'absolute z-50 bg-surface-raised border border-line rounded-lg shadow-xl',
         'overflow-hidden max-h-64 overflow-y-auto',
         'animate-slideIn'
       )}
@@ -71,9 +70,9 @@ export default function CommandAutocomplete({
         maxWidth: isMobile ? undefined : '400px',
       }}
     >
-      <div class={`px-3 py-2 border-b ${borderColors.ui.default} bg-dark-850/50`}>
+      <div class="px-3 py-2 border-b border-line bg-surface-overlay/50">
         <div class="flex items-center gap-2">
-          <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg class="w-4 h-4 text-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
               stroke-linecap="round"
               stroke-linejoin="round"
@@ -81,7 +80,7 @@ export default function CommandAutocomplete({
               d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
             />
           </svg>
-          <span class="text-xs font-medium text-gray-400">Slash Commands</span>
+          <span class="text-xs font-medium text-fg-muted">Slash Commands</span>
         </div>
       </div>
 
@@ -95,23 +94,23 @@ export default function CommandAutocomplete({
             class={cn(
               'w-full px-3 text-left transition-colors flex items-center gap-2',
               isMobile ? 'py-3' : 'py-2',
-              'hover:bg-dark-700/50 active:bg-dark-700/70',
-              index === selectedIndex && 'bg-blue-500/20 border-l-2 border-blue-500'
+              'hover:bg-fill-strong/50 active:bg-fill-strong/70',
+              index === selectedIndex && 'bg-accent/20 border-l-2 border-accent'
             )}
           >
-            <span class="text-blue-400 font-mono text-sm">{command}</span>
+            <span class="text-accent font-mono text-sm">{command}</span>
           </button>
         ))}
       </div>
 
-      <div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
+      <div class="px-3 py-2 border-t border-line bg-surface-overlay/50">
         {isMobile ? (
-          <p class="text-xs text-gray-500">Tap to select</p>
+          <p class="text-xs text-fg-faint">Tap to select</p>
         ) : (
-          <p class="text-xs text-gray-500">
-            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">↑↓</kbd> navigate{' '}
-            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Enter</kbd> select{' '}
-            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Esc</kbd> close
+          <p class="text-xs text-fg-faint">
+            <kbd class="px-1.5 py-0.5 bg-fill-strong rounded text-fg-muted">↑↓</kbd> navigate{' '}
+            <kbd class="px-1.5 py-0.5 bg-fill-strong rounded text-fg-muted">Enter</kbd> select{' '}
+            <kbd class="px-1.5 py-0.5 bg-fill-strong rounded text-fg-muted">Esc</kbd> close
           </p>
         )}
       </div>

@@ -41,20 +41,20 @@ describe('DiffViewer', () => {
   describe('Diff Statistics', () => {
     it('should show correct addition count', () => {
       const { container } = render(<DiffViewer oldText="line1" newText="line1\nline2\nline3" />);
-      const stats = container.querySelector('.text-green-700');
+      const stats = container.querySelector('.text-success');
       expect(stats?.textContent).toContain('+');
     });
 
     it('should show correct deletion count', () => {
       const { container } = render(<DiffViewer oldText="line1\nline2\nline3" newText="line1" />);
-      const stats = container.querySelector('.text-red-700');
+      const stats = container.querySelector('.text-danger');
       expect(stats?.textContent).toContain('-');
     });
 
     it('should show both additions and deletions for replacements', () => {
       const { container } = render(<DiffViewer oldText="old line" newText="new line" />);
-      const greenSpan = container.querySelector('.text-green-700');
-      const redSpan = container.querySelector('.text-red-700');
+      const greenSpan = container.querySelector('.text-success');
+      const redSpan = container.querySelector('.text-danger');
       expect(greenSpan).toBeTruthy();
       expect(redSpan).toBeTruthy();
     });
@@ -166,14 +166,14 @@ describe('DiffViewer', () => {
     it('should have green background for added lines', () => {
       const { container } = render(<DiffViewer oldText="line1" newText="line1\nadded" />);
       const rows = container.querySelectorAll('tr');
-      const addedRow = Array.from(rows).find((row) => row.className.includes('bg-green'));
+      const addedRow = Array.from(rows).find((row) => row.className.includes('bg-success'));
       expect(addedRow).toBeTruthy();
     });
 
     it('should have red background for removed lines', () => {
       const { container } = render(<DiffViewer oldText="line1\nremoved" newText="line1" />);
       const rows = container.querySelectorAll('tr');
-      const removedRow = Array.from(rows).find((row) => row.className.includes('bg-red'));
+      const removedRow = Array.from(rows).find((row) => row.className.includes('bg-danger'));
       expect(removedRow).toBeTruthy();
     });
 

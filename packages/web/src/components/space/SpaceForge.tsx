@@ -37,12 +37,6 @@ import { Button } from '../ui/Button';
 import { InspectBadge, InspectPanel, InspectPanelHeader } from '../ui/InspectPanel';
 import { Modal } from '../ui/Modal';
 import { SectionCard } from '../ui/SectionCard';
-import {
-  FLAT_SURFACE,
-  GLASS_CONTENT_CONTAINER_CLASS,
-  GLASS_PRIMARY_BUTTON_CLASS,
-  GLASS_SURFACE,
-} from './glass-workspace';
 import { formatGoalMetricSnapshot } from './goal-display-utils';
 import {
   WorkflowModelSelect,
@@ -314,31 +308,31 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
     <Modal isOpen={isOpen} onClose={handleClose} title="Create Scope" size="lg">
       <form onSubmit={handleSubmit} class="space-y-4">
         {error && (
-          <div class="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-400">
+          <div class="rounded-lg border border-danger bg-danger/20 px-4 py-3 text-sm text-danger">
             {error}
           </div>
         )}
 
         <div>
-          <label class="mb-1.5 block text-sm font-medium text-gray-200">Name</label>
+          <label class="mb-1.5 block text-sm font-medium text-fg-soft">Name</label>
           <input
             value={name}
             onInput={(event) => setName((event.target as HTMLInputElement).value)}
             placeholder="Improve code review loop"
-            class="w-full rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            class="w-full rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
             autoFocus
           />
         </div>
 
         <div class="grid gap-4 md:grid-cols-2">
           <div>
-            <label class="mb-1.5 block text-sm font-medium text-gray-300">Kind</label>
+            <label class="mb-1.5 block text-sm font-medium text-fg-soft">Kind</label>
             <select
               value={kind}
               onChange={(event) =>
                 setKind((event.target as HTMLSelectElement).value as EvolutionScopeKind)
               }
-              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+              class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
             >
               {SCOPE_KINDS.map((option) => (
                 <option key={option} value={option}>
@@ -348,14 +342,14 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
             </select>
           </div>
           <div>
-            <label class="mb-1.5 block text-sm font-medium text-gray-300">
+            <label class="mb-1.5 block text-sm font-medium text-fg-soft">
               Linked recurring goal
             </label>
             <select
               aria-label="Linked recurring goal"
               value={spaceGoalId}
               onInput={(event) => setSpaceGoalId((event.target as HTMLSelectElement).value)}
-              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+              class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
             >
               <option value="">None</option>
               {recurringGoals.map((goal) => (
@@ -368,42 +362,42 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
         </div>
 
         <div>
-          <label class="mb-1.5 block text-sm font-medium text-gray-300">Objective</label>
+          <label class="mb-1.5 block text-sm font-medium text-fg-soft">Objective</label>
           <textarea
             value={objective}
             onInput={(event) => setObjective((event.target as HTMLTextAreaElement).value)}
             placeholder="What should this scope prove or improve?"
             rows={3}
-            class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            class="w-full resize-none rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
           />
         </div>
 
         <div>
-          <label class="mb-1.5 block text-sm font-medium text-gray-300">Episode judge model</label>
+          <label class="mb-1.5 block text-sm font-medium text-fg-soft">Episode judge model</label>
           <WorkflowModelSelect
             value={episodeJudgeModel}
             provider={episodeJudgeProvider}
             onChange={handleEpisodeJudgeModelChange}
             testId="forge-scope-model-select"
-            className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+            className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
           />
-          <p class="mt-1 text-xs text-gray-400">
+          <p class="mt-1 text-xs text-fg-muted">
             Optional. Falls back to this Space&apos;s default model when unset.
           </p>
         </div>
 
-        <div class="space-y-3 rounded-lg border border-white/10 bg-white/[0.02] p-3">
+        <div class="space-y-3 rounded-lg border border-line bg-fill-soft p-3">
           <div class="flex items-center justify-between gap-3">
             <div>
-              <h3 class="text-sm font-medium text-gray-200">Metric definitions</h3>
-              <p class="text-xs text-gray-400">Optional keys tracked by snapshots.</p>
+              <h3 class="text-sm font-medium text-fg-soft">Metric definitions</h3>
+              <p class="text-xs text-fg-muted">Optional keys tracked by snapshots.</p>
             </div>
             <Button type="button" variant="secondary" size="sm" onClick={addMetric}>
               Add metric
             </Button>
           </div>
           {metrics.length === 0 ? (
-            <p class="text-xs text-gray-400">No metrics yet.</p>
+            <p class="text-xs text-fg-muted">No metrics yet.</p>
           ) : (
             <div class="space-y-2">
               {metrics.map((metric, index) => (
@@ -414,7 +408,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                       updateMetric(index, { key: (event.target as HTMLInputElement).value })
                     }
                     placeholder="key"
-                    class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                    class="rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
                   />
                   <input
                     value={metric.label}
@@ -422,7 +416,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                       updateMetric(index, { label: (event.target as HTMLInputElement).value })
                     }
                     placeholder="Label"
-                    class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                    class="rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
                   />
                   <select
                     value={metric.direction}
@@ -431,7 +425,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                         direction: (event.target as HTMLSelectElement).value as MetricDirection,
                       })
                     }
-                    class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500 focus:outline-none"
+                    class="rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-fg focus:border-accent focus:outline-none"
                   >
                     {METRIC_DIRECTIONS.map((direction) => (
                       <option key={direction} value={direction}>
@@ -445,7 +439,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                       updateMetric(index, { unit: (event.target as HTMLInputElement).value })
                     }
                     placeholder="unit"
-                    class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                    class="rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
                   />
                   <input
                     value={metric.targetValue}
@@ -453,12 +447,12 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
                       updateMetric(index, { targetValue: (event.target as HTMLInputElement).value })
                     }
                     placeholder="target"
-                    class="rounded-md border border-dark-700 bg-dark-800 px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                    class="rounded-md border border-line bg-surface-raised px-2 py-1.5 text-xs text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => removeMetric(index)}
-                    class="rounded-md px-2 py-1 text-xs text-gray-400 hover:bg-white/5 hover:text-red-300"
+                    class="rounded-md px-2 py-1 text-xs text-fg-muted hover:bg-fill-soft hover:text-danger-soft"
                   >
                     Remove
                   </button>
@@ -468,7 +462,7 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
           )}
         </div>
 
-        <div class="flex justify-end gap-2 border-t border-white/10 pt-4">
+        <div class="flex justify-end gap-2 border-t border-line pt-4">
           <Button type="button" variant="ghost" onClick={handleClose} disabled={submitting}>
             Cancel
           </Button>
@@ -483,22 +477,22 @@ function ScopeCreateDialog({ isOpen, spaceId, goals, onClose, onCreated }: Scope
 
 function GoalSummary({ goal }: { goal: SpaceGoal }) {
   return (
-    <div class="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
+    <div class="rounded-lg border border-accent/20 bg-accent/5 p-4">
       <div class="mb-3 flex items-center justify-between gap-3">
         <div>
-          <p class="text-[11px] font-semibold uppercase tracking-wide text-blue-300">
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-accent-soft">
             Linked recurring goal
           </p>
-          <h3 class="mt-1 text-sm font-medium text-gray-100">{goal.title}</h3>
+          <h3 class="mt-1 text-sm font-medium text-fg">{goal.title}</h3>
         </div>
-        <span class="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">Metrics</span>
+        <span class="rounded-full bg-accent/10 px-2 py-1 text-xs text-accent-soft">Metrics</span>
       </div>
-      <p class="mb-3 text-xs text-blue-100/80">
+      <p class="mb-3 text-xs text-accent-soft/80">
         Metric trajectory: {formatGoalMetricSnapshot(goal)}
       </p>
-      {goal.summary && <p class="text-sm text-gray-300">{goal.summary}</p>}
+      {goal.summary && <p class="text-sm text-fg-soft">{goal.summary}</p>}
       {goal.nextSteps.length > 0 && (
-        <ul class="mt-3 space-y-1 text-xs text-gray-400">
+        <ul class="mt-3 space-y-1 text-xs text-fg-muted">
           {goal.nextSteps.map((step) => (
             <li key={step}>Next: {step}</li>
           ))}
@@ -593,14 +587,14 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
 
   return (
     <div class="space-y-4">
-      <form onSubmit={handleAddNote} class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-        <label class="mb-2 block text-sm font-medium text-gray-200">Attach manual note</label>
+      <form onSubmit={handleAddNote} class="rounded-xl border border-line bg-fill-soft p-4">
+        <label class="mb-2 block text-sm font-medium text-fg-soft">Attach manual note</label>
         <textarea
           value={note}
           onInput={(event) => setNote((event.target as HTMLTextAreaElement).value)}
           placeholder="What happened? What evidence should Evolve remember?"
           rows={3}
-          class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+          class="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
         />
         <div class="mt-3 flex justify-end">
           <Button type="submit" size="sm" disabled={submitting || !note.trim()}>
@@ -610,36 +604,36 @@ function EvidenceTab({ scope }: { scope: EvolutionScope }) {
       </form>
 
       {error && (
-        <div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+        <div class="rounded-lg border border-danger bg-danger/20 px-3 py-2 text-sm text-danger">
           {error}
         </div>
       )}
 
-      <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <section class="rounded-xl border border-line bg-fill-soft p-4">
         <div class="mb-3 flex items-center justify-between">
-          <h3 class="text-sm font-medium text-gray-100">Evidence timeline</h3>
-          <span class="text-xs text-gray-400">{timeline.length} items</span>
+          <h3 class="text-sm font-medium text-fg">Evidence timeline</h3>
+          <span class="text-xs text-fg-muted">{timeline.length} items</span>
         </div>
         {loading ? (
-          <p class="text-sm text-gray-400">Loading evidence…</p>
+          <p class="text-sm text-fg-muted">Loading evidence…</p>
         ) : timeline.length === 0 ? (
-          <div class="text-sm text-gray-400">
+          <div class="text-sm text-fg-muted">
             <p>No evidence attached yet.</p>
-            <p class="mt-1 text-xs text-gray-400">
+            <p class="mt-1 text-xs text-fg-muted">
               Attach a completed task, metric snapshot, or manual note before generating an episode.
             </p>
           </div>
         ) : (
           <div class="space-y-3">
             {timeline.map((item) => (
-              <div key={item.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+              <div key={item.id} class="rounded-lg border border-line bg-surface/60 p-3">
                 <div class="mb-1 flex items-center justify-between gap-3">
-                  <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+                  <span class="rounded-full bg-fill-soft px-2 py-0.5 text-xs text-fg-soft">
                     {formatKind(item.kind)}
                   </span>
-                  <span class="text-xs text-gray-400">{formatDate(item.createdAt)}</span>
+                  <span class="text-xs text-fg-muted">{formatDate(item.createdAt)}</span>
                 </div>
-                <p class="text-sm text-gray-200">{item.summary}</p>
+                <p class="text-sm text-fg-soft">{item.summary}</p>
               </div>
             ))}
             {!exhausted && (
@@ -935,11 +929,11 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
 
   return (
     <div class="space-y-4">
-      <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <section class="rounded-xl border border-line bg-fill-soft p-4">
         <div class="mb-3 flex items-start justify-between gap-3">
           <div>
-            <h3 class="text-sm font-medium text-gray-100">Generate episode draft</h3>
-            <p class="mt-1 text-xs text-gray-400">
+            <h3 class="text-sm font-medium text-fg">Generate episode draft</h3>
+            <p class="mt-1 text-xs text-fg-muted">
               Select scoped evidence. Judge creates draft only; lessons and proposals remain
               candidates.
             </p>
@@ -954,9 +948,9 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
           </Button>
         </div>
         {evidence.length === 0 ? (
-          <div class="text-sm text-gray-400">
+          <div class="text-sm text-fg-muted">
             <p>No evidence available.</p>
-            <p class="mt-1 text-xs text-gray-400">
+            <p class="mt-1 text-xs text-fg-muted">
               Add evidence from the Evidence or Metrics tab, then return here to draft an episode.
             </p>
           </div>
@@ -966,7 +960,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
               {evidence.map((item) => (
                 <label
                   key={item.id}
-                  class="flex gap-3 rounded-lg border border-white/10 bg-dark-900/60 p-3 text-sm text-gray-300"
+                  class="flex gap-3 rounded-lg border border-line bg-surface/60 p-3 text-sm text-fg-soft"
                 >
                   <input
                     type="checkbox"
@@ -975,7 +969,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                     class="mt-1"
                   />
                   <span>
-                    <span class="mb-1 block text-xs text-cyan-300">{formatKind(item.kind)}</span>
+                    <span class="mb-1 block text-xs text-info-soft">{formatKind(item.kind)}</span>
                     {item.summary}
                   </span>
                 </label>
@@ -997,10 +991,10 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
               <div
                 class={`rounded-lg border px-3 py-2 text-sm ${
                   preflight.level === 'high'
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100'
+                    ? 'border-success/30 bg-success/10 text-success-soft'
                     : preflight.level === 'medium'
-                      ? 'border-amber-500/30 bg-amber-500/10 text-amber-100'
-                      : 'border-red-500/30 bg-red-500/10 text-red-100'
+                      ? 'border-warning/30 bg-warning/10 text-warning-soft'
+                      : 'border-danger/30 bg-danger/10 text-danger-soft'
                 }`}
               >
                 <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1026,7 +1020,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                 {preflight.artifactDiagnostics &&
                   preflight.artifactDiagnostics.status !== 'selected' &&
                   preflight.artifactDiagnostics.recommendations.length > 0 && (
-                    <div class="mt-2 rounded-md border border-white/10 bg-black/20 px-2 py-1.5 text-xs">
+                    <div class="mt-2 rounded-md border border-line bg-scrim-soft px-2 py-1.5 text-xs">
                       <div class="font-medium">
                         Artifact selection: {preflight.artifactDiagnostics.status.replace('_', ' ')}
                         {preflight.artifactDiagnostics.availableKinds.length > 0 &&
@@ -1058,33 +1052,33 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
       </section>
 
       {error && (
-        <div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+        <div class="rounded-lg border border-danger bg-danger/20 px-3 py-2 text-sm text-danger">
           {error}
         </div>
       )}
 
       {loading ? (
-        <p class="text-sm text-gray-400">Loading review…</p>
+        <p class="text-sm text-fg-muted">Loading review…</p>
       ) : !latestEpisode ? (
-        <div class="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-400">
+        <div class="rounded-xl border border-line bg-fill-soft p-4 text-sm text-fg-muted">
           <p>No episode drafts yet.</p>
-          <p class="mt-1 text-xs text-gray-400">
+          <p class="mt-1 text-xs text-fg-muted">
             Select scoped evidence above to generate candidate lessons and next action proposals.
           </p>
         </div>
       ) : (
         <div class="space-y-4">
-          <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+          <section class="rounded-xl border border-line bg-fill-soft p-4">
             <div class="flex items-start justify-between gap-3">
               <div>
-                <p class="text-xs uppercase tracking-wide text-gray-400">Outcome summary</p>
-                <h3 class="mt-1 text-base font-semibold text-gray-100">{latestEpisode.title}</h3>
+                <p class="text-xs uppercase tracking-wide text-fg-muted">Outcome summary</p>
+                <h3 class="mt-1 text-base font-semibold text-fg">{latestEpisode.title}</h3>
               </div>
-              <span class="rounded-full bg-white/5 px-2 py-1 text-xs text-gray-300">
+              <span class="rounded-full bg-fill-soft px-2 py-1 text-xs text-fg-soft">
                 {latestEpisode.status}
               </span>
             </div>
-            <p class="mt-3 text-sm text-gray-300">{latestEpisode.outcomeSummary}</p>
+            <p class="mt-3 text-sm text-fg-soft">{latestEpisode.outcomeSummary}</p>
             <div class="mt-4 flex gap-2">
               <Button
                 size="sm"
@@ -1107,9 +1101,9 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
           </section>
 
           {canApplyRollup && (
-            <section class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
-              <p class="text-sm font-medium text-blue-100">Manual rollup writeback</p>
-              <p class="mt-1 text-xs text-blue-200/70">
+            <section class="rounded-xl border border-accent/20 bg-accent/5 p-4">
+              <p class="text-sm font-medium text-accent-soft">Manual rollup writeback</p>
+              <p class="mt-1 text-xs text-accent-soft/70">
                 Apply accepted episode state to linked recurring goal.
               </p>
               <div class="mt-3">
@@ -1124,7 +1118,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                   }
                   placeholder="Goal summary after this rollup"
                   rows={3}
-                  class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                  class="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
                 />
               </div>
               <textarea
@@ -1138,7 +1132,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                 }
                 placeholder="One next step per line"
                 rows={2}
-                class="mt-3 w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                class="mt-3 w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
               />
               <div class="mt-3 flex justify-end">
                 <Button size="sm" onClick={applyRollup} disabled={submitting}>
@@ -1148,12 +1142,12 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
             </section>
           )}
 
-          <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-            <h3 class="mb-3 text-sm font-medium text-gray-100">Findings by domain</h3>
+          <section class="rounded-xl border border-line bg-fill-soft p-4">
+            <h3 class="mb-3 text-sm font-medium text-fg">Findings by domain</h3>
             <div class="space-y-3">
               {Object.entries(groupedFindings).map(([domain, findings]) => (
-                <div key={domain} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
-                  <h4 class="mb-2 text-sm font-medium text-cyan-200">{formatKind(domain)}</h4>
+                <div key={domain} class="rounded-lg border border-line bg-surface/60 p-3">
+                  <h4 class="mb-2 text-sm font-medium text-info-soft">{formatKind(domain)}</h4>
                   <div class="space-y-2">
                     {findings.map((finding, index) => (
                       <FindingCard key={`${domain}-${index}`} finding={finding} />
@@ -1164,10 +1158,10 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
             </div>
           </section>
 
-          <section class="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4">
-            <h3 class="mb-3 text-sm font-medium text-orange-100">HyperNeo friction findings</h3>
+          <section class="rounded-xl border border-orange-500/20 bg-warning/5 p-4">
+            <h3 class="mb-3 text-sm font-medium text-warning-soft">HyperNeo friction findings</h3>
             {frictionFindings.length === 0 ? (
-              <p class="text-sm text-orange-200/70">No friction findings in latest episode.</p>
+              <p class="text-sm text-warning-soft/70">No friction findings in latest episode.</p>
             ) : (
               <div class="space-y-2">
                 {frictionFindings.map((finding, index) => (
@@ -1183,9 +1177,9 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
               empty="No candidate lessons."
               items={candidateLessons}
               render={(lesson) => (
-                <div key={lesson.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
-                  <p class="text-sm text-gray-100">{lesson.rule}</p>
-                  <p class="mt-1 text-xs text-gray-400">{lesson.why}</p>
+                <div key={lesson.id} class="rounded-lg border border-line bg-surface/60 p-3">
+                  <p class="text-sm text-fg">{lesson.rule}</p>
+                  <p class="mt-1 text-xs text-fg-muted">{lesson.why}</p>
                   <div class="mt-3 flex gap-2">
                     <Button
                       size="sm"
@@ -1215,10 +1209,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
               render={(proposal) => {
                 const editing = editingProposalId === proposal.id && proposalDraft;
                 return (
-                  <div
-                    key={proposal.id}
-                    class="rounded-lg border border-white/10 bg-dark-900/60 p-3"
-                  >
+                  <div key={proposal.id} class="rounded-lg border border-line bg-surface/60 p-3">
                     {editing ? (
                       <div class="space-y-2">
                         <input
@@ -1231,7 +1222,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                                 : current
                             )
                           }
-                          class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                          class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
                         />
                         <textarea
                           aria-label="Proposal description"
@@ -1247,7 +1238,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                             )
                           }
                           rows={2}
-                          class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                          class="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
                         />
                         <textarea
                           aria-label="Proposal reason"
@@ -1263,7 +1254,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                             )
                           }
                           rows={2}
-                          class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                          class="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
                         />
                         <select
                           aria-label="Proposal priority"
@@ -1279,7 +1270,7 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                                 : current
                             )
                           }
-                          class="rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                          class="rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
                         >
                           {(['low', 'normal', 'high', 'urgent'] as const).map((priority) => (
                             <option key={priority} value={priority}>
@@ -1291,13 +1282,13 @@ function EpisodesTab({ scope, goal }: { scope: EvolutionScope; goal: SpaceGoal |
                     ) : (
                       <>
                         <div class="flex items-start justify-between gap-2">
-                          <p class="text-sm font-medium text-gray-100">{proposal.title}</p>
-                          <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-400">
+                          <p class="text-sm font-medium text-fg">{proposal.title}</p>
+                          <span class="rounded-full bg-fill-soft px-2 py-0.5 text-xs text-fg-muted">
                             {proposal.priority}
                           </span>
                         </div>
-                        <p class="mt-1 text-xs text-gray-400">{proposal.description}</p>
-                        <p class="mt-2 text-xs text-gray-400">Reason: {proposal.reason}</p>
+                        <p class="mt-1 text-xs text-fg-muted">{proposal.description}</p>
+                        <p class="mt-2 text-xs text-fg-muted">Reason: {proposal.reason}</p>
                       </>
                     )}
                     <div class="mt-3 flex flex-wrap gap-2">
@@ -1397,32 +1388,32 @@ function ActiveLessonsTab({ scope }: { scope: EvolutionScope }) {
   };
 
   return (
-    <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <section class="rounded-xl border border-line bg-fill-soft p-4">
       <div class="mb-3">
-        <h3 class="text-sm font-medium text-gray-100">Active lessons</h3>
-        <p class="mt-1 text-xs text-gray-400">
+        <h3 class="text-sm font-medium text-fg">Active lessons</h3>
+        <p class="mt-1 text-xs text-fg-muted">
           Top active lessons from this scope are injected into future scoped task-agent messages.
         </p>
       </div>
       {error && (
-        <div class="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+        <div class="mb-3 rounded-lg border border-danger bg-danger/20 px-3 py-2 text-sm text-danger">
           {error}
         </div>
       )}
       {loading ? (
-        <p class="text-sm text-gray-400">Loading active lessons…</p>
+        <p class="text-sm text-fg-muted">Loading active lessons…</p>
       ) : lessons.length === 0 ? (
-        <p class="text-sm text-gray-400">No active lessons yet.</p>
+        <p class="text-sm text-fg-muted">No active lessons yet.</p>
       ) : (
         <div class="space-y-3">
           {lessons.map((lesson) => (
-            <div key={lesson.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+            <div key={lesson.id} class="rounded-lg border border-line bg-surface/60 p-3">
               <div class="flex items-start justify-between gap-3">
                 <div>
-                  <p class="text-sm text-gray-100">{lesson.rule}</p>
-                  <p class="mt-1 text-xs text-gray-400">{lesson.why}</p>
+                  <p class="text-sm text-fg">{lesson.rule}</p>
+                  <p class="mt-1 text-xs text-fg-muted">{lesson.why}</p>
                   {lesson.appliesTo.length > 0 && (
-                    <p class="mt-2 text-xs text-cyan-300">
+                    <p class="mt-2 text-xs text-info-soft">
                       Applies to: {lesson.appliesTo.join(', ')}
                     </p>
                   )}
@@ -1441,21 +1432,21 @@ function ActiveLessonsTab({ scope }: { scope: EvolutionScope }) {
 
 function FindingCard({ finding }: { finding: EvolutionFinding }) {
   return (
-    <div class="rounded-md border border-white/10 bg-black/20 p-3">
+    <div class="rounded-md border border-line bg-scrim-soft p-3">
       <div class="mb-2 flex flex-wrap gap-2">
-        <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+        <span class="rounded-full bg-fill-soft px-2 py-0.5 text-xs text-fg-soft">
           {formatKind(finding.kind)}
         </span>
-        <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+        <span class="rounded-full bg-fill-soft px-2 py-0.5 text-xs text-fg-soft">
           {finding.impact} impact
         </span>
-        <span class="rounded-full bg-white/5 px-2 py-0.5 text-xs text-gray-300">
+        <span class="rounded-full bg-fill-soft px-2 py-0.5 text-xs text-fg-soft">
           {Math.round(finding.confidence * 100)}% confidence
         </span>
       </div>
-      <p class="text-sm text-gray-200">{finding.proposedAction}</p>
+      <p class="text-sm text-fg-soft">{finding.proposedAction}</p>
       {finding.evidence.length > 0 && (
-        <p class="mt-2 text-xs text-gray-400">Evidence: {finding.evidence.join(', ')}</p>
+        <p class="mt-2 text-xs text-fg-muted">Evidence: {finding.evidence.join(', ')}</p>
       )}
     </div>
   );
@@ -1473,10 +1464,10 @@ function ReviewList<T>({
   render: (item: T) => ComponentChild;
 }) {
   return (
-    <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-      <h3 class="mb-3 text-sm font-medium text-gray-100">{title}</h3>
+    <section class="rounded-xl border border-line bg-fill-soft p-4">
+      <h3 class="mb-3 text-sm font-medium text-fg">{title}</h3>
       {items.length === 0 ? (
-        <p class="text-sm text-gray-400">{empty}</p>
+        <p class="text-sm text-fg-muted">{empty}</p>
       ) : (
         <div class="space-y-3">{items.map(render)}</div>
       )}
@@ -1572,19 +1563,19 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
 
   return (
     <div class="space-y-4">
-      <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-        <h3 class="mb-3 text-sm font-medium text-gray-100">Metric definitions</h3>
+      <section class="rounded-xl border border-line bg-fill-soft p-4">
+        <h3 class="mb-3 text-sm font-medium text-fg">Metric definitions</h3>
         {scope.metricDefinitions.length === 0 ? (
-          <p class="text-sm text-gray-400">No metric definitions for this scope.</p>
+          <p class="text-sm text-fg-muted">No metric definitions for this scope.</p>
         ) : (
           <div class="grid gap-3 md:grid-cols-2">
             {scope.metricDefinitions.map((metric) => (
-              <div key={metric.key} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+              <div key={metric.key} class="rounded-lg border border-line bg-surface/60 p-3">
                 <div class="flex items-center justify-between gap-3">
-                  <p class="text-sm font-medium text-gray-100">{metric.label}</p>
-                  <span class="text-xs text-gray-400">{metric.direction}</span>
+                  <p class="text-sm font-medium text-fg">{metric.label}</p>
+                  <span class="text-xs text-fg-muted">{metric.direction}</span>
                 </div>
-                <p class="mt-1 text-xs text-gray-400">
+                <p class="mt-1 text-xs text-fg-muted">
                   {metric.key}
                   {metric.unit ? ` · ${metric.unit}` : ''}
                 </p>
@@ -1595,11 +1586,8 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
       </section>
 
       {scope.metricDefinitions.length > 0 && (
-        <form
-          onSubmit={handleAddSnapshot}
-          class="rounded-xl border border-white/10 bg-white/[0.02] p-4"
-        >
-          <h3 class="mb-3 text-sm font-medium text-gray-100">Add metric snapshot</h3>
+        <form onSubmit={handleAddSnapshot} class="rounded-xl border border-line bg-fill-soft p-4">
+          <h3 class="mb-3 text-sm font-medium text-fg">Add metric snapshot</h3>
           <div class="grid gap-3 md:grid-cols-2">
             {values.map((entry, index) => {
               const metric = scope.metricDefinitions.find(
@@ -1607,14 +1595,14 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
               );
               return (
                 <label key={entry.key} class="block">
-                  <span class="mb-1 block text-xs text-gray-400">{metric?.label ?? entry.key}</span>
+                  <span class="mb-1 block text-xs text-fg-muted">{metric?.label ?? entry.key}</span>
                   <input
                     value={entry.value}
                     onInput={(event) =>
                       updateValue(index, (event.target as HTMLInputElement).value)
                     }
                     placeholder={metric?.unit ?? 'value'}
-                    class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+                    class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
                   />
                 </label>
               );
@@ -1625,7 +1613,7 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
             onInput={(event) => setNote((event.target as HTMLTextAreaElement).value)}
             placeholder="Optional snapshot note"
             rows={2}
-            class="mt-3 w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            class="mt-3 w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
           />
           <div class="mt-3 flex justify-end">
             <Button type="submit" size="sm" disabled={submitting}>
@@ -1636,33 +1624,36 @@ function MetricsTab({ scope }: { scope: EvolutionScope }) {
       )}
 
       {error && (
-        <div class="rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+        <div class="rounded-lg border border-danger bg-danger/20 px-3 py-2 text-sm text-danger">
           {error}
         </div>
       )}
 
-      <section class="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-        <h3 class="mb-3 text-sm font-medium text-gray-100">Snapshot history</h3>
+      <section class="rounded-xl border border-line bg-fill-soft p-4">
+        <h3 class="mb-3 text-sm font-medium text-fg">Snapshot history</h3>
         {loading ? (
-          <p class="text-sm text-gray-400">Loading snapshots…</p>
+          <p class="text-sm text-fg-muted">Loading snapshots…</p>
         ) : snapshots.length === 0 ? (
-          <p class="text-sm text-gray-400">No metric snapshots yet.</p>
+          <p class="text-sm text-fg-muted">No metric snapshots yet.</p>
         ) : (
           <div class="space-y-3">
             {snapshots.map((snapshot) => (
-              <div key={snapshot.id} class="rounded-lg border border-white/10 bg-dark-900/60 p-3">
+              <div key={snapshot.id} class="rounded-lg border border-line bg-surface/60 p-3">
                 <div class="mb-2 flex items-center justify-between gap-3">
-                  <span class="text-sm text-gray-200">{snapshot.source}</span>
-                  <span class="text-xs text-gray-400">{formatDate(snapshot.capturedAt)}</span>
+                  <span class="text-sm text-fg-soft">{snapshot.source}</span>
+                  <span class="text-xs text-fg-muted">{formatDate(snapshot.capturedAt)}</span>
                 </div>
                 <div class="flex flex-wrap gap-2">
                   {Object.entries(snapshot.values).map(([key, value]) => (
-                    <span key={key} class="rounded-full bg-white/5 px-2 py-1 text-xs text-gray-300">
+                    <span
+                      key={key}
+                      class="rounded-full bg-fill-soft px-2 py-1 text-xs text-fg-soft"
+                    >
                       {key}: {String(value)}
                     </span>
                   ))}
                 </div>
-                {snapshot.note && <p class="mt-2 text-sm text-gray-400">{snapshot.note}</p>}
+                {snapshot.note && <p class="mt-2 text-sm text-fg-muted">{snapshot.note}</p>}
               </div>
             ))}
           </div>
@@ -1850,7 +1841,7 @@ export function ScopeDetail({
       }
     >
       <div class="px-3 pb-3 pt-3">
-        <div class="grid grid-cols-5 gap-1 rounded-lg border border-white/10 bg-dark-900/70 p-1">
+        <div class="grid grid-cols-5 gap-1 rounded-lg border border-line bg-surface/70 p-1">
           {SCOPE_TABS.map((item) => (
             <button
               key={item}
@@ -1859,8 +1850,8 @@ export function ScopeDetail({
               class={cn(
                 'min-w-0 rounded-md px-2 py-1.5 text-center text-xs font-medium capitalize transition-colors',
                 tab === item
-                  ? 'bg-dark-700 text-gray-100 shadow-sm'
-                  : 'text-gray-400 hover:bg-white/5 hover:text-gray-300'
+                  ? 'bg-fill-strong text-fg shadow-sm'
+                  : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft'
               )}
             >
               {item}
@@ -1872,33 +1863,33 @@ export function ScopeDetail({
         {tab === 'overview' && (
           <div class="space-y-4">
             {scope.objective && (
-              <p class="px-1 text-sm leading-5 text-gray-400">{scope.objective}</p>
+              <p class="px-1 text-sm leading-5 text-fg-muted">{scope.objective}</p>
             )}
             {goal ? (
               <GoalSummary goal={goal} />
             ) : (
-              <div class="rounded-lg border border-white/10 bg-white/[0.02] p-4 text-sm text-gray-400">
+              <div class="rounded-lg border border-line bg-fill-soft p-4 text-sm text-fg-muted">
                 No recurring goal linked.
               </div>
             )}
             <div class="grid gap-3 md:grid-cols-2">
-              <div class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+              <div class="rounded-lg border border-line bg-fill-soft p-4">
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
                   Created
                 </p>
-                <p class="mt-1 text-sm text-gray-200">{getRelativeTime(scope.createdAt)}</p>
+                <p class="mt-1 text-sm text-fg-soft">{getRelativeTime(scope.createdAt)}</p>
               </div>
-              <div class="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+              <div class="rounded-lg border border-line bg-fill-soft p-4">
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
                   Metrics
                 </p>
-                <p class="mt-1 text-sm text-gray-200">
+                <p class="mt-1 text-sm text-fg-soft">
                   {formatDefinitionCount(scope.metricDefinitions.length)}
                 </p>
               </div>
             </div>
             <SectionCard title="Episode judge model">
-              <p class="text-xs text-gray-400">
+              <p class="text-xs text-fg-muted">
                 Override model for episode judging, or clear to use Space default.
               </p>
               <WorkflowModelSelect
@@ -1914,17 +1905,17 @@ export function ScopeDetail({
                 }
                 onChange={handleJudgeModelChange}
                 testId="scope-episode-judge-model-select"
-                className="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                className="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none disabled:opacity-50"
               />
-              {savingJudgeModel && <p class="text-xs text-gray-400">Saving…</p>}
-              {settingsError && <p class="text-xs text-red-400">{settingsError}</p>}
+              {savingJudgeModel && <p class="text-xs text-fg-muted">Saving…</p>}
+              {settingsError && <p class="text-xs text-danger">{settingsError}</p>}
             </SectionCard>
             {goal && (
               <SectionCard title="Completed-task automation">
-                <p class="text-xs text-gray-400">
+                <p class="text-xs text-fg-muted">
                   Draft an Evolution episode after a configured number of completed scoped tasks.
                 </p>
-                <label class="flex items-center gap-2 text-sm text-gray-200">
+                <label class="flex items-center gap-2 text-sm text-fg-soft">
                   <input
                     type="checkbox"
                     checked={completedTaskAutomationEnabled}
@@ -1934,11 +1925,11 @@ export function ScopeDetail({
                         enabled: (event.currentTarget as HTMLInputElement).checked,
                       })
                     }
-                    class="h-4 w-4 rounded border-dark-600 bg-dark-800 text-blue-500 focus:ring-blue-500"
+                    class="h-4 w-4 rounded border-line-strong bg-surface-raised text-accent focus:ring-accent"
                   />
                   Enable count-based episode drafts
                 </label>
-                <label class="mt-3 block text-xs font-medium uppercase tracking-wide text-gray-400">
+                <label class="mt-3 block text-xs font-medium uppercase tracking-wide text-fg-muted">
                   Completed task threshold
                   <input
                     type="number"
@@ -1952,10 +1943,10 @@ export function ScopeDetail({
                       })
                     }
                     data-testid="scope-completed-task-threshold-input"
-                    class="mt-1 w-32 rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+                    class="mt-1 w-32 rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none disabled:opacity-50"
                   />
                 </label>
-                {savingCompletedTaskAutomation && <p class="text-xs text-gray-400">Saving…</p>}
+                {savingCompletedTaskAutomation && <p class="text-xs text-fg-muted">Saving…</p>}
               </SectionCard>
             )}
           </div>
@@ -2049,33 +2040,27 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
   return (
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
       <div class="flex-1 overflow-y-auto">
-        <div class={GLASS_CONTENT_CONTAINER_CLASS}>
+        <div class="glass-content-container">
           <section
             class={cn(
               'mb-5 flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6',
-              GLASS_SURFACE
+              'glass-surface'
             )}
             data-testid="space-forge-introduction"
             aria-label="Evolve workspace summary"
           >
             <div class="max-w-2xl">
-              <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-200/80">
-                <span class="h-1.5 w-1.5 rounded-full bg-amber-300" />
+              <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-warning-soft/80">
+                <span class="h-1.5 w-1.5 rounded-full bg-warning" />
                 Continuous evolution
               </div>
-              <h2 class="mt-2 text-lg font-semibold tracking-tight text-gray-50">
-                Evolution scopes
-              </h2>
-              <p class="mt-1 text-sm leading-5 text-gray-300">
+              <h2 class="mt-2 text-lg font-semibold tracking-tight text-fg">Evolution scopes</h2>
+              <p class="mt-1 text-sm leading-5 text-fg-soft">
                 {formatScopeCount(scopes.length)} collecting evidence, metrics, lessons, and
                 follow-up tasks from recurring goals.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              class={GLASS_PRIMARY_BUTTON_CLASS}
-            >
+            <button type="button" onClick={() => setCreateOpen(true)} class="glass-primary-button">
               Create scope
             </button>
           </section>
@@ -2083,22 +2068,22 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
           {error && (
             <div
               class={cn(
-                'mb-5 rounded-2xl border border-red-300/20 p-4 text-sm text-red-200',
-                FLAT_SURFACE
+                'mb-5 rounded-2xl border border-danger-soft/20 p-4 text-sm text-danger-soft',
+                'flat-surface'
               )}
             >
               {error}
             </div>
           )}
           {loading && scopes.length === 0 && (
-            <div class={cn('rounded-2xl border p-6 text-sm text-gray-300', FLAT_SURFACE)}>
+            <div class={cn('rounded-2xl border p-6 text-sm text-fg-soft', 'flat-surface')}>
               Loading scopes...
             </div>
           )}
           {!loading && scopes.length === 0 && (
-            <div class={cn('rounded-2xl border border-dashed p-10 text-center', FLAT_SURFACE)}>
-              <p class="text-sm font-medium text-gray-200">No Evolution scopes yet.</p>
-              <p class="mt-1 text-xs text-gray-400">
+            <div class={cn('rounded-2xl border border-dashed p-10 text-center', 'flat-surface')}>
+              <p class="text-sm font-medium text-fg-soft">No Evolution scopes yet.</p>
+              <p class="mt-1 text-xs text-fg-muted">
                 Create one from a recurring goal to track evidence, metrics, lessons, and follow-up
                 tasks.
               </p>
@@ -2126,39 +2111,39 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
                     onClick={() => openScope(scope.id)}
                     aria-pressed={selected}
                     class={cn(
-                      'group relative flex min-h-[12rem] w-full flex-col overflow-hidden rounded-2xl border border-white/[0.14] p-5 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70',
-                      FLAT_SURFACE,
+                      'group relative flex min-h-[12rem] w-full flex-col overflow-hidden rounded-2xl border border-line p-5 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/70',
+                      'flat-surface',
                       selected
-                        ? '!border-[rgba(111,177,255,0.72)] bg-[linear-gradient(145deg,rgba(35,82,137,0.44),rgba(13,20,32,0.96)_62%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_20px_48px_rgba(0,0,0,0.3)]'
-                        : 'hover:-translate-y-0.5 hover:bg-dark-850/95'
+                        ? '!border-accent/70 bg-accent/10'
+                        : 'hover:-translate-y-0.5 hover:bg-surface-overlay/95'
                     )}
                   >
                     <div class="min-w-0">
-                      <h3 class="line-clamp-2 text-base font-semibold leading-6 tracking-tight text-gray-50">
+                      <h3 class="line-clamp-2 text-base font-semibold leading-6 tracking-tight text-fg">
                         {scope.name}
                       </h3>
                       <div class="mt-2.5 flex flex-wrap items-center gap-2">
-                        <span class="rounded-full border border-cyan-300/25 bg-cyan-300/[0.08] px-2 py-0.5 text-[11px] font-medium text-cyan-200">
+                        <span class="rounded-full border border-cyan-300/25 bg-cyan-300/[0.08] px-2 py-0.5 text-[11px] font-medium text-info-soft">
                           {formatKind(scope.kind)}
                         </span>
-                        <span class="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] font-medium text-gray-300">
+                        <span class="rounded-full border border-line bg-fill-soft px-2 py-0.5 text-[11px] font-medium text-fg-soft">
                           {formatDefinitionCount(scope.metricDefinitions.length)}
                         </span>
                       </div>
-                      <p class="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-gray-300">
+                      <p class="mt-3 line-clamp-2 min-h-10 text-sm leading-5 text-fg-soft">
                         {scope.objective || 'No objective recorded yet'}
                       </p>
                     </div>
-                    <div class="mt-auto grid grid-cols-2 gap-3 border-t border-white/[0.08] pt-3 text-xs">
+                    <div class="mt-auto grid grid-cols-2 gap-3 border-t border-line pt-3 text-xs">
                       <div class="min-w-0">
-                        <span class="block text-gray-500">Goal</span>
-                        <span class="mt-0.5 block truncate text-gray-300">
+                        <span class="block text-fg-faint">Goal</span>
+                        <span class="mt-0.5 block truncate text-fg-soft">
                           {goal ? `Goal: ${goal.title}` : 'No linked goal'}
                         </span>
                       </div>
                       <div class="min-w-0">
-                        <span class="block text-gray-500">Updated</span>
-                        <span class="mt-0.5 block text-gray-300">
+                        <span class="block text-fg-faint">Updated</span>
+                        <span class="mt-0.5 block text-fg-soft">
                           {getRelativeTime(scope.updatedAt)}
                         </span>
                       </div>

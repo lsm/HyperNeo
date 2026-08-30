@@ -106,33 +106,25 @@ export function DiffViewer({
   const removedLines = diff.filter((l) => l.type === 'remove').length;
 
   return (
-    <div
-      class={cn(
-        'rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700',
-        className
-      )}
-    >
+    <div class={cn('rounded-lg overflow-hidden border border-line', className)}>
       {filePath && (
-        <div class="bg-gray-100 dark:bg-gray-800 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-          <div class="text-xs font-mono text-gray-700 dark:text-gray-300">{filePath}</div>
+        <div class="bg-surface-raised px-3 py-2 border-b border-line flex items-center justify-between">
+          <div class="text-xs font-mono text-fg-soft">{filePath}</div>
           <div class="text-xs font-mono flex items-center gap-1">
-            <span class="text-green-700 dark:text-green-400">+{addedLines}</span>
-            <span class="text-red-700 dark:text-red-400">-{removedLines}</span>
+            <span class="text-success">+{addedLines}</span>
+            <span class="text-danger">-{removedLines}</span>
           </div>
         </div>
       )}
 
-      <div class="bg-gray-50 dark:bg-gray-900 overflow-x-auto">
+      <div class="bg-surface overflow-x-auto">
         <table class="w-full text-xs font-mono">
           <tbody>
             {diff.map((line, idx) => {
               if (line.type === 'separator') {
                 return (
-                  <tr key={idx} class="bg-gray-100 dark:bg-gray-800">
-                    <td
-                      class="px-2 py-1 text-center text-gray-500 dark:text-gray-400 select-none"
-                      colSpan={3}
-                    >
+                  <tr key={idx} class="bg-surface-raised">
+                    <td class="px-2 py-1 text-center text-fg-muted select-none" colSpan={3}>
                       {line.content}
                     </td>
                   </tr>
@@ -141,31 +133,31 @@ export function DiffViewer({
 
               const bgClass =
                 line.type === 'add'
-                  ? 'bg-green-50 dark:bg-green-900/20'
+                  ? 'bg-success/10'
                   : line.type === 'remove'
-                    ? 'bg-red-50 dark:bg-red-900/20'
-                    : 'bg-white dark:bg-gray-900';
+                    ? 'bg-danger/10'
+                    : 'bg-surface';
 
               const textClass =
                 line.type === 'add'
-                  ? 'text-green-900 dark:text-green-100'
+                  ? 'text-success-soft'
                   : line.type === 'remove'
-                    ? 'text-red-900 dark:text-red-100'
-                    : 'text-gray-700 dark:text-gray-300';
+                    ? 'text-danger-soft'
+                    : 'text-fg-soft';
 
               const signClass =
                 line.type === 'add'
-                  ? 'text-green-700 dark:text-green-400'
+                  ? 'text-success'
                   : line.type === 'remove'
-                    ? 'text-red-700 dark:text-red-400'
-                    : 'text-gray-500 dark:text-gray-500';
+                    ? 'text-danger'
+                    : 'text-fg-faint';
 
               const sign = line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' ';
               const lineNum = line.type === 'add' ? line.newLineNum : line.oldLineNum;
 
               return (
                 <tr key={idx} class={bgClass}>
-                  <td class="px-2 py-0.5 text-right text-gray-500 dark:text-gray-500 select-none w-12 border-r border-gray-200 dark:border-gray-700">
+                  <td class="px-2 py-0.5 text-right text-fg-faint select-none w-12 border-r border-line">
                     {lineNum}
                   </td>
                   <td class={cn('px-2 py-0.5 w-6 select-none', signClass)}>{sign}</td>
@@ -177,16 +169,14 @@ export function DiffViewer({
         </table>
       </div>
 
-      <div class="bg-gray-100 dark:bg-gray-800 px-3 py-1.5 border-t border-gray-200 dark:border-gray-700 flex gap-4 text-xs">
+      <div class="bg-surface-raised px-3 py-1.5 border-t border-line flex gap-4 text-xs">
         <div class="flex items-center gap-1">
-          <span class="text-green-700 dark:text-green-400">+</span>
-          <span class="text-gray-700 dark:text-gray-300">
-            {diff.filter((l) => l.type === 'add').length} additions
-          </span>
+          <span class="text-success">+</span>
+          <span class="text-fg-soft">{diff.filter((l) => l.type === 'add').length} additions</span>
         </div>
         <div class="flex items-center gap-1">
-          <span class="text-red-700 dark:text-red-400">-</span>
-          <span class="text-gray-700 dark:text-gray-300">
+          <span class="text-danger">-</span>
+          <span class="text-fg-soft">
             {diff.filter((l) => l.type === 'remove').length} deletions
           </span>
         </div>

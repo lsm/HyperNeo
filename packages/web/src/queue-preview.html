@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 	<head>
 		<meta charset="utf-8" />
 		<meta
@@ -7,6 +7,40 @@
 			content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
 		/>
 		<title>HyperNeo Queue Preview</title>
+		<script>
+			// Theme boot: resolve light/dark before first paint.
+			// Mirrors packages/web/src/lib/theme.ts — keep the logic in sync.
+			// The media listener stands down once the app runtime is up
+			// (lib/theme.ts sets window.__hyperneoThemeReady); this page does
+			// not load it, so the boot listener keeps handling changes here.
+			(function () {
+				var media = window.matchMedia("(prefers-color-scheme: dark)");
+				var explicit = null;
+				try {
+					var stored = localStorage.getItem("theme");
+					if (stored === "light" || stored === "dark") explicit = stored;
+				} catch (e) {}
+				document.documentElement.dataset.theme =
+					explicit || (media.matches ? "dark" : "light");
+				media.addEventListener("change", function () {
+					if (window.__hyperneoThemeReady) return;
+					if (explicit) return;
+					document.documentElement.dataset.theme = media.matches ? "dark" : "light";
+				});
+				// Sync an explicit theme changed in another tab. This page never
+				// loads lib/theme.ts, so it owns storage handling here.
+				window.addEventListener("storage", function (e) {
+					if (e.key !== "theme") return;
+					try {
+						var stored = localStorage.getItem("theme");
+						if (stored === "light" || stored === "dark") explicit = stored;
+						else if (stored === "system") explicit = null;
+					} catch (e2) {}
+					document.documentElement.dataset.theme =
+						explicit || (media.matches ? "dark" : "light");
+				});
+			})();
+		</script>
 	</head>
 	<body>
 		<div id="root"></div>

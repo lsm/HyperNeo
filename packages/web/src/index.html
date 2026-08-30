@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta
@@ -7,6 +7,31 @@
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>HyperNeo - Claude Agent Wrapper</title>
+    <script>
+      // Theme boot: resolve light/dark before first paint so the semantic
+      // tokens in styles.css and the dark: variant never flash the wrong theme.
+      // Mirrors packages/web/src/lib/theme.ts — keep the logic in sync.
+      // The media listener stands down once the app runtime is up:
+      // lib/theme.ts sets window.__hyperneoThemeReady and its own listener,
+      // which consults the live setting, takes over — so an explicit theme
+      // chosen during the session (or when storage is unavailable) is never
+      // overwritten by an OS appearance change.
+      (function () {
+        var media = window.matchMedia("(prefers-color-scheme: dark)");
+        var explicit = null;
+        try {
+          var stored = localStorage.getItem("theme");
+          if (stored === "light" || stored === "dark") explicit = stored;
+        } catch (e) {}
+        document.documentElement.dataset.theme =
+          explicit || (media.matches ? "dark" : "light");
+        media.addEventListener("change", function () {
+          if (window.__hyperneoThemeReady) return;
+          if (explicit) return;
+          document.documentElement.dataset.theme = media.matches ? "dark" : "light";
+        });
+      })();
+    </script>
     <script>
       // Prevent errors from browser extensions trying to access window.ethereum
       if (typeof window.ethereum === "undefined") {

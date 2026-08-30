@@ -62,7 +62,7 @@ export function WorkflowModelSelect({
   provider,
   onChange,
   testId,
-  className = 'w-full text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1.5 text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed',
+  className = 'w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent disabled:opacity-50 disabled:cursor-not-allowed',
 }: WorkflowModelSelectProps) {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loadState, setLoadState] = useState<LoadState>('loading');

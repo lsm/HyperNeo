@@ -67,15 +67,15 @@ export const TRANSITION_LABELS: Record<string, string> = {
 };
 
 const TRANSITION_STYLES: Record<string, string> = {
-  in_progress: 'text-blue-300 hover:text-blue-200',
-  review: 'text-purple-300 hover:text-purple-200',
-  approved: 'text-emerald-300 hover:text-emerald-200',
-  done: 'text-green-300 hover:text-green-200',
-  blocked: 'text-amber-300 hover:text-amber-200',
-  cancelled: 'text-red-300 hover:text-red-200',
-  open: 'text-gray-300 hover:text-gray-100',
-  archived: 'text-gray-400 hover:text-gray-300',
-  stopped: 'text-gray-300 hover:text-gray-100',
+  in_progress: 'text-accent-soft hover:text-accent-soft',
+  review: 'text-cat-purple hover:text-cat-purple',
+  approved: 'text-success-soft hover:text-success-soft',
+  done: 'text-success-soft hover:text-success-soft',
+  blocked: 'text-warning hover:text-warning-soft',
+  cancelled: 'text-danger-soft hover:text-danger-soft',
+  open: 'text-fg-soft hover:text-fg',
+  archived: 'text-fg-muted hover:text-fg-soft',
+  stopped: 'text-fg-soft hover:text-fg',
 };
 
 export function getTransitionActions(
@@ -109,7 +109,7 @@ export function TaskStatusActions({
 
   if (actions.length === 0) {
     return (
-      <p class="text-xs text-gray-400" data-testid="task-status-no-actions">
+      <p class="text-xs text-fg-muted" data-testid="task-status-no-actions">
         No status actions available.
       </p>
     );
@@ -123,7 +123,7 @@ export function TaskStatusActions({
           type="button"
           onClick={() => onTransition(target)}
           disabled={disabled}
-          class={`px-2 py-1 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${TRANSITION_STYLES[target] ?? 'text-gray-300 hover:text-gray-100'}`}
+          class={`px-2 py-1 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${TRANSITION_STYLES[target] ?? 'text-fg-soft hover:text-fg'}`}
           data-testid={`task-action-${target}`}
         >
           {label}

@@ -141,27 +141,27 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
     <Modal isOpen={isOpen} onClose={handleClose} title="Add Skill" size="md">
       <form onSubmit={handleSubmit} class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1">
-            Display Name <span class="text-red-400">*</span>
+          <label class="block text-sm font-medium text-fg-soft mb-1">
+            Display Name <span class="text-danger">*</span>
           </label>
           <input
             type="text"
             value={form.displayName}
             onChange={(e) => handleDisplayNameChange((e.target as HTMLInputElement).value)}
             class={cn(
-              'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200',
-              'focus:outline-none focus:ring-1 focus:ring-blue-500',
-              errors.displayName ? 'border-red-500' : 'border-dark-700'
+              'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft',
+              'focus:outline-none focus:ring-1 focus:ring-accent',
+              errors.displayName ? 'border-danger' : 'border-line'
             )}
             placeholder="e.g., Web Search"
             autoFocus
           />
-          {errors.displayName && <p class="text-xs text-red-400 mt-1">{errors.displayName}</p>}
+          {errors.displayName && <p class="text-xs text-danger mt-1">{errors.displayName}</p>}
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1">
-            Name <span class="text-red-400">*</span>
+          <label class="block text-sm font-medium text-fg-soft mb-1">
+            Name <span class="text-danger">*</span>
           </label>
           <input
             type="text"
@@ -174,20 +174,20 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
               }))
             }
             class={cn(
-              'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-              'focus:outline-none focus:ring-1 focus:ring-blue-500',
-              errors.name ? 'border-red-500' : 'border-dark-700'
+              'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
+              'focus:outline-none focus:ring-1 focus:ring-accent',
+              errors.name ? 'border-danger' : 'border-line'
             )}
             placeholder="e.g., web-search"
           />
-          {errors.name && <p class="text-xs text-red-400 mt-1">{errors.name}</p>}
-          <p class="text-xs text-gray-500 mt-1">
+          {errors.name && <p class="text-xs text-danger mt-1">{errors.name}</p>}
+          <p class="text-xs text-fg-faint mt-1">
             Unique slug identifier (auto-derived from display name)
           </p>
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
+          <label class="block text-sm font-medium text-fg-soft mb-1">Description</label>
           <input
             type="text"
             value={form.description}
@@ -197,14 +197,14 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
                 description: (e.target as HTMLInputElement).value,
               }))
             }
-            class="w-full bg-dark-800 border border-dark-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full bg-surface-raised border border-line rounded-lg px-3 py-2 text-sm text-fg-soft focus:outline-none focus:ring-1 focus:ring-accent"
             placeholder="Optional description of what this skill does"
           />
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-2">
-            Source Type <span class="text-red-400">*</span>
+          <label class="block text-sm font-medium text-fg-soft mb-2">
+            Source Type <span class="text-danger">*</span>
           </label>
           <div class="flex gap-6">
             {(['builtin', 'plugin', 'mcp_server'] as SkillSourceType[]).map((type) => (
@@ -217,7 +217,7 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
                   onChange={() => setForm((f) => ({ ...f, sourceType: type }))}
                   class="accent-blue-500"
                 />
-                <span class="text-sm text-gray-300">
+                <span class="text-sm text-fg-soft">
                   {type === 'builtin' ? 'Built-in' : type === 'plugin' ? 'Plugin' : 'MCP Server'}
                 </span>
               </label>
@@ -227,8 +227,8 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
 
         {form.sourceType === 'builtin' && (
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-1">
-              Command Name <span class="text-red-400">*</span>
+            <label class="block text-sm font-medium text-fg-soft mb-1">
+              Command Name <span class="text-danger">*</span>
             </label>
             <input
               type="text"
@@ -240,14 +240,14 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
                 }))
               }
               class={cn(
-                'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-                'focus:outline-none focus:ring-1 focus:ring-blue-500',
-                errors.commandName ? 'border-red-500' : 'border-dark-700'
+                'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
+                'focus:outline-none focus:ring-1 focus:ring-accent',
+                errors.commandName ? 'border-danger' : 'border-line'
               )}
               placeholder="e.g., update-config"
             />
-            {errors.commandName && <p class="text-xs text-red-400 mt-1">{errors.commandName}</p>}
-            <p class="text-xs text-gray-500 mt-1">
+            {errors.commandName && <p class="text-xs text-danger mt-1">{errors.commandName}</p>}
+            <p class="text-xs text-fg-faint mt-1">
               The slash-command name in <code class="font-mono">.claude/commands/</code>
             </p>
           </div>
@@ -255,8 +255,8 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
 
         {form.sourceType === 'plugin' && (
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-1">
-              Plugin Directory Path <span class="text-red-400">*</span>
+            <label class="block text-sm font-medium text-fg-soft mb-1">
+              Plugin Directory Path <span class="text-danger">*</span>
             </label>
             <input
               type="text"
@@ -268,26 +268,26 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
                 }))
               }
               class={cn(
-                'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-                'focus:outline-none focus:ring-1 focus:ring-blue-500',
-                errors.pluginPath ? 'border-red-500' : 'border-dark-700'
+                'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
+                'focus:outline-none focus:ring-1 focus:ring-accent',
+                errors.pluginPath ? 'border-danger' : 'border-line'
               )}
               placeholder="/path/to/plugin-directory"
             />
-            {errors.pluginPath && <p class="text-xs text-red-400 mt-1">{errors.pluginPath}</p>}
-            <p class="text-xs text-gray-500 mt-1">Absolute path to the plugin directory on disk</p>
+            {errors.pluginPath && <p class="text-xs text-danger mt-1">{errors.pluginPath}</p>}
+            <p class="text-xs text-fg-faint mt-1">Absolute path to the plugin directory on disk</p>
           </div>
         )}
 
         {form.sourceType === 'mcp_server' && (
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-1">
-              MCP Server <span class="text-red-400">*</span>
+            <label class="block text-sm font-medium text-fg-soft mb-1">
+              MCP Server <span class="text-danger">*</span>
             </label>
             {mcpServers.length === 0 ? (
-              <p class="text-xs text-gray-500 py-2">
+              <p class="text-xs text-fg-faint py-2">
                 No application MCP servers configured. Add one in the{' '}
-                <span class="text-gray-400">MCP Servers</span> settings panel first.
+                <span class="text-fg-muted">MCP Servers</span> settings panel first.
               </p>
             ) : (
               <select
@@ -299,9 +299,9 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
                   }))
                 }
                 class={cn(
-                  'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200',
-                  'focus:outline-none focus:ring-1 focus:ring-blue-500',
-                  errors.appMcpServerId ? 'border-red-500' : 'border-dark-700'
+                  'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft',
+                  'focus:outline-none focus:ring-1 focus:ring-accent',
+                  errors.appMcpServerId ? 'border-danger' : 'border-line'
                 )}
               >
                 <option value="">Select an MCP server…</option>
@@ -313,7 +313,7 @@ export function AddSkillDialog({ isOpen, onClose }: AddSkillDialogProps) {
               </select>
             )}
             {errors.appMcpServerId && (
-              <p class="text-xs text-red-400 mt-1">{errors.appMcpServerId}</p>
+              <p class="text-xs text-danger mt-1">{errors.appMcpServerId}</p>
             )}
           </div>
         )}

@@ -195,7 +195,7 @@ describe('ThinkingBlock', () => {
       const { container } = render(<ThinkingBlock content={longContent} />);
 
       expect(container.querySelector('.border-t')).toBeTruthy();
-      expect(container.querySelector('.bg-white, .dark\\:bg-gray-900')).toBeTruthy();
+      expect(container.querySelector('.bg-surface')).toBeTruthy();
     });
   });
 
@@ -203,7 +203,7 @@ describe('ThinkingBlock', () => {
     it('should have amber color scheme', () => {
       const { container } = render(<ThinkingBlock content="Thinking..." />);
 
-      expect(container.querySelector('.bg-amber-50, .dark\\:bg-amber-900\\/20')).toBeTruthy();
+      expect(container.querySelector('.bg-warning\\/10')).toBeTruthy();
     });
 
     it('should have border styling', () => {

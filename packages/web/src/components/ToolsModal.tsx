@@ -3,7 +3,6 @@ import { useEffect } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
 import { Modal } from './ui/Modal.tsx';
-import { borderColors } from '../lib/design-tokens.ts';
 import type {
   Session,
   ToolsConfig,
@@ -87,20 +86,20 @@ function GroupHeader({
     <div class="flex items-center justify-between py-2 cursor-pointer select-none group">
       <button
         type="button"
-        class="flex items-center gap-2 flex-1 text-left hover:text-gray-200 transition-colors"
+        class="flex items-center gap-2 flex-1 text-left hover:text-fg-soft transition-colors"
         onClick={onToggleOpen}
         aria-expanded={isOpen}
       >
         <svg
-          class={`w-3.5 h-3.5 text-gray-500 transition-transform ${isOpen ? 'rotate-90' : ''}`}
+          class={`w-3.5 h-3.5 text-fg-faint transition-transform ${isOpen ? 'rotate-90' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
         >
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M9 5l7 7-7 7" />
         </svg>
-        <span class="text-sm font-medium text-gray-300">{title}</span>
-        <span class="text-xs text-gray-600">({itemCount})</span>
+        <span class="text-sm font-medium text-fg-soft">{title}</span>
+        <span class="text-xs text-fg-faint">({itemCount})</span>
       </button>
       <div class="flex items-center gap-3">
         {scopeNote && <span class="text-xs text-sky-500/70 font-medium">{scopeNote}</span>}
@@ -108,7 +107,7 @@ function GroupHeader({
           class="flex items-center gap-1.5 cursor-pointer"
           title={allEnabled ? 'Disable all' : 'Enable all'}
         >
-          <span class="text-xs text-gray-500">
+          <span class="text-xs text-fg-faint">
             {allEnabled ? 'All on' : someEnabled ? 'Mixed' : 'All off'}
           </span>
           <input
@@ -119,7 +118,7 @@ function GroupHeader({
             }}
             onChange={onToggleAll}
             disabled={disabled}
-            class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+            class="w-4 h-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
           />
         </label>
       </div>
@@ -459,14 +458,14 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
               <div class="flex items-center justify-between py-2 select-none group">
                 <button
                   type="button"
-                  class="flex items-center gap-2 flex-1 text-left hover:text-gray-200 transition-colors"
+                  class="flex items-center gap-2 flex-1 text-left hover:text-fg-soft transition-colors"
                   onClick={() => {
                     runtimeMcpGroupOpen.value = !runtimeMcpGroupOpen.value;
                   }}
                   aria-expanded={runtimeMcpGroupOpen.value}
                 >
                   <svg
-                    class={`w-3.5 h-3.5 text-gray-500 transition-transform ${runtimeMcpGroupOpen.value ? 'rotate-90' : ''}`}
+                    class={`w-3.5 h-3.5 text-fg-faint transition-transform ${runtimeMcpGroupOpen.value ? 'rotate-90' : ''}`}
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -478,8 +477,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                       d="M9 5l7 7-7 7"
                     />
                   </svg>
-                  <span class="text-sm font-medium text-gray-300">Agent Runtime Tools</span>
-                  <span class="text-xs text-gray-600">({runtimeMcpServers.value.length})</span>
+                  <span class="text-sm font-medium text-fg-soft">Agent Runtime Tools</span>
+                  <span class="text-xs text-fg-faint">({runtimeMcpServers.value.length})</span>
                 </button>
                 <span class="text-xs text-emerald-500/70 font-medium">Built-in</span>
               </div>
@@ -490,10 +489,10 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                     return (
                       <div
                         key={`runtime-${name}`}
-                        class="flex items-center gap-2 p-2 rounded-lg bg-dark-800/50 min-w-0"
+                        class="flex items-center gap-2 p-2 rounded-lg bg-surface-raised/50 min-w-0"
                       >
                         <svg
-                          class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0"
+                          class="w-3.5 h-3.5 text-success flex-shrink-0"
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
@@ -506,8 +505,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                           />
                         </svg>
                         <div class="flex-1 min-w-0">
-                          <div class="text-sm text-gray-200 truncate">{label?.title ?? name}</div>
-                          <div class="text-xs text-gray-500 truncate">
+                          <div class="text-sm text-fg-soft truncate">{label?.title ?? name}</div>
+                          <div class="text-xs text-fg-faint truncate">
                             {label?.description ?? name}
                           </div>
                         </div>
@@ -517,7 +516,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                 </div>
               )}
             </div>
-            <div class={`border-t ${borderColors.ui.secondary}`} />
+            <div class="border-t border-line-strong" />
           </>
         )}
 
@@ -539,7 +538,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
               />
               {skillsGroupOpen.value && (
                 <div class="mt-2 ml-5 space-y-2">
-                  <div class="text-xs text-gray-500">
+                  <div class="text-xs text-fg-faint">
                     Toggles apply to this session only. Click Save to persist.
                   </div>
                   {allSkills.value.length > 4 && (
@@ -550,11 +549,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                       onInput={(e) => {
                         skillSearch.value = (e.target as HTMLInputElement).value;
                       }}
-                      class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2.5 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+                      class="w-full text-xs bg-surface border border-line rounded px-2.5 py-1.5 text-fg-soft placeholder-gray-600 focus:outline-none focus:border-accent/50"
                     />
                   )}
                   {skillsRows.length === 0 ? (
-                    <div class="text-xs text-gray-600 py-1">
+                    <div class="text-xs text-fg-faint py-1">
                       No skills match &ldquo;{skillSearch.value}&rdquo;.
                     </div>
                   ) : (
@@ -576,10 +575,10 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                         return (
                           <label
                             key={skill.id}
-                            class={`flex items-center gap-2 p-2 rounded-lg bg-dark-800/50 transition-colors min-w-0 ${
+                            class={`flex items-center gap-2 p-2 rounded-lg bg-surface-raised/50 transition-colors min-w-0 ${
                               globallyDisabled
                                 ? 'opacity-50 cursor-not-allowed'
-                                : 'hover:bg-dark-800 cursor-pointer'
+                                : 'hover:bg-surface-raised cursor-pointer'
                             }`}
                             title={
                               globallyDisabled
@@ -589,7 +588,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                           >
                             <div class="flex-1 min-w-0">
                               <div class="flex items-center gap-1.5">
-                                <span class="text-xs text-gray-200 truncate">
+                                <span class="text-xs text-fg-soft truncate">
                                   {skill.displayName}
                                 </span>
                                 <SourceBadge {...sourceBadge} />
@@ -614,7 +613,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                                 checked={sessionEnabled}
                                 onChange={() => toggleSkill(skill)}
                                 disabled={globallyDisabled}
-                                class="w-3.5 h-3.5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                                class="w-3.5 h-3.5 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
                               />
                             </div>
                           </label>
@@ -628,7 +627,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
           ) : (
             <div class="flex items-center gap-2 py-1">
               <svg
-                class="w-3.5 h-3.5 text-gray-600"
+                class="w-3.5 h-3.5 text-fg-faint"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -640,13 +639,13 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                   d="M9 5l7 7-7 7"
                 />
               </svg>
-              <span class="text-sm font-medium text-gray-500">Skills</span>
+              <span class="text-sm font-medium text-fg-faint">Skills</span>
               <span class="text-xs text-gray-700">(none configured)</span>
             </div>
           )}
         </div>
 
-        <div class={`border-t ${borderColors.ui.secondary}`} />
+        <div class="border-t border-line-strong" />
 
         <div>
           {sessionMcpEntries.value.length > 0 ? (
@@ -665,7 +664,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
               />
               {mcpServersGroupOpen.value && (
                 <div class="mt-2 ml-5 space-y-2">
-                  <div class="text-xs text-gray-500">
+                  <div class="text-xs text-fg-faint">
                     Overrides apply to this session only. Click Save to persist; changes take effect
                     on the next respawn.
                   </div>
@@ -677,11 +676,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                       onInput={(e) => {
                         mcpServerSearch.value = (e.target as HTMLInputElement).value;
                       }}
-                      class="w-full text-xs bg-dark-900 border border-dark-700 rounded px-2.5 py-1.5 text-gray-300 placeholder-gray-600 focus:outline-none focus:border-blue-500/50"
+                      class="w-full text-xs bg-surface border border-line rounded px-2.5 py-1.5 text-fg-soft placeholder-gray-600 focus:outline-none focus:border-accent/50"
                     />
                   )}
                   {mcpRows.length === 0 ? (
-                    <div class="text-xs text-gray-600 py-1">
+                    <div class="text-xs text-fg-faint py-1">
                       No servers match &ldquo;{mcpServerSearch.value}&rdquo;.
                     </div>
                   ) : (
@@ -695,10 +694,10 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                         return (
                           <div
                             key={`mcp-${entry.server.id}`}
-                            class="flex items-center gap-2 p-2 rounded-lg bg-dark-800/50 min-w-0"
+                            class="flex items-center gap-2 p-2 rounded-lg bg-surface-raised/50 min-w-0"
                           >
                             <svg
-                              class="w-3.5 h-3.5 text-amber-400 flex-shrink-0"
+                              class="w-3.5 h-3.5 text-warning flex-shrink-0"
                               fill="none"
                               viewBox="0 0 24 24"
                               stroke="currentColor"
@@ -712,13 +711,13 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                             </svg>
                             <div class="flex-1 min-w-0">
                               <div class="flex items-center gap-1.5">
-                                <span class="text-xs text-gray-200 truncate">
+                                <span class="text-xs text-fg-soft truncate">
                                   {entry.server.name}
                                 </span>
                                 <SourceBadge {...provenanceBadge} />
                               </div>
                               {entry.server.description && (
-                                <div class="text-[10px] text-gray-500 truncate">
+                                <div class="text-[10px] text-fg-faint truncate">
                                   {entry.server.description}
                                 </div>
                               )}
@@ -727,7 +726,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                               {showClearAffordance && (
                                 <button
                                   type="button"
-                                  class="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+                                  class="text-[10px] text-fg-faint hover:text-fg-soft transition-colors"
                                   title="Revert this session back to the inherited value"
                                   onClick={() => clearMcpOverride(entry)}
                                 >
@@ -738,7 +737,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                                 type="checkbox"
                                 checked={effectiveEnabled}
                                 onChange={() => toggleMcpServer(entry)}
-                                class="w-3.5 h-3.5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                                class="w-3.5 h-3.5 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
                               />
                             </div>
                           </div>
@@ -752,7 +751,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
           ) : (
             <div class="flex items-center gap-2 py-1">
               <svg
-                class="w-3.5 h-3.5 text-gray-600"
+                class="w-3.5 h-3.5 text-fg-faint"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -764,25 +763,25 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                   d="M9 5l7 7-7 7"
                 />
               </svg>
-              <span class="text-sm font-medium text-gray-500">MCP Servers</span>
+              <span class="text-sm font-medium text-fg-faint">MCP Servers</span>
               <span class="text-xs text-gray-700">(none configured)</span>
             </div>
           )}
         </div>
 
-        <div class={`border-t ${borderColors.ui.secondary}`} />
+        <div class="border-t border-line-strong" />
 
         <div>
           <button
             type="button"
-            class="flex items-center gap-2 w-full text-left py-1 hover:text-gray-300 transition-colors"
+            class="flex items-center gap-2 w-full text-left py-1 hover:text-fg-soft transition-colors"
             onClick={() => {
               advancedOpen.value = !advancedOpen.value;
             }}
             aria-expanded={advancedOpen.value}
           >
             <svg
-              class={`w-3.5 h-3.5 text-gray-600 transition-transform ${advancedOpen.value ? 'rotate-90' : ''}`}
+              class={`w-3.5 h-3.5 text-fg-faint transition-transform ${advancedOpen.value ? 'rotate-90' : ''}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -794,21 +793,21 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                 d="M9 5l7 7-7 7"
               />
             </svg>
-            <span class="text-sm font-medium text-gray-500">Advanced</span>
+            <span class="text-sm font-medium text-fg-faint">Advanced</span>
           </button>
 
           {advancedOpen.value && (
             <div class="mt-3 space-y-4 ml-5">
               <div>
-                <h4 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+                <h4 class="text-xs font-medium text-fg-faint uppercase tracking-wider mb-2">
                   System Prompt
                 </h4>
                 <label
-                  class={`flex items-center justify-between p-2 rounded-lg bg-dark-800/50 transition-colors ${isClaudeCodePresetAllowed.value ? 'hover:bg-dark-800 cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+                  class={`flex items-center justify-between p-2 rounded-lg bg-surface-raised/50 transition-colors ${isClaudeCodePresetAllowed.value ? 'hover:bg-surface-raised cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
                 >
                   <div>
-                    <div class="text-sm text-gray-200">Claude Code Preset</div>
-                    <div class="text-xs text-gray-500">Use official Claude Code system prompt</div>
+                    <div class="text-sm text-fg-soft">Claude Code Preset</div>
+                    <div class="text-xs text-fg-faint">Use official Claude Code system prompt</div>
                   </div>
                   <input
                     type="checkbox"
@@ -817,12 +816,12 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                       useClaudeCodePreset.value = !useClaudeCodePreset.value;
                     }}
                     disabled={!isClaudeCodePresetAllowed.value}
-                    class="w-4 h-4 rounded border-gray-600 text-blue-500"
+                    class="w-4 h-4 rounded border-line-strong text-accent"
                   />
                 </label>
               </div>
               <div>
-                <h4 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+                <h4 class="text-xs font-medium text-fg-faint uppercase tracking-wider mb-2">
                   Setting Sources
                 </h4>
                 <div class="space-y-1.5">
@@ -835,10 +834,10 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                           ? settingSources.value.filter((s) => s !== 'user')
                           : [...settingSources.value, 'user'])
                       }
-                      class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                      class="w-4 h-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
                     />
-                    <span class="text-sm text-gray-200">User settings</span>
-                    <span class="text-xs text-gray-500">(~/.claude/settings.json)</span>
+                    <span class="text-sm text-fg-soft">User settings</span>
+                    <span class="text-xs text-fg-faint">(~/.claude/settings.json)</span>
                   </label>
                   <label class="flex items-center gap-2 cursor-pointer">
                     <input
@@ -849,10 +848,10 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                           ? settingSources.value.filter((s) => s !== 'project')
                           : [...settingSources.value, 'project'])
                       }
-                      class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                      class="w-4 h-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
                     />
-                    <span class="text-sm text-gray-200">Project settings + CLAUDE.md</span>
-                    <span class="text-xs text-gray-500">(.claude/settings.json)</span>
+                    <span class="text-sm text-fg-soft">Project settings + CLAUDE.md</span>
+                    <span class="text-xs text-fg-faint">(.claude/settings.json)</span>
                   </label>
                   <label class="flex items-center gap-2 cursor-pointer">
                     <input
@@ -863,10 +862,10 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
                           ? settingSources.value.filter((s) => s !== 'local')
                           : [...settingSources.value, 'local'])
                       }
-                      class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                      class="w-4 h-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
                     />
-                    <span class="text-sm text-gray-200">Local settings</span>
-                    <span class="text-xs text-gray-500">(.claude/settings.local.json)</span>
+                    <span class="text-sm text-fg-soft">Local settings</span>
+                    <span class="text-xs text-fg-faint">(.claude/settings.local.json)</span>
                   </label>
                 </div>
               </div>
@@ -874,11 +873,11 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
           )}
         </div>
 
-        <div class={`pt-4 border-t ${borderColors.ui.secondary} flex gap-3 justify-end`}>
+        <div class="pt-4 border-t border-line-strong flex gap-3 justify-end">
           <button
             type="button"
             onClick={handleCancel}
-            class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition-colors"
+            class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-fg transition-colors"
           >
             Cancel
           </button>
@@ -888,8 +887,8 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
             disabled={!hasChanges.value || saving.value}
             class={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
               hasChanges.value && !saving.value
-                ? 'bg-blue-500 text-white hover:bg-blue-600'
-                : 'bg-dark-700 text-gray-500 cursor-not-allowed'
+                ? 'bg-accent text-accent-fg hover:bg-accent-hover'
+                : 'bg-fill-strong text-fg-faint cursor-not-allowed'
             }`}
           >
             {saving.value ? (

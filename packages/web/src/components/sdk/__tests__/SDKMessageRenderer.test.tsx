@@ -599,7 +599,7 @@ describe('SDKMessageRenderer', () => {
       const message = createResultMessage(false);
       const { container } = render(<SDKMessageRenderer message={message} />);
 
-      expect(container.querySelector('.bg-red-50, .bg-red-900\\/10')).toBeTruthy();
+      expect(container.querySelector('[class*="bg-danger/10"]')).toBeTruthy();
     });
   });
 

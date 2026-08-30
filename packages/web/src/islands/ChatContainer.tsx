@@ -48,7 +48,6 @@ import { useSendMessage } from '../hooks/useSendMessage.ts';
 import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
-import { borderColors } from '../lib/design-tokens';
 import { MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
 import {
   clearOverlayHighlightMessageId,
@@ -1030,7 +1029,7 @@ export default function ChatContainer({
             <button
               type="button"
               onClick={onBack}
-              class="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-dark-800 hover:text-gray-200 transition-colors flex-shrink-0"
+              class="inline-flex h-8 w-8 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg-soft transition-colors flex-shrink-0"
               aria-label="Back"
             >
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1044,8 +1043,8 @@ export default function ChatContainer({
             </button>
           )}
           <div class="min-w-0 flex-1">
-            <div class="text-sm font-medium text-gray-100 truncate">{pendingAgent.agentName}</div>
-            <div class="text-xs text-gray-500 truncate">
+            <div class="text-sm font-medium text-fg truncate">{pendingAgent.agentName}</div>
+            <div class="text-xs text-fg-faint truncate">
               {pendingWaitingForSession ? 'Starting session…' : 'Not started yet'}
             </div>
           </div>
@@ -1054,28 +1053,28 @@ export default function ChatContainer({
         <div class="flex-1 min-h-0 overflow-auto px-4 py-6">
           <div
             class={cn(
-              'mx-auto max-w-md text-center text-sm rounded-lg border bg-dark-850/60 px-4 py-6',
-              borderColors.ui.default
+              'mx-auto max-w-md text-center text-sm rounded-lg border bg-surface-overlay/60 px-4 py-6',
+              'border-line'
             )}
             data-testid="pending-agent-overlay-body"
           >
             {pendingWaitingForSession ? (
               <>
                 <div class="mb-3 flex items-center justify-center">
-                  <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <div class="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
                 </div>
-                <p class="text-gray-200 font-medium mb-1">Starting {pendingAgent.agentName}…</p>
-                <p class="text-gray-500">
+                <p class="text-fg-soft font-medium mb-1">Starting {pendingAgent.agentName}…</p>
+                <p class="text-fg-faint">
                   Your message has been queued. The session will open here as soon as the agent is
                   ready.
                 </p>
               </>
             ) : (
               <>
-                <p class="text-gray-200 font-medium mb-1">
+                <p class="text-fg-soft font-medium mb-1">
                   {pendingAgent.agentName} hasn't started yet
                 </p>
-                <p class="text-gray-500">
+                <p class="text-fg-faint">
                   Send a message below to start this agent's session. Your first message will be
                   delivered when the session is ready.
                 </p>
@@ -1084,16 +1083,16 @@ export default function ChatContainer({
           </div>
         </div>
 
-        <div class={cn('flex-shrink-0 border-t bg-app-content px-3 py-3', borderColors.ui.default)}>
+        <div class={cn('flex-shrink-0 border-t bg-app-content px-3 py-3', 'border-line')}>
           {pendingErrorMessage && (
-            <p class="mb-2 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
+            <p class="mb-2 rounded border border-danger/30 bg-danger/10 px-2 py-1 text-xs text-danger-soft">
               {pendingErrorMessage}
             </p>
           )}
           <div class="flex gap-2">
             <textarea
               ref={pendingTextareaRef}
-              class="flex-1 min-h-[44px] max-h-40 resize-none rounded-md bg-dark-850 border border-dark-700 text-sm text-gray-100 px-3 py-2 placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              class="flex-1 min-h-[44px] max-h-40 resize-none rounded-md bg-surface-overlay border border-line text-sm text-fg px-3 py-2 placeholder-gray-500 focus:outline-none focus:border-accent"
               placeholder={
                 pendingWaitingForSession
                   ? `Send another message to ${pendingAgent.agentName}…`
@@ -1116,8 +1115,8 @@ export default function ChatContainer({
               disabled={!pendingContent.trim() || pendingSubmitting}
               class={cn(
                 'inline-flex items-center justify-center rounded-md px-3 text-sm font-medium transition-colors flex-shrink-0',
-                'bg-blue-600 text-white hover:bg-blue-500',
-                'disabled:bg-dark-700 disabled:text-gray-500 disabled:cursor-not-allowed'
+                'bg-accent-hover text-accent-fg hover:bg-accent',
+                'disabled:bg-fill-strong disabled:text-fg-faint disabled:cursor-not-allowed'
               )}
               data-testid="pending-agent-overlay-send"
             >
@@ -1154,14 +1153,14 @@ export default function ChatContainer({
     return (
       <div class="flex-1 flex flex-col bg-app-content overflow-hidden relative">
         <div class="flex items-center gap-3 px-4 h-[52px] flex-shrink-0">
-          <div class="w-4 h-4 rounded-full bg-dark-700 animate-pulse" />
-          <div class="h-4 w-48 rounded bg-dark-700 animate-pulse" />
+          <div class="w-4 h-4 rounded-full bg-fill-strong animate-pulse" />
+          <div class="h-4 w-48 rounded bg-fill-strong animate-pulse" />
         </div>
         <div class="flex-1 flex items-center justify-center">
-          <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <div class="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
         </div>
         <div class="absolute bottom-0 left-0 right-0 pt-4 pb-4 px-4">
-          <div class="h-10 rounded-2xl bg-dark-800 animate-pulse" />
+          <div class="h-10 rounded-2xl bg-surface-raised animate-pulse" />
         </div>
       </div>
     );
@@ -1175,10 +1174,10 @@ export default function ChatContainer({
     >
       {isDragging && <ImageDropOverlay />}
       {(sessionActions.archiving || sessionActions.deleting) && (
-        <div class="absolute inset-0 z-40 flex items-center justify-center bg-dark-900/80 backdrop-blur-sm">
+        <div class="absolute inset-0 z-40 flex items-center justify-center bg-surface/80 backdrop-blur-sm">
           <div class="text-center">
             <Spinner size="lg" className="mx-auto mb-3" />
-            <p class="text-sm text-gray-400">
+            <p class="text-sm text-fg-muted">
               {sessionActions.deleting ? 'Deleting session...' : 'Archiving session...'}
             </p>
           </div>
@@ -1200,7 +1199,7 @@ export default function ChatContainer({
 
       {isRecovering && !error && !isInitialLoad && (
         <div
-          class="flex items-center justify-center gap-2 border-b border-blue-500/20 bg-blue-500/10 px-4 py-1.5 text-xs text-blue-200"
+          class="flex items-center justify-center gap-2 border-b border-accent/20 bg-accent/10 px-4 py-1.5 text-xs text-accent-soft"
           data-testid="session-recovering-banner"
           role="status"
           aria-live="polite"
@@ -1212,7 +1211,7 @@ export default function ChatContainer({
 
       {sessionTerminal && !isInitialLoad && !error && (
         <div
-          class="flex items-center justify-between gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-200"
+          class="flex items-center justify-between gap-2 border-b border-warning/20 bg-warning/10 px-4 py-1.5 text-xs text-warning-soft"
           data-testid={`session-${session?.status}-banner`}
           role="status"
           aria-live="polite"
@@ -1227,7 +1226,7 @@ export default function ChatContainer({
               {onRefreshAgent && (
                 <button
                   type="button"
-                  class="rounded px-1.5 py-0.5 text-amber-200 hover:bg-amber-500/20"
+                  class="rounded px-1.5 py-0.5 text-warning-soft hover:bg-warning/20"
                   onClick={onRefreshAgent}
                 >
                   Refresh
@@ -1236,7 +1235,7 @@ export default function ChatContainer({
               {onBack && (
                 <button
                   type="button"
-                  class="rounded px-1.5 py-0.5 text-amber-200 hover:bg-amber-500/20"
+                  class="rounded px-1.5 py-0.5 text-warning-soft hover:bg-warning/20"
                   onClick={onBack}
                 >
                   Go back
@@ -1294,11 +1293,11 @@ export default function ChatContainer({
           )}
 
           {isRewinding && (
-            <div class="absolute inset-0 z-50 bg-dark-900/80 backdrop-blur-sm flex items-center justify-center">
-              <div class="bg-dark-800 border border-amber-500/30 rounded-xl p-6 flex flex-col items-center gap-4 shadow-2xl">
-                <Spinner size="lg" color="border-amber-500" />
-                <div class="text-amber-200 text-sm font-medium">Rewinding conversation...</div>
-                <div class="text-gray-400 text-xs">This may take a moment</div>
+            <div class="absolute inset-0 z-50 bg-surface/80 backdrop-blur-sm flex items-center justify-center">
+              <div class="bg-surface-raised border border-warning/30 rounded-xl p-6 flex flex-col items-center gap-4 shadow-2xl">
+                <Spinner size="lg" color="border-warning" />
+                <div class="text-warning-soft text-sm font-medium">Rewinding conversation...</div>
+                <div class="text-fg-muted text-xs">This may take a moment</div>
               </div>
             </div>
           )}
@@ -1313,8 +1312,8 @@ export default function ChatContainer({
               <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
                 <div class="text-center">
                   <div class="text-5xl mb-4">💬</div>
-                  <p class="text-lg text-gray-300 mb-2">No messages yet</p>
-                  <p class="text-sm text-gray-500">
+                  <p class="text-lg text-fg-soft mb-2">No messages yet</p>
+                  <p class="text-sm text-fg-faint">
                     Start a conversation with Claude to see the magic happen
                   </p>
                 </div>
@@ -1344,7 +1343,7 @@ export default function ChatContainer({
 
               {!hasMoreMessages && messages.length > 0 && (
                 <div class="flex items-center justify-center py-4">
-                  <div class="text-xs text-gray-500">Beginning of conversation</div>
+                  <div class="text-xs text-fg-faint">Beginning of conversation</div>
                 </div>
               )}
 
@@ -1437,7 +1436,7 @@ export default function ChatContainer({
 
       <Modal isOpen={deleteModal.isOpen} onClose={deleteModal.close} title="Delete Chat" size="sm">
         <div class="space-y-4">
-          <p class="text-gray-300 text-sm">
+          <p class="text-fg-soft text-sm">
             Are you sure you want to delete this chat session? This action cannot be undone.
           </p>
           <div class="flex gap-3 justify-end">
@@ -1486,7 +1485,7 @@ export default function ChatContainer({
         size="sm"
       >
         <div class="space-y-4">
-          <p class="text-gray-300 text-sm">
+          <p class="text-fg-soft text-sm">
             This will rewind the conversation to before this message. Choose what to restore:
           </p>
           <div class="space-y-2">
@@ -1497,9 +1496,9 @@ export default function ChatContainer({
                 value="both"
                 checked={rewindModeChoice === 'both'}
                 onChange={() => setRewindModeChoice('both')}
-                class="text-amber-500 focus:ring-amber-500"
+                class="text-warning focus:ring-amber-500"
               />
-              <span class="text-sm text-gray-200">Files & Conversation</span>
+              <span class="text-sm text-fg-soft">Files & Conversation</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer">
               <input
@@ -1508,9 +1507,9 @@ export default function ChatContainer({
                 value="files"
                 checked={rewindModeChoice === 'files'}
                 onChange={() => setRewindModeChoice('files')}
-                class="text-amber-500 focus:ring-amber-500"
+                class="text-warning focus:ring-amber-500"
               />
-              <span class="text-sm text-gray-200">Files only</span>
+              <span class="text-sm text-fg-soft">Files only</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer">
               <input
@@ -1519,12 +1518,12 @@ export default function ChatContainer({
                 value="conversation"
                 checked={rewindModeChoice === 'conversation'}
                 onChange={() => setRewindModeChoice('conversation')}
-                class="text-amber-500 focus:ring-amber-500"
+                class="text-warning focus:ring-amber-500"
               />
-              <span class="text-sm text-gray-200">Conversation only</span>
+              <span class="text-sm text-fg-soft">Conversation only</span>
             </label>
           </div>
-          <p class="text-amber-400 text-xs">This action cannot be undone.</p>
+          <p class="text-warning text-xs">This action cannot be undone.</p>
           <div class="flex gap-3 justify-end">
             <Button variant="secondary" onClick={handleRewindCancel} disabled={isRewinding}>
               Cancel

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'preact/hooks';
 import { AgentOverlayChat } from '../components/space/AgentOverlayChat';
 import { SpaceCreateTaskDialog } from '../components/space/SpaceCreateTaskDialog';
 import { useSpaceWorkspaceChoice } from '../components/space/SpaceWorkspacePicker';
-import { GLASS_PRIMARY_BUTTON_CLASS, GlassRouteShell } from '../components/space/glass-workspace';
+import { GlassRouteShell } from '../components/space/glass-workspace';
 import { SpacePageHeader } from '../components/space/SpacePageHeader';
 import { TaskAuxiliaryPanel } from '../components/space/TaskAuxiliaryPanel';
 import { createSession } from '../lib/api-helpers';
@@ -67,7 +67,7 @@ const SpaceMemories = lazy(() =>
 
 const lazyFallback = (
   <div class="flex-1 flex items-center justify-center bg-app-content">
-    <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+    <div class="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
   </div>
 );
 
@@ -270,7 +270,7 @@ export default function SpaceIsland({
   if (!space && !error) {
     return (
       <div class="flex-1 flex items-center justify-center bg-app-content">
-        <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <div class="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -278,8 +278,8 @@ export default function SpaceIsland({
     return (
       <div class="flex-1 flex items-center justify-center bg-app-content">
         <div class="text-center max-w-sm">
-          <p class="text-sm text-red-400 mb-2">Failed to load space</p>
-          <p class="text-xs text-gray-400">{error}</p>
+          <p class="text-sm text-danger mb-2">Failed to load space</p>
+          <p class="text-xs text-fg-muted">{error}</p>
         </div>
       </div>
     );
@@ -331,7 +331,7 @@ export default function SpaceIsland({
             <button
               type="button"
               onClick={() => setCreateTaskOpen(true)}
-              class={`${GLASS_PRIMARY_BUTTON_CLASS} !h-9 !px-3 sm:!px-4`}
+              class={`glass-primary-button !h-9 !px-3 sm:!px-4`}
               aria-label="Create task"
             >
               <svg
@@ -424,7 +424,7 @@ export default function SpaceIsland({
               type="button"
               onClick={handleCreateSession}
               disabled={creatingSession}
-              class={`${GLASS_PRIMARY_BUTTON_CLASS} !h-9 !px-3 sm:!px-4 disabled:cursor-not-allowed disabled:opacity-50`}
+              class={`glass-primary-button !h-9 !px-3 sm:!px-4 disabled:cursor-not-allowed disabled:opacity-50`}
               aria-label="Create session"
             >
               <svg

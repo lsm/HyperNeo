@@ -93,6 +93,7 @@ export const currentSpaceScopeIdSignal = signal<string | null>(null);
 
 export type SettingsSection =
   | 'general'
+  | 'appearance'
   | 'providers'
   | 'voice'
   | 'app-mcp-servers'

@@ -1,10 +1,20 @@
-import { INDICATOR_TONES, type IndicatorTone } from '../lib/indicator-tokens.ts';
 import {
   SESSION_PROCESSING_PHASE_CONFIG,
   SESSION_PROCESSING_STATUS_CONFIG,
   type SessionProcessingConfig,
+  type SessionProcessingTone,
 } from '../lib/session-processing-phase.ts';
 import { StatusDot } from './ui/StatusDot.tsx';
+
+const toneTextClasses: Record<SessionProcessingTone, string> = {
+  neutral: 'text-fg-muted',
+  info: 'text-accent',
+  progress: 'text-warning',
+  success: 'text-success',
+  warning: 'text-warning',
+  danger: 'text-danger',
+  special: 'text-cat-purple',
+};
 
 interface ConnectionStatusProps {
   connectionState:
@@ -20,7 +30,7 @@ interface ConnectionStatusProps {
 }
 
 interface StatusResult {
-  tone: IndicatorTone;
+  tone: SessionProcessingTone;
   pulse: boolean;
   text: string;
 }
@@ -66,9 +76,7 @@ export default function ConnectionStatus({
     <div class="flex items-center gap-2">
       <StatusDot tone={status.tone} pulse={status.pulse} />
       {status.text && (
-        <span class={`text-xs font-medium ${INDICATOR_TONES[status.tone].text}`}>
-          {status.text}
-        </span>
+        <span class={`text-xs font-medium ${toneTextClasses[status.tone]}`}>{status.text}</span>
       )}
     </div>
   );

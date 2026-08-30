@@ -245,14 +245,14 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
       data-testid="bottom-tab-bar"
       class={
         inline
-          ? 'flex md:hidden flex-shrink-0 bg-dark-900/90 backdrop-blur-md pb-safe'
-          : 'flex md:hidden fixed bottom-0 left-0 right-0 z-50 bg-dark-900/90 backdrop-blur-md pb-safe'
+          ? 'flex md:hidden flex-shrink-0 bg-surface/90 backdrop-blur-md pb-safe'
+          : 'flex md:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface/90 backdrop-blur-md pb-safe'
       }
       role="tablist"
       aria-label={isInSpaceContext ? 'Space navigation' : 'Main navigation'}
     >
       <div
-        class="flex w-full border-t border-dark-700 transition-opacity duration-200 ease-out"
+        class="flex w-full border-t border-line transition-opacity duration-200 ease-out"
         style={{ height: BOTTOM_BAR_HEIGHT + 'px' }}
         key={isInSpaceContext ? 'space' : 'global'}
       >
@@ -268,7 +268,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
               aria-label={tab.label}
               onClick={() => handleTabClick(tab.id)}
               class={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors duration-150 ${
-                isActive ? 'text-indigo-400' : 'text-gray-400 active:text-gray-300'
+                isActive ? 'text-cat-indigo' : 'text-fg-muted active:text-fg-soft'
               }`}
             >
               <tab.icon />

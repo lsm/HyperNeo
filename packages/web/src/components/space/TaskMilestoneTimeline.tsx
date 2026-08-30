@@ -1,14 +1,23 @@
-import type { TaskMilestoneRow } from '@hyperneo/shared';
+import type { TaskMilestoneRow, TaskMilestoneTone } from '@hyperneo/shared';
 import { useMemo } from 'preact/hooks';
 import { useTaskMilestones } from '../../hooks/useTaskMilestones';
 import { useVisibleTick } from '../../hooks/useVisibleTick';
-import { INDICATOR_TONES } from '../../lib/indicator-tokens';
 import { curateTaskMilestones, formatRelativeTimestamp } from '../../lib/task-milestones';
 import { cn } from '../../lib/utils';
 
+const TONE_CLASSES: Record<TaskMilestoneTone, { bg: string; soft: string }> = {
+  neutral: { bg: 'bg-fg-faint', soft: 'border-fg-faint/30 bg-fg-faint/10 text-fg-muted' },
+  info: { bg: 'bg-accent', soft: 'border-accent/30 bg-accent/10 text-accent-soft' },
+  progress: { bg: 'bg-warning', soft: 'border-warning/30 bg-warning/10 text-warning-soft' },
+  success: { bg: 'bg-success', soft: 'border-success/30 bg-success/10 text-success-soft' },
+  warning: { bg: 'bg-warning', soft: 'border-warning/30 bg-warning/10 text-warning-soft' },
+  danger: { bg: 'bg-danger', soft: 'border-danger/30 bg-danger/10 text-danger-soft' },
+  special: { bg: 'bg-cat-purple', soft: 'border-cat-purple/30 bg-cat-purple/10 text-cat-purple' },
+};
+
 function SourceChip({ row }: { row: TaskMilestoneRow }) {
   if (!row.sourceLabel) return null;
-  const toneSet = INDICATOR_TONES[row.tone] ?? INDICATOR_TONES.neutral;
+  const toneSet = TONE_CLASSES[row.tone] ?? TONE_CLASSES.neutral;
   return (
     <span
       class={cn(
@@ -30,25 +39,25 @@ function MilestoneRow({
   showTime: boolean;
   timeLabel: string;
 }) {
-  const toneSet = INDICATOR_TONES[row.tone] ?? INDICATOR_TONES.neutral;
+  const toneSet = TONE_CLASSES[row.tone] ?? TONE_CLASSES.neutral;
   return (
     <li class="relative pl-6" data-testid="task-milestone-row">
       <span
         class={cn(
-          'absolute left-0 top-2.5 h-2.5 w-2.5 rounded-full ring-2 ring-dark-900',
+          'absolute left-0 top-2.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface',
           toneSet.bg
         )}
       />
-      <div class="rounded-lg border border-dark-700 bg-dark-850/70 px-3 py-2 shadow-sm shadow-black/10">
+      <div class="rounded-lg border border-line bg-surface-overlay/70 px-3 py-2 shadow-sm shadow-black/10">
         <div class="flex flex-wrap items-center gap-2">
-          <span class="text-sm font-medium text-gray-100">{row.title}</span>
+          <span class="text-sm font-medium text-fg">{row.title}</span>
           <SourceChip row={row} />
-          <span class="ml-auto text-[11px] tabular-nums text-gray-400">
+          <span class="ml-auto text-[11px] tabular-nums text-fg-muted">
             {showTime ? timeLabel : ''}
           </span>
         </div>
         {row.body ? (
-          <p class="mt-1 line-clamp-3 text-sm leading-relaxed text-gray-300">{row.body}</p>
+          <p class="mt-1 line-clamp-3 text-sm leading-relaxed text-fg-soft">{row.body}</p>
         ) : null}
       </div>
     </li>
@@ -76,7 +85,7 @@ export function TaskMilestoneTimeline({
   if (isReconnecting || isLoading) {
     return (
       <div class="h-full overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-gray-400">
+        <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-fg-muted">
           {isReconnecting ? 'Reconnecting task timeline…' : 'Loading task timeline…'}
         </div>
       </div>
@@ -86,7 +95,7 @@ export function TaskMilestoneTimeline({
   if (curated.length === 0) {
     return (
       <div class="h-full overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-gray-400">
+        <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center text-sm text-fg-muted">
           No task timeline events yet.
         </div>
       </div>

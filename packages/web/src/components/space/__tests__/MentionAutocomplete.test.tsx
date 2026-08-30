@@ -6,12 +6,6 @@ vi.mock('../../../lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
-vi.mock('../../../lib/design-tokens', () => ({
-  borderColors: {
-    ui: { default: 'border-dark-700' },
-  },
-}));
-
 import MentionAutocomplete from '../MentionAutocomplete';
 
 const agents = [
@@ -49,9 +43,9 @@ describe('MentionAutocomplete', () => {
       <MentionAutocomplete agents={agents} selectedIndex={1} onSelect={vi.fn()} onClose={vi.fn()} />
     );
     const items = getAllByTestId('mention-item');
-    expect(items[1].className).toContain('bg-blue-500/20');
-    expect(items[0].className).not.toContain('bg-blue-500/20');
-    expect(items[2].className).not.toContain('bg-blue-500/20');
+    expect(items[1].className).toContain('bg-accent/20');
+    expect(items[0].className).not.toContain('bg-accent/20');
+    expect(items[2].className).not.toContain('bg-accent/20');
   });
 
   it('calls onSelect with agent name when an item is clicked', () => {

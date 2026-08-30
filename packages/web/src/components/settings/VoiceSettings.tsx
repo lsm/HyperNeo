@@ -136,7 +136,7 @@ export function VoiceSettings() {
             type="button"
             onClick={() => applyPreset('openai')}
             disabled={saving}
-            class="rounded-lg border border-white/[0.08] px-3 py-1.5 text-sm text-gray-200 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+            class="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-soft hover:bg-fill-soft disabled:cursor-not-allowed disabled:opacity-50"
           >
             OpenAI
           </button>
@@ -144,7 +144,7 @@ export function VoiceSettings() {
             type="button"
             onClick={() => applyPreset('local')}
             disabled={saving}
-            class="rounded-lg border border-white/[0.08] px-3 py-1.5 text-sm text-gray-200 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+            class="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-soft hover:bg-fill-soft disabled:cursor-not-allowed disabled:opacity-50"
           >
             Local / custom
           </button>
@@ -163,7 +163,7 @@ export function VoiceSettings() {
           onInput={(event) => setDraft({ ...draft, endpoint: event.currentTarget.value })}
           onBlur={() => patchOnBlur('endpoint')}
           placeholder="https://api.openai.com/v1/audio/transcriptions"
-          class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg-soft focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
       </SettingsRow>
 
@@ -175,7 +175,7 @@ export function VoiceSettings() {
           onInput={(event) => setDraft({ ...draft, model: event.currentTarget.value })}
           onBlur={() => patchOnBlur('model')}
           placeholder="whisper-1"
-          class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg-soft focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
       </SettingsRow>
 
@@ -195,7 +195,7 @@ export function VoiceSettings() {
               if (apiKey) void save({ ...draft, apiKey }, { silent: true });
             }}
             placeholder="sk-..."
-            class="w-full rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg-soft focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
           {draft.hasApiKey &&
             !draft.apiKey &&
@@ -213,11 +213,7 @@ export function VoiceSettings() {
                 normalizeEndpoint(draft.apiKeyEndpoint) !== normalizeEndpoint(draft.endpoint);
               return (
                 <div class="flex items-center justify-between gap-3">
-                  <div
-                    class={
-                      keyScopedElsewhere ? 'text-xs text-amber-400' : 'text-xs text-emerald-400'
-                    }
-                  >
+                  <div class={keyScopedElsewhere ? 'text-xs text-warning' : 'text-xs text-success'}>
                     {keyScopedElsewhere
                       ? 'Saved key is scoped to a different endpoint. Re-enter it for this endpoint.'
                       : 'Key saved. Enter a new key to replace it.'}
@@ -228,7 +224,7 @@ export function VoiceSettings() {
                       void removeKey();
                     }}
                     disabled={saving}
-                    class="rounded-md border border-red-400/30 px-2 py-1 text-xs text-red-300 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    class="rounded-md border border-red-400/30 px-2 py-1 text-xs text-danger-soft hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Remove key
                   </button>
@@ -267,7 +263,7 @@ export function VoiceSettings() {
             void testConnection();
           }}
           disabled={testing || saving || !draft.enabled}
-          class="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          class="rounded-lg bg-accent-hover px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
         >
           {testing ? 'Testing…' : 'Test connection'}
         </button>

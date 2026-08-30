@@ -44,22 +44,22 @@ export function ResultInfoDropdown({ result }: Props) {
 
   const t = isError
     ? {
-        bg: 'bg-amber-50 dark:bg-amber-900/70',
-        border: 'border-amber-200 dark:border-amber-800',
-        headText: 'text-amber-900 dark:text-amber-100',
-        subText: 'text-amber-600 dark:text-amber-400',
-        body: 'text-amber-700 dark:text-amber-300',
-        bodyBg: 'bg-amber-100 dark:bg-amber-900/30',
-        icon: 'text-amber-600 dark:text-amber-400',
+        bg: 'bg-warning/10',
+        border: 'border-warning/40',
+        headText: 'text-warning-soft',
+        subText: 'text-warning',
+        body: 'text-warning',
+        bodyBg: 'bg-warning/15',
+        icon: 'text-warning',
       }
     : {
         bg: 'bg-emerald-50 dark:bg-emerald-900/70',
         border: 'border-emerald-200 dark:border-emerald-800',
-        headText: 'text-emerald-900 dark:text-emerald-100',
-        subText: 'text-emerald-600 dark:text-emerald-400',
-        body: 'text-emerald-700 dark:text-emerald-300',
+        headText: 'text-success-soft',
+        subText: 'text-success',
+        body: 'text-success',
         bodyBg: 'bg-emerald-100 dark:bg-emerald-900/30',
-        icon: 'text-emerald-600 dark:text-emerald-400',
+        icon: 'text-success',
       };
 
   return (

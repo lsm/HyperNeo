@@ -29,7 +29,7 @@ interface RawModelEntry {
 
 function ChevronUpIcon() {
   return (
-    <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <svg class="w-4 h-4 text-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
     </svg>
   );
@@ -37,7 +37,7 @@ function ChevronUpIcon() {
 
 function ChevronDownIcon() {
   return (
-    <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <svg class="w-4 h-4 text-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
     </svg>
   );
@@ -46,7 +46,7 @@ function ChevronDownIcon() {
 function XIcon({ class: cls }: { class?: string }) {
   return (
     <svg
-      class={cls ?? 'w-4 h-4 text-gray-400'}
+      class={cls ?? 'w-4 h-4 text-fg-muted'}
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -71,7 +71,7 @@ function PlusIcon() {
 
 function PencilIcon() {
   return (
-    <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <svg class="w-4 h-4 text-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path
         stroke-linecap="round"
         stroke-linejoin="round"
@@ -112,22 +112,22 @@ function ModelPickerModal({
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="bg-dark-850 border border-dark-600 rounded-lg shadow-xl w-80 max-h-[80vh] overflow-hidden flex flex-col">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-dark-700">
-          <h3 class="text-sm font-medium text-gray-100">{title}</h3>
-          <button class="p-1 rounded hover:bg-dark-700" onClick={onClose}>
+      <div class="bg-surface-overlay border border-line-strong rounded-lg shadow-xl w-80 max-h-[80vh] overflow-hidden flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-line">
+          <h3 class="text-sm font-medium text-fg">{title}</h3>
+          <button class="p-1 rounded hover:bg-fill-strong" onClick={onClose}>
             <XIcon />
           </button>
         </div>
 
-        <div class="px-3 py-3 border-b border-dark-700">
+        <div class="px-3 py-3 border-b border-line">
           <input
             type="search"
             value={searchQuery}
             onInput={(e) => setSearchQuery(e.currentTarget.value)}
             placeholder="Search models..."
             aria-label="Search models"
-            class="w-full bg-dark-900 border border-dark-600 rounded px-2 py-1.5 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
+            class="w-full bg-surface border border-line-strong rounded px-2 py-1.5 text-sm text-fg placeholder:text-fg-faint focus:outline-none focus:border-accent"
           />
         </div>
 
@@ -138,19 +138,19 @@ function ModelPickerModal({
 
             return (
               <div key={provider}>
-                <div class="px-4 py-1.5 text-xs font-semibold text-gray-400">
+                <div class="px-4 py-1.5 text-xs font-semibold text-fg-muted">
                   {PROVIDER_LABELS[provider] || getProviderLabel(provider)}
-                  {!isAuthenticated && <span class="text-gray-600 ml-1">(not authenticated)</span>}
+                  {!isAuthenticated && <span class="text-fg-faint ml-1">(not authenticated)</span>}
                 </div>
                 {models.map((model) => {
                   return (
                     <button
                       key={`${model.provider}:${model.id}`}
-                      class="w-full text-left px-4 py-2 text-sm flex items-center gap-2 hover:bg-dark-700 transition-colors"
+                      class="w-full text-left px-4 py-2 text-sm flex items-center gap-2 hover:bg-fill-strong transition-colors"
                       onClick={() => onSelect(model)}
                     >
                       <ProviderLogo provider={model.provider} class="h-4 w-4" />
-                      <span class="flex-1 text-gray-200 truncate">{model.name}</span>
+                      <span class="flex-1 text-fg-soft truncate">{model.name}</span>
                     </button>
                   );
                 })}
@@ -159,7 +159,7 @@ function ModelPickerModal({
           })}
 
           {remaining.length === 0 && (
-            <div class="px-4 py-4 text-sm text-gray-500 text-center">
+            <div class="px-4 py-4 text-sm text-fg-faint text-center">
               {searchQuery.trim() && hasUnselectedModels
                 ? 'No matching models'
                 : 'All available models are already selected'}
@@ -200,19 +200,19 @@ function FallbackChainEditor({
         return (
           <div
             key={`${entry.provider}:${entry.model}`}
-            class="flex items-center gap-2 bg-dark-800 border border-dark-700 rounded-lg px-3 py-2"
+            class="flex items-center gap-2 bg-surface-raised border border-line rounded-lg px-3 py-2"
           >
-            <span class="text-xs text-gray-500 font-medium w-4">{index + 1}.</span>
+            <span class="text-xs text-fg-faint font-medium w-4">{index + 1}.</span>
             <ProviderLogo provider={entry.provider} class="h-4 w-4" />
             <div class="flex-1 min-w-0">
-              <div class="text-sm text-gray-200 truncate">{displayInfo.name}</div>
-              <div class="text-xs text-gray-500">
+              <div class="text-sm text-fg-soft truncate">{displayInfo.name}</div>
+              <div class="text-xs text-fg-faint">
                 {PROVIDER_LABELS[entry.provider] || getProviderLabel(entry.provider)}
               </div>
             </div>
             <div class="flex items-center gap-1">
               <button
-                class="p-1 rounded hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
                 onClick={() => onMove(index, 'up')}
                 disabled={index === 0 || isUpdating}
                 title="Move up"
@@ -220,7 +220,7 @@ function FallbackChainEditor({
                 <ChevronUpIcon />
               </button>
               <button
-                class="p-1 rounded hover:bg-dark-700 disabled:opacity-30 disabled:cursor-not-allowed"
+                class="p-1 rounded hover:bg-fill-strong disabled:opacity-30 disabled:cursor-not-allowed"
                 onClick={() => onMove(index, 'down')}
                 disabled={index === models.length - 1 || isUpdating}
                 title="Move down"
@@ -229,12 +229,12 @@ function FallbackChainEditor({
               </button>
             </div>
             <button
-              class="p-1 rounded hover:bg-red-900/30 disabled:opacity-30 disabled:cursor-not-allowed"
+              class="p-1 rounded hover:bg-danger/30 disabled:opacity-30 disabled:cursor-not-allowed"
               onClick={() => onRemove(index)}
               disabled={isUpdating}
               title="Remove"
             >
-              <XIcon class="w-4 h-4 text-red-400" />
+              <XIcon class="w-4 h-4 text-danger" />
             </button>
           </div>
         );
@@ -321,31 +321,31 @@ function OverrideEditorModal({
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div class="bg-dark-850 border border-dark-600 rounded-lg shadow-xl w-96 max-h-[85vh] overflow-hidden flex flex-col">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-dark-700">
-          <h3 class="text-sm font-medium text-gray-100">
+      <div class="bg-surface-overlay border border-line-strong rounded-lg shadow-xl w-96 max-h-[85vh] overflow-hidden flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-line">
+          <h3 class="text-sm font-medium text-fg">
             {editingKey ? 'Edit Override' : 'Add Model-Specific Override'}
           </h3>
-          <button class="p-1 rounded hover:bg-dark-700" onClick={onClose}>
+          <button class="p-1 rounded hover:bg-fill-strong" onClick={onClose}>
             <XIcon />
           </button>
         </div>
 
         <div class="flex-1 overflow-y-auto p-4 space-y-4">
           <div>
-            <label class="block text-xs font-medium text-gray-400 mb-1">Source model</label>
+            <label class="block text-xs font-medium text-fg-muted mb-1">Source model</label>
             {sourceInfo ? (
-              <div class="flex items-center gap-2 bg-dark-800 border border-dark-700 rounded-lg px-3 py-2">
+              <div class="flex items-center gap-2 bg-surface-raised border border-line rounded-lg px-3 py-2">
                 <ProviderLogo provider={sourceInfo.provider} class="h-4 w-4" />
                 <div class="flex-1 min-w-0">
-                  <div class="text-sm text-gray-200 truncate">{sourceInfo.name}</div>
-                  <div class="text-xs text-gray-500">
+                  <div class="text-sm text-fg-soft truncate">{sourceInfo.name}</div>
+                  <div class="text-xs text-fg-faint">
                     {PROVIDER_LABELS[sourceInfo.provider] || getProviderLabel(sourceInfo.provider)}
                   </div>
                 </div>
                 {editingKey === null && (
                   <button
-                    class="p-1 rounded hover:bg-dark-700"
+                    class="p-1 rounded hover:bg-fill-strong"
                     onClick={() => setShowSourcePicker(true)}
                     title="Change"
                   >
@@ -355,7 +355,7 @@ function OverrideEditorModal({
               </div>
             ) : (
               <button
-                class="w-full flex items-center gap-2 px-3 py-2 text-sm text-blue-400 hover:text-blue-300 hover:bg-dark-800 rounded-lg border border-dashed border-dark-600 hover:border-dark-500 transition-colors"
+                class="w-full flex items-center gap-2 px-3 py-2 text-sm text-accent hover:text-accent-soft hover:bg-surface-raised rounded-lg border border-dashed border-line-strong hover:border-line-strong transition-colors"
                 onClick={() => setShowSourcePicker(true)}
               >
                 <PlusIcon />
@@ -365,9 +365,9 @@ function OverrideEditorModal({
           </div>
 
           <div>
-            <label class="block text-xs font-medium text-gray-400 mb-1">Fallback chain</label>
+            <label class="block text-xs font-medium text-fg-muted mb-1">Fallback chain</label>
             {chain.length === 0 ? (
-              <p class="text-xs text-gray-500 italic mb-2">No fallback models in this chain</p>
+              <p class="text-xs text-fg-faint italic mb-2">No fallback models in this chain</p>
             ) : (
               <FallbackChainEditor
                 models={chain}
@@ -378,7 +378,7 @@ function OverrideEditorModal({
               />
             )}
             <button
-              class="mt-2 flex items-center gap-2 px-3 py-2 text-sm text-blue-400 hover:text-blue-300 hover:bg-dark-800 rounded-lg border border-dashed border-dark-600 hover:border-dark-500 transition-colors"
+              class="mt-2 flex items-center gap-2 px-3 py-2 text-sm text-accent hover:text-accent-soft hover:bg-surface-raised rounded-lg border border-dashed border-line-strong hover:border-line-strong transition-colors"
               onClick={() => setShowAddFallbackPicker(true)}
             >
               <PlusIcon />
@@ -387,15 +387,15 @@ function OverrideEditorModal({
           </div>
         </div>
 
-        <div class="px-4 py-3 border-t border-dark-700 flex justify-end gap-2">
+        <div class="px-4 py-3 border-t border-line flex justify-end gap-2">
           <button
-            class="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200 rounded-lg hover:bg-dark-700 transition-colors"
+            class="px-3 py-1.5 text-sm text-fg-muted hover:text-fg-soft rounded-lg hover:bg-fill-strong transition-colors"
             onClick={onClose}
           >
             Cancel
           </button>
           <button
-            class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
+            class="px-3 py-1.5 text-sm bg-accent-hover hover:bg-accent text-accent-fg rounded-lg transition-colors disabled:opacity-50"
             onClick={handleSave}
             disabled={!sourceKey}
           >
@@ -669,10 +669,10 @@ export function ModelsSettings() {
 
   return (
     <SettingsSection title="Models">
-      <div class="space-y-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3">
+      <div class="space-y-3 rounded-lg border border-line bg-fill-soft px-4 py-3">
         <div>
-          <h4 class="text-sm font-medium text-gray-300">OpenRouter Model Allowlist</h4>
-          <p class="text-xs text-gray-500 mt-0.5">
+          <h4 class="text-sm font-medium text-fg-soft">OpenRouter Model Allowlist</h4>
+          <p class="text-xs text-fg-faint mt-0.5">
             OpenRouter does not expose dashboard-enabled account models through its public API. Add
             one model ID per line to limit model pickers and runtime validation to models you have
             enabled on OpenRouter.
@@ -682,7 +682,7 @@ export function ModelsSettings() {
           value={openRouterAllowlistText}
           onInput={(e) => setOpenRouterAllowlistText(e.currentTarget.value)}
           placeholder={`xai/grok-4.3\nqwen/qwen3.6-max-preview\ndeepseek/deepseek-v4-pro`}
-          class="w-full h-28 bg-dark-950/60 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600 focus:outline-none focus:border-blue-500 font-mono"
+          class="w-full h-28 bg-bg/60 border border-line rounded-lg px-3 py-2 text-sm text-fg placeholder:text-fg-faint focus:outline-none focus:border-accent font-mono"
         />
         <Button
           variant="primary"
@@ -707,7 +707,7 @@ export function ModelsSettings() {
       </div>
       {loadError && (
         <div
-          class="flex items-center justify-between gap-3 rounded-lg border border-red-300/20 px-4 py-3 text-sm text-red-200"
+          class="flex items-center justify-between gap-3 rounded-lg border border-danger-soft/20 px-4 py-3 text-sm text-danger-soft"
           role="alert"
         >
           <span>{loadError.message}</span>
@@ -723,21 +723,21 @@ export function ModelsSettings() {
         </div>
       )}
       <div class="space-y-3">
-        <div class="space-y-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3">
+        <div class="space-y-3 rounded-lg border border-line bg-fill-soft px-4 py-3">
           <div>
-            <h4 class="text-sm font-medium text-gray-300">Default Fallback Chain</h4>
-            <p class="text-xs text-gray-500 mt-0.5">
+            <h4 class="text-sm font-medium text-fg-soft">Default Fallback Chain</h4>
+            <p class="text-xs text-fg-faint mt-0.5">
               Applies to all models that don&apos;t have a specific override below.
             </p>
           </div>
 
           {loading ? (
-            <div class="flex items-center gap-2 text-xs text-gray-500">
+            <div class="flex items-center gap-2 text-xs text-fg-faint">
               <Spinner size="xs" />
               <span>Loading models...</span>
             </div>
           ) : fallbackModels.length === 0 ? (
-            <div class="text-xs text-gray-500 italic">No fallback models configured</div>
+            <div class="text-xs text-fg-faint italic">No fallback models configured</div>
           ) : (
             <FallbackChainEditor
               models={fallbackModels}
@@ -749,7 +749,7 @@ export function ModelsSettings() {
           )}
 
           <button
-            class="flex items-center gap-2 px-3 py-2 text-sm text-blue-400 hover:text-blue-300 hover:bg-dark-800 rounded-lg border border-dashed border-dark-600 hover:border-dark-500 transition-colors disabled:opacity-50"
+            class="flex items-center gap-2 px-3 py-2 text-sm text-accent hover:text-accent-soft hover:bg-surface-raised rounded-lg border border-dashed border-line-strong hover:border-line-strong transition-colors disabled:opacity-50"
             onClick={() => setShowAddModal(true)}
             disabled={loading}
           >
@@ -758,22 +758,22 @@ export function ModelsSettings() {
           </button>
         </div>
 
-        <div class="space-y-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3">
+        <div class="space-y-3 rounded-lg border border-line bg-fill-soft px-4 py-3">
           <div>
-            <h4 class="text-sm font-medium text-gray-300">Model-Specific Overrides</h4>
-            <p class="text-xs text-gray-500 mt-0.5">
+            <h4 class="text-sm font-medium text-fg-soft">Model-Specific Overrides</h4>
+            <p class="text-xs text-fg-faint mt-0.5">
               Override the default chain for a specific model. Takes priority when that model hits a
               limit.
             </p>
           </div>
 
           {loading ? (
-            <div class="flex items-center gap-2 text-xs text-gray-500">
+            <div class="flex items-center gap-2 text-xs text-fg-faint">
               <Spinner size="xs" />
               <span>Loading models...</span>
             </div>
           ) : overrideEntries.length === 0 ? (
-            <div class="text-xs text-gray-500 italic">
+            <div class="text-xs text-fg-faint italic">
               No model-specific overrides. Add one to override the default chain for a specific
               model.
             </div>
@@ -782,18 +782,18 @@ export function ModelsSettings() {
               {overrideEntries.map(([key, chain]) => {
                 const sourceInfo = getKeyDisplayInfo(key);
                 return (
-                  <div key={key} class="bg-dark-800 border border-dark-700 rounded-lg px-3 py-2">
+                  <div key={key} class="bg-surface-raised border border-line rounded-lg px-3 py-2">
                     <div class="flex items-center gap-2">
                       <ProviderLogo provider={sourceInfo.provider} class="h-4 w-4" />
                       <div class="flex-1 min-w-0">
-                        <div class="text-sm text-gray-200 truncate">{sourceInfo.name}</div>
-                        <div class="text-xs text-gray-500">
+                        <div class="text-sm text-fg-soft truncate">{sourceInfo.name}</div>
+                        <div class="text-xs text-fg-faint">
                           {PROVIDER_LABELS[sourceInfo.provider] ||
                             getProviderLabel(sourceInfo.provider)}
                         </div>
                       </div>
                       <button
-                        class="p-1 rounded hover:bg-dark-700 disabled:opacity-30"
+                        class="p-1 rounded hover:bg-fill-strong disabled:opacity-30"
                         onClick={() => setOverrideModal({ open: true, editingKey: key })}
                         disabled={isUpdating}
                         title="Edit"
@@ -801,12 +801,12 @@ export function ModelsSettings() {
                         <PencilIcon />
                       </button>
                       <button
-                        class="p-1 rounded hover:bg-red-900/30 disabled:opacity-30"
+                        class="p-1 rounded hover:bg-danger/30 disabled:opacity-30"
                         onClick={() => handleDeleteOverride(key)}
                         disabled={isUpdating}
                         title="Delete"
                       >
-                        <XIcon class="w-4 h-4 text-red-400" />
+                        <XIcon class="w-4 h-4 text-danger" />
                       </button>
                     </div>
 
@@ -817,9 +817,9 @@ export function ModelsSettings() {
                           return (
                             <span
                               key={`${entry.provider}:${entry.model}`}
-                              class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-dark-700 text-gray-300 rounded-full"
+                              class="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-fill-strong text-fg-soft rounded-full"
                             >
-                              <span class="text-gray-500">{i + 1}.</span>
+                              <span class="text-fg-faint">{i + 1}.</span>
                               <ProviderLogo provider={entry.provider} class="h-3 w-3" />
                               <span class="truncate max-w-[120px]">{info.name}</span>
                             </span>
@@ -828,7 +828,7 @@ export function ModelsSettings() {
                       </div>
                     )}
                     {chain.length === 0 && (
-                      <p class="mt-1.5 text-xs text-gray-600 italic">Empty chain</p>
+                      <p class="mt-1.5 text-xs text-fg-faint italic">Empty chain</p>
                     )}
                   </div>
                 );
@@ -837,7 +837,7 @@ export function ModelsSettings() {
           )}
 
           <button
-            class="flex items-center gap-2 px-3 py-2 text-sm text-blue-400 hover:text-blue-300 hover:bg-dark-800 rounded-lg border border-dashed border-dark-600 hover:border-dark-500 transition-colors disabled:opacity-50"
+            class="flex items-center gap-2 px-3 py-2 text-sm text-accent hover:text-accent-soft hover:bg-surface-raised rounded-lg border border-dashed border-line-strong hover:border-line-strong transition-colors disabled:opacity-50"
             onClick={() => setOverrideModal({ open: true, editingKey: null })}
             disabled={loading}
           >

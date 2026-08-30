@@ -24,7 +24,7 @@ import {
 import { SyntheticMessageBlock } from '../../../sdk/SyntheticMessageBlock';
 import { DeliveryStateBadge } from '../../../ui/DeliveryStateBadge';
 import { SpaceTaskThreadMessageActions } from '../SpaceTaskThreadMessageActions';
-import { getAgentColor } from '../space-task-thread-agent-colors';
+import { getAgentColor, getAgentTextColor } from '../space-task-thread-agent-colors';
 import type { ParsedThreadRow } from '../space-task-thread-events';
 import { pushOverlayHistory } from '../../../../lib/router';
 import { useVisibleTick } from '../../../../hooks/useVisibleTick';
@@ -238,7 +238,7 @@ function ReplacementBadge({ status }: { status?: MessageReplacementStatus }) {
   return (
     <div
       class={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${
-        isRetracted ? 'text-rose-300' : 'text-amber-300'
+        isRetracted ? 'text-cat-rose' : 'text-warning'
       }`}
       data-message-replacement-status={status}
     >
@@ -1413,7 +1413,7 @@ function rosterToolLabel(toolName: string): string {
 
 function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: boolean }) {
   const fadeClass = isLatest ? 'minimal-thread-roster-fade-in' : '';
-  const bodyClass = `truncate ${isLatest ? 'text-gray-100' : 'text-gray-400'}`;
+  const bodyClass = `truncate ${isLatest ? 'text-fg' : 'text-fg-muted'}`;
 
   if (entry.kind === 'tool') {
     const toolColor = getToolColors(entry.tool).iconColor;
@@ -1437,27 +1437,27 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
           <span class={`${toolColor} font-semibold`}>{toolLabel}</span>
           {preview ? (
             <>
-              <span class="text-gray-400">: </span>
+              <span class="text-fg-muted">: </span>
               <span class={bodyClass}>{preview}</span>
             </>
           ) : null}
           {statusLabel ? (
             <>
-              <span class="text-gray-400"> — </span>
-              <span class="text-amber-300">{statusLabel}</span>
+              <span class="text-fg-muted"> — </span>
+              <span class="text-warning">{statusLabel}</span>
             </>
           ) : null}
           {entry.taskSummary ? (
             <>
-              <span class="text-gray-400"> — </span>
+              <span class="text-fg-muted"> — </span>
               <span
                 class={
                   isSuccess
-                    ? 'text-green-400'
+                    ? 'text-success'
                     : isStopped
-                      ? 'text-amber-300'
+                      ? 'text-warning'
                       : isError
-                        ? 'text-red-400'
+                        ? 'text-danger'
                         : bodyClass
                 }
               >
@@ -1466,7 +1466,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
             </>
           ) : null}
           {entry.taskUsage ? (
-            <span class="text-gray-500">
+            <span class="text-fg-faint">
               {' '}
               · {entry.taskUsage.total_tokens.toLocaleString()} tok · {entry.taskUsage.tool_uses}{' '}
               tool{entry.taskUsage.tool_uses === 1 ? '' : 's'} ·{' '}
@@ -1475,17 +1475,17 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
           ) : null}
         </span>
         {isSuccess && (
-          <span class="mt-0.5 shrink-0 text-green-400" aria-label="task completed">
+          <span class="mt-0.5 shrink-0 text-success" aria-label="task completed">
             ✓
           </span>
         )}
         {isStopped && (
-          <span class="mt-0.5 shrink-0 text-amber-300" aria-label="task stopped">
+          <span class="mt-0.5 shrink-0 text-warning" aria-label="task stopped">
             ■
           </span>
         )}
         {isError && (
-          <span class="mt-0.5 shrink-0 text-red-400" aria-label="task failed">
+          <span class="mt-0.5 shrink-0 text-danger" aria-label="task failed">
             ✗
           </span>
         )}
@@ -1501,12 +1501,12 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
         data-testid="minimal-thread-roster-entry"
         data-roster-kind="api_retry"
       >
-        <span class="shrink-0 text-amber-400" aria-hidden="true">
+        <span class="shrink-0 text-warning" aria-hidden="true">
           ↻
         </span>
         <span class="min-w-0 truncate">
-          <span class="font-semibold text-amber-300">API retry</span>
-          <span class="text-gray-400">: </span>
+          <span class="font-semibold text-warning">API retry</span>
+          <span class="text-fg-muted">: </span>
           <span class={bodyClass}>
             attempt {entry.attempt}/{entry.maxRetries} · status {status} · delay{' '}
             {entry.retryDelayMs}ms
@@ -1520,11 +1520,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
     const isSuccess = entry.status === 'completed';
     const isStopped = entry.status === 'stopped';
     const statusLabel = isSuccess ? 'Task completed' : isStopped ? 'Task stopped' : 'Task failed';
-    const statusColor = isSuccess
-      ? 'text-green-400'
-      : isStopped
-        ? 'text-amber-300'
-        : 'text-red-400';
+    const statusColor = isSuccess ? 'text-success' : isStopped ? 'text-warning' : 'text-danger';
     return (
       <div
         class={`flex items-start gap-2 font-mono text-xs leading-5 ${fadeClass}`}
@@ -1534,23 +1530,23 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
       >
         <span class="mt-0.5 shrink-0" aria-hidden="true">
           {isSuccess ? (
-            <span class="text-green-400">✓</span>
+            <span class="text-success">✓</span>
           ) : isStopped ? (
-            <span class="text-amber-300">■</span>
+            <span class="text-warning">■</span>
           ) : (
-            <span class="text-red-400">✗</span>
+            <span class="text-danger">✗</span>
           )}
         </span>
         <span class="min-w-0 truncate">
           <span class={`font-semibold ${statusColor}`}>{statusLabel}</span>
           {entry.summary ? (
             <>
-              <span class="text-gray-400"> — </span>
+              <span class="text-fg-muted"> — </span>
               <span class={bodyClass}>{entry.summary}</span>
             </>
           ) : null}
           {entry.usage ? (
-            <span class="text-gray-500">
+            <span class="text-fg-faint">
               {' '}
               · {entry.usage.total_tokens.toLocaleString()} tok · {entry.usage.tool_uses} tool
               {entry.usage.tool_uses === 1 ? '' : 's'} ·{' '}
@@ -1592,19 +1588,19 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
       >
         <span class="mt-0.5 shrink-0" aria-hidden="true">
           {isRunning ? (
-            <span class="inline-block h-3 w-3 animate-spin rounded-full border border-gray-500 border-t-transparent" />
+            <span class="inline-block h-3 w-3 animate-spin rounded-full border border-fg-faint border-t-transparent" />
           ) : isSuccess ? (
-            <span class="text-green-400">✓</span>
+            <span class="text-success">✓</span>
           ) : isError ? (
-            <span class="text-red-400">✗</span>
+            <span class="text-danger">✗</span>
           ) : null}
         </span>
         <span class="min-w-0 truncate">
-          <span class="font-semibold text-slate-300">{entry.hookName || 'hook'}</span>
+          <span class="font-semibold text-fg-soft">{entry.hookName || 'hook'}</span>
           {entry.hookEvent ? (
             <>
-              <span class="text-gray-400"> · </span>
-              <span class="text-gray-400">{entry.hookEvent}</span>
+              <span class="text-fg-muted"> · </span>
+              <span class="text-fg-muted">{entry.hookEvent}</span>
             </>
           ) : null}
           {entry.summary ? <span class={` ${bodyClass}`}> — {entry.summary}</span> : null}
@@ -1614,7 +1610,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
   }
 
   if (entry.kind === 'thinking') {
-    const thinkBody = `line-clamp-3 whitespace-pre-wrap italic ${isLatest ? 'text-amber-100' : 'text-amber-300/70'}`;
+    const thinkBody = `line-clamp-3 whitespace-pre-wrap italic ${isLatest ? 'text-warning-soft' : 'text-warning/70'}`;
     return (
       <div
         class={`flex items-start gap-2 text-xs leading-5 ${fadeClass}`}
@@ -1636,7 +1632,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
         data-testid="minimal-thread-roster-entry"
         data-roster-kind="user"
       >
-        <span class="shrink-0 text-blue-400" aria-hidden="true">
+        <span class="shrink-0 text-accent" aria-hidden="true">
           👤
         </span>
         <span class={bodyClass}>{entry.text}</span>
@@ -1651,7 +1647,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
         data-testid="minimal-thread-roster-entry"
         data-roster-kind="handoff"
       >
-        <span class="shrink-0 text-gray-400" aria-hidden="true">
+        <span class="shrink-0 text-fg-muted" aria-hidden="true">
           ↪
         </span>
         <span class={bodyClass}>{entry.text}</span>
@@ -1666,7 +1662,7 @@ function RosterEntry({ entry, isLatest }: { entry: ActiveRosterEntry; isLatest: 
       data-roster-kind="message"
     >
       <svg
-        class="w-3 h-3 shrink-0 text-gray-400 self-center"
+        class="w-3 h-3 shrink-0 text-fg-muted self-center"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -1775,8 +1771,8 @@ function CompletedBody({
       <div
         class={`rounded-lg px-3 py-2 ${
           isErrorBubble
-            ? 'bg-red-900/20 border border-red-800'
-            : 'bg-dark-800 border border-dark-700'
+            ? 'bg-danger/20 border border-danger'
+            : 'bg-surface-raised border border-line'
         }`}
         data-testid="minimal-thread-agent-bubble"
         data-result-error={isTerminalError ? 'true' : undefined}
@@ -1784,7 +1780,7 @@ function CompletedBody({
       >
         <ReplacementBadge status={turn.replacementStatus} />
         {turn.hasError ? (
-          <div class="flex items-center gap-2 text-red-400 text-sm font-medium mb-1">
+          <div class="flex items-center gap-2 text-danger text-sm font-medium mb-1">
             <svg
               class="w-4 h-4 shrink-0"
               fill="none"
@@ -1804,11 +1800,11 @@ function CompletedBody({
         ) : null}
         {errorSummary ? (
           <div
-            class="mb-2 flex items-start gap-1.5 text-xs text-red-300"
+            class="mb-2 flex items-start gap-1.5 text-xs text-danger-soft"
             data-testid="minimal-thread-result-error-summary"
           >
             <svg
-              class="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400"
+              class="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -1835,8 +1831,8 @@ function CompletedBody({
           <div
             class={
               turn.hasError
-                ? 'text-sm text-red-100 leading-relaxed [&_a]:text-red-300'
-                : 'text-sm text-gray-100 leading-relaxed [&_a]:text-blue-400'
+                ? 'text-sm text-danger-soft leading-relaxed [&_a]:text-danger-soft'
+                : 'text-sm text-fg leading-relaxed [&_a]:text-accent'
             }
           >
             {turn.fallback ? (
@@ -1873,7 +1869,7 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
       style={{ borderColor: color }}
       data-testid="minimal-thread-active-rail"
     >
-      <div class="text-[11px] text-gray-400 mt-0.5" data-testid="minimal-thread-active-meta">
+      <div class="text-[11px] text-fg-muted mt-0.5" data-testid="minimal-thread-active-meta">
         {hasSummaryCounts ? (
           <>
             ✦ {turn.thinkingEntries} · 💬 {turn.messageEntries} · ⚙ {turn.toolEntries} ·{' '}
@@ -1897,7 +1893,7 @@ function ActiveBody({ turn, color }: { turn: ActiveFeedTurn; color: string }) {
           ))}
         </div>
       ) : null}
-      <div class="mt-1.5 text-[11px] text-gray-400" data-testid="minimal-thread-last-event">
+      <div class="mt-1.5 text-[11px] text-fg-muted" data-testid="minimal-thread-last-event">
         last event {lastEventSec < 1 ? 'now' : `${formatDuration(lastEventSec)} ago`} ·{' '}
         {formatClock(turn.lastEventAt)}
       </div>
@@ -1915,6 +1911,7 @@ function AgentTurnRow({
   overlayTaskReadonly?: boolean;
 }) {
   const color = getAgentColor(turn.agent);
+  const textColor = getAgentTextColor(turn.agent);
   const initial = agentInitial(turn.agent);
   const openSession = turn.sessionId
     ? () => {
@@ -1941,16 +1938,16 @@ function AgentTurnRow({
       </div>
       <div class="flex flex-col gap-0.5 min-w-0">
         <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
-          <span class="font-semibold leading-tight" style={{ color }}>
+          <span class="font-semibold leading-tight" style={{ color: textColor }}>
             {shortAgentName(turn.agent)}
           </span>
           {turn.state === 'active' ? (
-            <span class="text-xs text-gray-400 leading-tight">{formatClock(turn.startedAt)}</span>
+            <span class="text-xs text-fg-muted leading-tight">{formatClock(turn.startedAt)}</span>
           ) : null}
         </div>
         {turn.state === 'completed' ? (
           <div
-            class="text-[11px] text-gray-400 leading-tight"
+            class="text-[11px] text-fg-muted leading-tight"
             data-testid="minimal-thread-agent-meta"
           >
             {turn.toolCalls} {turn.toolCalls === 1 ? 'tool call' : 'tool calls'} · {turn.messages}{' '}
@@ -1959,7 +1956,7 @@ function AgentTurnRow({
         ) : (
           <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <StatusPill color={color} status={turn.status} />
-            <span class="text-[11px] text-gray-400 leading-tight">
+            <span class="text-[11px] text-fg-muted leading-tight">
               {turn.messages} {turn.messages === 1 ? 'message' : 'messages'}
             </span>
           </div>
@@ -1977,7 +1974,7 @@ function AgentTurnRow({
       {openSession ? (
         <button
           type="button"
-          class="-m-1 flex min-h-11 max-w-full items-center gap-3 rounded-lg p-1 pr-2 text-left transition-colors hover:bg-dark-800/55 active:bg-dark-800/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+          class="-m-1 flex min-h-11 max-w-full items-center gap-3 rounded-lg p-1 pr-2 text-left transition-colors hover:bg-surface-raised/55 active:bg-surface-raised/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           onClick={openSession}
           title={overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : 'Open session'}
           aria-label={`Open ${turn.agent} session${overlayTaskReadonly ? ' read-only' : ''}`}
@@ -2016,7 +2013,7 @@ function HumanMessageTurn({ turn }: { turn: MessageFeedTurn }) {
     >
       <div class={`${TASK_THREAD_MESSAGE_BUBBLE_WIDTH_CLASS} w-auto`}>
         <div
-          class="bg-blue-500 text-white rounded-[20px] px-4 py-2 leading-relaxed break-words"
+          class="bg-accent text-accent-fg rounded-[20px] px-4 py-2 leading-relaxed break-words"
           data-testid="minimal-thread-human-bubble"
         >
           <ReplacementBadge status={turn.replacementStatus} />
@@ -2054,7 +2051,7 @@ function CompactBoundaryTurn({
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
 }) {
-  const color = getAgentColor(turn.agent);
+  const color = getAgentTextColor(turn.agent);
   const tokenDelta =
     typeof turn.postTokens === 'number' ? Math.max(0, turn.preTokens - turn.postTokens) : null;
   const tokenSummary = `${turn.preTokens.toLocaleString()} → ${turn.postTokens?.toLocaleString() ?? '—'} tokens`;
@@ -2073,29 +2070,29 @@ function CompactBoundaryTurn({
       }
     : undefined;
   const card = (
-    <div class="w-full rounded-lg border border-yellow-300/50 bg-yellow-400/10 px-3 py-2 text-yellow-100 shadow-sm shadow-yellow-950/20 dark:border-yellow-400/30 dark:bg-yellow-400/10">
+    <div class="w-full rounded-lg border border-yellow-300/50 bg-warning/10 px-3 py-2 text-warning-soft shadow-sm shadow-yellow-950/20 dark:border-yellow-400/30">
       <div class="flex items-center justify-between gap-3">
         <div class="flex items-center gap-2 min-w-0">
           <span class="h-2 w-2 rounded-full bg-yellow-300 shadow-[0_0_10px_rgba(253,224,71,0.65)]" />
-          <span class="text-xs font-semibold uppercase tracking-[0.16em] text-yellow-200">
+          <span class="text-xs font-semibold uppercase tracking-[0.16em] text-warning-soft">
             Compact Boundary
           </span>
-          <span class="text-[11px] text-yellow-300/80" style={{ color }}>
+          <span class="text-[11px] text-warning-soft/80" style={{ color }}>
             {shortAgentName(turn.agent)}
           </span>
         </div>
-        <span class="shrink-0 text-[11px] text-yellow-200/70">{formatClock(turn.createdAt)}</span>
+        <span class="shrink-0 text-[11px] text-warning-soft/70">{formatClock(turn.createdAt)}</span>
       </div>
-      <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-yellow-100/90">
-        <span class="rounded-full border border-yellow-300/30 bg-yellow-300/10 px-2 py-0.5 font-medium capitalize text-yellow-100">
+      <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-warning-soft/90">
+        <span class="rounded-full border border-yellow-300/30 bg-yellow-300/10 px-2 py-0.5 font-medium capitalize text-warning-soft">
           {turn.trigger}
         </span>
         <span>{tokenSummary}</span>
         {tokenDelta !== null ? (
-          <span class="text-yellow-200/75">saved {tokenDelta.toLocaleString()}</span>
+          <span class="text-warning-soft/75">saved {tokenDelta.toLocaleString()}</span>
         ) : null}
         {typeof turn.durationMs === 'number' ? (
-          <span class="text-yellow-200/75">
+          <span class="text-warning-soft/75">
             {formatDuration(Math.max(1, Math.round(turn.durationMs / 1000)))}
           </span>
         ) : null}
@@ -2113,7 +2110,7 @@ function CompactBoundaryTurn({
       {openSession ? (
         <button
           type="button"
-          class="w-full rounded-lg text-left transition-colors hover:bg-yellow-400/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-300/60"
+          class="w-full rounded-lg text-left transition-colors hover:bg-warning/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-warning/60"
           onClick={openSession}
           title={overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : 'Open session'}
           aria-label={`Open ${turn.agent} session at compact boundary${
@@ -2139,7 +2136,7 @@ function SystemTurn({
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
 }) {
-  const color = getAgentColor(turn.agent);
+  const color = getAgentTextColor(turn.agent);
   const openSession = turn.sessionId
     ? () => {
         openTurnSessionOverlay({
@@ -2155,18 +2152,18 @@ function SystemTurn({
       }
     : undefined;
   const card = (
-    <div class="w-fit max-w-full rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2 text-slate-200">
+    <div class="w-fit max-w-full rounded-lg border border-line bg-surface/40 px-3 py-2 text-fg-soft">
       <ReplacementBadge status={turn.replacementStatus} />
       <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        <span class="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+        <span class="text-[11px] font-semibold uppercase tracking-[0.16em] text-fg-muted">
           {turn.title}
         </span>
-        <span class="text-[11px] text-slate-500" style={{ color }}>
+        <span class="text-[11px] text-fg-faint" style={{ color }}>
           {shortAgentName(turn.agent)}
         </span>
-        <span class="text-[11px] text-slate-500">{formatClock(turn.createdAt)}</span>
+        <span class="text-[11px] text-fg-faint">{formatClock(turn.createdAt)}</span>
       </div>
-      <div class="mt-1 text-xs text-slate-200">{turn.body}</div>
+      <div class="mt-1 text-xs text-fg-soft">{turn.body}</div>
     </div>
   );
 
@@ -2180,7 +2177,7 @@ function SystemTurn({
       {openSession ? (
         <button
           type="button"
-          class="rounded-lg text-left transition-colors hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/60"
+          class="rounded-lg text-left transition-colors hover:bg-slate-800/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-fg-muted/60"
           onClick={openSession}
           title={overlayTaskReadonly ? 'Opens read-only — resume the task to chat' : 'Open session'}
           aria-label={`Open ${turn.agent} session at ${turn.title}${
@@ -2206,14 +2203,14 @@ function SyntheticMessageTurn({
   overlayTaskId?: string;
   overlayTaskReadonly?: boolean;
 }) {
-  const fromColor = getAgentColor(turn.fromLabel);
-  const toColor = getAgentColor(turn.toLabel);
+  const fromColor = getAgentTextColor(turn.fromLabel);
+  const toColor = getAgentTextColor(turn.toLabel);
   const fromShort = shortAgentName(turn.fromLabel);
   const toShort = shortAgentName(turn.toLabel);
   const replacementFrameClass =
     turn.replacementStatus === 'retracted'
       ? 'border-rose-500/35 bg-rose-500/5'
-      : 'border-amber-500/35 bg-amber-500/5';
+      : 'border-warning/35 bg-warning/5';
   const syntheticBlock = (
     <SyntheticMessageBlock
       deliveryState={turn.deliveryState}

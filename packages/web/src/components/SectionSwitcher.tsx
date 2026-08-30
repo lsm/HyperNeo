@@ -4,7 +4,6 @@ import {
   navSectionSignal,
 } from '../lib/signals.ts';
 import { navigateToSessions, navigateToSpaces } from '../lib/router.ts';
-import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
 
 interface SectionSwitcherProps {
@@ -39,14 +38,14 @@ export function SectionSwitcher({
         'flex items-center gap-2',
         isTitlebar
           ? 'min-w-0 flex-1'
-          : cn('h-[52px] px-3 md:h-[52px]', showDivider && `border-b ${borderColors.ui.default}`)
+          : cn('h-[52px] px-3 md:h-[52px]', showDivider && 'border-b border-line')
       )}
       data-tauri-drag-region={isTitlebar ? true : undefined}
     >
       <div
         class={cn(
-          'grid w-[136px] grid-cols-2 flex-none rounded-full bg-dark-900/70 p-0.5',
-          isTitlebar || compact ? 'h-6 bg-dark-950/70' : 'h-7'
+          'grid w-[136px] grid-cols-2 flex-none rounded-full bg-surface/70 p-0.5',
+          isTitlebar || compact ? 'h-6 bg-bg/70' : 'h-7'
         )}
         role="tablist"
       >
@@ -65,9 +64,7 @@ export function SectionSwitcher({
               class={cn(
                 'rounded-full font-medium transition-colors',
                 'px-2 text-[12px] leading-5',
-                isActive
-                  ? 'bg-white/10 text-gray-100'
-                  : 'text-gray-500 hover:bg-white/5 hover:text-gray-200'
+                isActive ? 'bg-fill text-fg' : 'text-fg-faint hover:bg-fill-soft hover:text-fg-soft'
               )}
             >
               {section.label}
@@ -79,9 +76,9 @@ export function SectionSwitcher({
         type="button"
         onClick={openQuickOpen}
         class={cn(
-          'ml-auto flex h-8 w-8 flex-none items-center justify-center rounded-full text-gray-400 transition-colors',
+          'ml-auto flex h-8 w-8 flex-none items-center justify-center rounded-full text-fg-muted transition-colors',
           compact && 'h-7 w-7',
-          'hover:bg-white/5 hover:text-gray-100'
+          'hover:bg-fill-soft hover:text-fg'
         )}
         title="Quick Open"
         aria-label="Quick Open"
@@ -99,8 +96,8 @@ export function SectionSwitcher({
           type="button"
           onClick={onClose}
           class={cn(
-            'md:hidden flex p-1.5 rounded-full text-gray-400 transition-colors',
-            'hover:bg-white/5 hover:text-gray-100'
+            'md:hidden flex p-1.5 rounded-full text-fg-muted transition-colors',
+            'hover:bg-fill-soft hover:text-fg'
           )}
           title="Close panel"
           aria-label="Close panel"

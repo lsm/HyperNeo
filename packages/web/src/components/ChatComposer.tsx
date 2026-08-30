@@ -10,7 +10,6 @@ import type {
 import type { ComponentChildren } from 'preact';
 import MessageInput from './MessageInput.tsx';
 import SessionStatusBar from './SessionStatusBar.tsx';
-import { borderColors } from '../lib/design-tokens.ts';
 import type { SessionStore } from '../lib/session-store.ts';
 import { cn } from '../lib/utils.ts';
 import type { RegisterFileDropTarget } from '../hooks';
@@ -111,13 +110,13 @@ export function ChatComposer({
         data-testid={CHAT_COMPOSER_READABILITY_SCRIM_TEST_ID}
         aria-hidden="true"
       >
-        <div class="absolute inset-0 bg-gradient-to-t from-dark-900/90 via-dark-900/40 to-transparent" />
+        <div class="absolute inset-0 bg-gradient-to-t from-app-content/90 via-app-content/40 to-transparent" />
         <div class="absolute inset-0 backdrop-blur-[1px] [mask-image:linear-gradient(to_top,black_0%,black_55%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_top,black_0%,black_55%,transparent_100%)]" />
       </div>
       <div class="relative z-10">
         {errorMessage && (
           <div class="px-3 mb-1">
-            <p class="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-300">
+            <p class="rounded border border-danger/30 bg-danger/10 px-2 py-1 text-xs text-danger-soft">
               {errorMessage}
             </p>
           </div>
@@ -149,11 +148,11 @@ export function ChatComposer({
               <div
                 class={cn(
                   'rounded-3xl border px-5 py-3 text-center',
-                  'bg-dark-800/60 backdrop-blur-sm',
-                  borderColors.ui.default
+                  'bg-surface-raised/60 backdrop-blur-sm',
+                  'border-line'
                 )}
               >
-                <span class="text-gray-400 text-sm flex items-center justify-center gap-2">
+                <span class="text-fg-muted text-sm flex items-center justify-center gap-2">
                   <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path
                       strokeLinecap="round"

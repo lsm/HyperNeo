@@ -93,16 +93,16 @@ function QueuePreviewRow({
   const toneClasses =
     tone === 'current'
       ? {
-          pill: 'border-amber-500/30 bg-amber-500/10 text-amber-200',
-          dot: 'bg-amber-300',
+          pill: 'border-warning/30 bg-warning/10 text-warning-soft',
+          dot: 'bg-warning',
           pillAction:
-            'hover:border-amber-400/50 hover:bg-amber-500/15 hover:text-amber-100 focus-visible:ring-amber-400/60',
+            'hover:border-amber-400/50 hover:bg-warning/15 hover:text-warning-soft focus-visible:ring-amber-400/60',
         }
       : {
-          pill: 'border-blue-500/30 bg-blue-500/10 text-blue-200',
+          pill: 'border-accent/30 bg-accent/10 text-accent-soft',
           dot: 'bg-blue-300',
           pillAction:
-            'hover:border-blue-400/50 hover:bg-blue-500/15 hover:text-blue-100 focus-visible:ring-blue-400/60',
+            'hover:border-blue-400/50 hover:bg-accent/15 hover:text-accent-soft focus-visible:ring-accent/60',
         };
 
   return (
@@ -114,7 +114,7 @@ function QueuePreviewRow({
       {visibleMessages.map((queued) => (
         <div
           key={queued.dbId}
-          class="flex min-h-8 min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 transition-colors hover:bg-white/[0.035]"
+          class="flex min-h-8 min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 transition-colors hover:bg-fill-soft"
         >
           {tone === 'current' && onDeferMessage ? (
             <button
@@ -150,14 +150,14 @@ function QueuePreviewRow({
               <span>{label}</span>
             </div>
           )}
-          <p class="min-w-0 flex-1 truncate text-xs leading-5 text-gray-200" title={queued.text}>
+          <p class="min-w-0 flex-1 truncate text-xs leading-5 text-fg-soft" title={queued.text}>
             {queued.text}
           </p>
           <div class="flex shrink-0 items-center gap-1">
             {onRemoveMessage && (
               <button
                 type="button"
-                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-red-500/15 hover:text-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60"
+                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-faint transition-colors hover:bg-danger/15 hover:text-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
                 title="Delete"
                 aria-label={`Delete queued message: ${queued.text}`}
                 data-testid="remove-queued-message"
@@ -172,7 +172,7 @@ function QueuePreviewRow({
       {overflowCount > 0 && onShowAll && (
         <button
           type="button"
-          class="ml-1 mt-0.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] text-gray-400 transition-colors hover:bg-white/[0.035] hover:text-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+          class="ml-1 mt-0.5 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           data-testid="queued-show-all"
           aria-label={`Show all ${messages.length} ${label} queued messages`}
           onClick={onShowAll}
@@ -229,8 +229,8 @@ export function QueuePreviewTray({
 
   return (
     <div class={className} data-testid="queue-overlay" aria-live="polite">
-      <div class="overflow-hidden rounded-xl border border-dark-700/80 bg-dark-900/90 shadow-lg shadow-black/20 backdrop-blur-md">
-        <div class="divide-y divide-dark-800/90">
+      <div class="overflow-hidden rounded-xl border border-line/80 bg-surface/90 shadow-lg shadow-black/20 backdrop-blur-md">
+        <div class="divide-y divide-line/90">
           <QueuePreviewRow
             label="Steer"
             messages={currentTurnMessages}
@@ -264,7 +264,7 @@ export function QueuePreviewTray({
           size="lg"
         >
           {unloaded > 0 && (
-            <p class="mb-2 text-xs text-gray-400" data-testid="queued-modal-unloaded-note">
+            <p class="mb-2 text-xs text-fg-muted" data-testid="queued-modal-unloaded-note">
               Showing the first {modalMessages.length} queued messages ({unloaded} more not loaded).
             </p>
           )}
@@ -278,22 +278,22 @@ export function QueuePreviewTray({
             onRemoveMessage={onRemoveMessage}
           />
           {totalPages > 1 && (
-            <div class="mt-3 flex items-center justify-between border-t border-dark-800 pt-3">
+            <div class="mt-3 flex items-center justify-between border-t border-surface-raised pt-3">
               <button
                 type="button"
-                class="rounded-lg px-3 py-1.5 text-xs text-gray-300 transition-colors hover:bg-white/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 disabled:cursor-not-allowed disabled:opacity-40"
+                class="rounded-lg px-3 py-1.5 text-xs text-fg-soft transition-colors hover:bg-fill-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-40"
                 disabled={currentPage === 0}
                 data-testid="queued-modal-prev-page"
                 onClick={() => setPage(Math.max(0, currentPage - 1))}
               >
                 Previous
               </button>
-              <span class="text-xs text-gray-400" data-testid="queued-modal-page-label">
+              <span class="text-xs text-fg-muted" data-testid="queued-modal-page-label">
                 Page {currentPage + 1} of {totalPages}
               </span>
               <button
                 type="button"
-                class="rounded-lg px-3 py-1.5 text-xs text-gray-300 transition-colors hover:bg-white/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 disabled:cursor-not-allowed disabled:opacity-40"
+                class="rounded-lg px-3 py-1.5 text-xs text-fg-soft transition-colors hover:bg-fill-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-40"
                 disabled={currentPage >= totalPages - 1}
                 data-testid="queued-modal-next-page"
                 onClick={() => setPage(Math.min(totalPages - 1, currentPage + 1))}

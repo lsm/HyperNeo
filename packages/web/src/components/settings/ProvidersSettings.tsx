@@ -777,11 +777,11 @@ export function ProvidersSettings() {
   const healthDotClass = (status: string) => {
     switch (status) {
       case 'healthy':
-        return 'bg-green-500';
+        return 'bg-success';
       case 'unhealthy':
-        return 'bg-red-500';
+        return 'bg-danger';
       default:
-        return 'bg-gray-500';
+        return 'bg-fg-faint';
     }
   };
 
@@ -793,7 +793,7 @@ export function ProvidersSettings() {
   if (loading) {
     return (
       <SettingsSection title="Providers">
-        <div class="text-gray-400 text-sm">Loading providers...</div>
+        <div class="text-fg-muted text-sm">Loading providers...</div>
       </SettingsSection>
     );
   }
@@ -803,7 +803,7 @@ export function ProvidersSettings() {
       <SettingsSection title="Providers">
         <div class="space-y-3">
           <div class="flex items-center justify-between">
-            <p class="text-sm text-gray-400">
+            <p class="text-sm text-fg-muted">
               Manage AI providers. Enable, disable, and configure authentication.
             </p>
             <Button size="sm" variant="primary" onClick={() => setShowAddModal(true)}>
@@ -816,15 +816,13 @@ export function ProvidersSettings() {
             <div
               class={`rounded-lg border px-4 py-3 ${
                 credentialStore.backend === 'keychain-fallback'
-                  ? 'border-blue-500/30 bg-blue-500/10'
-                  : 'border-yellow-500/30 bg-yellow-500/10'
+                  ? 'border-accent/30 bg-accent/10'
+                  : 'border-warning/30 bg-warning/10'
               }`}
             >
               <p
                 class={`text-sm font-medium ${
-                  credentialStore.backend === 'keychain-fallback'
-                    ? 'text-blue-400'
-                    : 'text-yellow-400'
+                  credentialStore.backend === 'keychain-fallback' ? 'text-accent' : 'text-warning'
                 }`}
               >
                 {credentialStore.backend === 'keychain-fallback'
@@ -834,8 +832,8 @@ export function ProvidersSettings() {
               <p
                 class={`text-xs mt-1 ${
                   credentialStore.backend === 'keychain-fallback'
-                    ? 'text-blue-400/80'
-                    : 'text-yellow-400/80'
+                    ? 'text-accent/80'
+                    : 'text-warning/80'
                 }`}
               >
                 {credentialStore.backend === 'keychain-fallback'
@@ -851,8 +849,8 @@ export function ProvidersSettings() {
           )}
 
           {loadError && autoRetryShowsLoadingRef.current && providers.length > 0 && (
-            <div class="flex items-center justify-between gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2">
-              <p class="text-sm text-red-300">
+            <div class="flex items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-4 py-2">
+              <p class="text-sm text-danger-soft">
                 {sessionExpired
                   ? 'Your session expired.'
                   : gateTimeout
@@ -866,11 +864,11 @@ export function ProvidersSettings() {
           )}
 
           {loadError && autoRetryShowsLoadingRef.current && providers.length === 0 ? (
-            <div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-6 text-center">
-              <p class="text-sm text-red-300">
+            <div class="rounded-lg border border-danger/30 bg-danger/10 px-4 py-6 text-center">
+              <p class="text-sm text-danger-soft">
                 {sessionExpired ? 'Your session expired.' : 'Failed to load providers.'}
               </p>
-              <p class="text-xs text-gray-400 mt-1">
+              <p class="text-xs text-fg-muted mt-1">
                 {sessionExpired
                   ? 'Re-authenticate, then retry to reload your providers.'
                   : gateTimeout
@@ -884,9 +882,9 @@ export function ProvidersSettings() {
               </div>
             </div>
           ) : providers.length === 0 ? (
-            <div class="rounded-lg border border-dashed border-dark-600 px-4 py-6 text-center">
-              <p class="text-sm text-gray-400">No providers configured.</p>
-              <p class="text-xs text-gray-500 mt-1">Add a provider to start using AI models.</p>
+            <div class="rounded-lg border border-dashed border-line-strong px-4 py-6 text-center">
+              <p class="text-sm text-fg-muted">No providers configured.</p>
+              <p class="text-xs text-fg-faint mt-1">Add a provider to start using AI models.</p>
             </div>
           ) : null}
 
@@ -924,10 +922,10 @@ export function ProvidersSettings() {
                 return (
                   <div
                     key={provider.id}
-                    class="rounded-lg border border-white/[0.08] bg-white/[0.025] overflow-hidden"
+                    class="rounded-lg border border-line bg-fill-soft overflow-hidden"
                   >
                     <div
-                      class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-white/[0.02] transition-colors"
+                      class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-fill-soft transition-colors"
                       onClick={() => setExpandedId(isExpanded ? null : provider.id)}
                     >
                       <div
@@ -937,19 +935,17 @@ export function ProvidersSettings() {
 
                       <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2 flex-wrap">
-                          <span class="text-sm font-medium text-gray-100">
-                            {provider.displayName}
-                          </span>
-                          <span class="text-[10px] uppercase tracking-wide text-gray-500 px-1.5 py-0.5 rounded bg-dark-800">
+                          <span class="text-sm font-medium text-fg">{provider.displayName}</span>
+                          <span class="text-[10px] uppercase tracking-wide text-fg-faint px-1.5 py-0.5 rounded bg-surface-raised">
                             {isCustom ? 'Custom' : 'Built-in'}
                           </span>
                           <span
                             class={`text-[10px] px-1.5 py-0.5 rounded-full ${
                               provider.authType === 'api_key'
-                                ? 'bg-blue-900/40 text-blue-300'
+                                ? 'bg-accent/40 text-accent-soft'
                                 : provider.authType === 'oauth'
-                                  ? 'bg-purple-900/40 text-purple-300'
-                                  : 'bg-gray-800 text-gray-400'
+                                  ? 'bg-cat-purple/40 text-cat-purple'
+                                  : 'bg-surface-raised text-fg-muted'
                             }`}
                           >
                             {provider.authType === 'api_key'
@@ -959,12 +955,12 @@ export function ProvidersSettings() {
                                 : 'None'}
                           </span>
                           {needsRefresh && (
-                            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-900/40 text-yellow-300">
+                            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-warning/15 text-warning-soft">
                               Refresh Needed
                             </span>
                           )}
                         </div>
-                        <div class="text-xs text-gray-500 font-mono mt-0.5">
+                        <div class="text-xs text-fg-faint font-mono mt-0.5">
                           {provider.providerId}
                         </div>
                       </div>
@@ -978,9 +974,7 @@ export function ProvidersSettings() {
                           }}
                           disabled={isPending || provider.isDefault}
                           class={`p-1 rounded transition-colors ${
-                            provider.isDefault
-                              ? 'text-yellow-400'
-                              : 'text-gray-600 hover:text-yellow-400'
+                            provider.isDefault ? 'text-warning' : 'text-fg-faint hover:text-warning'
                           }`}
                           title={provider.isDefault ? 'Default provider' : 'Set as default'}
                         >
@@ -1009,7 +1003,7 @@ export function ProvidersSettings() {
                           }}
                           disabled={isPending}
                           class={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full transition-colors ${
-                            provider.isEnabled ? 'bg-blue-600' : 'bg-dark-700'
+                            provider.isEnabled ? 'bg-accent-hover' : 'bg-fill-strong'
                           }`}
                         >
                           <span
@@ -1020,7 +1014,7 @@ export function ProvidersSettings() {
                         </button>
 
                         <svg
-                          class={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                          class={`w-4 h-4 text-fg-faint transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
@@ -1038,7 +1032,7 @@ export function ProvidersSettings() {
                     {isExpanded && (
                       <div class="px-4 pb-4 border-t border-white/[0.06] space-y-4">
                         <div class="pt-3">
-                          <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
+                          <h5 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-2">
                             Authentication
                           </h5>
                           {provider.authType === 'api_key' && (
@@ -1053,7 +1047,7 @@ export function ProvidersSettings() {
                                     [provider.id]: e.currentTarget.value,
                                   }))
                                 }
-                                class="flex-1 min-w-0 bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500 font-mono"
+                                class="flex-1 min-w-0 bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent font-mono"
                               />
                               <Button
                                 size="sm"
@@ -1103,16 +1097,16 @@ export function ProvidersSettings() {
                             </div>
                           )}
                           {provider.authType === 'none' && (
-                            <p class="text-xs text-gray-500">No authentication required.</p>
+                            <p class="text-xs text-fg-faint">No authentication required.</p>
                           )}
                         </div>
 
                         {isCustom && provider.baseUrl && (
                           <div>
-                            <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                            <h5 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-1">
                               Configuration
                             </h5>
-                            <div class="text-xs text-gray-500 font-mono">{provider.baseUrl}</div>
+                            <div class="text-xs text-fg-faint font-mono">{provider.baseUrl}</div>
                           </div>
                         )}
 
@@ -1120,7 +1114,7 @@ export function ProvidersSettings() {
                           <div>
                             <label
                               for={`kimi-region-${provider.id}`}
-                              class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2"
+                              class="block text-xs font-semibold uppercase tracking-wider text-fg-muted mb-2"
                             >
                               Region
                             </label>
@@ -1134,7 +1128,7 @@ export function ProvidersSettings() {
                                     [provider.id]: e.currentTarget.value as 'china' | 'global',
                                   }))
                                 }
-                                class="flex-1 min-w-0 bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+                                class="flex-1 min-w-0 bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg focus:outline-none focus:border-accent"
                               >
                                 <option value="china">{KIMI_REGION_LABELS.china}</option>
                                 <option value="global">{KIMI_REGION_LABELS.global}</option>
@@ -1152,7 +1146,7 @@ export function ProvidersSettings() {
                                 Save
                               </Button>
                             </div>
-                            <p class="text-[11px] text-gray-500 mt-1">
+                            <p class="text-[11px] text-fg-faint mt-1">
                               Switching region changes the upstream base URL — use the endpoint that
                               matches your Kimi account.
                             </p>
@@ -1163,10 +1157,10 @@ export function ProvidersSettings() {
                           <div>
                             <div class="flex items-center justify-between gap-2">
                               <div class="min-w-0">
-                                <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
+                                <h5 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-1">
                                   Configuration
                                 </h5>
-                                <div class="text-xs text-gray-500 font-mono truncate">
+                                <div class="text-xs text-fg-faint font-mono truncate">
                                   {readAcpCommand(provider) ||
                                     (provider.available
                                       ? 'Using HYPERNEO_ACP_COMMAND'
@@ -1177,7 +1171,7 @@ export function ProvidersSettings() {
                                     {readCuratedModels(provider)?.map((model) => (
                                       <span
                                         key={model.id}
-                                        class="text-[10px] px-1.5 py-0.5 rounded bg-dark-800 text-gray-300"
+                                        class="text-[10px] px-1.5 py-0.5 rounded bg-surface-raised text-fg-soft"
                                       >
                                         {model.name ?? model.id}
                                       </span>
@@ -1209,7 +1203,7 @@ export function ProvidersSettings() {
                         {!isCustom && (
                           <div data-testid="visible-models-panel">
                             <div class="flex items-center justify-between gap-2">
-                              <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                              <h5 class="text-xs font-semibold uppercase tracking-wider text-fg-muted">
                                 Visible models
                               </h5>
                               <Button
@@ -1234,10 +1228,10 @@ export function ProvidersSettings() {
                               </Button>
                             </div>
                             {visiblePanel.error && (
-                              <p class="text-xs text-red-400 mt-2">{visiblePanel.error}</p>
+                              <p class="text-xs text-danger mt-2">{visiblePanel.error}</p>
                             )}
                             {visibleRows.length === 0 ? (
-                              <p class="text-xs text-gray-500 italic mt-2">
+                              <p class="text-xs text-fg-faint italic mt-2">
                                 {storedCuratedIds
                                   ? 'No visible models curated.'
                                   : visiblePanel.error
@@ -1246,7 +1240,7 @@ export function ProvidersSettings() {
                               </p>
                             ) : (
                               <div>
-                                <p class="text-[11px] text-gray-500 mt-2">
+                                <p class="text-[11px] text-fg-faint mt-2">
                                   {storedCuratedIds
                                     ? `${visibleCheckedCount} of ${visibleRows.length} visible.`
                                     : hasUnsavedVisibleModels
@@ -1257,7 +1251,7 @@ export function ProvidersSettings() {
                                   {visibleRows.map((model) => (
                                     <label
                                       key={model.id}
-                                      class="flex items-center gap-2 text-xs text-gray-200 rounded px-1 py-0.5"
+                                      class="flex items-center gap-2 text-xs text-fg-soft rounded px-1 py-0.5"
                                     >
                                       <input
                                         type="checkbox"
@@ -1266,11 +1260,11 @@ export function ProvidersSettings() {
                                         onChange={() =>
                                           handleToggleVisibleModel(provider, model.id)
                                         }
-                                        class="rounded border-dark-600 bg-dark-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                                        class="rounded border-line-strong bg-surface text-accent focus:ring-accent focus:ring-offset-0"
                                       />
                                       <span class="font-mono break-all">{model.id}</span>
                                       {model.name && model.name !== model.id && (
-                                        <span class="text-gray-500">{model.name}</span>
+                                        <span class="text-fg-faint">{model.name}</span>
                                       )}
                                     </label>
                                   ))}
@@ -1288,7 +1282,7 @@ export function ProvidersSettings() {
                                 </div>
                               </div>
                             )}
-                            <p class="text-[11px] text-gray-500 mt-1">
+                            <p class="text-[11px] text-fg-faint mt-1">
                               {visibleRows.length === 0
                                 ? 'Fetch candidates, then check the models you want to make visible.'
                                 : 'Check the models you want visible, then save.'}
@@ -1297,7 +1291,7 @@ export function ProvidersSettings() {
                         )}
 
                         <div>
-                          <h5 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
+                          <h5 class="text-xs font-semibold uppercase tracking-wider text-fg-muted mb-2">
                             Health
                           </h5>
                           <div class="flex items-center gap-3">
@@ -1305,11 +1299,11 @@ export function ProvidersSettings() {
                               <div
                                 class={`w-2 h-2 rounded-full ${healthDotClass(provider.healthStatus)}`}
                               />
-                              <span class="text-xs text-gray-300 capitalize">
+                              <span class="text-xs text-fg-soft capitalize">
                                 {provider.healthStatus}
                               </span>
                             </div>
-                            <span class="text-xs text-gray-500">
+                            <span class="text-xs text-fg-faint">
                               Last checked: {formatHealthTime(provider.lastHealthCheckAt)}
                             </span>
                             <Button

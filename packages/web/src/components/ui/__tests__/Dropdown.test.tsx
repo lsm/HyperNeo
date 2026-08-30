@@ -85,7 +85,7 @@ describe('Dropdown', () => {
       container.querySelector('button')?.click();
 
       await waitFor(() => {
-        const divider = document.body.querySelector('.bg-dark-700');
+        const divider = document.body.querySelector('.bg-fill-strong');
         expect(divider).toBeTruthy();
       });
     });
@@ -684,7 +684,7 @@ describe('Dropdown', () => {
 
       await waitFor(() => {
         const menuItem = document.body.querySelector('[role="menuitem"]');
-        expect(menuItem?.className).toContain('text-red-400');
+        expect(menuItem?.className).toContain('text-danger');
       });
     });
 
@@ -700,7 +700,7 @@ describe('Dropdown', () => {
 
       await waitFor(() => {
         const menuItem = document.body.querySelector('[role="menuitem"]');
-        expect(menuItem?.className).toContain('text-gray-600');
+        expect(menuItem?.className).toContain('text-fg-faint');
         expect(menuItem?.className).toContain('cursor-not-allowed');
       });
     });

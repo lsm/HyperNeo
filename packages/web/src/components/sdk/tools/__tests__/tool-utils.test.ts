@@ -128,8 +128,8 @@ describe('tool-utils', () => {
   describe('getToolColors', () => {
     it('should return blue colors for file tools', () => {
       const colors = getToolColors('Read');
-      expect(colors.bg).toContain('blue');
-      expect(colors.iconColor).toContain('blue');
+      expect(colors.bg).toContain('accent');
+      expect(colors.iconColor).toContain('accent');
     });
 
     it('should return purple colors for search tools', () => {
@@ -140,8 +140,8 @@ describe('tool-utils', () => {
 
     it('should return gray colors for terminal tools', () => {
       const colors = getToolColors('Bash');
-      expect(colors.bg).toContain('gray');
-      expect(colors.iconColor).toContain('gray');
+      expect(colors.bg).toContain('bg-surface-raised');
+      expect(colors.iconColor).toContain('text-fg-muted');
     });
 
     it('should return indigo colors for agent tools', () => {
@@ -152,14 +152,14 @@ describe('tool-utils', () => {
 
     it('should return green colors for web tools', () => {
       const colors = getToolColors('WebFetch');
-      expect(colors.bg).toContain('green');
-      expect(colors.iconColor).toContain('green');
+      expect(colors.bg).toContain('success');
+      expect(colors.iconColor).toContain('success');
     });
 
     it('should return amber colors for todo tools', () => {
       const colors = getToolColors('TodoWrite');
-      expect(colors.bg).toContain('amber');
-      expect(colors.iconColor).toContain('amber');
+      expect(colors.bg).toContain('warning');
+      expect(colors.iconColor).toContain('warning');
     });
 
     it('should return pink colors for MCP tools', () => {
@@ -176,13 +176,13 @@ describe('tool-utils', () => {
 
     it('should return amber colors for Thinking tool', () => {
       const colors = getToolColors('Thinking');
-      expect(colors.bg).toContain('amber');
-      expect(colors.iconColor).toContain('amber');
+      expect(colors.bg).toContain('warning');
+      expect(colors.iconColor).toContain('warning');
     });
 
     it('should return gray colors for unknown tools', () => {
       const colors = getToolColors('UnknownTool');
-      expect(colors.bg).toContain('gray');
+      expect(colors.bg).toContain('bg-surface-raised');
     });
   });
 

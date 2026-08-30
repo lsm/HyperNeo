@@ -1,8 +1,19 @@
-import { INDICATOR_TONES, type IndicatorTone } from '../../lib/indicator-tokens';
 import { cn } from '../../lib/utils';
 
+type StatusDotTone = 'neutral' | 'info' | 'progress' | 'success' | 'warning' | 'danger' | 'special';
+
+const toneBgClasses: Record<StatusDotTone, string> = {
+  neutral: 'bg-fg-faint',
+  info: 'bg-accent',
+  progress: 'bg-warning',
+  success: 'bg-success',
+  warning: 'bg-warning',
+  danger: 'bg-danger',
+  special: 'bg-cat-purple',
+};
+
 export interface StatusDotProps {
-  tone: IndicatorTone;
+  tone: StatusDotTone;
   size?: 'xs' | 'sm' | 'md';
   pulse?: boolean;
   className?: string;
@@ -22,7 +33,7 @@ export function StatusDot({
   className,
   'aria-label': ariaLabel,
 }: StatusDotProps) {
-  const bgClass = INDICATOR_TONES[tone].bg;
+  const bgClass = toneBgClasses[tone];
   const wrapperClass = cn(
     'inline-flex flex-shrink-0 items-center justify-center rounded-full',
     sizeClasses[size],

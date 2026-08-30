@@ -15,29 +15,29 @@ import { downloadBundle, pickImportFile } from './export-import-utils.ts';
 import { WorkflowTemplateSyncDiffModal } from './WorkflowTemplateSyncDiffModal.tsx';
 
 const GATE_COLORS: Record<WorkflowConditionType, string> = {
-  always: 'bg-blue-500',
-  human: 'bg-yellow-400',
-  condition: 'bg-purple-400',
-  task_result: 'bg-orange-500',
+  always: 'bg-accent',
+  human: 'bg-warning',
+  condition: 'bg-cat-purple',
+  task_result: 'bg-warning',
 };
 
 function MiniStepDot({ isStart }: { isStart: boolean }) {
   return (
     <span
-      class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isStart ? 'bg-blue-500' : 'bg-blue-400'}`}
+      class={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isStart ? 'bg-accent' : 'bg-accent-soft'}`}
     />
   );
 }
 
 function MiniConnector({ conditionType }: { conditionType?: WorkflowConditionType }) {
-  const color = conditionType ? GATE_COLORS[conditionType] : 'bg-gray-700';
+  const color = conditionType ? GATE_COLORS[conditionType] : 'bg-fill-strong';
   return (
     <div class="flex items-center gap-0.5 flex-shrink-0">
-      <div class="w-4 h-px bg-gray-700" />
+      <div class="w-4 h-px bg-fill-strong" />
       {conditionType && conditionType !== 'always' && (
         <span class={`w-1.5 h-1.5 rounded-full ${color}`} />
       )}
-      <div class="w-4 h-px bg-gray-700" />
+      <div class="w-4 h-px bg-fill-strong" />
     </div>
   );
 }
@@ -46,7 +46,7 @@ const MAX_DOTS = 6;
 
 function MiniStepViz({ workflow }: { workflow: SpaceWorkflowSummary }) {
   if (workflow.nodeCount === 0) {
-    return <span class="text-xs text-gray-400 italic">No steps</span>;
+    return <span class="text-xs text-fg-muted italic">No steps</span>;
   }
 
   const overflow = workflow.nodeCount > MAX_DOTS ? workflow.nodeCount - MAX_DOTS : 0;
@@ -60,7 +60,7 @@ function MiniStepViz({ workflow }: { workflow: SpaceWorkflowSummary }) {
           {i + 1 < display && <MiniConnector conditionType={undefined} />}
         </div>
       ))}
-      {overflow > 0 && <span class="text-xs text-gray-400 ml-1">+{overflow}</span>}
+      {overflow > 0 && <span class="text-xs text-fg-muted ml-1">+{overflow}</span>}
     </div>
   );
 }
@@ -198,35 +198,37 @@ function WorkflowCard({
   return (
     <div
       class={[
-        'group border-b border-white/10 py-3 transition-colors last:border-b-0',
+        'group border-b border-line py-3 transition-colors last:border-b-0',
         workflow.disabled ? 'opacity-60' : '',
       ].join(' ')}
     >
       {deleteError && (
-        <div class="mb-2 rounded bg-red-900/20 px-3 py-1.5 text-xs text-red-300">{deleteError}</div>
+        <div class="mb-2 rounded bg-danger/20 px-3 py-1.5 text-xs text-danger-soft">
+          {deleteError}
+        </div>
       )}
 
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0 flex-1">
           <div class="flex min-w-0 items-center gap-2">
-            <h3 class="text-sm font-medium text-gray-200 truncate">{workflow.name}</h3>
+            <h3 class="text-sm font-medium text-fg-soft truncate">{workflow.name}</h3>
             {workflow.disabled && (
-              <span class="inline-flex shrink-0 items-center rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
+              <span class="inline-flex shrink-0 items-center rounded bg-danger/10 px-1.5 py-0.5 text-[10px] font-medium text-danger">
                 Disabled
               </span>
             )}
           </div>
           {workflow.description && (
-            <p class="mt-1 line-clamp-2 text-xs leading-5 text-gray-400">{workflow.description}</p>
+            <p class="mt-1 line-clamp-2 text-xs leading-5 text-fg-muted">{workflow.description}</p>
           )}
           {workflow.templateName && (
             <div class="mt-1.5 flex items-center gap-1.5">
-              <span class="inline-flex items-center rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-400">
+              <span class="inline-flex items-center rounded border border-line px-1.5 py-0.5 text-xs text-fg-muted">
                 {workflow.templateName}
               </span>
               {driftState?.updateAvailable && (
                 <span
-                  class="inline-flex items-center rounded bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-300"
+                  class="inline-flex items-center rounded bg-warning/10 px-1.5 py-0.5 text-xs text-warning-soft"
                   title="A newer version of this template is available. Apply it to bring this workflow up to date."
                 >
                   Update available
@@ -234,7 +236,7 @@ function WorkflowCard({
               )}
               {driftState?.customized && (
                 <span
-                  class="inline-flex items-center rounded bg-white/5 px-1.5 py-0.5 text-xs text-gray-400"
+                  class="inline-flex items-center rounded bg-fill-soft px-1.5 py-0.5 text-xs text-fg-muted"
                   title={
                     driftState?.updateAvailable
                       ? 'This workflow has local edits on top of its template — review the diff before applying the update.'
@@ -246,7 +248,7 @@ function WorkflowCard({
               )}
               {duplicateDrift && (
                 <span
-                  class="inline-flex items-center rounded bg-orange-500/10 px-1.5 py-0.5 text-xs text-orange-300"
+                  class="inline-flex items-center rounded bg-warning/10 px-1.5 py-0.5 text-xs text-warning-soft"
                   title={`${duplicateDrift.groupSize} rows share the "${duplicateDrift.templateName}" template (duplicates). Resync keeps the newest row and removes the rest.`}
                 >
                   Duplicate ×{duplicateDrift.groupSize}
@@ -262,17 +264,17 @@ function WorkflowCard({
         >
           {confirmDelete ? (
             <>
-              <span class="text-xs text-red-400">Delete?</span>
+              <span class="text-xs text-danger">Delete?</span>
               <button
                 onClick={handleDelete}
                 disabled={deleting}
-                class="px-2 py-1 text-xs text-red-300 bg-red-900/30 hover:bg-red-900/50 border border-red-800/50 rounded disabled:opacity-50 transition-colors"
+                class="px-2 py-1 text-xs text-danger-soft bg-danger/30 hover:bg-danger/50 border border-danger/50 rounded disabled:opacity-50 transition-colors"
               >
                 {deleting ? '…' : 'Confirm'}
               </button>
               <button
                 onClick={() => setConfirmDelete(false)}
-                class="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+                class="px-2 py-1 text-xs text-fg-muted hover:text-fg-soft transition-colors"
               >
                 Cancel
               </button>
@@ -284,7 +286,7 @@ function WorkflowCard({
                 (driftState.customized ? (
                   <button
                     onClick={() => setDiffOpen(true)}
-                    class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200"
+                    class="rounded-md px-2 py-1 text-xs text-warning transition-colors hover:bg-fill-soft hover:text-warning-soft"
                     title="This workflow has local edits. Review the diff before applying the template update."
                   >
                     Review diff
@@ -292,7 +294,7 @@ function WorkflowCard({
                 ) : (
                   <button
                     onClick={() => setConfirmSync(true)}
-                    class="rounded-md px-2 py-1 text-xs text-amber-300 transition-colors hover:bg-white/5 hover:text-amber-200"
+                    class="rounded-md px-2 py-1 text-xs text-warning transition-colors hover:bg-fill-soft hover:text-warning-soft"
                     title="Apply the template update (no local edits to lose)"
                   >
                     Apply update
@@ -301,7 +303,7 @@ function WorkflowCard({
               {duplicateDrift?.isNewest && (
                 <button
                   onClick={() => setConfirmDupResync(true)}
-                  class="rounded-md px-2 py-1 text-xs text-orange-300 transition-colors hover:bg-white/5 hover:text-orange-200"
+                  class="rounded-md px-2 py-1 text-xs text-warning-soft transition-colors hover:bg-fill-soft hover:text-warning-soft"
                   title={`Remove ${duplicateDrift.groupSize - 1} older duplicate${duplicateDrift.groupSize - 1 === 1 ? '' : 's'} and resync this workflow from the built-in template`}
                 >
                   Resync duplicates
@@ -309,13 +311,13 @@ function WorkflowCard({
               )}
               <button
                 onClick={onEdit}
-                class="rounded-md px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200"
+                class="rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft"
               >
                 Edit
               </button>
               <button
                 onClick={handleExport}
-                class="rounded-md px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200"
+                class="rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft"
                 title="Export workflow"
               >
                 <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -329,7 +331,7 @@ function WorkflowCard({
               </button>
               <button
                 onClick={() => setConfirmDelete(true)}
-                class="rounded-md px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-red-400"
+                class="rounded-md px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-danger"
                 title="Delete workflow"
               >
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -347,17 +349,17 @@ function WorkflowCard({
       </div>
 
       <div class="mt-2 flex flex-wrap items-center gap-2">
-        <span class="text-xs text-gray-400">
+        <span class="text-xs text-fg-muted">
           {workflow.nodeCount} {workflow.nodeCount === 1 ? 'step' : 'steps'}
         </span>
         <MiniStepViz workflow={workflow} />
         {workflow.tags.length > 0 && (
           <>
-            <span class="text-gray-400">·</span>
+            <span class="text-fg-muted">·</span>
             {workflow.tags.map((tag) => (
               <span
                 key={tag}
-                class="rounded border border-white/10 px-1.5 py-0.5 text-xs text-gray-400"
+                class="rounded border border-line px-1.5 py-0.5 text-xs text-fg-muted"
               >
                 {tag}
               </span>
@@ -367,30 +369,30 @@ function WorkflowCard({
       </div>
 
       {confirmDupResync && duplicateDrift && (
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
-            <h3 class="text-sm font-semibold text-gray-100 mb-2">Resync duplicate workflows?</h3>
-            <p class="text-xs text-gray-400 mb-1">
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-scrim">
+          <div class="bg-surface-overlay border border-line rounded-lg p-5 max-w-md w-full shadow-xl">
+            <h3 class="text-sm font-semibold text-fg mb-2">Resync duplicate workflows?</h3>
+            <p class="text-xs text-fg-muted mb-1">
               This space has{' '}
-              <span class="font-medium text-gray-200">{duplicateDrift.groupSize} rows</span> sharing
-              the <span class="font-medium text-gray-200">"{duplicateDrift.templateName}"</span>{' '}
+              <span class="font-medium text-fg-soft">{duplicateDrift.groupSize} rows</span> sharing
+              the <span class="font-medium text-fg-soft">"{duplicateDrift.templateName}"</span>{' '}
               template (duplicate rows).
             </p>
-            <p class="text-xs text-gray-400 mb-1">
-              The newest row <span class="font-medium text-gray-200">"{workflow.name}"</span> will
-              be kept and resynced from the built-in template. The remaining{' '}
-              <span class="font-medium text-gray-200">
+            <p class="text-xs text-fg-muted mb-1">
+              The newest row <span class="font-medium text-fg-soft">"{workflow.name}"</span> will be
+              kept and resynced from the built-in template. The remaining{' '}
+              <span class="font-medium text-fg-soft">
                 {duplicateDrift.groupSize - 1} older{' '}
                 {duplicateDrift.groupSize - 1 === 1 ? 'row' : 'rows'}
               </span>{' '}
               will be deleted.
             </p>
-            <p class="text-xs text-red-400 mb-4">
+            <p class="text-xs text-danger mb-4">
               Local edits to the older rows and any workflow runs attached to them will be
               permanently lost.
             </p>
             {dupResyncError && (
-              <div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
+              <div class="mb-3 px-3 py-1.5 bg-danger/20 border border-danger/40 rounded text-xs text-danger-soft">
                 {dupResyncError}
               </div>
             )}
@@ -401,14 +403,14 @@ function WorkflowCard({
                   setDupResyncError(null);
                 }}
                 disabled={dupResyncing}
-                class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+                class="px-3 py-1.5 text-xs text-fg-muted hover:text-fg-soft transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleResyncDuplicates}
                 disabled={dupResyncing}
-                class="px-3 py-1.5 text-xs font-medium text-white bg-orange-700 hover:bg-orange-600 rounded transition-colors disabled:opacity-50"
+                class="px-3 py-1.5 text-xs font-medium text-on-warning bg-warning hover:bg-warning rounded transition-colors disabled:opacity-50"
               >
                 {dupResyncing ? 'Resyncing…' : 'Delete older rows & resync'}
               </button>
@@ -418,21 +420,21 @@ function WorkflowCard({
       )}
 
       {confirmSync && (
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div class="bg-dark-850 border border-dark-700 rounded-lg p-5 max-w-md w-full shadow-xl">
-            <h3 class="text-sm font-semibold text-gray-100 mb-2">Apply template update?</h3>
-            <p class="text-xs text-gray-400 mb-1">
-              This updates <span class="font-medium text-gray-200">"{workflow.name}"</span> to the
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-scrim">
+          <div class="bg-surface-overlay border border-line rounded-lg p-5 max-w-md w-full shadow-xl">
+            <h3 class="text-sm font-semibold text-fg mb-2">Apply template update?</h3>
+            <p class="text-xs text-fg-muted mb-1">
+              This updates <span class="font-medium text-fg-soft">"{workflow.name}"</span> to the
               latest version of the{' '}
-              <span class="font-medium text-gray-200">"{workflow.templateName}"</span> template
+              <span class="font-medium text-fg-soft">"{workflow.templateName}"</span> template
               (structure, instructions, and channels).
             </p>
-            <p class="text-xs text-gray-500 mb-4">
+            <p class="text-xs text-fg-faint mb-4">
               No edits were detected to this workflow's steps, instructions, or prompts — though
               applying still overwrites the full structure.
             </p>
             {syncError && (
-              <div class="mb-3 px-3 py-1.5 bg-red-900/20 border border-red-800/40 rounded text-xs text-red-300">
+              <div class="mb-3 px-3 py-1.5 bg-danger/20 border border-danger/40 rounded text-xs text-danger-soft">
                 {syncError}
               </div>
             )}
@@ -443,14 +445,14 @@ function WorkflowCard({
                   setSyncError(null);
                 }}
                 disabled={syncing}
-                class="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+                class="px-3 py-1.5 text-xs text-fg-muted hover:text-fg-soft transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSyncFromTemplate}
                 disabled={syncing}
-                class="px-3 py-1.5 text-xs font-medium text-white bg-yellow-700 hover:bg-yellow-600 rounded transition-colors disabled:opacity-50"
+                class="px-3 py-1.5 text-xs font-medium text-accent-fg bg-yellow-700 hover:bg-yellow-600 rounded transition-colors disabled:opacity-50"
               >
                 {syncing ? 'Applying…' : 'Apply update'}
               </button>
@@ -630,7 +632,7 @@ export function WorkflowList({
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center">
-          <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <div class="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
         </div>
       </div>
     );
@@ -638,21 +640,21 @@ export function WorkflowList({
 
   return (
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
-      <div class="mb-3 flex flex-shrink-0 items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-3">
+      <div class="mb-3 flex flex-shrink-0 items-center justify-between gap-3 rounded-lg border border-line bg-fill-soft px-3 py-3">
         <div class="flex min-w-0 items-start gap-3">
-          <div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-purple-400/70" />
+          <div class="mt-0.5 h-8 w-1 flex-shrink-0 rounded-full bg-cat-purple/70" />
           <div class="min-w-0">
-            <p class="text-xs font-semibold uppercase tracking-wider text-gray-300">
+            <p class="text-xs font-semibold uppercase tracking-wider text-fg-soft">
               {workflows.length} {workflows.length === 1 ? 'workflow' : 'workflows'}
             </p>
-            <p class="mt-1 text-xs text-gray-400">Reusable multi-agent pipelines for this space.</p>
+            <p class="mt-1 text-xs text-fg-muted">Reusable multi-agent pipelines for this space.</p>
           </div>
         </div>
         <div class="flex items-center gap-2">
           <button
             type="button"
             onClick={startImport}
-            class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
+            class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg"
           >
             <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path
@@ -668,7 +670,7 @@ export function WorkflowList({
             <button
               type="button"
               onClick={exportAll}
-              class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
+              class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg"
             >
               <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path
@@ -683,7 +685,7 @@ export function WorkflowList({
           )}
           <button
             onClick={onCreateWorkflow}
-            class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-500"
+            class="flex items-center gap-1.5 rounded-lg bg-accent-hover px-3 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent"
           >
             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -702,9 +704,9 @@ export function WorkflowList({
         <div class="min-h-[calc(100%+1px)]">
           {workflows.length === 0 ? (
             <div class="text-center py-12">
-              <div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-dark-800 border border-dark-700 flex items-center justify-center">
+              <div class="w-10 h-10 mx-auto mb-3 rounded-lg bg-surface-raised border border-line flex items-center justify-center">
                 <svg
-                  class="w-5 h-5 text-gray-400"
+                  class="w-5 h-5 text-fg-muted"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -717,13 +719,13 @@ export function WorkflowList({
                   />
                 </svg>
               </div>
-              <p class="text-sm text-gray-400">No workflows yet</p>
-              <p class="text-xs text-gray-400 mt-1">
+              <p class="text-sm text-fg-muted">No workflows yet</p>
+              <p class="text-xs text-fg-muted mt-1">
                 Create a workflow to define multi-agent pipelines.
               </p>
               <button
                 onClick={onCreateWorkflow}
-                class="mt-4 px-4 py-2 text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors"
+                class="mt-4 px-4 py-2 text-xs font-medium bg-accent-hover hover:bg-accent text-accent-fg rounded transition-colors"
               >
                 Create your first workflow
               </button>

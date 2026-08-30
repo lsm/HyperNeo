@@ -14,9 +14,9 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
   if (message.resolved && message.chosenOption) {
     const label = message.chosenOption === 'start_fresh' ? 'Start Fresh Session' : 'Leave as Is';
     return (
-      <div class="flex items-start gap-2 px-3 py-2 mb-4 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/30 opacity-60">
+      <div class="flex items-start gap-2 px-3 py-2 mb-4 rounded border border-line bg-surface-raised opacity-60">
         <svg
-          class="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400 dark:text-gray-500"
+          class="w-3.5 h-3.5 mt-0.5 shrink-0 text-fg-faint"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -28,7 +28,7 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
             d="M5 13l4 4L19 7"
           />
         </svg>
-        <p class="text-xs text-gray-500 dark:text-gray-400">
+        <p class="text-xs text-fg-muted">
           Session choice resolved: <span class="font-medium">{label}</span>
         </p>
       </div>
@@ -52,10 +52,10 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
   }
 
   return (
-    <div class="flex flex-col gap-3 px-3 py-3 mb-4 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/10">
+    <div class="flex flex-col gap-3 px-3 py-3 mb-4 rounded border border-warning/40 bg-warning/10">
       <div class="flex items-start gap-2">
         <svg
-          class="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400"
+          class="w-3.5 h-3.5 mt-0.5 shrink-0 text-warning"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -67,9 +67,9 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
             d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
           />
         </svg>
-        <div class="flex-1 text-xs text-amber-900 dark:text-amber-100 space-y-1">
+        <div class="flex-1 text-xs text-warning-soft space-y-1">
           <p class="font-semibold">Session transcript not found</p>
-          <p class="text-amber-800 dark:text-amber-200">
+          <p class="text-warning-soft">
             The conversation history for this session could not be located. How would you like to
             proceed?
           </p>
@@ -84,8 +84,8 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
 						px-3 py-1.5 text-xs font-medium rounded border transition-colors
 						${
               loading === 'start_fresh'
-                ? 'opacity-50 cursor-not-allowed bg-amber-600 border-amber-600 text-white'
-                : 'bg-amber-600 hover:bg-amber-700 border-amber-600 hover:border-amber-700 text-white cursor-pointer'
+                ? 'opacity-50 cursor-not-allowed bg-warning border-warning text-on-warning'
+                : 'bg-warning hover:bg-warning border-warning hover:border-warning text-on-warning cursor-pointer'
             }
 					`}
         >
@@ -98,8 +98,8 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
 						px-3 py-1.5 text-xs font-medium rounded border transition-colors
 						${
               loading === 'leave_as_is'
-                ? 'opacity-50 cursor-not-allowed border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
-                : 'border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/30 cursor-pointer'
+                ? 'opacity-50 cursor-not-allowed border-line-strong text-fg-faint'
+                : 'border-warning-soft text-warning-soft hover:bg-warning/15 dark:hover:bg-amber-900/30 cursor-pointer'
             }
 					`}
         >
@@ -107,7 +107,7 @@ export function SDKResumeChoiceMessage({ message, sessionId }: Props) {
         </button>
       </div>
 
-      {error && <p class="ml-5 text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {error && <p class="ml-5 text-xs text-danger">{error}</p>}
     </div>
   );
 }

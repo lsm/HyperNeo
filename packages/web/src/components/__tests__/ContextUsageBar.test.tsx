@@ -49,7 +49,7 @@ describe('ContextUsageBar', () => {
       const lowUsage: ContextInfo = { ...mockContextUsage, percentUsed: 25 };
       const { container } = render(<ContextUsageBar contextUsage={lowUsage} />);
 
-      const percentText = container.querySelector('.text-green-400');
+      const percentText = container.querySelector('.text-success-soft');
       expect(percentText).toBeTruthy();
     });
 
@@ -57,7 +57,7 @@ describe('ContextUsageBar', () => {
       const mediumUsage: ContextInfo = { ...mockContextUsage, percentUsed: 65 };
       const { container } = render(<ContextUsageBar contextUsage={mediumUsage} />);
 
-      const percentText = container.querySelector('.text-yellow-400');
+      const percentText = container.querySelector('.text-warning-soft');
       expect(percentText).toBeTruthy();
     });
 
@@ -65,7 +65,7 @@ describe('ContextUsageBar', () => {
       const highUsage: ContextInfo = { ...mockContextUsage, percentUsed: 80 };
       const { container } = render(<ContextUsageBar contextUsage={highUsage} />);
 
-      const percentText = container.querySelector('.text-orange-400');
+      const percentText = container.querySelector('.text-warning-soft');
       expect(percentText).toBeTruthy();
     });
 
@@ -76,7 +76,7 @@ describe('ContextUsageBar', () => {
       };
       const { container } = render(<ContextUsageBar contextUsage={criticalUsage} />);
 
-      const percentText = container.querySelector('.text-red-400');
+      const percentText = container.querySelector('.text-danger-soft');
       expect(percentText).toBeTruthy();
     });
   });
@@ -88,7 +88,7 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      const progressFill = container.querySelector('.bg-green-500');
+      const progressFill = container.querySelector('.bg-success');
       const style = progressFill?.getAttribute('style');
       expect(style).toContain('width: 25%');
     });
@@ -100,7 +100,7 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      const progressFill = container.querySelector('.bg-red-500');
+      const progressFill = container.querySelector('.bg-danger');
       const style = progressFill?.getAttribute('style');
       expect(style).toContain('width: 100%');
     });
@@ -242,7 +242,7 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      const systemRow = Array.from(container.querySelectorAll('.bg-gray-600'));
+      const systemRow = Array.from(container.querySelectorAll('.bg-fg-faint'));
       expect(systemRow.length).toBeGreaterThan(0);
     });
 
@@ -252,7 +252,7 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      const messagesRow = container.querySelector('.bg-blue-500');
+      const messagesRow = container.querySelector('.bg-accent');
       expect(messagesRow).toBeTruthy();
     });
   });
@@ -427,7 +427,7 @@ describe('ContextUsageBar', () => {
       expect(container.textContent).toContain('Output Tokens');
       expect(container.textContent).toContain('Free Space');
       const categoryLabels = Array.from(
-        container.querySelectorAll('.text-gray-400.flex-1.min-w-0.truncate')
+        container.querySelectorAll('.text-fg-muted.flex-1.min-w-0.truncate')
       ).map((el) => el.textContent);
       expect(categoryLabels).not.toContain('Autocompact');
     });
@@ -464,7 +464,7 @@ describe('ContextUsageBar', () => {
       fireEvent.click(clickable);
 
       expect(container.textContent).toContain('Output');
-      const greenRow = container.querySelector('.bg-green-500');
+      const greenRow = container.querySelector('.bg-success');
       expect(greenRow).toBeTruthy();
     });
 
@@ -483,7 +483,7 @@ describe('ContextUsageBar', () => {
       fireEvent.click(clickable);
 
       expect(container.textContent).toContain('Unknown Category');
-      const indigoRow = container.querySelector('.bg-indigo-500');
+      const indigoRow = container.querySelector('.bg-accent-hover');
       expect(indigoRow).toBeTruthy();
     });
   });
@@ -501,7 +501,7 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      const purpleRow = container.querySelector('.bg-purple-500');
+      const purpleRow = container.querySelector('.bg-cat-purple');
       expect(purpleRow).toBeTruthy();
     });
 
@@ -517,7 +517,7 @@ describe('ContextUsageBar', () => {
       const clickable = container.querySelector('[title="Click for context details"]')!;
       fireEvent.click(clickable);
 
-      const cyanRow = container.querySelector('.bg-cyan-500');
+      const cyanRow = container.querySelector('.bg-cat-cyan');
       expect(cyanRow).toBeTruthy();
     });
 
@@ -536,7 +536,7 @@ describe('ContextUsageBar', () => {
       fireEvent.click(clickable);
 
       const categoryLabels = Array.from(
-        container.querySelectorAll('.text-gray-400.flex-1.min-w-0.truncate')
+        container.querySelectorAll('.text-fg-muted.flex-1.min-w-0.truncate')
       ).map((el) => el.textContent);
       expect(categoryLabels).not.toContain('Autocompact');
       expect(container.querySelector('[data-testid="autocompact-buffer-zone"]')).toBeTruthy();
@@ -659,7 +659,7 @@ describe('ContextUsageBar', () => {
       expect(Number.parseFloat(bufferZone?.style.width ?? '')).toBeCloseTo(12.14595588235294, 5);
       expect(Number.parseFloat(marker?.style.left ?? '')).toBeCloseTo(87.85404411764706, 5);
       const categoryLabels = Array.from(
-        container.querySelectorAll('.text-gray-400.flex-1.min-w-0.truncate')
+        container.querySelectorAll('.text-fg-muted.flex-1.min-w-0.truncate')
       ).map((el) => el.textContent);
       expect(categoryLabels).not.toContain('Reserved for Autocompact');
     });

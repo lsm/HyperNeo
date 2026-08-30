@@ -27,7 +27,6 @@ import {
   isSDKAPIRetryMessage,
   isSDKModelRefusalFallbackMessage,
 } from '@hyperneo/shared/sdk/type-guards';
-import { customColors } from '../../lib/design-tokens.ts';
 
 type SystemMessage = Extract<SDKMessage, { type: 'system' }>;
 
@@ -51,17 +50,9 @@ export function SDKSystemMessage({ message, isLiveTail = false, completedHookUui
     if (statusMessage.status === 'compacting') {
       return (
         <div class="flex items-center gap-3 py-4">
-          <div
-            class="flex-1 h-px"
-            style={{ backgroundColor: customColors.canaryYellow.light }}
-          ></div>
-          <span class="text-xs font-medium text-yellow-600 dark:text-yellow-400">
-            Compact Boundary
-          </span>
-          <div
-            class="flex-1 h-px"
-            style={{ backgroundColor: customColors.canaryYellow.light }}
-          ></div>
+          <div class="flex-1 h-px bg-warning"></div>
+          <span class="text-xs font-medium text-warning">Compact Boundary</span>
+          <div class="flex-1 h-px bg-warning"></div>
         </div>
       );
     }
@@ -156,10 +147,8 @@ function OperationalSystemMessage({
   children: ComponentChildren;
 }) {
   return (
-    <div class="my-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-100">
-      <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-        {title}
-      </div>
+    <div class="my-2 rounded-lg border border-line bg-surface-raised p-3 text-sm text-fg dark:text-slate-100">
+      <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-fg-muted">{title}</div>
       <div>{children}</div>
     </div>
   );
@@ -170,7 +159,7 @@ function InformationalMessage({ message }: { message: SDKInformationalMessage })
     <OperationalSystemMessage title={`Info: ${message.level}`}>
       {message.content}
       {message.prevent_continuation && (
-        <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">Continuation stopped</div>
+        <div class="mt-1 text-xs text-fg-muted">Continuation stopped</div>
       )}
     </OperationalSystemMessage>
   );
@@ -188,19 +177,11 @@ function ApiRetryMessage({ message }: { message: SDKAPIRetryMessage }) {
       <div class="flex flex-col gap-1">
         <div class="flex items-center gap-2 text-xs">
           <span class="font-medium">Attempt {currentAttempt}</span>
-          {maxRetries > 0 && (
-            <span class="text-slate-500 dark:text-slate-400">of {maxRetries}</span>
-          )}
-          {delayMs > 0 && (
-            <span class="text-slate-500 dark:text-slate-400">• delay {delayMs}ms</span>
-          )}
+          {maxRetries > 0 && <span class="text-fg-muted">of {maxRetries}</span>}
+          {delayMs > 0 && <span class="text-fg-muted">• delay {delayMs}ms</span>}
         </div>
-        {errorStatus && (
-          <div class="text-xs text-slate-600 dark:text-slate-400">Status: {errorStatus}</div>
-        )}
-        <div class="text-xs text-amber-700 dark:text-amber-400 font-mono break-words">
-          {errorMessage}
-        </div>
+        {errorStatus && <div class="text-xs text-fg-muted">Status: {errorStatus}</div>}
+        <div class="text-xs text-warning-soft font-mono break-words">{errorMessage}</div>
       </div>
     </OperationalSystemMessage>
   );
@@ -219,12 +200,12 @@ function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFall
   const refusalExplanation = message.api_refusal_explanation?.trim() || null;
 
   return (
-    <div class="my-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+    <div class="my-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning-soft">
       <div class="mb-1 flex flex-wrap items-center gap-2 font-semibold">
         Model fallback
         {refusalCategory && (
           <span
-            class="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/50 dark:text-amber-200"
+            class="rounded bg-warning/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-warning-soft"
             data-testid="api-refusal-category"
           >
             {refusalCategory}
@@ -233,14 +214,11 @@ function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFall
       </div>
       <div>{message.content}</div>
       {refusalExplanation && (
-        <div
-          class="mt-1 text-xs text-amber-700 dark:text-amber-300"
-          data-testid="api-refusal-explanation"
-        >
+        <div class="mt-1 text-xs text-warning-soft" data-testid="api-refusal-explanation">
           {refusalExplanation}
         </div>
       )}
-      <div class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+      <div class="mt-2 text-xs text-warning-soft">
         {message.original_model} → {message.fallback_model}
       </div>
     </div>
@@ -249,27 +227,25 @@ function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFall
 
 function ModelRefusalNoFallbackMessage({ message }: { message: SDKModelRefusalNoFallbackMessage }) {
   return (
-    <div class="my-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100">
+    <div class="my-2 rounded-lg border border-danger/40 bg-danger/15 p-3 text-sm text-danger-soft">
       <div class="mb-1 font-semibold">Model refusal</div>
       <div>{message.content}</div>
-      <div class="mt-2 text-xs text-red-700 dark:text-red-300">{message.original_model}</div>
+      <div class="mt-2 text-xs text-danger-soft">{message.original_model}</div>
     </div>
   );
 }
 
 function PermissionDeniedMessage({ message }: { message: SDKPermissionDeniedMessage }) {
   return (
-    <div class="my-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:border-rose-800 dark:bg-rose-950/30 dark:text-rose-100">
+    <div class="my-2 rounded-lg border border-cat-rose/40 bg-rose-50 p-3 text-sm text-cat-rose dark:bg-rose-950/30">
       <div class="mb-1 font-semibold">Permission denied</div>
       <div class="font-mono text-xs">{message.tool_name}</div>
       {message.decision_reason && (
-        <div class="mt-1 text-xs text-rose-700 dark:text-rose-300">{message.decision_reason}</div>
+        <div class="mt-1 text-xs text-cat-rose">{message.decision_reason}</div>
       )}
-      <div class="mt-1 text-xs text-rose-600 dark:text-rose-400">{message.message}</div>
+      <div class="mt-1 text-xs text-cat-rose">{message.message}</div>
       {message.agent_id && (
-        <div class="mt-1 text-xs text-rose-500 dark:text-rose-400">
-          Subagent: {message.agent_id.slice(0, 8)}...
-        </div>
+        <div class="mt-1 text-xs text-cat-rose">Subagent: {message.agent_id.slice(0, 8)}...</div>
       )}
     </div>
   );
@@ -283,10 +259,10 @@ function TaskNotificationMessage({ message }: { message: SDKTaskNotificationMess
     <div
       class={`my-2 rounded-lg border p-3 text-sm ${
         isSuccess
-          ? 'border-green-200 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-100'
+          ? 'border-success/40 bg-success/10 text-success-soft'
           : isError
-            ? 'border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100'
-            : 'border-slate-200 bg-slate-50 text-slate-900 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-100'
+            ? 'border-danger/40 bg-danger/15 text-danger-soft'
+            : 'border-line bg-surface-raised text-fg'
       }`}
     >
       <div class="mb-1 font-semibold">
@@ -310,7 +286,7 @@ function MemoryRecallMessage({ message }: { message: SDKMemoryRecallMessage }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (
-    <div class="my-2 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-100">
+    <div class="my-2 rounded-lg border border-cat-violet/40 bg-cat-violet/10 p-3 text-sm text-cat-violet">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
         class="w-full flex items-center justify-between"
@@ -345,14 +321,10 @@ function MemoryRecallMessage({ message }: { message: SDKMemoryRecallMessage }) {
           {message.memories.map((memory, index) => (
             <div
               key={index}
-              class="flex items-start gap-2 text-xs bg-white dark:bg-gray-900 rounded p-2 border border-violet-100 dark:border-violet-900"
+              class="flex items-start gap-2 text-xs bg-surface rounded p-2 border border-cat-violet/40"
             >
-              <span class="font-mono text-violet-600 dark:text-violet-400 flex-shrink-0">
-                {memory.scope}
-              </span>
-              <span class="font-mono text-violet-700 dark:text-violet-300 truncate">
-                {memory.path}
-              </span>
+              <span class="font-mono text-cat-violet flex-shrink-0">{memory.scope}</span>
+              <span class="font-mono text-cat-violet truncate">{memory.path}</span>
             </div>
           ))}
         </div>
@@ -363,7 +335,7 @@ function MemoryRecallMessage({ message }: { message: SDKMemoryRecallMessage }) {
 
 function LocalCommandOutputMessage({ message }: { message: SDKLocalCommandOutputMessage }) {
   return (
-    <div class="my-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-100">
+    <div class="my-2 rounded-lg border border-line bg-surface-raised p-3 text-sm text-fg">
       <pre class="text-xs font-mono whitespace-pre-wrap overflow-x-auto">{message.content}</pre>
     </div>
   );
@@ -371,12 +343,10 @@ function LocalCommandOutputMessage({ message }: { message: SDKLocalCommandOutput
 
 function NotificationMessage({ message }: { message: SDKNotificationMessage }) {
   const priorityColors = {
-    low: 'border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-100',
-    medium:
-      'border-yellow-200 bg-yellow-50 text-yellow-900 dark:border-yellow-800 dark:bg-yellow-950/30 dark:text-yellow-100',
-    high: 'border-orange-200 bg-orange-50 text-orange-900 dark:border-orange-800 dark:bg-orange-950/30 dark:text-orange-100',
-    immediate:
-      'border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100',
+    low: 'border-accent/40 bg-accent/10 text-accent-soft',
+    medium: 'border-warning/40 bg-warning/10 text-warning-soft dark:bg-yellow-950/30',
+    high: 'border-warning-soft bg-warning/10 text-warning-soft',
+    immediate: 'border-danger/40 bg-danger/15 text-danger-soft',
   };
 
   const colors = message.color
@@ -392,7 +362,7 @@ function NotificationMessage({ message }: { message: SDKNotificationMessage }) {
 
 function FilesPersistedMessage({ message }: { message: SDKFilesPersistedEvent }) {
   return (
-    <div class="my-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100">
+    <div class="my-2 rounded-lg border border-danger/40 bg-danger/15 p-3 text-sm text-danger-soft">
       <div class="mb-1 font-semibold">File persistence failed</div>
       <div class="text-xs">
         {message.failed.length} file{message.failed.length !== 1 ? 's' : ''} failed to persist
@@ -402,10 +372,10 @@ function FilesPersistedMessage({ message }: { message: SDKFilesPersistedEvent })
           {message.failed.map((failure, index) => (
             <div
               key={index}
-              class="text-xs bg-white dark:bg-gray-900 rounded p-2 border border-red-100 dark:border-red-900"
+              class="text-xs bg-surface rounded p-2 border border-red-100 dark:border-red-900"
             >
               <div class="font-mono">{failure.filename}</div>
-              <div class="text-red-700 dark:text-red-300 mt-1">{failure.error}</div>
+              <div class="text-danger-soft mt-1">{failure.error}</div>
             </div>
           ))}
         </div>
@@ -422,10 +392,10 @@ function PluginInstallMessage({ message }: { message: SDKPluginInstallMessage })
     <div
       class={`my-2 rounded-lg border p-3 text-sm ${
         isSuccess
-          ? 'border-green-200 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950/30 dark:text-green-100'
+          ? 'border-success/40 bg-success/10 text-success-soft'
           : isError
-            ? 'border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950/30 dark:text-red-100'
-            : 'border-slate-200 bg-slate-50 text-slate-900 dark:border-slate-700 dark:bg-slate-900/30 dark:text-slate-100'
+            ? 'border-danger/40 bg-danger/15 text-danger-soft'
+            : 'border-line bg-surface-raised text-fg'
       }`}
     >
       <div class="font-semibold">
@@ -434,9 +404,7 @@ function PluginInstallMessage({ message }: { message: SDKPluginInstallMessage })
         {isSuccess && ' installed'}
         {isError && ' installation failed'}
       </div>
-      {message.error && (
-        <div class="mt-1 text-xs text-red-700 dark:text-red-300">{message.error}</div>
-      )}
+      {message.error && <div class="mt-1 text-xs text-danger-soft">{message.error}</div>}
     </div>
   );
 }
@@ -445,14 +413,14 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
   const [showDetails, setShowDetails] = useState(false);
 
   return (
-    <div class="py-2 bg-indigo-50 dark:bg-indigo-900/20 rounded border border-indigo-200 dark:border-indigo-800">
+    <div class="py-2 bg-cat-indigo/10 rounded border border-cat-indigo/40">
       <button
         onClick={() => setShowDetails(!showDetails)}
         class="w-full flex items-center justify-between hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors -m-1 p-1 rounded"
       >
         <div class="flex items-center gap-2">
           <svg
-            class="w-4 h-4 text-indigo-600 dark:text-indigo-400"
+            class="w-4 h-4 text-cat-indigo"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -465,14 +433,14 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
             />
           </svg>
           <div class="text-xs">
-            <span class="font-medium text-indigo-900 dark:text-indigo-100">Session Started</span>
-            <span class="text-indigo-600 dark:text-indigo-400 ml-2">
+            <span class="font-medium text-cat-indigo">Session Started</span>
+            <span class="text-cat-indigo ml-2">
               {message.model.replace('claude-', '')} • {message.permissionMode}
             </span>
           </div>
         </div>
         <svg
-          class={`w-4 h-4 text-indigo-600 dark:text-indigo-400 transition-transform ${showDetails ? 'rotate-180' : ''}`}
+          class={`w-4 h-4 text-cat-indigo transition-transform ${showDetails ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -482,25 +450,23 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
       </button>
 
       {showDetails && (
-        <div class="mt-3 pt-3 border-t border-indigo-200 dark:border-indigo-800 space-y-2 text-sm">
+        <div class="mt-3 pt-3 border-t border-cat-indigo/40 space-y-2 text-sm">
           <div>
-            <div class="text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1">
-              Working Directory
-            </div>
-            <div class="font-mono text-xs text-indigo-900 dark:text-indigo-100 bg-indigo-100 dark:bg-indigo-900/30 px-2 py-1 rounded">
+            <div class="text-xs font-semibold text-cat-indigo mb-1">Working Directory</div>
+            <div class="font-mono text-xs text-cat-indigo bg-cat-indigo/15 px-2 py-1 rounded">
               {message.cwd}
             </div>
           </div>
 
           <div>
-            <div class="text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1">
+            <div class="text-xs font-semibold text-cat-indigo mb-1">
               Tools ({message.tools.length})
             </div>
             <div class="flex flex-wrap gap-1">
               {message.tools.map((tool: string) => (
                 <span
                   key={tool}
-                  class="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-200 px-2 py-0.5 rounded font-mono"
+                  class="text-xs bg-cat-indigo/15 text-cat-indigo px-2 py-0.5 rounded font-mono"
                 >
                   {tool}
                 </span>
@@ -510,18 +476,18 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
 
           {message.mcp_servers.length > 0 && (
             <div>
-              <div class="text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1">
+              <div class="text-xs font-semibold text-cat-indigo mb-1">
                 MCP Servers ({message.mcp_servers.length})
               </div>
               <div class="space-y-1">
                 {message.mcp_servers.map((server: { name: string; status: string }) => (
                   <div
                     key={server.name}
-                    class="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-200 px-2 py-1 rounded flex items-center justify-between"
+                    class="text-xs bg-cat-indigo/15 text-cat-indigo px-2 py-1 rounded flex items-center justify-between"
                   >
                     <span class="font-mono">{server.name}</span>
                     <span
-                      class={`text-xs ${server.status === 'connected' ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}`}
+                      class={`text-xs ${server.status === 'connected' ? 'text-success' : 'text-fg-faint'}`}
                     >
                       {server.status}
                     </span>
@@ -533,14 +499,14 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
 
           {message.slash_commands.length > 0 && (
             <div>
-              <div class="text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1">
+              <div class="text-xs font-semibold text-cat-indigo mb-1">
                 Slash Commands ({message.slash_commands.length})
               </div>
               <div class="flex flex-wrap gap-1">
                 {message.slash_commands.map((cmd: string) => (
                   <span
                     key={cmd}
-                    class="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-200 px-2 py-0.5 rounded font-mono"
+                    class="text-xs bg-cat-indigo/15 text-cat-indigo px-2 py-0.5 rounded font-mono"
                   >
                     /{cmd}
                   </span>
@@ -551,14 +517,14 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
 
           {message.agents && message.agents.length > 0 && (
             <div>
-              <div class="text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1">
+              <div class="text-xs font-semibold text-cat-indigo mb-1">
                 Agents ({message.agents.length})
               </div>
               <div class="flex flex-wrap gap-1">
                 {message.agents.map((agent: string) => (
                   <span
                     key={agent}
-                    class="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-200 px-2 py-0.5 rounded"
+                    class="text-xs bg-cat-indigo/15 text-cat-indigo px-2 py-0.5 rounded"
                   >
                     {agent}
                   </span>
@@ -567,7 +533,7 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
             </div>
           )}
 
-          <div class="text-xs text-indigo-600 dark:text-indigo-400">
+          <div class="text-xs text-cat-indigo">
             API Key Source: {message.apiKeySource} • Output: {message.output_style}
           </div>
         </div>
@@ -591,10 +557,10 @@ function HookRunningCard({
   const summary = stdout ? stdout.split('\n')[0].slice(0, 80) : undefined;
 
   return (
-    <div class="my-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 text-sm dark:border-slate-700 dark:bg-slate-900/30">
+    <div class="my-2 flex items-center gap-2 rounded-lg border border-line bg-surface-raised p-2 text-sm">
       {completed ? (
         <svg
-          class="h-4 w-4 flex-shrink-0 text-slate-400 dark:text-slate-500"
+          class="h-4 w-4 flex-shrink-0 text-fg-muted"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -604,7 +570,7 @@ function HookRunningCard({
         </svg>
       ) : (
         <svg
-          class="h-4 w-4 flex-shrink-0 animate-spin text-slate-500 dark:text-slate-400"
+          class="h-4 w-4 flex-shrink-0 animate-spin text-fg-muted"
           fill="none"
           viewBox="0 0 24 24"
           aria-label="hook running"
@@ -617,17 +583,11 @@ function HookRunningCard({
           />
         </svg>
       )}
-      <span
-        class={`font-semibold ${completed ? 'text-slate-500 dark:text-slate-400' : 'text-slate-900 dark:text-slate-100'}`}
-      >
-        {hookName}
-      </span>
-      <span class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+      <span class={`font-semibold ${completed ? 'text-fg-muted' : 'text-fg'}`}>{hookName}</span>
+      <span class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs text-fg-muted">
         {hookEvent}
       </span>
-      {summary && (
-        <span class="truncate font-mono text-xs text-slate-600 dark:text-slate-400">{summary}</span>
-      )}
+      {summary && <span class="truncate font-mono text-xs text-fg-muted">{summary}</span>}
     </div>
   );
 }
@@ -644,11 +604,11 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const colors = {
-    bg: 'bg-slate-50 dark:bg-slate-900/30',
-    border: 'border-slate-200 dark:border-slate-700',
-    text: 'text-slate-900 dark:text-slate-100',
-    lightText: 'text-slate-600 dark:text-slate-400',
-    iconColor: 'text-slate-500 dark:text-slate-400',
+    bg: 'bg-surface-raised',
+    border: 'border-line',
+    text: 'text-fg',
+    lightText: 'text-fg-muted',
+    iconColor: 'text-fg-muted',
   };
 
   const summary = message.stdout?.trim() ? message.stdout.split('\n')[0].slice(0, 80) : undefined;
@@ -678,7 +638,7 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
               {message.hook_name}
             </span>
             <span
-              class={`text-xs px-1.5 py-0.5 rounded font-mono ${colors.lightText} bg-slate-100 dark:bg-slate-800`}
+              class={`text-xs px-1.5 py-0.5 rounded font-mono ${colors.lightText} bg-surface-raised`}
             >
               {message.hook_event}
             </span>
@@ -690,7 +650,7 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
           <div class="flex items-center gap-2 flex-shrink-0">
             {message.exit_code !== undefined && message.exit_code !== 0 && (
               <svg
-                class="w-4 h-4 text-red-500"
+                class="w-4 h-4 text-danger"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -720,14 +680,14 @@ function HookResponseCard({ message }: { message: SDKHookResponseMessage }) {
         </button>
 
         {isExpanded && (
-          <div class={`p-3 border-t bg-white dark:bg-gray-900 space-y-2 ${colors.border}`}>
+          <div class={`p-3 border-t bg-surface space-y-2 ${colors.border}`}>
             {message.stdout?.trim() && (
-              <pre class="text-xs font-mono whitespace-pre-wrap overflow-x-auto bg-slate-50 dark:bg-slate-800 p-2 rounded border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200">
+              <pre class="text-xs font-mono whitespace-pre-wrap overflow-x-auto bg-surface-raised p-2 rounded border border-line text-fg">
                 {message.stdout}
               </pre>
             )}
             {message.stderr?.trim() && (
-              <pre class="text-xs font-mono whitespace-pre-wrap overflow-x-auto bg-red-50 dark:bg-red-900/20 p-2 rounded border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300">
+              <pre class="text-xs font-mono whitespace-pre-wrap overflow-x-auto bg-danger/10 p-2 rounded border border-danger/40 text-danger-soft">
                 {message.stderr}
               </pre>
             )}
@@ -749,11 +709,11 @@ function CompactBoundaryMessage({
   const [isExpanded, setIsExpanded] = useState(false);
 
   const colors = {
-    bg: 'bg-yellow-50 dark:bg-yellow-900/20',
-    text: 'text-yellow-900 dark:text-yellow-100',
-    borderColor: customColors.canaryYellow.light,
-    iconColor: 'text-yellow-600 dark:text-yellow-400',
-    lightText: 'text-yellow-700 dark:text-yellow-300',
+    bg: 'bg-warning/10',
+    text: 'text-warning-soft',
+    borderColor: '#FFEF00',
+    iconColor: 'text-warning',
+    lightText: 'text-warning',
   };
 
   const trigger = message.compact_metadata.trigger === 'manual' ? 'Manual' : 'Auto';
@@ -807,10 +767,7 @@ function CompactBoundaryMessage({
         </button>
 
         {isExpanded && (
-          <div
-            class="p-3 border-t bg-white dark:bg-gray-900"
-            style={{ borderColor: colors.borderColor }}
-          >
+          <div class="p-3 border-t bg-surface" style={{ borderColor: colors.borderColor }}>
             <div class={`text-xs font-semibold mb-2 ${colors.lightText}`}>Metadata:</div>
             <pre
               class={`text-xs font-mono whitespace-pre-wrap overflow-x-auto bg-yellow-100 dark:bg-yellow-900/30 p-2 rounded ${colors.text}`}

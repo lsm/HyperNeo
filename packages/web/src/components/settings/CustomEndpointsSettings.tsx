@@ -144,21 +144,21 @@ export function CustomEndpointsSettings() {
 
   return (
     <SettingsSection title="Custom Endpoints">
-      <p class="text-xs text-gray-500 px-1">
+      <p class="text-xs text-fg-faint px-1">
         User-defined API endpoints. Each entry registers a provider with id{' '}
-        <code class="bg-dark-800 px-1 rounded text-[11px]">custom:&lt;id&gt;</code>. Models become
-        selectable in the model picker.
+        <code class="bg-surface-raised px-1 rounded text-[11px]">custom:&lt;id&gt;</code>. Models
+        become selectable in the model picker.
       </p>
 
       {loading ? (
-        <div class="flex items-center gap-2 text-xs text-gray-500 px-1">
+        <div class="flex items-center gap-2 text-xs text-fg-faint px-1">
           <Spinner size="xs" />
           Loading endpoints...
         </div>
       ) : endpoints.length === 0 ? (
-        <div class="rounded-lg border border-dashed border-dark-600 px-4 py-6 text-center">
-          <p class="text-sm text-gray-400">No custom endpoints configured.</p>
-          <p class="text-xs text-gray-500 mt-1">
+        <div class="rounded-lg border border-dashed border-line-strong px-4 py-6 text-center">
+          <p class="text-sm text-fg-muted">No custom endpoints configured.</p>
+          <p class="text-xs text-fg-faint mt-1">
             Add one to use a self-hosted or third-party model.
           </p>
         </div>
@@ -167,20 +167,17 @@ export function CustomEndpointsSettings() {
           {endpoints.map((endpoint) => {
             const type = endpoint.type ?? 'openai-chat';
             return (
-              <div
-                key={endpoint.id}
-                class="rounded-lg border border-white/[0.08] bg-white/[0.025] px-4 py-3"
-              >
+              <div key={endpoint.id} class="rounded-lg border border-line bg-fill-soft px-4 py-3">
                 <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-2 flex-wrap">
-                      <span class="text-sm font-medium text-gray-100">{endpoint.name}</span>
-                      <span class="text-[10px] uppercase tracking-wide text-gray-500 px-1.5 py-0.5 rounded bg-dark-800">
+                      <span class="text-sm font-medium text-fg">{endpoint.name}</span>
+                      <span class="text-[10px] uppercase tracking-wide text-fg-faint px-1.5 py-0.5 rounded bg-surface-raised">
                         {type}
                       </span>
-                      <code class="text-[11px] text-gray-500 font-mono">custom:{endpoint.id}</code>
+                      <code class="text-[11px] text-fg-faint font-mono">custom:{endpoint.id}</code>
                     </div>
-                    <div class="text-xs text-gray-500 mt-1 truncate font-mono">
+                    <div class="text-xs text-fg-faint mt-1 truncate font-mono">
                       {endpoint.baseUrl}
                     </div>
                     <div class="mt-2 flex flex-wrap gap-1.5">
@@ -189,19 +186,19 @@ export function CustomEndpointsSettings() {
                         return (
                           <div
                             key={m.id}
-                            class="flex items-center gap-1 px-2 py-0.5 bg-dark-900 border border-dark-700 rounded-full"
+                            class="flex items-center gap-1 px-2 py-0.5 bg-surface border border-line rounded-full"
                           >
-                            <span class="text-xs text-gray-200">{m.name ?? m.id}</span>
+                            <span class="text-xs text-fg-soft">{m.name ?? m.id}</span>
                             {resolved.toolUse && (
-                              <span class="text-[10px] text-blue-300">tools</span>
+                              <span class="text-[10px] text-accent-soft">tools</span>
                             )}
                             {resolved.vision && (
-                              <span class="text-[10px] text-blue-300">vision</span>
+                              <span class="text-[10px] text-accent-soft">vision</span>
                             )}
                             {resolved.thinking && (
-                              <span class="text-[10px] text-blue-300">think</span>
+                              <span class="text-[10px] text-accent-soft">think</span>
                             )}
-                            <span class="text-[10px] text-gray-500">
+                            <span class="text-[10px] text-fg-faint">
                               {Math.round(resolved.maxContextTokens / 1000)}k
                             </span>
                           </div>

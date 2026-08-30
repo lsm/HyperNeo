@@ -44,7 +44,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
     await sessionStore.select(null);
   });
 
-  describe('constructor and initial state', () => {
+  describe('function Object() { [native code] } and initial state', () => {
     it('should initialize with null activeSessionId', () => {
       expect(sessionStore.activeSessionId.value).toBe(null);
     });

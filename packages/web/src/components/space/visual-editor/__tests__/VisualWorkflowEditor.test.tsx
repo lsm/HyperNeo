@@ -542,7 +542,7 @@ describe('VisualWorkflowEditor', () => {
     it('defaults to level 3 in create mode', () => {
       const { getByTestId } = render(<VisualWorkflowEditor {...makeProps()} />);
       const btn3 = getByTestId('autonomy-level-3');
-      expect(btn3.className).toContain('bg-blue-500/10');
+      expect(btn3.className).toContain('bg-accent/10');
     });
 
     it('reflects workflow completionAutonomyLevel in edit mode', () => {
@@ -552,7 +552,7 @@ describe('VisualWorkflowEditor', () => {
         />
       );
       const btn5 = getByTestId('autonomy-level-5');
-      expect(btn5.className).toContain('bg-blue-500/10');
+      expect(btn5.className).toContain('bg-accent/10');
     });
 
     it('includes completionAutonomyLevel in createWorkflow call', async () => {

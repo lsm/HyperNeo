@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
-import { borderColors } from '../lib/design-tokens.ts';
 import type { ReferenceSearchResult, ReferenceType } from '@hyperneo/shared';
 import ReferenceTypeIcon from './ReferenceTypeIcon.tsx';
 
@@ -22,10 +21,10 @@ const TYPE_LABELS: Record<ReferenceType, string> = {
 };
 
 const TYPE_ICON_CLASS: Record<ReferenceType, string> = {
-  task: 'w-3.5 h-3.5 text-indigo-400',
-  goal: 'w-3.5 h-3.5 text-amber-400',
-  file: 'w-3.5 h-3.5 text-blue-400',
-  folder: 'w-3.5 h-3.5 text-yellow-400',
+  task: 'w-3.5 h-3.5 text-cat-indigo',
+  goal: 'w-3.5 h-3.5 text-warning',
+  file: 'w-3.5 h-3.5 text-accent',
+  folder: 'w-3.5 h-3.5 text-warning',
 };
 
 function TypeIcon({ type }: { type: ReferenceType }) {
@@ -103,7 +102,7 @@ export default function ReferenceAutocomplete({
       role="listbox"
       aria-label={headerLabel}
       class={cn(
-        `absolute z-50 bg-dark-800 border ${borderColors.ui.default} rounded-lg shadow-xl`,
+        'absolute z-50 bg-surface-raised border border-line rounded-lg shadow-xl',
         'overflow-hidden max-h-72 overflow-y-auto',
         'animate-slideIn'
       )}
@@ -117,9 +116,9 @@ export default function ReferenceAutocomplete({
         maxWidth: isMobile ? undefined : '420px',
       }}
     >
-      <div class={`px-3 py-2 border-b ${borderColors.ui.default} bg-dark-850/50`}>
+      <div class="px-3 py-2 border-b border-line bg-surface-overlay/50">
         <div class="flex items-center gap-2">
-          <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg class="w-4 h-4 text-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
               stroke-linecap="round"
               stroke-linejoin="round"
@@ -127,7 +126,7 @@ export default function ReferenceAutocomplete({
               d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"
             />
           </svg>
-          <span class="text-xs font-medium text-gray-400">{headerLabel}</span>
+          <span class="text-xs font-medium text-fg-muted">{headerLabel}</span>
         </div>
       </div>
 
@@ -135,7 +134,7 @@ export default function ReferenceAutocomplete({
         {groups.map(({ type, items }) => (
           <div key={type}>
             <div class="px-3 pt-2 pb-1">
-              <span class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+              <span class="text-[10px] font-semibold uppercase tracking-wider text-fg-faint">
                 {TYPE_LABELS[type]}
               </span>
             </div>
@@ -152,17 +151,17 @@ export default function ReferenceAutocomplete({
                 class={cn(
                   'w-full px-3 text-left transition-colors flex items-start gap-2',
                   isMobile ? 'py-3' : 'py-2',
-                  'hover:bg-dark-700/50 active:bg-dark-700/70',
-                  globalIndex === selectedIndex && 'bg-blue-500/20 border-l-2 border-blue-500'
+                  'hover:bg-fill-strong/50 active:bg-fill-strong/70',
+                  globalIndex === selectedIndex && 'bg-accent/20 border-l-2 border-accent'
                 )}
               >
                 <span class="mt-0.5">
                   <TypeIcon type={result.type} />
                 </span>
                 <span class="flex flex-col min-w-0">
-                  <span class="text-sm text-gray-100 truncate">{result.displayText}</span>
+                  <span class="text-sm text-fg truncate">{result.displayText}</span>
                   {result.subtitle && (
-                    <span class="text-xs text-gray-500 truncate">{result.subtitle}</span>
+                    <span class="text-xs text-fg-faint truncate">{result.subtitle}</span>
                   )}
                 </span>
               </button>
@@ -171,14 +170,14 @@ export default function ReferenceAutocomplete({
         ))}
       </div>
 
-      <div class={`px-3 py-2 border-t ${borderColors.ui.default} bg-dark-850/50`}>
+      <div class="px-3 py-2 border-t border-line bg-surface-overlay/50">
         {isMobile ? (
-          <p class="text-xs text-gray-500">Tap to select</p>
+          <p class="text-xs text-fg-faint">Tap to select</p>
         ) : (
-          <p class="text-xs text-gray-500">
-            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">↑↓</kbd> navigate{' '}
-            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Enter</kbd> select{' '}
-            <kbd class="px-1.5 py-0.5 bg-dark-700 rounded text-gray-400">Esc</kbd> close
+          <p class="text-xs text-fg-faint">
+            <kbd class="px-1.5 py-0.5 bg-fill-strong rounded text-fg-muted">↑↓</kbd> navigate{' '}
+            <kbd class="px-1.5 py-0.5 bg-fill-strong rounded text-fg-muted">Enter</kbd> select{' '}
+            <kbd class="px-1.5 py-0.5 bg-fill-strong rounded text-fg-muted">Esc</kbd> close
           </p>
         )}
       </div>

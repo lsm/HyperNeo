@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { resolvedTheme } from '../../lib/theme.ts';
 import { CopyButton } from '../ui/CopyButton.tsx';
 
 interface MarkdownRendererProps {
@@ -24,6 +25,25 @@ let rehypeHighlightPromise: Promise<RehypeHighlight> | null = null;
 let rehypeKatexPromise: Promise<RehypeKatex> | null = null;
 let katexCssPromise: Promise<unknown> | null = null;
 let mermaidModulePromise: Promise<typeof import('mermaid').default> | null = null;
+let mermaidInitializedTheme: 'dark' | 'default' | null = null;
+
+function getMermaidForTheme(theme: 'dark' | 'default') {
+  if (!mermaidModulePromise) {
+    mermaidModulePromise = import('mermaid')
+      .then((module) => module.default)
+      .catch((error) => {
+        mermaidModulePromise = null;
+        throw error;
+      });
+  }
+  return mermaidModulePromise.then((mermaid) => {
+    if (mermaidInitializedTheme !== theme) {
+      mermaid.initialize({ startOnLoad: false, theme });
+      mermaidInitializedTheme = theme;
+    }
+    return mermaid;
+  });
+}
 
 function getMarkdownModules() {
   if (!markdownModulesPromise) {
@@ -847,27 +867,11 @@ function hasCodeBlock(content: string) {
   );
 }
 
-function getMermaid() {
-  if (!mermaidModulePromise) {
-    mermaidModulePromise = import('mermaid')
-      .then((module) => {
-        module.default.initialize({ startOnLoad: false });
-        return module.default;
-      })
-      .catch((error) => {
-        mermaidModulePromise = null;
-        throw error;
-      });
-  }
-
-  return mermaidModulePromise;
-}
-
 async function renderMermaidBlocks(container: HTMLElement, isCancelled?: () => boolean) {
   const blocks = Array.from(container.querySelectorAll('pre code.language-mermaid'));
   if (blocks.length === 0) return;
 
-  const mermaid = await getMermaid();
+  const mermaid = await getMermaidForTheme(resolvedTheme.value === 'dark' ? 'dark' : 'default');
   if (isCancelled?.()) return;
 
   await Promise.all(
@@ -943,6 +947,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
   const containerRef = useRef<HTMLDivElement>(null);
   const [html, setHtml] = useState<string | null>(null);
   const [renderedSource, setRenderedSource] = useState('');
+  const theme = resolvedTheme.value;
 
   useEffect(() => {
     let cancelled = false;
@@ -965,7 +970,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
       cancelled = true;
       cancelAnimationFrame(rafId);
     };
-  }, [content]);
+  }, [content, theme]);
 
   useLayoutEffect(() => {
     if (html == null || !containerRef.current) return;
@@ -995,7 +1000,7 @@ export default function MarkdownRenderer({ content, class: className }: Markdown
     return () => {
       mermaidCancelled = true;
     };
-  }, [html]);
+  }, [html, theme]);
 
   return (
     <div class="group relative">

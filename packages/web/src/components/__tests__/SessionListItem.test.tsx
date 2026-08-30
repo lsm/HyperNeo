@@ -178,7 +178,7 @@ describe('SessionListItem', () => {
       );
 
       const row = container.querySelector('[data-testid="session-row"]')!;
-      expect(row.className).toContain('hover:bg-white/5');
+      expect(row.className).toContain('hover:bg-fill-soft');
     });
   });
 
@@ -195,7 +195,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={sessionWithWorktree} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.text-green-400')).toBeNull();
+      expect(container.querySelector('.text-success')).toBeNull();
       expect(container.querySelector('[title^="Worktree:"]')).toBeNull();
     });
   });
@@ -207,7 +207,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={archivedSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const archivedIcon = container.querySelector('.text-amber-600');
+      const archivedIcon = container.querySelector('.text-warning');
       expect(archivedIcon).toBeTruthy();
     });
 
@@ -296,7 +296,7 @@ describe('SessionListItem', () => {
       );
 
       expect(container.querySelector('[role="img"]')).toBeNull();
-      expect(container.querySelector('.bg-blue-600')).toBeNull();
+      expect(container.querySelector('.bg-accent-hover')).toBeNull();
     });
 
     it('should show a static lifecycle dot when idle and read', () => {
@@ -308,7 +308,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.bg-green-500')).toBeTruthy();
+      expect(container.querySelector('.bg-success')).toBeTruthy();
       expect(container.querySelector('.animate-pulse')).toBeNull();
     });
 
@@ -339,7 +339,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.bg-blue-500')).toBeTruthy();
+      expect(container.querySelector('.bg-accent')).toBeTruthy();
     });
 
     it('should show a green dot when streaming', () => {
@@ -354,7 +354,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.bg-green-500')).toBeTruthy();
+      expect(container.querySelector('.bg-success')).toBeTruthy();
     });
 
     it('should show a yellow dot when queued', () => {
@@ -366,7 +366,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.bg-yellow-500')).toBeTruthy();
+      expect(container.querySelector('.bg-warning')).toBeTruthy();
     });
 
     it('should show a blue unread badge with the count when there are unseen messages', () => {
@@ -378,7 +378,7 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      const badge = container.querySelector('.bg-blue-600');
+      const badge = container.querySelector('.bg-accent-hover');
       expect(badge).toBeTruthy();
       expect(badge?.textContent).toContain('3');
 
@@ -397,9 +397,9 @@ describe('SessionListItem', () => {
         <SessionListItem session={mockSession} onSessionClick={mockOnSessionClick} />
       );
 
-      expect(container.querySelector('.bg-green-500')).toBeTruthy();
+      expect(container.querySelector('.bg-success')).toBeTruthy();
       expect(container.querySelector('.animate-pulse')).toBeTruthy();
-      expect(container.querySelector('.bg-blue-600')).toBeNull();
+      expect(container.querySelector('.bg-accent-hover')).toBeNull();
     });
 
     it('should not pulse for interrupted status', () => {
@@ -430,7 +430,7 @@ describe('SessionListItem', () => {
       );
 
       expect(container.querySelector('.animate-pulse')).toBeNull();
-      expect(container.querySelector('.bg-green-500')).toBeTruthy();
+      expect(container.querySelector('.bg-success')).toBeTruthy();
     });
   });
 
@@ -448,8 +448,8 @@ describe('SessionListItem', () => {
 
       const row = container.querySelector('[data-testid="session-row"]');
       const button = container.querySelector('[data-testid="session-card"]');
-      expect(row?.className).toContain('bg-white/10');
-      expect(button?.className).toContain('text-gray-100');
+      expect(row?.className).toContain('bg-fill');
+      expect(button?.className).toContain('text-fg');
     });
 
     it('should have inactive styling when not current session', () => {
@@ -461,9 +461,9 @@ describe('SessionListItem', () => {
 
       const row = container.querySelector('[data-testid="session-row"]');
       const button = container.querySelector('[data-testid="session-card"]');
-      expect(row?.className).toContain('hover:bg-white/5');
-      expect(row?.className).not.toContain('bg-white/10');
-      expect(button?.className).toContain('text-gray-400');
+      expect(row?.className).toContain('hover:bg-fill-soft');
+      expect(row?.className.split(' ')).not.toContain('bg-fill');
+      expect(button?.className).toContain('text-fg-muted');
     });
   });
 

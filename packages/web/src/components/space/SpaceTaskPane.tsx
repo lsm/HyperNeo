@@ -12,7 +12,6 @@ import type { ComponentChildren } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { TaskComposerTarget, FileDropHandler } from '../../hooks';
 import { useImageDropZone, useResolvedSpaceTask } from '../../hooks';
-import { borderColors } from '../../lib/design-tokens';
 import { getTaskStatusConfig } from '../../lib/task-status';
 import {
   navigateToSpaceTask,
@@ -90,10 +89,10 @@ const ACTIVITY_STATE_LABELS: Record<SpaceTaskActivityState, string> = {
 };
 
 const PRIORITY_BADGE_CLASSES: Record<SpaceTaskPriority, string> = {
-  low: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
-  normal: 'border-gray-500/25 bg-gray-500/10 text-gray-400',
-  high: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
-  urgent: 'border-red-500/30 bg-red-500/10 text-red-300',
+  low: 'border-fg-faint/25 bg-fg-faint/10 text-fg-muted',
+  normal: 'border-fg-faint/25 bg-fg-faint/10 text-fg-muted',
+  high: 'border-orange-500/30 bg-warning/10 text-warning-soft',
+  urgent: 'border-danger/30 bg-danger/10 text-danger-soft',
 };
 
 function getTaskActionLabel(
@@ -168,8 +167,8 @@ function formatTaskTimestamp(timestamp: number | null | undefined): string {
 function TaskInfoRow({ label, children }: { label: string; children: ComponentChildren }) {
   return (
     <div class="flex items-start justify-between gap-3 text-sm">
-      <span class="text-gray-400">{label}</span>
-      <span class="min-w-0 text-right text-gray-200">{children}</span>
+      <span class="text-fg-muted">{label}</span>
+      <span class="min-w-0 text-right text-fg-soft">{children}</span>
     </div>
   );
 }
@@ -288,7 +287,7 @@ export function SpaceTaskPane({
   if (!taskId) {
     return (
       <div class="flex items-center justify-center h-full p-6">
-        <p class="text-sm text-gray-400 text-center">Select a task to view details</p>
+        <p class="text-sm text-fg-muted text-center">Select a task to view details</p>
       </div>
     );
   }
@@ -296,7 +295,7 @@ export function SpaceTaskPane({
   if (!task) {
     return (
       <div class="flex items-center justify-center h-full p-6">
-        <p class="text-sm text-gray-400 text-center">Task not found</p>
+        <p class="text-sm text-fg-muted text-center">Task not found</p>
       </div>
     );
   }
@@ -1177,17 +1176,17 @@ export function SpaceTaskPane({
   }
 
   return (
-    <div class="flex flex-col h-full overflow-hidden bg-dark-900">
+    <div class="flex flex-col h-full overflow-hidden bg-surface">
       <div
         data-tauri-drag-region
-        class={`flex h-[88px] flex-shrink-0 items-center bg-dark-850 border-b px-4 ${borderColors.ui.default}`}
+        class={`flex h-[88px] flex-shrink-0 items-center bg-surface-overlay border-b px-4 border-line`}
       >
         <div class="flex w-full items-center gap-3 pr-12" data-tauri-drag-region>
           {onClose && (
             <button
               type="button"
               onClick={onClose}
-              class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-dark-800 hover:text-gray-200"
+              class="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
               aria-label="Back"
               data-testid="task-back-button"
             >
@@ -1204,7 +1203,7 @@ export function SpaceTaskPane({
           <div class="min-w-0 flex-1" data-tauri-drag-region>
             <div class="flex min-w-0 items-center gap-2" data-tauri-drag-region>
               <h2
-                class="min-w-0 truncate text-base font-semibold leading-6 text-gray-100"
+                class="min-w-0 truncate text-base font-semibold leading-6 text-fg"
                 title={task.title}
                 data-tauri-drag-region
               >
@@ -1217,7 +1216,7 @@ export function SpaceTaskPane({
                   trigger={
                     <button
                       type="button"
-                      class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-dark-800 hover:text-gray-200"
+                      class="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg-soft"
                       data-testid="task-actions-menu-trigger"
                       aria-label="Task Actions"
                       title="Task Actions"
@@ -1238,7 +1237,7 @@ export function SpaceTaskPane({
               )}
             </div>
             <div class="mt-2 flex min-w-0 flex-wrap items-center gap-2 overflow-hidden">
-              <span class="inline-flex h-6 min-w-16 items-center justify-center rounded-md border border-dark-600 bg-dark-800/60 px-2 font-mono text-[11px] font-medium leading-none text-gray-300 tabular-nums">
+              <span class="inline-flex h-6 min-w-16 items-center justify-center rounded-md border border-line-strong bg-surface-raised/60 px-2 font-mono text-[11px] font-medium leading-none text-fg-soft tabular-nums">
                 #{task.taskNumber}
               </span>
               {showHeaderStatusBadge && (
@@ -1254,7 +1253,7 @@ export function SpaceTaskPane({
               </TaskMetaBadge>
               {workspaceLabel && (
                 <span
-                  class="inline-flex h-6 max-w-[8.5rem] items-center rounded-md border border-dark-600 bg-dark-700 px-2 text-[11px] font-medium leading-none text-gray-400 whitespace-nowrap"
+                  class="inline-flex h-6 max-w-[8.5rem] items-center rounded-md border border-line-strong bg-fill-strong px-2 text-[11px] font-medium leading-none text-fg-muted whitespace-nowrap"
                   data-testid="task-workspace-badge"
                 >
                   <span class="truncate">{workspaceLabel}</span>
@@ -1354,11 +1353,11 @@ export function SpaceTaskPane({
                   <div class="mx-auto max-w-2xl space-y-4 px-4 py-6">
                     <SectionCard title="Description">
                       {resolvedTask?.description ? (
-                        <p class="whitespace-pre-wrap text-sm text-gray-300">
+                        <p class="whitespace-pre-wrap text-sm text-fg-soft">
                           {resolvedTask.description}
                         </p>
                       ) : (
-                        <p class="text-sm text-gray-500">No description yet.</p>
+                        <p class="text-sm text-fg-faint">No description yet.</p>
                       )}
                     </SectionCard>
                     <SectionCard title="Details">
@@ -1378,7 +1377,7 @@ export function SpaceTaskPane({
                         </TaskInfoRow>
                       )}
                     </SectionCard>
-                    <p class="text-center text-xs text-gray-500" data-testid="task-info-view-hint">
+                    <p class="text-center text-xs text-fg-faint" data-testid="task-info-view-hint">
                       This task has no agent activity yet.
                     </p>
                   </div>
@@ -1396,7 +1395,7 @@ export function SpaceTaskPane({
 
             {task.status === 'stopped' && (
               <div
-                class="flex-shrink-0 border-t border-white/10 bg-black/10 px-4 py-2 text-center text-xs text-gray-400"
+                class="flex-shrink-0 border-t border-line bg-scrim-soft px-4 py-2 text-center text-xs text-fg-muted"
                 data-testid="task-stopped-footer"
                 role="status"
               >
@@ -1405,7 +1404,7 @@ export function SpaceTaskPane({
             )}
             {!showInlineComposer && threadSendError && (
               <div
-                class="flex-shrink-0 border-t border-red-400/30 bg-red-500/10 px-4 py-2 text-center text-xs text-red-300"
+                class="flex-shrink-0 border-t border-red-400/30 bg-danger/10 px-4 py-2 text-center text-xs text-danger-soft"
                 data-testid="task-pane-transition-error"
                 role="alert"
               >

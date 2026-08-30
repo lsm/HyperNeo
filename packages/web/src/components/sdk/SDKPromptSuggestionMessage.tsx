@@ -12,7 +12,7 @@ export function SDKPromptSuggestionMessage({ message }: Props) {
 
   return (
     <div
-      class="flex items-center gap-2 py-1 px-2 text-xs text-gray-500 dark:text-gray-400"
+      class="flex items-center gap-2 py-1 px-2 text-xs text-fg-muted"
       data-testid="prompt-suggestion"
     >
       <svg

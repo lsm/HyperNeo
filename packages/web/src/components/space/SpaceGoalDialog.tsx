@@ -237,46 +237,46 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
     >
       <form onSubmit={handleSubmit} class="space-y-4">
         {error && (
-          <div class="rounded-lg border border-red-800 bg-red-900/20 px-4 py-3 text-sm text-red-400">
+          <div class="rounded-lg border border-danger bg-danger/20 px-4 py-3 text-sm text-danger">
             {error}
           </div>
         )}
 
         <div>
           <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-gray-200">
-              Title<span class="ml-1 text-red-400">*</span>
+            <span class="mb-1.5 block text-sm font-medium text-fg-soft">
+              Title<span class="ml-1 text-danger">*</span>
             </span>
             <input
               type="text"
               value={title}
               onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
               placeholder="Keep release train healthy"
-              class="w-full rounded-lg border border-dark-600 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+              class="w-full rounded-lg border border-line-strong bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
             />
           </label>
         </div>
 
         <div>
           <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-gray-300">Description</span>
+            <span class="mb-1.5 block text-sm font-medium text-fg-soft">Description</span>
             <textarea
               value={description}
               onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
               rows={3}
               placeholder="What should agents keep driving toward?"
-              class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+              class="w-full resize-none rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
             />
           </label>
         </div>
 
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-gray-300">Type</span>
+            <span class="mb-1.5 block text-sm font-medium text-fg-soft">Type</span>
             <select
               value={type}
               onChange={(e) => setType((e.target as HTMLSelectElement).value as SpaceGoalType)}
-              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+              class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
             >
               {TYPE_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -286,13 +286,13 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
             </select>
           </label>
           <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-gray-300">Priority</span>
+            <span class="mb-1.5 block text-sm font-medium text-fg-soft">Priority</span>
             <select
               value={priority}
               onChange={(e) =>
                 setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
               }
-              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+              class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
             >
               {PRIORITY_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -303,29 +303,29 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
           </label>
           {type !== 'recurring' ? (
             <label class="block">
-              <span class="mb-1.5 block text-sm font-medium text-gray-300">Progress</span>
+              <span class="mb-1.5 block text-sm font-medium text-fg-soft">Progress</span>
               <input
                 type="number"
                 min={0}
                 max={100}
                 value={progress}
                 onInput={(e) => setProgress((e.target as HTMLInputElement).value)}
-                class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
               />
             </label>
           ) : (
-            <div class="rounded-lg border border-dark-700 bg-dark-800/60 px-3 py-2 text-xs text-gray-500">
+            <div class="rounded-lg border border-line bg-surface-raised/60 px-3 py-2 text-xs text-fg-faint">
               Recurring goals use activity and metrics instead of progress.
             </div>
           )}
         </div>
 
         <label class="block">
-          <span class="mb-1.5 block text-sm font-medium text-gray-300">Preferred workflow</span>
+          <span class="mb-1.5 block text-sm font-medium text-fg-soft">Preferred workflow</span>
           <select
             value={preferredWorkflowId}
             onChange={(e) => setPreferredWorkflowId((e.target as HTMLSelectElement).value)}
-            class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+            class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
           >
             <option value="">Auto-select workflow</option>
             {workflows.map((workflow) => (
@@ -337,69 +337,69 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
         </label>
 
         <label class="block">
-          <span class="mb-1.5 block text-sm font-medium text-gray-300">Summary</span>
+          <span class="mb-1.5 block text-sm font-medium text-fg-soft">Summary</span>
           <textarea
             value={summary}
             onInput={(e) => setSummary((e.target as HTMLTextAreaElement).value)}
             rows={2}
             placeholder="Rolling state summary"
-            class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+            class="w-full resize-none rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
           />
         </label>
 
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-gray-300">Labels</span>
+            <span class="mb-1.5 block text-sm font-medium text-fg-soft">Labels</span>
             <input
               value={labels}
               onInput={(e) => setLabels((e.target as HTMLInputElement).value)}
               placeholder="release, health"
-              class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+              class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
             />
           </label>
           <label class="block">
-            <span class="mb-1.5 block text-sm font-medium text-gray-300">Metrics</span>
+            <span class="mb-1.5 block text-sm font-medium text-fg-soft">Metrics</span>
             <textarea
               value={metrics}
               onInput={(e) => setMetrics((e.target as HTMLTextAreaElement).value)}
               rows={2}
               placeholder={'build_health: green\nopen_bugs: 3'}
-              class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+              class="w-full resize-none rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
             />
           </label>
         </div>
 
         <label class="block">
-          <span class="mb-1.5 block text-sm font-medium text-gray-300">Next steps</span>
+          <span class="mb-1.5 block text-sm font-medium text-fg-soft">Next steps</span>
           <textarea
             value={nextSteps}
             onInput={(e) => setNextSteps((e.target as HTMLTextAreaElement).value)}
             rows={3}
             placeholder="One next step per line"
-            class="w-full resize-none rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+            class="w-full resize-none rounded-lg border border-line bg-surface-raised px-4 py-2.5 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
           />
         </label>
 
-        <label class="flex items-center gap-2 text-sm text-gray-300">
+        <label class="flex items-center gap-2 text-sm text-fg-soft">
           <input
             type="checkbox"
             checked={autoTriggerNext}
             onChange={(e) => setAutoTriggerNext((e.target as HTMLInputElement).checked)}
-            class="h-4 w-4 rounded border-dark-600 bg-dark-800 text-blue-600"
+            class="h-4 w-4 rounded border-line-strong bg-surface-raised text-accent"
           />
           Auto-trigger next task when current task finishes
         </label>
 
-        <div class="space-y-3 rounded-lg border border-dark-700 bg-dark-800/50 p-4">
-          <p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Check-in</p>
-          <p class="text-xs text-gray-500">
+        <div class="space-y-3 rounded-lg border border-line bg-surface-raised/50 p-4">
+          <p class="text-xs font-semibold uppercase tracking-wider text-fg-muted">Check-in</p>
+          <p class="text-xs text-fg-faint">
             {isEditing
               ? 'Edit the recurring check-in schedule. Clearing the cron removes it; changing it reschedules in place without affecting the active task.'
               : 'Schedule recurring check-in tasks for this goal.'}
           </p>
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label class="block">
-              <span class="mb-1.5 block text-sm font-medium text-gray-300">Cron expression</span>
+              <span class="mb-1.5 block text-sm font-medium text-fg-soft">Cron expression</span>
               <input
                 value={checkInCronExpression}
                 onInput={(e) => {
@@ -407,18 +407,18 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
                   setCheckInCronExpression((e.target as HTMLInputElement).value);
                 }}
                 placeholder="@daily or 0 9 * * 1"
-                class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg placeholder-gray-500 focus:border-accent focus:outline-none"
               />
             </label>
             <label class="block">
-              <span class="mb-1.5 block text-sm font-medium text-gray-300">Timezone</span>
+              <span class="mb-1.5 block text-sm font-medium text-fg-soft">Timezone</span>
               <select
                 value={checkInTimezone}
                 onChange={(e) => {
                   timezoneDirtyRef.current = true;
                   setCheckInTimezone((e.target as HTMLSelectElement).value);
                 }}
-                class="w-full rounded-lg border border-dark-700 bg-dark-800 px-3 py-2 text-sm text-gray-100 focus:border-blue-500 focus:outline-none"
+                class="w-full rounded-lg border border-line bg-surface-raised px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
               >
                 {Array.from(
                   new Set(
@@ -435,12 +435,12 @@ export function SpaceGoalDialog({ isOpen, goal, onClose, onSaved }: SpaceGoalDia
             </label>
           </div>
           {!isEditing && (
-            <label class="flex items-center gap-2 text-sm text-gray-300">
+            <label class="flex items-center gap-2 text-sm text-fg-soft">
               <input
                 type="checkbox"
                 checked={triggerImmediately}
                 onChange={(e) => setTriggerImmediately((e.target as HTMLInputElement).checked)}
-                class="h-4 w-4 rounded border-dark-600 bg-dark-800 text-blue-600"
+                class="h-4 w-4 rounded border-line-strong bg-surface-raised text-accent"
               />
               Create first task immediately
             </label>

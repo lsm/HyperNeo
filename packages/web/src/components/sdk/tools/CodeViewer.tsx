@@ -117,19 +117,14 @@ export function CodeViewer({
   const lineCount = lines.length;
 
   return (
-    <div
-      class={cn(
-        'rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700',
-        className
-      )}
-    >
+    <div class={cn('rounded-lg overflow-hidden border border-line', className)}>
       {showHeader && filePath && (
-        <div class="bg-gray-100 dark:bg-gray-800 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-          <div class="text-xs font-mono text-gray-700 dark:text-gray-300">{filePath}</div>
+        <div class="bg-surface-raised px-3 py-2 border-b border-line flex items-center justify-between">
+          <div class="text-xs font-mono text-fg-soft">{filePath}</div>
           <div class="flex items-center gap-2">
-            <div class="text-xs text-gray-600 dark:text-gray-400 font-mono">{lineCount}</div>
+            <div class="text-xs text-fg-muted font-mono">{lineCount}</div>
             {detectedLanguage && (
-              <div class="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+              <div class="text-xs px-2 py-0.5 rounded bg-fill-strong text-fg-muted">
                 {detectedLanguage}
               </div>
             )}
@@ -137,14 +132,14 @@ export function CodeViewer({
         </div>
       )}
 
-      <div class="relative bg-gray-50 dark:bg-gray-900" style={{ maxHeight }}>
+      <div class="relative bg-surface" style={{ maxHeight }}>
         <pre class="!m-0 !p-0 overflow-auto">
           <code ref={codeRef} class="block text-xs font-mono" style={{ whiteSpace: 'pre' }} />
         </pre>
       </div>
 
       {showLineNumbers && (
-        <div class="bg-gray-100 dark:bg-gray-800 px-3 py-1.5 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
+        <div class="bg-surface-raised px-3 py-1.5 border-t border-line text-xs text-fg-muted">
           {lineCount} {lineCount === 1 ? 'line' : 'lines'}
         </div>
       )}

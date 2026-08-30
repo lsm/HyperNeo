@@ -22,9 +22,7 @@ export function SDKResultMessage({ message }: Props) {
   return (
     <div
       class={`rounded border mb-4 ${
-        isSuccess
-          ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
-          : 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'
+        isSuccess ? 'bg-success/10 border-success/40' : 'bg-danger/10 border-danger/40'
       }`}
     >
       <button
@@ -33,12 +31,7 @@ export function SDKResultMessage({ message }: Props) {
       >
         <div class="flex items-center gap-2 text-xs">
           {isSuccess ? (
-            <svg
-              class="w-4 h-4 text-green-600 dark:text-green-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+            <svg class="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -47,12 +40,7 @@ export function SDKResultMessage({ message }: Props) {
               />
             </svg>
           ) : (
-            <svg
-              class="w-4 h-4 text-red-600 dark:text-red-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+            <svg class="w-4 h-4 text-danger" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -61,20 +49,16 @@ export function SDKResultMessage({ message }: Props) {
               />
             </svg>
           )}
-          <span class="font-medium text-green-900 dark:text-green-100">
+          <span class="font-medium text-success-soft">
             {inputTokens}→{outputTokens} tokens
           </span>
-          <span class="text-green-700 dark:text-green-300">•</span>
-          <span class="font-mono text-green-700 dark:text-green-300">
-            ${message.total_cost_usd.toFixed(4)}
-          </span>
-          <span class="text-green-700 dark:text-green-300">•</span>
-          <span class="text-green-700 dark:text-green-300">
-            {(message.duration_ms / 1000).toFixed(2)}s
-          </span>
+          <span class="text-success-soft">•</span>
+          <span class="font-mono text-success-soft">${message.total_cost_usd.toFixed(4)}</span>
+          <span class="text-success-soft">•</span>
+          <span class="text-success-soft">{(message.duration_ms / 1000).toFixed(2)}s</span>
         </div>
         <svg
-          class={`w-4 h-4 text-green-600 dark:text-green-400 transition-transform ${showDetails ? 'rotate-180' : ''}`}
+          class={`w-4 h-4 text-success transition-transform ${showDetails ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -84,7 +68,7 @@ export function SDKResultMessage({ message }: Props) {
       </button>
 
       {showDetails && (
-        <div class="p-3 border-t border-green-200 dark:border-green-800 bg-white dark:bg-gray-900 space-y-3">
+        <div class="p-3 border-t border-success/40 bg-surface space-y-3">
           <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <StatCard
               label="Input Tokens"
@@ -146,8 +130,8 @@ export function SDKResultMessage({ message }: Props) {
           </div>
 
           {(cacheReadTokens > 0 || cacheCreationTokens > 0) && (
-            <div class="pt-2 border-t border-green-200 dark:border-green-800">
-              <div class="flex items-center gap-4 text-xs text-green-700 dark:text-green-300">
+            <div class="pt-2 border-t border-success/40">
+              <div class="flex items-center gap-4 text-xs text-success-soft">
                 <div class="flex items-center gap-1">
                   <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -176,7 +160,7 @@ export function SDKResultMessage({ message }: Props) {
             </div>
           )}
 
-          <div class="text-xs text-gray-600 dark:text-gray-400">
+          <div class="text-xs text-fg-muted">
             Completed in {message.num_turns} turn
             {message.num_turns !== 1 ? 's' : ''}
             {' • '}
@@ -185,19 +169,12 @@ export function SDKResultMessage({ message }: Props) {
 
           {Object.keys(message.modelUsage).length > 0 && (
             <div>
-              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Model Usage Breakdown
-              </h4>
+              <h4 class="text-sm font-semibold text-fg-soft mb-2">Model Usage Breakdown</h4>
               <div class="space-y-2">
                 {Object.entries(message.modelUsage).map(([modelName, usage]) => (
-                  <div
-                    key={modelName}
-                    class="bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700"
-                  >
-                    <div class="font-mono text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">
-                      {modelName}
-                    </div>
-                    <div class="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-400">
+                  <div key={modelName} class="bg-surface-raised p-3 rounded border border-line">
+                    <div class="font-mono text-sm font-medium text-fg mb-1">{modelName}</div>
+                    <div class="grid grid-cols-2 gap-2 text-xs text-fg-muted">
                       <div>
                         Input: {(usage as { inputTokens: number }).inputTokens.toLocaleString()}
                       </div>
@@ -230,7 +207,7 @@ export function SDKResultMessage({ message }: Props) {
 
           {message.permission_denials && message.permission_denials.length > 0 && (
             <div>
-              <h4 class="text-sm font-semibold text-yellow-700 dark:text-yellow-300 mb-2 flex items-center gap-2">
+              <h4 class="text-sm font-semibold text-warning mb-2 flex items-center gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
@@ -246,14 +223,10 @@ export function SDKResultMessage({ message }: Props) {
                   (denial: { tool_name: string; tool_use_id: string }, idx: number) => (
                     <div
                       key={idx}
-                      class="bg-yellow-50 dark:bg-yellow-900/20 p-3 rounded border border-yellow-200 dark:border-yellow-800 text-sm"
+                      class="bg-warning/10 p-3 rounded border border-warning/40 text-sm"
                     >
-                      <div class="font-medium text-yellow-900 dark:text-yellow-100">
-                        {denial.tool_name}
-                      </div>
-                      <div class="text-yellow-700 dark:text-yellow-300 mt-1 text-xs font-mono">
-                        {denial.tool_use_id}
-                      </div>
+                      <div class="font-medium text-warning-soft">{denial.tool_name}</div>
+                      <div class="text-warning mt-1 text-xs font-mono">{denial.tool_use_id}</div>
                     </div>
                   )
                 )}
@@ -263,7 +236,7 @@ export function SDKResultMessage({ message }: Props) {
 
           {isSuccess && message.structured_output && (
             <div>
-              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+              <h4 class="text-sm font-semibold text-fg-soft mb-2 flex items-center gap-2">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
@@ -274,7 +247,7 @@ export function SDKResultMessage({ message }: Props) {
                 </svg>
                 Structured Output
               </h4>
-              <pre class="bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 text-xs overflow-x-auto">
+              <pre class="bg-surface-raised p-3 rounded border border-line text-xs overflow-x-auto">
                 {JSON.stringify(message.structured_output, null, 2)}
               </pre>
             </div>
@@ -282,12 +255,12 @@ export function SDKResultMessage({ message }: Props) {
 
           {isError && 'errors' in message && message.errors && (
             <div>
-              <h4 class="text-sm font-semibold text-red-700 dark:text-red-300 mb-2">Errors</h4>
+              <h4 class="text-sm font-semibold text-danger-soft mb-2">Errors</h4>
               <div class="space-y-2">
                 {message.errors.map((error: string, idx: number) => (
                   <div
                     key={idx}
-                    class="bg-red-50 dark:bg-red-900/20 p-3 rounded border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-300"
+                    class="bg-danger/10 p-3 rounded border border-danger/40 text-sm text-danger-soft"
                   >
                     {error}
                   </div>
@@ -298,8 +271,8 @@ export function SDKResultMessage({ message }: Props) {
 
           {isSuccess && 'result' in message && (
             <div>
-              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Result</h4>
-              <div class="bg-gray-50 dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 text-sm text-gray-700 dark:text-gray-300">
+              <h4 class="text-sm font-semibold text-fg-soft mb-2">Result</h4>
+              <div class="bg-surface-raised p-3 rounded border border-line text-sm text-fg-soft">
                 {message.result}
               </div>
             </div>
@@ -322,16 +295,12 @@ function StatCard({
   highlight?: boolean;
 }) {
   return (
-    <div
-      class={`${highlight ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700' : ''} p-2 rounded`}
-    >
-      <div class="flex items-center gap-1 text-gray-500 dark:text-gray-400 mb-1">
+    <div class={`${highlight ? 'bg-surface-raised border border-line' : ''} p-2 rounded`}>
+      <div class="flex items-center gap-1 text-fg-muted mb-1">
         {icon}
         <span class="text-xs">{label}</span>
       </div>
-      <div
-        class={`font-mono font-semibold ${highlight ? 'text-lg text-indigo-600 dark:text-indigo-400' : 'text-gray-900 dark:text-gray-100'}`}
-      >
+      <div class={`font-mono font-semibold ${highlight ? 'text-lg text-cat-indigo' : 'text-fg'}`}>
         {value}
       </div>
     </div>

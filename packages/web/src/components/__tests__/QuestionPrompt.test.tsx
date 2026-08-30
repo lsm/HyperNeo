@@ -137,7 +137,7 @@ describe('QuestionPrompt', () => {
       )!;
       fireEvent.click(editButton);
 
-      expect(editButton.className).toContain('bg-rose-900/60');
+      expect(editButton.className).toContain('bg-cat-rose/15');
     });
 
     it('should deselect previous option when new option is selected', () => {
@@ -155,8 +155,8 @@ describe('QuestionPrompt', () => {
       fireEvent.click(editButton);
       fireEvent.click(deleteButton);
 
-      expect(deleteButton.className).toContain('bg-rose-900/60');
-      expect(editButton.className).not.toContain('bg-rose-900/60');
+      expect(deleteButton.className).toContain('bg-cat-rose/15');
+      expect(editButton.className).not.toContain('bg-cat-rose/15');
     });
 
     it('should clear selection when "Other" is clicked', () => {
@@ -174,7 +174,7 @@ describe('QuestionPrompt', () => {
       fireEvent.click(editButton);
       fireEvent.click(otherButton);
 
-      expect(editButton.className).not.toContain('bg-rose-900/60');
+      expect(editButton.className).not.toContain('bg-cat-rose/15');
     });
   });
 
@@ -194,8 +194,8 @@ describe('QuestionPrompt', () => {
       fireEvent.click(darkModeBtn);
       fireEvent.click(notificationsBtn);
 
-      expect(darkModeBtn.className).toContain('bg-rose-900/60');
-      expect(notificationsBtn.className).toContain('bg-rose-900/60');
+      expect(darkModeBtn.className).toContain('bg-cat-rose/15');
+      expect(notificationsBtn.className).toContain('bg-cat-rose/15');
     });
 
     it('should toggle selection on repeated clicks', () => {
@@ -208,10 +208,10 @@ describe('QuestionPrompt', () => {
       )!;
 
       fireEvent.click(darkModeBtn);
-      expect(darkModeBtn.className).toContain('bg-rose-900/60');
+      expect(darkModeBtn.className).toContain('bg-cat-rose/15');
 
       fireEvent.click(darkModeBtn);
-      expect(darkModeBtn.className).not.toContain('bg-rose-900/60');
+      expect(darkModeBtn.className).not.toContain('bg-cat-rose/15');
     });
   });
 
@@ -404,7 +404,7 @@ describe('QuestionPrompt', () => {
         btn.textContent?.includes('Delete')
       )!;
 
-      expect(deleteButton.className).toContain('bg-rose-900/60');
+      expect(deleteButton.className).toContain('bg-cat-rose/15');
     });
 
     it('should initialize custom text from draft responses', () => {
@@ -613,11 +613,11 @@ describe('QuestionPrompt', () => {
       )!;
 
       fireEvent.click(darkModeBtn);
-      expect(darkModeBtn.className).toContain('bg-rose-900/60');
+      expect(darkModeBtn.className).toContain('bg-cat-rose/15');
 
       fireEvent.click(otherBtn);
 
-      expect(darkModeBtn.className).toContain('bg-rose-900/60');
+      expect(darkModeBtn.className).toContain('bg-cat-rose/15');
     });
 
     it('should show multi-select badge', () => {

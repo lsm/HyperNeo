@@ -95,7 +95,7 @@ export function EditTaskModal({
     >
       <div class="space-y-4" data-testid="edit-task-modal-content">
         <div>
-          <label class="block text-[11px] text-gray-400 mb-1" for="edit-task-title-input">
+          <label class="block text-[11px] text-fg-muted mb-1" for="edit-task-title-input">
             Title
           </label>
           <input
@@ -104,14 +104,14 @@ export function EditTaskModal({
             type="text"
             value={title}
             onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
-            class="w-full rounded border border-dark-600 bg-dark-800 px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+            class="w-full rounded border border-line-strong bg-surface-raised px-2 py-1.5 text-sm text-fg-soft focus:border-accent focus:outline-none"
             disabled={busy}
             maxLength={200}
           />
         </div>
 
         <div>
-          <label class="block text-[11px] text-gray-400 mb-1" for="edit-task-description-input">
+          <label class="block text-[11px] text-fg-muted mb-1" for="edit-task-description-input">
             Description
           </label>
           <textarea
@@ -119,7 +119,7 @@ export function EditTaskModal({
             data-testid="edit-task-description"
             value={description}
             onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
-            class="w-full rounded border border-dark-600 bg-dark-800 px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none min-h-[120px] resize-y"
+            class="w-full rounded border border-line-strong bg-surface-raised px-2 py-1.5 text-sm text-fg-soft focus:border-accent focus:outline-none min-h-[120px] resize-y"
             rows={6}
             disabled={busy}
             placeholder="Describe what this task should accomplish..."
@@ -127,7 +127,7 @@ export function EditTaskModal({
         </div>
 
         <div>
-          <label class="block text-[11px] text-gray-400 mb-1" for="edit-task-priority-select">
+          <label class="block text-[11px] text-fg-muted mb-1" for="edit-task-priority-select">
             Priority
           </label>
           <select
@@ -138,7 +138,7 @@ export function EditTaskModal({
               setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)
             }
             onInput={(e) => setPriority((e.target as HTMLSelectElement).value as SpaceTaskPriority)}
-            class="w-full rounded border border-dark-600 bg-dark-800 px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+            class="w-full rounded border border-line-strong bg-surface-raised px-2 py-1.5 text-sm text-fg-soft focus:border-accent focus:outline-none"
             disabled={busy}
           >
             {PRIORITY_OPTIONS.map((opt) => (
@@ -150,7 +150,7 @@ export function EditTaskModal({
         </div>
 
         {error && (
-          <p class="text-xs text-red-400" role="alert" data-testid="edit-task-error">
+          <p class="text-xs text-danger" role="alert" data-testid="edit-task-error">
             {error}
           </p>
         )}
@@ -162,7 +162,7 @@ export function EditTaskModal({
               if (!busy) onCancel();
             }}
             disabled={busy}
-            class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-fg bg-surface-raised hover:bg-fill-strong rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Cancel
           </button>
@@ -171,7 +171,7 @@ export function EditTaskModal({
             onClick={handleConfirm}
             disabled={!canConfirm}
             data-testid="edit-task-confirm"
-            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-600/50 disabled:cursor-not-allowed"
+            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-accent-hover hover:bg-accent-hover text-accent-fg disabled:bg-accent-hover/50 disabled:cursor-not-allowed"
           >
             {busy ? 'Saving...' : 'Save Changes'}
           </button>

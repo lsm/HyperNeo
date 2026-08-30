@@ -157,12 +157,12 @@ describe('MarkdownRenderer', () => {
         await vi.advanceTimersByTimeAsync(0);
 
         expect(button?.getAttribute('title')).toBe('Copied!');
-        expect(button?.classList.contains('text-green-400')).toBe(true);
+        expect(button?.classList.contains('text-success')).toBe(true);
 
         await vi.advanceTimersByTimeAsync(2000);
 
         expect(button?.getAttribute('title')).toBe('Copy markdown');
-        expect(button?.classList.contains('text-green-400')).toBe(false);
+        expect(button?.classList.contains('text-success')).toBe(false);
       } finally {
         vi.useRealTimers();
       }

@@ -230,7 +230,7 @@ export function GeneralSettings() {
           }
           onBlur={handleGitHubPollingIntervalBlur}
           disabled={isUpdating}
-          class="w-24 rounded-lg border border-white/[0.08] bg-dark-800 px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          class="w-24 rounded-lg border border-line bg-surface-raised px-3 py-1.5 text-sm text-fg-soft focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
         />
       </SettingsRow>
 
@@ -256,43 +256,43 @@ export function GeneralSettings() {
         layout="stacked"
       >
         <div class="grid gap-2 sm:grid-cols-3">
-          <label class="flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border border-white/[0.08] bg-dark-900/40 px-3 py-2.5">
+          <label class="flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border border-line bg-surface/40 px-3 py-2.5">
             <input
               type="checkbox"
               checked={localSettingSources.includes('user')}
               onChange={() => toggleSettingSource('user')}
               disabled={isUpdating}
-              class="mt-0.5 h-4 w-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+              class="mt-0.5 h-4 w-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
             />
             <span class="min-w-0">
-              <span class="block text-sm text-gray-200">User settings</span>
-              <span class="block truncate text-xs text-gray-500">~/.claude/settings.json</span>
+              <span class="block text-sm text-fg-soft">User settings</span>
+              <span class="block truncate text-xs text-fg-faint">~/.claude/settings.json</span>
             </span>
           </label>
-          <label class="flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border border-white/[0.08] bg-dark-900/40 px-3 py-2.5">
+          <label class="flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border border-line bg-surface/40 px-3 py-2.5">
             <input
               type="checkbox"
               checked={localSettingSources.includes('project')}
               onChange={() => toggleSettingSource('project')}
               disabled={isUpdating}
-              class="mt-0.5 h-4 w-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+              class="mt-0.5 h-4 w-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
             />
             <span class="min-w-0">
-              <span class="block text-sm text-gray-200">Project settings</span>
-              <span class="block truncate text-xs text-gray-500">.claude/settings.json</span>
+              <span class="block text-sm text-fg-soft">Project settings</span>
+              <span class="block truncate text-xs text-fg-faint">.claude/settings.json</span>
             </span>
           </label>
-          <label class="flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border border-white/[0.08] bg-dark-900/40 px-3 py-2.5">
+          <label class="flex min-w-0 cursor-pointer items-start gap-2 rounded-lg border border-line bg-surface/40 px-3 py-2.5">
             <input
               type="checkbox"
               checked={localSettingSources.includes('local')}
               onChange={() => toggleSettingSource('local')}
               disabled={isUpdating}
-              class="mt-0.5 h-4 w-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+              class="mt-0.5 h-4 w-4 rounded border-line-strong text-accent focus:ring-accent focus:ring-offset-dark-900"
             />
             <span class="min-w-0">
-              <span class="block text-sm text-gray-200">Local settings</span>
-              <span class="block truncate text-xs text-gray-500">.claude/settings.local.json</span>
+              <span class="block text-sm text-fg-soft">Local settings</span>
+              <span class="block truncate text-xs text-fg-faint">.claude/settings.local.json</span>
             </span>
           </label>
         </div>

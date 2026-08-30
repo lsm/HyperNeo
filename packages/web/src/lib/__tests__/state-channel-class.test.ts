@@ -48,7 +48,7 @@ describe('StateChannel - Comprehensive Coverage', () => {
     }
   });
 
-  describe('constructor and options', () => {
+  describe('function Object() { [native code] } and options', () => {
     it('should set default options', () => {
       const testChannel = new StateChannel(mockHubObj, 'test.channel');
       expect(testChannel).toBeDefined();

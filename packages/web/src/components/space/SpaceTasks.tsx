@@ -11,12 +11,6 @@ import { getTaskStatusConfig } from '../../lib/task-status';
 import { ActivitySpinner } from '../ui/ActivitySpinner';
 import { StatusBadge } from '../ui/StatusBadge';
 import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
-import {
-  FLAT_SURFACE,
-  GLASS_CONTENT_CONTAINER_CLASS,
-  GLASS_PRIMARY_BUTTON_CLASS,
-  GLASS_SURFACE,
-} from './glass-workspace';
 
 type TaskFilterTab = 'action' | 'active' | 'draft' | 'completed' | 'scheduled';
 type LegacyTaskFilterTab = TaskFilterTab | 'archived';
@@ -110,18 +104,18 @@ function TabButton({
   variant?: TabVariant;
 }) {
   const activeTint: Record<TabVariant, string> = {
-    default: 'bg-white/10 text-gray-50',
-    amber: 'bg-amber-400/15 text-amber-100',
-    purple: 'bg-purple-400/15 text-purple-100',
-    green: 'bg-green-400/15 text-green-100',
-    red: 'bg-red-400/15 text-red-100',
-    gray: 'bg-white/10 text-gray-200',
+    default: 'bg-fill text-fg',
+    amber: 'bg-warning/15 text-warning-soft',
+    purple: 'bg-cat-purple/15 text-cat-purple',
+    green: 'bg-success/15 text-success-soft',
+    red: 'bg-red-400/15 text-danger-soft',
+    gray: 'bg-fill text-fg-soft',
   };
   return (
     <button
       type="button"
       class={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition sm:flex-none ${
-        isActive ? activeTint[variant] : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+        isActive ? activeTint[variant] : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft'
       }`}
       onClick={onClick}
       aria-pressed={isActive}
@@ -130,7 +124,7 @@ function TabButton({
       {count > 0 && (
         <span
           class={`rounded px-1.5 py-0.5 text-xs ${
-            isActive ? 'bg-black/20 text-current' : 'bg-white/10 text-gray-400'
+            isActive ? 'bg-scrim-soft text-current' : 'bg-fill text-fg-muted'
           }`}
         >
           {count}
@@ -216,10 +210,8 @@ function MoreTabsDropdown({
       <button
         ref={triggerRef}
         type="button"
-        class={`flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition sm:w-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50 ${
-          moreIsActive
-            ? 'bg-white/10 text-gray-50'
-            : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+        class={`flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition sm:w-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50 ${
+          moreIsActive ? 'bg-fill text-fg' : 'text-fg-muted hover:bg-fill-soft hover:text-fg-soft'
         }`}
         aria-label={
           moreIsActive
@@ -237,7 +229,7 @@ function MoreTabsDropdown({
       {isOpen && (
         <div
           ref={menuRef}
-          class={`absolute right-0 top-full z-50 mt-2 min-w-[180px] rounded-xl border p-1.5 ${FLAT_SURFACE}`}
+          class={`absolute right-0 top-full z-50 mt-2 min-w-[180px] rounded-xl border p-1.5 flat-surface`}
           role="menu"
           onKeyDown={onMenuKeyDown}
         >
@@ -247,7 +239,7 @@ function MoreTabsDropdown({
               type="button"
               role="menuitem"
               aria-current={activeTab === tab.key ? 'page' : undefined}
-              class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-gray-300 transition-colors hover:bg-white/[0.07] hover:text-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50"
+              class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-fg-soft transition-colors hover:bg-white/[0.07] hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50"
               onClick={() => {
                 triggerRef.current?.focus();
                 setIsOpen(false);
@@ -256,9 +248,7 @@ function MoreTabsDropdown({
             >
               <span>{tab.label}</span>
               {tab.count > 0 && (
-                <span class="rounded bg-white/10 px-1.5 py-0.5 text-xs text-gray-300">
-                  {tab.count}
-                </span>
+                <span class="rounded bg-fill px-1.5 py-0.5 text-xs text-fg-soft">{tab.count}</span>
               )}
             </button>
           ))}
@@ -283,18 +273,18 @@ function TaskStatePanel({
 }) {
   return (
     <div
-      class={`flex min-h-44 flex-col items-center justify-center rounded-2xl border px-6 py-10 text-center ${FLAT_SURFACE}`}
+      class={`flex min-h-44 flex-col items-center justify-center rounded-2xl border px-6 py-10 text-center flat-surface`}
       role={role}
       data-testid="task-state-panel"
     >
       <span
-        class="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-lg text-gray-400"
+        class="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-fill-soft text-lg text-fg-muted"
         aria-hidden="true"
       >
         {icon}
       </span>
-      <p class="text-sm font-semibold text-gray-100">{title}</p>
-      <p class="mt-1 max-w-md text-xs leading-5 text-gray-400">{description}</p>
+      <p class="text-sm font-semibold text-fg">{title}</p>
+      <p class="mt-1 max-w-md text-xs leading-5 text-fg-muted">{description}</p>
       {action && <div class="mt-5">{action}</div>}
     </div>
   );
@@ -341,7 +331,7 @@ function TaskDependencyBadges({
 
   return (
     <div class="flex items-center gap-1 flex-wrap mt-1" data-testid="task-dependency-badges">
-      <span class="text-xs text-gray-400 mr-0.5">deps:</span>
+      <span class="text-xs text-fg-muted mr-0.5">deps:</span>
       {visible.map((depId) => {
         const dep = taskById.get(depId);
         const isDone = dep?.status === 'done';
@@ -353,8 +343,8 @@ function TaskDependencyBadges({
         const interactive = !isMissing && !!onSelectDependency;
 
         const colorClasses = isDone
-          ? `text-green-300 bg-green-900/40 border-green-700/60${interactive ? ' hover:bg-green-900/60' : ''}`
-          : `text-gray-300 bg-dark-700 border-dark-600${interactive ? ' hover:bg-dark-600' : ''}`;
+          ? `text-success-soft bg-success/15 border-success/40${interactive ? ' hover:bg-success/25' : ''}`
+          : `text-fg-soft bg-fill-strong border-line-strong ${interactive ? 'hover:bg-line-strong' : ''}`;
 
         return (
           <button
@@ -377,7 +367,7 @@ function TaskDependencyBadges({
             class={`inline-flex items-center gap-0.5 text-xs font-mono font-medium px-1.5 py-0.5 rounded border flex-shrink-0 transition-colors ${colorClasses} ${interactive ? 'cursor-pointer' : 'cursor-default'}`}
           >
             {isMissing && (
-              <span aria-hidden="true" class="text-amber-400">
+              <span aria-hidden="true" class="text-warning">
                 ⚠
               </span>
             )}
@@ -388,7 +378,7 @@ function TaskDependencyBadges({
       {overflow > 0 && (
         <span
           data-testid="task-dependency-overflow"
-          class="inline-flex items-center text-xs font-mono font-medium text-gray-400 bg-dark-700 border border-dark-600 px-1.5 py-0.5 rounded flex-shrink-0"
+          class="inline-flex items-center text-xs font-mono font-medium text-fg-muted bg-fill-strong border border-line-strong px-1.5 py-0.5 rounded flex-shrink-0"
           aria-label={`${overflow} more dependencies`}
         >
           +{overflow}
@@ -430,11 +420,11 @@ function TaskGroup({
 }) {
   const accentStyles: Record<string, string> = {
     default: 'bg-sky-300/80',
-    yellow: 'bg-amber-300/80',
+    yellow: 'bg-warning/80',
     purple: 'bg-purple-300/80',
-    green: 'bg-emerald-300/80',
+    green: 'bg-success-soft/80',
     red: 'bg-red-300/80',
-    gray: 'bg-gray-400/80',
+    gray: 'bg-fg-muted/80',
   };
 
   const showPagination = !!pagination && pagination.total > pagination.limit;
@@ -447,7 +437,7 @@ function TaskGroup({
 
   const body = error ? (
     <div
-      class="flex items-center justify-between gap-3 px-5 py-7 text-sm text-red-300"
+      class="flex items-center justify-between gap-3 px-5 py-7 text-sm text-danger-soft"
       data-testid="task-group-error"
       role="alert"
     >
@@ -455,7 +445,7 @@ function TaskGroup({
       {error.onRetry && (
         <button
           type="button"
-          class="rounded-lg border border-white/10 px-2.5 py-1 text-xs text-gray-200 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/50"
+          class="rounded-lg border border-line px-2.5 py-1 text-xs text-fg-soft transition hover:bg-fill focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger-soft/50"
           onClick={error.onRetry}
           data-testid="task-group-retry"
         >
@@ -465,7 +455,7 @@ function TaskGroup({
     </div>
   ) : loading && tasks.length === 0 ? (
     <div
-      class="flex items-center gap-2 px-5 py-7 text-xs text-gray-400"
+      class="flex items-center gap-2 px-5 py-7 text-xs text-fg-muted"
       data-testid="task-group-loading"
       aria-busy="true"
       role="status"
@@ -474,7 +464,7 @@ function TaskGroup({
       Loading tasks…
     </div>
   ) : (
-    <div class="divide-y divide-white/10">
+    <div class="divide-y divide-line">
       {tasks.map((task) => (
         <TaskItem
           key={task.id}
@@ -493,15 +483,12 @@ function TaskGroup({
         <span class={`h-1.5 w-1.5 rounded-full ${accentStyles[variant]}`} aria-hidden="true" />
         <h3
           id={`task-group-${slug}`}
-          class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-300"
+          class="text-xs font-semibold uppercase tracking-[0.14em] text-fg-soft"
         >
           {title} ({count})
         </h3>
       </div>
-      <div
-        class={`overflow-hidden rounded-2xl border ${FLAT_SURFACE}`}
-        data-testid="task-group-list"
-      >
+      <div class={`overflow-hidden rounded-2xl border flat-surface`} data-testid="task-group-list">
         {body}
         {showPagination && pagination && (
           <TaskGroupPagination
@@ -542,12 +529,12 @@ export function TaskGroupPagination({
   const nextDisabled = offset + limit >= total || isLoading;
 
   const buttonClass =
-    'rounded-lg px-2.5 py-1 text-xs text-gray-300 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent';
+    'rounded-lg px-2.5 py-1 text-xs text-fg-soft transition hover:bg-fill focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent';
 
   return (
     <div
       data-testid="task-group-pagination"
-      class="flex items-center justify-between border-t border-white/10 bg-black/10 px-4 py-2"
+      class="flex items-center justify-between border-t border-line bg-scrim-soft px-4 py-2"
     >
       <button
         type="button"
@@ -558,7 +545,7 @@ export function TaskGroupPagination({
       >
         ← Prev
       </button>
-      <span class="text-xs text-gray-400" data-testid="task-group-range" aria-live="polite">
+      <span class="text-xs text-fg-muted" data-testid="task-group-range" aria-live="polite">
         Showing {start}–{end} of {total}
       </span>
       <button
@@ -604,7 +591,7 @@ function TaskItem({
         data-testid="space-task-item"
         class={`group flex items-start justify-between gap-4 outline-none transition ${
           isClickable
-            ? 'cursor-pointer hover:bg-white/[0.045] focus-visible:bg-white/[0.045] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-200/55'
+            ? 'cursor-pointer hover:bg-fill-soft focus-visible:bg-fill-soft focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-warning/55'
             : ''
         }`}
         role={isClickable ? 'button' : undefined}
@@ -630,28 +617,28 @@ function TaskItem({
       >
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-2">
-            <h4 class="truncate text-[15px] font-semibold text-gray-50">{task.title}</h4>
-            <span class="shrink-0 font-mono text-[11px] text-gray-500">#{task.taskNumber}</span>
+            <h4 class="truncate text-[15px] font-semibold text-fg">{task.title}</h4>
+            <span class="shrink-0 font-mono text-[11px] text-fg-faint">#{task.taskNumber}</span>
           </div>
           <div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
             {showStatus && <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />}
             {showsActivity && <ActivitySpinner tone="info" />}
             {workspaceLabel && (
               <span
-                class="inline-flex h-6 max-w-[8.5rem] items-center rounded border border-dark-600 bg-dark-700 px-1.5 py-0.5 text-xs font-medium leading-none text-gray-400 whitespace-nowrap"
+                class="inline-flex h-6 max-w-[8.5rem] items-center rounded border border-line-strong bg-fill-strong px-1.5 py-0.5 text-xs font-medium leading-none text-fg-muted whitespace-nowrap"
                 data-testid="task-workspace-badge"
               >
                 <span class="truncate">{workspaceLabel}</span>
               </span>
             )}
             {task.updatedAt > 0 && (
-              <span class="text-xs text-gray-500">Updated {getRelativeTime(task.updatedAt)}</span>
+              <span class="text-xs text-fg-faint">Updated {getRelativeTime(task.updatedAt)}</span>
             )}
           </div>
         </div>
         {isClickable && (
           <svg
-            class="mt-1 h-4 w-4 shrink-0 text-gray-600 transition group-hover:translate-x-0.5 group-hover:text-gray-300 group-focus-visible:translate-x-0.5 group-focus-visible:text-amber-200"
+            class="mt-1 h-4 w-4 shrink-0 text-fg-faint transition group-hover:translate-x-0.5 group-hover:text-fg-soft group-focus-visible:translate-x-0.5 group-focus-visible:text-warning-soft"
             viewBox="0 0 20 20"
             fill="currentColor"
             aria-hidden="true"
@@ -671,7 +658,7 @@ function TaskItem({
       />
       {task.status === 'blocked' && task.result && (
         <p
-          class="mt-2 truncate text-xs leading-5 text-amber-200/75"
+          class="mt-2 truncate text-xs leading-5 text-warning-soft/75"
           data-testid="task-blocked-reason"
           title={task.result}
         >
@@ -770,22 +757,22 @@ export function SpaceTasks({
 
   return (
     <div class="flex-1 min-h-0 w-full overflow-y-auto">
-      <div class={`${GLASS_CONTENT_CONTAINER_CLASS} space-y-4`}>
+      <div class={`glass-content-container space-y-4`}>
         <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/80">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-warning-soft/80">
               Operational queue
             </p>
-            <p class="mt-1 text-sm text-gray-400">
+            <p class="mt-1 text-sm text-fg-muted">
               Review attention, active execution, schedules, and completed outcomes.
             </p>
           </div>
-          <p class="text-xs tabular-nums text-gray-500">
+          <p class="text-xs tabular-nums text-fg-faint">
             {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'} tracked
           </p>
         </div>
         <div
-          class={`flex w-full gap-1 rounded-2xl border p-1.5 sm:w-auto sm:self-start ${GLASS_SURFACE}`}
+          class={`flex w-full gap-1 rounded-2xl border p-1.5 sm:w-auto sm:self-start glass-surface`}
         >
           <div class="flex w-full gap-1 sm:w-auto xl:hidden">
             {compactTabs.map((tab) => (
@@ -827,7 +814,7 @@ export function SpaceTasks({
             icon="◇"
             action={
               onCreateTask ? (
-                <button type="button" class={GLASS_PRIMARY_BUTTON_CLASS} onClick={onCreateTask}>
+                <button type="button" class="glass-primary-button" onClick={onCreateTask}>
                   Create task
                 </button>
               ) : undefined
@@ -903,33 +890,33 @@ function ScheduleList({
         <span class="h-1.5 w-1.5 rounded-full bg-sky-300/80" aria-hidden="true" />
         <h3
           id="scheduled-tasks-heading"
-          class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-300"
+          class="text-xs font-semibold uppercase tracking-[0.14em] text-fg-soft"
         >
           Schedules
         </h3>
-        <span class="text-xs tabular-nums text-gray-500">{schedules.length}</span>
+        <span class="text-xs tabular-nums text-fg-faint">{schedules.length}</span>
       </div>
-      <div class={`divide-y divide-white/10 overflow-hidden rounded-2xl border ${FLAT_SURFACE}`}>
+      <div class={`divide-y divide-line overflow-hidden rounded-2xl border flat-surface`}>
         {schedules.map((s) => {
           const isPending = pendingAction?.id === s.id;
           return (
             <div key={s.id} class="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2">
-                  <span class="truncate text-[15px] font-semibold text-gray-50">{s.title}</span>
+                  <span class="truncate text-[15px] font-semibold text-fg">{s.title}</span>
                   <span
                     class={`rounded px-1.5 py-0.5 text-[11px] font-medium capitalize ${
                       s.status === 'active'
-                        ? 'bg-emerald-400/10 text-emerald-200'
+                        ? 'bg-emerald-400/10 text-success-soft'
                         : s.status === 'paused'
-                          ? 'bg-amber-400/10 text-amber-200'
-                          : 'bg-white/[0.06] text-gray-400'
+                          ? 'bg-warning/10 text-warning-soft'
+                          : 'bg-fill-soft text-fg-muted'
                     }`}
                   >
                     {s.status}
                   </span>
                 </div>
-                <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-faint">
                   <span title="Trigger">Trigger · {formatTrigger(s)}</span>
                   {s.nextRunAt && s.status === 'active' && (
                     <span>Next · {formatNextRun(s.nextRunAt)}</span>
@@ -941,7 +928,7 @@ function ScheduleList({
                 {s.status === 'active' && (
                   <button
                     type="button"
-                    class="rounded-lg px-2.5 py-1.5 text-xs text-amber-200 transition hover:bg-amber-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50 disabled:opacity-40"
+                    class="rounded-lg px-2.5 py-1.5 text-xs text-warning-soft transition hover:bg-warning/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50 disabled:opacity-40"
                     onClick={() => runAction(s.id, 'pause', () => onPause(s.id))}
                     disabled={isPending}
                     aria-label={`Pause schedule ${s.title}`}
@@ -952,7 +939,7 @@ function ScheduleList({
                 {s.status === 'paused' && (
                   <button
                     type="button"
-                    class="rounded-lg px-2.5 py-1.5 text-xs text-emerald-200 transition hover:bg-emerald-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200/50 disabled:opacity-40"
+                    class="rounded-lg px-2.5 py-1.5 text-xs text-success-soft transition hover:bg-emerald-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200/50 disabled:opacity-40"
                     onClick={() => runAction(s.id, 'resume', () => onResume(s.id))}
                     disabled={isPending}
                     aria-label={`Resume schedule ${s.title}`}
@@ -962,7 +949,7 @@ function ScheduleList({
                 )}
                 <button
                   type="button"
-                  class="rounded-lg px-2.5 py-1.5 text-xs text-red-300 transition hover:bg-red-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/50 disabled:opacity-40"
+                  class="rounded-lg px-2.5 py-1.5 text-xs text-danger-soft transition hover:bg-red-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger-soft/50 disabled:opacity-40"
                   onClick={() => runAction(s.id, 'delete', () => onDelete(s.id))}
                   disabled={isPending}
                   aria-label={`Delete schedule ${s.title}`}

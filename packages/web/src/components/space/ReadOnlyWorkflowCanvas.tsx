@@ -85,7 +85,7 @@ export function ReadOnlyWorkflowCanvas({
       <div
         ref={containerRef}
         tabIndex={-1}
-        class="flex-1 min-h-0 relative focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/70"
+        class="flex-1 min-h-0 relative focus:outline-none focus-visible:ring-2 focus-visible:ring-cat-purple/70"
       >
         <WorkflowCanvas
           nodes={nodeData}

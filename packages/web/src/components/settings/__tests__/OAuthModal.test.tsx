@@ -319,7 +319,7 @@ describe('OAuthModal', () => {
         />
       );
 
-      const backdrop = document.body.querySelector('.bg-black\\/60');
+      const backdrop = document.body.querySelector('.bg-scrim');
       backdrop?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
       expect(mockOnCancel).toHaveBeenCalledTimes(1);

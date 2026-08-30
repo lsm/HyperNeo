@@ -30,15 +30,15 @@ export function SpacePageHeader({
           <h2
             class={
               prominent
-                ? `truncate font-semibold tracking-tight text-gray-50 ${appearance === 'hero' ? 'text-3xl' : 'text-xl'}`
-                : 'truncate text-sm font-semibold text-gray-100'
+                ? `truncate font-semibold tracking-tight text-fg ${appearance === 'hero' ? 'text-3xl' : 'text-xl'}`
+                : 'truncate text-sm font-semibold text-fg'
             }
             data-tauri-drag-region
           >
             {pageTitle}
           </h2>
           {subtitle && (
-            <p class="mt-0.5 truncate text-sm text-gray-400" data-tauri-drag-region>
+            <p class="mt-0.5 truncate text-sm text-fg-muted" data-tauri-drag-region>
               {subtitle}
             </p>
           )}

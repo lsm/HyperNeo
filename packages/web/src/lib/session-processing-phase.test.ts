@@ -70,7 +70,7 @@ describe('session-processing-phase', () => {
       messageId: 'msg-1',
       phase: 'thinking',
     });
-    expect(classes.bg).toBe('bg-blue-500');
+    expect(classes.bg).toBe('bg-accent');
   });
 
   it('falls back to the processing config for an unrecognized persisted phase', () => {

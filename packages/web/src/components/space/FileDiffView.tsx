@@ -144,10 +144,10 @@ export function FileDiffView({
 
   return (
     <div class={cn('flex flex-col h-full overflow-hidden', className)} data-testid="file-diff-view">
-      <div class="flex items-center gap-3 px-4 py-3 border-b border-dark-700 flex-shrink-0 bg-dark-850">
+      <div class="flex items-center gap-3 px-4 py-3 border-b border-line flex-shrink-0 bg-surface-overlay">
         <button
           onClick={onBack}
-          class="text-gray-400 hover:text-gray-100 transition-colors flex-shrink-0"
+          class="text-fg-muted hover:text-fg transition-colors flex-shrink-0"
           aria-label="Back to file list"
           data-testid="file-diff-back"
         >
@@ -160,15 +160,15 @@ export function FileDiffView({
             />
           </svg>
         </button>
-        <p class="flex-1 text-xs font-mono text-gray-200 truncate min-w-0" title={filePath}>
+        <p class="flex-1 text-xs font-mono text-fg-soft truncate min-w-0" title={filePath}>
           {filePath}
         </p>
         {!loading && !error && (
           <div class="flex items-center gap-2 text-xs font-mono flex-shrink-0">
-            <span class="text-green-400" data-testid="diff-additions">
+            <span class="text-success" data-testid="diff-additions">
               +{additions}
             </span>
-            <span class="text-red-400" data-testid="diff-deletions">
+            <span class="text-danger" data-testid="diff-deletions">
               -{deletions}
             </span>
           </div>
@@ -178,19 +178,19 @@ export function FileDiffView({
       <div class="flex-1 overflow-auto">
         {loading && (
           <div class="flex items-center justify-center h-32" data-testid="diff-loading">
-            <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <div class="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
           </div>
         )}
 
         {error && (
           <div class="px-4 py-4" data-testid="diff-error">
-            <p class="text-sm text-red-400">{error}</p>
+            <p class="text-sm text-danger">{error}</p>
           </div>
         )}
 
         {!loading && !error && diffText !== null && parsedLines.length === 0 && (
           <div class="px-4 py-6 text-center" data-testid="diff-empty">
-            <p class="text-sm text-gray-400">No changes in this file</p>
+            <p class="text-sm text-fg-muted">No changes in this file</p>
           </div>
         )}
 
@@ -204,32 +204,32 @@ export function FileDiffView({
             <tbody>
               {parsedLines.map((line, idx) => {
                 let rowClass = '';
-                let contentClass = 'text-gray-300';
+                let contentClass = 'text-fg-soft';
                 let sigil: string | null = null;
 
                 switch (line.type) {
                   case 'added':
-                    rowClass = 'bg-green-950/40';
-                    contentClass = 'text-green-300';
+                    rowClass = 'bg-success/10';
+                    contentClass = 'text-success-soft';
                     sigil = '+';
                     break;
                   case 'removed':
-                    rowClass = 'bg-red-950/40';
-                    contentClass = 'text-red-300';
+                    rowClass = 'bg-danger/40';
+                    contentClass = 'text-danger-soft';
                     sigil = '-';
                     break;
                   case 'hunk':
-                    rowClass = 'bg-blue-950/30';
-                    contentClass = 'text-blue-400';
+                    rowClass = 'bg-accent/30';
+                    contentClass = 'text-accent';
                     break;
                   case 'header':
-                    rowClass = 'bg-dark-800';
-                    contentClass = 'text-gray-400';
+                    rowClass = 'bg-surface-raised';
+                    contentClass = 'text-fg-muted';
                     break;
                   case 'file-header':
                   case 'index':
-                    rowClass = 'bg-dark-850';
-                    contentClass = 'text-gray-400';
+                    rowClass = 'bg-surface-overlay';
+                    contentClass = 'text-fg-muted';
                     break;
                   default:
                     break;
@@ -237,10 +237,10 @@ export function FileDiffView({
 
                 return (
                   <tr key={idx} class={rowClass}>
-                    <td class="px-2 py-0.5 text-gray-400 text-right select-none border-r border-dark-700 w-14">
+                    <td class="px-2 py-0.5 text-fg-muted text-right select-none border-r border-line w-14">
                       {line.oldLineNum ?? ''}
                     </td>
-                    <td class="px-2 py-0.5 text-gray-400 text-right select-none border-r border-dark-700 w-14">
+                    <td class="px-2 py-0.5 text-fg-muted text-right select-none border-r border-line w-14">
                       {line.newLineNum ?? ''}
                     </td>
                     <td class={cn('px-3 py-0.5 whitespace-pre', contentClass)}>
@@ -248,7 +248,7 @@ export function FileDiffView({
                         <span
                           class={cn(
                             'mr-1 select-none',
-                            sigil === '+' ? 'text-green-600' : 'text-red-600'
+                            sigil === '+' ? 'text-success' : 'text-danger'
                           )}
                         >
                           {sigil}

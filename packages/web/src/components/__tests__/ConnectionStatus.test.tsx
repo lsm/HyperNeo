@@ -26,7 +26,7 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="connected" isProcessing={false} />
       );
 
-      const dot = container.querySelector('.bg-green-500');
+      const dot = container.querySelector('.bg-success');
       expect(dot).toBeTruthy();
     });
 
@@ -43,7 +43,7 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="connecting" isProcessing={false} />
       );
 
-      const dot = container.querySelector('.bg-yellow-500');
+      const dot = container.querySelector('.bg-warning');
       expect(dot).toBeTruthy();
       expect(dot?.className).toContain('animate-pulse');
     });
@@ -61,7 +61,7 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="disconnected" isProcessing={false} />
       );
 
-      const dot = container.querySelector('.bg-gray-500');
+      const dot = container.querySelector('.bg-fg-faint');
       expect(dot).toBeTruthy();
     });
 
@@ -78,7 +78,7 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="reconnecting" isProcessing={false} />
       );
 
-      const dot = container.querySelector('.bg-yellow-500');
+      const dot = container.querySelector('.bg-warning');
       expect(dot).toBeTruthy();
       expect(dot?.className).toContain('animate-pulse');
     });
@@ -96,7 +96,7 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="failed" isProcessing={false} />
       );
 
-      const dot = container.querySelector('.bg-red-500');
+      const dot = container.querySelector('.bg-danger');
       expect(dot).toBeTruthy();
     });
 
@@ -113,7 +113,7 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="error" isProcessing={false} />
       );
 
-      const dot = container.querySelector('.bg-red-500');
+      const dot = container.querySelector('.bg-danger');
       expect(dot).toBeTruthy();
     });
   });
@@ -140,7 +140,7 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      const dot = container.querySelector('.bg-blue-500');
+      const dot = container.querySelector('.bg-accent');
       expect(dot).toBeTruthy();
       expect(dot?.className).toContain('animate-pulse');
     });
@@ -170,10 +170,10 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      const dot = container.querySelector('.bg-yellow-500');
+      const dot = container.querySelector('.bg-warning');
       expect(dot).toBeTruthy();
 
-      const text = container.querySelector('.text-yellow-400');
+      const text = container.querySelector('.text-warning');
       expect(text).toBeTruthy();
     });
 
@@ -187,10 +187,10 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      const dot = container.querySelector('.bg-blue-500');
+      const dot = container.querySelector('.bg-accent');
       expect(dot).toBeTruthy();
 
-      const text = container.querySelector('.text-blue-400');
+      const text = container.querySelector('.text-accent');
       expect(text).toBeTruthy();
     });
 
@@ -204,10 +204,10 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      const dot = container.querySelector('.bg-green-500');
+      const dot = container.querySelector('.bg-success');
       expect(dot).toBeTruthy();
 
-      const text = container.querySelector('.text-green-400');
+      const text = container.querySelector('.text-success');
       expect(text).toBeTruthy();
     });
 
@@ -221,10 +221,10 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      const dot = container.querySelector('.bg-purple-500');
+      const dot = container.querySelector('.bg-cat-purple');
       expect(dot).toBeTruthy();
 
-      const text = container.querySelector('.text-purple-400');
+      const text = container.querySelector('.text-cat-purple');
       expect(text).toBeTruthy();
     });
   });
@@ -235,7 +235,7 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="connected" isProcessing={false} />
       );
 
-      const text = container.querySelector('.text-green-400');
+      const text = container.querySelector('.text-success');
       expect(text).toBeTruthy();
       expect(text?.textContent).toBe('Ready');
     });
@@ -245,7 +245,7 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="connecting" isProcessing={false} />
       );
 
-      const text = container.querySelector('.text-yellow-400');
+      const text = container.querySelector('.text-warning');
       expect(text).toBeTruthy();
     });
 
@@ -254,7 +254,7 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="disconnected" isProcessing={false} />
       );
 
-      const text = container.querySelector('.text-gray-400');
+      const text = container.querySelector('.text-fg-muted');
       expect(text).toBeTruthy();
     });
 
@@ -263,7 +263,7 @@ describe('ConnectionStatus', () => {
         <ConnectionStatus connectionState="failed" isProcessing={false} />
       );
 
-      const text = container.querySelector('.text-red-400');
+      const text = container.querySelector('.text-danger');
       expect(text).toBeTruthy();
     });
   });
@@ -343,7 +343,7 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      const dot = container.querySelector('.bg-blue-500');
+      const dot = container.querySelector('.bg-accent');
       expect(dot).toBeTruthy();
     });
 
@@ -357,7 +357,7 @@ describe('ConnectionStatus', () => {
         />
       );
 
-      const dot = container.querySelector('.bg-blue-500');
+      const dot = container.querySelector('.bg-accent');
       expect(dot).toBeTruthy();
       expect(container.textContent).toContain('Working...');
     });

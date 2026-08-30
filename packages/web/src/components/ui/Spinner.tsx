@@ -13,7 +13,7 @@ const sizeClasses = {
   lg: 'w-6 h-6 border-2',
 } as const;
 
-export function Spinner({ size = 'sm', color = 'border-gray-500', className }: SpinnerProps) {
+export function Spinner({ size = 'sm', color = 'border-fg-faint', className }: SpinnerProps) {
   return (
     <div
       class={cn(

@@ -5,12 +5,6 @@ import { ConfirmModal } from '../ui/ConfirmModal';
 import { memoryStore } from '../../lib/memory-store';
 import { toast } from '../../lib/toast';
 import { cn } from '../../lib/utils';
-import {
-  FLAT_SURFACE,
-  GLASS_CONTENT_CONTAINER_CLASS,
-  GLASS_PRIMARY_BUTTON_CLASS,
-  GLASS_SURFACE,
-} from './glass-workspace';
 import { SpaceMemoryEditor } from './SpaceMemoryEditor';
 
 const SEARCH_DEBOUNCE_MS = 250;
@@ -39,25 +33,23 @@ function MemoryCard({ memory, onEdit, onDelete }: MemoryCardProps) {
   return (
     <div
       class={cn(
-        'group relative flex min-h-[12rem] flex-col rounded-2xl border p-5 transition duration-200 hover:-translate-y-0.5 hover:border-white/25',
-        FLAT_SURFACE
+        'group relative flex min-h-[12rem] flex-col rounded-2xl border p-5 transition duration-200 hover:-translate-y-0.5 hover:border-line-strong',
+        'flat-surface'
       )}
     >
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0 flex-1">
-          <span class="block truncate font-mono text-sm font-semibold text-gray-100">
-            {memory.key}
-          </span>
-          <p class="mt-1.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-5 text-gray-300">
+          <span class="block truncate font-mono text-sm font-semibold text-fg">{memory.key}</span>
+          <p class="mt-1.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-5 text-fg-soft">
             {memory.content}
           </p>
-          <div class="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500">
+          <div class="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px] text-fg-faint">
             <span>Updated {formatDate(memory.updatedAt)}</span>
             {memory.accessCount > 0 && <span>· {memory.accessCount} reads</span>}
             {memory.tags.map((tag) => (
               <span
                 key={tag}
-                class="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-gray-400"
+                class="rounded-full border border-line bg-fill-soft px-2 py-0.5 text-fg-muted"
               >
                 {tag}
               </span>
@@ -68,7 +60,7 @@ function MemoryCard({ memory, onEdit, onDelete }: MemoryCardProps) {
           <button
             type="button"
             onClick={() => onEdit(memory)}
-            class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-200"
+            class="rounded-lg p-1.5 text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg-soft"
             aria-label={`Edit memory ${memory.key}`}
             data-testid={`memory-edit-${memory.key}`}
           >
@@ -84,7 +76,7 @@ function MemoryCard({ memory, onEdit, onDelete }: MemoryCardProps) {
           <button
             type="button"
             onClick={() => onDelete(memory)}
-            class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-red-400"
+            class="rounded-lg p-1.5 text-fg-muted transition-colors hover:bg-fill-soft hover:text-danger"
             aria-label={`Delete memory ${memory.key}`}
             data-testid={`memory-delete-${memory.key}`}
           >
@@ -105,7 +97,7 @@ function MemoryCard({ memory, onEdit, onDelete }: MemoryCardProps) {
 
 function MemoryIcon() {
   return (
-    <svg class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <svg class="w-5 h-5 text-fg-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path
         stroke-linecap="round"
         stroke-linejoin="round"
@@ -214,10 +206,10 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
           <div
             class={cn(
               'flex min-h-[12rem] items-center justify-center rounded-2xl border p-6',
-              FLAT_SURFACE
+              'flat-surface'
             )}
           >
-            <span class="text-xs text-gray-400 animate-pulse">Loading memories...</span>
+            <span class="text-xs text-fg-muted animate-pulse">Loading memories...</span>
           </div>
         </div>
       </div>
@@ -229,25 +221,25 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
   return (
     <div class="flex h-full min-h-0 flex-col overflow-hidden">
       <div class="flex-1 overflow-y-auto">
-        <div class={GLASS_CONTENT_CONTAINER_CLASS}>
+        <div class="glass-content-container">
           <section
             class={cn(
               'mb-5 flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6',
-              GLASS_SURFACE
+              'glass-surface'
             )}
             data-testid="space-memories-introduction"
             aria-label="Memories workspace summary"
           >
             <div class="max-w-2xl">
-              <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-200/80">
-                <span class="h-1.5 w-1.5 rounded-full bg-amber-300" />
+              <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-warning-soft/80">
+                <span class="h-1.5 w-1.5 rounded-full bg-warning" />
                 Persistent recall
               </div>
-              <h2 class="mt-2 text-lg font-semibold tracking-tight text-gray-50">
+              <h2 class="mt-2 text-lg font-semibold tracking-tight text-fg">
                 Memories · {memories.length}
                 {hasMore ? '+' : ''} {searchActive ? 'results' : 'stored'}
               </h2>
-              <p class="mt-1 text-sm leading-5 text-gray-300">
+              <p class="mt-1 text-sm leading-5 text-fg-soft">
                 Persistent facts, conventions, and decisions this space's agents can recall. Search
                 uses the hybrid keyword + semantic backend.
               </p>
@@ -255,16 +247,16 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
             <button
               type="button"
               onClick={handleCreate}
-              class={GLASS_PRIMARY_BUTTON_CLASS}
+              class="glass-primary-button"
               data-testid="memory-create-button"
             >
               New Memory
             </button>
           </section>
 
-          <div class={cn('relative mb-4 rounded-2xl border p-1.5', GLASS_SURFACE)}>
+          <div class={cn('relative mb-4 rounded-2xl border p-1.5', 'glass-surface')}>
             <svg
-              class="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500"
+              class="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -282,7 +274,7 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
               value={searchInput}
               onInput={(e) => handleSearchInput((e.target as HTMLInputElement).value)}
               placeholder="Search memories…"
-              class="w-full rounded-xl border border-white/10 bg-dark-950/80 py-2.5 pl-10 pr-9 text-sm text-gray-100 placeholder-gray-500 transition focus:border-blue-500/60 focus:outline-none"
+              class="w-full rounded-xl border border-line bg-bg/80 py-2.5 pl-10 pr-9 text-sm text-fg placeholder-gray-500 transition focus:border-accent/60 focus:outline-none"
               aria-label="Search memories"
               data-testid="memory-search-input"
             />
@@ -290,7 +282,7 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
               <button
                 type="button"
                 onClick={() => handleSearchInput('')}
-                class="absolute right-3 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-500 transition hover:text-gray-300"
+                class="absolute right-3 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-faint transition hover:text-fg-soft"
                 aria-label="Clear search"
               >
                 <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -308,8 +300,8 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
           {error && (
             <div
               class={cn(
-                'mb-5 flex flex-shrink-0 items-center justify-between gap-3 rounded-2xl border border-red-300/20 p-4 text-sm text-red-200',
-                FLAT_SURFACE
+                'mb-5 flex flex-shrink-0 items-center justify-between gap-3 rounded-2xl border border-danger-soft/20 p-4 text-sm text-danger-soft',
+                'flat-surface'
               )}
             >
               <span>{error}</span>
@@ -323,25 +315,25 @@ export function SpaceMemories({ spaceId }: SpaceMemoriesProps) {
             <div
               class={cn(
                 'flex flex-1 flex-col items-center justify-center rounded-2xl border border-dashed p-12 text-center',
-                FLAT_SURFACE
+                'flat-surface'
               )}
             >
-              <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-white/[0.05]">
+              <div class="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-fill-soft">
                 <MemoryIcon />
               </div>
               {trimmedSearch ? (
                 <>
-                  <p class="text-sm font-medium text-gray-200">
+                  <p class="text-sm font-medium text-fg-soft">
                     No memories match "{trimmedSearch}".
                   </p>
-                  <p class="mt-1 text-xs text-gray-400">
+                  <p class="mt-1 text-xs text-fg-muted">
                     Try a different query or clear the search.
                   </p>
                 </>
               ) : (
                 <>
-                  <p class="text-sm font-medium text-gray-200">No memories stored yet.</p>
-                  <p class="mt-1 text-xs text-gray-400">
+                  <p class="text-sm font-medium text-fg-soft">No memories stored yet.</p>
+                  <p class="mt-1 text-xs text-fg-muted">
                     Create a memory your agents can recall during sessions.
                   </p>
                   <div class="mt-4">

@@ -432,7 +432,7 @@ describe('InputTextarea', () => {
       );
 
       const containerDiv = container.querySelector('.rounded-3xl');
-      expect(containerDiv?.className).toContain('border-dark-700');
+      expect(containerDiv?.className).toContain('border-line/30');
     });
   });
 

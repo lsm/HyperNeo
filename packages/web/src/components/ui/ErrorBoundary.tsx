@@ -32,10 +32,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       }
       return (
         <div class="flex flex-col items-center justify-center h-full gap-3 p-4">
-          <p class="text-sm text-gray-400">Failed to load component</p>
+          <p class="text-sm text-fg-muted">Failed to load component</p>
           <button
             type="button"
-            class="text-sm text-blue-400 hover:text-blue-300 underline"
+            class="text-sm text-accent hover:text-accent-soft underline"
             onClick={this.handleRetry}
           >
             Retry

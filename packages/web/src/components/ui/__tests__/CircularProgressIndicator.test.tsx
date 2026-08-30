@@ -64,24 +64,24 @@ describe('CircularProgressIndicator', () => {
       expect(progressArc).toBeUndefined();
 
       const text = container.querySelector('svg text');
-      expect(text?.getAttribute('class')).toContain('text-dark-500');
+      expect(text?.getAttribute('class')).toContain('text-fg-faint');
     });
 
     it('should show blue color for in-progress (1-99%)', () => {
       const { container } = render(<CircularProgressIndicator progress={50} />);
 
       const progressArc = container.querySelectorAll('svg circle')[1];
-      expect(progressArc?.getAttribute('class')).toContain('text-blue-500');
+      expect(progressArc?.getAttribute('class')).toContain('text-accent');
     });
 
     it('should show green color for 100% progress', () => {
       const { container } = render(<CircularProgressIndicator progress={100} />);
 
       const progressArc = container.querySelectorAll('svg circle')[1];
-      expect(progressArc?.getAttribute('class')).toContain('text-green-500');
+      expect(progressArc?.getAttribute('class')).toContain('text-success');
 
       const text = container.querySelector('svg text');
-      expect(text?.getAttribute('class')).toContain('text-green-400');
+      expect(text?.getAttribute('class')).toContain('text-success');
     });
   });
 

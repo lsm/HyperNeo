@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { getAgentColor } from '../thread/space-task-thread-agent-colors';
+import { describe, expect, it, afterEach } from 'vitest';
+import { getAgentColor, getAgentTextColor } from '../thread/space-task-thread-agent-colors';
+import { resolvedTheme } from '../../../lib/theme';
 
 describe('getAgentColor', () => {
   it('returns the correct color for Task Agent', () => {
@@ -104,5 +105,38 @@ describe('getAgentColor', () => {
     const color = getAgentColor(undefined as unknown as string);
     expect(typeof color).toBe('string');
     expect(color.length).toBeGreaterThan(0);
+  });
+});
+
+describe('getAgentTextColor', () => {
+  afterEach(() => {
+    resolvedTheme.value = 'dark';
+  });
+
+  it('returns the pastel fill color in dark mode', () => {
+    resolvedTheme.value = 'dark';
+    expect(getAgentTextColor('Task Agent')).toBe('#66A7FF');
+  });
+
+  it('returns a darker text variant in light mode', () => {
+    resolvedTheme.value = 'light';
+    expect(getAgentTextColor('Task Agent')).toBe('#1d4ed8');
+    expect(getAgentTextColor('Reviewer Agent')).toBe('#b45309');
+    expect(getAgentTextColor('Workflow Agent')).toBe('#c026d3');
+  });
+
+  it('returns a darker HSL fallback in light mode for unknown labels', () => {
+    resolvedTheme.value = 'light';
+    expect(getAgentTextColor('Custom Agent')).toMatch(/^hsl\(\d+ 55% 38%\)$/);
+  });
+
+  it('keeps the pastel HSL fallback in dark mode for unknown labels', () => {
+    resolvedTheme.value = 'dark';
+    expect(getAgentTextColor('My Special Bot')).toMatch(/^hsl\(\d+ 70% 62%\)$/);
+  });
+
+  it('is case-insensitive and trims whitespace like getAgentColor', () => {
+    resolvedTheme.value = 'light';
+    expect(getAgentTextColor('  task agent  ')).toBe('#1d4ed8');
   });
 });

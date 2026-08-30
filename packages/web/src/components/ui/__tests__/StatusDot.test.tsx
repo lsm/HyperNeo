@@ -10,7 +10,7 @@ describe('StatusDot', () => {
   it('renders a dot with the tone background', () => {
     const { container } = render(<StatusDot tone="success" />);
     const dot = container.querySelector('span > span');
-    expect(dot?.className).toContain('bg-green-500');
+    expect(dot?.className).toContain('bg-success');
   });
 
   it('adds pulse animation when pulse is true', () => {

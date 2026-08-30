@@ -38,7 +38,7 @@ export function CopyButton({ text, label = 'Copy to clipboard' }: CopyButtonProp
       onClick={handleCopy}
       title={copied ? 'Copied!' : label}
       class={`p-1.5 rounded transition-colors ${
-        copied ? 'text-green-400' : 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
+        copied ? 'text-success' : 'text-fg-muted hover:text-fg-soft hover:bg-fill-strong'
       }`}
     >
       {copied ? (

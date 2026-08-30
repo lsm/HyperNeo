@@ -122,7 +122,7 @@ export function ToolResultCard({
         <span class={cn('text-xs font-medium truncate', colors.text)}>{displayName}</span>
         {isError && (
           <svg
-            class="w-3 h-3 text-red-500 ml-auto flex-shrink-0"
+            class="w-3 h-3 text-danger ml-auto flex-shrink-0"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -146,7 +146,7 @@ export function ToolResultCard({
       >
         <ToolIcon toolName={toolName} size="xs" />
         <span class={cn('text-xs font-medium', colors.text)}>{displayName}</span>
-        {isError && <span class="text-xs text-red-500">✗</span>}
+        {isError && <span class="text-xs text-danger">✗</span>}
       </span>
     );
   }
@@ -183,11 +183,7 @@ export function ToolResultCard({
   const getLineCountDisplay = () => {
     if (toolName === 'Read') {
       if (isFileReadOutput(output) && output.type === 'text') {
-        return (
-          <span class="text-xs text-gray-600 dark:text-gray-400 font-mono">
-            {output.file.numLines}
-          </span>
-        );
+        return <span class="text-xs text-fg-muted font-mono">{output.file.numLines}</span>;
       }
       const content =
         typeof output === 'string'
@@ -197,15 +193,13 @@ export function ToolResultCard({
             : undefined;
       if (content && typeof content === 'string') {
         const lineCount = content.split('\n').length;
-        return <span class="text-xs text-gray-600 dark:text-gray-400 font-mono">{lineCount}</span>;
+        return <span class="text-xs text-fg-muted font-mono">{lineCount}</span>;
       }
     } else if (toolName === 'Write') {
       const content = inputRecord?.content as string | undefined;
       if (content && typeof content === 'string') {
         const lineCount = content.split('\n').length;
-        return (
-          <span class="text-xs text-green-700 dark:text-green-400 font-mono">+{lineCount}</span>
-        );
+        return <span class="text-xs text-success font-mono">+{lineCount}</span>;
       }
     } else if (toolName === 'Edit') {
       const oldText = inputRecord?.old_string as string | undefined;
@@ -214,8 +208,8 @@ export function ToolResultCard({
         const { addedLines, removedLines } = calculateDiffCounts(oldText, newText);
         return (
           <span class="text-xs font-mono flex items-center gap-1">
-            <span class="text-green-700 dark:text-green-400">+{addedLines}</span>
-            <span class="text-red-700 dark:text-red-400">-{removedLines}</span>
+            <span class="text-success">+{addedLines}</span>
+            <span class="text-danger">-{removedLines}</span>
           </span>
         );
       }
@@ -254,7 +248,7 @@ export function ToolResultCard({
           {lineCountDisplay}
           {notificationIsSuccess && (
             <svg
-              class="w-4 h-4 text-green-600 dark:text-green-400"
+              class="w-4 h-4 text-success"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -270,7 +264,7 @@ export function ToolResultCard({
           )}
           {showErrorIcon && (
             <svg
-              class="w-4 h-4 text-red-600 dark:text-red-400"
+              class="w-4 h-4 text-danger"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -315,7 +309,7 @@ export function ToolResultCard({
       {isRunning && taskProgress && <TaskProgressLine progress={taskProgress} />}
 
       {isExpanded && (
-        <div class={cn('p-3 border-t bg-white dark:bg-gray-900 space-y-3', colors.border)}>
+        <div class={cn('p-3 border-t bg-surface space-y-3', colors.border)}>
           {taskNotification && (taskNotification.summary || taskNotification.usage) && (
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
               {taskNotification.summary && (
@@ -323,17 +317,17 @@ export function ToolResultCard({
                   class={cn(
                     'font-medium',
                     notificationIsSuccess
-                      ? 'text-green-700 dark:text-green-300'
+                      ? 'text-success-soft'
                       : notificationIsError
-                        ? 'text-red-700 dark:text-red-300'
-                        : 'text-gray-600 dark:text-gray-300'
+                        ? 'text-danger-soft'
+                        : 'text-fg-soft'
                   )}
                 >
                   {taskNotification.summary}
                 </span>
               )}
               {taskNotification.usage && (
-                <span class="flex flex-wrap gap-x-4 gap-y-1 font-mono text-gray-500 dark:text-gray-400">
+                <span class="flex flex-wrap gap-x-4 gap-y-1 font-mono text-fg-muted">
                   <span>{taskNotification.usage.total_tokens.toLocaleString()} tokens</span>
                   <span>{taskNotification.usage.tool_uses} tool uses</span>
                   <span>{(taskNotification.usage.duration_ms / 1000).toFixed(1)}s</span>
@@ -343,10 +337,10 @@ export function ToolResultCard({
           )}
           {isError && output !== undefined && output !== null && (
             <div>
-              <div class="text-xs font-semibold text-red-600 dark:text-red-400 mb-2">
+              <div class="text-xs font-semibold text-danger mb-2">
                 Error
                 {inputRecord?.file_path && (
-                  <span class="font-normal text-gray-500 dark:text-gray-400 ml-1">
+                  <span class="font-normal text-fg-muted ml-1">
                     — {String(inputRecord.file_path)}
                   </span>
                 )}
@@ -354,7 +348,7 @@ export function ToolResultCard({
               <pre
                 class={cn(
                   'text-xs p-3 rounded overflow-x-auto border',
-                  'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
+                  'bg-danger/10 border-danger/40 text-danger-soft'
                 )}
               >
                 {getOutputDisplayText(output)}
@@ -374,9 +368,7 @@ export function ToolResultCard({
                 />
                 {output.structuredPatch.length > 0 && variant === 'detailed' && (
                   <details>
-                    <summary class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer">
-                      Structured patch
-                    </summary>
+                    <summary class="text-xs text-fg-muted cursor-pointer">Structured patch</summary>
                     <CodeViewer
                       code={structuredPatchToDiff(output.structuredPatch)}
                       filePath={output.filePath}
@@ -388,7 +380,7 @@ export function ToolResultCard({
                   </details>
                 )}
                 {output.gitDiff && (
-                  <div class="text-xs text-gray-500 dark:text-gray-400">
+                  <div class="text-xs text-fg-muted">
                     Git: {output.gitDiff.additions} additions, {output.gitDiff.deletions} deletions
                   </div>
                 )}
@@ -411,7 +403,7 @@ export function ToolResultCard({
                   maxHeight="none"
                 />
               ) : output.type === 'file_unchanged' ? (
-                <div class="text-xs text-gray-500 dark:text-gray-400 italic">
+                <div class="text-xs text-fg-muted italic">
                   File unchanged: {output.file.filePath}
                 </div>
               ) : output.type === 'image' ? (
@@ -421,7 +413,7 @@ export function ToolResultCard({
                   class="max-w-full rounded border"
                 />
               ) : (
-                <pre class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded overflow-x-auto border border-gray-200 dark:border-gray-700">
+                <pre class="text-xs bg-surface-raised p-3 rounded overflow-x-auto border border-line">
                   {JSON.stringify(output, null, 2)}
                 </pre>
               )
@@ -447,7 +439,7 @@ export function ToolResultCard({
             isFileWriteOutput(output) ? (
               <div>
                 {variant === 'detailed' && (
-                  <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+                  <div class="text-xs font-semibold text-fg-muted mb-2">
                     {output.type === 'create' ? 'New File' : 'Updated File'}: {output.filePath}
                   </div>
                 )}
@@ -459,7 +451,7 @@ export function ToolResultCard({
                   maxHeight="none"
                 />
                 {output.gitDiff && (
-                  <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  <div class="text-xs text-fg-muted mt-1">
                     Git: {output.gitDiff.additions} additions, {output.gitDiff.deletions} deletions
                   </div>
                 )}
@@ -467,9 +459,7 @@ export function ToolResultCard({
             ) : inputRecord?.content && typeof inputRecord.content === 'string' ? (
               <div>
                 {variant === 'detailed' && (
-                  <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
-                    File Content:
-                  </div>
+                  <div class="text-xs font-semibold text-fg-muted mb-2">File Content:</div>
                 )}
                 <CodeViewer
                   code={inputRecord.content as string}
@@ -483,7 +473,7 @@ export function ToolResultCard({
           ) : toolName === 'Thinking' ? (
             <div>
               {variant === 'detailed' && (
-                <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
+                <div class="text-xs font-semibold text-fg-muted mb-2">
                   Extended Thinking Process ({typeof input === 'string' ? input.length : 0}{' '}
                   characters)
                 </div>
@@ -496,7 +486,7 @@ export function ToolResultCard({
                 </pre>
               </div>
               {variant === 'detailed' && (
-                <div class="text-xs text-gray-500 dark:text-gray-400 italic">
+                <div class="text-xs text-fg-muted italic">
                   This is Claude's internal reasoning process before generating the final response.
                 </div>
               )}
@@ -505,20 +495,14 @@ export function ToolResultCard({
             <>
               {variant === 'detailed' && (
                 <div>
-                  <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">
-                    Tool ID:
-                  </div>
-                  <div class="text-xs font-mono text-gray-700 dark:text-gray-300 break-all">
-                    {toolId}
-                  </div>
+                  <div class="text-xs font-semibold text-fg-muted mb-1">Tool ID:</div>
+                  <div class="text-xs font-mono text-fg-soft break-all">{toolId}</div>
                 </div>
               )}
 
               <div>
-                <div class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2">
-                  Input:
-                </div>
-                <pre class="text-xs bg-gray-50 dark:bg-gray-800 p-3 rounded overflow-x-auto border border-gray-200 dark:border-gray-700">
+                <div class="text-xs font-semibold text-fg-muted mb-2">Input:</div>
+                <pre class="text-xs bg-surface-raised p-3 rounded overflow-x-auto border border-line">
                   {JSON.stringify(input, null, 2)}
                 </pre>
               </div>
@@ -526,14 +510,12 @@ export function ToolResultCard({
               {!isError && output !== undefined && output !== null && (
                 <div>
                   <div class="flex items-center justify-between mb-2">
-                    <div class="text-xs font-semibold text-gray-600 dark:text-gray-400">
-                      Output:
-                    </div>
+                    <div class="text-xs font-semibold text-fg-muted">Output:</div>
                     {messageUuid && sessionId && !isOutputRemoved && (
                       <button
                         onClick={handleDeleteClick}
                         disabled={deleting}
-                        class="flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
+                        class="flex items-center gap-1 px-2 py-1 text-xs font-medium text-danger hover:text-red-700 dark:hover:text-red-300 hover:bg-danger/10 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
                         title="Remove this tool output from context to reduce session size"
                       >
                         <svg
@@ -554,10 +536,10 @@ export function ToolResultCard({
                     )}
                   </div>
                   {isOutputRemoved ? (
-                    <div class="p-3 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
+                    <div class="p-3 rounded border border-warning/40 bg-warning/10">
                       <div class="flex items-start gap-2">
                         <svg
-                          class="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5"
+                          class="w-5 h-5 text-warning flex-shrink-0 mt-0.5"
                           fill="none"
                           viewBox="0 0 24 24"
                           stroke="currentColor"
@@ -570,10 +552,10 @@ export function ToolResultCard({
                           />
                         </svg>
                         <div class="flex-1">
-                          <div class="text-sm font-medium text-amber-900 dark:text-amber-100 mb-1">
+                          <div class="text-sm font-medium text-warning-soft mb-1">
                             Output Removed from Agent Context
                           </div>
-                          <div class="text-xs text-amber-800 dark:text-amber-200">
+                          <div class="text-xs text-warning-soft">
                             This tool output has been removed from the Claude Agent SDK session file
                             to save context window space. What you see here is stored in the
                             database for reference only and will not be sent to the agent in future
@@ -587,8 +569,8 @@ export function ToolResultCard({
                       class={cn(
                         'text-xs p-3 rounded overflow-x-auto border',
                         isError
-                          ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
-                          : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'
+                          ? 'bg-danger/10 border-danger/40 text-danger-soft'
+                          : 'bg-surface-raised border-line text-fg'
                       )}
                     >
                       {getOutputDisplayText(output)}

@@ -92,8 +92,8 @@ describe('NewChatModelPicker', () => {
       await openDropdown(container);
 
       const dropdown = container.querySelector('.absolute.bottom-full')!;
-      expect(dropdown.querySelector('.bg-gray-500')).toBeTruthy();
-      expect(dropdown.querySelector('.bg-red-500')).toBeFalsy();
+      expect(dropdown.querySelector('.bg-fg-faint')).toBeTruthy();
+      expect(dropdown.querySelector('.bg-danger')).toBeFalsy();
     });
 
     it('renders an authenticated transient failure as degraded, not healthy', async () => {
@@ -105,8 +105,8 @@ describe('NewChatModelPicker', () => {
       await openDropdown(container);
 
       const dropdown = container.querySelector('.absolute.bottom-full')!;
-      expect(dropdown.querySelector('.bg-gray-500')).toBeTruthy();
-      expect(dropdown.querySelector('.bg-green-500')).toBeFalsy();
+      expect(dropdown.querySelector('.bg-fg-faint')).toBeTruthy();
+      expect(dropdown.querySelector('.bg-success')).toBeFalsy();
     });
 
     it('renders a definitive credential failure as danger', async () => {
@@ -118,7 +118,7 @@ describe('NewChatModelPicker', () => {
       await openDropdown(container);
 
       const dropdown = container.querySelector('.absolute.bottom-full')!;
-      expect(dropdown.querySelector('.bg-red-500')).toBeTruthy();
+      expect(dropdown.querySelector('.bg-danger')).toBeTruthy();
     });
   });
 

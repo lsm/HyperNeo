@@ -50,10 +50,10 @@ export function UnavailableSessionView({ kind, actions, detail }: UnavailableSes
         <div class="text-5xl mb-4" aria-hidden="true">
           {iconFor(kind)}
         </div>
-        <h3 id={headingId} class="text-lg font-semibold text-gray-100 mb-2">
+        <h3 id={headingId} class="text-lg font-semibold text-fg mb-2">
           {heading}
         </h3>
-        <p id={detailId} class="text-sm text-gray-400 mb-5">
+        <p id={detailId} class="text-sm text-fg-muted mb-5">
           {detail ?? defaultDetail}
         </p>
         {actions.length > 0 && (

@@ -42,10 +42,10 @@ export function RejectModal({
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="md" showCloseButton={true}>
       <div class="space-y-4">
-        <p class="text-gray-300 text-sm leading-relaxed">{message}</p>
+        <p class="text-fg-soft text-sm leading-relaxed">{message}</p>
 
         <textarea
-          class="w-full h-32 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+          class="w-full h-32 bg-surface-raised border border-line-strong rounded-lg px-3 py-2 text-sm text-fg placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
           placeholder={placeholder}
           value={feedback}
           onInput={(e) => setFeedback((e.target as HTMLTextAreaElement).value)}
@@ -58,7 +58,7 @@ export function RejectModal({
             type="button"
             onClick={handleClose}
             disabled={isLoading}
-            class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-4 py-2 text-sm font-medium text-fg-soft hover:text-fg bg-surface-raised hover:bg-fill-strong rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {cancelText}
           </button>
@@ -66,7 +66,7 @@ export function RejectModal({
             type="button"
             onClick={handleConfirm}
             disabled={isLoading || !isValid}
-            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50"
+            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-danger hover:bg-danger text-on-danger disabled:bg-danger/50"
           >
             {isLoading ? 'Rejecting...' : confirmText}
           </button>

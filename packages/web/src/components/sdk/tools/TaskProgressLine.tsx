@@ -27,7 +27,7 @@ export function TaskProgressLine({ progress }: { progress: SDKTaskProgressMessag
 
   return (
     <div
-      class="border-t border-gray-200/70 dark:border-gray-700/70 px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400"
+      class="border-t border-gray-200/70 dark:border-gray-700/70 px-3 py-1.5 text-xs text-fg-muted"
       aria-label="running task progress"
     >
       <span class="font-mono">{segments.join(' · ')}</span>

@@ -183,7 +183,7 @@ describe('MessageInput reference autocomplete', () => {
 
     expect(shell.className).toContain('bg-transparent');
     expect(shell.className).toContain('backdrop-blur-sm');
-    expect(shell.className).toContain('border-dark-600/80');
+    expect(shell.className).toContain('border-line-strong/80');
   });
 
   describe('keyboard event priority', () => {
@@ -365,8 +365,8 @@ describe('MessageInput reference autocomplete', () => {
         (b) => b.textContent?.includes('First task') || b.textContent?.includes('Second task')
       );
       expect(refButtons).toHaveLength(2);
-      expect(refButtons[1].className).toContain('border-blue-500');
-      expect(refButtons[0].className).not.toContain('border-blue-500');
+      expect(refButtons[1].className).toContain('border-accent');
+      expect(refButtons[0].className).not.toContain('border-accent');
     });
   });
 });

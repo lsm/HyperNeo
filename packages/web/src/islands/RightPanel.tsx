@@ -153,8 +153,8 @@ export function RightPanelToggle() {
       title={rightPanelOpen ? 'Hide right panel' : 'Show right panel'}
       onClick={handleToggle}
       class={cn(
-        'absolute right-3 top-2 z-40 bg-dark-900/80 backdrop-blur',
-        rightPanelOpen && 'bg-white/10 text-gray-100 hover:bg-white/10'
+        'absolute right-3 top-2 z-40 bg-surface/80 backdrop-blur',
+        rightPanelOpen && 'bg-fill text-fg hover:bg-fill'
       )}
     >
       <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -278,7 +278,7 @@ export function RightPanel() {
       >
         <div
           class={cn(
-            'relative h-full overflow-hidden rounded-l-[28px] border-l border-dark-700 bg-dark-800 pt-safe shadow-2xl transition-transform duration-200 ease-out lg:pt-0 lg:shadow-none',
+            'relative h-full overflow-hidden rounded-l-[28px] border-l border-line bg-surface-raised pt-safe shadow-2xl transition-transform duration-200 ease-out lg:pt-0 lg:shadow-none',
             open ? 'translate-x-0' : 'translate-x-full'
           )}
           style={{ width: panelWidthValue }}

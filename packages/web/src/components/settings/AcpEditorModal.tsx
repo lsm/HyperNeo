@@ -148,7 +148,7 @@ export function AcpEditorModal({
     <Modal isOpen onClose={onClose} title={`Edit ${providerName}`} size="lg">
       <div class="space-y-4">
         <label class="block">
-          <span class="text-xs font-medium text-gray-400 mb-1 block">ACP command</span>
+          <span class="text-xs font-medium text-fg-muted mb-1 block">ACP command</span>
           <input
             type="text"
             value={command}
@@ -158,9 +158,9 @@ export function AcpEditorModal({
               setFetching(false);
               setCommand(e.currentTarget.value);
             }}
-            class="w-full bg-dark-950 border border-dark-700 rounded px-2 py-1.5 text-sm text-gray-100 font-mono focus:outline-none focus:border-blue-500"
+            class="w-full bg-bg border border-line rounded px-2 py-1.5 text-sm text-fg font-mono focus:outline-none focus:border-accent"
           />
-          <span class="text-[11px] text-gray-500 mt-1 block">
+          <span class="text-[11px] text-fg-faint mt-1 block">
             Shell command that launches the ACP agent.
             {envBacked
               ? ' Leave empty to keep using HYPERNEO_ACP_COMMAND.'
@@ -170,7 +170,7 @@ export function AcpEditorModal({
 
         <div class="space-y-2">
           <div class="flex items-center justify-between">
-            <h4 class="text-xs font-semibold uppercase tracking-wider text-gray-400">Models</h4>
+            <h4 class="text-xs font-semibold uppercase tracking-wider text-fg-muted">Models</h4>
             <Button
               size="xs"
               variant="secondary"
@@ -183,9 +183,9 @@ export function AcpEditorModal({
           </div>
 
           {fetchedModels && (
-            <div class="rounded-lg border border-white/[0.08] bg-dark-900/60 px-3 py-2.5 space-y-2">
+            <div class="rounded-lg border border-line bg-surface/60 px-3 py-2.5 space-y-2">
               <div class="flex items-center justify-between">
-                <span class="text-xs text-gray-300">
+                <span class="text-xs text-fg-soft">
                   {fetchedModels.length} model{fetchedModels.length === 1 ? '' : 's'} found
                 </span>
                 {selectableFetched.length > 0 && (
@@ -200,24 +200,24 @@ export function AcpEditorModal({
                 )}
               </div>
               {fetchedModels.length === 0 ? (
-                <p class="text-xs text-gray-500 italic">The ACP agent reported no models.</p>
+                <p class="text-xs text-fg-faint italic">The ACP agent reported no models.</p>
               ) : selectableFetched.length === 0 ? (
-                <p class="text-xs text-gray-500 italic">All fetched models are already added.</p>
+                <p class="text-xs text-fg-faint italic">All fetched models are already added.</p>
               ) : (
                 <div class="max-h-40 overflow-y-auto space-y-1">
                   {selectableFetched.map((m) => (
                     <label
                       key={m.id}
-                      class="flex items-center gap-2 text-xs text-gray-200 cursor-pointer hover:bg-white/5 rounded px-1 py-0.5"
+                      class="flex items-center gap-2 text-xs text-fg-soft cursor-pointer hover:bg-fill-soft rounded px-1 py-0.5"
                     >
                       <input
                         type="checkbox"
                         checked={selectedIds.includes(m.id)}
                         onChange={() => toggleSelected(m.id)}
-                        class="rounded border-dark-600 bg-dark-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-0"
+                        class="rounded border-line-strong bg-surface text-accent focus:ring-accent focus:ring-offset-0"
                       />
                       <span class="font-mono break-all">{m.id}</span>
-                      {m.name && m.name !== m.id && <span class="text-gray-500">{m.name}</span>}
+                      {m.name && m.name !== m.id && <span class="text-fg-faint">{m.name}</span>}
                     </label>
                   ))}
                 </div>
@@ -226,7 +226,7 @@ export function AcpEditorModal({
           )}
 
           {!persistedModels?.length ? (
-            <p class="text-xs text-gray-500 italic">
+            <p class="text-xs text-fg-faint italic">
               {persistEmptySelection
                 ? 'No models selected — saving will hide all models for this command.'
                 : 'No models selected — fetch and add models, or leave empty to use ACP Default.'}
@@ -236,15 +236,15 @@ export function AcpEditorModal({
               {persistedModels.map((m) => (
                 <div
                   key={m.id}
-                  class="flex items-center gap-2 rounded-lg border border-white/[0.08] bg-dark-900/60 px-3 py-1.5"
+                  class="flex items-center gap-2 rounded-lg border border-line bg-surface/60 px-3 py-1.5"
                 >
-                  <span class="flex-1 font-mono text-xs text-gray-200 break-all">{m.id}</span>
-                  {m.name && m.name !== m.id && <span class="text-xs text-gray-500">{m.name}</span>}
+                  <span class="flex-1 font-mono text-xs text-fg-soft break-all">{m.id}</span>
+                  {m.name && m.name !== m.id && <span class="text-xs text-fg-faint">{m.name}</span>}
                   <button
                     type="button"
                     onClick={() => removeModel(m.id)}
                     aria-label={`Remove ${m.id}`}
-                    class="p-1 rounded hover:bg-red-900/30 text-red-400"
+                    class="p-1 rounded hover:bg-danger/30 text-danger"
                   >
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path
@@ -261,8 +261,8 @@ export function AcpEditorModal({
           )}
         </div>
 
-        <div class="flex items-center gap-2 pt-4 border-t border-dark-700">
-          {error && <p class="mr-auto text-xs text-red-400">{error}</p>}
+        <div class="flex items-center gap-2 pt-4 border-t border-line">
+          {error && <p class="mr-auto text-xs text-danger">{error}</p>}
           <Button size="sm" variant="ghost" onClick={onClose}>
             Cancel
           </Button>

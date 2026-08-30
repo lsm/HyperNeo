@@ -16,7 +16,7 @@ describe('ActionBar', () => {
       );
       const bar = getByTestId('action-bar');
       expect(bar.className).toContain('border-l-amber-500');
-      expect(bar.className).toContain('bg-amber-950/30');
+      expect(bar.className).toContain('bg-warning/30');
     });
 
     it('renders with red border and bg for type=needs_attention', () => {
@@ -29,7 +29,7 @@ describe('ActionBar', () => {
       );
       const bar = getByTestId('action-bar');
       expect(bar.className).toContain('border-l-red-500');
-      expect(bar.className).toContain('bg-red-950/30');
+      expect(bar.className).toContain('bg-danger/30');
     });
 
     it('renders with blue border and bg for type=confirm', () => {
@@ -42,7 +42,7 @@ describe('ActionBar', () => {
       );
       const bar = getByTestId('action-bar');
       expect(bar.className).toContain('border-l-blue-500');
-      expect(bar.className).toContain('bg-blue-950/30');
+      expect(bar.className).toContain('bg-accent/30');
     });
   });
 
@@ -145,7 +145,7 @@ describe('ActionBar', () => {
           primaryAction={{ label: 'Delete', onClick: vi.fn(), variant: 'danger' }}
         />
       );
-      expect(getByTestId('action-bar-primary').className).toContain('bg-red-600');
+      expect(getByTestId('action-bar-primary').className).toContain('bg-danger');
     });
   });
 

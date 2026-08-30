@@ -1,7 +1,6 @@
 import { h } from 'preact';
 import type { ToolConfig, ToolCategory } from './tool-types.ts';
 import { TodoViewer } from './TodoViewer.tsx';
-import { borderColors } from '../../../lib/design-tokens.ts';
 
 const getProp = (input: unknown, key: string): string | undefined => {
   const obj = input as Record<string, unknown>;
@@ -20,11 +19,11 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     category: 'file',
     summaryExtractor: (input) => extractFileName(getProp(input, 'file_path')),
     colors: {
-      bg: 'bg-blue-50 dark:bg-blue-900/20',
-      text: 'text-blue-900 dark:text-blue-100',
-      border: borderColors.tool.file,
-      iconColor: 'text-green-600 dark:text-green-400',
-      lightText: 'text-blue-700 dark:text-blue-300',
+      bg: 'bg-accent/10',
+      text: 'text-accent-soft',
+      border: 'border-accent/40',
+      iconColor: 'text-success',
+      lightText: 'text-accent',
     },
     hasLongOutput: false,
     defaultExpanded: false,
@@ -34,11 +33,11 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     category: 'file',
     summaryExtractor: (input) => extractFileName(getProp(input, 'file_path')),
     colors: {
-      bg: 'bg-blue-50 dark:bg-blue-900/20',
-      text: 'text-blue-900 dark:text-blue-100',
-      border: borderColors.tool.file,
-      iconColor: 'text-green-600 dark:text-green-400',
-      lightText: 'text-blue-700 dark:text-blue-300',
+      bg: 'bg-accent/10',
+      text: 'text-accent-soft',
+      border: 'border-accent/40',
+      iconColor: 'text-success',
+      lightText: 'text-accent',
     },
     hasLongOutput: false,
     defaultExpanded: false,
@@ -48,11 +47,11 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     category: 'file',
     summaryExtractor: (input) => extractFileName(getProp(input, 'file_path')),
     colors: {
-      bg: 'bg-blue-50 dark:bg-blue-900/20',
-      text: 'text-blue-900 dark:text-blue-100',
-      border: borderColors.tool.file,
-      iconColor: 'text-green-600 dark:text-green-400',
-      lightText: 'text-blue-700 dark:text-blue-300',
+      bg: 'bg-accent/10',
+      text: 'text-accent-soft',
+      border: 'border-accent/40',
+      iconColor: 'text-success',
+      lightText: 'text-accent',
     },
     hasLongOutput: false,
     defaultExpanded: false,
@@ -69,11 +68,11 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     category: 'file',
     summaryExtractor: (input) => extractFileName(getProp(input, 'notebook_path')),
     colors: {
-      bg: 'bg-blue-50 dark:bg-blue-900/20',
-      text: 'text-blue-900 dark:text-blue-100',
-      border: borderColors.tool.file,
-      iconColor: 'text-green-600 dark:text-green-400',
-      lightText: 'text-blue-700 dark:text-blue-300',
+      bg: 'bg-accent/10',
+      text: 'text-accent-soft',
+      border: 'border-accent/40',
+      iconColor: 'text-success',
+      lightText: 'text-accent',
     },
     hasLongOutput: false,
     defaultExpanded: false,
@@ -205,11 +204,11 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     hasLongOutput: false,
     defaultExpanded: true,
     colors: {
-      bg: 'bg-rose-950/30',
-      text: 'text-rose-200',
-      border: 'border-rose-200 dark:border-rose-800',
-      iconColor: 'text-rose-400',
-      lightText: 'text-rose-300',
+      bg: 'bg-cat-rose/30',
+      text: 'text-cat-rose',
+      border: 'border-cat-rose/40',
+      iconColor: 'text-cat-rose',
+      lightText: 'text-cat-rose',
     },
   },
   EnterPlanMode: {
@@ -246,11 +245,11 @@ const defaultToolConfigs: Record<string, ToolConfig> = {
     hasLongOutput: true,
     defaultExpanded: false,
     colors: {
-      bg: 'bg-amber-50 dark:bg-amber-900/20',
-      text: 'text-amber-900 dark:text-amber-100',
-      border: borderColors.semantic.warning,
-      iconColor: 'text-amber-600 dark:text-amber-400',
-      lightText: 'text-amber-700 dark:text-amber-300',
+      bg: 'bg-warning/10',
+      text: 'text-warning-soft',
+      border: 'border-warning/40',
+      iconColor: 'text-warning',
+      lightText: 'text-warning',
     },
   },
 };
@@ -261,75 +260,75 @@ export function getCategoryColors(category: ToolCategory) {
   switch (category) {
     case 'file':
       return {
-        bg: 'bg-blue-50 dark:bg-blue-900/20',
-        text: 'text-blue-900 dark:text-blue-100',
-        border: borderColors.tool.file,
-        iconColor: 'text-blue-600 dark:text-blue-400',
-        lightText: 'text-blue-700 dark:text-blue-300',
+        bg: 'bg-accent/10',
+        text: 'text-accent-soft',
+        border: 'border-accent/40',
+        iconColor: 'text-accent',
+        lightText: 'text-accent',
       };
     case 'search':
       return {
-        bg: 'bg-purple-50 dark:bg-purple-900/20',
-        text: 'text-purple-900 dark:text-purple-100',
-        border: borderColors.tool.search,
-        iconColor: 'text-purple-600 dark:text-purple-400',
-        lightText: 'text-purple-700 dark:text-purple-300',
+        bg: 'bg-cat-purple/10',
+        text: 'text-cat-purple',
+        border: 'border-cat-purple/40',
+        iconColor: 'text-cat-purple',
+        lightText: 'text-cat-purple',
       };
     case 'terminal':
       return {
-        bg: 'bg-gray-50 dark:bg-gray-900/20',
-        text: 'text-gray-900 dark:text-gray-100',
-        border: borderColors.tool.terminal,
-        iconColor: 'text-gray-600 dark:text-gray-400',
-        lightText: 'text-gray-700 dark:text-gray-300',
+        bg: 'bg-surface-raised',
+        text: 'text-fg',
+        border: 'border-line',
+        iconColor: 'text-fg-muted',
+        lightText: 'text-fg-soft',
       };
     case 'agent':
       return {
-        bg: 'bg-indigo-50 dark:bg-indigo-900/20',
-        text: 'text-indigo-900 dark:text-indigo-100',
-        border: borderColors.tool.agent,
-        iconColor: 'text-indigo-600 dark:text-indigo-400',
-        lightText: 'text-indigo-700 dark:text-indigo-300',
+        bg: 'bg-cat-indigo/10',
+        text: 'text-cat-indigo',
+        border: 'border-cat-indigo/40',
+        iconColor: 'text-cat-indigo',
+        lightText: 'text-cat-indigo',
       };
     case 'web':
       return {
-        bg: 'bg-green-50 dark:bg-green-900/20',
-        text: 'text-green-900 dark:text-green-100',
-        border: borderColors.tool.web,
-        iconColor: 'text-green-600 dark:text-green-400',
-        lightText: 'text-green-700 dark:text-green-300',
+        bg: 'bg-success/10',
+        text: 'text-success-soft',
+        border: 'border-success/40',
+        iconColor: 'text-success',
+        lightText: 'text-success-soft',
       };
     case 'todo':
       return {
-        bg: 'bg-amber-50 dark:bg-amber-900/20',
-        text: 'text-amber-900 dark:text-amber-100',
-        border: borderColors.tool.todo,
-        iconColor: 'text-amber-600 dark:text-amber-400',
-        lightText: 'text-amber-700 dark:text-amber-300',
+        bg: 'bg-warning/10',
+        text: 'text-warning-soft',
+        border: 'border-warning/40',
+        iconColor: 'text-warning',
+        lightText: 'text-warning',
       };
     case 'mcp':
       return {
-        bg: 'bg-pink-50 dark:bg-pink-900/20',
+        bg: 'bg-cat-pink/10',
         text: 'text-pink-900 dark:text-pink-100',
-        border: borderColors.tool.mcp,
-        iconColor: 'text-pink-600 dark:text-pink-400',
-        lightText: 'text-pink-700 dark:text-pink-300',
+        border: 'border-cat-pink/40',
+        iconColor: 'text-cat-pink',
+        lightText: 'text-cat-pink',
       };
     case 'system':
       return {
-        bg: 'bg-cyan-50 dark:bg-cyan-900/20',
-        text: 'text-cyan-900 dark:text-cyan-100',
-        border: borderColors.tool.system,
-        iconColor: 'text-cyan-600 dark:text-cyan-400',
-        lightText: 'text-cyan-700 dark:text-cyan-300',
+        bg: 'bg-cat-cyan/10',
+        text: 'text-cat-cyan',
+        border: 'border-cat-cyan/40',
+        iconColor: 'text-cat-cyan',
+        lightText: 'text-cat-cyan',
       };
     default:
       return {
-        bg: 'bg-gray-50 dark:bg-gray-900/20',
-        text: 'text-gray-900 dark:text-gray-100',
-        border: borderColors.semantic.neutral,
-        iconColor: 'text-gray-600 dark:text-gray-400',
-        lightText: 'text-gray-700 dark:text-gray-300',
+        bg: 'bg-surface-raised',
+        text: 'text-fg',
+        border: 'border-line',
+        iconColor: 'text-fg-muted',
+        lightText: 'text-fg-soft',
       };
   }
 }

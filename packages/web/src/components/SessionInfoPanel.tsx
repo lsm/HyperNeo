@@ -165,7 +165,7 @@ function extractSources(messages: ChatMessage[]): SourceItem[] {
 function StatusDot({ status }: { status: TodoStatus }) {
   if (status === 'completed') {
     return (
-      <span class="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-400/20 text-emerald-300">
+      <span class="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-400/20 text-success-soft">
         <svg class="h-3 w-3" viewBox="0 0 16 16" fill="none" stroke="currentColor">
           <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke-width={2} stroke-linecap="round" />
         </svg>
@@ -179,7 +179,7 @@ function StatusDot({ status }: { status: TodoStatus }) {
         'h-4 w-4 rounded-full border',
         status === 'in_progress'
           ? 'animate-pulse border-gray-300 bg-gray-300/10'
-          : 'border-gray-500'
+          : 'border-fg-faint'
       )}
     />
   );
@@ -187,8 +187,8 @@ function StatusDot({ status }: { status: TodoStatus }) {
 
 function PanelSection({ title, children }: { title: string; children: preact.ComponentChildren }) {
   return (
-    <section class="border-b border-white/10 py-4 first:pt-0 last:border-b-0 last:pb-0">
-      <h3 class="mb-3 text-sm font-medium text-gray-500">{title}</h3>
+    <section class="border-b border-line py-4 first:pt-0 last:border-b-0 last:pb-0">
+      <h3 class="mb-3 text-sm font-medium text-fg-faint">{title}</h3>
       {children}
     </section>
   );
@@ -211,23 +211,23 @@ function PanelRow({
         class={cn(
           'flex h-5 w-5 flex-shrink-0 items-center justify-center',
           tone === 'success'
-            ? 'text-emerald-300'
+            ? 'text-success-soft'
             : tone === 'danger'
-              ? 'text-red-300'
-              : 'text-gray-300'
+              ? 'text-danger-soft'
+              : 'text-fg-soft'
         )}
       >
         {icon}
       </span>
-      <span class="min-w-0 flex-1 truncate text-sm text-gray-100">{label}</span>
-      {value && <span class="flex-shrink-0 text-sm text-gray-500">{value}</span>}
+      <span class="min-w-0 flex-1 truncate text-sm text-fg">{label}</span>
+      {value && <span class="flex-shrink-0 text-sm text-fg-faint">{value}</span>}
     </div>
   );
 }
 
 function ProgressRows({ todos }: { todos: SessionTodo[] }) {
   if (todos.length === 0) {
-    return <p class="text-sm text-gray-500">No progress yet.</p>;
+    return <p class="text-sm text-fg-faint">No progress yet.</p>;
   }
 
   return (
@@ -241,13 +241,13 @@ function ProgressRows({ todos }: { todos: SessionTodo[] }) {
             <div
               class={cn(
                 'text-sm leading-snug',
-                todo.status === 'completed' ? 'text-gray-500 line-through' : 'text-gray-200'
+                todo.status === 'completed' ? 'text-fg-faint line-through' : 'text-fg-soft'
               )}
             >
               {todo.content}
             </div>
             {todo.status === 'in_progress' && todo.activeForm && (
-              <div class="mt-0.5 text-xs text-gray-500">{todo.activeForm}</div>
+              <div class="mt-0.5 text-xs text-fg-faint">{todo.activeForm}</div>
             )}
           </div>
         </div>
@@ -258,7 +258,7 @@ function ProgressRows({ todos }: { todos: SessionTodo[] }) {
 
 function BackgroundTaskRows({ tasks }: { tasks: BackgroundTask[] }) {
   if (tasks.length === 0) {
-    return <p class="text-sm text-gray-500">No background tasks.</p>;
+    return <p class="text-sm text-fg-faint">No background tasks.</p>;
   }
 
   return (
@@ -277,15 +277,15 @@ function BackgroundTaskRows({ tasks }: { tasks: BackgroundTask[] }) {
 
 function SourceRows({ sources }: { sources: SourceItem[] }) {
   if (sources.length === 0) {
-    return <p class="text-sm text-gray-500">No sources yet.</p>;
+    return <p class="text-sm text-fg-faint">No sources yet.</p>;
   }
 
   return (
     <div class="space-y-1">
       {sources.map((source) => (
         <div key={source.id} class="min-w-0 rounded-md px-1 py-1">
-          <div class="truncate text-sm text-gray-200">{source.label}</div>
-          {source.detail && <div class="truncate text-xs text-gray-600">{source.detail}</div>}
+          <div class="truncate text-sm text-fg-soft">{source.label}</div>
+          {source.detail && <div class="truncate text-xs text-fg-faint">{source.detail}</div>}
         </div>
       ))}
     </div>
@@ -327,7 +327,7 @@ function ActionToolbar({
 }) {
   return (
     <div
-      class="flex flex-wrap items-center gap-1 border-b border-white/10 pb-3"
+      class="flex flex-wrap items-center gap-1 border-b border-line pb-3"
       data-testid="session-info-toolbar"
     >
       {!readonly && (
@@ -353,7 +353,7 @@ function ActionToolbar({
           {...renameInputProps}
           data-testid="session-info-rename-input"
           placeholder="Session title"
-          class="basis-full rounded-md border border-white/20 bg-dark-900/80 px-2.5 py-1.5 text-sm text-gray-100 outline-none focus:border-gray-500"
+          class="basis-full rounded-md border border-line-strong bg-surface/80 px-2.5 py-1.5 text-sm text-fg outline-none focus:border-fg-faint"
         />
       )}
       <IconButton
@@ -446,8 +446,8 @@ function InternalDetails({ session }: { session: Session }) {
   const { metadata } = session;
 
   return (
-    <details class="group border-t border-white/10 pt-3" data-testid="session-info-internal">
-      <summary class="flex cursor-pointer list-none items-center gap-1 text-xs font-semibold uppercase tracking-wide text-gray-500 transition-colors hover:text-gray-300 [&::-webkit-details-marker]:hidden">
+    <details class="group border-t border-line pt-3" data-testid="session-info-internal">
+      <summary class="flex cursor-pointer list-none items-center gap-1 text-xs font-semibold uppercase tracking-wide text-fg-faint transition-colors hover:text-fg-soft [&::-webkit-details-marker]:hidden">
         <ChevronIcon />
         Internal
       </summary>
@@ -567,7 +567,7 @@ export function SessionInfoPanelButton({
           commitRename();
           setOpen((value) => !value);
         }}
-        class={cn('flex-shrink-0 text-gray-400', open && 'bg-white/10 text-gray-100')}
+        class={cn('flex-shrink-0 text-fg-muted', open && 'bg-fill text-fg')}
       >
         <InfoIcon />
       </IconButton>
@@ -577,7 +577,7 @@ export function SessionInfoPanelButton({
           ref={panelRef}
           data-testid="session-info-panel"
           style={{ position: 'fixed', top: `${panelPos.top}px`, right: `${panelPos.right}px` }}
-          class="z-50 w-[calc(100vw-1.5rem)] max-w-[380px] max-h-[calc(100dvh-140px)] md:max-h-[calc(100dvh-78px)] overflow-y-auto rounded-[22px] border border-white/10 bg-dark-800/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl"
+          class="z-50 w-[calc(100vw-1.5rem)] max-w-[380px] max-h-[calc(100dvh-140px)] md:max-h-[calc(100dvh-78px)] overflow-y-auto rounded-[22px] border border-line bg-surface-raised/95 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl"
         >
           <ActionToolbar
             features={features}

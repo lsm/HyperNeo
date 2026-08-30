@@ -28,13 +28,13 @@ const STATUS_BADGES: Record<GitFileStatusKind, string> = {
 };
 
 const STATUS_COLORS: Record<GitFileStatusKind, string> = {
-  modified: 'text-amber-300',
-  added: 'text-emerald-300',
-  deleted: 'text-red-300',
-  renamed: 'text-sky-300',
-  untracked: 'text-violet-300',
-  conflicted: 'text-orange-300',
-  other: 'text-gray-400',
+  modified: 'text-warning',
+  added: 'text-success-soft',
+  deleted: 'text-danger-soft',
+  renamed: 'text-info-soft',
+  untracked: 'text-cat-violet',
+  conflicted: 'text-warning-soft',
+  other: 'text-fg-muted',
 };
 
 const EMPTY_REVIEW: GitReviewSummary = {
@@ -138,11 +138,11 @@ function fileBuckets(
 }
 
 function diffLineClass(line: string): string {
-  if (line.startsWith('+') && !line.startsWith('+++')) return 'bg-emerald-400/10 text-emerald-200';
-  if (line.startsWith('-') && !line.startsWith('---')) return 'bg-red-400/10 text-red-200';
-  if (line.startsWith('@@')) return 'text-sky-300';
-  if (line.startsWith('diff --git')) return 'text-gray-300';
-  return 'text-gray-500';
+  if (line.startsWith('+') && !line.startsWith('+++')) return 'bg-emerald-400/10 text-success-soft';
+  if (line.startsWith('-') && !line.startsWith('---')) return 'bg-red-400/10 text-danger-soft';
+  if (line.startsWith('@@')) return 'text-info-soft';
+  if (line.startsWith('diff --git')) return 'text-fg-soft';
+  return 'text-fg-faint';
 }
 
 function EmptyState({ title, body }: { title: string; body: string }) {
@@ -162,8 +162,8 @@ function EmptyState({ title, body }: { title: string; body: string }) {
             d="M6 3v7m0 0a3 3 0 100-6 3 3 0 000 6zm0 0v11m12-7V3m0 11a3 3 0 100-6 3 3 0 000 6zm0 0v7"
           />
         </svg>
-        <p class="text-sm font-medium text-gray-300">{title}</p>
-        <p class="mt-1 text-xs leading-relaxed text-gray-500">{body}</p>
+        <p class="text-sm font-medium text-fg-soft">{title}</p>
+        <p class="mt-1 text-xs leading-relaxed text-fg-faint">{body}</p>
       </div>
     </div>
   );
@@ -172,8 +172,8 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 function SectionHeader({ title, value }: { title: string; value?: string }) {
   return (
     <div class="mb-2 flex items-center justify-between gap-3">
-      <h3 class="text-xs font-medium uppercase tracking-wide text-gray-500">{title}</h3>
-      {value && <span class="text-xs text-gray-500">{value}</span>}
+      <h3 class="text-xs font-medium uppercase tracking-wide text-fg-faint">{title}</h3>
+      {value && <span class="text-xs text-fg-faint">{value}</span>}
     </div>
   );
 }
@@ -195,30 +195,30 @@ function ReviewSummary({
     : 'Detached';
 
   return (
-    <section class="flex-shrink-0 border-b border-white/10 px-4 py-4">
+    <section class="flex-shrink-0 border-b border-line px-4 py-4">
       <div class="flex items-start justify-between gap-4">
         <div class="min-w-0">
           <div class="flex items-center gap-2">
-            <h3 class="truncate text-sm font-semibold text-gray-100">Branch</h3>
+            <h3 class="truncate text-sm font-semibold text-fg">Branch</h3>
             <span
               class={cn(
                 'rounded-full px-2 py-0.5 text-[11px] font-medium',
                 status.mode === 'worktree'
-                  ? 'bg-emerald-400/10 text-emerald-300'
-                  : 'bg-amber-400/10 text-amber-300'
+                  ? 'bg-emerald-400/10 text-success-soft'
+                  : 'bg-warning/10 text-warning'
               )}
             >
               {modeLabel(status)}
             </span>
           </div>
-          <p class="mt-1 truncate text-xs text-gray-500" title={branchText}>
+          <p class="mt-1 truncate text-xs text-fg-faint" title={branchText}>
             {branchText}
           </p>
         </div>
 
         <div class="flex flex-shrink-0 items-center gap-2 font-mono text-sm">
-          <span class="text-emerald-300">+{additions.toLocaleString()}</span>
-          <span class="text-red-300">-{deletions.toLocaleString()}</span>
+          <span class="text-success-soft">+{additions.toLocaleString()}</span>
+          <span class="text-danger-soft">-{deletions.toLocaleString()}</span>
         </div>
       </div>
 
@@ -259,20 +259,20 @@ function SummaryRow({
         class={cn(
           'flex h-5 w-5 flex-shrink-0 items-center justify-center',
           tone === 'success'
-            ? 'text-emerald-300'
+            ? 'text-success-soft'
             : tone === 'danger'
-              ? 'text-red-300'
+              ? 'text-danger-soft'
               : tone === 'pending'
-                ? 'text-amber-300'
-                : 'text-gray-300'
+                ? 'text-warning'
+                : 'text-fg-soft'
         )}
       >
         {icon}
       </span>
-      <span class={cn('min-w-0 flex-1 truncate', muted ? 'text-gray-500' : 'text-gray-200')}>
+      <span class={cn('min-w-0 flex-1 truncate', muted ? 'text-fg-faint' : 'text-fg-soft')}>
         {label}
       </span>
-      {value && <span class="flex-shrink-0 text-xs text-gray-500">{value}</span>}
+      {value && <span class="flex-shrink-0 text-xs text-fg-faint">{value}</span>}
     </div>
   );
 }
@@ -296,14 +296,14 @@ function PullRequestRow({ pullRequest }: { pullRequest: GitPullRequestSummary })
       href={pullRequest.url || undefined}
       target="_blank"
       rel="noreferrer"
-      class="flex min-w-0 items-center gap-3 rounded-md text-sm text-gray-200 hover:text-gray-100"
+      class="flex min-w-0 items-center gap-3 rounded-md text-sm text-fg-soft hover:text-fg"
       title={pullRequest.title}
     >
-      <span class="flex h-5 w-5 flex-shrink-0 items-center justify-center text-gray-300">
+      <span class="flex h-5 w-5 flex-shrink-0 items-center justify-center text-fg-soft">
         <PullRequestIcon />
       </span>
       <span class="min-w-0 flex-1 truncate">{label}</span>
-      <span class="flex-shrink-0 text-xs capitalize text-gray-500">{state}</span>
+      <span class="flex-shrink-0 text-xs capitalize text-fg-faint">{state}</span>
     </a>
   );
 }
@@ -340,7 +340,7 @@ function ChecksRow({ checks, githubError }: { checks: GitCheckSummary[]; githubE
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        class="flex w-full min-w-0 items-center gap-3 rounded-md text-sm text-gray-200 transition-colors hover:text-gray-100"
+        class="flex w-full min-w-0 items-center gap-3 rounded-md text-sm text-fg-soft transition-colors hover:text-fg"
         aria-expanded={open}
         data-testid="git-checks-toggle"
       >
@@ -348,16 +348,16 @@ function ChecksRow({ checks, githubError }: { checks: GitCheckSummary[]; githubE
           class={cn(
             'flex h-5 w-5 flex-shrink-0 items-center justify-center',
             tone === 'danger'
-              ? 'text-red-300'
+              ? 'text-danger-soft'
               : tone === 'pending'
-                ? 'text-amber-300'
-                : 'text-emerald-300'
+                ? 'text-warning'
+                : 'text-success-soft'
           )}
         >
           {failed ? <ErrorIcon /> : pending ? <PendingIcon /> : <ChecksIcon />}
         </span>
         <span class="min-w-0 flex-1 truncate text-left">{label}</span>
-        <span class="flex-shrink-0 text-xs text-gray-500">{checks.length} total</span>
+        <span class="flex-shrink-0 text-xs text-fg-faint">{checks.length} total</span>
         <ChevronIcon open={open} />
       </button>
       {open && (
@@ -375,12 +375,12 @@ function CheckItem({ check }: { check: GitCheckSummary }) {
   const bucket = checkBucket(check);
   const toneClass =
     bucket === 'pass'
-      ? 'text-emerald-300'
+      ? 'text-success-soft'
       : bucket === 'fail'
-        ? 'text-red-300'
+        ? 'text-danger-soft'
         : bucket === 'pending'
-          ? 'text-amber-300'
-          : 'text-gray-500';
+          ? 'text-warning'
+          : 'text-fg-faint';
 
   const inner = (
     <>
@@ -395,12 +395,13 @@ function CheckItem({ check }: { check: GitCheckSummary }) {
           <DotIcon />
         )}
       </span>
-      <span class="min-w-0 flex-1 truncate text-gray-300">{check.name}</span>
-      <span class="flex-shrink-0 text-[11px] capitalize text-gray-600">{check.state}</span>
+      <span class="min-w-0 flex-1 truncate text-fg-soft">{check.name}</span>
+      <span class="flex-shrink-0 text-[11px] capitalize text-fg-faint">{check.state}</span>
     </>
   );
 
-  const className = 'flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-white/5';
+  const className =
+    'flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-fill-soft';
 
   if (check.url) {
     return (
@@ -409,7 +410,7 @@ function CheckItem({ check }: { check: GitCheckSummary }) {
           href={check.url}
           target="_blank"
           rel="noreferrer"
-          class={cn(className, 'text-gray-400 hover:text-gray-200')}
+          class={cn(className, 'text-fg-muted hover:text-fg-soft')}
           title={`Open CI run: ${check.url}`}
         >
           {inner}
@@ -417,7 +418,7 @@ function CheckItem({ check }: { check: GitCheckSummary }) {
       </li>
     );
   }
-  return <li class={cn(className, 'text-gray-500')}>{inner}</li>;
+  return <li class={cn(className, 'text-fg-faint')}>{inner}</li>;
 }
 
 function FileList({
@@ -454,7 +455,7 @@ function FileList({
   const renderGrouped = hasWorktree && grouped.length > 1;
 
   return (
-    <section class="flex min-h-0 flex-1 flex-col border-b border-white/10 px-3 py-3">
+    <section class="flex min-h-0 flex-1 flex-col border-b border-line px-3 py-3">
       <SectionHeader
         title="Changed files"
         value={
@@ -462,7 +463,7 @@ function FileList({
         }
       />
       {files.length === 0 ? (
-        <div class="rounded-lg bg-white/[0.03] px-3 py-4 text-sm text-gray-500">
+        <div class="rounded-lg bg-white/[0.03] px-3 py-4 text-sm text-fg-faint">
           Working tree is clean.
         </div>
       ) : (
@@ -472,17 +473,17 @@ function FileList({
             value={query}
             onInput={(e) => setQuery(e.currentTarget.value)}
             placeholder="Filter files…"
-            class="mb-2 w-full rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-gray-200 placeholder:text-gray-600 focus:border-white/20 focus:outline-none"
+            class="mb-2 w-full rounded-md border border-line bg-white/[0.03] px-2 py-1 text-xs text-fg-soft placeholder:text-fg-faint focus:border-line-strong focus:outline-none"
             data-testid="git-file-search"
           />
           {filtered.length === 0 ? (
-            <p class="px-1 py-3 text-xs text-gray-600">No files match “{query}”.</p>
+            <p class="px-1 py-3 text-xs text-fg-faint">No files match “{query}”.</p>
           ) : (
             <div class="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
               {(renderGrouped ? grouped : [{ bucket: null, items: filtered }]).map((group) => (
                 <div key={group.bucket ?? 'all'}>
                   {group.bucket && (
-                    <div class="sticky top-0 z-10 bg-dark-800/90 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-gray-600 backdrop-blur">
+                    <div class="sticky top-0 z-10 bg-surface-raised/90 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-fg-faint backdrop-blur">
                       {BUCKET_LABELS[group.bucket]} · {group.items.length}
                     </div>
                   )}
@@ -522,7 +523,7 @@ function FileRow({
     <div
       class={cn(
         'group flex w-full min-w-0 items-center gap-1 rounded-md px-1 text-left text-xs transition-colors',
-        selected ? 'bg-white/10 text-gray-100' : 'text-gray-400 hover:bg-white/5'
+        selected ? 'bg-fill text-fg' : 'text-fg-muted hover:bg-fill-soft'
       )}
       title={file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path}
     >
@@ -537,10 +538,10 @@ function FileRow({
         <span class="min-w-0 flex-1 truncate font-mono">{compactPath(file.path)}</span>
         <span class="flex flex-shrink-0 items-center gap-1 font-mono">
           {file.additions > 0 && (
-            <span class="text-emerald-300">+{file.additions.toLocaleString()}</span>
+            <span class="text-success-soft">+{file.additions.toLocaleString()}</span>
           )}
           {file.deletions > 0 && (
-            <span class="text-red-300">-{file.deletions.toLocaleString()}</span>
+            <span class="text-danger-soft">-{file.deletions.toLocaleString()}</span>
           )}
         </span>
       </button>
@@ -552,7 +553,7 @@ function FileRow({
           rel="noreferrer"
           title="Open in editor (VS Code)"
           aria-label={`Open ${file.path} in editor`}
-          class="flex-shrink-0 rounded p-1 text-gray-600 opacity-0 transition-opacity hover:bg-white/10 hover:text-gray-200 group-hover:opacity-100"
+          class="flex-shrink-0 rounded p-1 text-fg-faint opacity-0 transition-opacity hover:bg-fill hover:text-fg-soft group-hover:opacity-100"
         >
           <ExternalLinkIcon />
         </a>
@@ -580,7 +581,7 @@ function CopyPathButton({ path }: { path: string }) {
       title="Copy path"
       aria-label={`Copy path ${path}`}
       data-testid="git-copy-path"
-      class="flex-shrink-0 rounded p-1 text-gray-600 opacity-0 transition-opacity hover:bg-white/10 hover:text-gray-200 group-hover:opacity-100"
+      class="flex-shrink-0 rounded p-1 text-fg-faint opacity-0 transition-opacity hover:bg-fill hover:text-fg-soft group-hover:opacity-100"
     >
       {copied ? <CheckSmallIcon /> : <CopyIcon />}
     </button>
@@ -624,7 +625,7 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
   if (!file) {
     return (
       <section class="flex min-h-0 flex-[1.5] items-center justify-center px-6 text-center">
-        <p class="text-sm text-gray-500">Select a changed file to review its diff.</p>
+        <p class="text-sm text-fg-faint">Select a changed file to review its diff.</p>
       </section>
     );
   }
@@ -656,23 +657,23 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
 
   return (
     <section class="flex min-h-0 flex-[1.5] flex-col">
-      <div class="flex flex-shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+      <div class="flex flex-shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3">
         <div class="min-w-0">
-          <h3 class="truncate font-mono text-xs text-gray-200" title={file.path}>
+          <h3 class="truncate font-mono text-xs text-fg-soft" title={file.path}>
             {file.path}
           </h3>
           {file.oldPath && (
-            <p class="mt-0.5 truncate font-mono text-[11px] text-gray-600">from {file.oldPath}</p>
+            <p class="mt-0.5 truncate font-mono text-[11px] text-fg-faint">from {file.oldPath}</p>
           )}
         </div>
         <div class="flex flex-shrink-0 items-center gap-2 font-mono text-xs">
-          <span class="text-emerald-300">+{file.additions.toLocaleString()}</span>
-          <span class="text-red-300">-{file.deletions.toLocaleString()}</span>
+          <span class="text-success-soft">+{file.additions.toLocaleString()}</span>
+          <span class="text-danger-soft">-{file.deletions.toLocaleString()}</span>
         </div>
       </div>
 
       {shownPatch ? (
-        <div class="min-h-0 flex-1 overflow-auto bg-dark-900/50">
+        <div class="min-h-0 flex-1 overflow-auto bg-surface/50">
           <pre class="min-w-max p-3 text-[11px] leading-relaxed">
             <DiffLines patch={shownPatch} />
             {!isExpanded && file.patchTruncated && (
@@ -681,23 +682,23 @@ function DiffPreview({ file, sessionId }: { file: GitReviewFile | null; sessionI
                   type="button"
                   onClick={handleExpand}
                   disabled={loadingFull}
-                  class="rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-[11px] text-gray-300 transition-colors hover:bg-white/10 hover:text-gray-100 disabled:opacity-50"
+                  class="rounded-md border border-line bg-white/[0.03] px-2 py-1 font-mono text-[11px] text-fg-soft transition-colors hover:bg-fill hover:text-fg disabled:opacity-50"
                   data-testid="git-expand-diff"
                 >
                   {loadingFull ? 'Loading…' : 'Expand full diff'}
                 </button>
-                <p class="mt-1 font-mono text-amber-300/80">Diff truncated for panel preview.</p>
+                <p class="mt-1 font-mono text-warning/80">Diff truncated for panel preview.</p>
               </div>
             )}
             {isExpanded && fullTruncated && (
-              <div class="pt-2 font-mono text-amber-300/80">Full diff still truncated.</div>
+              <div class="pt-2 font-mono text-warning/80">Full diff still truncated.</div>
             )}
-            {expandError && <div class="pt-2 font-mono text-red-300">{expandError}</div>}
+            {expandError && <div class="pt-2 font-mono text-danger-soft">{expandError}</div>}
           </pre>
         </div>
       ) : (
         <div class="flex min-h-0 flex-1 items-center justify-center px-6 text-center">
-          <p class="text-sm text-gray-500">
+          <p class="text-sm text-fg-faint">
             No inline diff available for this file. This can happen for untracked or binary files.
           </p>
         </div>
@@ -764,7 +765,7 @@ function GitPanelBody({ status }: { status: GitSessionStatusResponse }) {
       />
       <DiffPreview file={selectedFile} sessionId={status.sessionId} />
       {status.error && (
-        <p class="flex-shrink-0 border-t border-white/10 bg-red-500/10 px-4 py-2 text-xs leading-relaxed text-red-300">
+        <p class="flex-shrink-0 border-t border-line bg-danger/10 px-4 py-2 text-xs leading-relaxed text-danger-soft">
           {status.error}
         </p>
       )}
@@ -778,8 +779,8 @@ export function GitPanel({ sessionId }: GitPanelProps) {
   const header = (
     <div class="flex h-[52px] flex-shrink-0 items-center gap-2 px-4 pr-14">
       <div class="min-w-0 flex-1">
-        <h2 class="text-sm font-semibold text-gray-100">Review</h2>
-        <p class="truncate text-xs text-gray-500">
+        <h2 class="text-sm font-semibold text-fg">Review</h2>
+        <p class="truncate text-xs text-fg-faint">
           {status?.branch ?? (loading ? 'Loading status...' : 'Session workspace')}
         </p>
       </div>
@@ -787,7 +788,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
         type="button"
         onClick={refresh}
         disabled={loading}
-        class="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-white/5 hover:text-gray-100 disabled:opacity-50"
+        class="rounded-lg p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg disabled:opacity-50"
         title="Refresh review"
         aria-label="Refresh review"
       >
@@ -822,7 +823,7 @@ export function GitPanel({ sessionId }: GitPanelProps) {
         {error && (
           <p
             data-testid="git-status-error-banner"
-            class="flex-shrink-0 border-b border-white/10 bg-amber-500/10 px-4 py-2 text-xs leading-relaxed text-amber-300"
+            class="flex-shrink-0 border-b border-line bg-warning/10 px-4 py-2 text-xs leading-relaxed text-warning-soft"
           >
             Couldn't refresh: {error}. Showing the last known status.
           </p>
@@ -938,7 +939,7 @@ function DotIcon() {
 function ChevronIcon({ open }: { open: boolean }) {
   return (
     <svg
-      class={cn('h-3 w-3 flex-shrink-0 text-gray-600 transition-transform', open && 'rotate-90')}
+      class={cn('h-3 w-3 flex-shrink-0 text-fg-faint transition-transform', open && 'rotate-90')}
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -963,7 +964,12 @@ function CopyIcon() {
 
 function CheckSmallIcon() {
   return (
-    <svg class="h-3.5 w-3.5 text-emerald-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <svg
+      class="h-3.5 w-3.5 text-success-soft"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+    >
       <path
         stroke-linecap="round"
         stroke-linejoin="round"

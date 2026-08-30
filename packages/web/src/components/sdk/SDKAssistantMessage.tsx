@@ -18,7 +18,6 @@ import {
 } from '@hyperneo/shared/sdk/type-guards';
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
-import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { QuestionPrompt } from '../QuestionPrompt.tsx';
@@ -132,16 +131,14 @@ export function SDKAssistantMessage({
     textBlocks.length > 0 ? (
       <div
         class={cn(
-          hasError
-            ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
-            : messageColors.assistant.background,
-          borderRadius.message.bubble,
-          messageSpacing.assistant.bubble.combined,
+          hasError ? 'bg-danger/10 border border-danger/40' : 'bg-surface-raised',
+          'rounded-[20px]',
+          'px-3 py-1.5 md:px-3.5 md:py-2',
           'space-y-3'
         )}
       >
         {hasError && (
-          <div class="flex items-center gap-2 text-red-700 dark:text-red-400 text-sm font-medium">
+          <div class="flex items-center gap-2 text-danger text-sm font-medium">
             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 strokeLinecap="round"
@@ -154,19 +151,16 @@ export function SDKAssistantMessage({
           </div>
         )}
         {textBlocks.map((block: Extract<ContentBlock, { type: 'text' }>, idx: number) => (
-          <div
-            key={idx}
-            class={hasError ? 'text-red-900 dark:text-red-100' : messageColors.assistant.text}
-          >
+          <div key={idx} class={hasError ? 'text-danger-soft' : 'text-accent-fg'}>
             <MarkdownRenderer
               content={block.text}
-              class="dark:prose-invert prose-pre:bg-gray-900 prose-pre:text-gray-100"
+              class="dark:prose-invert prose-pre:bg-surface prose-pre:text-fg"
             />
           </div>
         ))}
 
         {message.parent_tool_use_id && (
-          <div class="text-xs text-gray-500 dark:text-gray-400 italic">
+          <div class="text-xs text-fg-muted italic">
             Sub-agent response (parent: {message.parent_tool_use_id.slice(0, 8)}...)
           </div>
         )}
@@ -175,23 +169,16 @@ export function SDKAssistantMessage({
 
   const textBlockActions =
     textBlocks.length > 0 ? (
-      <div
-        class={cn(
-          'flex items-center',
-          messageSpacing.actions.gap,
-          messageSpacing.actions.marginTop,
-          messageSpacing.actions.padding
-        )}
-      >
+      <div class="flex items-center gap-2 mt-2 px-1">
         <Tooltip content={getFullTimestamp()} position="right">
-          <span class="text-xs text-gray-500">{getTimestamp()}</span>
+          <span class="text-xs text-fg-faint">{getTimestamp()}</span>
         </Tooltip>
 
         <IconButton
           size="md"
           onClick={handleCopy}
           title={copied ? 'Copied!' : 'Copy message'}
-          class={copied ? 'text-green-400' : ''}
+          class={copied ? 'text-success' : ''}
         >
           {copied ? (
             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

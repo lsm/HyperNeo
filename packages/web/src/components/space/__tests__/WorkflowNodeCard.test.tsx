@@ -527,14 +527,14 @@ describe('WorkflowNodeCard — agent completion state', () => {
     const states: AgentTaskState[] = [{ agentName: null, status: 'idle' }];
     const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
     const badge = getByTestId('node-step-badge');
-    expect(badge.className).toContain('green');
+    expect(badge.className).toContain('success');
   });
 
   it('does NOT apply green step badge when not all done', () => {
     const states: AgentTaskState[] = [{ agentName: null, status: 'in_progress' }];
     const { getByTestId } = render(<WorkflowNodeCard {...makeProps({ nodeTaskStates: states })} />);
     const badge = getByTestId('node-step-badge');
-    expect(badge.className).not.toContain('green');
+    expect(badge.className).not.toContain('success');
   });
 
   it('shows completion summary text when provided', () => {
@@ -573,7 +573,7 @@ describe('WorkflowNodeCard — agent completion state', () => {
       <WorkflowNodeCard {...makeProps({ node: makeMultiAgentStep(), nodeTaskStates: states })} />
     );
     const outer = container.firstElementChild as HTMLElement;
-    expect(outer.className).toContain('green');
+    expect(outer.className).toContain('success');
   });
 });
 

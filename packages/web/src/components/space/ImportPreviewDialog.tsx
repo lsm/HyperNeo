@@ -52,7 +52,7 @@ function ConflictSelector({
       onInput={(e) =>
         onChange((e.currentTarget as HTMLSelectElement).value as ConflictResolutionStrategy)
       }
-      class="text-xs bg-dark-800 border border-dark-600 rounded px-2 py-1 text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      class="text-xs bg-surface-raised border border-line-strong rounded px-2 py-1 text-fg-soft focus:outline-none focus:ring-1 focus:ring-accent"
     >
       {(Object.keys(STRATEGY_LABELS) as ConflictResolutionStrategy[]).map((s) => (
         <option key={s} value={s}>
@@ -77,7 +77,7 @@ function ItemRow({
     <div class="flex items-center justify-between gap-3 py-1.5">
       <div class="flex items-center gap-2 min-w-0">
         {isConflict ? (
-          <span class="flex-shrink-0 w-4 h-4 text-yellow-400" aria-label="conflict">
+          <span class="flex-shrink-0 w-4 h-4 text-warning" aria-label="conflict">
             <svg viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4">
               <path
                 fillRule="evenodd"
@@ -87,7 +87,7 @@ function ItemRow({
             </svg>
           </span>
         ) : (
-          <span class="flex-shrink-0 w-4 h-4 text-green-400" aria-label="new">
+          <span class="flex-shrink-0 w-4 h-4 text-success" aria-label="new">
             <svg viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4">
               <path
                 fillRule="evenodd"
@@ -97,9 +97,9 @@ function ItemRow({
             </svg>
           </span>
         )}
-        <span class="text-sm text-gray-200 truncate">{item.name}</span>
-        {!isConflict && <span class="text-xs text-green-400 flex-shrink-0">new</span>}
-        {isConflict && <span class="text-xs text-yellow-400 flex-shrink-0">conflict</span>}
+        <span class="text-sm text-fg-soft truncate">{item.name}</span>
+        {!isConflict && <span class="text-xs text-success flex-shrink-0">new</span>}
+        {isConflict && <span class="text-xs text-warning flex-shrink-0">conflict</span>}
       </div>
       {isConflict && (
         <ConflictSelector name={item.name} value={strategy} onChange={onStrategyChange} />
@@ -165,18 +165,18 @@ export function ImportPreviewDialog({
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Import Preview" size="lg">
       <div class="space-y-5">
-        <div class="text-sm text-gray-400">
-          Importing from <span class="text-gray-200 font-medium">{bundle.name}</span>
+        <div class="text-sm text-fg-muted">
+          Importing from <span class="text-fg-soft font-medium">{bundle.name}</span>
           {bundle.exportedFrom && (
-            <span class="ml-1 text-gray-400 font-mono text-xs">({bundle.exportedFrom})</span>
+            <span class="ml-1 text-fg-muted font-mono text-xs">({bundle.exportedFrom})</span>
           )}
         </div>
 
         {hasValidationErrors && (
-          <div class="rounded-lg border border-red-800 bg-red-950/40 p-3 space-y-1" role="alert">
-            <p class="text-xs font-semibold text-red-400 mb-1">Validation errors</p>
+          <div class="rounded-lg border border-danger/40 bg-danger/10 p-3 space-y-1" role="alert">
+            <p class="text-xs font-semibold text-danger mb-1">Validation errors</p>
             {preview.validationErrors.map((err, i) => (
-              <p key={i} class="text-xs text-red-300">
+              <p key={i} class="text-xs text-danger-soft">
                 {err}
               </p>
             ))}
@@ -185,10 +185,10 @@ export function ImportPreviewDialog({
 
         {preview.agents.length > 0 && (
           <section>
-            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+            <h3 class="text-xs font-semibold text-fg-muted uppercase tracking-wider mb-2">
               Agents ({preview.agents.length})
             </h3>
-            <div class="divide-y divide-dark-700">
+            <div class="divide-y divide-line">
               {preview.agents.map((item) => (
                 <ItemRow
                   key={item.name}
@@ -203,10 +203,10 @@ export function ImportPreviewDialog({
 
         {preview.workflows.length > 0 && (
           <section>
-            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+            <h3 class="text-xs font-semibold text-fg-muted uppercase tracking-wider mb-2">
               Workflows ({preview.workflows.length})
             </h3>
-            <div class="divide-y divide-dark-700">
+            <div class="divide-y divide-line">
               {preview.workflows.map((item) => (
                 <ItemRow
                   key={item.name}
@@ -220,19 +220,19 @@ export function ImportPreviewDialog({
         )}
 
         {hasValidationErrors && (
-          <div class="rounded-lg border border-yellow-800 bg-yellow-950/30 p-3">
-            <p class="text-xs text-yellow-300">
+          <div class="rounded-lg border border-warning/40 bg-warning/10 p-3">
+            <p class="text-xs text-warning-soft">
               Workflows with unresolved agent references cannot be imported. Ensure all referenced
               agents are included in the bundle or already exist in this space.
             </p>
           </div>
         )}
 
-        <div class="flex items-center justify-between pt-2 border-t border-dark-700">
-          <p class="text-sm text-gray-400">
-            Will import <span class="text-gray-100 font-medium">{willCreateAgents}</span>
+        <div class="flex items-center justify-between pt-2 border-t border-line">
+          <p class="text-sm text-fg-muted">
+            Will import <span class="text-fg font-medium">{willCreateAgents}</span>
             {willCreateAgents === 1 ? ' agent' : ' agents'} and{' '}
-            <span class="text-gray-100 font-medium">{willCreateWorkflows}</span>
+            <span class="text-fg font-medium">{willCreateWorkflows}</span>
             {willCreateWorkflows === 1 ? ' workflow' : ' workflows'}
           </p>
           <div class="flex items-center gap-2">
@@ -240,7 +240,7 @@ export function ImportPreviewDialog({
               type="button"
               onClick={onClose}
               disabled={isExecuting}
-              class="px-3 py-1.5 text-sm text-gray-300 hover:text-gray-100 hover:bg-dark-800 rounded-lg transition-colors disabled:opacity-50"
+              class="px-3 py-1.5 text-sm text-fg-soft hover:text-fg hover:bg-surface-raised rounded-lg transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
@@ -248,7 +248,7 @@ export function ImportPreviewDialog({
               type="button"
               onClick={handleConfirm}
               disabled={isExecuting || (willCreateAgents === 0 && willCreateWorkflows === 0)}
-              class="px-4 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-4 py-1.5 text-sm bg-accent-hover hover:bg-accent text-accent-fg rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {isExecuting && (
                 <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">

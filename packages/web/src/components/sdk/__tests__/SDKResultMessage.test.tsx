@@ -140,7 +140,7 @@ describe('SDKResultMessage', () => {
       const message = createSuccessResult();
       const { container } = render(<SDKResultMessage message={message} />);
 
-      const svg = container.querySelector('svg.text-green-600, svg.text-green-400');
+      const svg = container.querySelector('svg.text-success');
       expect(svg).toBeTruthy();
     });
 
@@ -148,7 +148,7 @@ describe('SDKResultMessage', () => {
       const message = createErrorResult();
       const { container } = render(<SDKResultMessage message={message} />);
 
-      const svg = container.querySelector('svg.text-red-600, svg.text-red-400');
+      const svg = container.querySelector('svg.text-danger');
       expect(svg).toBeTruthy();
     });
 
@@ -321,7 +321,7 @@ describe('SDKResultMessage', () => {
       const message = createErrorResult();
       const { container } = render(<SDKResultMessage message={message} />);
 
-      expect(container.querySelector('.bg-red-50, .dark\\:bg-red-900\\/10')).toBeTruthy();
+      expect(container.querySelector('[class*="bg-danger/10"]')).toBeTruthy();
     });
   });
 
@@ -343,14 +343,14 @@ describe('SDKResultMessage', () => {
       const message = createSuccessResult();
       const { container } = render(<SDKResultMessage message={message} />);
 
-      expect(container.querySelector('.bg-green-50, .dark\\:bg-green-900\\/10')).toBeTruthy();
+      expect(container.querySelector('[class*="bg-success/10"]')).toBeTruthy();
     });
 
     it('should have error styling for error result', () => {
       const message = createErrorResult();
       const { container } = render(<SDKResultMessage message={message} />);
 
-      expect(container.querySelector('.bg-red-50, .dark\\:bg-red-900\\/10')).toBeTruthy();
+      expect(container.querySelector('[class*="bg-danger/10"]')).toBeTruthy();
     });
 
     it('should have rounded border', () => {

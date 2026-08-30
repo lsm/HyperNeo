@@ -118,10 +118,10 @@ Error
       const content = '<local-command-stderr>Error</local-command-stderr>';
       const { container } = render(<ErrorOutput content={content} />);
 
-      const errorBox = container.querySelector('.bg-red-950\\/40');
+      const errorBox = container.querySelector('.bg-danger\\/10');
       expect(errorBox).toBeTruthy();
 
-      const errorBorder = container.querySelector('.border-red-700\\/50');
+      const errorBorder = container.querySelector('.border-danger\\/40');
       expect(errorBorder).toBeTruthy();
     });
   });

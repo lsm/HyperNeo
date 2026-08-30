@@ -1179,7 +1179,7 @@ describe('NodeConfigPanel', () => {
       fireEvent.click(getAllByTestId('edit-slot-prompts-button')[0]);
       expect(getByTestId('replace-prompt-warning')).toBeTruthy();
       const replaceBtn = getByTestId('prompt-mode-replace') as HTMLButtonElement;
-      expect(replaceBtn.className).toContain('bg-amber-600');
+      expect(replaceBtn.className).toContain('bg-warning');
     });
 
     it('clicking replace persists replaceAgentPrompt on the targeted slot only', () => {
@@ -1271,7 +1271,7 @@ describe('NodeConfigPanel', () => {
         fireEvent.click(getByTestId('edit-single-prompts-button'));
         expect(queryByTestId('replace-prompt-warning')).toBeNull();
         expect((getByTestId('prompt-mode-append') as HTMLButtonElement).className).toContain(
-          'bg-blue-600'
+          'bg-accent-hover'
         );
       } finally {
         skillsStore.skills.value = [];

@@ -65,15 +65,12 @@ export function OAuthModal({
 
   return (
     <div class="fixed inset-0 z-50 flex items-center justify-center">
-      <div
-        class="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer"
-        onClick={onCancel}
-      />
+      <div class="absolute inset-0 bg-scrim backdrop-blur-sm cursor-pointer" onClick={onCancel} />
 
-      <div class="relative bg-dark-900 border border-dark-700 rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+      <div class="relative bg-surface border border-line rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
         <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-gray-100">Authenticate with {providerName}</h3>
-          <button onClick={onCancel} class="text-gray-400 hover:text-gray-200 transition-colors">
+          <h3 class="text-lg font-semibold text-fg">Authenticate with {providerName}</h3>
+          <button onClick={onCancel} class="text-fg-muted hover:text-fg-soft transition-colors">
             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 stroke-linecap="round"
@@ -88,11 +85,11 @@ export function OAuthModal({
         <div class="space-y-4">
           {isDeviceFlow && (
             <>
-              <div class="text-sm text-gray-300">
+              <div class="text-sm text-fg-soft">
                 <p class="mb-3">Enter this code when prompted at the verification URL:</p>
 
-                <div class="bg-dark-800 border border-dark-700 rounded-lg p-4 text-center mb-4">
-                  <code class="text-2xl font-mono text-blue-400 tracking-wider">{userCode}</code>
+                <div class="bg-surface-raised border border-line rounded-lg p-4 text-center mb-4">
+                  <code class="text-2xl font-mono text-accent tracking-wider">{userCode}</code>
                 </div>
 
                 <div class="flex justify-center mb-4">
@@ -136,12 +133,12 @@ export function OAuthModal({
                 </div>
 
                 <div class="text-center">
-                  <p class="text-gray-400 text-sm mb-2">Verification URL:</p>
+                  <p class="text-fg-muted text-sm mb-2">Verification URL:</p>
                   <a
                     href={verificationUri}
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="text-blue-400 hover:text-blue-300 underline break-all text-sm"
+                    class="text-accent hover:text-accent-soft underline break-all text-sm"
                   >
                     {verificationUri}
                   </a>
@@ -171,7 +168,7 @@ export function OAuthModal({
 
           {isRedirectFlow && !isDeviceFlow && (
             <>
-              <div class="text-sm text-gray-300">
+              <div class="text-sm text-fg-soft">
                 <p class="mb-4">
                   A browser window has been opened for you to authenticate with {providerName}.
                   Complete the authentication in that window.
@@ -200,12 +197,12 @@ export function OAuthModal({
           )}
 
           <div class="flex items-center justify-center py-4">
-            <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500 mr-3" />
-            <span class="text-sm text-gray-400">Waiting for authentication...</span>
+            <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-accent mr-3" />
+            <span class="text-sm text-fg-muted">Waiting for authentication...</span>
           </div>
         </div>
 
-        <div class="mt-6 pt-4 border-t border-dark-700 flex justify-end">
+        <div class="mt-6 pt-4 border-t border-line flex justify-end">
           <Button variant="secondary" onClick={onCancel}>
             Cancel
           </Button>

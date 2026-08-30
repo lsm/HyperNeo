@@ -158,7 +158,7 @@ export function PendingHookBanner({
         <div
           ref={bannerRef}
           tabIndex={-1}
-          class="focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/70"
+          class="focus:outline-none focus-visible:ring-2 focus-visible:ring-cat-purple/70"
           data-testid="pending-hook-banner"
         >
           {pendingHooks.map((hook) => {
@@ -210,13 +210,13 @@ export function PendingHookBanner({
                   dataAttrs={{ 'data-hook-id': hook.hookId }}
                 />
                 {error && (
-                  <p class="mx-4 -mt-1 mb-2 text-xs text-red-400" data-testid="pending-hook-error">
+                  <p class="mx-4 -mt-1 mb-2 text-xs text-danger" data-testid="pending-hook-error">
                     {error}
                   </p>
                 )}
                 {hook.remediation && (
                   <p
-                    class="mx-4 -mt-1 mb-2 text-xs text-gray-400"
+                    class="mx-4 -mt-1 mb-2 text-xs text-fg-muted"
                     data-testid="pending-hook-remediation"
                   >
                     {hook.remediation}
@@ -224,7 +224,7 @@ export function PendingHookBanner({
                 )}
                 {hook.retryCount !== undefined && hook.retryCount > 0 && (
                   <p
-                    class="mx-4 -mt-1 mb-2 text-xs text-gray-500"
+                    class="mx-4 -mt-1 mb-2 text-xs text-fg-faint"
                     data-testid="pending-hook-retry-count"
                   >
                     Retry attempt {hook.retryCount}

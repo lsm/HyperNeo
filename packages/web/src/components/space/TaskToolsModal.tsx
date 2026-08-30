@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal.tsx';
 import { listRuntimeMcpServers } from '../../lib/api-helpers.ts';
-import { borderColors } from '../../lib/design-tokens.ts';
 
 const RUNTIME_MCP_LABELS: Record<string, { title: string; description: string }> = {
   'space-agent-tools': {
@@ -71,22 +70,22 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
     <Modal isOpen={isOpen} onClose={onClose} title={`${agentLabel} Tools`} size="sm">
       <div class="space-y-3">
         {!sessionId && (
-          <p class="text-sm text-gray-400 text-center py-4">
+          <p class="text-sm text-fg-muted text-center py-4">
             Agent tools will be available after the agent starts.
           </p>
         )}
 
         {sessionId && loading && (
           <div class="flex items-center justify-center py-4 gap-2">
-            <div class="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <span class="text-sm text-gray-400">Loading tools...</span>
+            <div class="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            <span class="text-sm text-fg-muted">Loading tools...</span>
           </div>
         )}
 
-        {sessionId && error && <p class="text-sm text-red-300 text-center py-4">{error}</p>}
+        {sessionId && error && <p class="text-sm text-danger-soft text-center py-4">{error}</p>}
 
         {sessionId && !loading && !error && servers.length === 0 && (
-          <p class="text-sm text-gray-400 text-center py-4">
+          <p class="text-sm text-fg-muted text-center py-4">
             No runtime tools registered for this agent.
           </p>
         )}
@@ -99,10 +98,10 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
             return (
               <div
                 key={server.name}
-                class={`flex items-center gap-3 p-3 rounded-lg bg-dark-800/50 min-w-0 border ${borderColors.ui.secondary}`}
+                class={`flex items-center gap-3 p-3 rounded-lg bg-surface-raised/50 min-w-0 border border-line-strong`}
               >
                 <svg
-                  class="w-4 h-4 text-emerald-400 flex-shrink-0"
+                  class="w-4 h-4 text-success flex-shrink-0"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -115,8 +114,8 @@ export function TaskToolsModal({ isOpen, onClose, sessionId, agentLabel }: TaskT
                   />
                 </svg>
                 <div class="flex-1 min-w-0">
-                  <div class="text-sm text-gray-200 truncate">{label?.title ?? server.name}</div>
-                  <div class="text-xs text-gray-400 truncate">
+                  <div class="text-sm text-fg-soft truncate">{label?.title ?? server.name}</div>
+                  <div class="text-xs text-fg-muted truncate">
                     {label?.description ?? server.name}
                   </div>
                 </div>

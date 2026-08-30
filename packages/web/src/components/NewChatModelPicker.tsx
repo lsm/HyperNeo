@@ -29,11 +29,11 @@ interface NewChatModelPickerProps {
 }
 
 function providerDotClass(status: ProviderAuthStatus | undefined): string {
-  if (!status) return 'bg-gray-500';
-  if (status.errorKind === 'transient') return 'bg-gray-500';
-  if (!status.isAuthenticated) return 'bg-red-500';
-  if (status.needsRefresh) return 'bg-yellow-500';
-  return 'bg-green-500';
+  if (!status) return 'bg-fg-faint';
+  if (status.errorKind === 'transient') return 'bg-fg-faint';
+  if (!status.isAuthenticated) return 'bg-danger';
+  if (status.needsRefresh) return 'bg-warning';
+  return 'bg-success';
 }
 
 export function NewChatModelPicker({
@@ -121,7 +121,7 @@ export function NewChatModelPicker({
         disabled={loading && availableModels.length === 0}
         title="Choose model"
         aria-label="Choose model"
-        class="flex h-8 max-w-[240px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-gray-200 transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+        class="flex h-8 max-w-[240px] items-center gap-1.5 rounded-full border px-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         style={activeModelInfo ? providerPillStyle(activeProvider) : undefined}
       >
         {loading && availableModels.length === 0 ? (
@@ -133,7 +133,7 @@ export function NewChatModelPicker({
         ) : null}
         <span class="min-w-0 truncate">{activeLabel}</span>
         <svg
-          class="h-3.5 w-3.5 flex-shrink-0 text-gray-500"
+          class="h-3.5 w-3.5 flex-shrink-0 text-fg-faint"
           viewBox="0 0 20 20"
           fill="currentColor"
         >
@@ -146,10 +146,10 @@ export function NewChatModelPicker({
       </button>
 
       {dropdown.isOpen && (
-        <div class="absolute bottom-full left-0 z-50 mb-2 flex max-h-[52vh] w-72 flex-col rounded-xl border border-dark-700 bg-dark-800 py-1 shadow-2xl">
+        <div class="absolute bottom-full left-0 z-50 mb-2 flex max-h-[52vh] w-72 flex-col rounded-xl border border-line bg-surface-raised py-1 shadow-2xl">
           <div class="flex items-center justify-between px-3 py-1.5">
-            <span class="text-xs font-semibold text-gray-400">Model</span>
-            <span class="text-[10px] text-gray-600">{modelCountLabel}</span>
+            <span class="text-xs font-semibold text-fg-muted">Model</span>
+            <span class="text-[10px] text-fg-faint">{modelCountLabel}</span>
           </div>
           <div class="px-2 pb-2">
             <input
@@ -158,7 +158,7 @@ export function NewChatModelPicker({
               onInput={(e) => setSearchQuery(e.currentTarget.value)}
               placeholder="Search models..."
               aria-label="Search models"
-              class="w-full rounded-md border border-dark-600 bg-dark-900 px-2 py-1.5 text-xs text-gray-100 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
+              class="w-full rounded-md border border-line-strong bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
             />
           </div>
           <div class="min-h-0 flex-1 overflow-y-auto">
@@ -166,7 +166,7 @@ export function NewChatModelPicker({
               const authStatus = providerAuthStatuses.get(provider);
               return (
                 <div key={provider}>
-                  {groupIndex > 0 && <div class="mx-2 my-1 border-t border-dark-700" />}
+                  {groupIndex > 0 && <div class="mx-2 my-1 border-t border-line" />}
                   <div
                     class="flex items-center gap-1.5 px-3 py-1.5"
                     style={providerHeaderStyle(provider)}
@@ -181,7 +181,7 @@ export function NewChatModelPicker({
                       class={`h-2 w-2 flex-shrink-0 rounded-full ${providerDotClass(authStatus)}`}
                     />
                     {authStatus?.needsRefresh && (
-                      <span class="text-[10px] text-yellow-400" title="Token expiring soon">
+                      <span class="text-[10px] text-warning" title="Token expiring soon">
                         !
                       </span>
                     )}
@@ -192,8 +192,8 @@ export function NewChatModelPicker({
                       <button
                         key={`${model.provider}:${model.id}`}
                         type="button"
-                        class={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-dark-700 ${
-                          isActive ? 'text-blue-400' : 'text-gray-200'
+                        class={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-fill-strong ${
+                          isActive ? 'text-accent' : 'text-fg-soft'
                         }`}
                         onClick={() => {
                           onSelectModel(model);
@@ -203,7 +203,7 @@ export function NewChatModelPicker({
                         <span class="min-w-0 flex-1 truncate">
                           {shortenModelName(model.name, model.provider)}
                         </span>
-                        {isActive && <span class="text-[10px] text-blue-400">✓</span>}
+                        {isActive && <span class="text-[10px] text-accent">✓</span>}
                       </button>
                     );
                   })}
@@ -211,7 +211,7 @@ export function NewChatModelPicker({
               );
             })}
             {filteredModels.length === 0 && (
-              <div class="px-3 py-4 text-center text-xs text-gray-500">No matching models</div>
+              <div class="px-3 py-4 text-center text-xs text-fg-faint">No matching models</div>
             )}
           </div>
         </div>

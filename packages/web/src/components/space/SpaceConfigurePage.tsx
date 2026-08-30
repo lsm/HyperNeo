@@ -24,7 +24,7 @@ const VisualWorkflowEditor = lazy(() =>
 
 const lazyFallback = (
   <div class="flex-1 flex items-center justify-center py-12">
-    <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+    <div class="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
   </div>
 );
 
@@ -102,7 +102,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
   if (!configLoaded) {
     return (
       <div class="flex-1 flex items-center justify-center">
-        <div class="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <div class="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -119,7 +119,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
             }
           >
             <TabList
-              class="flex h-[52px] flex-shrink-0 items-center gap-1 border-b border-white/10"
+              class="flex h-[52px] flex-shrink-0 items-center gap-1 border-b border-line"
               data-testid="space-configure-tab-bar"
             >
               {CONFIGURE_TABS.map((tab) => (
@@ -129,12 +129,12 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
                   class={cn(
                     'flex h-[52px] items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors',
                     activeTab === tab.id
-                      ? 'border-blue-400 text-gray-100'
-                      : 'border-transparent text-gray-400 hover:text-gray-200'
+                      ? 'border-blue-400 text-fg'
+                      : 'border-transparent text-fg-muted hover:text-fg-soft'
                   )}
                 >
                   <span>{tab.label}</span>
-                  <span class="rounded-full bg-white/5 px-1.5 py-px text-xs text-gray-400">
+                  <span class="rounded-full bg-fill-soft px-1.5 py-px text-xs text-fg-muted">
                     {tab.count({
                       agentCount: workerAgentCount,
                       workflowCount: workflows.length,

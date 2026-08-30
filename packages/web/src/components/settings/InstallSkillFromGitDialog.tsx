@@ -99,36 +99,36 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title="Install Skill from Git" size="md">
       <form onSubmit={handleSubmit} class="space-y-4">
-        <p class="text-xs text-gray-500">
+        <p class="text-xs text-fg-faint">
           Paste a GitHub tree URL (e.g.{' '}
-          <code class="font-mono text-gray-400">
+          <code class="font-mono text-fg-muted">
             https://github.com/openai/skills/tree/main/skills/.curated/playwright
           </code>
           ) or a raw file URL. HyperNeo will download the skill directory and register it.
         </p>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1">
-            URL <span class="text-red-400">*</span>
+          <label class="block text-sm font-medium text-fg-soft mb-1">
+            URL <span class="text-danger">*</span>
           </label>
           <input
             type="text"
             value={form.repoUrl}
             onInput={(e) => handleUrlChange((e.target as HTMLInputElement).value)}
             class={cn(
-              'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-              'focus:outline-none focus:ring-1 focus:ring-blue-500',
-              errors.repoUrl ? 'border-red-500' : 'border-dark-700'
+              'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
+              'focus:outline-none focus:ring-1 focus:ring-accent',
+              errors.repoUrl ? 'border-danger' : 'border-line'
             )}
             placeholder="https://github.com/owner/repo/tree/main/skills/my-skill"
             autoFocus
           />
-          {errors.repoUrl && <p class="text-xs text-red-400 mt-1">{errors.repoUrl}</p>}
+          {errors.repoUrl && <p class="text-xs text-danger mt-1">{errors.repoUrl}</p>}
         </div>
 
         <div>
-          <label class="block text-sm font-medium text-gray-300 mb-1">
-            Skill name <span class="text-red-400">*</span>
+          <label class="block text-sm font-medium text-fg-soft mb-1">
+            Skill name <span class="text-danger">*</span>
           </label>
           <input
             type="text"
@@ -141,14 +141,14 @@ export function InstallSkillFromGitDialog({ isOpen, onClose }: InstallSkillFromG
               }))
             }
             class={cn(
-              'w-full bg-dark-800 border rounded-lg px-3 py-2 text-sm text-gray-200 font-mono',
-              'focus:outline-none focus:ring-1 focus:ring-blue-500',
-              errors.commandName ? 'border-red-500' : 'border-dark-700'
+              'w-full bg-surface-raised border rounded-lg px-3 py-2 text-sm text-fg-soft font-mono',
+              'focus:outline-none focus:ring-1 focus:ring-accent',
+              errors.commandName ? 'border-danger' : 'border-line'
             )}
             placeholder="e.g., playwright"
           />
-          {errors.commandName && <p class="text-xs text-red-400 mt-1">{errors.commandName}</p>}
-          <p class="text-xs text-gray-500 mt-1">
+          {errors.commandName && <p class="text-xs text-danger mt-1">{errors.commandName}</p>}
+          <p class="text-xs text-fg-faint mt-1">
             Auto-derived from the URL. Used as the slash-command name (
             <code class="font-mono">/playwright</code>) and install directory (
             <code class="font-mono">~/.hyperneo/skills/playwright/</code>).

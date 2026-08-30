@@ -22,12 +22,12 @@ export function CircularProgressIndicator({
   const dashArray = (progressPercent / 100) * circumference;
 
   const getProgressColor = () => {
-    if (progressPercent === 0) return 'text-dark-600';
-    if (progressPercent >= 100) return 'text-green-500';
-    return 'text-blue-500';
+    if (progressPercent === 0) return 'text-fg-faint';
+    if (progressPercent >= 100) return 'text-success';
+    return 'text-accent';
   };
 
-  const bgColor = 'text-dark-700';
+  const bgColor = 'text-fg-faint';
 
   return (
     <div class={className} title={title}>
@@ -65,10 +65,10 @@ export function CircularProgressIndicator({
             font-size="10"
             class={`font-bold fill-current ${
               progressPercent === 0
-                ? 'text-dark-500'
+                ? 'text-fg-faint'
                 : progressPercent >= 100
-                  ? 'text-green-400'
-                  : 'text-blue-400'
+                  ? 'text-success'
+                  : 'text-accent'
             }`}
           >
             {Math.round(progressPercent)}

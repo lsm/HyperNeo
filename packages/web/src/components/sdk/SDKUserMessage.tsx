@@ -4,8 +4,7 @@ import { useCallback, useEffect, useState } from 'preact/hooks';
 import { retryMessageDelivery } from '../../lib/api-helpers.ts';
 import { useVisibleTick } from '../../hooks/useVisibleTick.ts';
 import { toast } from '../../lib/toast.ts';
-import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
-import { cn, copyToClipboard } from '../../lib/utils.ts';
+import { copyToClipboard } from '../../lib/utils.ts';
 import { Dropdown } from '../ui/Dropdown.tsx';
 import { DeliveryStateBadge } from '../ui/DeliveryStateBadge.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
@@ -51,7 +50,7 @@ function renderMessageText(
           );
         }
         return (
-          <span key={idx} class="text-yellow-500/70 italic" title="Unknown reference type">
+          <span key={idx} class="text-warning/70 italic" title="Unknown reference type">
             {seg.content}
           </span>
         );
@@ -144,13 +143,13 @@ function UserMessageRetryControl({
       : '';
     return (
       <span
-        class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-orange-200"
+        class="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-warning-soft"
         role="status"
         aria-live="polite"
         data-testid="user-delivery-retry-countdown"
       >
         retrying in {formatRetryCountdown(remaining)}
-        {attempt && <span class="text-orange-300/60 normal-case font-normal">· {attempt}</span>}
+        {attempt && <span class="text-warning-soft/60 normal-case font-normal">· {attempt}</span>}
       </span>
     );
   }
@@ -161,7 +160,7 @@ function UserMessageRetryControl({
         type="button"
         onClick={handleRetry}
         disabled={retrying}
-        class="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border border-red-500/45 bg-red-500/10 text-red-200 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950"
+        class="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border border-danger/45 bg-danger/10 text-danger-soft hover:bg-danger/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
         data-testid="user-delivery-retry-button"
       >
         {retrying ? 'Retrying…' : 'Retry'}
@@ -345,7 +344,7 @@ export function SDKUserMessage({
 
   if (isReplay && hasCommandOutput()) {
     return (
-      <div class={cn(messageSpacing.assistant.container.combined)}>
+      <div class="py-2">
         <SlashCommandOutput content={textContent} />
       </div>
     );
@@ -353,7 +352,7 @@ export function SDKUserMessage({
 
   if (containsErrorOutput()) {
     return (
-      <div class={cn(messageSpacing.assistant.container.combined)}>
+      <div class="py-2">
         <ErrorOutput content={textContent} />
       </div>
     );
@@ -369,14 +368,8 @@ export function SDKUserMessage({
       showActions={false}
     />
   ) : (
-    <div
-      class={cn(
-        messageColors.user.background,
-        borderRadius.message.bubble,
-        messageSpacing.user.bubble.combined
-      )}
-    >
-      <div class={cn(messageColors.user.text, 'whitespace-pre-wrap break-words')}>
+    <div class="bg-accent rounded-[20px] px-3 py-1.5 md:px-3.5 md:py-2">
+      <div class="text-accent-fg whitespace-pre-wrap break-words">
         {renderMessageText(textContent, referenceMetadata, sessionId)}
       </div>
 
@@ -388,7 +381,7 @@ export function SDKUserMessage({
             const data = source.data as string;
 
             return (
-              <div key={idx} class="rounded overflow-hidden border border-gray-600/50">
+              <div key={idx} class="rounded overflow-hidden border border-line-strong/50">
                 <img
                   src={`data:${mediaType};base64,${data}`}
                   alt="Attached image"
@@ -401,7 +394,7 @@ export function SDKUserMessage({
       )}
 
       {message.parent_tool_use_id && (
-        <div class="mt-2 text-xs text-gray-500 dark:text-gray-400 italic">
+        <div class="mt-2 text-xs text-fg-muted italic">
           Sub-agent message (parent: {message.parent_tool_use_id.slice(0, 8)}...)
         </div>
       )}
@@ -409,21 +402,14 @@ export function SDKUserMessage({
   );
 
   const messageActions = (
-    <div
-      class={cn(
-        'flex items-center justify-end',
-        messageSpacing.actions.gap,
-        messageSpacing.actions.marginTop,
-        messageSpacing.actions.padding
-      )}
-    >
+    <div class="flex items-center justify-end gap-2 mt-2 px-1">
       <Tooltip content={getFullTimestamp()} position="left">
-        <span class="text-xs text-gray-500">{getTimestamp()}</span>
+        <span class="text-xs text-fg-faint">{getTimestamp()}</span>
       </Tooltip>
 
       {message.isSynthetic && (
         <Tooltip content="System-generated message" position="left">
-          <span class="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded">
+          <span class="text-xs px-2 py-0.5 bg-cat-purple/20 text-cat-purple rounded">
             synthetic
           </span>
         </Tooltip>
@@ -446,7 +432,7 @@ export function SDKUserMessage({
         message.uuid &&
         isDeliveryTerminal(message.deliveryStatus) &&
         (rewindingMessageUuid === message.uuid ? (
-          <Spinner size="sm" color="border-amber-500" />
+          <Spinner size="sm" color="border-warning" />
         ) : (
           <Tooltip content="Rewind to this message" position="left">
             <IconButton size="md" onClick={() => onRewind(message.uuid!)} title="Rewind to here">
@@ -474,7 +460,7 @@ export function SDKUserMessage({
         size="md"
         onClick={handleCopy}
         title={copied ? 'Copied!' : 'Copy message'}
-        class={copied ? 'text-green-400' : ''}
+        class={copied ? 'text-success' : ''}
       >
         {copied ? (
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -496,7 +482,7 @@ export function SDKUserMessage({
 
   const messageContent = (
     <div
-      class={cn(messageSpacing.user.container.combined, 'flex justify-end')}
+      class="py-2 flex justify-end"
       data-testid={syntheticContentBlocks ? 'synthetic-message' : 'user-message'}
       data-message-role={syntheticContentBlocks ? 'synthetic' : 'user'}
       data-message-uuid={message.uuid ?? ''}

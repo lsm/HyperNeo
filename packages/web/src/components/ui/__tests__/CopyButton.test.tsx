@@ -111,7 +111,7 @@ describe('CopyButton', () => {
 
       await waitFor(() => {
         const button = document.body.querySelector('button');
-        expect(button?.classList.contains('text-green-400')).toBe(true);
+        expect(button?.classList.contains('text-success')).toBe(true);
       });
     });
 
@@ -127,12 +127,12 @@ describe('CopyButton', () => {
       await vi.advanceTimersByTimeAsync(0);
 
       let btn = document.body.querySelector('button');
-      expect(btn?.classList.contains('text-green-400')).toBe(true);
+      expect(btn?.classList.contains('text-success')).toBe(true);
 
       await vi.advanceTimersByTimeAsync(2000);
 
       btn = document.body.querySelector('button');
-      expect(btn?.classList.contains('text-green-400')).toBe(false);
+      expect(btn?.classList.contains('text-success')).toBe(false);
 
       vi.useRealTimers();
     });
@@ -148,14 +148,14 @@ describe('CopyButton', () => {
       await Promise.resolve();
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(button?.classList.contains('text-green-400')).toBe(true);
+      expect(button?.classList.contains('text-success')).toBe(true);
 
       rerender(<CopyButton text="second" />);
 
       await Promise.resolve();
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(button?.classList.contains('text-green-400')).toBe(false);
+      expect(button?.classList.contains('text-success')).toBe(false);
       expect(button?.getAttribute('title')).toBe('Copy to clipboard');
 
       vi.useRealTimers();
@@ -181,7 +181,7 @@ describe('CopyButton', () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(button?.classList.contains('text-green-400')).toBe(false);
+      expect(button?.classList.contains('text-success')).toBe(false);
       expect(button?.getAttribute('title')).toBe('Copy to clipboard');
     });
   });
@@ -191,8 +191,8 @@ describe('CopyButton', () => {
       render(<CopyButton text="test text" />);
       const button = document.body.querySelector('button');
       expect(button?.className).toContain('p-1.5');
-      expect(button?.className).toContain('text-gray-400');
-      expect(button?.className).toContain('hover:text-gray-200');
+      expect(button?.className).toContain('text-fg-muted');
+      expect(button?.className).toContain('hover:text-fg-soft');
       expect(button?.className).toContain('rounded');
     });
 

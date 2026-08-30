@@ -163,7 +163,7 @@ describe('MessageInfoDropdown', () => {
       });
       const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
-      expect(container.querySelector('.bg-green-500')).toBeTruthy();
+      expect(container.querySelector('.bg-success')).toBeTruthy();
     });
 
     it('should show gray indicator for non-connected servers', () => {
@@ -172,7 +172,7 @@ describe('MessageInfoDropdown', () => {
       });
       const { container } = render(<MessageInfoDropdown sessionInfo={sessionInfo} />);
 
-      expect(container.querySelector('.bg-gray-500')).toBeTruthy();
+      expect(container.querySelector('.bg-fg-faint')).toBeTruthy();
     });
 
     it('should not show MCP servers section when empty', () => {

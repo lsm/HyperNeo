@@ -8,19 +8,19 @@ import { REFERENCE_PATTERN } from '@hyperneo/shared';
 
 const TYPE_STYLES: Record<ReferenceType, { pill: string; label: string }> = {
   task: {
-    pill: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40 hover:bg-indigo-500/30',
+    pill: 'bg-accent-hover/20 text-cat-indigo border-indigo-500/40 hover:bg-accent-hover/30',
     label: 'task',
   },
   goal: {
-    pill: 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30',
+    pill: 'bg-warning/20 text-warning border-warning/40 hover:bg-warning/30',
     label: 'goal',
   },
   file: {
-    pill: 'bg-blue-500/20 text-blue-300 border-blue-500/40 hover:bg-blue-500/30',
+    pill: 'bg-accent/20 text-accent-soft border-accent/40 hover:bg-accent/30',
     label: 'file',
   },
   folder: {
-    pill: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40 hover:bg-yellow-500/30',
+    pill: 'bg-warning/20 text-warning-soft border-warning/40 hover:bg-warning/30',
     label: 'folder',
   },
 };
@@ -32,10 +32,10 @@ function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
       const d = resolved.data as { title?: string; status?: string; description?: string };
       return (
         <div>
-          {d.title && <div class="font-medium text-white">{d.title}</div>}
-          {d.status && <div class="text-xs text-gray-400 mt-0.5">Status: {d.status}</div>}
+          {d.title && <div class="font-medium text-fg">{d.title}</div>}
+          {d.status && <div class="text-xs text-fg-muted mt-0.5">Status: {d.status}</div>}
           {d.description && (
-            <div class="text-xs text-gray-400 mt-1 line-clamp-2">{d.description}</div>
+            <div class="text-xs text-fg-muted mt-1 line-clamp-2">{d.description}</div>
           )}
         </div>
       );
@@ -49,8 +49,8 @@ function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
       };
       return (
         <div>
-          <div class="font-medium text-white font-mono text-xs truncate">{d.path}</div>
-          <div class="text-xs text-gray-400 mt-0.5">
+          <div class="font-medium text-fg font-mono text-xs truncate">{d.path}</div>
+          <div class="text-xs text-fg-muted mt-0.5">
             {d.binary ? 'Binary file' : `${Math.round(d.size / 1024)} KB`}
             {d.truncated && ' (truncated)'}
           </div>
@@ -61,13 +61,13 @@ function renderResolvedContent(resolved: ResolvedReference): JSX.Element {
       const d = resolved.data as { path: string; entries: Array<{ name: string }> };
       return (
         <div>
-          <div class="font-medium text-white font-mono text-xs truncate">{d.path}</div>
-          <div class="text-xs text-gray-400 mt-0.5">{d.entries.length} entries</div>
+          <div class="font-medium text-fg font-mono text-xs truncate">{d.path}</div>
+          <div class="text-xs text-fg-muted mt-0.5">{d.entries.length} entries</div>
         </div>
       );
     }
     default: {
-      return <div class="text-xs text-gray-400">Unknown reference type</div>;
+      return <div class="text-xs text-fg-muted">Unknown reference type</div>;
     }
   }
 }
@@ -160,18 +160,18 @@ function MentionTokenBase({ refType, id, displayText, status, sessionId }: Menti
             transform: popoverPos.below ? 'none' : 'translateY(-100%)',
             zIndex: 9999,
           }}
-          class="min-w-[180px] max-w-[280px] bg-dark-800 border border-gray-600/50 rounded-md shadow-lg p-3 text-sm pointer-events-none animate-fadeIn"
+          class="min-w-[180px] max-w-[280px] bg-surface-raised border border-line-strong/50 rounded-md shadow-lg p-3 text-sm pointer-events-none animate-fadeIn"
           role="tooltip"
           data-testid="mention-token-popover"
         >
-          {loadState === 'loading' && <div class="text-xs text-gray-400">Loading...</div>}
+          {loadState === 'loading' && <div class="text-xs text-fg-muted">Loading...</div>}
           {loadState === 'loaded' && resolvedData && renderResolvedContent(resolvedData)}
           {loadState === 'loaded' && !resolvedData && (
-            <div class="text-xs text-gray-400">Not found</div>
+            <div class="text-xs text-fg-muted">Not found</div>
           )}
-          {loadState === 'error' && <div class="text-xs text-red-400">Failed to load</div>}
+          {loadState === 'error' && <div class="text-xs text-danger">Failed to load</div>}
           {loadState === 'idle' && (
-            <div class="text-xs text-gray-400">
+            <div class="text-xs text-fg-muted">
               {refType}/{id}
             </div>
           )}

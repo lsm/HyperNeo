@@ -159,7 +159,7 @@ describe('SpaceOverview', () => {
     expect(getByTestId('space-overview-dashboard')).toBeTruthy();
     expect(getByTestId('overview-recent-tasks')).toBeTruthy();
     expect(getByTestId('overview-recent-sessions')).toBeTruthy();
-    expect(getByText('Running').closest('.backdrop-blur-xl')).toBeTruthy();
+    expect(getByText('Running').closest('.glass-surface')).toBeTruthy();
   });
 
   it('renders recent tasks sorted by updatedAt', () => {
@@ -276,7 +276,7 @@ describe('SpaceOverview', () => {
       mockRuntimeState.value = 'running';
       const { container, getByText } = render(<SpaceOverview spaceId="space-1" />);
       expect(getByText('Running')).toBeTruthy();
-      expect(container.querySelector('.bg-green-400')).toBeTruthy();
+      expect(container.querySelector('.bg-success')).toBeTruthy();
       expect(container.querySelector('.animate-ping')).toBeTruthy();
     });
 
@@ -285,7 +285,7 @@ describe('SpaceOverview', () => {
       mockRuntimeState.value = 'paused';
       const { container, getByText } = render(<SpaceOverview spaceId="space-1" />);
       expect(getByText('Paused')).toBeTruthy();
-      expect(container.querySelector('.bg-yellow-400')).toBeTruthy();
+      expect(container.querySelector('.bg-warning')).toBeTruthy();
       expect(container.querySelector('.animate-ping')).toBeFalsy();
     });
 
@@ -294,7 +294,7 @@ describe('SpaceOverview', () => {
       mockRuntimeState.value = 'stopped';
       const { container, getByText } = render(<SpaceOverview spaceId="space-1" />);
       expect(getByText('Stopped')).toBeTruthy();
-      expect(container.querySelector('.bg-gray-500')).toBeTruthy();
+      expect(container.querySelector('.bg-fg-faint')).toBeTruthy();
     });
   });
 

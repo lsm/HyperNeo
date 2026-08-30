@@ -12,8 +12,6 @@ import {
   useModal,
 } from '../hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
-import { borderColors } from '../lib/design-tokens.ts';
-import type { IndicatorTone } from '../lib/indicator-tokens.ts';
 import {
   providerHeaderStyle,
   providerLogoColor,
@@ -41,14 +39,14 @@ function ThinkingLevelIcon({ level }: { level: ThinkingLevel }) {
 
   const strokeColor =
     brightness === 0
-      ? 'text-gray-400'
+      ? 'text-fg-muted'
       : brightness === 1
-        ? 'text-amber-600'
+        ? 'text-warning'
         : brightness === 2
-          ? 'text-amber-500'
+          ? 'text-warning'
           : brightness === 3
-            ? 'text-amber-400'
-            : 'text-amber-300';
+            ? 'text-warning'
+            : 'text-warning';
 
   const fillOpacity =
     brightness === 0
@@ -308,7 +306,7 @@ export default function SessionStatusBar({
   );
   const groupedFilteredModels = groupModelsByProvider(filteredModels);
   const glassControlButtonBaseClass =
-    'control-btn w-8 h-8 flex items-center justify-center rounded-full bg-transparent backdrop-blur-sm hover:bg-dark-800/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed';
+    'control-btn w-8 h-8 flex items-center justify-center rounded-full bg-transparent backdrop-blur-sm hover:bg-surface-raised/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed';
 
   return (
     <ContentContainer className="pb-2 flex items-center gap-4 justify-between">
@@ -330,7 +328,7 @@ export default function SessionStatusBar({
               <button
                 data-testid="model-pill"
                 data-provider={activeProvider ?? ''}
-                class="control-btn inline-flex h-8 min-w-0 items-center gap-1.5 rounded-full border pl-2 pr-2.5 text-xs text-gray-200 transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                class="control-btn inline-flex h-8 min-w-0 items-center gap-1.5 rounded-full border pl-2 pr-2.5 text-xs text-fg-soft transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
                 style={pillStyle}
                 onClick={toggleModelDropdown}
                 disabled={modelLoading || modelSwitching || coordinatorSwitching || isRecovering}
@@ -352,7 +350,7 @@ export default function SessionStatusBar({
                       {tierLabel || currentModelInfo.name}
                     </span>
                     <svg
-                      class="h-3 w-3 shrink-0 text-gray-500"
+                      class="h-3 w-3 shrink-0 text-fg-faint"
                       viewBox="0 0 20 20"
                       fill="currentColor"
                       aria-hidden="true"
@@ -365,7 +363,7 @@ export default function SessionStatusBar({
                     </svg>
                   </>
                 ) : (
-                  <span class="px-1 text-gray-400">Select model</span>
+                  <span class="px-1 text-fg-muted">Select model</span>
                 )}
               </button>
             </Tooltip>
@@ -373,9 +371,9 @@ export default function SessionStatusBar({
             {modelDropdown.isOpen && (
               <div
                 data-testid="model-dropdown"
-                class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-72 py-1 z-50 animate-slideIn max-h-[60vh] flex flex-col`}
+                class="absolute bottom-full mb-2 left-0 bg-surface-raised border border-line-strong rounded-lg shadow-xl w-72 py-1 z-50 animate-slideIn max-h-[60vh] flex flex-col"
               >
-                <div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
+                <div class="px-3 py-1.5 text-xs font-semibold text-fg-muted">Select Model</div>
                 <div class="px-2 pb-2">
                   <input
                     type="search"
@@ -383,7 +381,7 @@ export default function SessionStatusBar({
                     onInput={(e) => setModelSearchQuery(e.currentTarget.value)}
                     placeholder="Search models..."
                     aria-label="Search models"
-                    class="w-full bg-dark-900 border border-dark-600 rounded px-2 py-1.5 text-xs text-gray-100 placeholder:text-gray-500 focus:outline-none focus:border-blue-500"
+                    class="w-full bg-surface border border-line-strong rounded px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:outline-none focus:border-accent"
                   />
                 </div>
                 <div class="flex-1 min-h-0 overflow-y-auto">
@@ -393,7 +391,7 @@ export default function SessionStatusBar({
                       const isAuthenticated = authStatus?.isAuthenticated;
                       const needsRefresh = authStatus?.needsRefresh ?? false;
                       const isTransient = authStatus?.errorKind === 'transient';
-                      const availabilityTone: IndicatorTone =
+                      const availabilityTone =
                         isAuthenticated === undefined || isTransient
                           ? 'neutral'
                           : !isAuthenticated
@@ -403,7 +401,7 @@ export default function SessionStatusBar({
                               : 'success';
                       return (
                         <div key={provider} data-testid="provider-section">
-                          {groupIndex > 0 && <div class="mx-2 my-1 border-t border-gray-700" />}
+                          {groupIndex > 0 && <div class="mx-2 my-1 border-t border-line" />}
                           <div
                             class="flex items-center gap-1.5 px-3 py-1.5"
                             style={providerHeaderStyle(provider)}
@@ -419,7 +417,7 @@ export default function SessionStatusBar({
                             </span>
                             <StatusDot tone={availabilityTone} />
                             {needsRefresh && (
-                              <span class="text-yellow-400 text-[10px]" title="Token expiring soon">
+                              <span class="text-warning text-[10px]" title="Token expiring soon">
                                 ⚠
                               </span>
                             )}
@@ -431,8 +429,8 @@ export default function SessionStatusBar({
                             return (
                               <button
                                 key={`${model.provider}:${model.id}`}
-                                class={`w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs flex items-center gap-2 ${
-                                  isCurrent ? 'text-blue-400' : 'text-gray-200'
+                                class={`w-full text-left px-3 py-1.5 hover:bg-fill-strong text-xs flex items-center gap-2 ${
+                                  isCurrent ? 'text-accent' : 'text-fg-soft'
                                 }`}
                                 onClick={() => handleModelSwitch(model)}
                                 disabled={modelSwitching}
@@ -440,9 +438,9 @@ export default function SessionStatusBar({
                                 <span class="flex-1 truncate">
                                   {shortenModelName(model.name, model.provider)}
                                 </span>
-                                {isCurrent && <span class="text-blue-400 text-[10px]">✓</span>}
+                                {isCurrent && <span class="text-accent text-[10px]">✓</span>}
                                 {needsRefresh && (
-                                  <span class="text-yellow-400 text-[10px]" title="Token expiring">
+                                  <span class="text-warning text-[10px]" title="Token expiring">
                                     ⚠
                                   </span>
                                 )}
@@ -454,7 +452,7 @@ export default function SessionStatusBar({
                     }
                   )}
                   {filteredModels.length === 0 && (
-                    <div class="px-3 py-4 text-xs text-gray-500 text-center">
+                    <div class="px-3 py-4 text-xs text-fg-faint text-center">
                       No matching models
                     </div>
                   )}
@@ -473,7 +471,7 @@ export default function SessionStatusBar({
             >
               <button
                 class={`${glassControlButtonBaseClass} relative ${
-                  thinkingLevel === 'off' ? 'border-dark-600/80' : 'border-transparent'
+                  thinkingLevel === 'off' ? 'border-line-strong/80' : 'border-transparent'
                 }`}
                 onClick={toggleThinkingDropdown}
                 disabled={isRecovering}
@@ -485,15 +483,13 @@ export default function SessionStatusBar({
             </Tooltip>
 
             {thinkingDropdown.isOpen && (
-              <div
-                class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-40 py-1 z-50 animate-slideIn`}
-              >
-                <div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Thinking Level</div>
+              <div class="absolute bottom-full mb-2 left-0 bg-surface-raised border border-line-strong rounded-lg shadow-xl w-40 py-1 z-50 animate-slideIn">
+                <div class="px-3 py-1.5 text-xs font-semibold text-fg-muted">Thinking Level</div>
                 {thinkingOptions.map((option) => (
                   <button
                     key={option.value}
-                    class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
-                      option.value === thinkingLevel ? 'text-amber-400' : 'text-gray-200'
+                    class={`w-full text-left px-3 py-2 hover:bg-fill-strong text-xs flex items-center gap-2 ${
+                      option.value === thinkingLevel ? 'text-warning' : 'text-fg-soft'
                     }`}
                     onClick={() => handleThinkingLevelChange(option.value)}
                     disabled={isRecovering}
@@ -515,13 +511,13 @@ export default function SessionStatusBar({
         >
           <button
             class={`${glassControlButtonBaseClass} ${
-              autoScroll ? 'border-2 border-emerald-500' : 'border border-dark-600/80'
+              autoScroll ? 'border-2 border-success' : 'border border-line-strong/80'
             }`}
             onClick={handleAutoScrollToggle}
             title={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
           >
             <svg
-              class={`w-4 h-4 transition-colors ${autoScroll ? 'text-emerald-400' : 'text-gray-500'}`}
+              class={`w-4 h-4 transition-colors ${autoScroll ? 'text-success' : 'text-fg-faint'}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -536,7 +532,7 @@ export default function SessionStatusBar({
           </button>
         </Tooltip>
 
-        <div class="h-6 w-px bg-gray-600" />
+        <div class="h-6 w-px bg-fg-faint" />
 
         <ContextUsageBar contextUsage={contextUsage} maxContextTokens={maxContextTokens} />
       </div>

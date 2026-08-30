@@ -88,7 +88,7 @@ export function SpaceTaskUnifiedThread({
   if (isReconnecting) {
     return (
       <div class="h-full overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-gray-400">
+        <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-fg-muted">
           Reconnecting task thread…
         </div>
       </div>
@@ -98,7 +98,7 @@ export function SpaceTaskUnifiedThread({
   if (isLoading) {
     return (
       <div class="h-full overflow-y-auto">
-        <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-gray-400">
+        <div class="min-h-[calc(100%+1px)] flex items-center justify-center text-sm text-fg-muted">
           Loading task thread…
         </div>
       </div>
@@ -109,7 +109,7 @@ export function SpaceTaskUnifiedThread({
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center">
-          <p class="text-sm text-amber-500">{error}</p>
+          <p class="text-sm text-warning">{error}</p>
         </div>
       </div>
     );
@@ -119,7 +119,7 @@ export function SpaceTaskUnifiedThread({
     return (
       <div class="h-full overflow-y-auto">
         <div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6 text-center">
-          <p class="text-sm text-gray-400">No task-agent activity yet.</p>
+          <p class="text-sm text-fg-muted">No task-agent activity yet.</p>
         </div>
       </div>
     );
@@ -143,7 +143,7 @@ export function SpaceTaskUnifiedThread({
         <div class="flex-shrink-0 px-4 pt-3 space-y-2" data-testid="space-task-thread-banner-stack">
           {cooldownBannerMembers.map((m) => (
             <div key={`cooldown-${m.sessionId}`} data-testid="space-thread-cooldown-banner">
-              <div class="mb-1 text-[11px] font-medium uppercase tracking-wide text-amber-300/80">
+              <div class="mb-1 text-[11px] font-medium uppercase tracking-wide text-warning/80">
                 {m.label}
               </div>
               <RateLimitCooldownBanner
@@ -183,11 +183,11 @@ function ProviderAuthErrorBanner({ member }: { member: AuthErrorBannerMember }) 
   const providerLabel = member.providerId ? getProviderLabel(member.providerId) : 'Provider';
   return (
     <div
-      class="flex items-center gap-2 px-3 py-2 rounded border bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100"
+      class="flex items-center gap-2 px-3 py-2 rounded border bg-danger/10 border-danger/40 text-danger"
       data-testid="space-thread-auth-error-banner"
     >
       <svg
-        class="w-3.5 h-3.5 shrink-0 text-red-600 dark:text-red-400"
+        class="w-3.5 h-3.5 shrink-0 text-danger"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -201,7 +201,9 @@ function ProviderAuthErrorBanner({ member }: { member: AuthErrorBannerMember }) 
         />
       </svg>
       <span class="text-xs flex-1 min-w-0">
-        <span class="font-medium text-red-300/80 uppercase tracking-wide mr-1">{member.label}</span>
+        <span class="font-medium text-danger-soft/80 uppercase tracking-wide mr-1">
+          {member.label}
+        </span>
         <span class="break-words">
           {member.message || `${providerLabel} authentication failed.`}
         </span>
@@ -209,7 +211,7 @@ function ProviderAuthErrorBanner({ member }: { member: AuthErrorBannerMember }) 
       <button
         type="button"
         onClick={() => navigateToSettings('providers')}
-        class="text-xs font-medium px-2 py-0.5 rounded bg-red-600 hover:bg-red-700 text-white transition-colors shrink-0"
+        class="text-xs font-medium px-2 py-0.5 rounded bg-danger hover:bg-danger text-on-danger transition-colors shrink-0"
       >
         Re-authenticate {providerLabel}
       </button>

@@ -36,7 +36,7 @@ describe('goal-status', () => {
 
   it('returns tone classes from getGoalStatusClasses', () => {
     const classes = getGoalStatusClasses('paused');
-    expect(classes.bg).toBe('bg-amber-500');
+    expect(classes.bg).toBe('bg-warning');
   });
 
   it('getGoalStatusConfig returns the same config as the record', () => {

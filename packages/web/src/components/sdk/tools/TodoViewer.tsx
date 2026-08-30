@@ -12,12 +12,7 @@ export interface TodoViewerProps {
 function StatusIcon({ status }: { status: 'pending' | 'in_progress' | 'completed' }) {
   if (status === 'completed') {
     return (
-      <svg
-        class="w-5 h-5 text-green-600 dark:text-green-400"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-      >
+      <svg class="w-5 h-5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path
           stroke-linecap="round"
           stroke-linejoin="round"
@@ -30,11 +25,7 @@ function StatusIcon({ status }: { status: 'pending' | 'in_progress' | 'completed
 
   if (status === 'in_progress') {
     return (
-      <svg
-        class="w-5 h-5 text-blue-600 dark:text-blue-400 animate-spin"
-        fill="none"
-        viewBox="0 0 24 24"
-      >
+      <svg class="w-5 h-5 text-accent animate-spin" fill="none" viewBox="0 0 24 24">
         <circle
           class="opacity-25"
           cx="12"
@@ -53,12 +44,7 @@ function StatusIcon({ status }: { status: 'pending' | 'in_progress' | 'completed
   }
 
   return (
-    <svg
-      class="w-5 h-5 text-gray-400 dark:text-gray-500"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-    >
+    <svg class="w-5 h-5 text-fg-faint" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path
         stroke-linecap="round"
         stroke-linejoin="round"
@@ -76,34 +62,26 @@ export function TodoViewer({ todos, className }: TodoViewerProps) {
   const totalCount = todos.length;
 
   return (
-    <div
-      class={cn(
-        'rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700',
-        className
-      )}
-    >
-      <div class="bg-gray-100 dark:bg-gray-800 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-        <div class="text-xs font-semibold text-gray-700 dark:text-gray-300">Task List</div>
-        <div class="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+    <div class={cn('rounded-lg overflow-hidden border border-line', className)}>
+      <div class="bg-surface-raised px-3 py-2 border-b border-line flex items-center justify-between">
+        <div class="text-xs font-semibold text-fg-soft">Task List</div>
+        <div class="text-xs px-2 py-0.5 rounded bg-fill-strong text-fg-muted">
           {completedCount}/{totalCount}
         </div>
       </div>
 
-      <div class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+      <div class="bg-surface divide-y divide-line">
         {todos.map((todo, idx) => {
           const bgClass =
             todo.status === 'completed'
-              ? 'bg-green-50/50 dark:bg-green-900/10'
+              ? 'bg-success/10'
               : todo.status === 'in_progress'
-                ? 'bg-blue-50/50 dark:bg-blue-900/10'
-                : 'bg-white dark:bg-gray-900';
+                ? 'bg-accent/10'
+                : 'bg-surface';
 
-          const textClass =
-            todo.status === 'completed'
-              ? 'text-gray-500 dark:text-gray-400 line-through'
-              : 'text-gray-900 dark:text-gray-100';
+          const textClass = todo.status === 'completed' ? 'text-fg-muted line-through' : 'text-fg';
 
-          const activeFormClass = 'text-gray-600 dark:text-gray-400 italic text-xs mt-1';
+          const activeFormClass = 'text-fg-muted italic text-xs mt-1';
 
           return (
             <div
@@ -123,17 +101,17 @@ export function TodoViewer({ todos, className }: TodoViewerProps) {
 
               <div class="flex-shrink-0">
                 {todo.status === 'completed' && (
-                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 dark:bg-green-900/30 text-success-soft">
                     Done
                   </span>
                 )}
                 {todo.status === 'in_progress' && (
-                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-accent/15 text-accent-soft">
                     In Progress
                   </span>
                 )}
                 {todo.status === 'pending' && (
-                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-surface-raised text-fg-muted">
                     Pending
                   </span>
                 )}
@@ -143,23 +121,23 @@ export function TodoViewer({ todos, className }: TodoViewerProps) {
         })}
       </div>
 
-      <div class="bg-gray-100 dark:bg-gray-800 px-3 py-1.5 border-t border-gray-200 dark:border-gray-700 flex gap-4 text-xs">
+      <div class="bg-surface-raised px-3 py-1.5 border-t border-line flex gap-4 text-xs">
         {completedCount > 0 && (
           <div class="flex items-center gap-1">
-            <span class="w-2 h-2 rounded-full bg-green-600 dark:bg-green-400"></span>
-            <span class="text-gray-700 dark:text-gray-300">{completedCount} completed</span>
+            <span class="w-2 h-2 rounded-full bg-success"></span>
+            <span class="text-fg-soft">{completedCount} completed</span>
           </div>
         )}
         {inProgressCount > 0 && (
           <div class="flex items-center gap-1">
-            <span class="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400"></span>
-            <span class="text-gray-700 dark:text-gray-300">{inProgressCount} in progress</span>
+            <span class="w-2 h-2 rounded-full bg-accent-hover"></span>
+            <span class="text-fg-soft">{inProgressCount} in progress</span>
           </div>
         )}
         {pendingCount > 0 && (
           <div class="flex items-center gap-1">
-            <span class="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500"></span>
-            <span class="text-gray-700 dark:text-gray-300">{pendingCount} pending</span>
+            <span class="w-2 h-2 rounded-full bg-fg-muted"></span>
+            <span class="text-fg-soft">{pendingCount} pending</span>
           </div>
         )}
       </div>

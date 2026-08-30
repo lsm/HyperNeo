@@ -4,13 +4,13 @@ import { cn } from '../../lib/utils';
 export type DeliveryBadgeState = MessageDeliveryStatus | ActorMessageDeliveryState;
 
 const DELIVERY_STATE_CLASSES: Record<DeliveryBadgeState, string> = {
-  queued: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
-  processing: 'border-sky-500/40 bg-sky-500/10 text-sky-200',
-  retrying: 'border-orange-500/50 bg-orange-500/15 text-orange-200',
-  delivered: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
-  failed: 'border-red-500/45 bg-red-500/10 text-red-200',
-  expired: 'border-red-500/45 bg-red-500/10 text-red-200',
-  skipped: 'border-gray-500/40 bg-gray-500/10 text-gray-300',
+  queued: 'border-warning/40 bg-warning/10 text-warning-soft',
+  processing: 'border-sky-500/40 bg-sky-500/10 text-info-soft',
+  retrying: 'border-orange-500/50 bg-warning/15 text-warning-soft',
+  delivered: 'border-success/40 bg-success/10 text-success-soft',
+  failed: 'border-danger/45 bg-danger/10 text-danger-soft',
+  expired: 'border-danger/45 bg-danger/10 text-danger-soft',
+  skipped: 'border-fg-faint/40 bg-fg-faint/10 text-fg-soft',
 };
 
 interface DeliveryStateBadgeProps {

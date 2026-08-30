@@ -457,7 +457,7 @@ describe('SDKAssistantMessage', () => {
       const message = createErrorMessage();
       const { container } = render(<SDKAssistantMessage message={message} />);
 
-      expect(container.querySelector('.bg-red-50, .dark\\:bg-red-900\\/20')).toBeTruthy();
+      expect(container.querySelector('.bg-danger\\/10')).toBeTruthy();
     });
 
     it('should show API Error label', () => {
@@ -504,7 +504,7 @@ describe('SDKAssistantMessage', () => {
         expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
         const copiedButton = container.querySelector('button[title="Copied!"]');
         expect(copiedButton).toBeTruthy();
-        expect(copiedButton?.className).toContain('text-green-400');
+        expect(copiedButton?.className).toContain('text-success');
       });
     });
 

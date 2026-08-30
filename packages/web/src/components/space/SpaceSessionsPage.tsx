@@ -9,11 +9,6 @@ import {
   syncSpaceSessionSeen,
 } from '../../lib/space-unread';
 import { getRelativeTime } from '../../lib/utils';
-import {
-  FLAT_SURFACE,
-  GLASS_CONTENT_CONTAINER_CLASS,
-  GLASS_PRIMARY_BUTTON_CLASS,
-} from './glass-workspace';
 
 const SESSION_PAGE_SIZE = 10;
 
@@ -40,12 +35,12 @@ interface RuntimeGroupDef {
 }
 
 const RUNTIME_GROUPS: RuntimeGroupDef[] = [
-  { key: 'waiting', title: 'Waiting for input', accent: 'bg-amber-300/80' },
+  { key: 'waiting', title: 'Waiting for input', accent: 'bg-warning/80' },
   { key: 'idle-unread', title: 'Unread', accent: 'bg-sky-300/80' },
   { key: 'error', title: 'Error', accent: 'bg-red-300/80' },
-  { key: 'running', title: 'Running', accent: 'bg-emerald-300/80' },
+  { key: 'running', title: 'Running', accent: 'bg-success-soft/80' },
   { key: 'rate-limited', title: 'Rate Limited', accent: 'bg-orange-300/80' },
-  { key: 'idle-read', title: 'Idle', accent: 'bg-gray-400/80' },
+  { key: 'idle-read', title: 'Idle', accent: 'bg-fg-muted/80' },
 ];
 
 const RUNNING_LABELS: Record<string, string> = {
@@ -110,11 +105,11 @@ function GroupShell({
     <section class="space-y-2" aria-labelledby={headingId} data-testid="session-group">
       <div class="flex items-center gap-2 px-1">
         <span class={`h-1.5 w-1.5 rounded-full ${accent}`} aria-hidden="true" />
-        <h3 id={headingId} class="text-xs font-semibold uppercase tracking-[0.14em] text-gray-300">
+        <h3 id={headingId} class="text-xs font-semibold uppercase tracking-[0.14em] text-fg-soft">
           {title} ({count})
         </h3>
       </div>
-      <div class={`overflow-hidden rounded-2xl border ${FLAT_SURFACE}`}>{children}</div>
+      <div class={`overflow-hidden rounded-2xl border flat-surface`}>{children}</div>
     </section>
   );
 }
@@ -139,17 +134,17 @@ function PaginatedSessionGroup({
   const displayed = sessions.slice(start, start + SESSION_PAGE_SIZE);
   const end = start + displayed.length;
   const buttonClass =
-    'rounded-lg px-2.5 py-1 text-xs text-gray-300 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/50 disabled:cursor-not-allowed disabled:opacity-40';
+    'rounded-lg px-2.5 py-1 text-xs text-fg-soft transition hover:bg-fill focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50 disabled:cursor-not-allowed disabled:opacity-40';
 
   return (
     <GroupShell title={group.title} count={sessions.length} accent={group.accent}>
-      <div class="divide-y divide-white/10">
+      <div class="divide-y divide-line">
         {displayed.map((session) => (
           <SessionItem key={session.session.id} classified={session} spaceId={spaceId} />
         ))}
       </div>
       {totalPages > 1 && (
-        <div class="flex items-center justify-between border-t border-white/10 bg-black/10 px-4 py-2">
+        <div class="flex items-center justify-between border-t border-line bg-scrim-soft px-4 py-2">
           <button
             type="button"
             onClick={() => setPage((current) => Math.max(0, current - 1))}
@@ -159,7 +154,7 @@ function PaginatedSessionGroup({
           >
             ← Prev
           </button>
-          <span class="text-xs text-gray-400" aria-live="polite">
+          <span class="text-xs text-fg-muted" aria-live="polite">
             Showing {start + 1}–{end} of {sessions.length}
           </span>
           <button
@@ -182,31 +177,31 @@ function SessionItem({ classified, spaceId }: { classified: ClassifiedSession; s
   const title = session.title || session.id;
   const runtimeTone =
     runtimeKind === 'waiting'
-      ? 'text-amber-200'
+      ? 'text-warning-soft'
       : runtimeKind === 'error'
-        ? 'text-red-300'
+        ? 'text-danger-soft'
         : runtimeKind === 'running'
-          ? 'text-emerald-200'
+          ? 'text-success-soft'
           : runtimeKind === 'rate-limited'
-            ? 'text-orange-200'
+            ? 'text-warning-soft'
             : unreadCount > 0
-              ? 'text-sky-200'
-              : 'text-gray-400';
+              ? 'text-info-soft'
+              : 'text-fg-muted';
 
   return (
     <button
       type="button"
-      class="group/open flex w-full items-start justify-between gap-3 px-5 py-4 text-left transition hover:bg-white/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-200/55"
+      class="group/open flex w-full items-start justify-between gap-3 px-5 py-4 text-left transition hover:bg-fill-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-warning/55"
       onClick={() => navigateToSpaceSession(spaceId, session.id)}
       aria-label={`Open session ${title}, ${runtimeLabel}${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
       data-testid="space-session-item"
     >
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
-          <h4 class="truncate text-[15px] font-semibold text-gray-50">{title}</h4>
+          <h4 class="truncate text-[15px] font-semibold text-fg">{title}</h4>
           {unreadCount > 0 && (
             <span
-              class="inline-flex min-w-5 shrink-0 items-center justify-center rounded-md bg-sky-400/15 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-sky-200"
+              class="inline-flex min-w-5 shrink-0 items-center justify-center rounded-md bg-sky-400/15 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-info-soft"
               aria-label={`${unreadCount} unread messages`}
             >
               {unreadCount}
@@ -216,12 +211,12 @@ function SessionItem({ classified, spaceId }: { classified: ClassifiedSession; s
         <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
           <span class={runtimeTone}>{runtimeLabel}</span>
           {session.lastActiveAt > 0 && (
-            <span class="text-gray-500">Updated {getRelativeTime(session.lastActiveAt)}</span>
+            <span class="text-fg-faint">Updated {getRelativeTime(session.lastActiveAt)}</span>
           )}
         </div>
       </div>
       <svg
-        class="mt-1 h-4 w-4 shrink-0 text-gray-600 transition group-hover/open:translate-x-0.5 group-hover/open:text-gray-300"
+        class="mt-1 h-4 w-4 shrink-0 text-fg-faint transition group-hover/open:translate-x-0.5 group-hover/open:text-fg-soft"
         viewBox="0 0 20 20"
         fill="currentColor"
         aria-hidden="true"
@@ -279,40 +274,40 @@ export function SpaceSessionsPage({
 
   return (
     <div class="flex-1 min-h-0 w-full overflow-y-auto">
-      <div class={`${GLASS_CONTENT_CONTAINER_CLASS} min-h-[calc(100%+1px)] space-y-4`}>
+      <div class={`glass-content-container min-h-[calc(100%+1px)] space-y-4`}>
         <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/80">
+            <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-warning-soft/80">
               Working conversations
             </p>
-            <p class="mt-1 text-sm text-gray-400">
+            <p class="mt-1 text-sm text-fg-muted">
               Resume running work, review unread output, or return to an idle session.
             </p>
           </div>
-          <p class="text-xs tabular-nums text-gray-500">
+          <p class="text-xs tabular-nums text-fg-faint">
             {sessions.length} {sessions.length === 1 ? 'session' : 'sessions'} tracked
           </p>
         </div>
 
         {sessions.length === 0 ? (
           <div
-            class={`flex min-h-52 flex-col items-center justify-center rounded-2xl border px-6 py-10 text-center ${FLAT_SURFACE}`}
+            class={`flex min-h-52 flex-col items-center justify-center rounded-2xl border px-6 py-10 text-center flat-surface`}
             role="status"
           >
             <span
-              class="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-gray-400"
+              class="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-fill-soft text-fg-muted"
               aria-hidden="true"
             >
               ◇
             </span>
-            <p class="text-sm font-semibold text-gray-100">No sessions yet</p>
-            <p class="mt-1 text-xs leading-5 text-gray-400">
+            <p class="text-sm font-semibold text-fg">No sessions yet</p>
+            <p class="mt-1 text-xs leading-5 text-fg-muted">
               Create a session to begin a focused conversation in this space.
             </p>
             {onCreateSession && (
               <button
                 type="button"
-                class={`${GLASS_PRIMARY_BUTTON_CLASS} mt-5`}
+                class={`glass-primary-button mt-5`}
                 onClick={onCreateSession}
                 disabled={creatingSession}
               >

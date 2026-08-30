@@ -3,7 +3,6 @@ import { useRef } from 'preact/hooks';
 import type { ModelInfo, SessionFeatures } from '@hyperneo/shared';
 import { DEFAULT_WORKER_FEATURES } from '@hyperneo/shared';
 import { cn } from '../lib/utils';
-import { borderColors } from '../lib/design-tokens';
 import { useClickOutside } from '../hooks/useClickOutside';
 
 export interface InputActionsMenuProps {
@@ -100,10 +99,10 @@ export function InputActionsMenu({
         }}
         class={cn(
           'w-[46px] h-[46px] rounded-full flex items-center justify-center transition-all',
-          `bg-dark-700/80 border ${borderColors.ui.secondary}`,
+          `bg-fill-strong/80 border border-line-strong`,
           disabled
-            ? 'opacity-50 cursor-not-allowed text-gray-500'
-            : 'text-gray-300 hover:bg-dark-600 hover:text-white active:scale-95'
+            ? 'opacity-50 cursor-not-allowed text-fg-faint'
+            : 'text-fg-soft hover:bg-line-strong hover:text-fg active:scale-95'
         )}
         title={disabled ? 'Not connected' : 'More options'}
       >
@@ -121,16 +120,16 @@ export function InputActionsMenu({
       {isOpen && (
         <div
           ref={menuRef}
-          class={`absolute bottom-full left-0 mb-2 bg-dark-800 border ${borderColors.ui.secondary} rounded-xl shadow-2xl overflow-hidden animate-slideIn min-w-[220px] z-50`}
+          class="absolute bottom-full left-0 mb-2 bg-surface-raised border border-line-strong rounded-xl shadow-2xl overflow-hidden animate-slideIn min-w-[220px] z-50"
         >
           <button
             type="button"
             onClick={handleAutoScrollToggle}
-            class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-gray-200 hover:bg-dark-700/50"
+            class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-fg-soft hover:bg-fill-strong/50"
           >
             <span class="flex items-center gap-3">
               <svg
-                class={cn('w-5 h-5', autoScroll ? 'text-blue-400' : 'text-gray-400')}
+                class={cn('w-5 h-5', autoScroll ? 'text-accent' : 'text-fg-muted')}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -146,7 +145,7 @@ export function InputActionsMenu({
             </span>
             {autoScroll && (
               <svg
-                class="w-4 h-4 text-blue-400"
+                class="w-4 h-4 text-accent"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -166,11 +165,11 @@ export function InputActionsMenu({
               type="button"
               onClick={handleCoordinatorToggle}
               disabled={coordinatorSwitching || modelSwitching}
-              class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-gray-200 hover:bg-dark-700/50 disabled:opacity-50"
+              class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-fg-soft hover:bg-fill-strong/50 disabled:opacity-50"
             >
               <span class="flex items-center gap-3">
                 <svg
-                  class={cn('w-5 h-5', coordinatorMode ? 'text-purple-400' : 'text-gray-400')}
+                  class={cn('w-5 h-5', coordinatorMode ? 'text-cat-purple' : 'text-fg-muted')}
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -186,7 +185,7 @@ export function InputActionsMenu({
               </span>
               {coordinatorMode && (
                 <svg
-                  class="w-4 h-4 text-purple-400"
+                  class="w-4 h-4 text-cat-purple"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -207,11 +206,11 @@ export function InputActionsMenu({
               type="button"
               onClick={handleSandboxToggle}
               disabled={sandboxSwitching || modelSwitching}
-              class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-gray-200 hover:bg-dark-700/50 disabled:opacity-50"
+              class="w-full px-4 py-3 text-left flex items-center justify-between transition-colors text-fg-soft hover:bg-fill-strong/50 disabled:opacity-50"
             >
               <span class="flex items-center gap-3">
                 <svg
-                  class={cn('w-5 h-5', sandboxEnabled ? 'text-green-400' : 'text-gray-400')}
+                  class={cn('w-5 h-5', sandboxEnabled ? 'text-success' : 'text-fg-muted')}
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -227,7 +226,7 @@ export function InputActionsMenu({
               </span>
               {sandboxEnabled && (
                 <svg
-                  class="w-4 h-4 text-green-400"
+                  class="w-4 h-4 text-success"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -243,19 +242,14 @@ export function InputActionsMenu({
             </button>
           )}
 
-          <div class="h-px bg-dark-600" />
+          <div class="h-px bg-line-strong" />
 
           <button
             type="button"
             onClick={handleToolsClick}
-            class="w-full px-4 py-3 text-left flex items-center gap-3 transition-colors text-gray-200 hover:bg-dark-700/50"
+            class="w-full px-4 py-3 text-left flex items-center gap-3 transition-colors text-fg-soft hover:bg-fill-strong/50"
           >
-            <svg
-              class="w-5 h-5 text-orange-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
+            <svg class="w-5 h-5 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 stroke-linecap="round"
                 stroke-linejoin="round"
@@ -272,19 +266,19 @@ export function InputActionsMenu({
             <span class="text-sm">Tools</span>
           </button>
 
-          <div class="h-px bg-dark-600" />
+          <div class="h-px bg-line-strong" />
 
           <button
             type="button"
             onClick={handleAttachClick}
             disabled={disabled}
             class={cn(
-              'w-full px-4 py-3 text-left flex items-center gap-3 transition-colors text-gray-200 hover:bg-dark-700/50',
+              'w-full px-4 py-3 text-left flex items-center gap-3 transition-colors text-fg-soft hover:bg-fill-strong/50',
               disabled && 'opacity-50 cursor-not-allowed'
             )}
           >
             <svg
-              class="w-5 h-5 text-gray-400"
+              class="w-5 h-5 text-fg-muted"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"

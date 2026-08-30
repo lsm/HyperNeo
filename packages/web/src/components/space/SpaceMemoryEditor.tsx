@@ -125,7 +125,7 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
     >
       <div class="space-y-4">
         <div>
-          <label class="mb-1 block text-xs font-medium text-gray-300" htmlFor="memory-key">
+          <label class="mb-1 block text-xs font-medium text-fg-soft" htmlFor="memory-key">
             Key
           </label>
           <input
@@ -136,23 +136,23 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
             disabled={isEditing || saving}
             maxLength={KEY_MAX_LENGTH}
             placeholder="unique-key"
-            class="w-full rounded-lg border border-white/10 bg-dark-950 px-3 py-2 font-mono text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none disabled:opacity-60"
+            class="w-full rounded-lg border border-line bg-bg px-3 py-2 font-mono text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none disabled:opacity-60"
             data-testid="memory-key-input"
           />
-          <p class="mt-1 text-xs text-gray-600">
+          <p class="mt-1 text-xs text-fg-faint">
             {isEditing
               ? 'Key cannot be changed — delete and recreate to rename.'
               : 'A short, unique identifier for this memory within the space.'}
           </p>
           {duplicateKey && (
-            <p class="mt-1 text-xs text-amber-300" data-testid="memory-duplicate-key-warning">
+            <p class="mt-1 text-xs text-warning" data-testid="memory-duplicate-key-warning">
               A memory with this key already exists — edit it instead, or choose a different key.
             </p>
           )}
         </div>
 
         <div>
-          <label class="mb-1 block text-xs font-medium text-gray-300" htmlFor="memory-content">
+          <label class="mb-1 block text-xs font-medium text-fg-soft" htmlFor="memory-content">
             Content
           </label>
           <textarea
@@ -163,16 +163,16 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
             maxLength={CONTENT_MAX_LENGTH}
             rows={6}
             placeholder="The fact, convention, or decision to remember…"
-            class="w-full resize-y rounded-lg border border-white/10 bg-dark-950 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            class="w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
             data-testid="memory-content-input"
           />
-          <p class="mt-1 text-right text-xs text-gray-600">
+          <p class="mt-1 text-right text-xs text-fg-faint">
             {content.length}/{CONTENT_MAX_LENGTH}
           </p>
         </div>
 
         <div>
-          <label class="mb-1 block text-xs font-medium text-gray-300" htmlFor="memory-tags">
+          <label class="mb-1 block text-xs font-medium text-fg-soft" htmlFor="memory-tags">
             Tags
           </label>
           <input
@@ -182,15 +182,15 @@ export function SpaceMemoryEditor({ memory, existingKeys, onClose }: SpaceMemory
             onInput={(e) => setTagsInput((e.target as HTMLInputElement).value)}
             disabled={saving}
             placeholder="convention, feedback, project"
-            class="w-full rounded-lg border border-white/10 bg-dark-950 px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:border-blue-500 focus:outline-none"
+            class="w-full rounded-lg border border-line bg-bg px-3 py-2 text-sm text-fg placeholder-gray-600 focus:border-accent focus:outline-none"
             data-testid="memory-tags-input"
           />
-          <p class="mt-1 text-xs text-gray-600">Comma-separated keywords that improve retrieval.</p>
+          <p class="mt-1 text-xs text-fg-faint">Comma-separated keywords that improve retrieval.</p>
         </div>
 
         {error && (
           <p
-            class="rounded-lg border border-red-800/50 bg-red-900/20 px-3 py-2 text-sm text-red-400"
+            class="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger-soft"
             data-testid="memory-editor-error"
           >
             {error}

@@ -11,23 +11,23 @@ export interface MentionTokenProps {
 
 const TYPE_STYLES: Record<ReferenceType, { container: string; icon: string; label: string }> = {
   task: {
-    container: 'bg-blue-500/15 text-blue-300 hover:bg-blue-500/25',
-    icon: 'w-3 h-3 text-blue-400',
+    container: 'bg-accent/15 text-accent-soft hover:bg-accent/25',
+    icon: 'w-3 h-3 text-accent',
     label: 'task',
   },
   goal: {
-    container: 'bg-purple-500/15 text-purple-300 hover:bg-purple-500/25',
-    icon: 'w-3 h-3 text-purple-400',
+    container: 'bg-cat-purple/15 text-cat-purple hover:bg-cat-purple/25',
+    icon: 'w-3 h-3 text-cat-purple',
     label: 'goal',
   },
   file: {
-    container: 'bg-green-500/15 text-green-300 hover:bg-green-500/25',
-    icon: 'w-3 h-3 text-green-400',
+    container: 'bg-success/15 text-success-soft hover:bg-success/25',
+    icon: 'w-3 h-3 text-success',
     label: 'file',
   },
   folder: {
-    container: 'bg-yellow-500/15 text-yellow-300 hover:bg-yellow-500/25',
-    icon: 'w-3 h-3 text-yellow-400',
+    container: 'bg-warning/15 text-warning-soft hover:bg-warning/25',
+    icon: 'w-3 h-3 text-warning',
     label: 'folder',
   },
 };
@@ -81,15 +81,15 @@ export default function MentionToken({ mention, metadata, onClick }: MentionToke
           role="tooltip"
           class={cn(
             'absolute z-50 bottom-full left-0 mb-1.5',
-            'bg-dark-800 border border-gray-700 rounded-lg shadow-xl',
-            'px-3 py-2 text-xs text-gray-200 whitespace-nowrap',
+            'bg-surface-raised border border-line rounded-lg shadow-xl',
+            'px-3 py-2 text-xs text-fg-soft whitespace-nowrap',
             'pointer-events-none'
           )}
         >
           <span class="flex flex-col gap-0.5 min-w-0">
-            <span class="font-medium text-gray-100">{displayText}</span>
-            {status && <span class="text-gray-400">{status}</span>}
-            <span class="text-gray-500">
+            <span class="font-medium text-fg">{displayText}</span>
+            {status && <span class="text-fg-muted">{status}</span>}
+            <span class="text-fg-faint">
               {mention.type}: {mention.id}
             </span>
           </span>

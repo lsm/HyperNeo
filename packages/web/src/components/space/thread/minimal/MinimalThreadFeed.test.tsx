@@ -650,9 +650,9 @@ describe('MinimalThreadFeed', () => {
     render(<MinimalThreadFeed parsedRows={rows} />);
     const bubble = screen.getByTestId('minimal-thread-agent-bubble');
     expect(bubble.getAttribute('data-has-error')).toBe('true');
-    expect(bubble.className).toContain('border-red-800');
-    expect(bubble.className).toContain('bg-red-900');
-    expect(bubble.className).not.toContain('bg-dark-800');
+    expect(bubble.className).toContain('border-danger');
+    expect(bubble.className).toContain('bg-danger');
+    expect(bubble.className).not.toContain('bg-surface-raised');
     expect(bubble.textContent).toContain('API Error');
     await waitFor(() => {
       expect(screen.getByTestId('md').textContent).toContain('API Error: 400');
@@ -680,7 +680,7 @@ describe('MinimalThreadFeed', () => {
     const bubble = screen.getByTestId('minimal-thread-agent-bubble');
     expect(bubble.getAttribute('data-has-error')).toBeNull();
     expect(bubble.className).not.toContain('border-red');
-    expect(bubble.className).toContain('bg-dark-800');
+    expect(bubble.className).toContain('bg-surface-raised');
     expect(bubble.textContent).not.toContain('API Error');
     await waitFor(() => {
       expect(screen.getByText('all good')).toBeTruthy();
@@ -713,7 +713,7 @@ describe('MinimalThreadFeed', () => {
     render(<MinimalThreadFeed parsedRows={rows} />);
     const bubble = screen.getByTestId('minimal-thread-agent-bubble');
     expect(bubble.getAttribute('data-has-error')).toBeNull();
-    expect(bubble.className).toContain('bg-dark-800');
+    expect(bubble.className).toContain('bg-surface-raised');
     expect(bubble.className).not.toContain('border-red');
     await waitFor(() => {
       expect(screen.getByText('Recovered — here is the fix')).toBeTruthy();
@@ -2807,7 +2807,7 @@ describe('MinimalThreadFeed', () => {
       const { container } = render(<MinimalThreadFeed parsedRows={rows} />);
       const trigger = container.querySelector('button[title="Run result"]');
       expect(trigger).not.toBeNull();
-      expect(trigger?.className).toMatch(/amber/);
+      expect(trigger?.className).toMatch(/warning/);
     });
   });
 
@@ -2833,8 +2833,8 @@ describe('MinimalThreadFeed', () => {
       const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
       expect(bubble).not.toBeNull();
       expect(bubble?.getAttribute('data-result-error')).toBe('true');
-      expect(bubble?.className).toMatch(/bg-red-900\/20/);
-      expect(bubble?.className).toMatch(/border-red-800/);
+      expect(bubble?.className).toMatch(/bg-danger\/20/);
+      expect(bubble?.className).toMatch(/border-danger/);
       const summary = container.querySelector(
         '[data-testid="minimal-thread-result-error-summary"]'
       );
@@ -2863,7 +2863,7 @@ describe('MinimalThreadFeed', () => {
       const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
       expect(bubble).not.toBeNull();
       expect(bubble?.getAttribute('data-result-error')).toBeNull();
-      expect(bubble?.className).not.toMatch(/bg-red-900/);
+      expect(bubble?.className).not.toMatch(/bg-danger/);
       expect(
         container.querySelector('[data-testid="minimal-thread-result-error-summary"]')
       ).toBeNull();
@@ -2891,7 +2891,7 @@ describe('MinimalThreadFeed', () => {
       const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
       expect(bubble).not.toBeNull();
       expect(bubble?.getAttribute('data-result-error')).toBeNull();
-      expect(bubble?.className).toMatch(/bg-dark-800/);
+      expect(bubble?.className).toMatch(/bg-surface-raised/);
       expect(
         container.querySelector('[data-testid="minimal-thread-result-error-summary"]')
       ).toBeNull();
@@ -2972,7 +2972,7 @@ describe('MinimalThreadFeed', () => {
       const bubble = container.querySelector('[data-testid="minimal-thread-agent-bubble"]');
       expect(bubble).not.toBeNull();
       expect(bubble?.getAttribute('data-result-error')).toBeNull();
-      expect(bubble?.className).not.toMatch(/bg-red-900/);
+      expect(bubble?.className).not.toMatch(/bg-danger/);
       expect(container.querySelector('button[title="Run result"]')).not.toBeNull();
     });
 

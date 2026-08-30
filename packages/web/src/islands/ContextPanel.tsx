@@ -22,7 +22,6 @@ import {
   navigateToSpaceMemories,
   navigateToSpaceTasks,
 } from '../lib/router.ts';
-import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
@@ -37,20 +36,26 @@ const SETTINGS_SECTIONS: Array<{
   icon: string;
   accent: string;
 }> = [
-  { id: 'general', label: 'General', icon: 'settings', accent: 'text-blue-300 bg-blue-500/15' },
-  { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-sky-300 bg-sky-500/15' },
-  { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-rose-300 bg-rose-500/15' },
+  { id: 'general', label: 'General', icon: 'settings', accent: 'text-accent-soft bg-accent/15' },
+  {
+    id: 'appearance',
+    label: 'Appearance',
+    icon: 'palette',
+    accent: 'text-cat-purple bg-cat-purple/15',
+  },
+  { id: 'providers', label: 'Providers', icon: 'cloud', accent: 'text-info-soft bg-sky-500/15' },
+  { id: 'voice', label: 'Voice', icon: 'mic', accent: 'text-cat-rose bg-rose-500/15' },
   {
     id: 'app-mcp-servers',
     label: 'MCP Servers',
     icon: 'server',
-    accent: 'text-violet-300 bg-violet-500/15',
+    accent: 'text-cat-violet bg-cat-violet/15',
   },
-  { id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-emerald-300 bg-emerald-500/15' },
-  { id: 'models', label: 'Models', icon: 'swap', accent: 'text-cyan-300 bg-cyan-500/15' },
-  { id: 'usage', label: 'Usage', icon: 'chart', accent: 'text-amber-300 bg-amber-500/15' },
-  { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', accent: 'text-pink-300 bg-pink-500/15' },
-  { id: 'about', label: 'About', icon: 'info', accent: 'text-gray-300 bg-white/10' },
+  { id: 'skills', label: 'Skills', icon: 'skills', accent: 'text-success-soft bg-success/15' },
+  { id: 'models', label: 'Models', icon: 'swap', accent: 'text-cat-cyan bg-cat-cyan/15' },
+  { id: 'usage', label: 'Usage', icon: 'chart', accent: 'text-warning bg-warning/15' },
+  { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard', accent: 'text-cat-pink bg-pink-500/15' },
+  { id: 'about', label: 'About', icon: 'info', accent: 'text-fg-soft bg-fill' },
 ];
 
 function SectionIcon({ type }: { type: string }) {
@@ -171,6 +176,17 @@ function SectionIcon({ type }: { type: string }) {
           />
         </svg>
       );
+    case 'palette':
+      return (
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M12 3a9 9 0 100 18c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16a5 5 0 005-5c0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"
+          />
+        </svg>
+      );
     default:
       return null;
   }
@@ -252,7 +268,7 @@ export function ContextPanel() {
       {activeSpaces.length === 0 ? (
         <div class="px-4 py-8 text-center">
           <svg
-            class="w-10 h-10 mx-auto text-gray-400 mb-3"
+            class="w-10 h-10 mx-auto text-fg-muted mb-3"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -264,8 +280,8 @@ export function ContextPanel() {
               d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
             />
           </svg>
-          <p class="text-sm font-medium text-gray-300">No spaces yet</p>
-          <p class="text-xs text-gray-400 mt-1">
+          <p class="text-sm font-medium text-fg-soft">No spaces yet</p>
+          <p class="text-xs text-fg-muted mt-1">
             Create a Space to organize agents, missions, and project context.
           </p>
         </div>
@@ -282,12 +298,12 @@ export function ContextPanel() {
                 class={cn(
                   'w-full rounded-lg px-3 py-3 flex items-center gap-3 text-left transition-colors',
                   isCurrent
-                    ? 'bg-white/10 border border-transparent text-gray-100'
-                    : 'border border-transparent text-gray-400 hover:bg-white/5 hover:text-gray-100'
+                    ? 'bg-fill border border-transparent text-fg'
+                    : 'border border-transparent text-fg-muted hover:bg-fill-soft hover:text-fg'
                 )}
               >
                 <svg
-                  class="w-5 h-5 flex-shrink-0 text-gray-400"
+                  class="w-5 h-5 flex-shrink-0 text-fg-muted"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -302,12 +318,12 @@ export function ContextPanel() {
                 <div class="min-w-0 flex-1">
                   <div class="text-sm font-medium truncate">{space.name}</div>
                   {space.description && (
-                    <div class="text-xs text-gray-400 truncate mt-0.5">{space.description}</div>
+                    <div class="text-xs text-fg-muted truncate mt-0.5">{space.description}</div>
                   )}
                 </div>
                 {isCurrent && (
                   <svg
-                    class="w-4 h-4 text-gray-300 flex-shrink-0"
+                    class="w-4 h-4 text-fg-soft flex-shrink-0"
                     fill="none"
                     viewBox="0 0 24 24"
                     stroke="currentColor"
@@ -329,7 +345,7 @@ export function ContextPanel() {
         <button
           type="button"
           onClick={handleCreateSpace}
-          class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-dark-600 hover:border-dark-500 hover:bg-white/5 text-sm text-gray-400 hover:text-gray-100 transition-colors"
+          class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-line-strong hover:border-line-strong hover:bg-fill-soft text-sm text-fg-muted hover:text-fg transition-colors"
         >
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -381,13 +397,11 @@ export function ContextPanel() {
         </div>
 
         {isSpaceDetail && (
-          <div
-            class={`hidden h-9 items-center gap-1 border-b px-4 md:flex ${borderColors.ui.default}`}
-          >
+          <div class="hidden h-9 items-center gap-1 border-b px-4 md:flex border-line">
             <button
               type="button"
               onClick={() => navigateToSpaces()}
-              class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"
+              class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-fill-soft hover:text-fg"
               title="Back to Spaces"
               aria-label="Back to Spaces"
             >
@@ -400,17 +414,15 @@ export function ContextPanel() {
                 />
               </svg>
             </button>
-            <h2 class="min-w-0 flex-1 text-sm font-semibold text-gray-100 truncate">
-              {headerTitle}
-            </h2>
+            <h2 class="min-w-0 flex-1 text-sm font-semibold text-fg truncate">{headerTitle}</h2>
             <button
               type="button"
               onClick={() => navigateToSpaceConfigure(currentSpaceId!)}
               class={cn(
                 'ml-1 p-1.5 rounded-lg transition-colors flex-shrink-0',
                 currentSpaceViewMode === 'configure'
-                  ? 'bg-white/10 text-gray-100'
-                  : 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
+                  ? 'bg-fill text-fg'
+                  : 'text-fg-muted hover:bg-fill-soft hover:text-fg'
               )}
               title="Configure space"
               aria-label="Configure space"
@@ -450,7 +462,7 @@ export function ContextPanel() {
                     navigateToSpaces();
                     contextPanelOpenSignal.value = false;
                   }}
-                  class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg w-full text-sm text-gray-400 hover:text-gray-100 hover:bg-white/5 transition-colors"
+                  class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg w-full text-sm text-fg-muted hover:text-fg hover:bg-fill-soft transition-colors"
                 >
                   <svg
                     class="w-4 h-4 flex-shrink-0"
@@ -477,7 +489,7 @@ export function ContextPanel() {
           )}
           {navSection === 'settings' && (
             <div class="flex-1 overflow-y-auto scrollbar-dark px-2 py-3">
-              <div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+              <div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-fg-muted">
                 Settings
               </div>
               <nav class="space-y-1" aria-label="Settings sections">
@@ -491,14 +503,14 @@ export function ContextPanel() {
                       class={cn(
                         'w-full rounded-lg px-2.5 py-2 flex items-center gap-2.5 text-left transition-colors duration-150',
                         isActive
-                          ? 'bg-white/10 text-gray-100'
-                          : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+                          ? 'bg-fill text-fg'
+                          : 'text-fg-muted hover:text-fg-soft hover:bg-fill-soft'
                       )}
                     >
                       <span
                         class={cn(
                           'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md',
-                          isActive ? section.accent : 'bg-white/[0.03] text-gray-400'
+                          isActive ? section.accent : 'bg-white/[0.03] text-fg-muted'
                         )}
                       >
                         <SectionIcon type={section.icon} />
@@ -512,17 +524,15 @@ export function ContextPanel() {
           )}
         </div>
 
-        <div
-          class={`flex h-[53px] flex-shrink-0 items-center gap-2 px-2 border-t ${borderColors.ui.default}`}
-        >
+        <div class="flex h-[53px] flex-shrink-0 items-center gap-2 px-2 border-t border-line">
           <button
             type="button"
             onClick={() => handleSettingsNav()}
             class={cn(
               'flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors',
               navSection === 'settings'
-                ? 'bg-white/10 text-gray-100'
-                : 'text-gray-400 hover:bg-white/5 hover:text-gray-100'
+                ? 'bg-fill text-fg'
+                : 'text-fg-muted hover:bg-fill-soft hover:text-fg'
             )}
           >
             <svg class="w-4 h-4 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor">

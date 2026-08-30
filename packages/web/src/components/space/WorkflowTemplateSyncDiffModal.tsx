@@ -58,17 +58,17 @@ export function WorkflowTemplateSyncDiffModal({ workflow, onClose, onApplied }: 
   return (
     <Modal isOpen onClose={onClose} title={`Review update — ${workflow.name}`} size="lg">
       <div class="space-y-4">
-        <p class="text-xs text-gray-500">
+        <p class="text-xs text-fg-faint">
           A newer version of the "{workflow.templateName}" template is available. Review what
           applying the update would change, then apply it.
         </p>
 
-        {loading && <p class="text-xs text-gray-600 animate-pulse">Loading diff...</p>}
+        {loading && <p class="text-xs text-fg-faint animate-pulse">Loading diff...</p>}
 
-        {loadError && <p class="text-xs text-red-400">Failed to load diff: {loadError}</p>}
+        {loadError && <p class="text-xs text-danger">Failed to load diff: {loadError}</p>}
 
         {preview && (
-          <p class="rounded-md border border-amber-500/20 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/90">
+          <p class="rounded-md border border-warning/20 bg-warning/[0.06] px-3 py-2 text-xs text-warning-soft/90">
             Applying overwrites the entire workflow structure — steps, instructions, channels, and
             per-step settings — with the current template.
             {preview.customized ? ' Local edits will be lost.' : ''}
@@ -76,7 +76,7 @@ export function WorkflowTemplateSyncDiffModal({ workflow, onClose, onApplied }: 
         )}
 
         {preview && !hasDiff(preview) && (
-          <p class="text-xs text-gray-400">
+          <p class="text-xs text-fg-muted">
             {preview.customized
               ? 'No description, instructions, or step-name changes to show — the local edits are in channels, hooks, or per-step prompts, all of which applying overwrites.'
               : `No field-level changes to show — applying only re-stamps the version (${preview.storedHash ? 'stale' : 'missing'} → current) so the badge clears.`}
@@ -129,7 +129,7 @@ export function WorkflowTemplateSyncDiffModal({ workflow, onClose, onApplied }: 
 function DiffSection({ label, children }: { label: string; children: preact.ComponentChildren }) {
   return (
     <div>
-      <p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400">{label}</p>
+      <p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-fg-muted">{label}</p>
       {children}
     </div>
   );
@@ -139,16 +139,18 @@ function BeforeAfter({ before, after }: { before: string; after: string }) {
   return (
     <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
       <div>
-        <p class="mb-1 text-[10px] font-medium uppercase tracking-wider text-red-300/80">Before</p>
-        <pre class="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/30 p-2 text-xs leading-5 text-gray-300">
+        <p class="mb-1 text-[10px] font-medium uppercase tracking-wider text-danger-soft/80">
+          Before
+        </p>
+        <pre class="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-scrim p-2 text-xs leading-5 text-fg-soft">
           {before || '(empty)'}
         </pre>
       </div>
       <div>
-        <p class="mb-1 text-[10px] font-medium uppercase tracking-wider text-emerald-300/80">
+        <p class="mb-1 text-[10px] font-medium uppercase tracking-wider text-success-soft/80">
           After
         </p>
-        <pre class="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/30 p-2 text-xs leading-5 text-gray-300">
+        <pre class="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-scrim p-2 text-xs leading-5 text-fg-soft">
           {after || '(empty)'}
         </pre>
       </div>
@@ -166,16 +168,16 @@ function NameDelta({
   return (
     <div class="space-y-2">
       <div class="flex flex-wrap gap-1.5">
-        <span class="text-[10px] font-medium uppercase tracking-wider text-emerald-300/80">
+        <span class="text-[10px] font-medium uppercase tracking-wider text-success-soft/80">
           Added:
         </span>
         {diff.added.length === 0 ? (
-          <span class="text-xs text-gray-600">none</span>
+          <span class="text-xs text-fg-faint">none</span>
         ) : (
           diff.added.map((name) => (
             <span
               key={`add-${name}`}
-              class="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-xs text-emerald-300"
+              class="rounded border border-success/30 bg-success/10 px-1.5 py-0.5 text-xs text-success-soft"
             >
               {name}
             </span>
@@ -183,23 +185,23 @@ function NameDelta({
         )}
       </div>
       <div class="flex flex-wrap gap-1.5">
-        <span class="text-[10px] font-medium uppercase tracking-wider text-red-300/80">
+        <span class="text-[10px] font-medium uppercase tracking-wider text-danger-soft/80">
           Removed:
         </span>
         {diff.removed.length === 0 ? (
-          <span class="text-xs text-gray-600">none</span>
+          <span class="text-xs text-fg-faint">none</span>
         ) : (
           diff.removed.map((name) => (
             <span
               key={`rm-${name}`}
-              class="rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-xs text-red-300"
+              class="rounded border border-danger/30 bg-danger/10 px-1.5 py-0.5 text-xs text-danger-soft"
             >
               {name}
             </span>
           ))
         )}
       </div>
-      <p class="text-[10px] text-gray-600">
+      <p class="text-[10px] text-fg-faint">
         Ordering and {singular} details are reconciled on apply.
       </p>
     </div>

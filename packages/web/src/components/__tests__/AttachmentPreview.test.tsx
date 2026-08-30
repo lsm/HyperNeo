@@ -168,7 +168,7 @@ describe('AttachmentPreview', () => {
       );
 
       const removeButton = container.querySelector('[aria-label="Remove attachment"]')!;
-      expect(removeButton.className).toContain('bg-red-600');
+      expect(removeButton.className).toContain('bg-danger');
     });
 
     it('should have hover effect on remove button', () => {
@@ -177,7 +177,7 @@ describe('AttachmentPreview', () => {
       );
 
       const removeButton = container.querySelector('[aria-label="Remove attachment"]')!;
-      expect(removeButton.className).toContain('hover:bg-red-700');
+      expect(removeButton.className).toContain('hover:bg-danger');
     });
 
     it('should have title attribute for accessibility', () => {
@@ -247,7 +247,7 @@ describe('AttachmentPreview', () => {
 
       const thumbnail = container.querySelector('.group');
       expect(thumbnail?.className).toContain('border');
-      expect(thumbnail?.className).toContain('border-gray-600');
+      expect(thumbnail?.className).toContain('border-line-strong');
     });
 
     it('should have hover border effect', () => {
@@ -256,7 +256,7 @@ describe('AttachmentPreview', () => {
       );
 
       const thumbnail = container.querySelector('.group');
-      expect(thumbnail?.className).toContain('hover:border-gray-500');
+      expect(thumbnail?.className).toContain('hover:border-fg-faint');
     });
   });
 

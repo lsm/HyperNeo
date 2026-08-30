@@ -31,25 +31,25 @@ describe('Button', () => {
     it('should render primary variant by default', () => {
       const { container } = render(<Button>Primary</Button>);
       const button = container.querySelector('button');
-      expect(button?.className).toContain('bg-blue-600');
+      expect(button?.className).toContain('bg-accent-hover');
     });
 
     it('should render secondary variant', () => {
       const { container } = render(<Button variant="secondary">Secondary</Button>);
       const button = container.querySelector('button');
-      expect(button?.className).toContain('bg-dark-800');
+      expect(button?.className).toContain('bg-surface-raised');
     });
 
     it('should render ghost variant', () => {
       const { container } = render(<Button variant="ghost">Ghost</Button>);
       const button = container.querySelector('button');
-      expect(button?.className).toContain('hover:bg-dark-800');
+      expect(button?.className).toContain('hover:bg-surface-raised');
     });
 
     it('should render danger variant', () => {
       const { container } = render(<Button variant="danger">Danger</Button>);
       const button = container.querySelector('button');
-      expect(button?.className).toContain('bg-red-600');
+      expect(button?.className).toContain('bg-danger');
     });
 
     it('should render approve variant with emerald background', () => {
@@ -57,14 +57,14 @@ describe('Button', () => {
       const button = container.querySelector('button');
       expect(button?.className).toContain('bg-emerald-600');
       expect(button?.className).toContain('hover:bg-emerald-700');
-      expect(button?.className).toContain('text-white');
+      expect(button?.className).toContain('text-accent-fg');
     });
 
     it('should render interrupt variant with amber outline', () => {
       const { container } = render(<Button variant="interrupt">Interrupt</Button>);
       const button = container.querySelector('button');
-      expect(button?.className).toContain('border-amber-500');
-      expect(button?.className).toContain('text-amber-500');
+      expect(button?.className).toContain('border-warning');
+      expect(button?.className).toContain('text-warning');
     });
   });
 
