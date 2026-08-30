@@ -1604,7 +1604,7 @@ describe('node-agent-tools: list_deliveries', () => {
     const event = makeGitHubEvent({ spaceId: ctx.spaceId });
     seedDelivery(store, event, { deliveryKey: 'dk-pending' });
     seedDelivery(store, event, { deliveryKey: 'dk-delivered' });
-    store.markDeliveryDelivered(event.id, 'dk-delivered');
+    store.markDeliveryMailboxAccepted(event.id, 'dk-delivered');
 
     const handlers = createNodeAgentToolHandlers(makeConfig(ctx, { externalEventStore: store }));
 

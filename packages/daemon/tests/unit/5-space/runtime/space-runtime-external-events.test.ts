@@ -1455,7 +1455,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       await eventService.publish(elsewhere);
       await eventService.publish(pending);
       const elsewhereDelivery = eventStore.listDeliveries(elsewhere.id)[0]!;
-      eventStore.markDeliveryDelivered(elsewhere.id, elsewhereDelivery.deliveryKey);
+      eventStore.markDeliveryMailboxAccepted(elsewhere.id, elsewhereDelivery.deliveryKey);
       eventStore.markEventDeliveredIfAllDeliveriesDelivered(elsewhere.id);
       expect(eventStore.getById(elsewhere.id)?.state).toBe('delivered');
 
@@ -1527,7 +1527,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const codeDelivery = eventStore
         .listDeliveries(fanout.id)
         .find((delivery) => delivery.nodeId === 'code')!;
-      eventStore.markDeliveryDelivered(fanout.id, codeDelivery.deliveryKey);
+      eventStore.markDeliveryMailboxAccepted(fanout.id, codeDelivery.deliveryKey);
       expect(eventStore.getById(fanout.id)?.state).toBe('published');
 
       nodeExecutionRepo.update(execution.id, {
@@ -1588,7 +1588,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const event = makeEvent({ id: 'evt-skip-supersede', topic });
       await eventService.publish(event);
       const delivery = eventStore.listDeliveries(event.id)[0]!;
-      eventStore.markDeliveryDelivered(event.id, delivery.deliveryKey);
+      eventStore.markDeliveryMailboxAccepted(event.id, delivery.deliveryKey);
       eventStore.markEventDeliveredIfAllDeliveriesDelivered(event.id);
       expect(eventStore.getById(event.id)?.state).toBe('delivered');
 
@@ -1652,7 +1652,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const event = makeEvent({ id: 'evt-cross-task-drop', topic });
       await eventService.publish(event);
       const delivery = eventStore.listDeliveries(event.id)[0]!;
-      eventStore.markDeliveryDelivered(event.id, delivery.deliveryKey);
+      eventStore.markDeliveryMailboxAccepted(event.id, delivery.deliveryKey);
 
       const secondTask = taskRepo.createTask({
         spaceId: SPACE_ID,
@@ -1733,7 +1733,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       await eventService.publish(siblingEvent);
       await eventService.publish(freshEvent);
       const siblingDelivery = eventStore.listDeliveries(siblingEvent.id)[0]!;
-      eventStore.markDeliveryDelivered(siblingEvent.id, siblingDelivery.deliveryKey);
+      eventStore.markDeliveryMailboxAccepted(siblingEvent.id, siblingDelivery.deliveryKey);
 
       nodeExecutionRepo.update(execution.id, {
         status: 'in_progress',
@@ -1858,7 +1858,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       await eventService.publish(deliveredMember);
       await eventService.publish(pendingMember);
       const deliveredDelivery = eventStore.listDeliveries(deliveredMember.id)[0]!;
-      eventStore.markDeliveryDelivered(deliveredMember.id, deliveredDelivery.deliveryKey);
+      eventStore.markDeliveryMailboxAccepted(deliveredMember.id, deliveredDelivery.deliveryKey);
       eventStore.markEventDeliveredIfAllDeliveriesDelivered(deliveredMember.id);
       expect(eventStore.listDeliveries(pendingMember.id)[0]!.state).toBe('pending');
 
@@ -1948,9 +1948,13 @@ describe('SpaceRuntime external event subscriptions', () => {
         delivered.dbId
       );
 
-      (
+      await (
         runtime as unknown as {
-          handoffDigestDelivery: (sessionId: string, messageUuid: string, dbId: string) => void;
+          handoffDigestDelivery: (
+            sessionId: string,
+            messageUuid: string,
+            dbId: string
+          ) => Promise<void>;
         }
       ).handoffDigestDelivery('session-handoff-race', delivered.uuid, delivered.dbId);
 
@@ -2783,11 +2787,12 @@ describe('SpaceRuntime external event subscriptions', () => {
         .get(sessionId) as { id: string };
       tam.alive.delete(sessionId);
 
-      (
+      db.exec('DROP TABLE job_queue');
+      await (
         runtime as unknown as {
-          scheduleDigestHandoffRetry: (sessionId: string, uuid: string, dbId: string) => void;
+          handoffDigestDelivery: (sessionId: string, uuid: string, dbId: string) => Promise<void>;
         }
-      ).scheduleDigestHandoffRetry(sessionId, 'digest-abandon-owed', String(row.id));
+      ).handoffDigestDelivery(sessionId, 'digest-abandon-owed', String(row.id));
       await wait(1200);
 
       const runtimeInternals = runtime as unknown as {
@@ -2797,6 +2802,74 @@ describe('SpaceRuntime external event subscriptions', () => {
         true
       );
       expect(deferredDigestUuids(sessionId)).toContain('digest-abandon-owed');
+    });
+
+    test('flag on: a successful handoff retry clears its timer and attempt count', async () => {
+      const sessionId = 'session-retry-clear';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+      tam.alive.add(sessionId);
+      const { task } = await startRunWithSubscription(topic);
+      await eventService.publish(makeEvent({ id: 'evt-retry-clear', topic }));
+      const delivery = eventStore.listDeliveries('evt-retry-clear')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-retry-clear', deliveryKey: delivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-retry-clear', ['evt-retry-clear'], task.id);
+      const row = db
+        .prepare(
+          `SELECT id FROM sdk_messages WHERE session_id = ? AND sdk_uuid = 'digest-retry-clear'`
+        )
+        .get(sessionId) as { id: string };
+
+      db.exec('DROP TABLE job_queue');
+      await (
+        runtime as unknown as {
+          handoffDigestDelivery: (sessionId: string, uuid: string, dbId: string) => Promise<void>;
+        }
+      ).handoffDigestDelivery(sessionId, 'digest-retry-clear', String(row.id));
+
+      const internals = runtime as unknown as {
+        digestHandoffRetryCounts: Map<string, number>;
+        digestHandoffRetryTimers: Map<string, unknown>;
+      };
+      const key = `${sessionId}:digest-retry-clear`;
+      expect(internals.digestHandoffRetryCounts.get(key)).toBe(1);
+      expect(internals.digestHandoffRetryTimers.has(key)).toBe(true);
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS job_queue (
+          id TEXT PRIMARY KEY,
+          queue TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+          payload TEXT NOT NULL DEFAULT '{}',
+          result TEXT,
+          error TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          run_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          started_at INTEGER,
+          heartbeat_at INTEGER,
+          completed_at INTEGER
+        )
+      `);
+      await wait(1200);
+
+      expect(internals.digestHandoffRetryCounts.has(key)).toBe(false);
+      expect(internals.digestHandoffRetryTimers.has(key)).toBe(false);
+      const status = (
+        db.prepare(`SELECT send_status AS s FROM sdk_messages WHERE id = ?`).get(row.id) as {
+          s: string;
+        }
+      ).s;
+      expect(status).toBe('enqueued');
     });
 
     test('flag on: a tick failure after rehydration does not poison the reconciliation gate', async () => {
@@ -2921,7 +2994,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const sibling = eventStore
         .listDeliveries('evt-sibling-owed')
         .find((delivery) => delivery.deliveryKey === 'delivery-sibling')!;
-      eventStore.markDeliveryDelivered('evt-sibling-owed', sibling.deliveryKey);
+      eventStore.markDeliveryMailboxAccepted('evt-sibling-owed', sibling.deliveryKey);
       saveDeferredDigestWithTask(sessionId, 'digest-sibling-owed', ['evt-sibling-owed'], task.id);
 
       const runtimeInternals = runtime as unknown as {
@@ -3086,7 +3159,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       await eventService.publish(makeEvent({ id: 'evt-mixed-1', topic }));
       await eventService.publish(makeEvent({ id: 'evt-mixed-2', topic }));
       const first = eventStore.listDeliveries('evt-mixed-1')[0]!;
-      eventStore.markDeliveryDelivered('evt-mixed-1', first.deliveryKey);
+      eventStore.markDeliveryMailboxAccepted('evt-mixed-1', first.deliveryKey);
       eventStore.registerExpectedDelivery('evt-mixed-2', 'delivery-mixed-second', {
         workflowRunId: run.id,
         taskId: task.id,
@@ -3096,7 +3169,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const second = eventStore
         .listDeliveries('evt-mixed-2')
         .find((delivery) => delivery.deliveryKey === 'delivery-mixed-second')!;
-      eventStore.markDeliveryDelivered('evt-mixed-2', second.deliveryKey);
+      eventStore.markDeliveryMailboxAccepted('evt-mixed-2', second.deliveryKey);
       saveDeferredDigestWithTask(
         sessionId,
         'digest-mixed-coverage',

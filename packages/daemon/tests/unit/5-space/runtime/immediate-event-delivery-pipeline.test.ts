@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import type { NodeExecution, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
+import { buildSyntheticExternalEventMessage } from '../../../../src/lib/external-events/deferred-event-digest';
 import type { ExternalEventPublishedPayload } from '../../../../src/lib/external-events/external-event-service';
 import type { DeliveryFailure } from '../../../../src/lib/external-events/types';
 import type { ExternalEventTaskDecision } from '../../../../src/lib/space/runtime/external-event-admission-gates';
@@ -11,8 +16,6 @@ import {
   type ImmediateEventDeliveryInput,
   pickMechanics,
 } from '../../../../src/lib/space/runtime/immediate-event-delivery-pipeline';
-import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
-import type { SendStatus } from '../../../../src/storage/repositories/sdk-message-repository';
 
 const SPACE_ID = 'space-1';
 const RUN_ID = 'run-1';
@@ -70,10 +73,6 @@ function execution(): NodeExecution {
 }
 
 interface Recording {
-  saved: Array<{ sessionId: string; uuid: string; sendStatus: string; origin: string }>;
-  reopened: string[];
-  rolledBack: string[];
-  jobs: Array<{ sessionId: string; messageUuid: string; role: string; origin: string }>;
   queuedIfIdle: string[];
   delivered: Array<[string, string]>;
   failed: Array<{ eventId: string; deliveryKey: string; failure: DeliveryFailure }>;
@@ -81,24 +80,86 @@ interface Recording {
   eventFailureRollups: string[];
 }
 
+function setupDb(): Database {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE sdk_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      message_type TEXT NOT NULL,
+      message_subtype TEXT,
+      sdk_message TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      send_status TEXT,
+      origin TEXT,
+      is_renderable INTEGER NOT NULL DEFAULT 1,
+      is_terminal INTEGER NOT NULL DEFAULT 0,
+      conversation_turn_index INTEGER,
+      parent_tool_use_id TEXT,
+      task_id TEXT,
+      sdk_uuid TEXT,
+      consumed_seq INTEGER,
+      replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE sdk_message_replacements (
+      source_message_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      task_id TEXT,
+      target_uuid TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      PRIMARY KEY (source_message_id, target_uuid, kind)
+    );
+    CREATE TABLE sessions (id TEXT PRIMARY KEY, visible_message_count INTEGER NOT NULL DEFAULT 0);
+    CREATE INDEX idx_sdk_messages_session ON sdk_messages(session_id);
+
+    CREATE TABLE job_queue (
+      id TEXT PRIMARY KEY,
+      queue TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+      payload TEXT NOT NULL DEFAULT '{}',
+      result TEXT,
+      error TEXT,
+      priority INTEGER NOT NULL DEFAULT 0,
+      max_retries INTEGER NOT NULL DEFAULT 3,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      run_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      started_at INTEGER,
+      heartbeat_at INTEGER,
+      completed_at INTEGER
+    );
+  `);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
+      ON job_queue (queue, json_extract(payload, '$.sessionId'))
+      WHERE queue = 'message_delivery'
+        AND json_extract(payload, '$.role') = 'turn'
+        AND status IN ('pending', 'processing');
+    CREATE INDEX IF NOT EXISTS idx_message_delivery_session_active
+      ON job_queue (json_extract(payload, '$.sessionId'))
+      WHERE queue = 'message_delivery' AND status IN ('pending', 'processing');
+  `);
+  return db;
+}
+
 function makeDeps(overrides: Partial<ImmediateEventDeliveryDeps> = {}): {
   deps: ImmediateEventDeliveryDeps;
   rec: Recording;
-  rowStatus: Map<string, SendStatus>;
+  db: Database;
+  messages: SDKMessageRepository;
+  jobQueue: JobQueueRepository;
 } {
+  const db = setupDb();
+  const messages = new SDKMessageRepository(db);
+  const jobQueue = new JobQueueRepository(db);
   const rec: Recording = {
-    saved: [],
-    reopened: [],
-    rolledBack: [],
-    jobs: [],
     queuedIfIdle: [],
     delivered: [],
     failed: [],
     eventRollups: [],
     eventFailureRollups: [],
   };
-  const rowStatus = new Map<string, SendStatus>();
-  const activeRoles = new Map<string, 'turn' | 'steer'>();
   const deps: ImmediateEventDeliveryDeps = {
     getTask: () => task(),
     getRun: () => run(),
@@ -114,50 +175,13 @@ function makeDeps(overrides: Partial<ImmediateEventDeliveryDeps> = {}): {
       rec.queuedIfIdle.push(messageUuid);
       return Promise.resolve(true);
     },
-    messages: {
-      getDeliveryContent: (_sessionId, uuid) => {
-        const sendStatus = rowStatus.get(uuid);
-        return sendStatus === undefined ? null : { content: RENDER, sendStatus };
-      },
-      saveUserMessage: (sessionId, message, sendStatus = 'enqueued', origin) => {
-        const uuid = String(message.uuid);
-        rowStatus.set(uuid, sendStatus);
-        rec.saved.push({ sessionId, uuid, sendStatus, origin: origin ?? 'null' });
-        return `db-${rec.saved.length}`;
-      },
-      reopenDeliveryByUuid: (_sessionId, uuid) => {
-        rowStatus.set(uuid, 'enqueued');
-        rec.reopened.push(uuid);
-        return `db-reopened-${rec.reopened.length}`;
-      },
-      markDeliveryFailedByUuid: (_sessionId, uuid) => {
-        rowStatus.set(uuid, 'failed');
-        rec.rolledBack.push(uuid);
-        return `db-failed-${rec.rolledBack.length}`;
-      },
-    },
-    jobQueue: {
-      getActiveDeliveryRole: (_sessionId, messageUuid) => activeRoles.get(messageUuid) ?? null,
-      enqueue: (params) => {
-        const p = params.payload as unknown as {
-          sessionId: string;
-          messageUuid: string;
-          role: 'turn' | 'steer';
-          origin: string;
-        };
-        activeRoles.set(p.messageUuid, p.role);
-        rec.jobs.push({
-          sessionId: p.sessionId,
-          messageUuid: p.messageUuid,
-          role: p.role,
-          origin: p.origin,
-        });
-        return {} as Job;
-      },
-    },
+    db,
+    messages,
+    jobQueue,
     eventStore: {
       isDeliveryTerminal: () => false,
-      markDeliveryDelivered: (eventId, deliveryKey) => rec.delivered.push([eventId, deliveryKey]),
+      markDeliveryMailboxAccepted: (eventId, deliveryKey) =>
+        rec.delivered.push([eventId, deliveryKey]),
       markDeliveryFailed: (eventId, deliveryKey, failure) =>
         rec.failed.push({ eventId, deliveryKey, failure }),
       markEventDeliveredIfAllDeliveriesDelivered: (eventId) => rec.eventRollups.push(eventId),
@@ -165,31 +189,64 @@ function makeDeps(overrides: Partial<ImmediateEventDeliveryDeps> = {}): {
     },
     ...overrides,
   };
-  return { deps, rec, rowStatus };
+  return { deps, rec, db, messages, jobQueue };
 }
 
 async function deliver(
   depsOverrides: Partial<ImmediateEventDeliveryDeps> = {},
   inputOverrides: Partial<ImmediateEventDeliveryInput> = {}
 ) {
-  const { deps, rec, rowStatus } = makeDeps(depsOverrides);
-  return { outcome: await deliverImmediateEvent(deps, input(inputOverrides)), rec, rowStatus };
+  const harness = makeDeps(depsOverrides);
+  return {
+    outcome: await deliverImmediateEvent(harness.deps, input(inputOverrides)),
+    ...harness,
+  };
+}
+
+interface DeliveryJobRow {
+  sessionId: string;
+  messageUuid: string;
+  role: string;
+  origin: string;
+}
+
+function deliveryJobs(db: Database): DeliveryJobRow[] {
+  return (
+    db.prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`).all() as Array<{
+      payload: string;
+    }>
+  ).map((row) => {
+    const payload = JSON.parse(row.payload) as DeliveryJobRow;
+    return {
+      sessionId: payload.sessionId,
+      messageUuid: payload.messageUuid,
+      role: payload.role,
+      origin: payload.origin,
+    };
+  });
+}
+
+function messageRow(
+  db: Database,
+  uuid: string
+): { sendStatus: string | null; origin: string | null } {
+  return db
+    .prepare(`SELECT send_status AS sendStatus, origin FROM sdk_messages WHERE sdk_uuid = ?`)
+    .get(uuid) as { sendStatus: string | null; origin: string | null };
 }
 
 describe('deliver-immediate-event pipeline', () => {
   it('delivers to an idle session as a turn with system origin and render text', async () => {
     const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
-    const { outcome, rec } = await deliver();
+    const { outcome, rec, db } = await deliver();
     expect(outcome).toEqual({
       action: 'delivered',
       mechanics: 'turn',
       deliveryRole: 'turn',
       messageUuid: uuid,
     });
-    expect(rec.saved).toEqual([
-      { sessionId: SESSION_ID, uuid, sendStatus: 'enqueued', origin: 'system' },
-    ]);
-    expect(rec.jobs).toEqual([
+    expect(messageRow(db, uuid)).toEqual({ sendStatus: 'enqueued', origin: 'system' });
+    expect(deliveryJobs(db)).toEqual([
       { sessionId: SESSION_ID, messageUuid: uuid, role: 'turn', origin: 'space_inject' },
     ]);
     expect(rec.queuedIfIdle).toEqual([uuid]);
@@ -199,41 +256,60 @@ describe('deliver-immediate-event pipeline', () => {
   });
 
   it('steers into a session whose status is exactly processing', async () => {
-    const { outcome, rec } = await deliver({ getSessionStatus: () => 'processing' });
-    expect(outcome.action).toBe('delivered');
-    if (outcome.action !== 'delivered') return;
-    expect(outcome.mechanics).toBe('steer');
-    expect(outcome.deliveryRole).toBe('steer');
-    expect(rec.jobs[0].role).toBe('steer');
-    expect(rec.queuedIfIdle).toEqual([]);
+    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
+    const harness = makeDeps({ getSessionStatus: () => 'processing' });
+    harness.jobQueue.enqueue({
+      queue: MESSAGE_DELIVERY,
+      payload: {
+        sessionId: SESSION_ID,
+        messageUuid: 'seed-active-turn',
+        role: 'turn',
+        origin: 'chat',
+        parentToolUseId: null,
+      },
+      maxRetries: 8,
+    });
+    const outcome = await deliverImmediateEvent(harness.deps, input());
+    expect(outcome).toEqual({
+      action: 'delivered',
+      mechanics: 'steer',
+      deliveryRole: 'steer',
+      messageUuid: uuid,
+    });
+    expect(
+      deliveryJobs(harness.db).filter((job) => job.messageUuid !== 'seed-active-turn')
+    ).toEqual([
+      { sessionId: SESSION_ID, messageUuid: uuid, role: 'steer', origin: 'space_inject' },
+    ]);
+    expect(harness.rec.queuedIfIdle).toEqual([]);
   });
 
   it('keeps the first routing decision when later gate inputs also hold', async () => {
-    const { outcome, rec } = await deliver({
+    const { outcome, rec, db } = await deliver({
       isDeliveryInFlight: () => true,
       isSubscriptionActive: () => false,
       getTask: () => task('done'),
     });
     expect(outcome).toEqual({ action: 'skip', reason: 'claim_conflict' });
     expect(rec.failed).toEqual([]);
-    expect(rec.saved).toEqual([]);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages`).get()).toEqual({ n: 0 });
   });
 
   it('skips when the delivery is already terminal but still reconciles the event', async () => {
-    const { deps, rec } = makeDeps();
+    const { deps, rec, db } = makeDeps();
     deps.eventStore.isDeliveryTerminal = () => true;
     const outcome = await deliverImmediateEvent(deps, input());
     expect(outcome).toEqual({ action: 'skip', reason: 'delivery_terminal' });
     expect(rec.eventRollups).toEqual([EVENT_ID]);
     expect(rec.eventFailureRollups).toEqual([EVENT_ID]);
-    expect(rec.saved).toEqual([]);
-    expect(rec.jobs).toEqual([]);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages`).get()).toEqual({ n: 0 });
+    expect(deliveryJobs(db)).toEqual([]);
     expect(rec.delivered).toEqual([]);
     expect(rec.failed).toEqual([]);
   });
 
   it('fails the ledger and rolls the failure up to the event when the subscription is gone', async () => {
-    const { outcome, rec } = await deliver({ isSubscriptionActive: () => false });
+    const { outcome, rec, db } = await deliver({ isSubscriptionActive: () => false });
     expect(outcome).toEqual({ action: 'failed', reason: 'subscription_no_longer_active' });
     expect(rec.failed).toEqual([
       {
@@ -243,16 +319,16 @@ describe('deliver-immediate-event pipeline', () => {
       },
     ]);
     expect(rec.eventFailureRollups).toEqual([EVENT_ID]);
-    expect(rec.saved).toEqual([]);
-    expect(rec.jobs).toEqual([]);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages`).get()).toEqual({ n: 0 });
+    expect(deliveryJobs(db)).toEqual([]);
   });
 
   it('fails the ledger when the target task is terminal', async () => {
-    const { outcome, rec } = await deliver({ getTask: () => task('done') });
+    const { outcome, rec, db } = await deliver({ getTask: () => task('done') });
     expect(outcome).toEqual({ action: 'failed', reason: 'target_task_terminal' });
     expect(rec.failed[0].failure).toEqual({ terminal: true, reason: 'target_task_terminal' });
     expect(rec.eventFailureRollups).toEqual([EVENT_ID]);
-    expect(rec.saved).toEqual([]);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages`).get()).toEqual({ n: 0 });
   });
 
   it('defers a stopped task leaving the ledger pending', async () => {
@@ -260,14 +336,13 @@ describe('deliver-immediate-event pipeline', () => {
     expect(outcome).toEqual({ action: 'deferred', reason: 'task_stopped' });
     expect(rec.failed).toEqual([]);
     expect(rec.delivered).toEqual([]);
-    expect(rec.saved).toEqual([]);
   });
 
   it('defers while the target space is paused leaving the ledger pending', async () => {
-    const { outcome, rec } = await deliver({ isTargetSpacePaused: () => true });
+    const { outcome, rec, db } = await deliver({ isTargetSpacePaused: () => true });
     expect(outcome).toEqual({ action: 'deferred', reason: 'space_paused' });
-    expect(rec.saved).toEqual([]);
-    expect(rec.jobs).toEqual([]);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages`).get()).toEqual({ n: 0 });
+    expect(deliveryJobs(db)).toEqual([]);
     expect(rec.failed).toEqual([]);
     expect(rec.delivered).toEqual([]);
   });
@@ -275,191 +350,128 @@ describe('deliver-immediate-event pipeline', () => {
   it('defers when the target has no active session', async () => {
     const { outcome, rec } = await deliver({ listExecutions: () => [] });
     expect(outcome).toEqual({ action: 'deferred', reason: 'no_active_session' });
-    expect(rec.saved).toEqual([]);
-    expect(rec.jobs).toEqual([]);
     expect(rec.delivered).toEqual([]);
   });
 
   it('defers when the resolved session is no longer live', async () => {
-    const { outcome, rec } = await deliver({ isTargetSessionLive: () => false });
+    const { outcome } = await deliver({ isTargetSessionLive: () => false });
     expect(outcome).toEqual({ action: 'deferred', reason: 'stale_session' });
-    expect(rec.saved).toEqual([]);
-    expect(rec.jobs).toEqual([]);
-    expect(rec.delivered).toEqual([]);
   });
 
   it('defers while the target session has an interrupt still in progress', async () => {
-    const { outcome, rec } = await deliver({ isSessionInterruptInProgress: () => true });
+    const { outcome } = await deliver({ isSessionInterruptInProgress: () => true });
     expect(outcome).toEqual({ action: 'deferred', reason: 'session_interrupted' });
-    expect(rec.saved).toEqual([]);
-    expect(rec.jobs).toEqual([]);
-    expect(rec.delivered).toEqual([]);
   });
 
   it('treats rate budget overflow as a deferral, not a failure', async () => {
     const { outcome, rec } = await deliver({ withinRateBudget: () => false });
     expect(outcome).toEqual({ action: 'deferred', reason: 'rate_budget' });
     expect(rec.failed).toEqual([]);
-    expect(rec.saved).toEqual([]);
-    expect(rec.jobs).toEqual([]);
     expect(rec.delivered).toEqual([]);
   });
 
   it('defers when the row carries no render block', async () => {
-    const { outcome, rec } = await deliver({}, { render: null });
+    const { outcome } = await deliver({}, { render: null });
     expect(outcome).toEqual({ action: 'deferred', reason: 'render_missing' });
-    expect(rec.saved).toEqual([]);
-    expect(rec.jobs).toEqual([]);
   });
 
   it('replaying the same input reuses the same row and job without duplicates', async () => {
-    const { deps, rec } = makeDeps();
+    const { deps, db } = makeDeps();
     const first = await deliverImmediateEvent(deps, input());
     const second = await deliverImmediateEvent(deps, input());
     expect(first.action).toBe('delivered');
     expect(second.action).toBe('delivered');
-    if (second.action !== 'delivered' || first.action !== 'delivered') return;
-    expect(second.messageUuid).toBe(first.messageUuid);
-    expect(rec.saved.length).toBe(1);
-    expect(rec.jobs.length).toBe(1);
-    expect(rec.jobs[0].messageUuid).toBe(first.messageUuid);
+    const rows = db
+      .prepare(`SELECT COUNT(*) AS n FROM sdk_messages WHERE sdk_uuid IS NOT NULL`)
+      .get() as { n: number };
+    expect(rows.n).toBe(1);
+    expect(deliveryJobs(db)).toHaveLength(1);
   });
 
-  it('reopens a previously failed row instead of skipping it silently', async () => {
+  it('retries a previously failed row instead of skipping it silently', async () => {
     const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
-    const { deps, rec, rowStatus } = makeDeps();
-    rowStatus.set(uuid, 'failed');
+    const { deps, rec, messages, db } = makeDeps();
+    messages.saveUserMessage(
+      SESSION_ID,
+      buildSyntheticExternalEventMessage(SESSION_ID, RENDER, uuid),
+      'failed',
+      'system'
+    );
     const outcome = await deliverImmediateEvent(deps, input());
-    expect(outcome.action).toBe('delivered');
-    expect(rec.reopened).toEqual([uuid]);
-    expect(rec.saved).toEqual([]);
-    expect(rec.jobs.length).toBe(1);
+    expect(outcome).toEqual({
+      action: 'delivered',
+      mechanics: 'turn',
+      deliveryRole: 'turn',
+      messageUuid: uuid,
+    });
+    expect(messageRow(db, uuid).sendStatus).toBe('enqueued');
+    expect(deliveryJobs(db)).toEqual([
+      { sessionId: SESSION_ID, messageUuid: uuid, role: 'turn', origin: 'space_inject' },
+    ]);
     expect(rec.delivered).toEqual([[EVENT_ID, DELIVERY_KEY]]);
   });
 
-  it('reports a persist error and leaves the ledger pending', async () => {
-    const base = makeDeps();
-    const { outcome, rec } = await deliver({
-      messages: {
-        ...base.deps.messages,
-        saveUserMessage: () => {
-          throw new Error('db locked');
-        },
-      },
-    });
-    expect(outcome.action).toBe('error');
-    if (outcome.action !== 'error') return;
-    expect(outcome.stage).toBe('persistAndEnqueue');
-    expect(rec.rolledBack).toEqual([]);
-    expect(rec.delivered).toEqual([]);
-    expect(rec.failed).toEqual([]);
-  });
-
-  it('rolls the freshly saved row back to failed when the job-queue insert throws', async () => {
+  it('treats an already consumed row as mailbox-accepted without enqueuing a new job', async () => {
     const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
-    const base = makeDeps();
-    const { outcome, rec, rowStatus } = await deliver({
-      jobQueue: {
-        ...base.deps.jobQueue,
-        enqueue: () => {
-          throw new Error('job queue insert failed');
-        },
-      },
-    });
-    expect(outcome.action).toBe('error');
-    if (outcome.action !== 'error') return;
-    expect(outcome.stage).toBe('persistAndEnqueue');
-    expect(rec.saved.length).toBe(1);
-    expect(rec.rolledBack).toEqual([uuid]);
-    expect(rowStatus.get(uuid)).toBe('failed');
-    expect(rec.delivered).toEqual([]);
-    expect(rec.failed).toEqual([]);
-  });
-
-  it('rolls a reopened row back to failed when the job-queue insert throws after reopening', async () => {
-    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
-    const base = makeDeps();
-    base.rowStatus.set(uuid, 'failed');
-    const outcome = await deliverImmediateEvent(
-      {
-        ...base.deps,
-        jobQueue: {
-          ...base.deps.jobQueue,
-          enqueue: () => {
-            throw new Error('job queue insert failed');
-          },
-        },
-      },
-      input()
+    const { deps, rec, messages, db } = makeDeps();
+    messages.saveUserMessage(
+      SESSION_ID,
+      buildSyntheticExternalEventMessage(SESSION_ID, RENDER, uuid),
+      'consumed',
+      'system'
     );
-    expect(outcome.action).toBe('error');
-    expect(base.rec.reopened).toEqual([uuid]);
-    expect(base.rec.rolledBack).toEqual([uuid]);
-    expect(base.rowStatus.get(uuid)).toBe('failed');
-  });
-
-  it('leaves a pre-existing live row untouched when the job-queue insert throws', async () => {
-    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
-    const base = makeDeps();
-    base.rowStatus.set(uuid, 'enqueued');
-    const outcome = await deliverImmediateEvent(
-      {
-        ...base.deps,
-        jobQueue: {
-          ...base.deps.jobQueue,
-          enqueue: () => {
-            throw new Error('job queue insert failed');
-          },
-        },
-      },
-      input()
-    );
-    expect(outcome.action).toBe('error');
-    expect(base.rec.saved).toEqual([]);
-    expect(base.rec.reopened).toEqual([]);
-    expect(base.rec.rolledBack).toEqual([]);
-    expect(base.rowStatus.get(uuid)).toBe('enqueued');
-  });
-
-  it('still reports the original enqueue error when the rollback itself throws', async () => {
-    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
-    const rollbackAttempts: string[] = [];
-    const base = makeDeps();
-    const { outcome } = await deliver({
-      jobQueue: {
-        ...base.deps.jobQueue,
-        enqueue: () => {
-          throw new Error('job queue insert failed');
-        },
-      },
-      messages: {
-        ...base.deps.messages,
-        markDeliveryFailedByUuid: (_sessionId, attempted) => {
-          rollbackAttempts.push(attempted);
-          throw new Error('rollback failed');
-        },
-      },
+    const outcome = await deliverImmediateEvent(deps, input());
+    expect(outcome).toEqual({
+      action: 'delivered',
+      mechanics: 'turn',
+      deliveryRole: null,
+      messageUuid: uuid,
     });
+    expect(messageRow(db, uuid).sendStatus).toBe('consumed');
+    expect(deliveryJobs(db)).toEqual([]);
+    expect(rec.delivered).toEqual([[EVENT_ID, DELIVERY_KEY]]);
+  });
+
+  it('reports an outbox failure without persisting a half-open row', async () => {
+    const harness = makeDeps();
+    harness.db.exec('DROP TABLE job_queue');
+    const outcome = await deliverImmediateEvent(harness.deps, input());
     expect(outcome.action).toBe('error');
     if (outcome.action !== 'error') return;
     expect(outcome.stage).toBe('persistAndEnqueue');
-    expect((outcome.error as Error).message).toBe('job queue insert failed');
-    expect(rollbackAttempts).toEqual([uuid]);
+    expect(harness.db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages`).get()).toEqual({ n: 0 });
+    expect(harness.rec.delivered).toEqual([]);
+    expect(harness.rec.failed).toEqual([]);
+  });
+
+  it('leaves a pre-existing enqueued row untouched when the outbox enqueue fails', async () => {
+    const uuid = buildImmediateEventMessageUuid(EVENT_ID, DELIVERY_KEY);
+    const harness = makeDeps();
+    harness.messages.saveUserMessage(
+      SESSION_ID,
+      buildSyntheticExternalEventMessage(SESSION_ID, RENDER, uuid),
+      'enqueued',
+      'system'
+    );
+    harness.db.exec('DROP TABLE job_queue');
+    const outcome = await deliverImmediateEvent(harness.deps, input());
+    expect(outcome.action).toBe('error');
+    expect(messageRow(harness.db, uuid).sendStatus).toBe('enqueued');
   });
 
   it('reports a ledger-marking error after the mailbox accepted the row and job', async () => {
     const base = makeDeps();
-    const { outcome, rec } = await deliver({
+    const { outcome, db } = await deliver({
       eventStore: {
         ...base.deps.eventStore,
-        markDeliveryDelivered: () => {
+        markDeliveryMailboxAccepted: () => {
           throw new Error('sqlite busy');
         },
       },
     });
     expect(outcome.action).toBe('error');
-    expect(rec.saved.length).toBe(1);
-    expect(rec.jobs.length).toBe(1);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM sdk_messages`).get()).toEqual({ n: 1 });
+    expect(deliveryJobs(db)).toHaveLength(1);
   });
 
   it('derives the message uuid deterministically from event id and delivery key', () => {

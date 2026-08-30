@@ -446,7 +446,7 @@ export class ExternalEventStore {
     }
   }
 
-  markDeliveryDelivered(eventId: string, deliveryKey: string): void {
+  markDeliveryMailboxAccepted(eventId: string, deliveryKey: string): void {
     if (this.applyDeliveryDelivered(eventId, deliveryKey)) {
       this.emitDeliveryDelivered(eventId, deliveryKey);
     }

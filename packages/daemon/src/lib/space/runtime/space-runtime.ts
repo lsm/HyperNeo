@@ -23,7 +23,7 @@ import {
 } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { isSDKResultError, isSDKResultSuccess } from '@hyperneo/shared/sdk';
-import { deliverMessage } from '../../agent/message-delivery.ts';
+import { activatePrompts } from '../../agent/message-delivery-outbox.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import {
   ChannelCycleRepository,
@@ -1579,6 +1579,7 @@ export class SpaceRuntime {
             ? session.stateManager.setQueuedIfIdle(messageUuid)
             : Promise.resolve(false);
         },
+        db: this.config.db,
         messages: this.getSdkMessageRepo(),
         jobQueue: this.getJobQueueRepo(),
         eventStore: store,
@@ -1656,28 +1657,32 @@ export class SpaceRuntime {
     this.turnEndDigestRetryTimers.set(sessionId, timer);
   }
 
-  private handoffDigestDelivery(sessionId: string, messageUuid: string, dbId: string): void {
+  private async handoffDigestDelivery(
+    sessionId: string,
+    messageUuid: string,
+    dbId: string
+  ): Promise<void> {
     try {
-      const repo = this.getSdkMessageRepo();
-      if (!repo.transitionMessageSendStatus(dbId, 'deferred', 'enqueued')) return;
-      const role = deliverMessage(this.getJobQueueRepo(), sessionId, messageUuid, {
+      const { activated } = await activatePrompts({
+        db: this.config.db,
+        jobQueue: this.getJobQueueRepo(),
+        sessionId,
+        messageUuids: [messageUuid],
+        dbIds: [dbId],
         origin: 'space_inject',
       });
       this.deleteDigestHandoffDebt(sessionId, messageUuid);
-      if (role !== 'turn') return;
+      this.digestHandoffRetryCounts.delete(`${sessionId}:${messageUuid}`);
+      const entry = activated[0];
+      if (!entry || entry.role !== 'turn') return;
       const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
       if (session?.stateManager) {
         void session.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
       }
     } catch (error) {
-      try {
-        this.getSdkMessageRepo().transitionMessageSendStatus(dbId, 'enqueued', 'deferred');
-      } catch {
-        void error;
-      }
       log.warn(
         `SpaceRuntime: turn-end digest handoff for session ${sessionId} failed, ` +
-          `row reverted to deferred: ${formatCommandError(error)}`
+          `row stays deferred in the outbox: ${formatCommandError(error)}`
       );
       this.scheduleDigestHandoffRetry(sessionId, messageUuid, dbId);
     }
@@ -1701,7 +1706,7 @@ export class SpaceRuntime {
         this.addDigestHandoffDebt(sessionId, messageUuid);
         return;
       }
-      this.handoffDigestDelivery(sessionId, messageUuid, dbId);
+      void this.handoffDigestDelivery(sessionId, messageUuid, dbId);
     }, EXTERNAL_EVENT_RETRY_DELAY_MS);
     this.digestHandoffRetryTimers.set(key, timer);
   }
@@ -1852,7 +1857,7 @@ export class SpaceRuntime {
       const outcome = await this.renderPendingDigestForSession(sessionId, scopeTaskId);
       outcomes.push(outcome);
       if (outcome?.action === 'delivered') {
-        this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
+        await this.handoffDigestDelivery(sessionId, outcome.uuid, outcome.dbId);
       }
     }
     return outcomes;
@@ -2308,7 +2313,7 @@ export class SpaceRuntime {
       if (this.cancelledLongHorizonDeliveries.has(deliveryKey)) return;
       if (!result.delivered) throw new Error('long-horizon agent unavailable');
       this.clearExternalEventRetry(deliveryKey);
-      store.markDeliveryDelivered(event.eventId, deliveryKey);
+      store.markDeliveryMailboxAccepted(event.eventId, deliveryKey);
       store.markEventDeliveredIfAllDeliveriesDelivered(event.eventId);
       store.markEventFailedIfAllDeliveriesTerminal(event.eventId);
     } catch (err) {
