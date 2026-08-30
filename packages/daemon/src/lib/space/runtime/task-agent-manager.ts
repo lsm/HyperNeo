@@ -22,6 +22,8 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
 import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
 import {
+  acquireContextClearBoundary,
+  type ContextClearBoundaryOwner,
   isMessageDeliveryV2Enabled,
   withSessionResetCoordination,
 } from '../../../lib/agent/message-delivery.ts';
@@ -3898,6 +3900,7 @@ export class TaskAgentManager {
     };
 
     const v2Enabled = isMessageDeliveryV2Enabled();
+    let boundaryOwner: ContextClearBoundaryOwner | null = null;
     const existing = v2Enabled
       ? this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)
       : null;
@@ -3945,8 +3948,11 @@ export class TaskAgentManager {
       !this.hasActiveDeliveryJob(sessionId)
     ) {
       try {
-        await session.clearConversationContext();
+        boundaryOwner = await acquireContextClearBoundary(sessionId);
+        await session.clearConversationContext(boundaryOwner);
       } catch (err) {
+        boundaryOwner?.release();
+        boundaryOwner = null;
         if (err instanceof ClearConversationCancelledError) {
           throw err;
         }
@@ -3961,74 +3967,83 @@ export class TaskAgentManager {
       await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
     }
 
-    if (!isBusy) {
-      const clearSuppressedByPendingWork =
-        outcome.decision.action === 'deliver_without_clear' &&
-        outcome.decision.reason === 'unconsumed_work_pending';
-      let clearedUpstream = false;
-      let backlogReplayFailed = false;
-      const sendEnqueued = (
-        session as AgentSession & {
-          sendEnqueuedMessagesOnTurnEnd?: (options?: {
-            pendingTaskInput?: boolean;
-            skipResetCoordination?: boolean;
-          }) => Promise<{ replayedWork: boolean; clearedContext: boolean; replayFailed: boolean }>;
+    try {
+      if (!isBusy) {
+        const clearSuppressedByPendingWork =
+          outcome.decision.action === 'deliver_without_clear' &&
+          outcome.decision.reason === 'unconsumed_work_pending';
+        let clearedUpstream = false;
+        let backlogReplayFailed = false;
+        const sendEnqueued = (
+          session as AgentSession & {
+            sendEnqueuedMessagesOnTurnEnd?: (options?: {
+              pendingTaskInput?: boolean;
+              skipResetCoordination?: boolean;
+            }) => Promise<{
+              replayedWork: boolean;
+              clearedContext: boolean;
+              replayFailed: boolean;
+            }>;
+          }
+        ).sendEnqueuedMessagesOnTurnEnd;
+        if (clearSuppressedByPendingWork && typeof sendEnqueued === 'function') {
+          const replayed = await sendEnqueued.call(session, {
+            pendingTaskInput: true,
+            skipResetCoordination: true,
+          });
+          clearedUpstream = replayed.clearedContext;
+          backlogReplayFailed = replayed.replayFailed;
         }
-      ).sendEnqueuedMessagesOnTurnEnd;
-      if (clearSuppressedByPendingWork && typeof sendEnqueued === 'function') {
-        const replayed = await sendEnqueued.call(session, {
-          pendingTaskInput: true,
+        const replay = await session.handleQueryTrigger({
+          deliverIndividually: true,
+          excludeMessageUuid: messageId,
           skipResetCoordination: true,
+          skipContextReset: clearedUpstream || boundaryOwner !== null,
+          pendingTaskInput: clearSuppressedByPendingWork && !clearedUpstream,
         });
-        clearedUpstream = replayed.clearedContext;
-        backlogReplayFailed = replayed.replayFailed;
-      }
-      const replay = await session.handleQueryTrigger({
-        deliverIndividually: true,
-        excludeMessageUuid: messageId,
-        skipResetCoordination: true,
-        skipContextReset: clearedUpstream,
-        pendingTaskInput: clearSuppressedByPendingWork && !clearedUpstream,
-      });
-      if (!replay.success) {
-        log.warn(
-          `TaskAgentManager: deferred backlog replay for session ${sessionId} failed: ` +
-            `${replay.error ?? 'unknown error'} — delivering current message only`
-        );
-      }
-      if (
-        clearSuppressedByPendingWork &&
-        !clearedUpstream &&
-        (backlogReplayFailed || !replay.success || this.clearStillBlocked(session))
-      ) {
-        if (existing) {
-          const flippedDbId = await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
-          return flippedDbId ?? messageId;
+        if (!replay.success) {
+          log.warn(
+            `TaskAgentManager: deferred backlog replay for session ${sessionId} failed: ` +
+              `${replay.error ?? 'unknown error'} — delivering current message only`
+          );
         }
-        return settleDeliveryRowStatus(deliveryRows, {
-          sessionId,
-          message: sdkUserMessage,
-          messageId,
-          rowExists: false,
-          status: 'deferred',
-          origin,
-        });
+        if (
+          clearSuppressedByPendingWork &&
+          !clearedUpstream &&
+          (backlogReplayFailed || !replay.success || this.clearStillBlocked(session))
+        ) {
+          if (existing) {
+            const flippedDbId = await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
+            return flippedDbId ?? messageId;
+          }
+          return settleDeliveryRowStatus(deliveryRows, {
+            sessionId,
+            message: sdkUserMessage,
+            messageId,
+            rowExists: false,
+            status: 'deferred',
+            origin,
+          });
+        }
       }
-    }
 
-    return deliverInjectedMessage(
-      { ...deliveryRows, jobQueue: this.config.db.getJobQueueRepo() },
-      {
-        session,
-        sessionId,
-        messageId,
-        sdkUserMessage,
-        enqueuePayload: hasImages ? sdkContent : message,
-        deliveryV2Enabled: v2Enabled,
-        rowExists: !!existing,
-        origin,
-      }
-    );
+      return deliverInjectedMessage(
+        { ...deliveryRows, jobQueue: this.config.db.getJobQueueRepo() },
+        {
+          session,
+          sessionId,
+          messageId,
+          sdkUserMessage,
+          enqueuePayload: hasImages ? sdkContent : message,
+          deliveryV2Enabled: v2Enabled,
+          rowExists: !!existing,
+          origin,
+          boundaryOwner: boundaryOwner ?? undefined,
+        }
+      );
+    } finally {
+      boundaryOwner?.release();
+    }
   }
 
   private injectDeliveryRowDeps(): InjectionDeliveryRowDeps {

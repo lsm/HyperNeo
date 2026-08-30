@@ -630,10 +630,14 @@ async function awaitBoundaryTurnStage(
   return ctx;
 }
 
+export interface ContextClearBoundaryOwner {
+  release: () => void;
+}
+
 export async function acquireContextClearBoundary(
   sessionId: string,
   signal?: AbortSignal
-): Promise<() => void> {
+): Promise<ContextClearBoundaryOwner> {
   throwIfDeliveryAborted(signal);
   const hold = armContextClearBoundary(sessionId);
   let timeoutHolderAgeMs: number | null;
@@ -651,7 +655,7 @@ export async function acquireContextClearBoundary(
       timeoutHolderAgeMs
     );
   }
-  return hold.release;
+  return hold;
 }
 
 async function runUnderBoundaryStage(

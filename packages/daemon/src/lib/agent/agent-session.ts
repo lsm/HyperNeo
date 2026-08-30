@@ -189,6 +189,7 @@ import {
   steerAckTimeoutMs,
   throwIfDeliveryAborted,
   acquireContextClearBoundary,
+  type ContextClearBoundaryOwner,
   waitForDeliveryAbort,
   withSessionLock,
 } from './message-delivery.ts';
@@ -942,16 +943,16 @@ export class AgentSession
     return await this.lifecycleManager.reset({ restartAfter: restartQuery });
   }
 
-  async clearConversationContext(preArmedBoundary?: () => void): Promise<void> {
-    if (preArmedBoundary) {
+  async clearConversationContext(boundaryOwner?: ContextClearBoundaryOwner): Promise<void> {
+    if (boundaryOwner) {
       await this.runClearConversationFlow();
       return;
     }
-    const releaseBoundary = await acquireContextClearBoundary(this.session.id);
+    const owner = await acquireContextClearBoundary(this.session.id);
     try {
       await this.runClearConversationFlow();
     } finally {
-      releaseBoundary();
+      owner.release();
     }
   }
 

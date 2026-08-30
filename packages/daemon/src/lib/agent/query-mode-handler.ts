@@ -11,6 +11,7 @@ import type { Logger } from '../logger.ts';
 import { ClearConversationCancelledError } from './agent-session.ts';
 import {
   acquireContextClearBoundary,
+  type ContextClearBoundaryOwner,
   deliverAndMarkQueued,
   deliverBatchAndMarkQueued,
   flattenDeliveryText,
@@ -34,7 +35,7 @@ export interface QueryModeHandlerContext {
     getState(): { status: string };
   };
   slotResetsContext?(): boolean;
-  clearConversationContext?(preArmedBoundary?: () => void): Promise<void>;
+  clearConversationContext?(boundaryOwner?: ContextClearBoundaryOwner): Promise<void>;
   renderPendingDigest?(
     sessionId: string,
     taskId?: string
@@ -295,7 +296,7 @@ export class QueryModeHandler {
   private async clearContextAheadOfFlush(
     flushMessages: FlushMessage[],
     options?: { skipContextReset?: boolean; pendingTaskInput?: boolean },
-    preArmedBoundary?: () => void
+    boundaryOwner?: ContextClearBoundaryOwner
   ): Promise<boolean> {
     if (options?.skipContextReset) return false;
     if (!this.ctx.clearConversationContext) return false;
@@ -303,7 +304,7 @@ export class QueryModeHandler {
     if (plan.action === 'noop') return false;
     if (plan.contextReset.action !== 'clear_then_flush') return false;
     try {
-      await this.ctx.clearConversationContext(preArmedBoundary);
+      await this.ctx.clearConversationContext(boundaryOwner);
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
       this.ctx.logger.warn(
@@ -348,11 +349,11 @@ export class QueryModeHandler {
     let reDeferredDbIds: string[] = [];
     let planAction = plan.action;
     let deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
-    let clearBoundaryRelease: (() => void) | null = null;
+    let clearBoundaryOwner: ContextClearBoundaryOwner | null = null;
     try {
-      if (plan.contextReset.action === 'clear_then_flush') {
-        clearBoundaryRelease = await this.acquireClearBoundaryAheadOfFlush();
-        if (clearBoundaryRelease === null) {
+      if (plan.contextReset.action === 'clear_then_flush' && !options?.skipContextReset) {
+        clearBoundaryOwner = await this.acquireClearBoundaryAheadOfFlush();
+        if (clearBoundaryOwner === null) {
           const refreshed = this.planFlush(flushMessages, options);
           if (refreshed.action === 'noop') {
             return { clearedContext: false, reDeferredDbIds };
@@ -370,7 +371,7 @@ export class QueryModeHandler {
           clearedContext = await this.clearContextAheadOfFlush(
             flushMessages,
             options,
-            clearBoundaryRelease
+            clearBoundaryOwner
           );
           if (!clearedContext) {
             const refreshed = this.planFlush(flushMessages, options);
@@ -393,7 +394,10 @@ export class QueryModeHandler {
             }
           }
         }
-      } else if (plan.contextReset.reason === 'active_delivery_job') {
+      } else if (
+        plan.contextReset.action === 'flush_without_clear' &&
+        plan.contextReset.reason === 'active_delivery_job'
+      ) {
         const deliverableSet = new Set(deliverables);
         reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
         deliverables = deliverables.filter((uuid) => {
@@ -423,11 +427,11 @@ export class QueryModeHandler {
       }
       return { clearedContext, reDeferredDbIds };
     } finally {
-      clearBoundaryRelease?.();
+      clearBoundaryOwner?.release();
     }
   }
 
-  private async acquireClearBoundaryAheadOfFlush(): Promise<(() => void) | null> {
+  private async acquireClearBoundaryAheadOfFlush(): Promise<ContextClearBoundaryOwner | null> {
     try {
       return await acquireContextClearBoundary(this.ctx.session.id);
     } catch (error) {
