@@ -119,15 +119,58 @@ function planHandoffMechanism(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
   return { ...ctx, mechanism, handoff: null };
 }
 
-function alreadyHandledHandoff(ctx: MailboxHandoffCtx, targetStatus: string): MailboxHandoffCtx {
-  const current = ctx.sdkMessageRepo.getDeliveryContent(ctx.sessionId, ctx.messageId);
-  if (current === null || current === undefined || current.sendStatus === targetStatus) {
-    throw new Error(
-      `prompt handoff: no ${targetStatus} row to advance for ${ctx.sessionId}/${ctx.messageId}`
-    );
-  }
+const DELIVERABLE_STATUSES = new Set(['enqueued', 'submitted', 'consumed']);
+
+function deliverableHandoff(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
   const dbIds = ctx.sdkMessageRepo.getDeliveryMessageIdsByUuids(ctx.sessionId, [ctx.messageId]);
   return { ...ctx, handoff: { dbId: dbIds[0] ?? ctx.messageId, role: null, changed: false } };
+}
+
+async function advanceStaleHandoff(
+  ctx: MailboxHandoffCtx,
+  sourceStatus: string
+): Promise<MailboxHandoffCtx> {
+  const current = ctx.sdkMessageRepo.getDeliveryContent(ctx.sessionId, ctx.messageId);
+  if (current === null || current === undefined || current.sendStatus === sourceStatus) {
+    throw new Error(
+      `prompt handoff: no ${sourceStatus} row to advance for ${ctx.sessionId}/${ctx.messageId}`
+    );
+  }
+  if (DELIVERABLE_STATUSES.has(current.sendStatus)) {
+    return deliverableHandoff(ctx);
+  }
+  if (current.sendStatus === 'deferred') {
+    const { activated } = await activatePrompts({
+      db: ctx.db,
+      jobQueue: ctx.jobQueue,
+      sessionId: ctx.sessionId,
+      messageUuids: [ctx.messageId],
+      origin: ctx.origin,
+    });
+    const entry = activated[0];
+    if (entry) {
+      return { ...ctx, handoff: { dbId: entry.dbId, role: entry.role, changed: true } };
+    }
+  } else if (current.sendStatus === 'failed') {
+    const retried = await retryPrompt({
+      db: ctx.db,
+      jobQueue: ctx.jobQueue,
+      sdkMessageRepo: ctx.sdkMessageRepo,
+      sessionId: ctx.sessionId,
+      messageUuid: ctx.messageId,
+      origin: ctx.origin,
+    });
+    if (retried !== null) {
+      return { ...ctx, handoff: { dbId: retried.dbId, role: retried.role, changed: true } };
+    }
+  }
+  const recheck = ctx.sdkMessageRepo.getDeliveryContent(ctx.sessionId, ctx.messageId);
+  if (recheck !== null && recheck !== undefined && DELIVERABLE_STATUSES.has(recheck.sendStatus)) {
+    return deliverableHandoff(ctx);
+  }
+  throw new Error(
+    `prompt handoff: could not advance ${current.sendStatus} row for ${ctx.sessionId}/${ctx.messageId}`
+  );
 }
 
 async function applyRetryHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
@@ -141,7 +184,7 @@ async function applyRetryHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHandoff
     origin: ctx.origin,
   });
   if (retried === null) {
-    return alreadyHandledHandoff(ctx, 'failed');
+    return advanceStaleHandoff(ctx, 'failed');
   }
   return { ...ctx, handoff: { dbId: retried.dbId, role: retried.role, changed: true } };
 }
@@ -157,7 +200,7 @@ async function applyActivateHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHand
   });
   const entry = activated[0];
   if (!entry) {
-    return alreadyHandledHandoff(ctx, 'deferred');
+    return advanceStaleHandoff(ctx, 'deferred');
   }
   return { ...ctx, handoff: { dbId: entry.dbId, role: entry.role, changed: true } };
 }

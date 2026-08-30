@@ -245,6 +245,60 @@ describe('deliverInjectedMessage', () => {
     }
   });
 
+  it('advances a stale failed snapshot when the row was concurrently deferred', async () => {
+    const db = await makeDb();
+    try {
+      const { deps, publishStatusChanged } = makeBranchDeps(db);
+      const target = makeTargetSession();
+      db.saveUserMessage(SESSION_ID, makeSdkUserMessage(), 'enqueued');
+      db.getSDKMessageRepo().markDeliveryDeferredByUuid(SESSION_ID, MESSAGE_ID);
+      publishStatusChanged.mockClear();
+
+      const dbId = await deliverInjectedMessage(deps, {
+        session: target.session,
+        sessionId: SESSION_ID,
+        messageId: MESSAGE_ID,
+        sdkUserMessage: makeSdkUserMessage(),
+        existing: { sendStatus: 'failed' },
+      });
+
+      expect(dbId).toBeTypeOf('string');
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, MESSAGE_ID)?.sendStatus).toBe(
+        'enqueued'
+      );
+      expect(publishStatusChanged).toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('retries a stale deferred snapshot when the row was concurrently failed', async () => {
+    const db = await makeDb();
+    try {
+      const { deps, publishStatusChanged } = makeBranchDeps(db);
+      const target = makeTargetSession();
+      db.saveUserMessage(SESSION_ID, makeSdkUserMessage(), 'enqueued');
+      db.getSDKMessageRepo().markDeliveryFailedByUuid(SESSION_ID, MESSAGE_ID);
+      publishStatusChanged.mockClear();
+
+      const dbId = await deliverInjectedMessage(deps, {
+        session: target.session,
+        sessionId: SESSION_ID,
+        messageId: MESSAGE_ID,
+        sdkUserMessage: makeSdkUserMessage(),
+        existing: { sendStatus: 'deferred' },
+      });
+
+      expect(dbId).toBeTypeOf('string');
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, MESSAGE_ID)?.sendStatus).toBe(
+        'enqueued'
+      );
+      expect(publishStatusChanged).toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
   it('reuses an existing enqueued row without re-publishing enqueued', async () => {
     const db = await makeDb();
     try {
