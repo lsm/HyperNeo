@@ -22,14 +22,23 @@ export interface RateLimitManualRetryCtx {
   released: boolean;
 }
 
-function readPersistedCooldownActive(ctx: RateLimitManualRetryCtx): boolean {
-  const persistedState = ctx.db.getSession(ctx.sessionId)?.processingState;
-  if (!persistedState) return false;
+export type RateLimitPersistedCooldownRead =
+  | { state: 'cooldown'; messageId?: string }
+  | { state: 'inactive' }
+  | { state: 'unreadable' };
+
+export function readRateLimitPersistedCooldown(
+  db: RateLimitManualRetryDb,
+  sessionId: string
+): RateLimitPersistedCooldownRead {
+  const persistedState = db.getSession(sessionId)?.processingState;
+  if (!persistedState) return { state: 'inactive' };
   try {
-    const parsed = JSON.parse(persistedState) as { status?: string };
-    return parsed.status === 'rate_limit_cooldown';
+    const parsed = JSON.parse(persistedState) as { status?: string; messageId?: string };
+    if (parsed.status !== 'rate_limit_cooldown') return { state: 'inactive' };
+    return { state: 'cooldown', messageId: parsed.messageId };
   } catch {
-    return false;
+    return { state: 'unreadable' };
   }
 }
 
@@ -51,10 +60,13 @@ export function resolveRateLimitEpisodeDeliveryUuid(
 async function clearPersistedCooldownStage(
   ctx: RateLimitManualRetryCtx
 ): Promise<RateLimitManualRetryCtx> {
-  if (readPersistedCooldownActive(ctx)) {
+  if (readRateLimitPersistedCooldown(ctx.db, ctx.sessionId).state === 'cooldown') {
     await ctx.clearCooldown();
   }
-  return { ...ctx, cleared: !readPersistedCooldownActive(ctx) };
+  return {
+    ...ctx,
+    cleared: readRateLimitPersistedCooldown(ctx.db, ctx.sessionId).state !== 'cooldown',
+  };
 }
 
 async function releaseOwningDeliveryStage(
