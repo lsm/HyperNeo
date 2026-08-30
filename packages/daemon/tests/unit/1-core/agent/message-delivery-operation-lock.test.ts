@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { withSessionOperationLock } from '../../../../src/lib/agent/message-delivery';
+import {
+  sessionOperationLockArmedAtCountForTest,
+  withSessionOperationLock,
+} from '../../../../src/lib/agent/message-delivery';
 
 const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -32,6 +35,15 @@ describe('withSessionOperationLock', () => {
     await expect(first).resolves.toBe(1);
     await expect(second).resolves.toBe(2);
     expect(order).toEqual(['first-start', 'first-end', 'second-start']);
+  });
+
+  it('clears the holder timestamp once the last operation for a session completes', async () => {
+    expect(sessionOperationLockArmedAtCountForTest()).toBe(0);
+
+    await withSessionOperationLock('s', async () => 'a');
+    await withSessionOperationLock('s', async () => 'b');
+
+    expect(sessionOperationLockArmedAtCountForTest()).toBe(0);
   });
 
   it('runs different sessions concurrently', async () => {

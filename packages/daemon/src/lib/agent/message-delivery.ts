@@ -801,6 +801,10 @@ export function hasContextClearBoundaryForTest(sessionId: string): boolean {
   return sessionContextClearBoundaries.has(sessionId);
 }
 
+export function sessionOperationLockArmedAtCountForTest(): number {
+  return sessionOperationLockArmedAt.size;
+}
+
 const sessionOperationLocks = new Map<string, Promise<unknown>>();
 
 const sessionOperationLockArmedAt = new Map<string, number>();
@@ -967,7 +971,12 @@ export async function withSessionOperationLock<T>(
     signal,
     prev: armed.prev,
     registeredTail: armed.tail,
-    release: armed.release,
+    release: () => {
+      armed.release();
+      if (sessionOperationLockArmedAt.get(sessionId) === ctx.armedAt) {
+        sessionOperationLockArmedAt.delete(sessionId);
+      }
+    },
     armedAt: 0,
     observedArmedAt: null,
     acquired: false,
