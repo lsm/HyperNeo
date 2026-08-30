@@ -36,7 +36,11 @@ interface PromptInput {
   message: SDKMessage;
   origin?: MessageOrigin;
   hold?: PromptHold;
-  delivery: { origin: MessageDeliveryOrigin; parentToolUseId?: string | null };
+  delivery: {
+    origin: MessageDeliveryOrigin;
+    parentToolUseId?: string | null;
+    requestedRole?: MessageDeliveryRole;
+  };
 }
 
 export interface PersistPromptArgs extends PromptInput {
@@ -107,6 +111,7 @@ export interface RetryPromptArgs {
   dbId?: string;
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
+  requestedRole?: MessageDeliveryRole;
   publishStatusChanged?: OutboxStatusPublisher;
 }
 
@@ -349,11 +354,12 @@ function setDeliveryJobReleased(db: BunDatabase, jobId: string, released: boolea
 
 function enqueueArbitratedDeliveryJob(
   jobQueue: JobQueueRepository,
-  basePayload: ReleasedDeliveryPayload
+  basePayload: ReleasedDeliveryPayload,
+  requestedRole?: MessageDeliveryRole
 ): MessageDeliveryRole {
   const arbitration = planDeliveryRoleArbitration({
     existingActiveRole: null,
-    requestedRole: undefined,
+    requestedRole,
   });
   if (arbitration.action === 'reuse') {
     throw new Error('message-delivery-outbox: arbitration returned reuse without an active role');
@@ -381,7 +387,8 @@ function reviveDeliveryJob(
   db: BunDatabase,
   jobQueue: JobQueueRepository,
   basePayload: ReleasedDeliveryPayload,
-  jobId: string
+  jobId: string,
+  requestedRole?: MessageDeliveryRole
 ): MessageDeliveryRole {
   const reviveAs = (role: MessageDeliveryRole) =>
     db
@@ -394,6 +401,12 @@ function reviveDeliveryJob(
         basePayload.parentToolUseId ?? null,
         jobId
       );
+  if (requestedRole !== undefined) {
+    if (reviveAs(requestedRole).changes === 0) {
+      return enqueueArbitratedDeliveryJob(jobQueue, basePayload, requestedRole);
+    }
+    return requestedRole;
+  }
   try {
     if (reviveAs('turn').changes === 0) {
       return enqueueArbitratedDeliveryJob(jobQueue, basePayload);
@@ -448,7 +461,8 @@ function ensureReleasedDeliveryJob(
 function rePendingDeliveryJob(
   db: BunDatabase,
   jobQueue: JobQueueRepository,
-  basePayload: ReleasedDeliveryPayload
+  basePayload: ReleasedDeliveryPayload,
+  requestedRole?: MessageDeliveryRole
 ): MessageDeliveryRole {
   const active = findActiveDeliveryJob(db, basePayload.sessionId, basePayload.messageUuid);
   if (active) {
@@ -461,13 +475,13 @@ function rePendingDeliveryJob(
       }
       return active.role ?? 'turn';
     }
-    return reviveDeliveryJob(db, jobQueue, basePayload, active.jobId);
+    return reviveDeliveryJob(db, jobQueue, basePayload, active.jobId, requestedRole);
   }
   const latest = db
     .prepare(LATEST_DELIVERY_JOB_SQL)
     .get(basePayload.sessionId, basePayload.messageUuid) as { job_id: string } | undefined;
-  if (latest) return reviveDeliveryJob(db, jobQueue, basePayload, latest.job_id);
-  return enqueueArbitratedDeliveryJob(jobQueue, basePayload);
+  if (latest) return reviveDeliveryJob(db, jobQueue, basePayload, latest.job_id, requestedRole);
+  return enqueueArbitratedDeliveryJob(jobQueue, basePayload, requestedRole);
 }
 
 function buildReleasedPayload(args: {
@@ -539,7 +553,11 @@ function persistAdmittedPrompt(
       ctx.origin,
       ctx.admission
     );
-    const role = enqueueArbitratedDeliveryJob(args.jobQueue, ctx.basePayload);
+    const role = enqueueArbitratedDeliveryJob(
+      args.jobQueue,
+      ctx.basePayload,
+      ctx.delivery.requestedRole
+    );
     return { dbMessageId: core.id, countsTowardsBadge: core.countsTowardsBadge, role };
   })();
 }
@@ -645,7 +663,8 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
             origin: ctx.delivery.origin,
             parentToolUseId: ctx.delivery.parentToolUseId,
             released,
-          })
+          }),
+          ctx.delivery.requestedRole
         );
         return { dbId: ctx.existing.dbId, role, released, countsTowardsBadge: false };
       }
@@ -681,7 +700,8 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
         origin: ctx.delivery.origin,
         parentToolUseId: ctx.delivery.parentToolUseId,
         released: ctx.ensureStatus !== 'deferred',
-      })
+      }),
+      ctx.delivery.requestedRole
     );
     return {
       dbId: core.id,
@@ -833,7 +853,8 @@ function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
           origin: ctx.origin,
           parentToolUseId: ctx.parentToolUseId,
           released: true,
-        })
+        }),
+        ctx.requestedRole
       );
       ctx.sdkMessageRepo?.updateMessageStatus([row.db_id], 'enqueued');
       return { dbId: row.db_id, messageUuid: ctx.messageUuid, role };

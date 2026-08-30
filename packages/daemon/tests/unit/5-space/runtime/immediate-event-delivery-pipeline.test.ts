@@ -98,6 +98,7 @@ function setupDb(): Database {
       parent_tool_use_id TEXT,
       task_id TEXT,
       sdk_uuid TEXT,
+      consumed_seq INTEGER,
       replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE sdk_message_replacements (
@@ -214,7 +215,15 @@ function deliveryJobs(db: Database): DeliveryJobRow[] {
     db.prepare(`SELECT payload FROM job_queue WHERE queue = 'message_delivery'`).all() as Array<{
       payload: string;
     }>
-  ).map((row) => JSON.parse(row.payload) as DeliveryJobRow);
+  ).map((row) => {
+    const payload = JSON.parse(row.payload) as DeliveryJobRow;
+    return {
+      sessionId: payload.sessionId,
+      messageUuid: payload.messageUuid,
+      role: payload.role,
+      origin: payload.origin,
+    };
+  });
 }
 
 function messageRow(

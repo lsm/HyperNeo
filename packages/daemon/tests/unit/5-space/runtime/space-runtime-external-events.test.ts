@@ -2804,6 +2804,74 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(deferredDigestUuids(sessionId)).toContain('digest-abandon-owed');
     });
 
+    test('flag on: a successful handoff retry clears its timer and attempt count', async () => {
+      const sessionId = 'session-retry-clear';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      db.prepare(
+        `INSERT INTO sessions
+           (id, title, created_at, last_active_at, status, config, metadata, type)
+         VALUES (?, ?, ?, ?, 'active', '{}', '{}', 'worker')`
+      ).run(sessionId, sessionId, Date.now(), Date.now());
+      tam.alive.add(sessionId);
+      const { task } = await startRunWithSubscription(topic);
+      await eventService.publish(makeEvent({ id: 'evt-retry-clear', topic }));
+      const delivery = eventStore.listDeliveries('evt-retry-clear')[0]!;
+      eventStore.markDeliveriesDeliveredAtomic([
+        { eventId: 'evt-retry-clear', deliveryKey: delivery.deliveryKey },
+      ]);
+      saveDeferredDigestWithTask(sessionId, 'digest-retry-clear', ['evt-retry-clear'], task.id);
+      const row = db
+        .prepare(
+          `SELECT id FROM sdk_messages WHERE session_id = ? AND sdk_uuid = 'digest-retry-clear'`
+        )
+        .get(sessionId) as { id: string };
+
+      db.exec('DROP TABLE job_queue');
+      await (
+        runtime as unknown as {
+          handoffDigestDelivery: (sessionId: string, uuid: string, dbId: string) => Promise<void>;
+        }
+      ).handoffDigestDelivery(sessionId, 'digest-retry-clear', String(row.id));
+
+      const internals = runtime as unknown as {
+        digestHandoffRetryCounts: Map<string, number>;
+        digestHandoffRetryTimers: Map<string, unknown>;
+      };
+      const key = `${sessionId}:digest-retry-clear`;
+      expect(internals.digestHandoffRetryCounts.get(key)).toBe(1);
+      expect(internals.digestHandoffRetryTimers.has(key)).toBe(true);
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS job_queue (
+          id TEXT PRIMARY KEY,
+          queue TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+          payload TEXT NOT NULL DEFAULT '{}',
+          result TEXT,
+          error TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          run_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          started_at INTEGER,
+          heartbeat_at INTEGER,
+          completed_at INTEGER
+        )
+      `);
+      await wait(1200);
+
+      expect(internals.digestHandoffRetryCounts.has(key)).toBe(false);
+      expect(internals.digestHandoffRetryTimers.has(key)).toBe(false);
+      const status = (
+        db.prepare(`SELECT send_status AS s FROM sdk_messages WHERE id = ?`).get(row.id) as {
+          s: string;
+        }
+      ).s;
+      expect(status).toBe('enqueued');
+    });
+
     test('flag on: a tick failure after rehydration does not poison the reconciliation gate', async () => {
       const sessionId = 'session-tickfail-gate';
       const topic = 'github/lsm/neokai/pull_request/42.comment_polled';

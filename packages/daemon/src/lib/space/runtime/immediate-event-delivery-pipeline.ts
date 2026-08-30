@@ -186,6 +186,7 @@ export async function persistAndEnqueue(
   ctx: ImmediateEventDeliveryCtx
 ): Promise<ImmediateEventDeliveryCtx> {
   try {
+    const steer = ctx.mechanics === 'steer';
     const ensured = ensurePrompt({
       db: ctx.deps.db,
       sdkMessageRepo: ctx.deps.messages,
@@ -193,7 +194,10 @@ export async function persistAndEnqueue(
       sessionId: ctx.sessionId!,
       message: ctx.message!,
       origin: 'system',
-      delivery: { origin: 'space_inject' },
+      delivery: {
+        origin: 'space_inject',
+        ...(steer ? { requestedRole: 'steer' as const } : {}),
+      },
     });
     let deliveryRole = ensured.role;
     if (deliveryRole === null && !ensured.created) {
@@ -204,6 +208,7 @@ export async function persistAndEnqueue(
         sessionId: ctx.sessionId!,
         messageUuid: ctx.messageUuid!,
         origin: 'space_inject',
+        ...(steer ? { requestedRole: 'steer' as const } : {}),
       });
       deliveryRole = retried?.role ?? null;
     }

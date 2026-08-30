@@ -1672,6 +1672,7 @@ export class SpaceRuntime {
         origin: 'space_inject',
       });
       this.deleteDigestHandoffDebt(sessionId, messageUuid);
+      this.digestHandoffRetryCounts.delete(`${sessionId}:${messageUuid}`);
       const entry = activated[0];
       if (!entry || entry.role !== 'turn') return;
       const session = this.config.taskAgentManager?.getAgentSessionById(sessionId);
