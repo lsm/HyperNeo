@@ -122,6 +122,7 @@ describe('QueryModeHandler', () => {
         toolCallCount: 0,
       },
     };
+    db.createSession(mockSession);
 
     mockInternalEventBus = {
       publish: mock(async (event: string, payload: { messageIds?: string[]; status?: string }) => {
@@ -412,6 +413,7 @@ describe('QueryModeHandler', () => {
 
     it('creates durable ownership before publishing enqueued status', async () => {
       seedRow('uuid-1', 'one', 'deferred');
+      let ownedWhenPublished = false;
       const publishSpy = mockInternalEventBus.publish as ReturnType<typeof mock>;
       publishSpy.mockImplementation(
         async (event: string, payload: { messageIds?: string[]; status?: string }) => {
@@ -421,9 +423,10 @@ describe('QueryModeHandler', () => {
               status: payload.status ?? '',
             });
             if (payload.status === 'enqueued') {
-              expect(
-                db.getJobQueueRepo().activeDeliveryMessageUuids(SESSION_ID).has('uuid-1')
-              ).toBe(true);
+              ownedWhenPublished = db
+                .getJobQueueRepo()
+                .activeDeliveryMessageUuids(SESSION_ID)
+                .has('uuid-1');
             }
           }
           return { delivered: 1, failures: [] };
@@ -434,6 +437,7 @@ describe('QueryModeHandler', () => {
       await handler.handleQueryTrigger();
 
       expect(statusEvents).toHaveLength(1);
+      expect(ownedWhenPublished).toBe(true);
     });
 
     it('rolls the activation back whole when the enqueue fails (no stranded row, no status event)', async () => {

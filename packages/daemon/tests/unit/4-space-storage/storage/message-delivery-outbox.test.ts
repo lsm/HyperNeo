@@ -424,8 +424,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
   });
 
   describe('canonical producer API (persistPrompt / ensurePrompt / activatePrompts / retryPrompt)', () => {
-    function insertStatusRow(uuid: string, sendStatus: string): string {
-      const dbId = `db-${uuid}`;
+    function insertStatusRow(uuid: string, sendStatus: string, dbId = `db-${uuid}`): string {
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid, replacement_metadata_normalized)
          VALUES (?, ?, 'user', ?, ?, ?, ?, 1)`
@@ -853,6 +852,207 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(retried).toBeNull();
       expect(rowStatus('retry-consumed')).toBe('consumed');
       expect(jobsFor('retry-consumed')).toHaveLength(0);
+    });
+
+    it('persistAndEnqueueDelivery maps a deferred sendStatus onto the manual hold', () => {
+      const result = persistAndEnqueueDelivery({
+        db: db as never,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: userMessage('wrapper-deferred'),
+        sendStatus: 'deferred',
+        delivery: { origin: 'chat' },
+      });
+
+      expect(result.role).toBe('turn');
+      expect(rowStatus('wrapper-deferred')).toBe('deferred');
+      expect(jobsFor('wrapper-deferred')[0].released).toBe(0);
+    });
+
+    it('activatePrompts transitions exactly one row per uuid when duplicates exist', async () => {
+      insertStatusRow('dup-activate', 'deferred', 'db-dup-activate-old');
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      insertStatusRow('dup-activate', 'deferred', 'db-dup-activate-new');
+
+      const { activated } = await activatePrompts({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuids: ['dup-activate'],
+        origin: 'recovery',
+      });
+
+      expect(activated).toHaveLength(1);
+      expect(activated[0].dbId).toBe('db-dup-activate-old');
+      const statuses = db
+        .prepare(
+          `SELECT id, send_status FROM sdk_messages WHERE sdk_uuid = ? ORDER BY timestamp ASC, rowid ASC`
+        )
+        .all('dup-activate') as Array<{ id: string; send_status: string }>;
+      expect(statuses).toEqual([
+        { id: 'db-dup-activate-old', send_status: 'enqueued' },
+        { id: 'db-dup-activate-new', send_status: 'deferred' },
+      ]);
+      expect(jobsFor('dup-activate')).toHaveLength(1);
+    });
+
+    it('retryPrompt transitions exactly one row per uuid when duplicates exist', async () => {
+      insertStatusRow('dup-retry', 'failed', 'db-dup-retry-old');
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      insertStatusRow('dup-retry', 'failed', 'db-dup-retry-new');
+
+      const retried = await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'dup-retry',
+        origin: 'chat',
+      });
+
+      expect(retried?.dbId).toBe('db-dup-retry-old');
+      const statuses = db
+        .prepare(
+          `SELECT id, send_status FROM sdk_messages WHERE sdk_uuid = ? ORDER BY timestamp ASC, rowid ASC`
+        )
+        .all('dup-retry') as Array<{ id: string; send_status: string }>;
+      expect(statuses).toEqual([
+        { id: 'db-dup-retry-old', send_status: 'enqueued' },
+        { id: 'db-dup-retry-new', send_status: 'failed' },
+      ]);
+      expect(jobsFor('dup-retry')).toHaveLength(1);
+    });
+
+    it('retryPrompt strips park budget, claim token, and batch membership when reviving', async () => {
+      insertStatusRow('retry-strip', 'failed');
+      const deadJob = jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'retry-strip',
+          role: 'turn',
+          origin: 'chat',
+          parentToolUseId: null,
+          released: true,
+          __parkCount: 12,
+          __claimToken: 'stale-claim',
+          batchUuids: ['retry-strip', 'retry-other'],
+          droppedBatchUuids: ['retry-dropped'],
+        },
+        maxRetries: 8,
+      });
+      db.prepare(
+        `UPDATE job_queue SET status = 'dead', retry_count = 8, result = ? WHERE id = ?`
+      ).run('{"outcome":"parked"}', deadJob.id);
+
+      await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'retry-strip',
+        origin: 'chat',
+      });
+
+      const payload = jobPayload(db, SESSION, 'retry-strip');
+      expect(payload?.__parkCount).toBeUndefined();
+      expect(payload?.__claimToken).toBeUndefined();
+      expect(payload?.batchUuids).toBeUndefined();
+      expect(payload?.droppedBatchUuids).toBeUndefined();
+      expect(payload?.released).toBe(true);
+      expect(payload?.role).toBe('turn');
+      const job = jobsFor('retry-strip')[0];
+      expect(job.retryCount).toBe(0);
+      expect(job.status).toBe('pending');
+    });
+
+    it('retryPrompt runs the repo status bookkeeping inside the retry transaction', async () => {
+      insertStatusRow('retry-book', 'failed');
+      const bookkeeping: Array<[string[], string, string]> = [];
+      const spyRepo = {
+        updateMessageStatus: (ids: string[], status: string) => {
+          const withinJobWrite = db
+            .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
+            .get(ids[0]) as { send_status: string };
+          bookkeeping.push([[...ids], status, withinJobWrite.send_status]);
+        },
+      } as unknown as SDKMessageRepository;
+
+      await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sdkMessageRepo: spyRepo,
+        sessionId: SESSION,
+        messageUuid: 'retry-book',
+        origin: 'chat',
+      });
+
+      expect(bookkeeping).toEqual([[['db-retry-book'], 'enqueued', 'enqueued']]);
+    });
+
+    it('activatePrompts re-arms ownership when a processing held claim settles as skipped', async () => {
+      insertStatusRow('claim-settled', 'deferred');
+      const heldJob = jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'claim-settled',
+          role: 'turn',
+          origin: 'chat',
+          parentToolUseId: null,
+          released: false,
+        },
+      });
+      db.prepare(`UPDATE job_queue SET status = 'processing' WHERE id = ?`).run(heldJob.id);
+
+      const { activated } = await activatePrompts({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuids: ['claim-settled'],
+        origin: 'recovery',
+        publishStatusChanged: () => {
+          db.prepare(
+            `UPDATE job_queue SET status = 'completed', completed_at = ? WHERE id = ?`
+          ).run(Date.now(), heldJob.id);
+        },
+      });
+
+      expect(activated).toHaveLength(1);
+      expect(activated[0].role).toBe('turn');
+      expect(rowStatus('claim-settled')).toBe('enqueued');
+      const jobs = jobsFor('claim-settled');
+      expect(jobs).toHaveLength(2);
+      expect(jobs.map((job) => job.status).sort()).toEqual(['completed', 'pending']);
+      expect(jobs.find((job) => job.status === 'pending')?.released).toBe(1);
+    });
+
+    it('activatePrompts leaves a still-processing claim alone instead of double-owning', async () => {
+      insertStatusRow('claim-live', 'deferred');
+      const heldJob = jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'claim-live',
+          role: 'turn',
+          origin: 'chat',
+          parentToolUseId: null,
+          released: false,
+        },
+      });
+      db.prepare(`UPDATE job_queue SET status = 'processing' WHERE id = ?`).run(heldJob.id);
+
+      await activatePrompts({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuids: ['claim-live'],
+        origin: 'recovery',
+      });
+
+      const jobs = jobsFor('claim-live');
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].status).toBe('processing');
+      expect(jobs[0].released).toBe(1);
     });
   });
 });

@@ -1264,6 +1264,7 @@ export function setupSessionHandlers(
     const retried = await retryPrompt({
       db: db.getDatabase(),
       jobQueue: db.getJobQueueRepo(),
+      sdkMessageRepo: db.getSDKMessageRepo(),
       sessionId: targetSessionId,
       messageUuid,
       origin: 'chat',

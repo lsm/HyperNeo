@@ -991,7 +991,7 @@ describe('Session RPC Handlers — models.list', () => {
         getDatabase: () => db,
         getSession: (sid: string) => ({ id: sid, status: sessionStatus }),
         getSDKMessageRepo: () => ({
-          transitionMessageSendStatus: () => false,
+          updateMessageStatus: mock(() => {}),
         }),
       };
       const agentSession = {
