@@ -1440,6 +1440,16 @@ describe('AgentSession', () => {
       expect(start).not.toHaveBeenCalled();
     });
 
+    it('startStreamingQuery refuses to start an ended session', async () => {
+      const start = mock(async () => {});
+      (agentSession as unknown as { queryRunner: unknown }).queryRunner = { start } as never;
+      (agentSession as unknown as { session: { status: string } }).session.status = 'ended';
+
+      await agentSession.startStreamingQuery();
+
+      expect(start).not.toHaveBeenCalled();
+    });
+
     it('cancelRateLimitRetry clears a persisted cooldown left by a restart', async () => {
       const cancelDelivery = mock(() => true);
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);

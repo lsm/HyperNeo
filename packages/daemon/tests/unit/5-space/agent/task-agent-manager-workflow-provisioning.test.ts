@@ -269,13 +269,14 @@ function makeRestoreManager(input: {
   sessionId?: string;
   executionStatus?: string | null;
   archiveDuringAdmission?: boolean;
+  endedStatus?: boolean;
 }) {
   const startStreamingQuery = mock(async () => {});
   const replay = mock(async () => true);
   const sessionId = input.sessionId ?? SESSION_ID;
   const data: { id: string; status: string; config: { queryMode?: string } } = {
     id: sessionId,
-    status: 'active',
+    status: input.endedStatus ? 'ended' : 'active',
     config: { queryMode: input.queryMode },
   };
   const session = {
@@ -396,6 +397,17 @@ describe('TaskAgentManager restored worker query admission', () => {
   it('skips query startup when the session archives during admission', async () => {
     const { manager, startStreamingQuery, replay } = makeRestoreManager({
       archiveDuringAdmission: true,
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
+
+    expect(startStreamingQuery).not.toHaveBeenCalled();
+    expect(replay).not.toHaveBeenCalled();
+  });
+
+  it('skips query startup for a session persisted as ended', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      endedStatus: true,
     });
 
     await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);

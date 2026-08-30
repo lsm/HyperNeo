@@ -398,10 +398,11 @@ export class JobQueueRepository {
       this.db
         .prepare(
           `UPDATE job_queue
-              SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL
+              SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
+                  payload = json_remove(payload, '$.__claimToken', '$.__parkCount')
             WHERE queue = 'message_delivery'
               AND json_extract(payload, '$.sessionId') = ?
-              AND status = 'pending'`
+              AND status IN ('pending', 'processing')`
         )
         .run(runAt, sessionId)
     );
