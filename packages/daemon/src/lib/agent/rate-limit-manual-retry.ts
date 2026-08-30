@@ -76,6 +76,7 @@ async function releaseOwningDeliveryStage(
 const rateLimitManualRetryPipeline = (
   superpipe({
     settled: (ctx: RateLimitManualRetryCtx) => ctx.released,
+    cleared: (ctx: RateLimitManualRetryCtx) => ctx.cleared,
   })('rate-limit-manual-retry') as PipelineAPI
 )
   .input(['ctx'])
