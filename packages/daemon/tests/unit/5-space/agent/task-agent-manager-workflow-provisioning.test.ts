@@ -213,6 +213,53 @@ function executionWorkerSession(): AgentSession {
   } as unknown as AgentSession;
 }
 
+function makeIndexedRehydrateManager(input: { taskStatus: string }) {
+  const startStreamingQuery = mock(async () => {});
+  const replay = mock(async () => true);
+  const sessionId = 'space:space-1:task:task-1:exec:e2';
+  const session = {
+    getSessionData: () => ({ id: sessionId, config: {}, status: 'active' }),
+    isQueryActiveOrStarting: () => false,
+    startStreamingQuery,
+    replayPendingMessagesForImmediateMode: replay,
+  } as unknown as AgentSession;
+  const task = {
+    id: 'task-1',
+    spaceId: 'space-1',
+    workflowRunId: 'run-1',
+    status: input.taskStatus,
+  };
+  let releaseLock: () => void = () => {};
+  const lockGate = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  const manager = Object.create(TaskAgentManager.prototype) as TaskAgentManager;
+  Object.defineProperty(manager, 'config', {
+    value: {
+      taskRepo: { getTask: () => task },
+      workflowRunRepo: { getRun: () => ({ id: 'run-1', status: 'in_progress' }) },
+      spaceManager: {
+        getSpace: async () => ({ id: 'space-1', stopped: false, paused: false, status: 'active' }),
+      },
+      sessionManager: {},
+    },
+  });
+  Object.defineProperty(manager, 'withSessionRestoreLock', {
+    value: (_sessionId: string, run: () => Promise<unknown>) => lockGate.then(() => run()),
+  });
+  Object.defineProperty(manager, 'agentSessionIndex', {
+    value: new Map([[sessionId, session]]),
+  });
+  Object.defineProperty(manager, 'rehydrateInFlight', { value: new Map() });
+  Object.defineProperty(manager, 'resolveNodeExecutionForSubSession', {
+    value: () => ({ workflowRunId: 'run-1', status: 'in_progress' }),
+  });
+  Object.defineProperty(manager, 'hasQueuedRetryableHookAction', {
+    value: () => false,
+  });
+  return { manager, session, sessionId, startStreamingQuery, replay, releaseLock, task };
+}
+
 function makeRestoreManager(input: {
   queryMode?: string;
   cleanupState?: string;
@@ -462,5 +509,39 @@ describe('TaskAgentManager restored rate-limit cooldown lookup', () => {
     const manager = makeCooldownManager({ watchdogRetryAt: 5678 });
 
     expect(manager.getRestoredRateLimitRetryAt(SESSION_ID)).toBeNull();
+  });
+});
+
+describe('TaskAgentManager indexed rehydrate revalidation', () => {
+  it('starts and replays an admitted indexed worker after acquiring the lock', async () => {
+    const fixture = makeIndexedRehydrateManager({ taskStatus: 'in_progress' });
+    const rehydrate = (
+      fixture.manager as unknown as {
+        rehydrateSubSession: (id: string) => Promise<AgentSession | null>;
+      }
+    ).rehydrateSubSession.bind(fixture.manager);
+
+    const restored = await rehydrate(fixture.sessionId);
+
+    expect(restored).toBe(fixture.session);
+    expect(fixture.startStreamingQuery).toHaveBeenCalledTimes(1);
+    expect(fixture.replay).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips startup and replay when the task finishes while the lock is held', async () => {
+    const fixture = makeIndexedRehydrateManager({ taskStatus: 'in_progress' });
+    const rehydrate = (
+      fixture.manager as unknown as {
+        rehydrateSubSession: (id: string) => Promise<AgentSession | null>;
+      }
+    ).rehydrateSubSession.bind(fixture.manager);
+
+    const pending = rehydrate(fixture.sessionId);
+    fixture.task.status = 'done';
+    fixture.releaseLock();
+    await pending;
+
+    expect(fixture.startStreamingQuery).not.toHaveBeenCalled();
+    expect(fixture.replay).not.toHaveBeenCalled();
   });
 });

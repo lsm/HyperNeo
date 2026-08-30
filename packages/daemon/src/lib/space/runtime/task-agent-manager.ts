@@ -3728,10 +3728,23 @@ export class TaskAgentManager {
     const rehydrateTask = this.withSessionRestoreLock(subSessionId, async () => {
       const indexed = this.agentSessionIndex.get(subSessionId);
       if (indexed && (indexed === suppliedSession || !suppliedSession)) {
-        if (options.startQuery !== false && !indexed.isQueryActiveOrStarting()) {
+        const taskId = taskIdFromSubSessionIdentity(subSessionId);
+        if (
+          options.startQuery !== false &&
+          !indexed.isQueryActiveOrStarting() &&
+          taskId !== null &&
+          (await this.restoredWorkerStartAdmitted(indexed, taskId))
+        ) {
           await indexed.startStreamingQuery();
         }
-        if (options.startQuery !== false && options.replayPendingMessages !== false) {
+        if (
+          options.startQuery !== false &&
+          options.replayPendingMessages !== false &&
+          taskId !== null &&
+          (await this.restoredWorkerStartAdmitted(indexed, taskId, {
+            settleReplayProvisioning: true,
+          }))
+        ) {
           const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
           options.onReplaySettled?.(replayed);
         }
