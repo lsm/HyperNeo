@@ -1244,7 +1244,7 @@ export class SDKMessageHandler {
       }
 
       if (isSDKStatusMessage(message)) {
-        await this.handleStatusMessage(message);
+        await this.handleStatusMessage(message, invocationGeneration);
       }
 
       if (isSDKModelRefusalFallbackMessage(message)) {
@@ -1880,7 +1880,10 @@ export class SDKMessageHandler {
     }
   }
 
-  private async handleStatusMessage(message: SDKMessage): Promise<void> {
+  private async handleStatusMessage(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): Promise<void> {
     const { stateManager } = this.ctx;
 
     if (!isSDKStatusMessage(message)) return;
@@ -1888,6 +1891,7 @@ export class SDKMessageHandler {
     const statusMsg = message as { status: string | null };
     if (statusMsg.status === 'compacting') {
       if (
+        !this.isInvocationStale(invocationGeneration) &&
         this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
         this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()
       ) {
@@ -1918,7 +1922,6 @@ export class SDKMessageHandler {
     if (manualBoundary && this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) {
       if (this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()) {
         this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
-        this.ctx.messageQueue.consumeCompactionBoundary();
         this.ctx.messageQueue.armInternalCompactionResultAttribution();
       } else {
         this.ctx.messageQueue.consumeCompactionBoundary();

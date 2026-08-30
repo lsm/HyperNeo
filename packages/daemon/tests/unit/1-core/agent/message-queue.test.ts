@@ -1098,7 +1098,6 @@ describe('MessageQueue', () => {
       expect(q.hasBufferedInternalCompaction()).toBe(false);
       expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
       q.acknowledgeCompactionsAwaitingBoundary();
-      q.consumeCompactionBoundary();
       q.armInternalCompactionResultAttribution();
       expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
       expect(q.consumeInternalCompactionResultAttribution()).toBe(true);
@@ -1120,6 +1119,7 @@ describe('MessageQueue', () => {
       } as never);
       expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
       q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
       q.consumeCompactionBoundary();
       expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
       q.stop();
@@ -1165,6 +1165,38 @@ describe('MessageQueue', () => {
       q.stop();
       expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
       expect(q.hasBufferedInternalCompaction()).toBe(false);
+    });
+
+    it('removes the boundary marker when a delivered compaction is revoked', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'daemon-revoked',
+        content: '/compact',
+        internal: true,
+      } as never);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+
+      expect(q.revokeDeliveredCompaction('daemon-revoked')).toBe(true);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      q.stop();
+    });
+
+    it('removes the boundary marker when the turn-end janitor acks a boundary-less daemon compaction', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'daemon-dead',
+        content: '/compact',
+        internal: true,
+      } as never);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+
+      q.acknowledgeCompactionsAwaitingBoundary();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+      expect(q.hasCompactionsAwaitingBoundary()).toBe(false);
+      q.stop();
     });
 
     it('keeps a yielded internal compaction outstanding across a compact boundary', async () => {

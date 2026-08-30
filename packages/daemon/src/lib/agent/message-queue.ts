@@ -133,7 +133,7 @@ export class MessageQueue {
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private internalCompactionResultAttributionArmed: boolean = false;
-  private outstandingCompactionBoundaries: Array<'daemon' | 'user'> = [];
+  private outstandingCompactionBoundaries: Array<{ kind: 'daemon' | 'user'; id?: string }> = [];
   private internalCompactionBuffered: boolean = false;
   private nonCompactionSentSinceBoundary: boolean = false;
   private recentSentPrompts: Map<string, string | MessageContent[]> = new Map();
@@ -169,7 +169,7 @@ export class MessageQueue {
       this.internalCompactionsAwaitingBoundary += 1;
       this.internalCompactionIdsAwaitingBoundary.add(message.id);
       this.internalCompactionBuffered = this.outstandingCompactionBoundaries.length > 0;
-      this.outstandingCompactionBoundaries.push('daemon');
+      this.outstandingCompactionBoundaries.push({ kind: 'daemon', id: message.id });
     } else {
       this.nonCompactionSentSinceBoundary = true;
       this.recentSentPrompts.delete(message.id);
@@ -181,7 +181,7 @@ export class MessageQueue {
         }
       }
       if (typeof message.content === 'string' && message.content === '/compact') {
-        this.outstandingCompactionBoundaries.push('user');
+        this.outstandingCompactionBoundaries.push({ kind: 'user' });
       }
     }
   }
@@ -213,6 +213,7 @@ export class MessageQueue {
       if (acknowledged !== undefined) {
         this.internalCompactionIdsAwaitingBoundary.delete(acknowledged);
       }
+      this.outstandingCompactionBoundaries.shift();
     }
     this.removePendingInternalCompactions();
     this.recentSentPrompts.clear();
@@ -230,7 +231,7 @@ export class MessageQueue {
   }
 
   nextCompactionBoundaryIsDaemon(): boolean {
-    return this.outstandingCompactionBoundaries[0] === 'daemon';
+    return this.outstandingCompactionBoundaries[0]?.kind === 'daemon';
   }
 
   consumeCompactionBoundary(): void {
@@ -255,6 +256,12 @@ export class MessageQueue {
       0,
       this.internalCompactionsAwaitingBoundary - 1
     );
+    const markerIndex = this.outstandingCompactionBoundaries.findIndex(
+      (entry) => entry.kind === 'daemon' && entry.id === messageId
+    );
+    if (markerIndex !== -1) {
+      this.outstandingCompactionBoundaries.splice(markerIndex, 1);
+    }
     return true;
   }
 
