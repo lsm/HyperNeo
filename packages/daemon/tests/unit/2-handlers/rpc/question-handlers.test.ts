@@ -55,6 +55,7 @@ function createMockAgentSession(): {
   };
 } {
   const mocks = {
+    getSessionData: mock(() => ({ id: 'session-123', config: {} })),
     handleQuestionResponse: mock(async () => {}),
     updateQuestionDraft: mock(async () => {}),
     handleQuestionCancel: mock(async () => {}),

@@ -37,6 +37,7 @@ function createMockMessageHub(): {
 
 function createMockAgentSession(overrides?: Partial<AgentSession>): AgentSession {
   return {
+    getSessionData: () => ({ id: 'session-123', config: {} }),
     handleQuestionResponse: mock(async () => {}),
     updateQuestionDraft: mock(async () => {}),
     handleQuestionCancel: mock(async () => {}),
