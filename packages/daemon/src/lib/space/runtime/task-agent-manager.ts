@@ -354,6 +354,7 @@ export class TaskAgentManager {
   private taskWorktreePaths = new Map<string, string>();
 
   private readonly auditLogRepo: McpAuditLogRepository;
+  private readonly flagManagedDispatcherServers = new WeakSet<object>();
 
   private taskArchiveListenerUnsub: (() => void) | null = null;
   private rateLimitListenerUnsubs: Array<() => void> = [];
@@ -4396,11 +4397,13 @@ export class TaskAgentManager {
       ctx.workflowNodeId
     );
     session.mergeRuntimeMcpServers(rebuilt);
+    const attachedDispatcher = (
+      session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined
+    )?.['space-actions'];
     if (
       !rebuilt['space-actions'] &&
-      (session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined)?.[
-        'space-actions'
-      ]
+      attachedDispatcher !== undefined &&
+      this.flagManagedDispatcherServers.has(attachedDispatcher)
     ) {
       session.detachRuntimeMcpServer('space-actions');
     }
@@ -4870,7 +4873,7 @@ export class TaskAgentManager {
 
   buildSpaceActionsDispatcherServer(nodeConfig: NodeAgentToolsConfig): McpServerConfig | null {
     if (!isSpaceActionsDispatcherEnabled()) return null;
-    return createSpaceActionsMcpServer({
+    const server = createSpaceActionsMcpServer({
       role: 'workflow_worker',
       nodeRole: nodeConfig.myAgentName,
       spaceId: nodeConfig.spaceId,
@@ -4884,6 +4887,8 @@ export class TaskAgentManager {
           (await this.config.spaceManager.getSpace(spaceId))?.autonomyLevel ?? 1,
       },
     }) as unknown as McpServerConfig;
+    this.flagManagedDispatcherServers.add(server);
+    return server;
   }
 
   async spawnPostApprovalSubSession(args: {

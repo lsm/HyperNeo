@@ -161,13 +161,9 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     expect(fake.state.restarted).toBe(1);
   });
 
-  test('flag off: reinject detaches a stale space-actions server merged under a previous flag-on era', async () => {
+  test('flag off: reinject detaches a flag-built dispatcher but not a user-provided space-actions server', async () => {
     const tam = makeManager();
-    const fake = makeFakeSession();
-    fake.agentSession.mergeRuntimeMcpServers({
-      'space-actions': { __stale: true } as unknown as McpServerConfig,
-    });
-    await tam.reinjectNodeAgentMcpServer(fake.agentSession, {
+    const ctx = {
       taskId: TASK_ID,
       subSessionId: SUB_SESSION_ID,
       agentName: 'coder',
@@ -175,10 +171,27 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
       workflowRunId: RUN_ID,
       workspacePath: '/tmp/ws',
       workflowNodeId: 'node-coder',
+    };
+    process.env[FLAG] = '1';
+    const built = buildServers(tam);
+    delete process.env[FLAG];
+
+    const userProvided = makeFakeSession();
+    userProvided.agentSession.mergeRuntimeMcpServers({
+      'space-actions': { __userProvided: true } as unknown as McpServerConfig,
     });
-    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
-    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeUndefined();
-    expect(fake.state.calls).toContain('detachRuntimeMcpServer:space-actions');
+    await tam.reinjectNodeAgentMcpServer(userProvided.agentSession, ctx);
+    expect(userProvided.state.session.config.mcpServers?.['space-actions']).toEqual({
+      __userProvided: true,
+    });
+    expect(userProvided.state.calls).not.toContain('detachRuntimeMcpServer:space-actions');
+
+    const flagEra = makeFakeSession();
+    flagEra.agentSession.mergeRuntimeMcpServers({ 'space-actions': built['space-actions'] });
+    await tam.reinjectNodeAgentMcpServer(flagEra.agentSession, ctx);
+    expect(flagEra.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(flagEra.state.session.config.mcpServers?.['space-actions']).toBeUndefined();
+    expect(flagEra.state.calls).toContain('detachRuntimeMcpServer:space-actions');
   });
 
   test('flag off: contract keeps the typed tool list', () => {
