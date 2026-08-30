@@ -27,7 +27,9 @@ export function setupRewindHandlers(
   messageHub.onRequest('rewind.preview', async (data) => {
     const { sessionId, checkpointId } = data as { sessionId: string; checkpointId: string };
 
-    const agentSession = await sessionManager.getSessionForControl(sessionId);
+    const agentSession = await sessionManager.getSessionAsync(sessionId, {
+      replayPendingMessages: false,
+    });
     if (!agentSession) {
       return {
         preview: {
@@ -76,7 +78,9 @@ export function setupRewindHandlers(
   messageHub.onRequest('rewind.previewSelective', async (data) => {
     const { sessionId, messageIds } = data as SelectiveRewindRequest;
 
-    const agentSession = await sessionManager.getSessionForControl(sessionId);
+    const agentSession = await sessionManager.getSessionAsync(sessionId, {
+      replayPendingMessages: false,
+    });
     if (!agentSession) {
       return {
         preview: {

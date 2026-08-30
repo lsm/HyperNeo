@@ -196,6 +196,17 @@ describe('Rewind RPC Handlers', () => {
     });
   });
 
+  it('previews provision dormant workers without replaying pending messages', async () => {
+    const handler = messageHubData.handlers.get('rewind.preview');
+    expect(handler).toBeDefined();
+
+    await handler!({ sessionId: 'session-123', checkpointId: 'checkpoint-1' }, {});
+
+    expect(sessionManagerData.getSessionAsyncMock).toHaveBeenCalledWith('session-123', {
+      replayPendingMessages: false,
+    });
+  });
+
   describe('rewind.execute', () => {
     it('executes rewind with default files mode', async () => {
       const handler = messageHubData.handlers.get('rewind.execute');
