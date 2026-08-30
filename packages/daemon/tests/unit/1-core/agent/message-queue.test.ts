@@ -226,6 +226,70 @@ describe('MessageQueue', () => {
     });
   });
 
+  describe('requeueAllYielded', () => {
+    it('requeues every yielded message durably', async () => {
+      queue.start();
+      const ack1 = queue.enqueueWithId('all-yielded-1', 'Message 1');
+      const ack2 = queue.enqueueWithId('all-yielded-2', 'Message 2');
+      const generator = queue.messageGenerator(testSessionId);
+
+      const first = await generator.next();
+      expect(first.done).toBe(false);
+      expect((first.value?.message as { uuid?: string }).uuid).toBe('all-yielded-1');
+
+      const second = await generator.next();
+      expect(second.done).toBe(false);
+      expect((second.value?.message as { uuid?: string }).uuid).toBe('all-yielded-2');
+
+      expect(queue.hasYielded('all-yielded-1')).toBe(true);
+      expect(queue.hasYielded('all-yielded-2')).toBe(true);
+
+      const requeued = queue.requeueAllYielded({ durable: true });
+      expect(requeued).toEqual(['all-yielded-1', 'all-yielded-2']);
+      expect(queue.hasYielded('all-yielded-1')).toBe(false);
+      expect(queue.hasYielded('all-yielded-2')).toBe(false);
+      expect(queue.hasPendingOrInFlight('all-yielded-1')).toBe(true);
+      expect(queue.hasPendingOrInFlight('all-yielded-2')).toBe(true);
+
+      const reyielded1 = await generator.next();
+      expect(reyielded1.done).toBe(false);
+      expect((reyielded1.value?.message as { uuid?: string }).uuid).toBe('all-yielded-2');
+
+      const reyielded2 = await generator.next();
+      expect(reyielded2.done).toBe(false);
+      expect((reyielded2.value?.message as { uuid?: string }).uuid).toBe('all-yielded-1');
+
+      reyielded1.value?.onSent();
+      reyielded2.value?.onSent();
+      await ack1;
+      await ack2;
+      queue.stop();
+    });
+
+    it('returns an empty array when no message is yielded', async () => {
+      const requeued = queue.requeueAllYielded();
+      expect(requeued).toEqual([]);
+    });
+
+    it('marks requeued messages as durable so they survive the next query start', async () => {
+      queue.start();
+      const ack = queue.enqueueWithId('durable-requeue', 'Message 1');
+      const generator = queue.messageGenerator(testSessionId);
+      const result = await generator.next();
+      expect(result.done).toBe(false);
+
+      queue.requeueAllYielded({ durable: true });
+
+      const reyielded = await generator.next();
+      expect(reyielded.done).toBe(false);
+      expect((reyielded.value?.message as { uuid?: string }).uuid).toBe('durable-requeue');
+
+      reyielded.value?.onSent();
+      await ack;
+      queue.stop();
+    });
+  });
+
   describe('hasPendingOrInFlight', () => {
     it('reports false for an unknown id and true while queued/claimed/yielded', async () => {
       expect(queue.hasPendingOrInFlight('nope')).toBe(false);

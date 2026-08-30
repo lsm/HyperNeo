@@ -13,7 +13,12 @@ import type { QueryAttemptRegistry } from './query-attempt-token.ts';
 import { Logger } from '../logger.ts';
 import { existsSync, copyFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { throwIfDeliveryAborted, waitForDeliveryAbort } from './message-delivery.ts';
+import {
+  buildBatchedDeliveryContent,
+  flattenDeliveryText,
+  throwIfDeliveryAborted,
+  waitForDeliveryAbort,
+} from './message-delivery.ts';
 import {
   validateAndRepairSDKSession,
   findSDKSessionFileGlobally,
@@ -102,6 +107,68 @@ export class QueryLifecycleManager {
     if (Object.keys(updates).length > 0) {
       db.updateSession(session.id, updates);
     }
+  }
+
+  private isTranscriptPreservedForProvider(): boolean {
+    const { session } = this.ctx;
+    if (session.config.provider === 'acp') {
+      return !!session.acpSessionId;
+    }
+    return !!session.sdkSessionId;
+  }
+
+  private resolveLastConsumedUuid(): string | null {
+    const { db, session } = this.ctx;
+    const repo = db.getSDKMessageRepo?.();
+    if (!repo) return null;
+    const { messages } = repo.getUserMessagesByStatus(session.id, 'consumed', 1, 'desc');
+    const last = messages[0];
+    return last?.uuid ?? null;
+  }
+
+  private reenqueueLastConsumedIfTranscriptDropped(
+    lastConsumedUuid: string | null,
+    lastConsumedContent: string | MessageContent[] | null
+  ): void {
+    if (!lastConsumedUuid || !lastConsumedContent) return;
+    if (this.isTranscriptPreservedForProvider()) return;
+    const { messageQueue, session } = this.ctx;
+    if (messageQueue.hasPendingOrInFlight(lastConsumedUuid)) return;
+    this.logger.info(
+      `re-enqueueing last consumed message ${lastConsumedUuid} for session ${session.id} ` +
+        `because the replacement query does not preserve the provider transcript`
+    );
+    messageQueue
+      .enqueueWithId(lastConsumedUuid, lastConsumedContent, false, {
+        durable: true,
+        prepend: true,
+      })
+      .catch((error) => {
+        this.logger.warn(`re-enqueue of last consumed message ${lastConsumedUuid} failed:`, error);
+      });
+  }
+
+  private buildRequeueContentFor(messageUuid: string): string | MessageContent[] | null {
+    const { db, session } = this.ctx;
+    const repo = db.getSDKMessageRepo?.();
+    if (!repo) return null;
+    const content = repo.getUserMessageContentByUuid(session.id, messageUuid);
+    if (content === null) return null;
+    const jobQueue = db.getJobQueueRepo?.();
+    const batchUuids = jobQueue?.getActiveDeliveryBatchUuids?.(session.id, messageUuid);
+    if (!batchUuids || batchUuids.length <= 1) return content;
+    const texts: string[] = [];
+    for (const uuid of batchUuids) {
+      const memberContent =
+        uuid === messageUuid ? content : repo.getUserMessageContentByUuid(session.id, uuid);
+      if (memberContent === null) continue;
+      const text =
+        typeof memberContent === 'string' ? memberContent : flattenDeliveryText(memberContent);
+      if (text === null) continue;
+      texts.push(text);
+    }
+    if (texts.length <= 1) return content;
+    return buildBatchedDeliveryContent(texts);
   }
 
   private getSDKWorkspacePath(): string {
@@ -291,6 +358,22 @@ export class QueryLifecycleManager {
 
       await this.stop();
 
+      const lastConsumedUuid = this.resolveLastConsumedUuid();
+      const lastConsumedContent = lastConsumedUuid
+        ? this.buildRequeueContentFor(lastConsumedUuid)
+        : null;
+      const jobQueue = this.ctx.db.getJobQueueRepo?.();
+      if (jobQueue) {
+        const cancelledUuids = jobQueue.cancelForSessionWithMessages(session.id);
+        if (cancelledUuids.length > 0) {
+          this.logger.debug(
+            `cancelled ${cancelledUuids.length} in-flight message_delivery job(s) for session ${session.id}`
+          );
+        }
+      }
+      this.ctx.messageQueue.requeueAllYielded({ durable: true });
+      this.reenqueueLastConsumedIfTranscriptDropped(lastConsumedUuid, lastConsumedContent);
+
       await this.ctx.stateManager.setIdle({ suppressDeliveryWaiters: true });
       reachedSuppressedIdle = true;
 
@@ -372,6 +455,19 @@ export class QueryLifecycleManager {
         timeoutMs: RESET_TERMINATION_TIMEOUT_MS,
         catchQueryErrors: true,
       });
+
+      const jobQueue = db.getJobQueueRepo?.();
+      if (jobQueue) {
+        jobQueue.cancelForSession(session.id);
+      }
+
+      if (restartAfter) {
+        const lastConsumedUuid = this.resolveLastConsumedUuid();
+        const lastConsumedContent = lastConsumedUuid
+          ? this.buildRequeueContentFor(lastConsumedUuid)
+          : null;
+        this.reenqueueLastConsumedIfTranscriptDropped(lastConsumedUuid, lastConsumedContent);
+      }
 
       this.ctx.firstMessageReceived = false;
       await stateManager.setIdle({ suppressDeliveryWaiters: restartAfter });

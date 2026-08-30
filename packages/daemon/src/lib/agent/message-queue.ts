@@ -597,6 +597,16 @@ export class MessageQueue {
     return false;
   }
 
+  requeueAllYielded(options?: { durable?: boolean }): string[] {
+    const requeued: string[] = [];
+    for (const message of Array.from(this.yielded)) {
+      if (this.requeueYielded(message.id, options)) {
+        requeued.push(message.id);
+      }
+    }
+    return requeued;
+  }
+
   waitForPendingOrInFlight(
     messageId: string
   ): { acknowledgment: Promise<void>; content: string | MessageContent[] } | null {

@@ -186,7 +186,6 @@ import {
   MessageDeliveryTerminalTurnError,
   signalDeliveryConsumed,
   steerAckTimeoutMs,
-  throwIfDeliveryAborted,
   waitForDeliveryAbort,
   withSessionLock,
 } from './message-delivery.ts';
@@ -195,7 +194,6 @@ import {
   classifyTurnCompletion,
   decideReconcileAdmission,
   selectStrandedDeliveries,
-  shouldRearmSpuriousTurnEnd,
 } from './message-delivery-pipeline.ts';
 import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
 import { MessageQueue } from './message-queue.ts';
@@ -325,6 +323,10 @@ export class AgentSession
     generation: number;
     observer: MessageDeliveryAttemptObserver;
     pendingStart?: boolean;
+  } | null = null;
+  private acpTurnAccepted: {
+    promise: Promise<void>;
+    resolve: () => void;
   } | null = null;
 
   private taskNotificationRequeryAttempts = 0;
@@ -1683,7 +1685,7 @@ export class AgentSession
       onResumeClear: () => {
         this.pendingResumeAfterCompaction = false;
       },
-      onSurvivorRequeued: (uuid) => this.reopenDeliveryForRetry(uuid),
+      onSurvivorRequeued: (uuid) => this.reopenDeliveryForRetry([uuid]),
       getDurableMessageContent: (uuid) => {
         const repo = this.db.getSDKMessageRepo();
         const kickoff = repo.getUserMessageContentByUuid(this.session.id, uuid);
@@ -2488,33 +2490,21 @@ export class AgentSession
     if (started.kind === 'aborted') {
       return { outcome: 'aborted' };
     }
-    if (
-      alreadyConsumed &&
-      !this.rateLimitWatchdog.isRecoveryPending() &&
-      this.db.getSDKMessageRepo()?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
-    ) {
-      this.logger.info(
-        `delivery-turn: reclaiming recovery-intercepted row directly (uuid=${messageUuid}); ` +
-          `the parked recovery episode no longer owns its retry.`
+    if (alreadyConsumed) {
+      this.logger.debug(
+        `delivery-turn: message already accepted (uuid=${messageUuid}); delivery job is complete`
       );
-      started.turnEnd.cancel();
-      if (started.responseObserver && this.deliveryResponseObserver === started.responseObserver) {
-        this.deliveryResponseObserver = null;
-      }
-      if (!claimGuard || claimGuard()) {
-        this.reopenDeliveryForRetry(messageUuid);
-      }
-      throw new MessageDeliveryRecoverableTurnError('Turn ended without a response');
+      return { outcome: 'completed' };
     }
     this.deliveryTurnStalled = false;
     this.outstandingToolUseIds.clear();
-    let stallPromise: Promise<void> = new Promise<void>(() => {});
     let stallWatchdog: DeliveryTurnStallWatchdog | null = null;
     let activeTurnEnd = started.turnEnd;
     const responseObserver = started.responseObserver;
     let kickoffAcknowledged = false;
     let kickoffDiedBeforeConsumption = false;
     let kickoffAckInvalidated = false;
+    const turnUuids = [messageUuid, ...(started.admittedBatchUuids ?? [])];
     try {
       if (started.acknowledgment) {
         const aborted = waitForDeliveryAbort(signal);
@@ -2543,10 +2533,10 @@ export class AgentSession
           this.logger.warn(
             `delivery-turn: query ended before the SDK consumed the kickoff ` +
               `(uuid=${messageUuid}, generation=${started.generation}); requeueing the ` +
-              `kickoff, reopening it for retry, and classifying the turn outcome`
+              `kickoff and reopening any accepted batch members for retry`
           );
           this.messageQueue.requeueYielded(messageUuid);
-          this.reopenDeliveryForRetry(messageUuid);
+          this.reopenDeliveryForRetry(turnUuids);
           kickoffDiedBeforeConsumption = true;
         }
         const kickoffStatus = this.stateManager.getState().status;
@@ -2580,69 +2570,98 @@ export class AgentSession
                 signalDeliveryConsumed(this.session.id, memberUuid);
               }
             }
+            this.zeroProgressDeliveryFailures = null;
+            return { outcome: 'completed' };
           }
+          this.armDeliveryTurnStall(signal, claimGuard);
+          stallWatchdog = this.deliveryTurnStall;
+          const acpAborted = waitForDeliveryAbort(signal);
+          let acpAcceptanceWon = false;
+          try {
+            await Promise.race([
+              this.waitForAcpTurnAccepted().then(() => {
+                acpAcceptanceWon = true;
+              }),
+              started.queryPromise.catch(() => {}),
+              acpAborted.promise,
+            ]);
+          } finally {
+            acpAborted.cancel();
+          }
+          if (acpAcceptanceWon) {
+            this.logger.debug(
+              `delivery-turn: ACP prompt accepted ` +
+                `(${Date.now() - turnStartedAt}ms since turn start, uuid=${messageUuid})`
+            );
+            this.zeroProgressDeliveryFailures = null;
+            return { outcome: 'completed' };
+          }
+          this.logger.warn(
+            `delivery-turn: ACP query ended before the prompt was accepted ` +
+              `(uuid=${messageUuid}, generation=${started.generation}); requeueing the kickoff ` +
+              `and reopening any accepted batch members for retry`
+          );
+          this.messageQueue.requeueYielded(messageUuid);
+          this.reopenDeliveryForRetry(turnUuids);
+          throw new MessageDeliveryRecoverableTurnError(
+            'ACP prompt was not accepted before query end'
+          );
         }
       }
-      throwIfDeliveryAborted(signal);
-      stallPromise = this.armDeliveryTurnStall(signal, claimGuard);
-      stallWatchdog = this.deliveryTurnStall;
-      const SPURIOUS_TURN_END_GRACE_MS = 250;
-      const feedAcknowledged = started.acknowledgment !== null;
-      let raceArmedAt = Date.now();
-      let graceRearms = 0;
-      let turnEndFired = false;
-      let queryEnded = false;
-      void activeTurnEnd.promise.then(() => {
-        turnEndFired = true;
-      });
-      void started.queryPromise
-        .catch(() => {})
-        .then(() => {
-          queryEnded = true;
-        });
-      while (true) {
-        const aborted = waitForDeliveryAbort(signal);
-        try {
-          await Promise.race([
-            activeTurnEnd.promise,
-            started.queryPromise.catch(() => {}),
-            stallPromise,
-            aborted.promise,
-          ]);
-        } finally {
-          aborted.cancel();
-        }
-        const turnResultRepo = this.db.getSDKMessageRepo();
-        const hasAnyTerminalResult =
-          !!turnResultRepo?.hasTerminalResultAfter(this.session.id, messageUuid) ||
-          !!turnResultRepo?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
-        const spuriousFire = shouldRearmSpuriousTurnEnd({
-          feedAcknowledged,
-          turnEndFired,
-          queryEnded,
-          withinGraceMs: Date.now() - raceArmedAt <= SPURIOUS_TURN_END_GRACE_MS,
-          graceRearms,
-          hasTerminalResult: hasAnyTerminalResult,
-        });
-        if (!spuriousFire) break;
-        graceRearms++;
-        activeTurnEnd.cancel();
-        const rearmedTurnEnd = this.stateManager.waitForIdleTransition(
-          this.rateLimitWatchdog.getGeneration(),
-          recordTurnEndMarker,
-          started.idleOwner
+      if (kickoffAckInvalidated) {
+        this.logger.warn(
+          `delivery-turn: kickoff acknowledgment was invalidated ` +
+            `(uuid=${messageUuid}, generation=${started.generation}); classifying without reopen`
         );
-        activeTurnEnd = {
-          promise: rearmedTurnEnd.promise,
-          cancel: rearmedTurnEnd.cancel,
-          idleOwner: started.idleOwner,
-        };
-        raceArmedAt = Date.now();
-        turnEndFired = false;
-        void activeTurnEnd.promise.then(() => {
-          turnEndFired = true;
-        });
       }
+      const producedResult = !!this.db
+        .getSDKMessageRepo()
+        ?.hasTerminalResultAfter(this.session.id, messageUuid);
+      if (!producedResult) {
+        if (this.rateLimitWatchdog.isRecoveryPending()) {
+          const cooldownRetryAt = this.rateLimitWatchdog.getState().retryAt;
+          const retryAt = this.rateLimitWatchdog.isManualRecoveryPause()
+            ? Date.now() + MANUAL_RECOVERY_PARK_MS
+            : Math.max(Date.now() + MESSAGE_DELIVERY_PARK_MS, cooldownRetryAt ?? 0);
+          this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
+          this.logger.info(
+            `delivery-turn: parking job while limit recovery is pending ` +
+              `(uuid=${messageUuid}, retryAt=${new Date(retryAt).toISOString()})`
+          );
+          return { outcome: 'recovery_pending', retryAt };
+        }
+        const turnError = this.consumeTerminalTurnError(turnStartedAt);
+        this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
+        const errorResultSubtype = this.db
+          .getSDKMessageRepo()
+          ?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
+        const completion = classifyTurnCompletion({
+          producedResult,
+          turnError,
+          errorResultSubtype,
+          deliveryTurnStalled: this.deliveryTurnStalled,
+          claimGuardHeld: claimGuard ? claimGuard() : undefined,
+        });
+        if (completion.outcome === 'terminal_error') {
+          throw new MessageDeliveryTerminalTurnError(completion.detail, completion.category);
+        }
+        if (completion.outcome === 'recoverable_error') {
+          if (!kickoffAcknowledged && !kickoffAckInvalidated && !alreadyConsumed) {
+            const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
+            if (terminal) throw terminal;
+          }
+          if (
+            completion.reopenForRetry &&
+            !kickoffDiedBeforeConsumption &&
+            !kickoffAckInvalidated
+          ) {
+            this.reopenDeliveryForRetry(turnUuids);
+          }
+          throw new MessageDeliveryRecoverableTurnError(completion.detail, completion.category);
+        }
+      }
+      this.zeroProgressDeliveryFailures = null;
+      return { outcome: 'completed' };
     } finally {
       activeTurnEnd.cancel();
       if (this.deliveryTurnStall === stallWatchdog) {
@@ -2651,51 +2670,8 @@ export class AgentSession
       if (responseObserver && this.deliveryResponseObserver === responseObserver) {
         this.deliveryResponseObserver = null;
       }
+      this.acpTurnAccepted = null;
     }
-    const producedResult = !!this.db
-      .getSDKMessageRepo()
-      ?.hasTerminalResultAfter(this.session.id, messageUuid);
-    if (!producedResult) {
-      if (this.rateLimitWatchdog.isRecoveryPending()) {
-        const cooldownRetryAt = this.rateLimitWatchdog.getState().retryAt;
-        const retryAt = this.rateLimitWatchdog.isManualRecoveryPause()
-          ? Date.now() + MANUAL_RECOVERY_PARK_MS
-          : Math.max(Date.now() + MESSAGE_DELIVERY_PARK_MS, cooldownRetryAt ?? 0);
-        this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
-        this.logger.info(
-          `delivery-turn: parking job while limit recovery is pending ` +
-            `(uuid=${messageUuid}, retryAt=${new Date(retryAt).toISOString()})`
-        );
-        return { outcome: 'recovery_pending', retryAt };
-      }
-      const turnError = this.consumeTerminalTurnError(turnStartedAt);
-      this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
-      const errorResultSubtype = this.db
-        .getSDKMessageRepo()
-        ?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
-      const completion = classifyTurnCompletion({
-        producedResult,
-        turnError,
-        errorResultSubtype,
-        deliveryTurnStalled: this.deliveryTurnStalled,
-        claimGuardHeld: claimGuard ? claimGuard() : undefined,
-      });
-      if (completion.outcome === 'terminal_error') {
-        throw new MessageDeliveryTerminalTurnError(completion.detail, completion.category);
-      }
-      if (completion.outcome === 'recoverable_error') {
-        if (!kickoffAcknowledged && !kickoffAckInvalidated && !alreadyConsumed) {
-          const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
-          if (terminal) throw terminal;
-        }
-        if (completion.reopenForRetry) {
-          this.reopenDeliveryForRetry(messageUuid);
-        }
-        throw new MessageDeliveryRecoverableTurnError(completion.detail, completion.category);
-      }
-    }
-    this.zeroProgressDeliveryFailures = null;
-    return { outcome: 'completed' };
   }
 
   private buildDeliveryTurnAdmissionDeps(
@@ -2855,8 +2831,21 @@ export class AgentSession
   }
 
   onDeliveryTurnAccepted(): void {
-    if (!this.isAcpSession() || !this.deliveryTurnStall) return;
-    this.deliveryTurnStall.resizeTimeoutMs(DELIVERY_TURN_NO_ACTIVITY_MS);
+    if (!this.isAcpSession()) return;
+    if (this.deliveryTurnStall) {
+      this.deliveryTurnStall.resizeTimeoutMs(DELIVERY_TURN_NO_ACTIVITY_MS);
+    }
+    this.acpTurnAccepted?.resolve();
+  }
+
+  private waitForAcpTurnAccepted(): Promise<void> {
+    if (this.acpTurnAccepted) return this.acpTurnAccepted.promise;
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    this.acpTurnAccepted = { promise, resolve };
+    return promise;
   }
 
   private isAcpSession(): boolean {
@@ -3067,7 +3056,7 @@ export class AgentSession
     }
     if (steerWinner === 'query_ended') {
       this.messageQueue.requeueYielded(messageUuid);
-      this.reopenDeliveryForRetry(messageUuid);
+      this.reopenDeliveryForRetry([messageUuid]);
       throw new Error('Steer target query ended before the SDK consumed the steer');
     }
     if (steerWinner === 'ack_timeout') {
@@ -3088,7 +3077,7 @@ export class AgentSession
         if (!this.messageQueue.remove(messageUuid)) {
           this.messageQueue.acknowledgeYielded(messageUuid);
         }
-        this.reopenDeliveryForRetry(messageUuid);
+        this.reopenDeliveryForRetry([messageUuid]);
         return { outcome: 'ack_timeout' };
       }
     }
@@ -3100,7 +3089,7 @@ export class AgentSession
       this.stateManager.isTerminalIdlePending() ||
       (this.messageQueue.getClearEpoch?.() ?? 0) !== action.clearEpoch
     ) {
-      this.reopenDeliveryForRetry(messageUuid);
+      this.reopenDeliveryForRetry([messageUuid]);
       throw new Error('Steer was invalidated by session teardown before the SDK consumed it');
     }
     deliveryMetrics.recordFeed(messageUuid);
@@ -3335,19 +3324,21 @@ export class AgentSession
     return { content: buildBatchedDeliveryContent(texts), admittedUuids: admitted };
   }
 
-  private reopenDeliveryForRetry(messageUuid: string): void {
-    deliveryMetrics.forgetFeed(messageUuid);
-    const dbId = this.db
-      .getSDKMessageRepo()
-      ?.markDeliveryRetryableByUuid(this.session.id, messageUuid);
-    if (dbId) {
-      void this.internalEventBus
-        .publish('messages.statusChanged', {
-          sessionId: this.session.id,
-          messageIds: [dbId],
-          status: 'enqueued',
-        })
-        .catch(() => {});
+  private reopenDeliveryForRetry(messageUuids: string[]): void {
+    const repo = this.db.getSDKMessageRepo();
+    if (!repo) return;
+    for (const messageUuid of messageUuids) {
+      deliveryMetrics.forgetFeed(messageUuid);
+      const dbId = repo.markDeliveryRetryableByUuid(this.session.id, messageUuid);
+      if (dbId) {
+        void this.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId: this.session.id,
+            messageIds: [dbId],
+            status: 'enqueued',
+          })
+          .catch(() => {});
+      }
     }
   }
 

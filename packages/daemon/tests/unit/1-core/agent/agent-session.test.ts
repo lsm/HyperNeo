@@ -1011,7 +1011,7 @@ describe('AgentSession', () => {
       );
     });
 
-    it('driveDeliveryTurn reopens a no-result consumed row for retry only while the claim is current', async () => {
+    it('driveDeliveryTurn completes an already-consumed row without reopening or waiting for turn end', async () => {
       const retrySpy = mock(() => 'db-1');
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
@@ -1031,12 +1031,15 @@ describe('AgentSession', () => {
       );
 
       await agentSession.stateManager.setProcessing('uuid-reopen');
-      const live = agentSession.driveDeliveryTurn('uuid-reopen', 'hello', null, true, () => true);
-      await agentSession.stateManager.setIdle();
-      const error = await live.catch((caught) => caught);
-      expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
-      expect(error).toMatchObject({ message: 'Turn ended without a response' });
-      expect(retrySpy).toHaveBeenCalledTimes(1);
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-reopen',
+        'hello',
+        null,
+        true,
+        () => true
+      );
+      expect(result).toEqual({ outcome: 'completed' });
+      expect(retrySpy).not.toHaveBeenCalled();
 
       let claimAlive = true;
       await agentSession.stateManager.setProcessing('uuid-reopen-2');
@@ -1050,8 +1053,8 @@ describe('AgentSession', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       claimAlive = false;
       await agentSession.stateManager.setIdle();
-      await expect(cancelled).rejects.toThrow();
-      expect(retrySpy).toHaveBeenCalledTimes(1);
+      expect(await cancelled).toEqual({ outcome: 'completed' });
+      expect(retrySpy).not.toHaveBeenCalled();
     });
 
     it('an aborted delivery admission leaves the idle owner untouched (no phantom turn)', async () => {
@@ -1084,7 +1087,7 @@ describe('AgentSession', () => {
       expect(admitSpy).not.toHaveBeenCalled();
     });
 
-    it('driveDeliveryTurn parks instead of reopening while limit recovery is pending', async () => {
+    it('driveDeliveryTurn completes an already-consumed row even when limit recovery is pending', async () => {
       const retrySpy = mock(() => 'db-1');
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
@@ -1112,15 +1115,19 @@ describe('AgentSession', () => {
       watchdog.getState = mock(() => ({ retryAt: cooldownRetryAt })) as never;
 
       await agentSession.stateManager.setProcessing('uuid-park');
-      const drive = agentSession.driveDeliveryTurn('uuid-park', 'hello', null, true, () => true);
-      await agentSession.stateManager.setIdle();
-      const result = await drive;
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-park',
+        'hello',
+        null,
+        true,
+        () => true
+      );
 
-      expect(result).toEqual({ outcome: 'recovery_pending', retryAt: cooldownRetryAt });
+      expect(result).toEqual({ outcome: 'completed' });
       expect(retrySpy).not.toHaveBeenCalled();
     });
 
-    it('driveDeliveryTurn parks a manual-only pause on a long horizon without short polling', async () => {
+    it('driveDeliveryTurn completes an already-consumed row even during a manual-only pause', async () => {
       const retrySpy = mock(() => 'db-1');
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
@@ -1138,7 +1145,6 @@ describe('AgentSession', () => {
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
       );
-      const before = Date.now();
       const watchdog = (agentSession as unknown as { rateLimitWatchdog: unknown })
         .rateLimitWatchdog as {
         isRecoveryPending: () => boolean;
@@ -1150,27 +1156,23 @@ describe('AgentSession', () => {
       watchdog.getState = mock(() => ({ retryAt: null })) as never;
 
       await agentSession.stateManager.setProcessing('uuid-manual-park');
-      const drive = agentSession.driveDeliveryTurn(
+      const result = await agentSession.driveDeliveryTurn(
         'uuid-manual-park',
         'hello',
         null,
         true,
         () => true
       );
-      await agentSession.stateManager.setIdle();
-      const result = (await drive) as { outcome: string; retryAt: number };
 
-      expect(result.outcome).toBe('recovery_pending');
-      expect(result.retryAt).toBeGreaterThanOrEqual(before + 4 * 60_000);
+      expect(result).toEqual({ outcome: 'completed' });
       expect(retrySpy).not.toHaveBeenCalled();
     });
 
-    it('driveDeliveryTurn reopens a consumed reclaim immediately when no query or recovery owns it', async () => {
+    it('driveDeliveryTurn completes an already-consumed reclaim immediately', async () => {
       const retrySpy = mock(() => 'db-1');
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
         hasTerminalResultAfter: mock(() => false),
-        hasRecoveryInterceptedResultAfter: mock(() => true),
         hasDeliveryTurnEnd: mock(() => false),
         clearDeliveryTurnEnd: mock(() => {}),
         getErrorTerminalResultSubtypeAfter: mock(() => null),
@@ -1186,12 +1188,16 @@ describe('AgentSession', () => {
       );
 
       await agentSession.stateManager.setProcessing('uuid-reclaim');
-      const drive = agentSession.driveDeliveryTurn('uuid-reclaim', 'hello', null, true, () => true);
-      const error = await drive.catch((caught) => caught);
+      const result = await agentSession.driveDeliveryTurn(
+        'uuid-reclaim',
+        'hello',
+        null,
+        true,
+        () => true
+      );
 
-      expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
-      expect(error).toMatchObject({ message: 'Turn ended without a response' });
-      expect(retrySpy).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ outcome: 'completed' });
+      expect(retrySpy).not.toHaveBeenCalled();
     });
 
     it('cancelRateLimitRetry cancels the parked delivery for the episode message', async () => {
@@ -1209,7 +1215,7 @@ describe('AgentSession', () => {
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
     });
 
-    it('driveDeliveryTurn makes a terminal turn error non-retryable without reopening', async () => {
+    it('driveDeliveryTurn completes an already-consumed row despite a terminal turn error', async () => {
       const retrySpy = mock(() => 'db-terminal');
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
@@ -1248,13 +1254,12 @@ describe('AgentSession', () => {
       };
       await agentSession.stateManager.setIdle();
 
-      const error = await drive.catch((caught) => caught);
-      expect(error).toBeInstanceOf(MessageDeliveryTerminalTurnError);
-      expect(error).toMatchObject({ message: 'Sign in again', category: 'authentication' });
+      const result = await drive;
+      expect(result).toEqual({ outcome: 'completed' });
       expect(retrySpy).not.toHaveBeenCalled();
     });
 
-    it('driveDeliveryTurn treats a non-retryable persisted error subtype as terminal', async () => {
+    it('driveDeliveryTurn completes an already-consumed row despite a non-retryable persisted error subtype', async () => {
       const retrySpy = mock(() => 'db-terminal-subtype');
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
@@ -1278,13 +1283,12 @@ describe('AgentSession', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       await agentSession.stateManager.setIdle();
 
-      const error = await drive.catch((caught) => caught);
-      expect(error).toBeInstanceOf(MessageDeliveryTerminalTurnError);
-      expect(error).toMatchObject({ category: 'error_max_budget_usd' });
+      const result = await drive;
+      expect(result).toEqual({ outcome: 'completed' });
       expect(retrySpy).not.toHaveBeenCalled();
     });
 
-    it('driveDeliveryTurn re-arms at most twice within the 250ms spurious turn-end grace', async () => {
+    it('driveDeliveryTurn completes on SDK consumption and does not re-arm through later idle churn', async () => {
       let sendStatus = 'enqueued';
       const retrySpy = mock(() => 'db-grace-cap');
       mockDb.getSDKMessageRepo = mock(() => ({
@@ -1315,35 +1319,24 @@ describe('AgentSession', () => {
       };
 
       await agentSession.stateManager.setProcessing('uuid-grace-cap');
-      const drive = agentSession.driveDeliveryTurn(
+      const result = await agentSession.driveDeliveryTurn(
         'uuid-grace-cap',
         'hello',
         null,
         false,
         () => true
       );
-      let settled = false;
-      void drive.then(
-        () => {
-          settled = true;
-        },
-        () => {
-          settled = true;
-        }
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      for (let fire = 0; fire < 3; fire++) {
-        await agentSession.stateManager.setIdle();
-        if (fire < 2) {
-          await new Promise((resolve) => setTimeout(resolve, 10));
-          expect(settled).toBe(false);
-          await agentSession.stateManager.setProcessing('uuid-grace-cap');
-        }
-      }
 
-      const error = await drive.catch((caught) => caught);
-      expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
-      expect(retrySpy).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ outcome: 'completed' });
+      expect(retrySpy).not.toHaveBeenCalled();
+
+      await agentSession.stateManager.setIdle();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.stateManager.setProcessing('uuid-grace-cap');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await agentSession.stateManager.setIdle();
+
+      expect(result).toEqual({ outcome: 'completed' });
     });
 
     it('driveDeliveryTurn re-arms through a spurious turn-end fired right after a fresh admission', async () => {
@@ -7580,7 +7573,7 @@ describe('AgentSession', () => {
         queue.acknowledgeYielded(hardUuid);
         await agentSession.stateManager.setIdle();
         resolveQuery();
-        await expect(drive).rejects.toThrow('Turn ended without a response');
+        await expect(drive).rejects.toThrow('ACP prompt was not accepted before query end');
         expect(reportStage).toHaveBeenCalledWith('sdk_admitted', expect.anything());
       } finally {
         db.close();

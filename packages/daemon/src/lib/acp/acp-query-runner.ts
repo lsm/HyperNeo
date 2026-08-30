@@ -430,7 +430,17 @@ export class AcpQueryRunner {
       attemptOwnsRun() && !runAbortController.signal.aborted && !this.ctx.isCleaningUp();
     const requeueYieldedPrompt = (yieldedMessage: SDKUserMessage) => {
       const yieldedUuid = yieldedMessage.uuid;
-      if (yieldedUuid && !messageQueue.requeueYielded(yieldedUuid)) {
+      if (!yieldedUuid) return;
+      if (this.ctx.session.acpSessionId) {
+        const status = this.ctx.db
+          .getSDKMessageRepo?.()
+          ?.getDeliveryContent(this.ctx.session.id, yieldedUuid)?.sendStatus;
+        if (status === 'consumed') {
+          messageQueue.acknowledgeYielded(yieldedUuid);
+          return;
+        }
+      }
+      if (!messageQueue.requeueYielded(yieldedUuid)) {
         logger.warn(`ACP prompt loop: could not requeue yielded prompt ${yieldedUuid}.`);
       }
     };

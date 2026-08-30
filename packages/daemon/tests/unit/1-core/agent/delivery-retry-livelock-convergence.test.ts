@@ -367,15 +367,23 @@ describe('delivery retry livelock convergence (task #1256 incident)', () => {
         },
       };
       await agentSession.stateManager.setProcessing(WEDGE_UUID);
-      const drive = agentSession
-        .driveDeliveryTurn(WEDGE_UUID, 'go', null, true, () => true, undefined, undefined, observer)
-        .catch((error: unknown) => error);
+      const drive = agentSession.driveDeliveryTurn(
+        WEDGE_UUID,
+        'go',
+        null,
+        true,
+        () => true,
+        undefined,
+        undefined,
+        observer
+      );
       await queryReady;
       await new Promise((resolve) => setTimeout(resolve, 10));
       await agentSession.stateManager.setIdle();
-      const result = (await drive) as Error;
-      expect(result).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
-      expect(result).not.toBeInstanceOf(MessageDeliveryTerminalTurnError);
+      await expect(drive).resolves.toEqual({ outcome: 'completed' });
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, WEDGE_UUID)).toMatchObject({
+        sendStatus: 'consumed',
+      });
     }
   });
 

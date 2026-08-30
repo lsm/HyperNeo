@@ -833,7 +833,6 @@ describe('delivery transcript parity harness (A1a)', () => {
             uuids: [turnUuid],
             dbIds: [],
           },
-          { op: 'db:recordTurnEnd', sessionId, uuid: turnUuid },
         ]);
       } finally {
         db.close();
@@ -892,7 +891,7 @@ describe('delivery transcript parity harness (A1a)', () => {
 
         await waitForTranscript(
           harness,
-          (e) => e.op === 'db:recordTurnEnd' && e.uuid === kickoffUuid
+          (e) => e.op === 'db:markConsumedBatch' && e.uuids.includes(kickoffUuid)
         );
         repo.saveSDKMessage(sessionId, {
           type: 'result',
@@ -945,7 +944,6 @@ describe('delivery transcript parity harness (A1a)', () => {
             uuids: [kickoffUuid, memberUuid],
             dbIds: [expect.any(String)],
           },
-          { op: 'db:recordTurnEnd', sessionId, uuid: kickoffUuid },
         ]);
       } finally {
         db.close();
@@ -1290,7 +1288,6 @@ describe('delivery transcript parity harness (A1a)', () => {
             uuids: [kickoffUuid, memberUuid],
             dbIds: [expect.any(String)],
           },
-          { op: 'db:recordTurnEnd', sessionId, uuid: kickoffUuid },
         ]);
       } finally {
         db.close();

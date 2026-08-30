@@ -102,6 +102,13 @@ describe('QueryLifecycleManager', () => {
         saveHyperNeoActionMessage: saveHyperNeoActionMessageSpy,
         getSDKMessageRepo: () => ({
           hasUnresolvedHyperNeoAction: () => hasUnresolvedResumeChoice,
+          getUserMessagesByStatus: () => ({ messages: [] }),
+          getUserMessageContentByUuid: () => null,
+        }),
+        getJobQueueRepo: () => ({
+          cancelForSessionWithMessages: mock(() => []),
+          cancelForSession: mock(() => {}),
+          getActiveDeliveryBatchUuids: mock(() => []),
         }),
       } as unknown as Database,
       messageHub: {
@@ -1936,6 +1943,110 @@ describe('QueryLifecycleManager', () => {
         },
         { timeout: 5000 }
       );
+    });
+  });
+
+  describe('model-switch re-injection delivery cleanup', () => {
+    function patchReinjectionMocks(): {
+      cancelForSessionWithMessages: ReturnType<typeof mock>;
+      cancelForSession: ReturnType<typeof mock>;
+      getActiveDeliveryBatchUuids: ReturnType<typeof mock>;
+    } {
+      const cancelForSessionWithMessages = mock(() => ['msg-delivery-1']);
+      const cancelForSession = mock(() => {});
+      const getActiveDeliveryBatchUuids = mock(() => ['last-consumed']);
+
+      (mockContext.db as unknown as Record<string, unknown>).getJobQueueRepo = () => ({
+        cancelForSessionWithMessages,
+        cancelForSession,
+        getActiveDeliveryBatchUuids,
+      });
+
+      (mockContext.db as unknown as Record<string, unknown>).getSDKMessageRepo = () => ({
+        hasUnresolvedHyperNeoAction: () => false,
+        getUserMessagesByStatus: () => ({ messages: [{ uuid: 'last-consumed' }] }),
+        getUserMessageContentByUuid: () => 'last message',
+      });
+
+      return { cancelForSessionWithMessages, cancelForSession, getActiveDeliveryBatchUuids };
+    }
+
+    beforeEach(() => {
+      messageQueue = new MessageQueue();
+      mockContext = createMockContext({ messageQueue });
+      manager = new QueryLifecycleManager(mockContext);
+    });
+
+    test('restart cancels in-flight delivery jobs and re-enqueues the last consumed message when transcript is not preserved', async () => {
+      const spies = patchReinjectionMocks();
+      mockContext.session.sdkSessionId = undefined;
+      mockContext.session.acpSessionId = undefined;
+      mockContext.session.config.provider = 'anthropic';
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.restart();
+
+      expect(spies.cancelForSessionWithMessages).toHaveBeenCalledWith('test-session');
+      expect(messageQueue.hasPendingOrInFlight('last-consumed')).toBe(true);
+    });
+
+    test('restart does not re-enqueue the last consumed message when SDK transcript is preserved', async () => {
+      const spies = patchReinjectionMocks();
+      mockContext.session.sdkSessionId = 'preserved-sdk-session';
+      mockContext.session.config.provider = 'anthropic';
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.restart();
+
+      expect(spies.cancelForSessionWithMessages).toHaveBeenCalledWith('test-session');
+      expect(messageQueue.hasPendingOrInFlight('last-consumed')).toBe(false);
+    });
+
+    test('restart does not re-enqueue the last consumed message for ACP when ACP session is preserved', async () => {
+      const spies = patchReinjectionMocks();
+      mockContext.session.config.provider = 'acp';
+      mockContext.session.acpSessionId = 'preserved-acp-session';
+      manager = new QueryLifecycleManager(mockContext);
+
+      await manager.restart();
+
+      expect(spies.cancelForSessionWithMessages).toHaveBeenCalledWith('test-session');
+      expect(messageQueue.hasPendingOrInFlight('last-consumed')).toBe(false);
+    });
+
+    test('reset cancels in-flight delivery jobs and re-enqueues the last consumed message when restarting without transcript preservation', async () => {
+      const spies = patchReinjectionMocks();
+      mockContext.session.sdkSessionId = undefined;
+      mockContext.session.config.provider = 'anthropic';
+      mockContext.queryObject = {
+        interrupt: mock(async () => {}),
+        close: mock(() => {}),
+      } as unknown as QueryLifecycleManagerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      manager = new QueryLifecycleManager(mockContext);
+
+      const result = await manager.reset({ restartAfter: true });
+
+      expect(result.success).toBe(true);
+      expect(spies.cancelForSession).toHaveBeenCalledWith('test-session');
+      expect(messageQueue.hasPendingOrInFlight('last-consumed')).toBe(true);
+    });
+
+    test('reset preserves the last consumed message when restart is not requested', async () => {
+      const spies = patchReinjectionMocks();
+      mockContext.session.sdkSessionId = undefined;
+      mockContext.session.config.provider = 'anthropic';
+      mockContext.queryObject = {
+        interrupt: mock(async () => {}),
+        close: mock(() => {}),
+      } as unknown as QueryLifecycleManagerContext['queryObject'];
+      mockContext.queryPromise = Promise.resolve();
+      manager = new QueryLifecycleManager(mockContext);
+
+      const result = await manager.reset({ restartAfter: false });
+
+      expect(result.success).toBe(true);
+      expect(messageQueue.hasPendingOrInFlight('last-consumed')).toBe(false);
     });
   });
 });

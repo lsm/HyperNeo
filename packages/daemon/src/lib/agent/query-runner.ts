@@ -1946,6 +1946,9 @@ export class QueryRunner {
     };
 
     const requeueConsumedList = (state: RetryTeardownState): RetryTeardownState => {
+      if (this.ctx.getQueryGeneration() !== queryGeneration) {
+        return state;
+      }
       const consumed = this._consumedUserMessages.get(queryGeneration) ?? [];
       if (consumed.length > 0) {
         logger.warn(
