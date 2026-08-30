@@ -896,7 +896,10 @@ export class SDKMessageHandler {
       .catch(() => {});
 
     const jobQueue = db.getJobQueueRepo?.();
-    if (jobQueue?.getActiveDeliveryRole(session.id, messageId)) {
+    if (
+      session.config.provider !== 'acp' &&
+      jobQueue?.getActiveDeliveryRole(session.id, messageId)
+    ) {
       return;
     }
 

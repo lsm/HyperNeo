@@ -18,6 +18,7 @@ import {
   deliverMessage,
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
+  signalDeliveryConsumed,
   STEER_ACK_TIMEOUT_MS,
   steerAckTimeoutMs,
   waitForDeliveryConsumption,
@@ -6054,6 +6055,10 @@ describe('AgentSession', () => {
       }
       if (row.expected === 'completed') {
         queue.remove(steerUuid);
+        if (row.provider === 'acp') {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          signalDeliveryConsumed(sessionId, steerUuid);
+        }
       }
       const outcome = await steerPromise;
       return { db, queue, outcome, admitWithId };
@@ -6369,6 +6374,8 @@ describe('AgentSession', () => {
           await Promise.resolve();
         }
         queue.acknowledgeYielded(steerUuid);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        signalDeliveryConsumed(sessionId, steerUuid);
         const outcome = await steerPromise;
         expect(outcome).toEqual({ outcome: 'completed' });
         expect(admitWithId).toHaveBeenCalledTimes(0);
@@ -6947,6 +6954,8 @@ describe('AgentSession', () => {
         await generator.next();
         db.getSDKMessageRepo().markDeliverySubmittedByUuids('sess-a3a-turn-submitted', [hardUuid]);
         queue.acknowledgeYielded(hardUuid);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        signalDeliveryConsumed('sess-a3a-turn-submitted', hardUuid);
         await expect(drive).resolves.toEqual({ outcome: 'completed' });
         expect(reportStage).toHaveBeenCalledWith('sdk_admitted', expect.anything());
         expect(

@@ -171,6 +171,7 @@ import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
   waitForDeliveryAbort,
+  waitForDeliveryConsumption,
   withSessionLock,
 } from './message-delivery.ts';
 import { decideReconcileAdmission, selectStrandedDeliveries } from './message-delivery-pipeline.ts';
@@ -2678,33 +2679,38 @@ export class AgentSession
     let ackTimedOut = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const aborted = waitForDeliveryAbort(signal);
+    const consumption = waitForDeliveryConsumption(this.session.id, messageUuid);
+    const admissionTimeout = (): Promise<never> =>
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          ackTimedOut = true;
+          reject(
+            new MessageDeliveryRecoverableTurnError(
+              'Delivery not consumed within timeout',
+              'admission_timeout'
+            )
+          );
+        }, timeoutMs);
+      });
     try {
-      await Promise.race([
-        admission.acknowledgment,
-        new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(() => {
-            ackTimedOut = true;
-            reject(
-              new MessageDeliveryRecoverableTurnError(
-                'Delivery not consumed within timeout',
-                'admission_timeout'
-              )
-            );
-          }, timeoutMs);
-        }),
-        aborted.promise,
-      ]);
+      await Promise.race([admission.acknowledgment, admissionTimeout(), aborted.promise]);
+      if (this.session.config.provider === 'acp') {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+        await Promise.race([consumption.promise, admissionTimeout(), aborted.promise]);
+      }
       deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'acknowledged');
     } catch (error) {
       if (ackTimedOut) {
         deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'ack_timeout');
         if (!this.messageQueue.hasYielded?.(messageUuid)) {
-          this.messageQueue.remove(messageUuid);
+          this.messageQueue.remove?.(messageUuid);
         }
       }
       throw error;
     } finally {
       clearTimeout(timeoutId);
+      consumption.cancel();
       aborted.cancel();
     }
 

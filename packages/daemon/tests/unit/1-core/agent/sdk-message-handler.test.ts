@@ -6181,6 +6181,37 @@ describe('SDKMessageHandler', () => {
       waiter.cancel();
     });
 
+    it('flips a submitted ACP kickoff to consumed at acceptance even while a delivery job owns it', async () => {
+      (mockSession as { config: { provider?: string } }).config.provider = 'acp';
+      let consumed = false;
+      getMessageByStatusAndUuidSpy.mockImplementation(
+        (_sessionId: string, status: string, uuid: string) =>
+          uuid !== 'msg-acp'
+            ? null
+            : status === (consumed ? 'consumed' : 'submitted')
+              ? {
+                  dbId: 'db-acp',
+                  uuid: 'msg-acp',
+                  type: 'user',
+                  timestamp: 1,
+                  message: { role: 'user', content: [{ type: 'text', text: 'acp' }] },
+                }
+              : null
+      );
+      updateMessageStatusSpy.mockImplementation((ids: string[], status: string) => {
+        if (status === 'consumed') consumed = true;
+      });
+      mockDb.getJobQueueRepo = mock(() => ({
+        getActiveDeliveryRole: () => 'turn',
+      })) as never;
+      const waiter = waitForDeliveryConsumption(mockSession.id, 'msg-acp');
+      handler.markMessageAccepted('msg-acp');
+      await expect(waiter.promise).resolves.toBeUndefined();
+      expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-acp'], 'consumed');
+      waiter.cancel();
+      delete (mockSession as { config: { provider?: string } }).config.provider;
+    });
+
     it('signals delivery waiters when a consumed ACP kickoff is accepted', async () => {
       getMessageByStatusAndUuidSpy.mockImplementation(
         (_sessionId: string, status: string, uuid: string) =>
