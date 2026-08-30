@@ -103,15 +103,23 @@ export interface JobQueueProcessorOptions {
   settlementGraceMs?: number;
 }
 
+export interface SessionFifoDequeueMode {
+  kind: 'session-fifo';
+  sessionIdPath?: string;
+  releasedPath?: string;
+}
+
 export interface RegisterOptions {
   exemptJobs?: PayloadMatch;
   onDead?: (job: Job) => void;
+  dequeueMode?: SessionFifoDequeueMode;
 }
 
 interface Registration {
   handler: JobHandler;
   exemptJobs?: PayloadMatch;
   onDead?: (job: Job) => void;
+  dequeueMode?: SessionFifoDequeueMode;
 }
 
 const SETTLEMENT_GRACE_MS = 10_000;
@@ -201,6 +209,7 @@ export class JobQueueProcessor {
       handler,
       exemptJobs: options?.exemptJobs,
       onDead: options?.onDead,
+      dequeueMode: options?.dequeueMode,
     });
   }
 
@@ -272,8 +281,16 @@ export class JobQueueProcessor {
         for (const [queue, reg] of this.handlers) {
           if (cappedSlots <= 0) break;
           let jobs: Job[];
+          const dequeueMode = reg.dequeueMode;
           try {
-            jobs = this.repo.dequeue(queue, cappedSlots, reg.exemptJobs, excludeIds);
+            jobs =
+              dequeueMode?.kind === 'session-fifo'
+                ? this.repo.dequeueSessionFifo(queue, cappedSlots, {
+                    sessionIdPath: dequeueMode.sessionIdPath,
+                    releasedPath: dequeueMode.releasedPath,
+                    excludeIds,
+                  })
+                : this.repo.dequeue(queue, cappedSlots, reg.exemptJobs, excludeIds);
           } catch (error) {
             errored = true;
             this.notePollError('dequeue', queue, error);
