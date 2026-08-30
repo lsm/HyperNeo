@@ -359,6 +359,7 @@ interface AgentStuckRecoveryState {
   lastObservedProgressMessageId: string | null;
   lastObservedProgressMessageAt: number | null;
   lastRuntimeNagMessageId: string | null;
+  lastNagParked: boolean;
   lastSessionId: string | null;
   pendingRestartNotice: string | null;
 }
@@ -382,6 +383,7 @@ interface TerminalErrorContinueState {
   lastContinueAt: number | null;
   failedInjectionCount: number;
   lastContinueMessageId: string | null;
+  lastContinueParked: boolean;
 }
 
 interface ReconciliationGate {
@@ -5292,6 +5294,7 @@ export class SpaceRuntime {
       lastObservedProgressMessageId: null,
       lastObservedProgressMessageAt: null,
       lastRuntimeNagMessageId: null,
+      lastNagParked: false,
       lastSessionId: execution.agentSessionId,
       pendingRestartNotice: null,
     };
@@ -5809,6 +5812,7 @@ export class SpaceRuntime {
           state.lastRuntimeNagMessageId
         );
         if (nagDelivery === 'pending') {
+          state.lastNagParked = true;
           log.debug(
             `SpaceRuntime: runtime nag for stuck agent execution ${execution.id} is still ` +
               `awaiting consumption; holding the restart grace`
@@ -5820,6 +5824,14 @@ export class SpaceRuntime {
             `SpaceRuntime: runtime nag for stuck agent execution ${execution.id} ` +
               `dead-lettered without being consumed; proceeding to restart`
           );
+        } else if (state.lastNagParked) {
+          state.lastNagParked = false;
+          state.lastActionAt = now;
+          log.debug(
+            `SpaceRuntime: runtime nag for stuck agent execution ${execution.id} was consumed ` +
+              `after a park; restarting the grace window`
+          );
+          continue;
         } else {
           const elapsedSinceNag = now - state.lastActionAt;
           if (elapsedSinceNag < nagGraceMs) {
@@ -7251,6 +7263,7 @@ export class SpaceRuntime {
           lastContinueAt: null,
           failedInjectionCount: 0,
           lastContinueMessageId: null,
+          lastContinueParked: false,
         } satisfies TerminalErrorContinueState);
       this.terminalErrorContinueStates.set(key, state);
 
@@ -7261,6 +7274,7 @@ export class SpaceRuntime {
         state.lastContinueAt = null;
         state.failedInjectionCount = 0;
         state.lastContinueMessageId = null;
+        state.lastContinueParked = false;
       }
 
       const signature = this.computeTerminalErrorSignature(lastMessage);
@@ -7271,14 +7285,25 @@ export class SpaceRuntime {
 
       const lastPromptDelivery = this.classifyLastContinuePrompt(state);
       if (lastPromptDelivery === 'pending') {
+        state.lastContinueParked = true;
         log.debug(
           `Node ${execution.workflowNodeId} runtime-continue prompt is still awaiting consumption ` +
             `(execution=${execution.id}); not classifying the terminal result as recurrent yet`
         );
         continue;
       }
+      if (lastPromptDelivery === 'consumed' && state.lastContinueParked) {
+        state.lastContinueParked = false;
+        state.lastContinueAt = now;
+        log.debug(
+          `Node ${execution.workflowNodeId} runtime-continue prompt was consumed after a park ` +
+            `(execution=${execution.id}); restarting the grace window`
+        );
+        continue;
+      }
       if (lastPromptDelivery === 'dead') {
         state.lastContinueMessageId = null;
+        state.lastContinueParked = false;
         state.lastRetriedErrorSignature = null;
         state.lastContinueAt = now;
         log.warn(
@@ -7342,6 +7367,7 @@ export class SpaceRuntime {
         state.lastRetriedErrorSignature = signature;
         state.failedInjectionCount = 0;
         state.lastContinueMessageId = continueMessageId;
+        state.lastContinueParked = false;
         log.warn(
           `Node ${execution.workflowNodeId} ended idle on a terminal error result; ` +
             `sent runtime continue ${state.continueCount}/${MAX_TERMINAL_ERROR_CONTINUE_RETRIES}: ` +

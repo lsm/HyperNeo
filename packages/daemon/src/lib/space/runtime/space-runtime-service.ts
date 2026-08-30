@@ -412,7 +412,10 @@ export class SpaceRuntimeService {
         .getSDKMessageRepo()
         .getDeliveryContent(sessionId, args.idempotencyKey);
       if (row !== null && row !== undefined && row.sendStatus === 'failed') {
-        return 'terminal_failure_after_consumption';
+        const consumed = this.config.reactiveDb?.db
+          .getSDKMessageRepo()
+          .getMessageByStatusAndUuid(sessionId, 'consumed', args.idempotencyKey);
+        return consumed !== null ? 'terminal_failure_after_consumption' : 'terminal_failure';
       }
       return 'accepted';
     } catch {
