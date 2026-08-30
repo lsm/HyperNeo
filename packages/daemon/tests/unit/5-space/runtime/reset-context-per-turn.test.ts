@@ -1,14 +1,10 @@
 import { describe, expect, it, mock } from 'bun:test';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session.ts';
-import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
-import {
-  QueryModeHandler,
-  type QueryModeHandlerContext,
-} from '../../../../src/lib/agent/query-mode-handler.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import type { Database } from '../../../../src/storage/database';
+import { createTestDb, createTestSession } from '../../../helpers/database';
 
 const SESSION_ID = 'reviewer-session-1';
 const RUN_ID = 'run-1';
@@ -16,98 +12,34 @@ const WORKFLOW_ID = 'wf-1';
 const NODE_ID = 'node-review';
 const AGENT_NAME = 'reviewer';
 
-interface MockSessionOptions {
-  sdkSessionId?: string;
-  status?: string;
-}
-
-function makeManager(opts: {
+async function makeManager(opts: {
   slotResets?: boolean;
-  nodeMissing?: boolean;
-  nodeEmptyAgents?: boolean;
-  hasActiveDeliveryJob?: boolean;
-  deliveryContent?: { sendStatus: string };
   parentTaskStatus?: string;
-  reopenDbId?: string;
-  failedDbId?: string;
-  enqueueThrows?: boolean;
-  unconsumedCounts?: Record<string, number>;
-}): {
+  noSession?: boolean;
+}): Promise<{
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
-} {
+  db: Database;
+}> {
   const clearMock = mock(async () => {});
   const ensureStartedMock = mock(async () => ({ started: false }));
   const enqueueMock = mock(async () => {});
   const replayMock = mock(async () => ({ success: true, messageCount: 0 }));
   const getProcessingState = mock(() => ({ status: 'idle' }));
-  const saveUserMessage = mock(() => 'db-id');
-  const jobQueueEnqueue = mock(
-    (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
-      if (opts.enqueueThrows) throw new Error('job queue unavailable');
-      const uuid = args?.payload?.messageUuid;
-      if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
-      return { id: 'job-1' };
-    }
-  );
-  const reopenDeliveryByUuid = mock(() => opts.reopenDbId ?? null);
-  const markDeliveryDeferredByUuid = mock(() => null);
-  const markDeliveryFailedByUuid = mock(() => opts.failedDbId ?? null);
-  const getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
-    Array.from({ length: opts.unconsumedCounts?.[status] ?? 0 }, (_, i) => ({
-      dbId: `db-${status}-${i}`,
-      uuid: `uuid-${status}-${i}`,
-      timestamp: 0,
-    }))
-  );
   const publishStatusChanged = mock(async () => {});
-
-  function makeSession(o: MockSessionOptions) {
-    return {
-      session: { id: SESSION_ID, sdkSessionId: o.sdkSessionId },
-      getProcessingState,
-      getSessionData: () => ({ id: SESSION_ID, workspacePath: null }),
-      updateMetadata: () => {},
-      handleQueryTrigger: replayMock,
-      ensureQueryStarted: ensureStartedMock,
-      clearConversationContext: clearMock,
-      messageQueue: { enqueueWithId: enqueueMock, size: () => 0 },
-    } as unknown as AgentSession;
-  }
+  const db = await createTestDb();
+  if (!opts.noSession) db.createSession(createTestSession(SESSION_ID));
 
   const slot = {
     agentId: 'Reviewer',
     name: AGENT_NAME,
     ...(opts.slotResets ? { resetContextPerTurn: true } : {}),
   };
-  const workflow = {
-    nodes: opts.nodeMissing
-      ? []
-      : [{ id: NODE_ID, name: 'Review', agents: opts.nodeEmptyAgents ? [] : [slot] }],
-  };
+  const workflow = { nodes: [{ id: NODE_ID, name: 'Review', agents: [slot] }] };
 
-  const config = {
-    db: {
-      getDatabase: () => ({}),
-      saveUserMessage,
-      getUserMessageIdsByStatus,
-      getSDKMessageRepo: () => ({
-        getDeliveryContent: () => opts.deliveryContent ?? null,
-        reopenDeliveryByUuid,
-        markDeliveryFailedByUuid,
-        markDeliveryDeferredByUuid,
-      }),
-      getJobQueueRepo: () => ({
-        activeDeliveryMessageUuids: () =>
-          new Set<string>(opts.hasActiveDeliveryJob ? ['pending-job'] : []),
-        enqueue: jobQueueEnqueue,
-        getActiveDeliveryRole: () => null,
-      }),
-    },
-    internalEventBus: {
-      subscribe: mock(() => () => {}),
-      publish: publishStatusChanged,
-    },
+  const manager = new TaskAgentManager({
+    db,
+    internalEventBus: { subscribe: mock(() => () => {}), publish: publishStatusChanged },
     nodeExecutionRepo: {
       getByAgentSessionId: mock(() => ({
         workflowRunId: RUN_ID,
@@ -117,9 +49,7 @@ function makeManager(opts: {
       })),
       listByAgentSessionId: mock(() => []),
     },
-    workflowRunRepo: {
-      getRun: mock(() => ({ workflowId: WORKFLOW_ID })),
-    },
+    workflowRunRepo: { getRun: mock(() => ({ workflowId: WORKFLOW_ID })) },
     taskRepo: {
       getTask: mock(() =>
         opts.parentTaskStatus
@@ -132,9 +62,8 @@ function makeManager(opts: {
       getWorkflow: mock(() => workflow),
       getWorkflowForRun: mock(() => workflow),
     },
-  } as unknown as TaskAgentManagerConfig;
+  } as unknown as TaskAgentManagerConfig);
 
-  const manager = new TaskAgentManager(config);
   return {
     manager,
     session: {
@@ -143,15 +72,53 @@ function makeManager(opts: {
       enqueueMock,
       replayMock,
       getProcessingState,
-      saveUserMessage,
-      jobQueueEnqueue,
-      reopenDeliveryByUuid,
-      markDeliveryDeferredByUuid,
-      markDeliveryFailedByUuid,
-      getUserMessageIdsByStatus,
       publishStatusChanged,
     },
+    db,
   };
+}
+
+function seedDeliveryRow(db: Database, messageId: string, text: string, status: string): void {
+  db.saveUserMessage(
+    SESSION_ID,
+    {
+      type: 'user',
+      uuid: messageId,
+      session_id: SESSION_ID,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'text', text }] },
+    },
+    'enqueued'
+  );
+  if (status === 'deferred') {
+    db.getSDKMessageRepo().markDeliveryDeferredByUuid(SESSION_ID, messageId);
+  }
+  if (status === 'consumed') {
+    db.getSDKMessageRepo().markDeliveryConsumedByUuid(SESSION_ID, messageId);
+  }
+  if (status === 'failed') {
+    db.getSDKMessageRepo().markDeliveryFailedByUuid(SESSION_ID, messageId);
+  }
+}
+
+function deliveryJobExists(db: Database, messageId: string): boolean {
+  return (
+    db
+      .getDatabase()
+      .prepare(
+        `SELECT id FROM job_queue WHERE queue = 'message_delivery'
+           AND json_extract(payload, '$.messageUuid') = ?`
+      )
+      .get(messageId) != null
+  );
+}
+
+function deliveryRowCount(db: Database, messageId: string): number {
+  const row = db
+    .getDatabase()
+    .prepare(`SELECT COUNT(*) AS count FROM sdk_messages WHERE sdk_uuid = ?`)
+    .get(messageId) as { count: number };
+  return row.count;
 }
 
 function indexSession(manager: TaskAgentManager, session: AgentSession): void {
@@ -185,273 +152,349 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     } as unknown as AgentSession;
   }
 
+  function busySession(
+    session: {
+      ensureStartedMock: ReturnType<typeof mock>;
+      clearMock: ReturnType<typeof mock>;
+      enqueueMock: ReturnType<typeof mock>;
+      replayMock: ReturnType<typeof mock>;
+    },
+    status: 'processing' | 'rate_limit_cooldown'
+  ): AgentSession {
+    return {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
+    } as unknown as AgentSession;
+  }
+
   it('first inject persists the row and enqueues a durable job', async () => {
-    const { manager, session } = makeManager({});
+    const { manager, session, db } = await makeManager({});
     indexSession(manager, liveSession(session));
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-1'
+    );
 
-    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
-    expect(session.jobQueueEnqueue).toHaveBeenCalled();
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')?.sendStatus).toBe(
+      'enqueued'
+    );
+    expect(deliveryJobExists(db, 'msg-1')).toBe(true);
+    db.close();
   });
 
   it('a retry finding an existing CONSUMED row does not re-persist or re-enqueue (no re-drive)', async () => {
-    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'consumed' } });
+    const { manager, session, db } = await makeManager({});
     indexSession(manager, liveSession(session));
+    seedDeliveryRow(db, 'msg-1', '─── Message from coder ───', 'consumed');
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-1'
+    );
 
-    expect(session.saveUserMessage).not.toHaveBeenCalled();
-    expect(session.jobQueueEnqueue).not.toHaveBeenCalled();
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')?.sendStatus).toBe(
+      'consumed'
+    );
+    expect(deliveryJobExists(db, 'msg-1')).toBe(false);
+    db.close();
   });
 
   it('a retry finding an existing FAILED row reopens it and re-enqueues without a duplicate row', async () => {
-    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'failed' } });
+    const { manager, session, db } = await makeManager({});
     indexSession(manager, liveSession(session));
+    seedDeliveryRow(db, 'msg-1', '─── Message from coder ───', 'failed');
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-1'
+    );
 
-    expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
-    expect(session.saveUserMessage).not.toHaveBeenCalled();
-    expect(session.jobQueueEnqueue).toHaveBeenCalled();
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')?.sendStatus).toBe(
+      'enqueued'
+    );
+    expect(deliveryJobExists(db, 'msg-1')).toBe(true);
+    expect(deliveryRowCount(db, 'msg-1')).toBe(1);
+    db.close();
   });
 
   it('a cancelled clear during a FAILED-row retry aborts before reopening the row', async () => {
-    const { manager, session } = makeManager({
-      slotResets: true,
-      deliveryContent: { sendStatus: 'failed' },
-    });
+    const { manager, session, db } = await makeManager({ slotResets: true });
     session.clearMock.mockRejectedValue(new ClearConversationCancelledError());
     indexSession(manager, liveSession(session));
+    seedDeliveryRow(db, 'msg-1', '─── Message from coder ───', 'failed');
 
     await expect(
-      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+      manager.injectSubSessionMessage(
+        SESSION_ID,
+        '─── Message from coder ───',
+        true,
+        undefined,
+        'immediate',
+        undefined,
+        'msg-1'
+      )
     ).rejects.toThrow('cancelled by query teardown');
 
-    expect(session.reopenDeliveryByUuid).not.toHaveBeenCalled();
     expect(session.publishStatusChanged).not.toHaveBeenCalled();
-    expect(session.saveUserMessage).not.toHaveBeenCalled();
-    expect(session.enqueueMock).not.toHaveBeenCalled();
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')?.sendStatus).toBe(
+      'failed'
+    );
+    expect(deliveryJobExists(db, 'msg-1')).toBe(false);
+    db.close();
   });
 
   it('a retry finding an existing CONSUMED row skips resetContextPerTurn (no /clear of the just-delivered handoff)', async () => {
-    const { manager, session } = makeManager({
-      slotResets: true,
-      deliveryContent: { sendStatus: 'consumed' },
-    });
-    const live = {
-      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
-      getProcessingState: () => ({ status: 'idle' }),
-      ensureQueryStarted: session.ensureStartedMock,
-      handleQueryTrigger: session.replayMock,
-      clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
-    } as unknown as AgentSession;
-    indexSession(manager, live);
+    const { manager, session, db } = await makeManager({ slotResets: true });
+    indexSession(manager, liveSession(session));
+    seedDeliveryRow(db, 'msg-1', '─── Message from coder ───', 'consumed');
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-1'
+    );
 
     expect(session.clearMock).not.toHaveBeenCalled();
-    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')?.sendStatus).toBe(
+      'consumed'
+    );
+    db.close();
   });
 
   it('a failed-row retry that hits the deferred branch marks the row deferred (replay-selectable)', async () => {
-    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'failed' } });
-    const live = {
-      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
-      getProcessingState: () => ({ status: 'rate_limit_cooldown' }),
-      ensureQueryStarted: session.ensureStartedMock,
-      handleQueryTrigger: session.replayMock,
-      clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
-    } as unknown as AgentSession;
-    indexSession(manager, live);
+    const { manager, session, db } = await makeManager({});
+    indexSession(manager, busySession(session, 'rate_limit_cooldown'));
+    seedDeliveryRow(db, 'msg-1', '─── Message from coder ───', 'failed');
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-1'
+    );
 
-    expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
-    expect(session.markDeliveryDeferredByUuid).toHaveBeenCalledTimes(1);
-    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')?.sendStatus).toBe(
+      'deferred'
+    );
+    expect(deliveryRowCount(db, 'msg-1')).toBe(1);
+    db.close();
   });
 
   it('defers injection while the parent task is rate limited', async () => {
-    const { manager, session } = makeManager({ parentTaskStatus: 'rate_limited' });
-    const live = {
-      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
-      getProcessingState: () => ({ status: 'idle' }),
-      ensureQueryStarted: session.ensureStartedMock,
-      clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
-    } as unknown as AgentSession;
+    const { manager, session, db } = await makeManager({ parentTaskStatus: 'rate_limited' });
+    const live = liveSession(session);
     indexSession(manager, live);
     attachSessionToTask(manager, live);
 
-    await manager.injectSubSessionMessage(SESSION_ID, 'wait for parent task', true);
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      'wait for parent task',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-1'
+    );
 
-    expect(session.saveUserMessage.mock.calls[0][2]).toBe('deferred');
-    expect(session.enqueueMock).not.toHaveBeenCalled();
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')?.sendStatus).toBe(
+      'deferred'
+    );
+    expect(deliveryJobExists(db, 'msg-1')).toBe(false);
+    db.close();
   });
 
   it('a deferred human message to a busy live session persists as a deferred row (task #949)', async () => {
-    const { manager, session } = makeManager({});
-    const live = {
-      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
-      getProcessingState: () => ({ status: 'processing' }),
-      ensureQueryStarted: session.ensureStartedMock,
-      handleQueryTrigger: session.replayMock,
-      clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
-    } as unknown as AgentSession;
-    indexSession(manager, live);
+    const { manager, session, db } = await makeManager({});
+    indexSession(manager, busySession(session, 'processing'));
 
     await manager.injectSubSessionMessage(
       SESSION_ID,
       'queue for next turn',
       false,
       undefined,
-      'defer'
+      'defer',
+      undefined,
+      'msg-1'
     );
 
-    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
-    const [sid, _sdkMsg, status, origin] = session.saveUserMessage.mock.calls[0];
-    expect(sid).toBe(SESSION_ID);
-    expect(status).toBe('deferred');
-    expect(origin).toBeUndefined();
-    expect(session.enqueueMock).not.toHaveBeenCalled();
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')?.sendStatus).toBe(
+      'deferred'
+    );
+    const originRow = db
+      .getDatabase()
+      .prepare(`SELECT origin FROM sdk_messages WHERE sdk_uuid = 'msg-1'`)
+      .get() as { origin: string | null };
+    expect(originRow.origin).toBeNull();
+    expect(deliveryJobExists(db, 'msg-1')).toBe(false);
+    db.close();
   });
 
   it('a deferred injection into a busy session publishes messages.statusChanged', async () => {
-    const { manager, session } = makeManager({});
-    const live = {
-      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
-      getProcessingState: () => ({ status: 'processing' }),
-      ensureQueryStarted: session.ensureStartedMock,
-      clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
-    } as unknown as AgentSession;
-    indexSession(manager, live);
+    const { manager, session, db } = await makeManager({});
+    indexSession(manager, busySession(session, 'processing'));
 
     await manager.injectSubSessionMessage(
       SESSION_ID,
       'queue for next turn',
       false,
       undefined,
-      'defer'
+      'defer',
+      undefined,
+      'msg-1'
     );
 
-    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
-      sessionId: SESSION_ID,
-      messageIds: ['db-id'],
-      status: 'deferred',
-    });
+    const call = session.publishStatusChanged.mock.calls.find(
+      ([event]) => event === 'messages.statusChanged'
+    );
+    expect(call?.[1]).toMatchObject({ sessionId: SESSION_ID, status: 'deferred' });
+    expect(typeof (call?.[1] as { messageIds: string[] }).messageIds[0]).toBe('string');
+    db.close();
   });
 
   it('a fresh enqueued injection publishes messages.statusChanged', async () => {
-    const { manager, session } = makeManager({});
+    const { manager, session, db } = await makeManager({});
     indexSession(manager, liveSession(session));
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-1'
+    );
 
-    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
-      sessionId: SESSION_ID,
-      messageIds: ['db-id'],
-      status: 'enqueued',
-    });
+    const call = session.publishStatusChanged.mock.calls.find(
+      ([event]) => event === 'messages.statusChanged'
+    );
+    expect(call?.[1]).toMatchObject({ sessionId: SESSION_ID, status: 'enqueued' });
+    expect(typeof (call?.[1] as { messageIds: string[] }).messageIds[0]).toBe('string');
+    db.close();
   });
 
   it('a failed-row retry publishes reopen and deferred status changes', async () => {
-    const { manager, session } = makeManager({
-      deliveryContent: { sendStatus: 'failed' },
-      reopenDbId: 'db-id',
-    });
-    const live = {
-      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
-      getProcessingState: () => ({ status: 'rate_limit_cooldown' }),
-      ensureQueryStarted: session.ensureStartedMock,
-      clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
-    } as unknown as AgentSession;
-    indexSession(manager, live);
+    const { manager, session, db } = await makeManager({});
+    indexSession(manager, busySession(session, 'rate_limit_cooldown'));
+    seedDeliveryRow(db, 'msg-1', '─── Message from coder ───', 'failed');
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-1'
+    );
 
     const statuses = session.publishStatusChanged.mock.calls
       .filter(([event]) => event === 'messages.statusChanged')
       .map(([, payload]) => (payload as { status: string }).status);
     expect(statuses).toContain('enqueued');
     expect(statuses).toContain('deferred');
+    db.close();
   });
 
-  it('publishes a failed status when the delivery job cannot be enqueued', async () => {
-    const { manager, session } = makeManager({ enqueueThrows: true, failedDbId: 'db-id' });
+  it('rolls back the fresh row when the outbox handoff fails', async () => {
+    const { manager, session, db } = await makeManager({ noSession: true });
     indexSession(manager, liveSession(session));
 
     await manager
-      .injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+      .injectSubSessionMessage(
+        SESSION_ID,
+        '─── Message from coder ───',
+        true,
+        undefined,
+        'immediate',
+        undefined,
+        'msg-1'
+      )
       .catch(() => {});
 
-    expect(session.markDeliveryFailedByUuid).toHaveBeenCalled();
-    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
-      sessionId: SESSION_ID,
-      messageIds: ['db-id'],
-      status: 'failed',
-    });
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')).toBeNull();
+    const failedCalls = session.publishStatusChanged.mock.calls.filter(
+      ([, payload]) => (payload as { status: string }).status === 'failed'
+    );
+    expect(failedCalls).toHaveLength(0);
+    db.close();
   });
 
   it('a defer branch over an existing deferred row re-marks nothing and reuses the existing message id', async () => {
-    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'deferred' } });
-    const live = {
-      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
-      getProcessingState: () => ({ status: 'processing' }),
-      ensureQueryStarted: session.ensureStartedMock,
-      handleQueryTrigger: session.replayMock,
-      clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
-    } as unknown as AgentSession;
-    indexSession(manager, live);
+    const { manager, session, db } = await makeManager({});
+    indexSession(manager, busySession(session, 'processing'));
+    seedDeliveryRow(db, 'msg-1', 'queue for next turn', 'deferred');
 
     const dbId = await manager.injectSubSessionMessage(
       SESSION_ID,
       'queue for next turn',
       false,
       undefined,
-      'defer'
+      'defer',
+      undefined,
+      'msg-1'
     );
 
-    expect(session.markDeliveryDeferredByUuid).not.toHaveBeenCalled();
-    expect(session.reopenDeliveryByUuid).not.toHaveBeenCalled();
-    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(dbId).toBe('msg-1');
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')?.sendStatus).toBe(
+      'deferred'
+    );
+    expect(deliveryRowCount(db, 'msg-1')).toBe(1);
     expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
       sessionId: SESSION_ID,
-      messageIds: [dbId],
+      messageIds: ['msg-1'],
       status: 'deferred',
     });
+    db.close();
   });
 
   it('a rejecting status publish is swallowed on the defer branch (fire-and-forget)', async () => {
-    const { manager, session } = makeManager({});
+    const { manager, session, db } = await makeManager({});
     session.publishStatusChanged.mockRejectedValue(new Error('bus down'));
-    const live = {
-      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
-      getProcessingState: () => ({ status: 'processing' }),
-      ensureQueryStarted: session.ensureStartedMock,
-      handleQueryTrigger: session.replayMock,
-      clearConversationContext: session.clearMock,
-      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
-    } as unknown as AgentSession;
-    indexSession(manager, live);
+    indexSession(manager, busySession(session, 'processing'));
 
     const dbId = await manager.injectSubSessionMessage(
       SESSION_ID,
       'queue for next turn',
       false,
       undefined,
-      'defer'
+      'defer',
+      undefined,
+      'msg-1'
     );
 
-    expect(dbId).toBe('db-id');
-    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
-    expect(session.saveUserMessage.mock.calls[0][2]).toBe('deferred');
-    expect(session.enqueueMock).not.toHaveBeenCalled();
+    expect(dbId).toBeTypeOf('string');
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-1')?.sendStatus).toBe(
+      'deferred'
+    );
+    expect(deliveryJobExists(db, 'msg-1')).toBe(false);
+    db.close();
   });
 });

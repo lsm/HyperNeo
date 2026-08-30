@@ -1,5 +1,6 @@
 import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   activatePrompts,
   ensurePrompt,
@@ -103,62 +104,104 @@ export interface MailboxHandoffArgs {
   setQueuedIfIdle?(messageId: string): Promise<boolean>;
 }
 
+interface MailboxHandoffCtx extends MailboxHandoffArgs {
+  mechanism: 'retry' | 'activate' | 'ensure';
+  handoff: { dbId: string; role: MessageDeliveryRole | null; changed: boolean } | null;
+}
+
+function planHandoffMechanism(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
+  const mechanism =
+    ctx.existing?.sendStatus === 'failed'
+      ? 'retry'
+      : ctx.existing?.sendStatus === 'deferred'
+        ? 'activate'
+        : 'ensure';
+  return { ...ctx, mechanism, handoff: null };
+}
+
+async function applyRetryHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
+  if (ctx.mechanism !== 'retry') return ctx;
+  const retried = await retryPrompt({
+    db: ctx.db,
+    jobQueue: ctx.jobQueue,
+    sdkMessageRepo: ctx.sdkMessageRepo,
+    sessionId: ctx.sessionId,
+    messageUuid: ctx.messageId,
+    origin: ctx.origin,
+  });
+  if (retried === null) {
+    throw new Error(
+      `prompt handoff: no retryable failed row for ${ctx.sessionId}/${ctx.messageId}`
+    );
+  }
+  return { ...ctx, handoff: { dbId: retried.dbId, role: retried.role, changed: true } };
+}
+
+async function applyActivateHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
+  if (ctx.mechanism !== 'activate') return ctx;
+  const { activated } = await activatePrompts({
+    db: ctx.db,
+    jobQueue: ctx.jobQueue,
+    sessionId: ctx.sessionId,
+    messageUuids: [ctx.messageId],
+    origin: ctx.origin,
+  });
+  const entry = activated[0];
+  if (!entry) {
+    throw new Error(
+      `prompt handoff: no activatable deferred row for ${ctx.sessionId}/${ctx.messageId}`
+    );
+  }
+  return { ...ctx, handoff: { dbId: entry.dbId, role: entry.role, changed: true } };
+}
+
+function applyEnsureHandoff(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
+  if (ctx.mechanism !== 'ensure') return ctx;
+  const ensured = ensurePrompt({
+    db: ctx.db,
+    sdkMessageRepo: ctx.sdkMessageRepo,
+    jobQueue: ctx.jobQueue,
+    sessionId: ctx.sessionId,
+    message: ctx.message,
+    origin: ctx.messageOrigin,
+    delivery: { origin: ctx.origin },
+  });
+  return {
+    ...ctx,
+    handoff: { dbId: ensured.dbMessageId, role: ensured.role, changed: ensured.created },
+  };
+}
+
+async function markQueuedIfTurn(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
+  if (ctx.handoff?.role !== 'turn') return ctx;
+  try {
+    await ctx.setQueuedIfIdle?.(ctx.messageId);
+  } catch {}
+  return ctx;
+}
+
+async function publishEnqueuedIfChanged(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
+  if (ctx.handoff?.changed !== true) return ctx;
+  await ctx.publishEnqueued(ctx.sessionId, ctx.handoff.dbId);
+  return ctx;
+}
+
+const runHandoff = (superpipe({})('prompt-mailbox-handoff') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(planHandoffMechanism, 'ctx', 'ctx')
+  .pipe(applyRetryHandoff, 'ctx', 'ctx')
+  .pipe(applyActivateHandoff, 'ctx', 'ctx')
+  .pipe(applyEnsureHandoff, 'ctx', 'ctx')
+  .pipe(markQueuedIfTurn, 'ctx', 'ctx')
+  .pipe(publishEnqueuedIfChanged, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: MailboxHandoffCtx) => Promise<MailboxHandoffCtx>;
+
 export async function handoffPromptToMailbox(args: MailboxHandoffArgs): Promise<string> {
-  const { db, sdkMessageRepo, jobQueue, sessionId, messageId, message, origin, existing } = args;
-  let dbId: string;
-  let role: MessageDeliveryRole | null;
-  if (existing?.sendStatus === 'failed') {
-    const retried = await retryPrompt({
-      db,
-      jobQueue,
-      sdkMessageRepo,
-      sessionId,
-      messageUuid: messageId,
-      origin,
-    });
-    if (retried === null) {
-      throw new Error(`prompt handoff: no retryable failed row for ${sessionId}/${messageId}`);
-    }
-    dbId = retried.dbId;
-    role = retried.role;
-    await args.publishEnqueued(sessionId, dbId);
-  } else if (existing?.sendStatus === 'deferred') {
-    const { activated } = await activatePrompts({
-      db,
-      jobQueue,
-      sessionId,
-      messageUuids: [messageId],
-      origin,
-    });
-    const entry = activated[0];
-    if (!entry) {
-      throw new Error(`prompt handoff: no activatable deferred row for ${sessionId}/${messageId}`);
-    }
-    dbId = entry.dbId;
-    role = entry.role;
-    await args.publishEnqueued(sessionId, dbId);
-  } else {
-    const ensured = ensurePrompt({
-      db,
-      sdkMessageRepo,
-      jobQueue,
-      sessionId,
-      message,
-      origin: args.messageOrigin,
-      delivery: { origin },
-    });
-    dbId = ensured.dbMessageId;
-    role = ensured.role;
-    if (ensured.created) {
-      await args.publishEnqueued(sessionId, dbId);
-    }
+  const ctx = await runHandoff({ ...args, mechanism: 'ensure', handoff: null });
+  if (ctx.handoff === null) {
+    throw new Error(`prompt handoff: no mechanism applied for ${args.sessionId}/${args.messageId}`);
   }
-  if (role === 'turn') {
-    try {
-      await args.setQueuedIfIdle?.(messageId);
-    } catch {}
-  }
-  return dbId;
+  return ctx.handoff.dbId;
 }
 
 export interface DeliverInjectedMessageArgs {
