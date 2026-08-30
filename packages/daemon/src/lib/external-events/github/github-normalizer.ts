@@ -32,6 +32,7 @@ export interface NormalizedGitHubEvent {
   prUrl: string;
   actor: string;
   actorType: string;
+  initiatorLogin?: string;
   body: string;
   summary: string;
   externalUrl: string;
@@ -415,8 +416,9 @@ export function normalizeGitHubPollingRow(
     entityId: String(prNumber),
     prNumber,
     prUrl: prUrl(repo.owner, repo.repo, prNumber),
-    actor: causalInitiator ? user.login : '',
-    actorType: causalInitiator ? user.type : 'Unknown',
+    actor: user.login,
+    actorType: user.type,
+    initiatorLogin: causalInitiator ? undefined : '',
     body: getString(obj.body),
     summary: `PR #${prNumber} ${eventType} by ${user.login}: ${truncateBody(getString(obj.body, getString(obj.title)))}`,
     externalUrl: htmlUrl || prUrl(repo.owner, repo.repo, prNumber),
@@ -1047,6 +1049,7 @@ export function normalizeGitHubMergeConflict(params: {
   if (!watched.owner || !watched.repo || !prNumber) return null;
   const pr = asObject(params.pullRequest);
   const repo = resolvePollingRepo(watched, pr);
+  const author = userFrom(pr.user);
   const occurredAt = Date.now();
   const action = params.conflicting ? 'merge_conflict' : 'merge_conflict_resolved';
   const canonicalOwner = repo.owner.toLowerCase();
@@ -1066,8 +1069,9 @@ export function normalizeGitHubMergeConflict(params: {
     entityId: String(prNumber),
     prNumber,
     prUrl: prUrl(repo.owner, repo.repo, prNumber),
-    actor: '',
-    actorType: 'Unknown',
+    actor: author.login,
+    actorType: author.type,
+    initiatorLogin: '',
     body: '',
     summary,
     externalUrl: getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber)),

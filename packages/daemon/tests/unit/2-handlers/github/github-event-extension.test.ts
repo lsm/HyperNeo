@@ -10972,7 +10972,7 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
-  test('merge-conflict events carry no initiator so the self-echo gate admits derived state', async () => {
+  test('merge-conflict events keep the author but carry no initiator so the gate admits derived state', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: selfUserFetch('octocat'),
@@ -10991,15 +10991,17 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
       deliveryId: 'poll:merge_conflict:7',
     });
     expect(conflictEvent).not.toBeNull();
-    expect(conflictEvent!.actor).toBe('');
+    expect(conflictEvent!.actor).toBe('octocat');
+    expect(conflictEvent!.initiatorLogin).toBe('');
     await ext.publishEvent('space-1', conflictEvent!, context);
 
     expect(published).toHaveLength(1);
+    expect(published[0].payload.actor).toBe('octocat');
     expect(published[0].payload.state).toBe('conflicting');
     await extension.stop();
   });
 
-  test('pulls polling rows carry no initiator so the gate admits updates by other users', async () => {
+  test('pulls polling rows keep the author but carry no initiator so the gate admits updates by others', async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: selfUserFetch('octocat'),
@@ -11021,10 +11023,12 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
       },
       'pulls'
     )!;
-    expect(pullsRow.actor).toBe('');
+    expect(pullsRow.actor).toBe('octocat');
+    expect(pullsRow.initiatorLogin).toBe('');
     await ext.publishEvent('space-1', pullsRow, context);
 
     expect(published).toHaveLength(1);
+    expect(published[0].payload.actor).toBe('octocat');
     expect(published[0].payload.title).toBe('Update widgets');
     await extension.stop();
   });

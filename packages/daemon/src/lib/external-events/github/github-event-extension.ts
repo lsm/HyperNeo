@@ -1786,7 +1786,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const tokenLogin = tokenLoginSnapshot ?? tokenStatus?.login ?? '';
     if (
       decideSelfEchoGate({
-        initiatorLogin: event.actor,
+        initiatorLogin: event.initiatorLogin ?? event.actor,
         filteredLogins: resolveFilteredLogins({ filterCurrentUser, tokenLogin }),
         filterCurrentUser,
       }) === 'drop'
