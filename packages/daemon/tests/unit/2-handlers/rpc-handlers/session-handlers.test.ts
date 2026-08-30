@@ -2033,6 +2033,43 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
     expect(worker.calls).toEqual([]);
   });
 
+  it('does not clear the sdk identity when start_fresh admission fails', async () => {
+    const worker = makeResumeFake('space:s1:task:t1:exec:e2');
+    const data: Record<string, unknown> = {
+      id: 'space:s1:task:t1:exec:e2',
+      config: {},
+      status: 'active',
+      sdkSessionId: 'sdk-old',
+    };
+    worker.session.getSessionData = () => data as never;
+    const db = makeResumeDb();
+    const sessionManager = {
+      getSessionForControl: mock(async () => worker.session),
+      getSessionAsync: mock(async () => worker.session),
+      getDatabase: () => db,
+    } as unknown as SessionManager;
+    const messageHubData = createMockMessageHub();
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+
+    const result = (await messageHubData.handlers.get('session.sdkResumeChoice')!(
+      { sessionId: 'space:s1:task:t1:exec:e2', choice: 'start_fresh', messageUuid: 'uuid-5' },
+      {}
+    )) as { success: boolean; error?: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not resumable');
+    expect(db.updateSession).not.toHaveBeenCalled();
+    expect(data.sdkSessionId).toBe('sdk-old');
+  });
+
   it('clears the sdk identity on the provisioned instance for start_fresh', async () => {
     const replacement = makeResumeFake('resume-session');
     let data: Record<string, unknown> = {

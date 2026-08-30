@@ -1310,19 +1310,7 @@ export function setupSessionHandlers(
       throw new Error(`Invalid choice: ${choice}. Must be 'start_fresh' or 'leave_as_is'`);
     }
 
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-
     const db = sessionManager.getDatabase();
-
-    if (choice === 'start_fresh') {
-      db.updateSession(targetSessionId, { sdkSessionId: undefined, sdkOriginPath: undefined });
-      const session = agentSession.getSessionData();
-      session.sdkSessionId = undefined;
-      session.sdkOriginPath = undefined;
-    }
 
     const resolvedMessage: HyperNeoActionMessage = {
       type: 'hyperneo_action',
@@ -1333,14 +1321,6 @@ export function setupSessionHandlers(
       chosenOption: choice,
       timestamp: Date.now(),
     };
-
-    db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
-
-    messageHub.event(
-      'state.sdkMessages.delta',
-      { added: [resolvedMessage], timestamp: Date.now() },
-      { channel: `session:${targetSessionId}` }
-    );
 
     try {
       const current = await sessionManager.getSessionAsync(targetSessionId, {
@@ -1359,6 +1339,7 @@ export function setupSessionHandlers(
         );
       }
       if (choice === 'start_fresh') {
+        db.updateSession(targetSessionId, { sdkSessionId: undefined, sdkOriginPath: undefined });
         currentData.sdkSessionId = undefined;
         currentData.sdkOriginPath = undefined;
       }
@@ -1385,6 +1366,14 @@ export function setupSessionHandlers(
         error: errorText,
       };
     }
+
+    db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
+
+    messageHub.event(
+      'state.sdkMessages.delta',
+      { added: [resolvedMessage], timestamp: Date.now() },
+      { channel: `session:${targetSessionId}` }
+    );
 
     return { success: true };
   });
