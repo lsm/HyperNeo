@@ -14,6 +14,10 @@ inventory; no source code is changed by these plans.
 | `task-agent-manager.md` | `task-agent-manager.ts` cluster map, slice ladder, ADR-0004 risks | 19 |
 | `web.md` | Web routing/parsers/status helpers and `useSendMessage` | 13 |
 
+"Sites" counts measured clusters/flow groups per area (the inventory's unit
+of analysis), not pipeline candidates — several clusters stay plain or remain
+class-owned, and each plan's candidate table is the authoritative split.
+
 Each plan records the named business-operation pipelines, per-site input/output
 and pure-core designs, shell/effect wiring, tests, risks, migration order, and
 open questions. A plan may note where an existing combinator (`decisionRun`,

@@ -5,6 +5,9 @@ Measured map of `packages/daemon/src/lib/space/runtime/task-agent-manager.ts`
 plus switch `case` arms not yet counted — the stated ~405 total was an
 underestimate) against ADR 0004. Measure-only slice: no source changes are proposed
 here. Child implementation slices are cut by the coordinator after owner review.
+Line references (`:NNN`) point at the tree this map was measured against and
+WILL DRIFT as sibling slices land — the symbol names beside them are the
+durable anchors; re-resolve the line numbers before relying on them.
 The ladder below is the current 44-row table (pin / build / wire / delete /
 extract) — 43 mandatory slices plus the optional TAM-H non-superpipe
 extraction, which does not count toward the mandatory ladder; coordinators
@@ -621,6 +624,12 @@ adoption outside the lock; pin adoption-before-lock ordering. Fit:
 
 Ordering runs lowest-risk first; every PR targets `dev`, ≤ ~300 prod lines,
 tests ride their slice. Exact cut is the coordinator's after owner review.
+Some rows deliberately carry MULTIPLE ordered contracts (an interface, a
+concurrency protocol, cleanup, wiring, tests) because review rounds bound
+them together; where a row's Deliverable names several, the coordinator cuts
+them as ORDERED child issues in the row's stated sequence — the row is the
+unit of review, not necessarily one PR, and no child may invert the stated
+order.
 
 | Slice | Deliverable | Kind | Prod Δ | Test Δ | Depends on |
 | --- | --- | --- | --- | --- | --- |
