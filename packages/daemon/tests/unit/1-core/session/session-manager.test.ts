@@ -409,6 +409,9 @@ describe('SessionManager', () => {
             mcpServers: { ...(data.config.mcpServers ?? {}), ...additional },
           };
         }),
+        updateMetadata: mock((updates: Record<string, unknown>) => {
+          if (typeof updates.status === 'string') data.status = updates.status;
+        }),
         cleanup: mock(async () => {}),
       } as unknown as AgentSession;
     };
@@ -500,6 +503,58 @@ describe('SessionManager', () => {
       expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(2, instanceC, {});
       expect(instanceC.getSessionData().config.mcpServers).toHaveProperty('node-agent');
       expect(instanceB.getSessionData().config.mcpServers?.['node-agent']).toBeUndefined();
+    });
+
+    it('marks a displaced in-flight provisioning owner archived before awaiting it', async () => {
+      const sessionId = 'space:s1:task:t1:exec:e9';
+      const instanceA = makeWorkerFake(sessionId);
+      const instanceB = makeWorkerFake(sessionId);
+      sessionManager.registerSession(instanceA);
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        id: sessionId,
+        title: 'Worker',
+        workspacePath: '/nonexistent-archive-probe',
+        status: 'active',
+        config: {},
+        metadata: {},
+      });
+
+      let releaseFirstCall: (() => void) | undefined;
+      let signalProvisioningStarted: (() => void) | undefined;
+      const provisioningStarted = new Promise<void>((resolve) => {
+        signalProvisioningStarted = resolve;
+      });
+      let providerCalls = 0;
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock((session: AgentSession) => {
+          providerCalls += 1;
+          if (providerCalls === 1) {
+            return new Promise<void>((resolve) => {
+              signalProvisioningStarted!();
+              releaseFirstCall = resolve;
+            });
+          }
+          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+          return Promise.resolve();
+        }),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const lookup = sessionManager.getSessionAsync(sessionId);
+      await provisioningStarted;
+      sessionManager.registerSession(instanceB);
+
+      const archive = sessionManager.archiveSessionResources(sessionId, 'ui_session_archive');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(instanceA.getSessionData().status).toBe('archived');
+      expect(instanceB.getSessionData().status).toBe('archived');
+      expect(mockDb.updateSession).toHaveBeenCalledWith(sessionId, { status: 'archived' });
+
+      releaseFirstCall!();
+      await lookup.catch(() => {});
+      await archive;
     });
 
     it('returns the cache-current instance when a reset swaps it during its own provisioning', async () => {

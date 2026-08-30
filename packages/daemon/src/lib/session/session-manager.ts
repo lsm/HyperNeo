@@ -631,6 +631,7 @@ export class SessionManager {
     const inFlight = this.workflowMcpProvisioning.get(sessionId);
     if (inFlight) {
       await this.sessionLifecycle.update(sessionId, { status: 'archived' });
+      inFlight.session.getSessionData().status = 'archived';
       await inFlight.promise.catch(() => {});
     }
     return this.sessionLifecycle.archiveResources(sessionId, trigger);
@@ -640,6 +641,7 @@ export class SessionManager {
     const inFlight = this.workflowMcpProvisioning.get(sessionId);
     if (inFlight) {
       await this.sessionLifecycle.update(sessionId, { status: 'archived' });
+      inFlight.session.getSessionData().status = 'archived';
       await inFlight.promise.catch(() => {});
     }
     return this.sessionLifecycle.deleteResources(sessionId, trigger);
