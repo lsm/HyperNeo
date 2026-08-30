@@ -3649,7 +3649,10 @@ export class TaskAgentManager {
           when: 'rehydrate',
           writes: [],
           run: async () => {
-            await this.rehydrateSubSession(sessionId, session, options);
+            const rehydrateOptions = this.readPersistedRateLimitCooldown(sessionId)
+              ? { ...options, startQuery: false }
+              : options;
+            await this.rehydrateSubSession(sessionId, session, rehydrateOptions);
           },
         }),
       ],

@@ -1230,6 +1230,16 @@ describe('AgentSession', () => {
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
     });
 
+    it('startStreamingQuery refuses to start an archived session', async () => {
+      const start = mock(async () => {});
+      (agentSession as unknown as { queryRunner: unknown }).queryRunner = { start } as never;
+      (agentSession as unknown as { session: { status: string } }).session.status = 'archived';
+
+      await agentSession.startStreamingQuery();
+
+      expect(start).not.toHaveBeenCalled();
+    });
+
     it('cancelRateLimitRetry clears a persisted cooldown left by a restart', async () => {
       const cancelDelivery = mock(() => true);
       mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);

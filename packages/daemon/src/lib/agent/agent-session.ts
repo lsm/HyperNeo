@@ -780,6 +780,10 @@ export class AgentSession
   }
 
   async startStreamingQuery(): Promise<void> {
+    if (this.session.status === 'archived') {
+      this.logger.warn(`startStreamingQuery refused: session ${this.session.id} is archived`);
+      return;
+    }
     const wantsAcp = this.session.config.provider === 'acp';
     const hasAcpRunner = this.queryRunner instanceof AcpQueryRunner;
     if (wantsAcp !== hasAcpRunner) {

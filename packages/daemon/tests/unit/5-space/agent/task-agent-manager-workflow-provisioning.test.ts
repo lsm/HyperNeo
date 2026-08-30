@@ -161,7 +161,57 @@ describe('TaskAgentManager workflow session provisioning', () => {
       'space lookup failed'
     );
   });
+
+  it('rehydrates a cooling-down execution worker without starting its query', async () => {
+    const { manager } = makeManager({ cooldown: true, taskStatus: 'in_progress' });
+    const rehydrateSubSession = mock(async () => null);
+    Object.defineProperty(manager, 'resolveNodeExecutionForSubSession', {
+      value: () => ({ workflowRunId: 'run-1', status: 'in_progress' }),
+    });
+    Object.defineProperty(manager, 'hasQueuedRetryableHookAction', {
+      value: () => false,
+    });
+    Object.defineProperty(manager, 'rehydrateSubSession', {
+      value: rehydrateSubSession,
+    });
+
+    await manager.provisionWorkflowSession(executionWorkerSession());
+
+    expect(rehydrateSubSession).toHaveBeenCalledWith(
+      'space:space-1:task:task-1:exec:e1',
+      expect.anything(),
+      { startQuery: false }
+    );
+  });
+
+  it('rehydrates an execution worker with the original options outside cooldowns', async () => {
+    const { manager } = makeManager({ taskStatus: 'in_progress' });
+    const rehydrateSubSession = mock(async () => null);
+    Object.defineProperty(manager, 'resolveNodeExecutionForSubSession', {
+      value: () => ({ workflowRunId: 'run-1', status: 'in_progress' }),
+    });
+    Object.defineProperty(manager, 'hasQueuedRetryableHookAction', {
+      value: () => false,
+    });
+    Object.defineProperty(manager, 'rehydrateSubSession', {
+      value: rehydrateSubSession,
+    });
+
+    await manager.provisionWorkflowSession(executionWorkerSession());
+
+    expect(rehydrateSubSession).toHaveBeenCalledWith(
+      'space:space-1:task:task-1:exec:e1',
+      expect.anything(),
+      {}
+    );
+  });
 });
+
+function executionWorkerSession(): AgentSession {
+  return {
+    getSessionData: () => ({ id: 'space:space-1:task:task-1:exec:e1' }),
+  } as unknown as AgentSession;
+}
 
 function makeRestoreManager(input: {
   queryMode?: string;
