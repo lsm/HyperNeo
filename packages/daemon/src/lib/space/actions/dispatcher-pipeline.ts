@@ -27,6 +27,8 @@ export type DispatchTelemetryEvent = {
   safetyClass?: string;
   role: SpaceMcpSessionRole;
   spaceId: string;
+  agentName?: string | null;
+  sessionId?: string | null;
   taskId?: string;
   workflowRunId?: string;
   outcome: 'dispatched' | 'denied' | 'failed';
@@ -58,6 +60,12 @@ export interface DispatchActionDeps {
     params: Record<string, unknown>
   ) => string | undefined | Promise<string | undefined>;
   resolveRunId?: (taskId: string) => string | undefined | Promise<string | undefined>;
+  validateTargets?: (
+    params: unknown,
+    spaceId: string,
+    action?: RegisteredAction
+  ) => string | undefined | Promise<string | undefined>;
+  auditReads?: boolean;
 }
 
 export interface DispatchActionCtx extends DispatchActionInput {
@@ -101,21 +109,26 @@ function failedOutcome(error: string): DispatchActionOutcome {
 export function resolveAction(ctx: DispatchActionCtx): DispatchActionCtx {
   const action = ctx.deps.registry.get(ctx.actionName);
   if (!action) {
-    return {
+    const next: DispatchActionCtx = {
       ...ctx,
       outcome: deniedOutcome('unknown_action', `Action not found: ${ctx.actionName}`),
     };
+    writeAuditEntry(next, true);
+    return next;
   }
   const parsed = action.paramsSchema.safeParse(ctx.params);
   if (!parsed.success) {
-    return {
+    const next: DispatchActionCtx = {
       ...ctx,
       action,
+      isMutating: isMutatingSafetyClass(action.safetyClass),
       outcome: deniedOutcome(
         'invalid_params',
         `Invalid parameters for ${action.name}: ${parsed.error.message}`
       ),
     };
+    writeAuditEntry(next, true);
+    return next;
   }
   const parsedParams = parsed.data as Record<string, unknown> | null;
   const hasTaskId =
@@ -218,13 +231,15 @@ export function applyRoleAdmission(ctx: DispatchActionCtx): DispatchActionCtx {
   const action = ctx.action!;
   const allowed = ROLE_ACTION_FAMILY_ALLOWLIST[ctx.role] ?? [];
   if (!allowed.includes(action.family)) {
-    return {
+    const next: DispatchActionCtx = {
       ...ctx,
       outcome: deniedOutcome(
         'role_denied',
         `Action ${action.name} (family "${action.family}") is not available for role ${ctx.role}.`
       ),
     };
+    writeAuditEntry(denialAuditCtx(next), true);
+    return next;
   }
   return ctx;
 }
@@ -244,7 +259,9 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
         spaceLevel = await ctx.deps.getSpaceAutonomyLevel(ctx.spaceId);
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        return { ...ctx, outcome: failedOutcome(error) };
+        const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
+        writeAuditEntry(denialAuditCtx(next), true);
+        return next;
       }
     }
   }
@@ -256,7 +273,14 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
       required = await action.autonomyRequirement(ctx.parsedParams);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      return { ...ctx, spaceLevel, agentLevel, outcome: failedOutcome(error) };
+      const next: DispatchActionCtx = {
+        ...ctx,
+        spaceLevel,
+        agentLevel,
+        outcome: failedOutcome(error),
+      };
+      writeAuditEntry(denialAuditCtx(next), true);
+      return next;
     }
   } else {
     required = action.autonomyRequirement;
@@ -271,12 +295,14 @@ export async function applyAutonomyGate(ctx: DispatchActionCtx): Promise<Dispatc
   if (admission.action === 'allow') {
     return { ...ctx, spaceLevel, agentLevel };
   }
-  return {
+  const denied: DispatchActionCtx = {
     ...ctx,
     spaceLevel,
     agentLevel,
     outcome: deniedOutcome('autonomy_denied', admission.message),
   };
+  writeAuditEntry(denialAuditCtx(denied), true);
+  return denied;
 }
 
 export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
@@ -288,7 +314,9 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       required = await action.autonomyRequirement(ctx.parsedParams);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      return { ...ctx, outcome: failedOutcome(error) };
+      const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
+      writeAuditEntry(denialAuditCtx(next), true);
+      return next;
     }
     const spaceLevel = ctx.spaceLevel ?? 1;
     const agentLevel = ctx.agentLevel ?? null;
@@ -301,7 +329,14 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       spaceLevel,
     });
     if (admission.action !== 'allow') {
-      return { ...ctx, outcome: deniedOutcome('autonomy_denied', admission.message) };
+      const denied: DispatchActionCtx = {
+        ...ctx,
+        spaceLevel,
+        agentLevel,
+        outcome: deniedOutcome('autonomy_denied', admission.message),
+      };
+      writeAuditEntry(denialAuditCtx(denied), true);
+      return denied;
     }
   }
   if (ctx.deps.isWithinRateBudget) {
@@ -310,36 +345,79 @@ export async function applyRateAndAudit(ctx: DispatchActionCtx): Promise<Dispatc
       ok = await ctx.deps.isWithinRateBudget();
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      return { ...ctx, outcome: failedOutcome(error) };
+      const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
+      writeAuditEntry(denialAuditCtx(next), true);
+      return next;
     }
     if (!ok) {
-      return {
+      const denied: DispatchActionCtx = {
         ...ctx,
         outcome: deniedOutcome(
           'rate_limited',
           `Action ${action.name} is currently rate limited. Please retry later.`
         ),
       };
+      writeAuditEntry(denialAuditCtx(denied), true);
+      return denied;
     }
   }
-  if (ctx.isMutating && ctx.deps.auditLogRepo) {
+  if (ctx.deps.validateTargets) {
+    let message: string | undefined;
     try {
-      const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
-      for (const key of action.auditRedactKeys ?? []) {
-        delete summaryParams[key];
-      }
-      ctx.deps.auditLogRepo.createEntry({
-        agentName: ctx.agentName ?? null,
-        sessionId: ctx.sessionId ?? null,
-        toolName: action.name,
-        paramsSummary: JSON.stringify(summaryParams),
-        spaceId: ctx.spaceId,
-        taskId: ctx.taskId ?? null,
-        workflowRunId: ctx.workflowRunId ?? null,
-      });
-    } catch {}
+      message = await ctx.deps.validateTargets(ctx.parsedParams, ctx.spaceId, ctx.action);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      const next: DispatchActionCtx = { ...ctx, outcome: failedOutcome(error) };
+      writeAuditEntry(denialAuditCtx(next), true);
+      return next;
+    }
+    if (message) {
+      writeAuditEntry(denialAuditCtx(ctx), true);
+      return { ...ctx, outcome: deniedOutcome('invalid_params', message) };
+    }
   }
+  writeAuditEntry(ctx);
   return ctx;
+}
+
+function denialAuditCtx(ctx: DispatchActionCtx): DispatchActionCtx {
+  if (typeof ctx.parsedParams !== 'object' || ctx.parsedParams === null) return ctx;
+  const record = ctx.parsedParams as Record<string, unknown>;
+  const explicitTaskId =
+    typeof record.task_id === 'string' && record.task_id.length > 0 ? record.task_id : undefined;
+  const numericResolved =
+    typeof record.task_number === 'number' &&
+    (ctx.action?.taskIdPreference === 'task_number' || !explicitTaskId);
+  const runTargetPresent =
+    (typeof record.run_id === 'string' && record.run_id.length > 0) ||
+    (typeof record.workflow_run_id === 'string' && record.workflow_run_id.length > 0) ||
+    (typeof record.workflowRunId === 'string' && record.workflowRunId.length > 0);
+  const retainTask = !explicitTaskId || numericResolved || explicitTaskId === ctx.contextualTaskId;
+  const taskId = retainTask ? ctx.taskId : undefined;
+  const workflowRunId = runTargetPresent ? undefined : ctx.workflowRunId;
+  return { ...ctx, taskId, workflowRunId };
+}
+
+function writeAuditEntry(ctx: DispatchActionCtx, forceExempt = false): void {
+  if (!ctx.deps.auditLogRepo) return;
+  const toolName = ctx.action?.name ?? ctx.actionName;
+  if (!forceExempt && ctx.action?.auditExempt) return;
+  if (!ctx.isMutating && !ctx.deps.auditReads) return;
+  try {
+    const summaryParams = { ...(ctx.parsedParams as Record<string, unknown> | null) };
+    for (const key of ctx.action?.auditRedactKeys ?? []) {
+      delete summaryParams[key];
+    }
+    ctx.deps.auditLogRepo.createEntry({
+      agentName: ctx.agentName ?? null,
+      sessionId: ctx.sessionId ?? null,
+      toolName,
+      paramsSummary: JSON.stringify(summaryParams),
+      spaceId: ctx.spaceId,
+      taskId: ctx.taskId ?? null,
+      workflowRunId: ctx.workflowRunId ?? null,
+    });
+  } catch {}
 }
 
 export async function executeAction(ctx: DispatchActionCtx): Promise<DispatchActionCtx> {
@@ -393,6 +471,8 @@ export function buildDispatchTelemetryEvent(
     safetyClass: action?.safetyClass,
     role: input.role,
     spaceId: input.spaceId,
+    agentName: input.agentName,
+    sessionId: input.sessionId,
     taskId: input.taskId,
     workflowRunId: input.workflowRunId,
     outcome: outcome.action,
@@ -449,6 +529,9 @@ export async function runDispatchAction(
   try {
     const ctx = await run({ ...input, deps });
     const outcome = ctx.outcome ?? failedOutcome('Missing dispatch outcome');
+    if (ctx.action?.auditExempt && outcome.action === 'dispatched') {
+      writeAuditEntry(ctx, true);
+    }
     await emitDispatchTelemetry(
       deps,
       { ...input, taskId: ctx.taskId, workflowRunId: ctx.workflowRunId },

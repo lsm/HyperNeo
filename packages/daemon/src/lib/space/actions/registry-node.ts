@@ -98,6 +98,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
     }),
     nodeAction({
       name: 'send_message',
+      auditRedactKeys: ['message', 'data'],
       safetyClass: 'mutate',
       description:
         'Send a DM by agent name, fan out by node name, multicast by array, or broadcast with "*"; validates against channel topology.',
@@ -186,6 +187,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
             description:
               'Persist a structured fact to the run artifact store as one of link/commit_set/check/metric/decision/note.',
             paramsDoc: 'shape, kind?, key?, summary?, data?',
+            auditRedactKeys: ['data'],
             paramsSchema: SaveArtifactSchema,
             handler: handlers.save_artifact,
           }),
@@ -209,6 +211,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
               'Create a task request in this space with optional priority, workflow, dependencies, and draft flag.',
             paramsDoc:
               'title, description, priority?, custom_agent_id?, workflow_id?, depends_on?, draft?',
+            auditRedactKeys: ['description'],
             paramsSchema: CreateStandaloneTaskSchema,
             handler: handlers.create_standalone_task,
           }),
@@ -280,6 +283,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
             description:
               'Finish post-approval work: transition THIS task from approved to done (routed post-approval session only).',
             paramsDoc: 'goal_update? (legacy, optional)',
+            auditRedactKeys: ['goal_update'],
             paramsSchema: MarkCompleteSchema,
             handler: wrapHandlerWithHooks(
               'mark_complete',
@@ -306,6 +310,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
             safetyClass: 'read',
             description: 'Read one task with status, result, and metadata.',
             paramsDoc: 'task_number? or task_id? (one required)',
+            taskIdPreference: 'task_number',
             paramsSchema: GetTaskSchema,
             handler: handlers.get_task,
           }),
@@ -319,6 +324,7 @@ export function createNodeRegistryEntries(config: NodeAgentToolsConfig): ActionD
             description:
               'List MCP audit log entries for this space, optionally filtered by task or session.',
             paramsDoc: 'task_id?, session_id?, limit?, offset?',
+            auditExempt: true,
             paramsSchema: ListAuditEntriesSchema,
             handler: handlers.list_audit_entries,
           }),

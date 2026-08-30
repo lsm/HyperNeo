@@ -24,6 +24,8 @@ export function emitActionDispatchedEvent(event: DispatchTelemetryEvent): void {
     const optional: Record<string, string | number | undefined> = {
       family: event.family,
       safetyClass: event.safetyClass,
+      agentName: event.agentName ?? undefined,
+      sessionId: event.sessionId ?? undefined,
       taskId: event.taskId,
       workflowRunId: event.workflowRunId,
       reason: event.reason,
