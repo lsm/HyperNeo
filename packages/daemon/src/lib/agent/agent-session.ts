@@ -1235,7 +1235,7 @@ export class AgentSession
     if (owningTurnMessageId) {
       try {
         const jobQueue = this.db.getJobQueueRepo();
-        const sdkRepo = this.db.getSDKMessageRepo();
+        const sdkRepo = this.db.getSDKMessageRepo?.();
         const batchUuids = jobQueue?.getActiveDeliveryBatchUuids?.(
           this.session.id,
           owningTurnMessageId

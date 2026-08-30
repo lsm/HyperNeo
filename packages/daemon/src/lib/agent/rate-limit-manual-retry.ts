@@ -60,6 +60,9 @@ async function clearPersistedCooldownStage(
 async function releaseOwningDeliveryStage(
   ctx: RateLimitManualRetryCtx
 ): Promise<RateLimitManualRetryCtx> {
+  if (!ctx.cleared) {
+    return { ...ctx, released: false };
+  }
   const jobQueue = ctx.db.getJobQueueRepo?.();
   if (jobQueue?.rescheduleSessionDeliveries) {
     try {
@@ -89,7 +92,6 @@ const rateLimitManualRetryPipeline = (
 )
   .input(['ctx'])
   .pipe(clearPersistedCooldownStage, 'ctx', 'ctx')
-  .pipe('cleared', 'ctx')
   .pipe(releaseOwningDeliveryStage, 'ctx', 'ctx')
   .endAsync('ctx');
 
