@@ -150,6 +150,9 @@ export function SpaceExternalEventsSettings({
   const githubSpaceEnabled = spaceConfig?.enabled ?? true;
   const spacePollingIntent =
     (spaceConfig?.settings as { pollingIntent?: boolean } | undefined)?.pollingIntent === true;
+  const spaceFilterCurrentUser =
+    (spaceConfig?.settings as { filterCurrentUser?: boolean } | undefined)?.filterCurrentUser !==
+    false;
   const spacePollingActive = githubPollingEnabled && spacePollingIntent;
   const webhookUrl = useMemo(getWebhookUrl, []);
 
@@ -428,6 +431,34 @@ export function SpaceExternalEventsSettings({
       if (!isActionCurrent(actionSpaceId)) return;
       toast.error(
         `Failed to update GitHub polling: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function setFilterCurrentUser(enabled: boolean): Promise<void> {
+    const actionSpaceId = spaceIdRef.current;
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) {
+      toast.error('Not connected to server');
+      return;
+    }
+    try {
+      setBusy('github:self-echo');
+      await hub.request('space.github.setFilterCurrentUser', {
+        spaceId: actionSpaceId,
+        enabled,
+      });
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.success(
+        `Filtering events by current login user ${enabled ? 'enabled' : 'disabled'} for this space`
+      );
+      await refresh();
+    } catch (err) {
+      if (!isActionCurrent(actionSpaceId)) return;
+      toast.error(
+        `Failed to update login filtering: ${err instanceof Error ? err.message : String(err)}`
       );
     } finally {
       setBusy(null);
@@ -732,6 +763,33 @@ export function SpaceExternalEventsSettings({
                 pull_request, issue_comment, pull_request_review, pull_request_review_comment,
                 pull_request_review_thread, check_run, and check_suite events.
               </p>
+            </div>
+
+            <div class="mt-3 flex flex-wrap items-center gap-3">
+              <label
+                class={cn(
+                  'flex items-center gap-2 text-xs text-gray-300',
+                  (disabled ||
+                    !githubControlsEnabled ||
+                    busy === 'github:self-echo' ||
+                    panelBusy) &&
+                    'opacity-60'
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={spaceFilterCurrentUser}
+                  disabled={
+                    disabled || !githubControlsEnabled || busy === 'github:self-echo' || panelBusy
+                  }
+                  onChange={() => setFilterCurrentUser(!spaceFilterCurrentUser)}
+                  class="h-4 w-4 rounded border-dark-500 bg-dark-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-dark-900"
+                />
+                Filter events by current login user
+              </label>
+              {tokenStatus?.login && (
+                <span class="text-xs text-gray-400">current login: {tokenStatus.login}</span>
+              )}
             </div>
 
             <form

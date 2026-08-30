@@ -72,6 +72,11 @@ export class GitHubEventExtensionRepository {
         'ALTER TABLE space_github_source_settings ADD COLUMN polling_intent INTEGER NOT NULL DEFAULT 0'
       );
     }
+    if (!columns.some((column) => column.name === 'filter_current_user')) {
+      this.db.exec(
+        'ALTER TABLE space_github_source_settings ADD COLUMN filter_current_user INTEGER NOT NULL DEFAULT 1'
+      );
+    }
     const now = Date.now();
     this.db
       .prepare(
@@ -260,6 +265,26 @@ export class GitHubEventExtensionRepository {
       )
       .get(spaceId) as { pollingIntent: number } | undefined;
     return row ? row.pollingIntent === 1 : false;
+  }
+
+  setFilterCurrentUser(spaceId: string, enabled: boolean): void {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO space_github_source_settings (space_id, enabled, filter_current_user, created_at, updated_at)
+				 VALUES (?, 1, ?, ?, ?)
+				 ON CONFLICT(space_id) DO UPDATE SET filter_current_user = excluded.filter_current_user, updated_at = excluded.updated_at`
+      )
+      .run(spaceId, enabled ? 1 : 0, now, now);
+  }
+
+  getFilterCurrentUser(spaceId: string): boolean {
+    const row = this.db
+      .prepare(
+        'SELECT filter_current_user AS filterCurrentUser FROM space_github_source_settings WHERE space_id = ?'
+      )
+      .get(spaceId) as { filterCurrentUser: number } | undefined;
+    return row ? row.filterCurrentUser === 1 : true;
   }
 
   countSpacesWithPollingIntent(): number {

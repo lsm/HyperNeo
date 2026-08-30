@@ -35,6 +35,7 @@ import {
 } from './github-pr-head-ref-index.ts';
 import { isPullRequestOpen, pullRequestUpdatedAt } from './github-pr-row-state.ts';
 import { isPositiveReaction, reactionIdFrom } from './github-reaction-fields.ts';
+import { decideSelfEchoGate, resolveFilteredLogins } from './github-self-echo.ts';
 import {
   normalizeGitHubCheckRun,
   normalizeGitHubDeployment,
@@ -65,6 +66,7 @@ const RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
 const HEALTH_RECENT_ERROR_WINDOW_MS = 24 * 60 * 60 * 1000;
 const TOKEN_VALIDATION_TIMEOUT_MS = 5_000;
 const TOKEN_STATUS_CACHE_TTL_MS = 5 * 60 * 1000;
+const SELF_ECHO_LOGIN_RETRY_MS = 30_000;
 const GITHUB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 const GITHUB_WEBHOOK_REQUEST_TIMEOUT_MS = 30_000;
 const DEPLOYMENT_PR_RESOLUTION_TIMEOUT_MS = 5_000;
@@ -298,6 +300,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private lastTokenStatus: GitHubTokenStatus | null = null;
   private lastTokenStatusGeneration = -1;
   private lastTokenStatusAt = 0;
+  private tokenValidationSequence = 0;
   private credentialGeneration = 0;
   private pollCycleCredentialGeneration: number | null = null;
   private pollCycleCredentialFingerprint: string | null = null;
@@ -339,6 +342,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     this.pollTimer = null;
     await this.activePollCycle;
     if (this.reconcileSweepPromise) await this.reconcileSweepPromise;
+    if (this.selfEchoLoginRefresh) await this.selfEchoLoginRefresh;
   }
 
   registerRpcHandlers(hub: MessageHub, context: ExternalEventExtensionContext): void {
@@ -596,7 +600,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
     hub.onRequest('space.github.getTokenStatus', async () => {
       await assertRpcConfigEnabled(context, this.sourceId);
-      return await this.getTokenStatus();
+      return await this.resolveTokenStatus(true);
     });
 
     hub.onRequest('space.github.health', async (data) => {
@@ -660,6 +664,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         kind: 'watched_repo_changed',
       });
       return { spaceId: params.spaceId, pollingEnabled: params.enabled };
+    });
+
+    hub.onRequest('space.github.setFilterCurrentUser', async (data) => {
+      await assertRpcConfigEnabled(context, this.sourceId);
+      const params = data as { spaceId?: string; enabled?: boolean };
+      if (!params.spaceId || typeof params.enabled !== 'boolean') {
+        throw new Error('spaceId and enabled are required');
+      }
+      this.repo.setFilterCurrentUser(params.spaceId, params.enabled);
+      await this.persistSpaceConfig(context, params.spaceId);
+      context.onSourceConfigChanged({
+        source: this.sourceId,
+        spaceId: params.spaceId,
+        kind: 'watched_repo_changed',
+      });
+      return { spaceId: params.spaceId, filterCurrentUser: params.enabled };
     });
   }
 
@@ -726,13 +746,14 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       return Response.json({ error: 'Repository is not watched' }, { status: 404 });
 
     let published = 0;
+    const tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
     for (const repo of validForRepo) {
       if (!repo.enabled) continue;
       const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
       if (spaceConfig && !spaceConfig.enabled) continue;
-      await this.publishEvent(repo.spaceId, normalized, this.context);
+      if (await this.publishEvent(repo.spaceId, normalized, this.context, tokenLoginSnapshot))
+        published++;
       this.repo.markWebhookReceived(repo.id);
-      published++;
     }
 
     return Response.json({ message: 'Webhook received', deliveryId, spaces: published });
@@ -818,6 +839,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     let published = 0;
+    const tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
     for (const watched of targets) {
       for (const prNumber of prNumbers) {
         const normalized =
@@ -842,8 +864,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                 prNumber,
               });
         if (!normalized) continue;
-        await this.publishEvent(watched.spaceId, normalized, this.context);
-        published++;
+        if (await this.publishEvent(watched.spaceId, normalized, this.context, tokenLoginSnapshot))
+          published++;
       }
       this.repo.markWebhookReceived(watched.id);
     }
@@ -920,6 +942,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     let published = 0;
+    const tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
     for (const watched of targets) {
       for (const prNumber of prNumbers) {
         const normalized = normalizeGitHubStatus({
@@ -932,8 +955,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           sender: root.sender,
         });
         if (!normalized) continue;
-        await this.publishEvent(watched.spaceId, normalized, this.context);
-        published++;
+        if (await this.publishEvent(watched.spaceId, normalized, this.context, tokenLoginSnapshot))
+          published++;
       }
       this.repo.markWebhookReceived(watched.id);
     }
@@ -1331,20 +1354,54 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
   }
 
-  private async resolveTokenStatus(lightweight: boolean): Promise<GitHubTokenStatus> {
+  private cachedTokenStatus(): GitHubTokenStatus | null {
     if (
-      lightweight &&
       this.lastTokenStatus !== null &&
       this.lastTokenStatusGeneration === this.credentialGeneration &&
-      Date.now() - this.lastTokenStatusAt < TOKEN_STATUS_CACHE_TTL_MS &&
-      credentialFingerprint(this.lastResolvedToken) === this.lastTokenStatus.validatedFingerprint
+      credentialFingerprint(this.lastResolvedToken) === this.lastTokenStatus.validatedFingerprint &&
+      (Date.now() - this.lastTokenStatusAt < TOKEN_STATUS_CACHE_TTL_MS ||
+        Date.now() < this.rateLimitedUntil)
     ) {
       return this.lastTokenStatus;
     }
+    return null;
+  }
+
+  private selfEchoLoginRefresh: Promise<void> | null = null;
+  private selfEchoLoginRetryAt = 0;
+  private selfEchoLoginRetryGeneration = -1;
+
+  private triggerSelfEchoLoginRefresh(): void {
+    if (this.selfEchoLoginRefresh) return;
+    if (Date.now() < this.rateLimitedUntil) return;
+    if (
+      Date.now() < this.selfEchoLoginRetryAt &&
+      this.selfEchoLoginRetryGeneration === this.credentialGeneration
+    ) {
+      return;
+    }
     const generationBefore = this.credentialGeneration;
+    this.selfEchoLoginRefresh = this.resolveTokenStatus(false)
+      .then((status) => {
+        this.selfEchoLoginRetryAt = status.login ? 0 : Date.now() + SELF_ECHO_LOGIN_RETRY_MS;
+        this.selfEchoLoginRetryGeneration = status.login ? -1 : generationBefore;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.selfEchoLoginRefresh = null;
+      });
+  }
+
+  private async resolveTokenStatus(lightweight: boolean): Promise<GitHubTokenStatus> {
+    if (lightweight) {
+      const cached = this.cachedTokenStatus();
+      if (cached) return cached;
+    }
+    const generationBefore = this.credentialGeneration;
+    const sequenceBefore = ++this.tokenValidationSequence;
     const token = await this.getTokenStatus();
     if (this.credentialGeneration !== generationBefore) {
-      this.lastTokenStatus = null;
+      if (this.lastTokenStatusGeneration === generationBefore) this.lastTokenStatus = null;
       return {
         configured: true,
         source: token.source,
@@ -1352,12 +1409,13 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
       };
     }
+    if (this.tokenValidationSequence !== sequenceBefore) return token;
     const isPermissionError = token.error === 'HTTP 403';
     if (!token.error || token.authRejected || isPermissionError) {
       this.lastTokenStatus = token;
       this.lastTokenStatusGeneration = generationBefore;
       this.lastTokenStatusAt = Date.now();
-    } else {
+    } else if (!token.error?.includes('(rate limited)')) {
       this.lastTokenStatus = null;
     }
     return token;
@@ -1734,9 +1792,34 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   private async publishEvent(
     spaceId: string,
     event: import('./github-normalizer.ts').NormalizedGitHubEvent,
-    context: ExternalEventExtensionContext
-  ): Promise<void> {
+    context: ExternalEventExtensionContext,
+    tokenLoginSnapshot?: string
+  ): Promise<boolean> {
+    const spaceConfig = await context.config.getSpaceConfig(spaceId, this.sourceId);
+    const filterCurrentUser =
+      (spaceConfig?.settings as { filterCurrentUser?: boolean } | undefined)?.filterCurrentUser !==
+      false;
+    const tokenStatus = this.cachedTokenStatus();
+    if (filterCurrentUser && !tokenStatus) this.triggerSelfEchoLoginRefresh();
+    const tokenLogin = tokenLoginSnapshot ?? tokenStatus?.login ?? '';
+    if (
+      decideSelfEchoGate({
+        initiatorLogin: event.initiatorLogin ?? event.actor,
+        filteredLogins: resolveFilteredLogins({ filterCurrentUser, tokenLogin }),
+        filterCurrentUser,
+      }) === 'drop'
+    ) {
+      log.debug('GitHub self-echo event dropped before publish', {
+        spaceId,
+        eventType: event.eventType,
+        action: event.action,
+        actor: event.actor,
+        filteredLogin: tokenLogin,
+      });
+      return false;
+    }
     await context.publisher.publish(toExternalEvent(spaceId, event));
+    return true;
   }
 
   private async persistSpaceConfig(
@@ -1750,6 +1833,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       enabled: this.repo.isSpaceEnabled(spaceId),
       settings: {
         pollingIntent: this.repo.getPollingIntent(spaceId),
+        filterCurrentUser: this.repo.getFilterCurrentUser(spaceId),
         watchedRepos: repos.map((repo) => ({
           id: repo.id,
           owner: repo.owner,
@@ -2491,10 +2575,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
       for (const row of rows) {
         const event = normalizeGitHubPollingRow(watched, row, endpoint.key);
         if (event) {
-          await this.publishEvent(watched.spaceId, event, this.context);
+          if (await this.publishEvent(watched.spaceId, event, this.context)) count++;
           endpointPending = Math.max(endpointPending, event.occurredAt);
           watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
-          count++;
         }
       }
       processedPages[endpoint.key] = pullsBacklogClearedByCutoff
@@ -2720,12 +2803,11 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
                   prScopedDedupe,
                 });
                 if (!event) continue;
-                await this.publishEvent(watched.spaceId, event, this.context);
+                if (await this.publishEvent(watched.spaceId, event, this.context)) count++;
                 if (!prScopedDedupe && !(checkRunLegacyKey in checkRunLegacyPrs)) {
                   checkRunLegacyPrs[checkRunLegacyKey] = checkRunPrNumber;
                 }
                 watermarks.pending = Math.max(watermarks.pending, event.occurredAt);
-                count++;
               }
             }
             if (reachedOldRows) {
@@ -2863,8 +2945,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         deliveryId: `poll:merge_conflict:${prNumber}`,
       });
       if (mergeConflictEvent) {
-        await this.publishEvent(watched.spaceId, mergeConflictEvent, this.context);
-        count++;
+        if (await this.publishEvent(watched.spaceId, mergeConflictEvent, this.context)) count++;
       }
       if (
         Number.isFinite(mergeRateLimit.remaining) &&
@@ -2982,10 +3063,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
             seenReviewIds[reviewId] = true;
             continue;
           }
-          await this.publishEvent(watched.spaceId, event, this.context);
+          if (await this.publishEvent(watched.spaceId, event, this.context)) count++;
           seenReviewIds[reviewId] = true;
           reviewLastSeenAt[prNumber] = Math.max(reviewLastSeenAt[prNumber] ?? 0, event.occurredAt);
-          count++;
         }
         if (reviews.length < 100) {
           reviewScanComplete = true;
@@ -3101,9 +3181,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           seenReactionIds[reactionId] = true;
           continue;
         }
-        await this.publishEvent(watched.spaceId, event, this.context);
+        if (await this.publishEvent(watched.spaceId, event, this.context)) count++;
         seenReactionIds[reactionId] = true;
-        count++;
       }
       if (
         Number.isFinite(reactionRateLimit.remaining) &&

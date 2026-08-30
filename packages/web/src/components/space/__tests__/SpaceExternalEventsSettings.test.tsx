@@ -1196,6 +1196,72 @@ describe('SpaceExternalEventsSettings', () => {
     expect(await findByText('Polling for this space (daemon-wide capability)')).toBeTruthy();
   });
 
+  it('shows the self-echo filter checkbox checked by default with the current login', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: {},
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      if (method === 'space.github.getTokenStatus') {
+        return Promise.resolve({ configured: true, source: 'env', login: 'octocat' });
+      }
+      return Promise.resolve({});
+    });
+
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    const label = await findByText('Filter events by current login user');
+    expect(label.closest('label')?.querySelector('input')).toHaveProperty('checked', true);
+    expect(await findByText('current login: octocat')).toBeTruthy();
+  });
+
+  it('shows the self-echo filter checkbox unchecked when the space config disables it', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockImplementation((method) => {
+      if (method === 'externalEvents.extensions.list') return Promise.resolve(extensionResult);
+      if (method === 'space.github.listConfig') {
+        return Promise.resolve({
+          spaceId: 'space-1',
+          source: 'github',
+          enabled: true,
+          settings: { filterCurrentUser: false },
+        });
+      }
+      if (method === 'space.github.listWatchedRepos') return Promise.resolve(repoResult);
+      return Promise.resolve({});
+    });
+
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    const label = await findByText('Filter events by current login user');
+    expect(label.closest('label')?.querySelector('input')).toHaveProperty('checked', false);
+  });
+
+  it('toggles self-echo filtering through the setFilterCurrentUser RPC', async () => {
+    setupRequests();
+    const { findByText } = render(<SpaceExternalEventsSettings spaceId="space-1" />);
+    const label = await findByText('Filter events by current login user');
+
+    fireEvent.click(label);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith('space.github.setFilterCurrentUser', {
+        spaceId: 'space-1',
+        enabled: false,
+      });
+    });
+    await waitFor(() => {
+      expect(mockToastSuccess).toHaveBeenCalledWith(
+        'Filtering events by current login user disabled for this space'
+      );
+    });
+  });
+
   it('prompts for confirmation before overwriting an existing keychain token', async () => {
     const confirmSpy = vi.fn(() => false);
     vi.stubGlobal('confirm', confirmSpy);

@@ -11,6 +11,8 @@ import { GitHubEventExtension } from '../../../../src/lib/external-events/github
 import { syncGitHubPollingCapability } from '../../../../src/app';
 import {
   mapEventType,
+  normalizeGitHubMergeConflict,
+  normalizeGitHubPollingRow,
   normalizeGitHubWebhook,
   type NormalizedGitHubEvent,
   toExternalEvent,
@@ -10516,7 +10518,7 @@ describe('GitHubEventExtension — credential store + token RPC', () => {
   });
 });
 
-describe('GitHub self-echo pins (GE-P1)', () => {
+describe('GitHub self-echo gate wiring (GE-W1)', () => {
   function selfCommentPayload(login: string): Record<string, unknown> {
     return {
       action: 'created',
@@ -10549,7 +10551,89 @@ describe('GitHub self-echo pins (GE-P1)', () => {
     return (await ext.resolveTokenStatus(false)).login;
   }
 
-  test("webhook: a comment authored by the token's own login round-trips into the space", async () => {
+  function selfCommentEvent(login: string): NormalizedGitHubEvent {
+    return normalizeGitHubWebhook('issue_comment', `delivery-${login}`, selfCommentPayload(login))!;
+  }
+
+  function publishCapture(
+    extension: GitHubEventExtension,
+    config: ExternalEventExtensionConfigStore = new StaticExternalEventExtensionConfigStore({
+      globallyEnabled: true,
+    })
+  ) {
+    const published: ExternalEvent[] = [];
+    const context: ExternalEventExtensionContext = {
+      publisher: {
+        publish: async (event: ExternalEvent) => {
+          published.push(event);
+        },
+      },
+      config,
+      onSourceConfigChanged() {},
+    };
+    const ext = extension as unknown as {
+      publishEvent(
+        spaceId: string,
+        event: NormalizedGitHubEvent,
+        context: ExternalEventExtensionContext
+      ): Promise<boolean>;
+    };
+    return { published, ext, context };
+  }
+
+  async function deliverWebhook(
+    extension: GitHubEventExtension,
+    eventType: string,
+    payload: Record<string, unknown>
+  ) {
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, eventType, await createSignature(raw, 'secret'))
+    );
+    return (await res.json()) as { spaces: number };
+  }
+
+  function prWebhookPayload(senderLogin: string, authorLogin: string): Record<string, unknown> {
+    return {
+      action: 'synchronize',
+      repository: baseRepo,
+      sender: { login: senderLogin, type: 'User' },
+      pull_request: {
+        id: 77,
+        number: 7,
+        body: 'pr body',
+        html_url: 'https://github.com/acme/widgets/pull/7',
+        user: { login: authorLogin, type: 'User' },
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    };
+  }
+
+  function reviewWebhookPayload(
+    action: string,
+    reviewerLogin: string,
+    senderLogin: string
+  ): Record<string, unknown> {
+    return {
+      action,
+      repository: baseRepo,
+      sender: { login: senderLogin, type: 'User' },
+      pull_request: {
+        number: 7,
+        html_url: 'https://github.com/acme/widgets/pull/7',
+        user: { login: 'author', type: 'User' },
+      },
+      review: {
+        id: 42,
+        user: { login: reviewerLogin, type: 'User' },
+        state: 'APPROVED',
+        html_url: 'https://github.com/acme/widgets/pull/7#pullrequestreview-42',
+        submitted_at: '2026-01-01T00:00:00Z',
+      },
+    };
+  }
+
+  test("webhook: the token's own comment is dropped as self-echo while other logins still publish", async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
@@ -10568,20 +10652,166 @@ describe('GitHub self-echo pins (GE-P1)', () => {
     });
     expect(await resolveOwnLogin(extension)).toBe('octocat');
 
-    const payload = selfCommentPayload('octocat');
-    const raw = JSON.stringify(payload);
-    const res = await extension.routes[0].handle(
-      webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
-    );
-    expect(res.status).toBe(200);
+    expect(
+      (await deliverWebhook(extension, 'issue_comment', selfCommentPayload('octocat'))).spaces
+    ).toBe(0);
+    expect(received).toHaveLength(0);
+    expect(
+      (await deliverWebhook(extension, 'issue_comment', selfCommentPayload('unrelated-user')))
+        .spaces
+    ).toBe(1);
     expect(received).toHaveLength(1);
     expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.comment_created');
-    expect(received[0].payload.actor).toBe('octocat');
+    expect(received[0].payload.actor).toBe('unrelated-user');
     expect(db.prepare('SELECT COUNT(*) AS c FROM space_external_events').get()).toEqual({ c: 1 });
     await extension.stop();
   });
 
-  test("poll: an issue-comment row authored by the token's own login round-trips into the space", async () => {
+  test('webhook: pull_request filtering compares the causal sender, not the PR author', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    expect(
+      (await deliverWebhook(extension, 'pull_request', prWebhookPayload('collaborator', 'octocat')))
+        .spaces
+    ).toBe(1);
+    expect(received).toHaveLength(1);
+    expect(received[0].payload.actor).toBe('collaborator');
+
+    expect(
+      (await deliverWebhook(extension, 'pull_request', prWebhookPayload('octocat', 'collaborator')))
+        .spaces
+    ).toBe(0);
+    expect(received).toHaveLength(1);
+    await extension.stop();
+  });
+
+  test('webhook: pull_request_review dismissal compares the sender, not the dismissed review author', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    expect(
+      (
+        await deliverWebhook(
+          extension,
+          'pull_request_review',
+          reviewWebhookPayload('dismissed', 'octocat', 'collaborator')
+        )
+      ).spaces
+    ).toBe(1);
+    expect(received).toHaveLength(1);
+    expect(received[0].payload.actor).toBe('collaborator');
+
+    expect(
+      (
+        await deliverWebhook(
+          extension,
+          'pull_request_review',
+          reviewWebhookPayload('dismissed', 'collaborator', 'octocat')
+        )
+      ).spaces
+    ).toBe(0);
+    expect(received).toHaveLength(1);
+    await extension.stop();
+  });
+
+  test('normalizer keeps the causal sender as actor and the review author as reviewer on dismissal', async () => {
+    const normalized = normalizeGitHubWebhook(
+      'pull_request_review',
+      'delivery-review',
+      reviewWebhookPayload('dismissed', 'octocat', 'collaborator')
+    )!;
+    expect(normalized.actor).toBe('collaborator');
+    expect(normalized.payload?.reviewer).toBe('octocat');
+    expect(normalized.payload?.reviewerBot).toBe(false);
+
+    const botReview = {
+      ...reviewWebhookPayload('dismissed', 'octocat', 'collaborator'),
+      review: {
+        ...reviewWebhookPayload('dismissed', 'octocat', 'collaborator').review,
+        user: { login: 'dependabot[bot]', type: 'Bot' },
+      },
+    };
+    const normalizedBot = normalizeGitHubWebhook(
+      'pull_request_review',
+      'delivery-review-2',
+      botReview
+    )!;
+    expect(normalizedBot.actor).toBe('collaborator');
+    expect(normalizedBot.payload?.reviewer).toBe('dependabot[bot]');
+    expect(normalizedBot.payload?.reviewerBot).toBe(true);
+  });
+
+  test('webhook: comment deletion compares the sender, not the comment author', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    const moderatorDeletesOwn = {
+      ...selfCommentPayload('octocat'),
+      action: 'deleted',
+      sender: { login: 'moderator', type: 'User' },
+    };
+    expect((await deliverWebhook(extension, 'issue_comment', moderatorDeletesOwn)).spaces).toBe(1);
+    expect(received).toHaveLength(1);
+    expect(received[0].payload.actor).toBe('octocat');
+
+    const tokenDeletesOther = {
+      ...selfCommentPayload('collaborator'),
+      action: 'deleted',
+      sender: { login: 'octocat', type: 'User' },
+      comment: { ...selfCommentPayload('collaborator').comment, id: 102 },
+    };
+    expect((await deliverWebhook(extension, 'issue_comment', tokenDeletesOther)).spaces).toBe(0);
+    expect(received).toHaveLength(1);
+    await extension.stop();
+  });
+
+  test("poll: an issue-comment row authored by the token's own login is dropped as self-echo", async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
@@ -10615,52 +10845,472 @@ describe('GitHub self-echo pins (GE-P1)', () => {
 
     try {
       await extension.pollWatchedRepo(extension.repo.listPollingRepos()[0], fetchImpl);
-      expect(received).toHaveLength(1);
-      expect(received[0].topic).toBe('github/acme/widgets/pull_request/7.comment_polled');
-      expect(received[0].payload.actor).toBe('octocat');
+      expect(received).toHaveLength(0);
     } finally {
       await extension.stop();
     }
   });
 
-  test('publishEvent passes events from arbitrary actors through unfiltered', async () => {
+  test("publishEvent drops the token's own login and passes other actors through", async () => {
     const db = setupDb();
     const extension = new GitHubEventExtension(db, 'token', {
       fetchImpl: selfUserFetch('octocat'),
     });
-    const published: ExternalEvent[] = [];
-    const context: ExternalEventExtensionContext = {
-      publisher: {
-        publish: async (event: ExternalEvent) => {
-          published.push(event);
-        },
-      },
-      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
-      onSourceConfigChanged() {},
-    };
-    const ext = extension as unknown as {
-      publishEvent(
-        spaceId: string,
-        event: NormalizedGitHubEvent,
-        context: ExternalEventExtensionContext
-      ): Promise<void>;
-    };
+    const { published, ext, context } = publishCapture(extension);
 
     expect(await resolveOwnLogin(extension)).toBe('octocat');
     for (const login of ['octocat', 'unrelated-user']) {
-      const normalized = normalizeGitHubWebhook(
-        'issue_comment',
-        `delivery-${login}`,
-        selfCommentPayload(login)
-      )!;
-      await ext.publishEvent('space-1', normalized, context);
+      await ext.publishEvent('space-1', selfCommentEvent(login), context);
     }
 
-    expect(published.map((event) => event.payload.actor)).toEqual(['octocat', 'unrelated-user']);
+    expect(published.map((event) => event.payload.actor)).toEqual(['unrelated-user']);
     expect(published.map((event) => event.topic)).toEqual([
       'github/acme/widgets/pull_request/7.comment_created',
-      'github/acme/widgets/pull_request/7.comment_created',
     ]);
+    await extension.stop();
+  });
+
+  test("publishEvent admits the token's own login when filterCurrentUser is disabled and never refreshes the identity", async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const config = new StaticExternalEventExtensionConfigStore({ globallyEnabled: true });
+    config.spaceConfigs.set('space-1:github', {
+      spaceId: 'space-1',
+      source: 'github',
+      enabled: true,
+      settings: { filterCurrentUser: false },
+    });
+    const { published, ext, context } = publishCapture(extension, config);
+
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+
+    expect(published.map((event) => event.payload.actor)).toEqual(['octocat']);
+    expect(userCalls).toBe(1);
+    await extension.stop();
+  });
+
+  test('publishEvent admits while the token-status cache is cold and triggers a background identity refresh', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const { published, ext, context } = publishCapture(extension);
+    const refreshAware = extension as unknown as {
+      selfEchoLoginRefresh: Promise<void> | null;
+    };
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+
+    expect(published.map((event) => event.payload.actor)).toEqual(['octocat']);
+    await refreshAware.selfEchoLoginRefresh;
+    expect(userCalls).toBe(1);
+    await extension.stop();
+  });
+
+  test('publishEvent retains the last known login for filtering during rate-limit backoff', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const rateAware = extension as unknown as {
+      rateLimitedUntil: number;
+      lastTokenStatusAt: number;
+    };
+    const { published, ext, context } = publishCapture(extension);
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+    rateAware.lastTokenStatusAt = Date.now() - (5 * 60 * 1000 + 1_000);
+    rateAware.rateLimitedUntil = Date.now() + 60_000;
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+
+    expect(published).toHaveLength(0);
+    await Promise.resolve();
+    expect(userCalls).toBe(1);
+    await extension.stop();
+  });
+
+  test('a failed identity refresh throttles subsequent refreshes', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response('{"message": "server error"}', { status: 500 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      selfEchoLoginRefresh: Promise<void> | null;
+    };
+    const { published, ext, context } = publishCapture(extension);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await aware.selfEchoLoginRefresh;
+    expect(userCalls).toBe(1);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await Promise.resolve();
+    expect(userCalls).toBe(1);
+    expect(published).toHaveLength(3);
+    await extension.stop();
+  });
+
+  test('a credential change after a failed refresh clears the retry deadline', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response('{"message": "server error"}', { status: 500 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      selfEchoLoginRefresh: Promise<void> | null;
+      resetRateLimitObservation(): void;
+    };
+    const { ext, context } = publishCapture(extension);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await aware.selfEchoLoginRefresh;
+    expect(userCalls).toBe(1);
+
+    aware.resetRateLimitObservation();
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await aware.selfEchoLoginRefresh;
+    expect(userCalls).toBe(2);
+    await extension.stop();
+  });
+
+  test('an in-flight failed refresh for an obsolete credential cannot reinstate the deadline', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    let releaseFailure: (() => void) | null = null;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          if (userCalls === 1) {
+            return new Promise<Response>((resolve) => {
+              releaseFailure = () =>
+                resolve(new Response('{"message": "server error"}', { status: 500 }));
+            });
+          }
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      selfEchoLoginRefresh: Promise<void> | null;
+      resetRateLimitObservation(): void;
+    };
+    const { ext, context } = publishCapture(extension);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    expect(userCalls).toBe(1);
+    expect(releaseFailure).toBeTypeOf('function');
+
+    aware.resetRateLimitObservation();
+    releaseFailure!();
+    await aware.selfEchoLoginRefresh;
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await aware.selfEchoLoginRefresh;
+    expect(userCalls).toBe(2);
+    await extension.stop();
+  });
+
+  test('stop() awaits an in-flight identity refresh before completing', async () => {
+    const db = setupDb();
+    let releaseUser!: (response: Response) => void;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          return new Promise<Response>((resolve) => {
+            releaseUser = resolve;
+          });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    await extension.start({
+      publisher: { publish: async () => {} },
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    const { ext, context } = publishCapture(extension);
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+
+    let stopped = false;
+    const stopPromise = extension.stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+
+    releaseUser(new Response(JSON.stringify({ login: 'octocat' }), { status: 200 }));
+    await stopPromise;
+    expect(stopped).toBe(true);
+  });
+
+  test('an overlapping stale validation failure does not clear a newer cached login', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    let releaseFailure!: (response: Response) => void;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          if (userCalls === 1) {
+            return new Promise<Response>((resolve) => {
+              releaseFailure = resolve;
+            });
+          }
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      resolveTokenStatus(lightweight: boolean): Promise<{ login?: string; error?: string }>;
+    };
+    const { published, ext, context } = publishCapture(extension);
+
+    const stale = aware.resolveTokenStatus(false);
+    const fresh = await aware.resolveTokenStatus(false);
+    expect(fresh.login).toBe('octocat');
+
+    releaseFailure(new Response('{"message": "server error"}', { status: 500 }));
+    await stale;
+
+    expect((await aware.resolveTokenStatus(true)).login).toBe('octocat');
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    expect(published).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('a stale validation completing after credential rotation returns the rotation error', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    let releaseStale!: (response: Response) => void;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          if (userCalls === 1) {
+            return new Promise<Response>((resolve) => {
+              releaseStale = resolve;
+            });
+          }
+          return new Response(JSON.stringify({ login: 'new-user' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      resolveTokenStatus(lightweight: boolean): Promise<{ login?: string; error?: string }>;
+      resetRateLimitObservation(): void;
+    };
+    const { published, ext, context } = publishCapture(extension);
+
+    const stale = aware.resolveTokenStatus(false);
+    aware.resetRateLimitObservation();
+    const fresh = await aware.resolveTokenStatus(false);
+    expect(fresh.login).toBe('new-user');
+
+    releaseStale(new Response(JSON.stringify({ login: 'old-user' }), { status: 200 }));
+    const staleResult = await stale;
+    expect(staleResult.login).toBeUndefined();
+    expect(staleResult.error).toBe('credential changed during validation');
+
+    expect((await aware.resolveTokenStatus(true)).login).toBe('new-user');
+    await ext.publishEvent('space-1', selfCommentEvent('new-user'), context);
+    expect(published).toHaveLength(0);
+    await extension.stop();
+  });
+
+  test('publishEvent suppresses the identity refresh while rate-limited', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const rateAware = extension as unknown as { rateLimitedUntil: number };
+    rateAware.rateLimitedUntil = Date.now() + 60_000;
+    const { published, ext, context } = publishCapture(extension);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+
+    expect(published.map((event) => event.payload.actor)).toEqual(['octocat']);
+    await Promise.resolve();
+    expect(userCalls).toBe(0);
+    await extension.stop();
+  });
+
+  test('webhook: a cold identity cache admits consistently across spaces watching the same repo', async () => {
+    const db = setupDb();
+    db.prepare(
+      `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-2', 'space-2', 'Space', '/tmp-2', 'active', 1, 1)`
+    ).run();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    for (const spaceId of ['space-1', 'space-2']) {
+      extension.repo.upsertWatchedRepo({
+        spaceId,
+        owner: 'acme',
+        repo: 'widgets',
+        webhookSecret: 'secret',
+      });
+    }
+
+    const payload = selfCommentPayload('octocat');
+    const raw = JSON.stringify(payload);
+    const res = await extension.routes[0].handle(
+      webhookRequest(payload, 'issue_comment', await createSignature(raw, 'secret'))
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { spaces: number }).spaces).toBe(2);
+    expect(received).toHaveLength(2);
+    await extension.stop();
+  });
+
+  test('merge-conflict events keep the author but carry no initiator so the gate admits derived state', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    const { published, ext, context } = publishCapture(extension);
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    const conflictEvent = normalizeGitHubMergeConflict({
+      repo: { owner: 'acme', repo: 'widgets' },
+      pullRequest: { user: { login: 'octocat' }, node_id: 'PR_7', head: { sha: 'abc' } },
+      prNumber: 7,
+      conflicting: true,
+      mergeable: false,
+      mergeableState: 'dirty',
+      sequence: 1,
+      deliveryId: 'poll:merge_conflict:7',
+    });
+    expect(conflictEvent).not.toBeNull();
+    expect(conflictEvent!.actor).toBe('octocat');
+    expect(conflictEvent!.initiatorLogin).toBe('');
+    await ext.publishEvent('space-1', conflictEvent!, context);
+
+    expect(published).toHaveLength(1);
+    expect(published[0].payload.actor).toBe('octocat');
+    expect(published[0].payload.state).toBe('conflicting');
+    await extension.stop();
+  });
+
+  test('pulls polling rows keep the author but carry no initiator so the gate admits updates by others', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    const { published, ext, context } = publishCapture(extension);
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    const pullsRow = normalizeGitHubPollingRow(
+      { owner: 'acme', repo: 'widgets' },
+      {
+        url: 'https://api.github.com/repos/acme/widgets/pulls/7',
+        id: 77,
+        number: 7,
+        title: 'Update widgets',
+        state: 'open',
+        user: { login: 'octocat', type: 'User' },
+        updated_at: '2026-08-01T00:00:00Z',
+        head: { sha: 'abc123' },
+      },
+      'pulls'
+    )!;
+    expect(pullsRow.actor).toBe('octocat');
+    expect(pullsRow.initiatorLogin).toBe('');
+    await ext.publishEvent('space-1', pullsRow, context);
+
+    expect(published).toHaveLength(1);
+    expect(published[0].payload.actor).toBe('octocat');
+    expect(published[0].payload.title).toBe('Update widgets');
+    await extension.stop();
+  });
+
+  test('a rate-limited refresh keeps the last known login for the gate', async () => {
+    const db = setupDb();
+    let rateLimited = false;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          if (rateLimited) {
+            return new Response('{"message": "rate limited"}', {
+              status: 429,
+              headers: { 'X-RateLimit-Remaining': '0', 'Retry-After': '60' },
+            });
+          }
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      lastTokenStatusAt: number;
+      rateLimitedUntil: number;
+      selfEchoLoginRefresh: Promise<void> | null;
+    };
+    const { published, ext, context } = publishCapture(extension);
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    aware.lastTokenStatusAt = Date.now() - (5 * 60 * 1000 + 1_000);
+    rateLimited = true;
+    await ext.publishEvent('space-1', selfCommentEvent('unrelated-user'), context);
+    await aware.selfEchoLoginRefresh;
+    expect(aware.rateLimitedUntil).toBeGreaterThan(Date.now());
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    expect(published.map((event) => event.payload.actor)).toEqual(['unrelated-user']);
     await extension.stop();
   });
 
@@ -10696,5 +11346,69 @@ describe('GitHub self-echo pins (GE-P1)', () => {
     expect(revalidated.login).toBe('octocat');
     expect(userCalls).toBe(2);
     await extension.stop();
+  });
+
+  test('setFilterCurrentUser RPC round-trips the setting through the space config', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db);
+    const clientHub = new MessageHub();
+    const hub = new MessageHub();
+    const [clientTransport, serverTransport] = InProcessTransport.createPair();
+    clientHub.registerTransport(clientTransport);
+    hub.registerTransport(serverTransport);
+    await Promise.all([clientTransport.initialize(), serverTransport.initialize()]);
+    const config = new StaticExternalEventExtensionConfigStore({ globallyEnabled: true });
+    const context = {
+      publisher: { publish: async () => {} },
+      config,
+      onSourceConfigChanged() {},
+    };
+    await extension.start(context);
+    extension.registerRpcHandlers(hub, context);
+
+    expect(extension.repo.getFilterCurrentUser('space-1')).toBe(true);
+    await expect(
+      clientHub.request('space.github.setFilterCurrentUser', { spaceId: 'space-1' })
+    ).rejects.toThrow('spaceId and enabled are required');
+
+    const disabled = await clientHub.request<{ filterCurrentUser: boolean }>(
+      'space.github.setFilterCurrentUser',
+      { spaceId: 'space-1', enabled: false }
+    );
+    expect(disabled.filterCurrentUser).toBe(false);
+    expect(extension.repo.getFilterCurrentUser('space-1')).toBe(false);
+    const afterDisable = await clientHub.request<{ settings: { filterCurrentUser?: boolean } }>(
+      'space.github.listConfig',
+      { spaceId: 'space-1' }
+    );
+    expect(afterDisable.settings.filterCurrentUser).toBe(false);
+    await extension.stop();
+  });
+
+  test('getTokenStatus RPC warms the self-echo cache so own-login events are filtered without a health request', async () => {
+    const db = setupDb();
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    const { clientHub, hub, ready } = setupHubPair();
+    await ready;
+    const config = new StaticExternalEventExtensionConfigStore({ globallyEnabled: true });
+    const context = {
+      publisher: { publish: async () => {} },
+      config,
+      onSourceConfigChanged() {},
+    };
+    try {
+      extension.registerRpcHandlers(hub, context);
+
+      const status = await clientHub.request<{ login?: string }>('space.github.getTokenStatus', {});
+      expect(status.login).toBe('octocat');
+
+      const { published, ext, context: publishContext } = publishCapture(extension);
+      await ext.publishEvent('space-1', selfCommentEvent('octocat'), publishContext);
+      expect(published).toHaveLength(0);
+    } finally {
+      await extension.stop();
+    }
   });
 });

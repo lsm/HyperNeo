@@ -32,6 +32,7 @@ export interface NormalizedGitHubEvent {
   prUrl: string;
   actor: string;
   actorType: string;
+  initiatorLogin?: string;
   body: string;
   summary: string;
   externalUrl: string;
@@ -195,6 +196,7 @@ export function normalizeGitHubWebhook(
   const sender = userFrom(root.sender);
   let prNumber = 0;
   let actor = sender;
+  let initiatorLogin: string | undefined;
   let body = '';
   let externalUrl = '';
   let externalId = `${eventType}:${deliveryId}`;
@@ -209,6 +211,7 @@ export function normalizeGitHubWebhook(
     if (!asObject(issue.pull_request).url) return null;
     const comment = asObject(root.comment);
     actor = userFrom(comment.user ?? root.sender);
+    if (action === 'deleted') initiatorLogin = userFrom(root.sender ?? comment.user).login;
     prNumber = getNumber(issue.number);
     body = getString(comment.body);
     commentId = idString(comment.id);
@@ -226,7 +229,8 @@ export function normalizeGitHubWebhook(
   } else if (eventType === 'pull_request_review') {
     const pr = asObject(root.pull_request);
     const review = asObject(root.review);
-    actor = userFrom(review.user ?? root.sender);
+    const reviewer = userFrom(review.user ?? root.sender);
+    actor = action === 'dismissed' ? userFrom(root.sender ?? review.user) : reviewer;
     prNumber = getNumber(pr.number);
     body = getString(review.body);
     const reviewId = idString(review.id);
@@ -243,8 +247,8 @@ export function normalizeGitHubWebhook(
       reviewId,
       reviewNodeId: nodeId,
       state: getString(review.state).toUpperCase(),
-      reviewer: actor.login,
-      reviewerBot: isBotActor(actor.login, actor.type),
+      reviewer: reviewer.login,
+      reviewerBot: isBotActor(reviewer.login, reviewer.type),
       submittedAt: getString(review.submitted_at),
       commitId: getString(review.commit_id) || undefined,
     };
@@ -252,6 +256,7 @@ export function normalizeGitHubWebhook(
     const pr = asObject(root.pull_request);
     const comment = asObject(root.comment);
     actor = userFrom(comment.user ?? root.sender);
+    if (action === 'deleted') initiatorLogin = userFrom(root.sender ?? comment.user).login;
     prNumber = getNumber(pr.number);
     body = getString(comment.body);
     commentId = idString(comment.in_reply_to_id ?? comment.id);
@@ -315,7 +320,7 @@ export function normalizeGitHubWebhook(
     };
   } else {
     const pr = asObject(root.pull_request);
-    actor = userFrom(pr.user ?? root.sender);
+    actor = userFrom(root.sender ?? pr.user);
     prNumber = getNumber(pr.number);
     body = getString(pr.body);
     externalId = `pull_request:${getNumber(pr.id) || prNumber}:${action}:${deliveryId}`;
@@ -347,6 +352,7 @@ export function normalizeGitHubWebhook(
     prUrl: prUrl(repo.owner, repo.repo, prNumber),
     actor: actor.login,
     actorType: actor.type,
+    initiatorLogin,
     body,
     summary: `${title} by ${actor.login}${body ? `: ${truncateBody(body)}` : ''}`,
     externalUrl,
@@ -382,6 +388,7 @@ export function normalizeGitHubPollingRow(
   if (!prNumber) return null;
   const repo = resolvePollingRepo(watched, obj);
   const user = userFrom(obj.user);
+  const causalInitiator = endpointKey !== 'pulls';
   let eventType: GitHubEventKind = 'pull_request';
   if (endpointKey === 'issue_comments') eventType = 'issue_comment';
   if (endpointKey === 'review_comments') eventType = 'pull_request_review_comment';
@@ -415,6 +422,7 @@ export function normalizeGitHubPollingRow(
     prUrl: prUrl(repo.owner, repo.repo, prNumber),
     actor: user.login,
     actorType: user.type,
+    initiatorLogin: causalInitiator ? undefined : '',
     body: getString(obj.body),
     summary: `PR #${prNumber} ${eventType} by ${user.login}: ${truncateBody(getString(obj.body, getString(obj.title)))}`,
     externalUrl: htmlUrl || prUrl(repo.owner, repo.repo, prNumber),
@@ -1067,6 +1075,7 @@ export function normalizeGitHubMergeConflict(params: {
     prUrl: prUrl(repo.owner, repo.repo, prNumber),
     actor: author.login,
     actorType: author.type,
+    initiatorLogin: '',
     body: '',
     summary,
     externalUrl: getString(pr.html_url, prUrl(repo.owner, repo.repo, prNumber)),
