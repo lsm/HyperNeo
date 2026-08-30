@@ -105,6 +105,7 @@ export class RateLimitWatchdog {
   private cooldownQueryGeneration: number | undefined = undefined;
   private activePauseQueryGeneration: number | undefined = undefined;
   private persistedCooldownArm = false;
+  private persistedEpisodeMessageUuid: string | null = null;
 
   constructor(
     sessionId: string,
@@ -142,15 +143,17 @@ export class RateLimitWatchdog {
     };
   }
 
-  armPersistedCooldown(retryAt: number): void {
+  armPersistedCooldown(retryAt: number, messageId?: string): void {
     if (this.cooldownTimer !== null) return;
     const remaining = Math.max(0, retryAt - Date.now());
     this.currentRetryAt = retryAt;
     this.persistedCooldownArm = true;
+    this.persistedEpisodeMessageUuid = messageId ?? null;
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
       this.currentRetryAt = null;
       this.persistedCooldownArm = false;
+      this.persistedEpisodeMessageUuid = null;
       this.notifyResume();
     }, remaining);
     if (
@@ -160,6 +163,10 @@ export class RateLimitWatchdog {
     ) {
       this.cooldownTimer.unref();
     }
+  }
+
+  getPersistedEpisodeMessageUuid(): string | null {
+    return this.persistedCooldownArm ? this.persistedEpisodeMessageUuid : null;
   }
 
   private querySuperseded(queryGeneration?: number): boolean {
@@ -471,6 +478,7 @@ export class RateLimitWatchdog {
 
     this.cancelCooldownTimer();
     this.persistedCooldownArm = false;
+    this.persistedEpisodeMessageUuid = null;
     this.cooldownQueryGeneration = queryGeneration;
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
@@ -773,6 +781,7 @@ export class RateLimitWatchdog {
       this.cooldownTimer = null;
       this.currentRetryAt = null;
       this.persistedCooldownArm = false;
+      this.persistedEpisodeMessageUuid = null;
       this.cooldownQueryGeneration = undefined;
       this.logger.info('Cancelled pending rate limit cooldown.');
     }
@@ -817,6 +826,8 @@ export class RateLimitWatchdog {
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
       this.currentRetryAt = null;
+      this.persistedCooldownArm = false;
+      this.persistedEpisodeMessageUuid = null;
     }
     if (this.startupExhausted) {
       this.startupExhausted = false;

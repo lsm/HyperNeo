@@ -800,13 +800,20 @@ export class AgentSession
     const persistedState = this.db.getSession(this.session.id)?.processingState;
     if (!persistedState) return;
     try {
-      const parsed = JSON.parse(persistedState) as { status?: string; retryAt?: unknown };
+      const parsed = JSON.parse(persistedState) as {
+        status?: string;
+        retryAt?: unknown;
+        messageId?: unknown;
+      };
       if (
         parsed.status === 'rate_limit_cooldown' &&
         typeof parsed.retryAt === 'number' &&
         parsed.retryAt > Date.now()
       ) {
-        this.rateLimitWatchdog.armPersistedCooldown(parsed.retryAt);
+        this.rateLimitWatchdog.armPersistedCooldown(
+          parsed.retryAt,
+          typeof parsed.messageId === 'string' ? parsed.messageId : undefined
+        );
       }
     } catch {
       this.logger.warn('Failed to restore the persisted rate-limit cooldown.');
@@ -1221,11 +1228,25 @@ export class AgentSession
   }
 
   async retryNowAfterRateLimit(): Promise<boolean> {
+    const persistedEpisodeMessageUuid = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
     const fired = this.rateLimitWatchdog.retryNow();
-    if (!fired) {
+    if (!fired && persistedEpisodeMessageUuid === null) {
       this.logger.warn('retryNowAfterRateLimit: no cooldown retry is pending.');
+      return false;
     }
-    return fired;
+    if (persistedEpisodeMessageUuid !== null) {
+      try {
+        this.db
+          .getJobQueueRepo()
+          ?.rescheduleDelivery?.(this.session.id, persistedEpisodeMessageUuid, Date.now());
+      } catch (error) {
+        this.logger.warn(
+          'Failed to release the parked delivery for the persisted cooldown retry:',
+          error
+        );
+      }
+    }
+    return true;
   }
 
   isRateLimitBannerCancelled(): boolean {

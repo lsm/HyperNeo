@@ -1230,6 +1230,25 @@ describe('AgentSession', () => {
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-episode');
     });
 
+    it('retryNowAfterRateLimit releases the parked delivery for a persisted episode', async () => {
+      const rescheduleDelivery = mock(() => true);
+      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
+      const retryNow = mock(() => true);
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        retryNow,
+        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
+      } as never;
+
+      const resumed = await agentSession.retryNowAfterRateLimit();
+
+      expect(resumed).toBe(true);
+      expect(rescheduleDelivery).toHaveBeenCalledWith(
+        'test-session-id',
+        'msg-persisted-episode',
+        expect.any(Number)
+      );
+    });
+
     it('startStreamingQuery refuses to start an archived session', async () => {
       const start = mock(async () => {});
       (agentSession as unknown as { queryRunner: unknown }).queryRunner = { start } as never;

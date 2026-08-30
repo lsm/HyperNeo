@@ -1030,8 +1030,8 @@ export function setupSessionHandlers(
     if (!agentSession) {
       throw new Error('Session not found');
     }
-    await agentSession.retryNowAfterRateLimit();
-    return { success: true };
+    const resumed = await agentSession.retryNowAfterRateLimit();
+    return { success: resumed };
   });
 
   messageHub.onRequest('session.query.trigger', async (data) => {

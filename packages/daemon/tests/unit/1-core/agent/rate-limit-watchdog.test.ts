@@ -2126,5 +2126,15 @@ describe('RateLimitWatchdog persisted cooldown arming', () => {
 
     expect(watchdog.retryNow()).toBe(true);
     expect(watchdog.getState().retryAt).toBeNull();
+    expect(watchdog.getState().persistedCooldown).toBe(false);
+  });
+
+  it('exposes the persisted episode message for a manual retry', () => {
+    const watchdog = new RateLimitWatchdog('s', createMockStateManager(), createMockDeps());
+    watchdog.armPersistedCooldown(Date.now() + 60_000, 'msg-persisted');
+
+    expect(watchdog.getPersistedEpisodeMessageUuid()).toBe('msg-persisted');
+    watchdog.retryNow();
+    expect(watchdog.getPersistedEpisodeMessageUuid()).toBeNull();
   });
 });

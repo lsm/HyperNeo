@@ -393,6 +393,22 @@ export class JobQueueRepository {
     );
   }
 
+  rescheduleDelivery(sessionId: string, messageUuid: string, runAt: number): boolean {
+    const result = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue
+              SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL
+            WHERE queue = 'message_delivery'
+              AND json_extract(payload, '$.sessionId') = ?
+              AND json_extract(payload, '$.messageUuid') = ?
+              AND status IN ('pending', 'processing')`
+        )
+        .run(runAt, sessionId, messageUuid)
+    );
+    return result.changes > 0;
+  }
+
   cancelDelivery(sessionId: string, messageUuid: string): boolean {
     const result = withBusyRetry(() =>
       this.db
