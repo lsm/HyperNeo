@@ -30,7 +30,8 @@ function makeDb(): BunDatabase {
 		is_renderable INTEGER NOT NULL DEFAULT 1,
 		is_terminal INTEGER NOT NULL DEFAULT 0,
 		conversation_turn_index INTEGER,
-		parent_tool_use_id TEXT
+		parent_tool_use_id TEXT,
+		consumed_seq INTEGER
 	)`);
 
   return db;

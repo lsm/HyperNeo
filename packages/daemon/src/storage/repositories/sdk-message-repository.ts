@@ -1424,14 +1424,17 @@ export class SDKMessageRepository {
     return row ? inflatePersistedMessage(row) : null;
   }
 
-  hasConsumptionEvidence(sessionId: string, uuid: string): boolean {
+  hasConsumptionEvidence(sessionId: string, messageId: string): boolean {
     const row = this.db
       .prepare(
         `SELECT 1 FROM sdk_messages
-         WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ? AND consumed_seq IS NOT NULL
+         WHERE session_id = ?
+           AND message_type = 'user'
+           AND (sdk_uuid = ? OR id = ?)
+           AND consumed_seq IS NOT NULL
          LIMIT 1`
       )
-      .get(sessionId, uuid);
+      .get(sessionId, messageId, messageId);
     return row !== null && row !== undefined;
   }
 
