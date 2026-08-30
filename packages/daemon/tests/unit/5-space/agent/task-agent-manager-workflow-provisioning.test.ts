@@ -270,9 +270,11 @@ function makeRestoreManager(input: {
   executionStatus?: string | null;
   archiveDuringAdmission?: boolean;
   endedStatus?: boolean;
+  spaceError?: Error;
 }) {
   const startStreamingQuery = mock(async () => {});
   const replay = mock(async () => true);
+  let getSpaceCalls = 0;
   const sessionId = input.sessionId ?? SESSION_ID;
   const data: { id: string; status: string; config: { queryMode?: string } } = {
     id: sessionId,
@@ -301,6 +303,8 @@ function makeRestoreManager(input: {
       },
       spaceManager: {
         getSpace: async () => {
+          getSpaceCalls += 1;
+          if (input.spaceError) throw input.spaceError;
           if (input.archiveDuringAdmission) data.status = 'archived';
           return {
             id: 'space-1',
@@ -337,7 +341,7 @@ function makeRestoreManager(input: {
   Object.defineProperty(manager, 'agentSessionIndex', {
     value: new Map([[sessionId, session]]),
   });
-  return { manager, startStreamingQuery, replay };
+  return { manager, startStreamingQuery, replay, getSpaceCalls: () => getSpaceCalls };
 }
 
 describe('TaskAgentManager restored worker query admission', () => {
@@ -425,6 +429,38 @@ describe('TaskAgentManager restored worker query admission', () => {
 
     expect(startStreamingQuery).toHaveBeenCalledTimes(1);
     expect(replay).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TaskAgentManager restored worker admission short-circuits', () => {
+  it('never awaits the space lookup when an early gate denies every admission', async () => {
+    const denyCases = [
+      { cleanupState: 'cleaning' },
+      { taskStatus: 'cancelled' },
+      { taskStatus: 'archived' },
+    ];
+    for (const denyCase of denyCases) {
+      const { manager, startStreamingQuery, replay, getSpaceCalls } = makeRestoreManager({
+        ...denyCase,
+        spaceError: new Error('space lookup failed'),
+      });
+
+      await expect(manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID)).resolves.toBe(
+        SESSION_ID
+      );
+
+      expect(getSpaceCalls()).toBe(0);
+      expect(startStreamingQuery).not.toHaveBeenCalled();
+      expect(replay).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rejects when the space lookup fails after the early gates pass', async () => {
+    const { manager } = makeRestoreManager({ spaceError: new Error('space lookup failed') });
+
+    await expect(manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID)).rejects.toThrow(
+      'space lookup failed'
+    );
   });
 });
 

@@ -2,10 +2,19 @@ import type { NodeExecution, Space, SpaceTask, SpaceWorkflowRun } from '@hyperne
 import { decisionRun } from './decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
 
-export interface RestoredWorkerAdmissionInput {
+export interface RestoredWorkerPreSpaceInput {
   settleReplayProvisioning: boolean;
   queryMode: 'immediate' | 'manual' | undefined;
   daemonCleaningUp: boolean;
+  task: SpaceTask | null | (() => SpaceTask | null);
+  workflowRun: SpaceWorkflowRun | null | (() => SpaceWorkflowRun | null);
+}
+
+export interface RestoredWorkerPreSpaceCtx extends RestoredWorkerPreSpaceInput {
+  decision: boolean | null;
+}
+
+export interface RestoredWorkerAdmissionInput {
   task: SpaceTask | null;
   workflowRun: SpaceWorkflowRun | null;
   space: Space | null;
@@ -19,7 +28,7 @@ export interface RestoredWorkerAdmissionCtx extends RestoredWorkerAdmissionInput
   decision: boolean | null;
 }
 
-function decided(ctx: RestoredWorkerAdmissionCtx, admitted: boolean): RestoredWorkerAdmissionCtx {
+function decided<Ctx extends { decision: boolean | null }>(ctx: Ctx, admitted: boolean): Ctx {
   return { ...ctx, decision: admitted };
 }
 
@@ -28,31 +37,40 @@ function readLazyInput<T>(value: T | (() => T)): T {
 }
 
 export function applyManualQueryModeGate(
-  ctx: RestoredWorkerAdmissionCtx
-): RestoredWorkerAdmissionCtx {
+  ctx: RestoredWorkerPreSpaceCtx
+): RestoredWorkerPreSpaceCtx {
   return !ctx.settleReplayProvisioning && ctx.queryMode === 'manual' ? decided(ctx, false) : ctx;
 }
 
-export function applyDaemonCleanupGate(
-  ctx: RestoredWorkerAdmissionCtx
-): RestoredWorkerAdmissionCtx {
+export function applyDaemonCleanupGate(ctx: RestoredWorkerPreSpaceCtx): RestoredWorkerPreSpaceCtx {
   return ctx.daemonCleaningUp ? decided(ctx, false) : ctx;
 }
 
-export function applyTaskWorkflowGate(ctx: RestoredWorkerAdmissionCtx): RestoredWorkerAdmissionCtx {
-  return ctx.task?.workflowRunId ? ctx : decided(ctx, false);
+export function applyTaskGate(ctx: RestoredWorkerPreSpaceCtx): RestoredWorkerPreSpaceCtx {
+  const task = readLazyInput(ctx.task);
+  if (!task?.workflowRunId) return decided(ctx, false);
+  return task.status === 'cancelled' || task.status === 'archived' ? decided(ctx, false) : ctx;
 }
 
-export function applyTaskTerminalGate(ctx: RestoredWorkerAdmissionCtx): RestoredWorkerAdmissionCtx {
-  return ctx.task?.status === 'cancelled' || ctx.task?.status === 'archived'
-    ? decided(ctx, false)
-    : ctx;
+export function applyWorkflowRunGate(ctx: RestoredWorkerPreSpaceCtx): RestoredWorkerPreSpaceCtx {
+  const workflowRun = readLazyInput(ctx.workflowRun);
+  return workflowRun !== null && workflowRun.status !== 'cancelled' ? ctx : decided(ctx, false);
 }
 
-export function applyWorkflowRunGate(ctx: RestoredWorkerAdmissionCtx): RestoredWorkerAdmissionCtx {
-  return ctx.workflowRun !== null && ctx.workflowRun.status !== 'cancelled'
-    ? ctx
-    : decided(ctx, false);
+export function applyContinueGate(ctx: RestoredWorkerPreSpaceCtx): RestoredWorkerPreSpaceCtx {
+  return decided(ctx, true);
+}
+
+const restoredWorkerPreSpaceAdmissionRun = decisionRun('restored-worker-pre-space-admission', [
+  applyManualQueryModeGate,
+  applyDaemonCleanupGate,
+  applyTaskGate,
+  applyWorkflowRunGate,
+  applyContinueGate,
+]);
+
+export function decideRestoredWorkerPreSpaceAdmission(input: RestoredWorkerPreSpaceInput): boolean {
+  return restoredWorkerPreSpaceAdmissionRun(input).decision ?? false;
 }
 
 export function applySessionStatusGate(
@@ -84,17 +102,9 @@ export function applyTerminalForSpawnGate(
     : ctx;
 }
 
-export function applyExecutionPresenceGate(
-  ctx: RestoredWorkerAdmissionCtx
-): RestoredWorkerAdmissionCtx {
-  return readLazyInput(ctx.execution) !== null ? ctx : decided(ctx, false);
-}
-
-export function applyExecutionResumableGate(
-  ctx: RestoredWorkerAdmissionCtx
-): RestoredWorkerAdmissionCtx {
+export function applyExecutionGate(ctx: RestoredWorkerAdmissionCtx): RestoredWorkerAdmissionCtx {
   const execution = readLazyInput(ctx.execution);
-  if (execution === null) return ctx;
+  if (execution === null) return decided(ctx, false);
   if (execution.status === 'in_progress' || execution.status === 'blocked') return ctx;
   return readLazyInput(ctx.hasQueuedRetryableHookAction) ? ctx : decided(ctx, false);
 }
@@ -104,17 +114,11 @@ export function applyAdmitGate(ctx: RestoredWorkerAdmissionCtx): RestoredWorkerA
 }
 
 const restoredWorkerAdmissionRun = decisionRun('restored-worker-start-admission', [
-  applyManualQueryModeGate,
-  applyDaemonCleanupGate,
-  applyTaskWorkflowGate,
-  applyTaskTerminalGate,
-  applyWorkflowRunGate,
   applySessionStatusGate,
   applySpaceGate,
   applyPostApprovalGate,
   applyTerminalForSpawnGate,
-  applyExecutionPresenceGate,
-  applyExecutionResumableGate,
+  applyExecutionGate,
   applyAdmitGate,
 ]);
 
