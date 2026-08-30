@@ -1809,25 +1809,36 @@ The slices follow the `Suggested migration order` phases and together cover ever
 
 ### P46-W — `feat(space): deferred-message settlement primitive`
 
-- 🔧 apply — prod Δ ≲40, test Δ ≲60
+- ➕ additive core — prod Δ ≲40, test Δ ≲60
 - **Scope**: The deferred-message atomic fail/remove-and-correlate settlement operation (additive build, split OUT of the completion-path wiring) — consumed by P46-W2/W3's DELIVERED-only finalizers and by TAM-DS. NO wiring here.
+- **Lands**: the settlement primitive exists and is unit-tested in isolation; nothing calls it yet.
+- **Excludes**: any completion/error/termination call-site wiring (P46-W2/W3) and startup reconciliation (TAM-DS).
+- **Tests**: atomic fail/remove-and-correlate rows; idempotency on double settlement; correlation-survives-restart row.
 - **Depends on**: P46.
 
 ### P46-R — `feat(space): prepared-fence reconciliation operation`
 
-- 🔧 apply — prod Δ ≲40, test Δ ≲60
+- ➕ additive core — prod Δ ≲40, test Δ ≲60
+- **Lands**: the reconciler operation (both record classes + fence reconstitution/registry) exists and is unit-tested; no daemon-startup call site invokes it.
+- **Excludes**: daemon-startup wiring (TAM-DS owns the single seam); completion/error/termination lifters (P46-W2/W3).
+- **Tests**: queued-PREPARED retained (new claim blocked); never-enqueued-PREPARED cleared; unfinalized-DELIVERED verified-and-finalized; status-mismatch-replay row.
 - **Scope**: The PREPARED/ENQUEUED fence reconciler OPERATION (additive build — reconciliation logic + tests), covering BOTH unresolved record classes: (a) PREPARED/ENQUEUED attempts (clear only those proven never enqueued; retain/promote — or atomically remove the queued message before clearing — for queued-PREPARED) and (b) UNFINALIZED DELIVERED attempts: a crash after kickoff delivery but before the dispatch CAS leaves a DELIVERED record whose worker can no longer emit the idle (or message-correlated failure) callback that would finalize it, so startup reconciliation VERIFIES the recorded worker is no longer processing (durable liveness/completion evidence) and finalizes the attempt — otherwise the crash-safety fence permanently blocks post-approval retry for the task (P46-W3 covers runtime termination paths only). Startup reconciliation ALSO RECONSTITUTES the equivalent WRITER FENCES for every unresolved attempt: the process-local TAM-F0/TAM-OW/TAM-SW handles vanish at crash, so after a restart with a durable PREPARED/ENQUEUED record and queued kickoff, an `approved → in_progress` transition or workflow/workspace reassignment could otherwise complete before the kickoff replays — the reconciler re-acquires the fences (or ATOMICALLY REMOVES/CANCELS the queued kickoff when the admitted task status and ownership no longer match; status-mismatch-replay row). THE RECONSTITUTED HANDLES ARE REGISTERED IN A MANAGER-OWNED REGISTRY and released by explicit paths when the attempt later completes, fails, or is terminated (P46-W2's completion/failure lifters and P46-W3's termination lifter release the reconstructed handles alongside finalizing the record; TAM-DS releases them on reconciliation-cleared attempts) — finalizing only the durable record would leave task-status, workflow, and workspace writers blocked indefinitely in the new process (restart-then-settlement waiter test). NO daemon-startup wiring here: the single startup wiring owner is TAM-DS in `task-agent-manager.md`, which invokes this reconciler operation from its startup seam (P46 is additive/unwired and the finalizer wiring lives in P46-W2/P46-W3, not P46-W — without a reconciler, a crash after PREPARED but before enqueue blocks P44 forever).
 - **Depends on**: P46.
 
 ### P46-W2 — `refactor(space): wire finalizePostApprovalDispatch into the completion paths`
 
 - 🔧 apply — prod Δ ≲50, test Δ ≲70
+- **Lands**: the idle-completion and message-correlated-failure lifters are live; DELIVERED fences lift only on attempt-correlated completion or verified termination.
+- **Excludes**: verified/cancelled termination wiring (P46-W3); startup reconciliation (TAM-DS); the settlement primitive itself (P46-W).
 - **Scope**: Wires the finalizer into the IDLE-COMPLETION callback (round 30, the fence's lifter) AND the message-correlated FAILURE event (the failed-message status event or a dedicated event carrying the message UUID — task-agent-manager.ts:3124–3143 shows the separate subscription shape); the GENERIC `session.error` subscription is NOT wired here at all (it represents nonterminal recoverable errors, carries no message correlation, and must lift neither a DEFERRED nor a DELIVERED fence). VERIFIED/CANCELLED TERMINATION wiring is NOT here (P46-W3 owns it). The branches are EXPLICITLY SPLIT for DEFERRED attempts: an ordinary IDLE event from the reused worker's current turn IGNORES DEFERRED attempts (the deferred kickoff is still valid and unconsumed — removing it there would lose the post-approval work and contradict the unrelated-completion ineligibility rule), while deferred-message failure settlement is driven by a MESSAGE-CORRELATED SIGNAL only — the failed-message status event or a dedicated event carrying the message UUID — never by a generic `session.error` (ErrorManager.broadcastError publishes `session.error` for NONTERMINAL, recoverable errors at error-manager.ts:457–470 and message-delivery dead-lettering publishes the same event at app.ts:970–981, and the generic event neither proves terminality nor identifies a message, so an unrelated recoverable error must not discard a valid deferred kickoff; pinned with an unrelated-recoverable-error-while-deferred-pending row). A `session.error` does NOT lift a DELIVERED fence by itself either: a DELIVERED fence lifts only on VERIFIED TERMINATION or attempt-correlated completion. COMPLETION TRACKING IS PRESERVED/REARMED ACROSS RECOVERABLE ERRORS: the existing `registerCompletionCallback` error branch (:3124–3142) marks the listener fired and unsubscribes WITHOUT invoking the queued callbacks, so after a recoverable `session.error` a later idle has no listener and the durable attempt never finalizes — P44 then rejects every future reservation for the task; a persistent attempt-specific idle subscription (or a rearm on the recoverable-error path) keeps the lifter alive, with an error-then-idle row. Finalization is RESTRICTED TO `DELIVERED` attempts otherwise (a DEFERRED outcome's unconsumed kickoff survives the worker stop; finalizing its fence would admit a new dispatch after reapproval while the old deferred kickoff can still replay on session restore — deferred-then-cancelled-then-reapproved row).
 - **Depends on**: P46-W.
 
 ### P46-W3 — `refactor(space): wire dispatch finalization into verified/cancelled termination`
 
 - 🔧 apply — prod Δ ≲40, test Δ ≲60
+- **Lands**: every verified/cancelled termination path finalizes DELIVERED fences (settling DEFERRED messages via P46-W's primitive first) and releases the reconstituted startup fences alongside.
+- **Excludes**: idle/error wiring (P46-W2); startup reconciliation (TAM-DS).
+- **Tests**: stopSessionPreserveDb-path finalization; DEFERRED-then-cancelled-then-reapproved row; cancel-then-reapprove retry; restart-then-settlement waiter (registry release).
 - **Scope**: Wires finalization into every verified/cancelled session-termination path (`stopSessionPreserveDb` :4063–4105 removes the completion listener), RESTRICTED to DELIVERED attempts — for DEFERRED outcomes the exact deferred message is atomically failed/removed and its correlation settled first (deferred-then-cancelled-then-reapproved row).
 - **Depends on**: P46-W, P46-W2.
 
@@ -1838,7 +1849,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 - **Lands**: the most effect-heavy routing site is one named composition; P43 pins stay green.
 - **Excludes**: changes to `goalService.handleTaskTerminal` itself (P51–P53).
 - **Tests**: `post-approval-router.test.ts`, `post-approval-routing-integration.test.ts`.
-- **Depends on**: P46, P46-W, P46-W2, P46-W3, P46-R (startup prepared-fence reconciliation), P53 (the CAS-capable goal terminal handler — P45's no-route branch requires the expected-`approved` update to be the FIRST operation inside `handleTaskTerminal`'s `runAtomic` transaction, but the current handler performs an unconditional `taskRepo.updateTask` and P47 explicitly excludes changing it; wiring the router first would let a concurrent cancel/reopen be overwritten with `done` while goal bookkeeping commits); TAM-F2 and TAM-C2 from `task-agent-manager.md` (the wired
+- **Depends on**: P46, P46-W, P46-W2, P46-W3, P46-R (startup prepared-fence reconciliation), P53 (the CAS-capable goal terminal handler — P45's no-route branch requires the expected-`approved` update to be the FIRST operation inside `handleTaskTerminal`'s `runAtomic` transaction, but the current handler performs an unconditional `taskRepo.updateTask` and P47 explicitly excludes changing it; wiring the router first would let a concurrent cancel/reopen be overwritten with `done` while goal bookkeeping commits); TAM-F2, TAM-F2T (the missing-MCP fence-propagation test must land before the delegated spawner is activated), and TAM-C2 from `task-agent-manager.md` (the wired
   `spawnPostApprovalSubSession` returning the richer outcome).
 
 ### P48 — `test(space): pin activation routing classification`
