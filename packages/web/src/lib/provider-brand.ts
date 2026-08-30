@@ -1,3 +1,5 @@
+import { resolvedTheme } from './theme';
+
 export const PROVIDER_BRAND_COLORS: Record<string, string> = {
   anthropic: '#D97757',
   'anthropic-copilot': '#8957E5',
@@ -12,7 +14,22 @@ export const PROVIDER_BRAND_COLORS: Record<string, string> = {
   acp: '#F97316',
 };
 
+const PROVIDER_BRAND_COLORS_LIGHT: Record<string, string> = {
+  anthropic: '#9a3412',
+  'anthropic-copilot': '#6d28d9',
+  'anthropic-codex': '#3f3f46',
+  openrouter: '#0369a1',
+  glm: '#0369a1',
+  kimi: '#7c3aed',
+  minimax: '#dc2626',
+  deepseek: '#3730a3',
+  ollama: '#475569',
+  gemini: '#1d4ed8',
+  acp: '#c2410c',
+};
+
 const DEFAULT_BRAND_COLOR = '#9CA3AF';
+const DEFAULT_BRAND_COLOR_LIGHT = '#52525b';
 
 export function getProviderBrandColor(provider: string | undefined | null): string {
   if (!provider) return DEFAULT_BRAND_COLOR;
@@ -39,11 +56,17 @@ export function providerHeaderStyle(provider: string | undefined | null): {
   backgroundColor: string;
   color: string;
 } {
-  const brand = getProviderBrandColor(provider);
+  const light = resolvedTheme.value === 'light';
+  const brand = light ? getProviderBrandColorLight(provider) : getProviderBrandColor(provider);
   return {
     backgroundColor: `color-mix(in srgb, ${brand} 10%, transparent)`,
-    color: providerLogoColor(provider),
+    color: light ? brand : providerLogoColor(provider),
   };
+}
+
+function getProviderBrandColorLight(provider: string | undefined | null): string {
+  if (!provider) return DEFAULT_BRAND_COLOR_LIGHT;
+  return PROVIDER_BRAND_COLORS_LIGHT[provider] ?? DEFAULT_BRAND_COLOR_LIGHT;
 }
 
 const REDUNDANT_BRAND_PREFIXES: Record<string, RegExp> = {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   PROVIDER_BRAND_COLORS,
   getProviderBrandColor,
@@ -7,6 +7,7 @@ import {
   providerHeaderStyle,
   shortenModelName,
 } from '../provider-brand';
+import { resolvedTheme } from '../theme';
 
 describe('provider-brand', () => {
   describe('getProviderBrandColor', () => {
@@ -62,13 +63,26 @@ describe('provider-brand', () => {
   });
 
   describe('providerHeaderStyle', () => {
-    it('returns a brand-tinted band + brand-hued text color', () => {
+    afterEach(() => {
+      resolvedTheme.value = 'dark';
+    });
+
+    it('returns a brand-tinted band + brand-hued text color in dark mode', () => {
+      resolvedTheme.value = 'dark';
       const style = providerHeaderStyle('anthropic');
       expect(style.backgroundColor).toContain('#D97757');
       expect(style.color).toContain('#D97757');
     });
 
+    it('uses darker foreground variants in light mode for pale brands', () => {
+      resolvedTheme.value = 'light';
+      expect(providerHeaderStyle('anthropic-codex').color).toBe('#3f3f46');
+      expect(providerHeaderStyle('glm').color).toBe('#0369a1');
+      expect(providerHeaderStyle('kimi').color).toBe('#7c3aed');
+    });
+
     it('falls back to gray for unknown providers', () => {
+      resolvedTheme.value = 'dark';
       expect(providerHeaderStyle('nope').backgroundColor).toContain('#9CA3AF');
     });
   });

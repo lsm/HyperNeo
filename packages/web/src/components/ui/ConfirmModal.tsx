@@ -52,7 +52,7 @@ export function ConfirmModal({
         {children && <div class="mt-2">{children}</div>}
 
         {error && (
-          <p class="text-danger text-sm bg-danger/20 border border-danger/50 rounded px-3 py-2">
+          <p class="text-danger-soft text-sm bg-danger/10 border border-danger/40 rounded px-3 py-2">
             {error}
           </p>
         )}

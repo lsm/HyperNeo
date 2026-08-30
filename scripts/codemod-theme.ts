@@ -151,7 +151,11 @@ export function collectRewrites(
     prefix: string,
     suffix: string
   ): void => {
-    const result = rewriteClassString(node.text, mapping);
+    const raw = node.getText(sourceFile);
+    const result = rewriteClassString(
+      raw.slice(prefix.length, raw.length - suffix.length),
+      mapping
+    );
     if (result.changes.length === 0) return;
     rewrites.push({
       start: node.getStart(sourceFile),

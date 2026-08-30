@@ -228,7 +228,7 @@ function WorkflowCard({
               </span>
               {driftState?.updateAvailable && (
                 <span
-                  class="inline-flex items-center rounded bg-warning/10 px-1.5 py-0.5 text-xs text-warning"
+                  class="inline-flex items-center rounded bg-warning/10 px-1.5 py-0.5 text-xs text-warning-soft"
                   title="A newer version of this template is available. Apply it to bring this workflow up to date."
                 >
                   Update available

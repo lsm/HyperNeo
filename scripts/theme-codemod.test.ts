@@ -144,6 +144,14 @@ describe('collectRewrites/applyRewrites', () => {
     expect(next).toContain('"bg-surface-raised before:content-[\\"x\\"]"');
   });
 
+  it('preserves escapes in interpolated template parts', () => {
+    const source = 'const t = `bg-dark-800 \\`x\\` ${y}`;';
+    const all = collectRewrites(source, 'sample.tsx', mapping, true);
+    const next = applyRewrites(source, all.rewrites);
+    expect(all.changes.length).toBe(1);
+    expect(next).toContain('`bg-surface-raised \\`x\\` ${y}`');
+  });
+
   it('all-strings mode rewrites module-level records', () => {
     const source = "const STYLES = { dot: 'bg-dark-800', label: 'text-gray-400' };";
     const scoped = collectRewrites(source, 'sample.ts', mapping);
