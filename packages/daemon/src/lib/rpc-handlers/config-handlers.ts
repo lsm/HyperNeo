@@ -26,6 +26,7 @@ import type {
   UpdateSystemPromptRequest,
   UpdateToolsConfigRequest,
 } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { AgentSession } from '../agent/agent-session.ts';
 import {
   validateAgentsConfig,
@@ -48,35 +49,111 @@ import type { SessionManager } from '../session-manager.ts';
 
 const log = new Logger('config-handlers');
 
+type RestartQueryForConfigResult = { success: boolean; error?: string };
+
+interface RestartQueryForConfigCtx {
+  sessionManager: SessionManager;
+  sessionId: string;
+  agentSession: AgentSession;
+  configDelta: Partial<Session['config']>;
+  applyUserMcpUpdate?: (session: AgentSession) => Promise<void>;
+  current?: AgentSession | null;
+  result?: RestartQueryForConfigResult;
+}
+
+function isRestartResolved(ctx: RestartQueryForConfigCtx): boolean {
+  return ctx.result !== undefined;
+}
+
+async function activeShortcutStage(
+  ctx: RestartQueryForConfigCtx
+): Promise<RestartQueryForConfigCtx> {
+  if (ctx.agentSession.isQueryActiveOrStarting()) {
+    const result = await ctx.agentSession.resetQuery({ restartQuery: true });
+    return { ...ctx, result };
+  }
+  return ctx;
+}
+
+async function loadReplacementSession(
+  ctx: RestartQueryForConfigCtx
+): Promise<RestartQueryForConfigCtx> {
+  const current = await ctx.sessionManager.getSessionAsync(ctx.sessionId, { startQuery: false });
+  return { ...ctx, current };
+}
+
+async function reapplyMcpAndConfig(
+  ctx: RestartQueryForConfigCtx
+): Promise<RestartQueryForConfigCtx> {
+  const { current, agentSession, applyUserMcpUpdate, configDelta } = ctx;
+  if (current && current !== agentSession) {
+    if (applyUserMcpUpdate) await applyUserMcpUpdate(current);
+    if (Object.keys(configDelta).length > 0) await current.updateConfig(configDelta);
+  }
+  return ctx;
+}
+
+function rejectUnprovisioned(ctx: RestartQueryForConfigCtx): RestartQueryForConfigCtx {
+  const { current, sessionId } = ctx;
+  if (!current) {
+    return {
+      ...ctx,
+      result: {
+        success: false,
+        error: `Session ${sessionId} is not resumable — workflow provisioning skipped`,
+      },
+    };
+  }
+  const currentData = current.getSessionData();
+  if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(currentData.config)) {
+    return {
+      ...ctx,
+      result: {
+        success: false,
+        error: `Session ${sessionId} is not resumable — workflow provisioning skipped`,
+      },
+    };
+  }
+  return ctx;
+}
+
+async function resetAndRestartStage(
+  ctx: RestartQueryForConfigCtx
+): Promise<RestartQueryForConfigCtx> {
+  const result = await ctx.current!.resetQuery({ restartQuery: true });
+  return { ...ctx, result };
+}
+
+const runRestartQueryForConfig = (
+  superpipe<{ isRestartResolved: (ctx: RestartQueryForConfigCtx) => boolean }>({
+    isRestartResolved,
+  })('restart-query-for-config') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(activeShortcutStage, 'ctx', 'ctx')
+  .pipe('!isRestartResolved', 'ctx')
+  .pipe(loadReplacementSession, 'ctx', 'ctx')
+  .pipe(reapplyMcpAndConfig, 'ctx', 'ctx')
+  .pipe(rejectUnprovisioned, 'ctx', 'ctx')
+  .pipe('!isRestartResolved', 'ctx')
+  .pipe(resetAndRestartStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: RestartQueryForConfigCtx) => Promise<RestartQueryForConfigCtx>;
+
 async function restartQueryForConfig(
   sessionManager: SessionManager,
   sessionId: string,
   agentSession: AgentSession,
   configDelta: Partial<Session['config']>,
   applyUserMcpUpdate?: (session: AgentSession) => Promise<void>
-): Promise<{ success: boolean; error?: string }> {
-  if (agentSession.isQueryActiveOrStarting()) {
-    return agentSession.resetQuery({ restartQuery: true });
-  }
-  const current = await sessionManager.getSessionAsync(sessionId, { startQuery: false });
-  if (current && current !== agentSession) {
-    if (applyUserMcpUpdate) await applyUserMcpUpdate(current);
-    if (Object.keys(configDelta).length > 0) await current.updateConfig(configDelta);
-  }
-  if (!current) {
-    return {
-      success: false,
-      error: `Session ${sessionId} is not resumable — workflow provisioning skipped`,
-    };
-  }
-  const currentData = current.getSessionData();
-  if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(currentData.config)) {
-    return {
-      success: false,
-      error: `Session ${sessionId} is not resumable — workflow provisioning skipped`,
-    };
-  }
-  return current.resetQuery({ restartQuery: true });
+): Promise<RestartQueryForConfigResult> {
+  const ctx = await runRestartQueryForConfig({
+    sessionManager,
+    sessionId,
+    agentSession,
+    configDelta,
+    applyUserMcpUpdate,
+  });
+  return ctx.result!;
 }
 
 export function setupConfigHandlers(
