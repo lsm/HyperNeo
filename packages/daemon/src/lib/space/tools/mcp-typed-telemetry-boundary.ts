@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { emitStructuredLogEvent } from '../../logger.ts';
 import { emitActionTypedEvent } from '../actions/dispatch-telemetry.ts';
 
 export interface McpTypedTelemetryConfig {
@@ -34,6 +35,21 @@ export function instrumentTypedTelemetryAtMcpBoundary(
   config: McpTypedTelemetryConfig
 ): void {
   const tools = (server.instance as unknown as McpServerWithRegisteredTools)._registeredTools;
+  const protocol = (server.instance as unknown as { server?: ProtocolWithRequestHandlers }).server;
+
+  if (!tools && !protocol?._requestHandlers) {
+    try {
+      emitStructuredLogEvent({
+        level: 'warn',
+        args: ['typed telemetry boundary has no SDK instrumentation surface'],
+        source: 'logger',
+        module: 'hyperneo:daemon:space-actions.typed',
+        metadata: { spaceId: config.spaceId },
+      });
+    } catch {}
+    return;
+  }
+
   if (tools) {
     for (const tool of Object.values(tools)) {
       if (typeof tool !== 'object' || tool === null) continue;
@@ -54,7 +70,6 @@ export function instrumentTypedTelemetryAtMcpBoundary(
     }
   }
 
-  const protocol = (server.instance as unknown as { server?: ProtocolWithRequestHandlers }).server;
   if (!protocol?._requestHandlers) return;
 
   const original = protocol._requestHandlers.get('tools/call');

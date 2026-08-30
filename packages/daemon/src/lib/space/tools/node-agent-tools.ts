@@ -1019,28 +1019,8 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
   return handlers;
 }
 
-function wrapToolHandlersWithTypedTelemetry(
-  _config: NodeAgentToolsConfig,
-  handlers: Record<string, (...args: unknown[]) => Promise<ToolResult>>
-): Record<string, (...args: unknown[]) => Promise<ToolResult>> {
-  return handlers;
-}
-
-function withTypedTelemetry<TArgs extends unknown[]>(
-  _config: NodeAgentToolsConfig,
-  _name: string,
-  handler: (...args: TArgs) => Promise<ToolResult>
-): (...args: TArgs) => Promise<ToolResult> {
-  return (...args: TArgs) => handler(...args);
-}
-
 export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
   const handlers = createNodeAgentToolHandlers(config);
-  const typedHandlers = wrapToolHandlersWithTypedTelemetry(
-    config,
-    handlers as unknown as Record<string, (...args: unknown[]) => Promise<ToolResult>>
-  );
-
   async function submitForApproval(args: SubmitForApprovalInput): Promise<ToolResult> {
     return config.onSubmitForApproval!(args);
   }
@@ -1082,7 +1062,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
         'Use this to discover which peers are active, what direct messaging channels are available, ' +
         'and what output peers have saved (including their summaries).',
       ListPeersSchema.shape,
-      (args) => typedHandlers.list_peers(args)
+      (args) => handlers.list_peers(args)
     ),
     tool(
       'list_reachable_agents',
@@ -1090,7 +1070,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
         '(agents in the same workflow node) and cross-node targets (agents/nodes on other nodes). ' +
         'Use this before sending a message to understand who you can reach.',
       ListReachableAgentsSchema.shape,
-      (args) => typedHandlers.list_reachable_agents(args)
+      (args) => handlers.list_reachable_agents(args)
     ),
     tool(
       'list_channels',
@@ -1098,7 +1078,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
         'Channels define the messaging topology — which agents can communicate. Use this to ' +
         'understand the full channel map for this workflow run.',
       ListChannelsSchema.shape,
-      (args) => typedHandlers.list_channels(args)
+      (args) => handlers.list_channels(args)
     ),
     tool(
       'send_message',
@@ -1107,7 +1087,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
         'Validates against declared channel topology — returns an error with available targets if not permitted. ' +
         "The optional `data` payload is passed to any send_message hooks for validation. Use target 'space-agent' to escalate blockers or request human/space-level judgment.",
       SendMessageSchema.shape,
-      (args) => typedHandlers.send_message(args)
+      (args) => handlers.send_message(args)
     ),
     ...(config.onSubscribeExternalEvent && config.onUnsubscribeExternalEvent
       ? [
@@ -1116,13 +1096,13 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
             'Subscribe to external events matching a topic pattern (e.g. github/*/*/pull_request/*.*). ' +
               'Use this during execution to receive matching events directly in this node-agent session.',
             SubscribeExternalEventSchema.shape,
-            (args) => typedHandlers.subscribe_external_event(args)
+            (args) => handlers.subscribe_external_event(args)
           ),
           tool(
             'unsubscribe_external_event',
             'Unsubscribe from external events for this node-agent session.',
             UnsubscribeExternalEventSchema.shape,
-            (args) => typedHandlers.unsubscribe_external_event(args)
+            (args) => handlers.unsubscribe_external_event(args)
           ),
           tool(
             'subscribe_pr_events',
@@ -1130,7 +1110,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               "Resolves the run's current PR automatically; pass `prUrl` to target a different PR. " +
               'Events are delivered to this node-agent session as messages. The coder node typically calls this.',
             SubscribePrEventsSchema.shape,
-            (args) => typedHandlers.subscribe_pr_events(args)
+            (args) => handlers.subscribe_pr_events(args)
           ),
         ]
       : []),
@@ -1145,7 +1125,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'The durable layers are the source of truth; the trie is never the answer. Defaults to this ' +
               'workflow run; pass `nodeId` to scope to one node.',
             ListSubscriptionsSchema.shape,
-            (args) => typedHandlers.list_subscriptions(args)
+            (args) => handlers.list_subscriptions(args)
           ),
         ]
       : []),
@@ -1159,7 +1139,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               '`eventType`, source-native fields such as review `state`, check-run `conclusion`, diff `path`/`line`, etc.). ' +
               'Returns a not-found result for unknown ids.',
             GetExternalEventSchema.shape,
-            (args) => typedHandlers.get_external_event(args)
+            (args) => handlers.get_external_event(args)
           ),
           tool(
             'list_deliveries',
@@ -1169,7 +1149,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Always scoped to the current space; defaults to this workflow run. ' +
               'These tables are space-scoped, so db_query cannot reach them — this tool is the surface for that state.',
             ListDeliveriesSchema.shape,
-            (args) => typedHandlers.list_deliveries(args)
+            (args) => handlers.list_deliveries(args)
           ),
         ]
       : []),
@@ -1182,7 +1162,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
         'measure and emits a structured log line for diagnosis. After calling, retry the ' +
         'failed tool once.',
       RestoreNodeAgentSchema.shape,
-      (args) => typedHandlers.restore_node_agent(args)
+      (args) => handlers.restore_node_agent(args)
     ),
     ...(config.artifactRepo
       ? [
@@ -1197,7 +1177,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'link, CI/tests → check, review verdict → decision, current status → note), NOT a re-narration of ' +
               'the thread. Keep prose in chat; only structured facts belong here.',
             SaveArtifactSchema.shape,
-            (args) => typedHandlers.save_artifact(args)
+            (args) => handlers.save_artifact(args)
           ),
           tool(
             'list_artifacts',
@@ -1205,7 +1185,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               '(link/commit_set/check/metric/decision/note). Legacy type filters (progress/result/review/pr) ' +
               'are mapped to their shapes for compatibility.',
             ListArtifactsSchema.shape,
-            (args) => typedHandlers.list_artifacts(args)
+            (args) => handlers.list_artifacts(args)
           ),
         ]
       : []),
@@ -1215,7 +1195,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
             'create_standalone_task',
             'Create a task request in this Space. Runtime may attach and execute a workflow for this task during orchestration. Supports structured task dependencies via depends_on — the task will be blocked until every listed dependency reaches status=done, and cascade-cancelled if a dependency is cancelled.',
             CreateStandaloneTaskSchema.shape,
-            (args) => typedHandlers.create_standalone_task(args)
+            (args) => handlers.create_standalone_task(args)
           ),
         ]
       : []),
@@ -1225,7 +1205,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
             'publish_task',
             'Publish a draft task, transitioning it from draft to open status. Published tasks become eligible for orchestration by the runtime tick loop. Only valid for tasks currently in draft status.',
             PublishTaskSchema.shape,
-            (args) => typedHandlers.publish_task(args)
+            (args) => handlers.publish_task(args)
           ),
         ]
       : []),
@@ -1235,7 +1215,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
             'archive_task',
             "Archive a task. Archived tasks are excluded from most queries and cannot be reactivated. Valid from any status that allows the 'archived' transition (e.g. draft, done, cancelled, blocked, review, approved).",
             ArchiveTaskSchema.shape,
-            (args) => typedHandlers.archive_task(args)
+            (args) => handlers.archive_task(args)
           ),
         ]
       : []),
@@ -1247,7 +1227,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Only use when work is approved/QA-passed, all blocking findings are resolved, required review/artifact evidence is saved, and space autonomy meets workflow completionAutonomyLevel. ' +
               'If autonomy is too low, use submit_for_approval instead. Never use while findings, QA failures, or dispatch work remain open.',
             ApproveTaskSchema.shape,
-            (args) => typedHandlers.approve_task(args)
+            (args) => handlers.approve_task(args)
           ),
         ]
       : []),
@@ -1259,7 +1239,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Same approval semantic and preconditions as approve_task: use only when work is approved/QA-passed, all findings are resolved, and required review/artifact evidence is saved. ' +
               'Use when autonomy blocks self-close or risk warrants human sign-off. Never use to defer judgment while findings, QA failures, or dispatch work remain open.',
             SubmitForApprovalSchema.shape,
-            withTypedTelemetry(config, 'submit_for_approval', wrappedSubmitForApproval)
+            wrappedSubmitForApproval
           ),
         ]
       : []),
@@ -1274,7 +1254,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               '`approve_task` handles `in_progress → approved`; `mark_complete` handles ' +
               '`approved → done`. Rejected if the task is not currently in `approved`.',
             MarkCompleteSchema.shape,
-            (args) => withTypedTelemetry(config, 'mark_complete', wrappedMarkComplete!)(args)
+            (args) => wrappedMarkComplete!(args)
           ),
         ]
       : []),
@@ -1285,14 +1265,14 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
             'List tasks in this space. Filterable by status. Use compact:true to reduce payload size. ' +
               'Use this to discover existing tasks before creating new ones or to check on task progress.',
             ListTasksSchema.shape,
-            (args) => typedHandlers.list_tasks(args)
+            (args) => handlers.list_tasks(args)
           ),
           tool(
             'get_task',
             'Retrieve detailed information about a specific task including its status, result, and metadata. ' +
               'Provide either task_number (numeric ID like 5 for task #5, preferred) or task_id (UUID).',
             GetTaskSchema.shape,
-            (args) => typedHandlers.get_task(args)
+            (args) => handlers.get_task(args)
           ),
         ]
       : []),
@@ -1304,7 +1284,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
               'Returns entries ordered by timestamp descending (newest first). ' +
               'Use this to inspect the audit trail of tool operations performed by agents.',
             ListAuditEntriesSchema.shape,
-            (args) => typedHandlers.list_audit_entries(args)
+            (args) => handlers.list_audit_entries(args)
           ),
         ]
       : []),
