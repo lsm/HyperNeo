@@ -843,17 +843,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
 
     it('retryPrompt revives as steer when another turn already owns the session', async () => {
       insertStatusRow('retry-steer', 'failed');
-      jobQueue.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: {
-          sessionId: SESSION,
-          messageUuid: 'other-active',
-          role: 'turn',
-          origin: 'chat',
-          parentToolUseId: null,
-          released: true,
-        },
-      });
       const deadJob = jobQueue.enqueue({
         queue: MESSAGE_DELIVERY,
         payload: {
@@ -866,6 +855,17 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         },
       });
       db.prepare(`UPDATE job_queue SET status = 'dead' WHERE id = ?`).run(deadJob.id);
+      jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'other-active',
+          role: 'turn',
+          origin: 'chat',
+          parentToolUseId: null,
+          released: true,
+        },
+      });
 
       const retried = await retryPrompt({
         db: db as never,
