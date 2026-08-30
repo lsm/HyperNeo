@@ -13,6 +13,7 @@ type RegisteredTool = {
     | unknown;
   callback?: (args: unknown) => unknown;
   handler?: (args: unknown) => unknown;
+  emitTypedTelemetry?: (toolName: string) => void;
 };
 
 export type AcpProxyToolSchema = {
@@ -27,6 +28,7 @@ type ProxiedTool = {
   handler: (args: unknown) => unknown;
   inputSchema?: RegisteredTool['inputSchema'];
   schema: AcpProxyToolSchema;
+  emitTypedTelemetry?: (toolName: string) => void;
 };
 
 type ProxyRequest = {
@@ -188,6 +190,7 @@ export class AcpMcpProxyBridge {
       };
     }
     try {
+      tool.emitTypedTelemetry?.(tool.toolName);
       const args = await parseToolArgs(tool.inputSchema, request.arguments ?? {});
       if (this.ownsExecution && !this.ownsExecution()) {
         return {
@@ -229,6 +232,7 @@ export class AcpMcpProxyBridge {
           handler,
           inputSchema: registered.inputSchema,
           schema,
+          emitTypedTelemetry: registered.emitTypedTelemetry,
         });
       }
     }
