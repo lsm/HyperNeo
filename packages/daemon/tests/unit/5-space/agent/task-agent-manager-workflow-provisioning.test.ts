@@ -123,7 +123,10 @@ describe('TaskAgentManager workflow session provisioning', () => {
   });
 
   it('provisions a cooling-down post-approval worker without starting its query', async () => {
-    const { manager, restorePostApprovalWorkerSession } = makeManager({ cooldown: true });
+    const { manager, restorePostApprovalWorkerSession } = makeManager({
+      cooldown: true,
+      taskStatus: 'approved',
+    });
 
     await manager.provisionWorkflowSession(workflowSession());
 
@@ -136,7 +139,10 @@ describe('TaskAgentManager workflow session provisioning', () => {
   });
 
   it('provisions a cooling-down post-approval worker for a non-starting retry lookup', async () => {
-    const { manager, restorePostApprovalWorkerSession } = makeManager({ cooldown: true });
+    const { manager, restorePostApprovalWorkerSession } = makeManager({
+      cooldown: true,
+      taskStatus: 'approved',
+    });
 
     await manager.provisionWorkflowSession(workflowSession(), { startQuery: false });
 
