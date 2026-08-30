@@ -1660,7 +1660,46 @@ export class TaskAgentManager {
     try {
       const outcome = await inject(spaceId, message, replyTo, row.id);
       if (outcome.state === 'accepted') {
-        settleDelivered(outcome.sessionId);
+        const settledSessionId = outcome.sessionId;
+        const probeDeliveryStatus = (): string | null | undefined => {
+          try {
+            return this.config.db
+              .getSDKMessageRepo?.()
+              ?.getDeliveryContent(settledSessionId, row.id)?.sendStatus;
+          } catch {
+            return undefined;
+          }
+        };
+        this.lateSettlements.arm({
+          sessionId: settledSessionId,
+          messageId: row.id,
+          onConsumed: (consumedSessionId) => {
+            settleDelivered(consumedSessionId);
+            scheduleReconciliation();
+          },
+          onFailed: () => {
+            repo.recordDeliveryError(row.id, 'space-agent delivery dead-lettered');
+            repo.deferExpiration([row.id]);
+            const latest = repo.getById(row.id);
+            if (
+              latest?.status === 'pending' &&
+              (latest.attempts ?? 0) >= (latest.maxAttempts ?? Infinity)
+            ) {
+              repo.markFailed(
+                row.id,
+                `space-agent delivery attempts exhausted (${latest.maxAttempts})`
+              );
+              return;
+            }
+            scheduleReconciliation();
+          },
+          getSendStatus: probeDeliveryStatus,
+        });
+        repo.deferExpiration([row.id]);
+        log.info(
+          `TaskAgentManager: Space Agent delivery for ${row.id} accepted by ` +
+            `${settledSessionId}; the pending row settles when consumption completes`
+        );
         return;
       }
       repo.deferExpiration([row.id]);
@@ -4368,7 +4407,11 @@ export class TaskAgentManager {
           }
           if (existing) {
             const flippedDbId = await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
-            return flippedDbId ?? messageId;
+            if (flippedDbId) return flippedDbId;
+            const rowIds = this.config.db
+              .getSDKMessageRepo()
+              .getDeliveryMessageIdsByUuids(sessionId, [messageId]);
+            return rowIds[0] ?? messageId;
           }
           return settleDeliveryRowStatus(deliveryRows, {
             sessionId,

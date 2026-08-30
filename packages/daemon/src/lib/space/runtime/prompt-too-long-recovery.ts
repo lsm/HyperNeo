@@ -13,12 +13,14 @@ export interface PromptTooLongRecoveryState {
   awaitingContinueAfterDbId: string | null;
   awaitingContinueSince: number | null;
   awaitingContinueMessageId: string | null;
+  awaitingContinueParked: boolean;
   continueNagPending: boolean;
   continueNagAttempts: number;
   awaitingResume: boolean;
   awaitingResumeAfterDbId: string | null;
   awaitingResumeSince: number | null;
   awaitingResumeMessageId: string | null;
+  awaitingResumeParked: boolean;
   awaitingResumeLastProgressDbId: string | null;
 }
 
@@ -30,12 +32,14 @@ export function createPromptTooLongRecoveryState(): PromptTooLongRecoveryState {
     awaitingContinueAfterDbId: null,
     awaitingContinueSince: null,
     awaitingContinueMessageId: null,
+    awaitingContinueParked: false,
     continueNagPending: false,
     continueNagAttempts: 0,
     awaitingResume: false,
     awaitingResumeAfterDbId: null,
     awaitingResumeSince: null,
     awaitingResumeMessageId: null,
+    awaitingResumeParked: false,
     awaitingResumeLastProgressDbId: null,
   };
 }

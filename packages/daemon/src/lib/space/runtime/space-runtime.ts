@@ -5409,6 +5409,7 @@ export class SpaceRuntime {
       state.awaitingContinueAfterDbId = null;
       state.awaitingContinueSince = null;
       state.awaitingContinueMessageId = null;
+      state.awaitingContinueParked = false;
       if (lastMessageIsSuccessResult) {
         state.continueNagPending = true;
         state.awaitingResumeAfterDbId = lastMessageDbId;
@@ -5426,6 +5427,7 @@ export class SpaceRuntime {
         state.awaitingResumeAfterDbId = null;
         state.awaitingResumeSince = null;
         state.awaitingResumeMessageId = null;
+        state.awaitingResumeParked = false;
         state.awaitingResumeLastProgressDbId = null;
         if (lastMessageIsSuccessResult) {
           this.promptTooLongRecovery.delete(key);
@@ -5452,6 +5454,7 @@ export class SpaceRuntime {
             state.awaitingResumeMessageId
           );
           if (resumeDelivery === 'pending') {
+            state.awaitingResumeParked = true;
             return 'handled';
           }
           if (resumeDelivery === 'dead') {
@@ -5460,7 +5463,27 @@ export class SpaceRuntime {
             state.awaitingResumeSince = null;
             state.awaitingResumeMessageId = null;
             state.awaitingResumeLastProgressDbId = null;
+            state.awaitingResumeParked = false;
+            state.continueNagAttempts += 1;
+            if (state.continueNagAttempts >= MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS) {
+              const reason = `Context-overflow recovery: the resume nag dead-lettered ${state.continueNagAttempts} time(s) without being consumed for agent ${execution.agentName}.`;
+              await this.escalatePromptTooLongBlocked(
+                runId,
+                spaceId,
+                canonicalTask,
+                execution,
+                now,
+                reason,
+                manager
+              );
+              return 'blocked';
+            }
             state.continueNagPending = true;
+            return 'handled';
+          }
+          if (state.awaitingResumeParked) {
+            state.awaitingResumeSince = now;
+            state.awaitingResumeParked = false;
             return 'handled';
           }
           const reason = `Context-overflow recovery timed out: the resumed turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
@@ -5489,6 +5512,7 @@ export class SpaceRuntime {
         state.awaitingContinueMessageId
       );
       if (compactDelivery === 'pending') {
+        state.awaitingContinueParked = true;
         return 'handled';
       }
       if (compactDelivery === 'dead') {
@@ -5496,7 +5520,13 @@ export class SpaceRuntime {
         state.awaitingContinueAfterDbId = null;
         state.awaitingContinueSince = null;
         state.awaitingContinueMessageId = null;
+        state.awaitingContinueParked = false;
         state.compactRetryPending = true;
+        return 'handled';
+      }
+      if (state.awaitingContinueParked) {
+        state.awaitingContinueSince = now;
+        state.awaitingContinueParked = false;
         return 'handled';
       }
       const reason = `Context-overflow recovery timed out: the /compact turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
@@ -5549,6 +5579,7 @@ export class SpaceRuntime {
         state.awaitingContinueAfterDbId = lastMessageDbId;
         state.awaitingContinueSince = now;
         state.awaitingContinueMessageId = injectedDbId;
+        state.awaitingContinueParked = false;
         log.warn(
           `SpaceRuntime: injected /compact for overflowed execution ${execution.id} ` +
             `(agent ${execution.agentName}, session ${sessionId}, attempt ${state.compactAttempts}/${MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS})`
@@ -5583,10 +5614,10 @@ export class SpaceRuntime {
       }
       if (nagDbId !== null) {
         state.continueNagPending = false;
-        state.continueNagAttempts = 0;
         state.awaitingResume = true;
         state.awaitingResumeSince = now;
         state.awaitingResumeMessageId = nagDbId;
+        state.awaitingResumeParked = false;
         log.warn(
           `SpaceRuntime: injected continue nag after compaction for execution ${execution.id} (agent ${execution.agentName}, session ${sessionId})`
         );
@@ -7226,25 +7257,13 @@ export class SpaceRuntime {
         continue;
       }
       if (lastPromptDelivery === 'dead') {
-        state.failedInjectionCount += 1;
+        state.lastContinueMessageId = null;
+        state.lastRetriedErrorSignature = null;
         state.lastContinueAt = now;
-        if (state.failedInjectionCount >= MAX_TERMINAL_ERROR_CONTINUE_RETRIES) {
-          await this.escalateTerminalErrorToBlocked(
-            runId,
-            spaceId,
-            canonicalTask,
-            execution,
-            lastMessage,
-            tam,
-            `runtime continue prompt dead-lettered ${state.failedInjectionCount} time(s) without being consumed (${signature})`
-          );
-          return 'blocked';
-        }
         log.warn(
           `Runtime-continue prompt for terminal-error idle node ${execution.workflowNodeId} ` +
-            `dead-lettered without being consumed ` +
-            `(failure ${state.failedInjectionCount}/${MAX_TERMINAL_ERROR_CONTINUE_RETRIES}); ` +
-            `escalating unless it clears: execution=${execution.id} signature=${signature}`
+            `dead-lettered without being consumed; will re-inject after the grace period: ` +
+            `execution=${execution.id} signature=${signature}`
         );
         continue;
       }
@@ -7332,6 +7351,11 @@ export class SpaceRuntime {
     if (repo.getMessageByStatusAndDbId(sessionId, 'failed', messageId)) return 'dead';
     for (const pending of ['enqueued', 'submitted', 'deferred'] as const) {
       if (repo.getMessageByStatusAndDbId(sessionId, pending, messageId)) return 'pending';
+    }
+    const byUuid = repo.getDeliveryContent(sessionId, messageId)?.sendStatus;
+    if (byUuid === 'failed') return 'dead';
+    if (byUuid === 'enqueued' || byUuid === 'submitted' || byUuid === 'deferred') {
+      return 'pending';
     }
     return 'consumed';
   }

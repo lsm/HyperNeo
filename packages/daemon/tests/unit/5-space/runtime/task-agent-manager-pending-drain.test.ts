@@ -638,16 +638,25 @@ function makeSpaceAgentHarness(
     )
   );
   const publish = mock(async (_event: string, _payload: unknown) => {});
+  const acceptedRowIds = new Set<string>();
   const injector = mock(
-    options.injectorImpl ??
-      (async (_spaceId: string, _message: string, _replyTo: string | null, rowId: string) => ({
-        state: 'accepted',
-        messageId: rowId,
-      }))
+    async (spaceId: string, message: string, replyTo: string | null, rowId: string) => {
+      acceptedRowIds.add(rowId);
+      if (options.injectorImpl) {
+        return options.injectorImpl(spaceId, message, replyTo, rowId);
+      }
+      return { state: 'accepted' as const, messageId: rowId };
+    }
   );
 
   const config: Record<string, unknown> = {
-    db: { getDatabase: () => db },
+    db: {
+      getDatabase: () => db,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, messageId: string) =>
+          acceptedRowIds.has(messageId) ? { content: 'x', sendStatus: 'consumed' } : null,
+      }),
+    },
     pendingMessageRepo: spyRepo.spy,
     internalEventBus: { subscribe: mock(() => () => {}), publish },
   };
@@ -783,22 +792,53 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(expiredAt).toBeGreaterThan(deliveredAt);
   });
 
-  it('settles a space-agent row as soon as the injector accepts it', async () => {
+  it('settles a space-agent row once the accepted delivery is consumed', async () => {
+    const consumedIds = new Set<string>();
     const h = makeSpaceAgentHarness({
-      injectorImpl: async (spaceId, _message, _replyTo, rowId) => ({
-        state: 'accepted',
-        messageId: rowId,
-        sessionId: `space:chat:${spaceId}`,
-      }),
+      injectorImpl: async (spaceId, _message, _replyTo, rowId) => {
+        consumedIds.add(rowId);
+        return { state: 'accepted' as const, messageId: rowId, sessionId: `space:chat:${spaceId}` };
+      },
     });
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, messageId: string) =>
+          consumedIds.has(messageId) ? { content: 'x', sendStatus: 'consumed' } : null,
+      }),
+    };
     dbByTest.push(h.db);
     const row = h.enqueue({ message: 'accepted while coordinator idle' });
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(row.id)?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
     expect(h.spyRepo.calls).toContain(`delivered:${row.id}`);
+  });
+
+  it('keeps an accepted row recoverable until the delivery outcome settles', async () => {
+    const pendingIds = new Set<string>();
+    const h = makeSpaceAgentHarness({
+      injectorImpl: async (spaceId, _message, _replyTo, rowId) => {
+        pendingIds.add(rowId);
+        return { state: 'accepted' as const, messageId: rowId, sessionId: `space:chat:${spaceId}` };
+      },
+    });
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, messageId: string) =>
+          pendingIds.has(messageId) ? { content: 'x', sendStatus: 'enqueued' } : null,
+      }),
+    };
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'parked after acceptance' });
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+    expect(h.spyRepo.calls).not.toContain(`delivered:${row.id}`);
   });
 
   it('drains only space_agent rows targeted at the space agent', async () => {
@@ -922,6 +962,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     const laterRow = h.enqueue({ message: 'still drains' });
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const failed = h.spyRepo.repo.getById(failingRow.id);
     expect(failed?.status).toBe('pending');

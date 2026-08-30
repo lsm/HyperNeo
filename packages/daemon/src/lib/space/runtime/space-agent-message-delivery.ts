@@ -10,6 +10,7 @@ import {
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { PromptContentConflictError } from '../../agent/message-delivery-outbox.ts';
 import { handoffPromptToMailbox } from './injection-delivery-steps.ts';
 
 const log = new Logger('space-agent-delivery');
@@ -202,7 +203,10 @@ function acceptOutcome(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
   };
 }
 
-async function failDelivery(ctx: SpaceAgentDeliveryCtx): Promise<void> {
+async function failDelivery(ctx: SpaceAgentDeliveryCtx, error: unknown): Promise<void> {
+  if (error instanceof PromptContentConflictError) {
+    return;
+  }
   const failedDbId = ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(ctx.sessionId, ctx.messageId);
   if (failedDbId) {
     await ctx.deps.publishStatusChanged(ctx.sessionId, failedDbId, 'failed').catch(() => {});
@@ -224,20 +228,29 @@ const run = (
   .pipe('!hasOutcome', 'ctx')
   .pipe(enqueuePrompt, 'ctx', 'ctx')
   .pipe(acceptOutcome, 'ctx', 'ctx')
-  .error(failDelivery, ['ctx'])
+  .error(failDelivery, ['ctx', 'error'])
   .endAsync('ctx') as (input: SpaceAgentDeliveryCtx) => Promise<SpaceAgentDeliveryCtx>;
 
 export async function deliverSpaceAgentMessage(
   deps: SpaceAgentDeliveryDeps,
   args: SpaceAgentDeliveryInput
 ): Promise<SpaceAgentInjectionOutcome> {
-  const ctx = await run({ ...args, deps });
-  return (
-    ctx.outcome ?? {
+  try {
+    const ctx = await run({ ...args, deps });
+    return (
+      ctx.outcome ?? {
+        state: 'failed',
+        messageId: args.messageId,
+        sessionId: args.sessionId,
+        error: 'space-agent delivery ended without an outcome',
+      }
+    );
+  } catch (error) {
+    return {
       state: 'failed',
       messageId: args.messageId,
       sessionId: args.sessionId,
-      error: 'space-agent delivery ended without an outcome',
-    }
-  );
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }

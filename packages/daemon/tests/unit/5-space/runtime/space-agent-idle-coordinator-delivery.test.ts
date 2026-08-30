@@ -396,4 +396,33 @@ describe('idle coordinator message consumption (issue #2963)', () => {
     );
     await completeTurn(db, agentSession, injectedMessageId!);
   });
+
+  it('rejects a duplicate id with different content without cancelling the original delivery', async () => {
+    const harness = await makeIdleCoordinatorHarness();
+    track(harness, harness.agentSession.getSessionData().workspacePath);
+    const { db } = harness;
+    const original = {
+      type: 'user',
+      uuid: 'msg-conflict-1',
+      session_id: SESSION_ID,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'text', text: 'original escalation' }] },
+    } as unknown as SDKUserMessage;
+    db.saveUserMessage(SESSION_ID, original, 'enqueued');
+
+    const outcome = await harness.escalate('msg-conflict-1', 'conflicting duplicate content');
+
+    expect(outcome.state).toBe('failed');
+    if (outcome.state === 'failed') {
+      expect(outcome.error).toContain('different content');
+    }
+    expect(
+      db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-conflict-1')?.sendStatus
+    ).toBe('enqueued');
+    const stored = db
+      .getDatabase()
+      .prepare(`SELECT sdk_message FROM sdk_messages WHERE sdk_uuid = 'msg-conflict-1'`)
+      .get() as { sdk_message: string };
+    expect(stored.sdk_message).toContain('original escalation');
+  });
 });

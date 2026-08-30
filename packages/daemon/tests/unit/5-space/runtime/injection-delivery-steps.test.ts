@@ -326,6 +326,38 @@ describe('deliverInjectedMessage', () => {
     }
   });
 
+  it('recreates the delivery job for a transient enqueued row with no active job', async () => {
+    const db = await makeDb();
+    try {
+      const { deps } = makeBranchDeps(db);
+      const target = makeTargetSession();
+      db.saveUserMessage(SESSION_ID, makeSdkUserMessage(), 'enqueued');
+
+      const dbId = await deliverInjectedMessage(deps, {
+        session: target.session,
+        sessionId: SESSION_ID,
+        messageId: MESSAGE_ID,
+        sdkUserMessage: makeSdkUserMessage(),
+        existing: { sendStatus: 'failed' },
+      });
+
+      expect(dbId).toBeTypeOf('string');
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, MESSAGE_ID)?.sendStatus).toBe(
+        'enqueued'
+      );
+      const job = db
+        .getDatabase()
+        .prepare(
+          `SELECT id FROM job_queue WHERE queue = 'message_delivery'
+             AND json_extract(payload, '$.messageUuid') = ?`
+        )
+        .get(MESSAGE_ID);
+      expect(job).toBeDefined();
+    } finally {
+      db.close();
+    }
+  });
+
   it('activates a row that became deferred before the ensure path ran', async () => {
     const db = await makeDb();
     try {

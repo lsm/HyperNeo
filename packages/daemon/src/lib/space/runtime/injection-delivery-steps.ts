@@ -119,20 +119,45 @@ function planHandoffMechanism(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
   return { ...ctx, mechanism, handoff: null };
 }
 
-const DELIVERABLE_STATUSES = new Set(['enqueued', 'submitted', 'consumed']);
-
 function deliverableHandoff(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
   const dbIds = ctx.sdkMessageRepo.getDeliveryMessageIdsByUuids(ctx.sessionId, [ctx.messageId]);
   return { ...ctx, handoff: { dbId: dbIds[0] ?? ctx.messageId, role: null, changed: false } };
 }
 
-async function advanceCurrentHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
+async function advanceCurrentHandoff(
+  ctx: MailboxHandoffCtx,
+  revisits = 0
+): Promise<MailboxHandoffCtx> {
   const current = ctx.sdkMessageRepo.getDeliveryContent(ctx.sessionId, ctx.messageId);
   if (current === null || current === undefined) {
     throw new Error(`prompt handoff: row disappeared for ${ctx.sessionId}/${ctx.messageId}`);
   }
-  if (DELIVERABLE_STATUSES.has(current.sendStatus)) {
+  if (current.sendStatus === 'consumed') {
     return deliverableHandoff(ctx);
+  }
+  if (current.sendStatus === 'enqueued' || current.sendStatus === 'submitted') {
+    const active = ctx.jobQueue.activeDeliveryMessageUuids(ctx.sessionId);
+    if (active.has(ctx.messageId)) {
+      return deliverableHandoff(ctx);
+    }
+    const ensured = ensurePrompt({
+      db: ctx.db,
+      sdkMessageRepo: ctx.sdkMessageRepo,
+      jobQueue: ctx.jobQueue,
+      sessionId: ctx.sessionId,
+      message: ctx.message,
+      origin: ctx.messageOrigin,
+      delivery: { origin: ctx.origin },
+    });
+    if (ensured.created || (ensured.role !== null && ensured.released)) {
+      return {
+        ...ctx,
+        handoff: { dbId: ensured.dbMessageId, role: ensured.role, changed: ensured.created },
+      };
+    }
+    if (revisits < 2) {
+      return advanceCurrentHandoff(ctx, revisits + 1);
+    }
   }
   if (current.sendStatus === 'deferred') {
     const { activated } = await activatePrompts({
@@ -160,7 +185,7 @@ async function advanceCurrentHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHan
     }
   }
   const recheck = ctx.sdkMessageRepo.getDeliveryContent(ctx.sessionId, ctx.messageId);
-  if (recheck !== null && recheck !== undefined && DELIVERABLE_STATUSES.has(recheck.sendStatus)) {
+  if (recheck !== null && recheck !== undefined && recheck.sendStatus === 'consumed') {
     return deliverableHandoff(ctx);
   }
   throw new Error(
