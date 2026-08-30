@@ -7,6 +7,7 @@ export interface RateLimitManualRetryDb {
         getActiveDeliveryRole?: (sessionId: string, messageUuid: string) => 'turn' | 'steer' | null;
         getActiveTurnDeliveryMessageUuid?: (sessionId: string) => string | null;
         rescheduleDelivery?: (sessionId: string, messageUuid: string, runAt: number) => boolean;
+        rescheduleSessionDeliveries?: (sessionId: string, runAt: number) => boolean;
       }
     | null
     | undefined;
@@ -59,6 +60,15 @@ async function clearPersistedCooldownStage(
 async function releaseOwningDeliveryStage(
   ctx: RateLimitManualRetryCtx
 ): Promise<RateLimitManualRetryCtx> {
+  const jobQueue = ctx.db.getJobQueueRepo?.();
+  if (jobQueue?.rescheduleSessionDeliveries) {
+    try {
+      jobQueue.rescheduleSessionDeliveries(ctx.sessionId, Date.now());
+      return { ...ctx, released: true };
+    } catch {
+      return { ...ctx, released: false };
+    }
+  }
   const owningTurnMessageId = resolveRateLimitEpisodeDeliveryUuid(
     ctx.db,
     ctx.sessionId,
@@ -67,9 +77,7 @@ async function releaseOwningDeliveryStage(
   if (!owningTurnMessageId) {
     return { ...ctx, released: true };
   }
-  const released = ctx.db
-    .getJobQueueRepo?.()
-    ?.rescheduleDelivery?.(ctx.sessionId, owningTurnMessageId, Date.now());
+  const released = jobQueue?.rescheduleDelivery?.(ctx.sessionId, owningTurnMessageId, Date.now());
   return { ...ctx, released: released !== false };
 }
 

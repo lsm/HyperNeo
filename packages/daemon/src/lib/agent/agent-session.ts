@@ -1207,8 +1207,9 @@ export class AgentSession
     const episodeMessage = this.rateLimitWatchdog.getState().lastUserMessage;
     this.rateLimitWatchdog.cancel(false);
     let persistedEpisodeMessageId: string | undefined;
+    let cooldownClearPending = false;
     if (this.stateManager.getState().status === 'rate_limit_cooldown') {
-      void this.stateManager.setIdle();
+      cooldownClearPending = true;
     } else {
       const persistedState = this.db.getSession(this.session.id)?.processingState;
       try {
@@ -1217,7 +1218,7 @@ export class AgentSession
           : null;
         if (parsed?.status === 'rate_limit_cooldown') {
           persistedEpisodeMessageId = parsed.messageId;
-          void this.stateManager.setIdle();
+          cooldownClearPending = true;
         }
       } catch {
         this.logger.warn('Failed to inspect the persisted rate-limit cooldown on cancel.');
@@ -1232,9 +1233,24 @@ export class AgentSession
     if (owningTurnMessageId) {
       try {
         this.db.getJobQueueRepo()?.cancelDelivery(this.session.id, owningTurnMessageId);
+        const settledDbId = this.db
+          .getSDKMessageRepo()
+          ?.markDeliveryFailedByUuid?.(this.session.id, owningTurnMessageId);
+        if (settledDbId) {
+          void this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: this.session.id,
+              messageIds: [settledDbId],
+              status: 'failed',
+            })
+            .catch(() => {});
+        }
       } catch (error) {
         this.logger.warn('Failed to cancel the parked delivery for the retry episode:', error);
       }
+    }
+    if (cooldownClearPending) {
+      void this.stateManager.setIdle();
     }
   }
 
