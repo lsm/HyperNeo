@@ -3529,9 +3529,6 @@ export class TaskAgentManager {
               if (task.status !== 'approved') {
                 return { decision: 'post-approval-not-active', skip: true };
               }
-              if (this.readPersistedRateLimitCooldown(sessionId) && options.startQuery !== false) {
-                return { decision: 'cooling-down', skip: true };
-              }
               return { decision: 'restore-post-approval', postApproval: true };
             }
             if (isCanonicalTaskTerminalForSpawn(task.status) || workflowRun.status === 'done') {
@@ -3559,7 +3556,10 @@ export class TaskAgentManager {
           when: 'postApproval',
           writes: [],
           run: async () => {
-            await this.restorePostApprovalWorkerSession(taskId, sessionId, session, options);
+            const restoreOptions = this.readPersistedRateLimitCooldown(sessionId)
+              ? { ...options, startQuery: false }
+              : options;
+            await this.restorePostApprovalWorkerSession(taskId, sessionId, session, restoreOptions);
           },
         }),
         s.halt({
