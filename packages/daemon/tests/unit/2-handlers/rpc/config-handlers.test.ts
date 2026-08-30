@@ -95,6 +95,7 @@ function createMockAgentSession(configOverrides: Partial<Session['config']> = {}
     setPermissionMode: mock(async () => ({ success: true })),
     updateConfig: mock(async () => {}),
     updateUserMcpServers: mock(async () => {}),
+    isQueryActiveOrStarting: mock(() => true),
     resetQuery: mock(async () => ({ success: true })),
     getMcpServerStatus: mock(async () => ({})),
   };
@@ -308,6 +309,29 @@ describe('SDK Config RPC Handlers', () => {
       );
 
       expect(result).toEqual({ success: true, applied: true });
+    });
+
+    it('starts a dormant session through the barrier instead of a no-op restart', async () => {
+      const handler = messageHubData.handlers.get('config.systemPrompt.update');
+      expect(handler).toBeDefined();
+
+      const { agentSession, mocks } = createMockAgentSession();
+      mocks.isQueryActiveOrStarting.mockReturnValueOnce(false);
+      sessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
+      sessionManagerData.getSessionAsyncMock.mockClear();
+
+      const result = await handler!(
+        {
+          sessionId: 'session-123',
+          systemPrompt: 'New prompt',
+          restartQuery: true,
+        },
+        {}
+      );
+
+      expect(result).toEqual({ success: true, applied: true });
+      expect(mocks.resetQuery).not.toHaveBeenCalled();
+      expect(sessionManagerData.getSessionAsyncMock).toHaveBeenCalledWith('session-123');
     });
 
     it('handles restart failure', async () => {

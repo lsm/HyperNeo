@@ -107,6 +107,17 @@ export function setupRewindHandlers(
       mode = 'both',
     } = data as SelectiveRewindRequest & { mode?: RewindMode };
 
+    if (messageIds.length === 0) {
+      return {
+        result: {
+          success: false,
+          error: 'No messages selected',
+          messagesDeleted: 0,
+          filesReverted: [],
+        },
+      };
+    }
+
     const agentSession = await sessionManager.getSessionAsync(sessionId, {
       replayPendingMessages: false,
     });
@@ -115,17 +126,6 @@ export function setupRewindHandlers(
         result: {
           success: false,
           error: 'Session not found',
-          messagesDeleted: 0,
-          filesReverted: [],
-        },
-      };
-    }
-
-    if (messageIds.length === 0) {
-      return {
-        result: {
-          success: false,
-          error: 'No messages selected',
           messagesDeleted: 0,
           filesReverted: [],
         },

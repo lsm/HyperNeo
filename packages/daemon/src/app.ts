@@ -939,10 +939,13 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
-        getSession: async (sessionId: string) =>
-          taskAgentManager?.getSubSession(sessionId) ??
-          (await sessionManager?.getSessionAsync(sessionId)) ??
-          null,
+        getSession: async (sessionId: string) => {
+          const indexed = taskAgentManager?.getSubSession(sessionId);
+          if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {
+            return indexed;
+          }
+          return (await sessionManager?.getSessionAsync(sessionId)) ?? null;
+        },
         getMessageContent: (sessionId: string, messageUuid: string) =>
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
         isSessionArchived: (sessionId: string) =>

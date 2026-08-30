@@ -27,6 +27,7 @@ import type {
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import type { AgentSession } from '../agent/agent-session.ts';
 import type { SessionManager } from '../session-manager.ts';
 import {
   validateSystemPromptConfig,
@@ -41,6 +42,18 @@ import {
 } from '../config-validators.ts';
 
 const log = new Logger('config-handlers');
+
+async function restartQueryForConfig(
+  sessionManager: SessionManager,
+  sessionId: string,
+  agentSession: AgentSession
+): Promise<{ success: boolean; error?: string }> {
+  if (agentSession.isQueryActiveOrStarting()) {
+    return agentSession.resetQuery({ restartQuery: true });
+  }
+  await sessionManager.getSessionAsync(sessionId);
+  return { success: true };
+}
 
 export function setupConfigHandlers(
   messageHub: MessageHub,
@@ -150,7 +163,7 @@ export function setupConfigHandlers(
     await agentSession.updateConfig({ systemPrompt });
 
     if (restartQuery) {
-      const result = await agentSession.resetQuery({ restartQuery: true });
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
       if (!result.success) {
         return {
           success: false,
@@ -201,7 +214,7 @@ export function setupConfigHandlers(
     await agentSession.updateConfig(configUpdate);
 
     if (restartQuery) {
-      const result = await agentSession.resetQuery({ restartQuery: true });
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
       if (!result.success) {
         return {
           success: false,
@@ -243,7 +256,7 @@ export function setupConfigHandlers(
     await agentSession.updateConfig({ agents });
 
     if (restartQuery) {
-      const result = await agentSession.resetQuery({ restartQuery: true });
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
       if (!result.success) {
         return {
           success: false,
@@ -285,7 +298,7 @@ export function setupConfigHandlers(
     await agentSession.updateConfig({ sandbox });
 
     if (restartQuery) {
-      const result = await agentSession.resetQuery({ restartQuery: true });
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
       if (!result.success) {
         return {
           success: false,
@@ -339,7 +352,7 @@ export function setupConfigHandlers(
     }
 
     if (restartQuery) {
-      const result = await agentSession.resetQuery({ restartQuery: true });
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
       if (!result.success) {
         return {
           success: false,
@@ -379,7 +392,7 @@ export function setupConfigHandlers(
     await agentSession.updateUserMcpServers(updatedServers);
 
     if (restartQuery) {
-      const result = await agentSession.resetQuery({ restartQuery: true });
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
       if (!result.success) {
         return {
           success: false,
@@ -421,7 +434,7 @@ export function setupConfigHandlers(
     await agentSession.updateUserMcpServers(currentSubprocessServers);
 
     if (restartQuery) {
-      const result = await agentSession.resetQuery({ restartQuery: true });
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
       if (!result.success) {
         return {
           success: false,
@@ -467,7 +480,7 @@ export function setupConfigHandlers(
     });
 
     if (restartQuery) {
-      const result = await agentSession.resetQuery({ restartQuery: true });
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
       if (!result.success) {
         return {
           success: false,
@@ -509,7 +522,7 @@ export function setupConfigHandlers(
     await agentSession.updateConfig({ betas });
 
     if (restartQuery) {
-      const result = await agentSession.resetQuery({ restartQuery: true });
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
       if (!result.success) {
         return {
           success: false,
@@ -556,7 +569,7 @@ export function setupConfigHandlers(
     await agentSession.updateConfig(settings);
 
     if (restartQuery) {
-      const result = await agentSession.resetQuery({ restartQuery: true });
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
       if (!result.success) {
         return {
           success: false,
@@ -692,7 +705,7 @@ export function setupConfigHandlers(
       await agentSession.updateConfig(configToUpdate as Partial<Session['config']>);
 
       if (restartQuery) {
-        const result = await agentSession.resetQuery({ restartQuery: true });
+        const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
         if (result.success) {
           results.applied.push(...remainingKeys);
         } else {
