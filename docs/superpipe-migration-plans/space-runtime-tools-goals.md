@@ -1816,7 +1816,7 @@ The slices follow the `Suggested migration order` phases and together cover ever
 ### P46-R — `refactor(space): wire daemon-startup prepared-fence reconciliation`
 
 - 🔧 apply — prod Δ ≲40, test Δ ≲60
-- **Scope**: Wires the PREPARED/ENQUEUED fence reconciler into daemon startup (P46 is additive/unwired and P46-W wires only worker-completion finalization — no declared slice otherwise invokes the reconciler, so a crash after PREPARED but before enqueue blocks P44 forever).
+- **Scope**: Wires the PREPARED/ENQUEUED fence reconciler into daemon startup (P46 is additive/unwired and the finalizer wiring lives in P46-W2/P46-W3, not P46-W — no declared slice otherwise invokes the reconciler, so a crash after PREPARED but before enqueue blocks P44 forever).
 - **Depends on**: P46.
 
 ### P46-W2 — `refactor(space): wire finalizePostApprovalDispatch into the completion paths`
