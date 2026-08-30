@@ -183,3 +183,63 @@ describe('question handlers — session routing', () => {
     });
   });
 });
+
+describe('question handlers — workflow provisioning gate', () => {
+  let mockHub: ReturnType<typeof createMockMessageHub>;
+  let daemonHub: DaemonHub;
+
+  beforeEach(() => {
+    mockHub = createMockMessageHub();
+    daemonHub = createMockDaemonHub();
+  });
+
+  it('rejects question.respond when workflow provisioning was skipped', async () => {
+    const sessionManager = createMockSessionManager({
+      getSessionData: () => ({ id: 'space:s1:task:t1:exec:e1', config: {} }),
+    } as unknown as AgentSession);
+    setupQuestionHandlers(mockHub.hub, sessionManager, daemonHub, () => undefined);
+
+    await expect(
+      mockHub.handlers.get('question.respond')!({
+        sessionId: 'space:s1:task:t1:exec:e1',
+        toolUseId: 'tool-1',
+        responses: [],
+      })
+    ).rejects.toThrow('not resumable');
+  });
+
+  it('rejects question.cancel when workflow provisioning was skipped', async () => {
+    const sessionManager = createMockSessionManager({
+      getSessionData: () => ({ id: 'space:s1:task:t1:exec:e1', config: {} }),
+    } as unknown as AgentSession);
+    setupQuestionHandlers(mockHub.hub, sessionManager, daemonHub, () => undefined);
+
+    await expect(
+      mockHub.handlers.get('question.cancel')!({
+        sessionId: 'space:s1:task:t1:exec:e1',
+        toolUseId: 'tool-1',
+      })
+    ).rejects.toThrow('not resumable');
+  });
+
+  it('allows question.respond for a provisioned workflow session', async () => {
+    const handleQuestionResponse = mock(async () => {});
+    const sessionManager = createMockSessionManager({
+      getSessionData: () => ({
+        id: 'space:s1:task:t1:exec:e1',
+        config: { mcpServers: { 'node-agent': { type: 'sdk' } } },
+      }),
+      handleQuestionResponse,
+    } as unknown as AgentSession);
+    setupQuestionHandlers(mockHub.hub, sessionManager, daemonHub, () => undefined);
+
+    const result = (await mockHub.handlers.get('question.respond')!({
+      sessionId: 'space:s1:task:t1:exec:e1',
+      toolUseId: 'tool-1',
+      responses: [],
+    })) as { success: boolean };
+
+    expect(result).toEqual({ success: true });
+    expect(handleQuestionResponse).toHaveBeenCalledWith('tool-1', []);
+  });
+});

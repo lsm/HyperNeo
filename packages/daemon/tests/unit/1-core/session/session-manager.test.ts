@@ -470,6 +470,39 @@ describe('SessionManager', () => {
       expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(2);
     });
 
+    it('resolves message persistence without starting restored workflow queries', async () => {
+      const sessionId = 'space:s1:task:t1:exec:e21';
+      const worker = makeWorkerFake(sessionId);
+      sessionManager.registerSession(worker);
+
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock(
+          async (
+            session: AgentSession,
+            options?: { onReplaySettled?: (succeeded: boolean) => void }
+          ) => {
+            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            options?.onReplaySettled?.(true);
+          }
+        ),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const resolve = (
+        sessionManager as unknown as {
+          getSessionForMessagePersistence: (id: string) => Promise<AgentSession | null>;
+        }
+      ).getSessionForMessagePersistence.bind(sessionManager);
+      const session = await resolve(sessionId);
+
+      expect(session).toBe(worker);
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(
+        worker,
+        expect.objectContaining({ startQuery: false, replayPendingMessages: false })
+      );
+    });
+
     it('retries replay when workflow provisioning reports failure', async () => {
       const sessionId = 'space:s1:task:t1:exec:e12';
       const worker = makeWorkerFake(sessionId);

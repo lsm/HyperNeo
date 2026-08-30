@@ -544,7 +544,10 @@ export class SessionManager {
   }
 
   private async getSessionForMessagePersistence(sessionId: string): Promise<AgentSession | null> {
-    const session = await this.getSessionAsync(sessionId);
+    const session = await this.getSessionAsync(sessionId, {
+      startQuery: false,
+      replayPendingMessages: false,
+    });
     if (!session) return null;
     if (
       this.isWorkflowSubSession(session) &&
