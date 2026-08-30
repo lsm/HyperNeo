@@ -1506,6 +1506,31 @@ describe('AgentSession', () => {
       expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
     });
 
+    it('cancelRateLimitRetry settles every bundled message of a batched turn', async () => {
+      const cancelDelivery = mock(() => true);
+      const markDeliveryFailedByUuid = mock((uuid: string) => `db-${uuid}`);
+      mockDb.getJobQueueRepo = mock(
+        () =>
+          ({
+            cancelDelivery,
+            getActiveDeliveryBatchUuids: mock(() => ['msg-owning-turn', 'msg-bundled']),
+          }) as never
+      );
+      mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid }) as never);
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
+        getState: mock(() => ({
+          lastUserMessage: { uuid: 'msg-owning-turn', content: 'hi' },
+        })),
+      } as never;
+
+      agentSession.cancelRateLimitRetry();
+
+      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
+      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
+      expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-bundled');
+    });
+
     it('retryNowAfterRateLimit releases every parked delivery for the session', async () => {
       const rescheduleSessionDeliveries = mock(() => true);
       mockDb.getJobQueueRepo = mock(

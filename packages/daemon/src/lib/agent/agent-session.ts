@@ -1232,15 +1232,25 @@ export class AgentSession
     );
     if (owningTurnMessageId) {
       try {
-        this.db.getJobQueueRepo()?.cancelDelivery(this.session.id, owningTurnMessageId);
-        const settledDbId = this.db
-          .getSDKMessageRepo()
-          ?.markDeliveryFailedByUuid?.(this.session.id, owningTurnMessageId);
-        if (settledDbId) {
+        const jobQueue = this.db.getJobQueueRepo();
+        const sdkRepo = this.db.getSDKMessageRepo();
+        const batchUuids = jobQueue?.getActiveDeliveryBatchUuids?.(
+          this.session.id,
+          owningTurnMessageId
+        );
+        jobQueue?.cancelDelivery(this.session.id, owningTurnMessageId);
+        const uuidsToSettle =
+          batchUuids && batchUuids.length > 0 ? batchUuids : [owningTurnMessageId];
+        const settledDbIds: string[] = [];
+        for (const uuid of uuidsToSettle) {
+          const settledDbId = sdkRepo?.markDeliveryFailedByUuid?.(this.session.id, uuid);
+          if (settledDbId) settledDbIds.push(settledDbId);
+        }
+        if (settledDbIds.length > 0) {
           void this.internalEventBus
             .publish('messages.statusChanged', {
               sessionId: this.session.id,
-              messageIds: [settledDbId],
+              messageIds: settledDbIds,
               status: 'failed',
             })
             .catch(() => {});
