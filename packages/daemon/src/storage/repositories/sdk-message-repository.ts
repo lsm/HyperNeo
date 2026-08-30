@@ -1424,6 +1424,17 @@ export class SDKMessageRepository {
     return row ? inflatePersistedMessage(row) : null;
   }
 
+  hasConsumptionEvidence(sessionId: string, uuid: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+         WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ? AND consumed_seq IS NOT NULL
+         LIMIT 1`
+      )
+      .get(sessionId, uuid);
+    return row !== null && row !== undefined;
+  }
+
   getMessageByStatusAndDbId(
     sessionId: string,
     status: SendStatus,

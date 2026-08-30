@@ -33,7 +33,10 @@ import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
 } from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
+import {
+  encodeActorIdComponent,
+  longTermAgentSessionId,
+} from '../../../../src/lib/space/long-term-agent-session.ts';
 import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceAgentManager as AgentMgr } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -45,6 +48,7 @@ import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-run
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
+import type { SpaceAgentInboxMessageRecord } from '../../../../src/storage/repositories/space-agent-inbox-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
@@ -1825,6 +1829,7 @@ describe('SpaceRuntimeService', () => {
           uuid: 'delivery-1',
           session_id: sessionId,
           parent_tool_use_id: null,
+          isSynthetic: true,
           message: { role: 'user', content: [{ type: 'text', text: 'event payload' }] },
         },
         'enqueued'
@@ -1865,6 +1870,88 @@ describe('SpaceRuntimeService', () => {
         )
         .get();
       expect(job).toBeNull();
+      db.close();
+    });
+
+    test('long-horizon crash-retry rejects a consumed id reused with different content', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const createdSession = {
+        ...makeSession(),
+        getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} })),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      } as unknown as AgentSession;
+      const sessionManager = makeSessionManager(null);
+      (
+        sessionManager.createSession as Mock<typeof sessionManager.createSession>
+      ).mockImplementation(async () => sessionId);
+      (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(createdSession);
+      const longHorizonAgentRepo = {
+        getCoordinator: mock(() => null),
+        getById: mock(() => ({
+          id: 'lh-agent-1',
+          spaceId: mockSpace.id,
+          handle: 'mcp-agent',
+          displayName: 'MCP Agent',
+          templateKey: null,
+          status: 'active',
+          sessionId: null,
+          instructions: 'Do work.',
+          autonomyLevel: null,
+          model: null,
+          thinkingLevel: null,
+          provider: null,
+          settingSources: null,
+          toolPermissions: {},
+          createdAt: NOW,
+          updatedAt: NOW,
+        })),
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const { reactiveDb, db } = await buildDurableDeliveryReactiveDb();
+      seedSessionForDelivery(db, sessionId);
+      db.saveUserMessage(
+        sessionId,
+        {
+          type: 'user',
+          uuid: 'delivery-1',
+          session_id: sessionId,
+          parent_tool_use_id: null,
+          isSynthetic: true,
+          message: { role: 'user', content: [{ type: 'text', text: 'original payload' }] },
+        },
+        'enqueued'
+      );
+      db.getSDKMessageRepo().markDeliveryConsumedByUuid(sessionId, 'delivery-1');
+
+      const svc = new SpaceRuntimeService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        longHorizonAgentRepo,
+      });
+
+      await expect(
+        (
+          svc as unknown as {
+            deliverLongHorizonExternalEvent(args: {
+              spaceId: string;
+              agentId: string;
+              message: string;
+              idempotencyKey: string;
+            }): Promise<{ delivered: boolean }>;
+          }
+        ).deliverLongHorizonExternalEvent({
+          spaceId: mockSpace.id,
+          agentId: 'lh-agent-1',
+          message: 'conflicting payload',
+          idempotencyKey: 'delivery-1',
+        })
+      ).rejects.toThrow('different content');
+      expect(db.getSDKMessageRepo().getDeliveryContent(sessionId, 'delivery-1')?.sendStatus).toBe(
+        'consumed'
+      );
       db.close();
     });
 
@@ -2420,6 +2507,167 @@ describe('SpaceRuntimeService', () => {
             'goal-outcome:notif-1'
           )
       ).toBeNull();
+      db.close();
+    });
+  });
+
+  describe('flushLongTermAgentInbox() — settles on the mailbox terminal outcome', () => {
+    const agentId = 'agent-1';
+    const sessionId = longTermAgentSessionId(mockSpace.id, agentId);
+
+    interface FlushTargetSession {
+      getSessionData(): Session;
+      ensureQueryStarted(): Promise<void>;
+      messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
+    }
+
+    interface MockedInboxRepo {
+      expireStale: Mock<() => number>;
+      listPendingForAgent: Mock<
+        (spaceId: string, targetAgentId: string) => SpaceAgentInboxMessageRecord[]
+      >;
+      markDelivered: Mock<(id: string, sessionId: string) => void>;
+      markAttemptFailed: Mock<(id: string, error: string) => SpaceAgentInboxMessageRecord | null>;
+    }
+
+    async function buildDurableDeliveryReactiveDb(): Promise<{
+      reactiveDb: SpaceRuntimeServiceConfig['reactiveDb'];
+      db: StorageDatabase;
+    }> {
+      const db = await createTestDb();
+      return { reactiveDb: { db } as unknown as SpaceRuntimeServiceConfig['reactiveDb'], db };
+    }
+
+    function seedSessionForDelivery(db: StorageDatabase, sid: string): void {
+      const session = createTestSession(sid);
+      session.type = 'space_chat';
+      db.createSession(session);
+    }
+
+    function makeInboxRow(overrides: Partial<SpaceAgentInboxMessageRecord> = {}) {
+      return {
+        id: 'inbox-1',
+        spaceId: mockSpace.id,
+        targetAgentId: agentId,
+        sourceActorId: 'agent:worker-1',
+        sourceSessionId: null,
+        message: 'catch up on the rolling goal',
+        messageRecordJson: null,
+        idempotencyKey: 'wake-1',
+        attempts: 0,
+        maxAttempts: 5,
+        lastAttemptAt: null,
+        lastError: null,
+        status: 'pending',
+        deliveredAt: null,
+        deliveredSessionId: null,
+        expiresAt: NOW + 60_000,
+        createdAt: NOW,
+        ...overrides,
+      } as SpaceAgentInboxMessageRecord;
+    }
+
+    function makeInboxRepo(rows: SpaceAgentInboxMessageRecord[]): MockedInboxRepo {
+      return {
+        expireStale: mock(() => 0),
+        listPendingForAgent: mock(() => rows),
+        markDelivered: mock(() => {}),
+        markAttemptFailed: mock(() => null),
+      };
+    }
+
+    function makeFlushSession(sid: string): FlushTargetSession {
+      return {
+        getSessionData: mock(() => ({ id: sid, metadata: {}, config: {} }) as Session),
+        ensureQueryStarted: mock(async () => {}),
+        messageQueue: { enqueueWithId: mock(async () => {}) },
+      };
+    }
+
+    async function runFlush(
+      svc: SpaceRuntimeService,
+      session: FlushTargetSession = makeFlushSession(sessionId)
+    ): Promise<void> {
+      await (
+        svc as unknown as {
+          flushLongTermAgentInbox: (actor: ActorRef, session: FlushTargetSession) => Promise<void>;
+        }
+      ).flushLongTermAgentInbox(
+        {
+          actorId: `agent:${encodeActorIdComponent(agentId)}`,
+          kind: 'agent',
+          spaceId: mockSpace.id,
+          roles: ['space-agent'],
+          status: 'inactive',
+        },
+        session
+      );
+    }
+
+    test('keeps the inbox row pending at acceptance and delivers it once the mailbox consumes', async () => {
+      const { reactiveDb, db } = await buildDurableDeliveryReactiveDb();
+      seedSessionForDelivery(db, sessionId);
+      const inboxRepo = makeInboxRepo([makeInboxRow()]);
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        spaceAgentInboxRepo:
+          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
+      });
+
+      await runFlush(svc);
+
+      expect(db.getSDKMessageRepo().getDeliveryContent(sessionId, 'wake-1')?.sendStatus).toBe(
+        'enqueued'
+      );
+      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
+      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
+
+      const enqueued = db
+        .getSDKMessageRepo()
+        .getMessageByStatusAndUuid(sessionId, 'enqueued', 'wake-1');
+      if (!enqueued) throw new Error('expected an enqueued SDK row for wake-1');
+      db.getSDKMessageRepo().updateMessageStatus([enqueued.dbId], 'consumed');
+
+      await runFlush(svc);
+
+      expect(inboxRepo.markDelivered).toHaveBeenCalledTimes(1);
+      expect(inboxRepo.markDelivered).toHaveBeenCalledWith('inbox-1', sessionId);
+      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
+      db.close();
+    });
+
+    test('marks the inbox row attempt-failed when the mailbox row dead-letters', async () => {
+      const { reactiveDb, db } = await buildDurableDeliveryReactiveDb();
+      seedSessionForDelivery(db, sessionId);
+      const inboxRepo = makeInboxRepo([makeInboxRow()]);
+      const internalEventBus = {
+        subscribe: mock(() => () => {}),
+        publish: mock(async (_topic: string, payload: { messageIds: string[]; status: string }) => {
+          if (payload.status === 'enqueued') {
+            db.getSDKMessageRepo().updateMessageStatus(payload.messageIds, 'failed');
+          }
+        }),
+      } as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        reactiveDb,
+        internalEventBus,
+        spaceAgentInboxRepo:
+          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
+      });
+
+      await runFlush(svc);
+
+      expect(db.getSDKMessageRepo().getDeliveryContent(sessionId, 'wake-1')?.sendStatus).toBe(
+        'failed'
+      );
+      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
+      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledTimes(1);
+      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
+        'inbox-1',
+        expect.stringContaining('wake-1')
+      );
       db.close();
     });
   });

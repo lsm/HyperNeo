@@ -425,4 +425,36 @@ describe('idle coordinator message consumption (issue #2963)', () => {
       .get() as { sdk_message: string };
     expect(stored.sdk_message).toContain('original escalation');
   });
+
+  it('rejects a consumed id reused with different content as a no-op success', async () => {
+    const harness = await makeIdleCoordinatorHarness();
+    track(harness, harness.agentSession.getSessionData().workspacePath);
+    const { db } = harness;
+    db.saveUserMessage(
+      SESSION_ID,
+      {
+        type: 'user',
+        uuid: 'msg-consumed-1',
+        session_id: SESSION_ID,
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'already delivered escalation' }],
+        },
+      } as unknown as SDKUserMessage,
+      'enqueued'
+    );
+    db.getSDKMessageRepo().markDeliveryConsumedByUuid(SESSION_ID, 'msg-consumed-1');
+
+    const outcome = await harness.escalate('msg-consumed-1', 'conflicting retry content');
+
+    expect(outcome.state).toBe('failed');
+    if (outcome.state === 'failed') {
+      expect(outcome.error).toContain('different content');
+    }
+    expect(
+      db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-consumed-1')?.sendStatus
+    ).toBe('consumed');
+  });
 });

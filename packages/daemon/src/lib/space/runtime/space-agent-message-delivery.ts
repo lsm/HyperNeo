@@ -10,7 +10,10 @@ import {
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { PromptContentConflictError } from '../../agent/message-delivery-outbox.ts';
+import {
+  PromptContentConflictError,
+  verifyPromptContent,
+} from '../../agent/message-delivery-outbox.ts';
 import { handoffPromptToMailbox } from './injection-delivery-steps.ts';
 
 const log = new Logger('space-agent-delivery');
@@ -173,6 +176,12 @@ function loadExistingRow(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
 
 function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
   if (ctx.existing?.sendStatus !== 'consumed') return ctx;
+  verifyPromptContent({
+    db: ctx.deps.db,
+    sessionId: ctx.sessionId,
+    messageUuid: ctx.messageId,
+    message: ctx.sdkUserMessage,
+  });
   return {
     ...ctx,
     outcome: { state: 'accepted', messageId: ctx.messageId, sessionId: ctx.sessionId },

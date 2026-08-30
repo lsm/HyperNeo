@@ -22,6 +22,7 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
 import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
+import { verifyPromptContent } from '../../../lib/agent/message-delivery-outbox.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
@@ -4317,6 +4318,14 @@ export class TaskAgentManager {
     const deliveryRows = this.injectDeliveryRowDeps();
 
     if (outcome.decision.action === 'noop') {
+      if (existing?.sendStatus === 'consumed') {
+        verifyPromptContent({
+          db: this.config.db.getDatabase(),
+          sessionId,
+          messageUuid: messageId,
+          message: sdkUserMessage,
+        });
+      }
       return messageId;
     }
     if (outcome.decision.action === 'defer') {

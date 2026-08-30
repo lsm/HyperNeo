@@ -41,6 +41,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { AgentSession } from '../../agent/agent-session.ts';
+import { verifyPromptContent } from '../../agent/message-delivery-outbox.ts';
 import { handoffPromptToMailbox } from './injection-delivery-steps.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
@@ -414,8 +415,8 @@ export class SpaceRuntimeService {
       if (row !== null && row !== undefined && row.sendStatus === 'failed') {
         const consumed = this.config.reactiveDb?.db
           .getSDKMessageRepo()
-          .getMessageByStatusAndUuid(sessionId, 'consumed', args.idempotencyKey);
-        return consumed !== null ? 'terminal_failure_after_consumption' : 'terminal_failure';
+          .hasConsumptionEvidence(sessionId, args.idempotencyKey);
+        return consumed ? 'terminal_failure_after_consumption' : 'terminal_failure';
       }
       return 'accepted';
     } catch {
@@ -627,12 +628,38 @@ export class SpaceRuntimeService {
           inboxRepo.markDelivered(row.id, session.getSessionData().id);
           continue;
         }
-        await this.injectLongTermAgentMessage(session, row.message, row.idempotencyKey ?? row.id);
-        inboxRepo.markDelivered(row.id, session.getSessionData().id);
+        const messageId = await this.injectLongTermAgentMessage(
+          session,
+          row.message,
+          row.idempotencyKey ?? row.id
+        );
+        const sessionId = session.getSessionData().id;
+        const delivery = this.classifyLongTermAgentDelivery(sessionId, messageId);
+        if (delivery === 'consumed') {
+          inboxRepo.markDelivered(row.id, sessionId);
+        } else if (delivery === 'dead') {
+          inboxRepo.markAttemptFailed(row.id, `mailbox delivery failed for message ${messageId}`);
+        }
       } catch (err) {
         inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
       }
     }
+  }
+
+  private classifyLongTermAgentDelivery(
+    sessionId: string,
+    messageId: string
+  ): 'consumed' | 'pending' | 'dead' {
+    const sdkMessageRepo = this.config.reactiveDb?.db.getSDKMessageRepo();
+    if (!sdkMessageRepo) return 'pending';
+    if (sdkMessageRepo.getMessageByStatusAndUuid(sessionId, 'consumed', messageId)) {
+      return 'consumed';
+    }
+    if (sdkMessageRepo.getMessageByStatusAndUuid(sessionId, 'failed', messageId)) return 'dead';
+    const sendStatus = sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
+    if (sendStatus === 'failed') return 'dead';
+    if (sendStatus === 'consumed') return 'consumed';
+    return 'pending';
   }
 
   private isGoalOutcomeWakeStale(row: SpaceAgentInboxMessageRecord): boolean {
@@ -688,7 +715,15 @@ export class SpaceRuntimeService {
     }
     const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
     const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
-    if (existing?.sendStatus === 'consumed') return id;
+    if (existing?.sendStatus === 'consumed') {
+      verifyPromptContent({
+        db: reactiveDb.getDatabase(),
+        sessionId,
+        messageUuid: id,
+        message: sdkUserMessage,
+      });
+      return id;
+    }
     await handoffPromptToMailbox({
       db: reactiveDb.getDatabase(),
       sdkMessageRepo,
