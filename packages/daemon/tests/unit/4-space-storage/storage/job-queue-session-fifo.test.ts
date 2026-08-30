@@ -405,6 +405,33 @@ describe('JobQueueProcessor — session-fifo dequeue mode (dark launch)', () => 
     }
   });
 
+  it('rejects session-fifo registrations combining exemptJobs with a releasedPath', () => {
+    expect(() =>
+      processor.register('message_delivery', async () => {}, {
+        exemptJobs: { path: '$.role', equals: 'steer' },
+        dequeueMode: { kind: 'session-fifo', releasedPath: '$.released' },
+      })
+    ).toThrow();
+  });
+
+  it('rejects session-fifo registrations combining exemptJobs with a non-default sessionIdPath', () => {
+    expect(() =>
+      processor.register('message_delivery', async () => {}, {
+        exemptJobs: { path: '$.role', equals: 'steer' },
+        dequeueMode: { kind: 'session-fifo', sessionIdPath: '$.chat' },
+      })
+    ).toThrow();
+  });
+
+  it('accepts session-fifo registrations with exemptJobs on the default sessionId path', () => {
+    expect(() =>
+      processor.register('message_delivery', async () => {}, {
+        exemptJobs: { path: '$.role', equals: 'steer' },
+        dequeueMode: { kind: 'session-fifo', sessionIdPath: '$.sessionId' },
+      })
+    ).not.toThrow();
+  });
+
   it('two concurrent ticks cannot double-claim the same session job', async () => {
     const claimedIds: string[] = [];
     const other = new JobQueueProcessor(repo, { pollIntervalMs: 60_000, maxConcurrent: 2 });

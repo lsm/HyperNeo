@@ -205,6 +205,19 @@ export class JobQueueProcessor {
   }
 
   register(queue: string, handler: JobHandler, options?: RegisterOptions): void {
+    const dequeueMode = options?.dequeueMode;
+    if (
+      dequeueMode?.kind === 'session-fifo' &&
+      options?.exemptJobs &&
+      (dequeueMode.releasedPath !== undefined ||
+        (dequeueMode.sessionIdPath !== undefined && dequeueMode.sessionIdPath !== '$.sessionId'))
+    ) {
+      throw new Error(
+        `session-fifo dequeue mode with exemptJobs requires the default sessionId path and no ` +
+          `releasedPath, because exempt admission gates on payload.sessionId and ignores the ` +
+          `release flag (queue: ${queue})`
+      );
+    }
     this.handlers.set(queue, {
       handler,
       exemptJobs: options?.exemptJobs,
