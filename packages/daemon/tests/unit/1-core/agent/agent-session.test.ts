@@ -1233,8 +1233,10 @@ describe('AgentSession', () => {
     it('retryNowAfterRateLimit releases the parked delivery for a persisted episode', async () => {
       const rescheduleDelivery = mock(() => true);
       mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
+      const cancel = mock(() => {});
       const retryNow = mock(() => true);
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel,
         retryNow,
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
       } as never;
@@ -1242,6 +1244,7 @@ describe('AgentSession', () => {
       const resumed = await agentSession.retryNowAfterRateLimit();
 
       expect(resumed).toBe(true);
+      expect(retryNow).not.toHaveBeenCalled();
       expect(rescheduleDelivery).toHaveBeenCalledWith(
         'test-session-id',
         'msg-persisted-episode',
@@ -1260,6 +1263,7 @@ describe('AgentSession', () => {
           }) as never
       );
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
         retryNow: mock(() => true),
         getPersistedEpisodeMessageUuid: () => 'msg-steer-episode',
       } as never;
@@ -1278,6 +1282,7 @@ describe('AgentSession', () => {
       const rescheduleDelivery = mock(() => false);
       mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
         retryNow: mock(() => true),
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
       } as never;

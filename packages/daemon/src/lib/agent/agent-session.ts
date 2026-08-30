@@ -1235,12 +1235,8 @@ export class AgentSession
 
   async retryNowAfterRateLimit(): Promise<boolean> {
     const persistedEpisodeMessageUuid = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
-    const fired = this.rateLimitWatchdog.retryNow();
-    if (!fired && persistedEpisodeMessageUuid === null) {
-      this.logger.warn('retryNowAfterRateLimit: no cooldown retry is pending.');
-      return false;
-    }
     if (persistedEpisodeMessageUuid !== null) {
+      this.rateLimitWatchdog.cancel();
       const owningTurnMessageId = this.resolveRateLimitEpisodeDeliveryUuid(
         persistedEpisodeMessageUuid
       );
@@ -1263,8 +1259,13 @@ export class AgentSession
           return false;
         }
       }
+      return true;
     }
-    return true;
+    const fired = this.rateLimitWatchdog.retryNow();
+    if (!fired) {
+      this.logger.warn('retryNowAfterRateLimit: no cooldown retry is pending.');
+    }
+    return fired;
   }
 
   isRateLimitBannerCancelled(): boolean {
