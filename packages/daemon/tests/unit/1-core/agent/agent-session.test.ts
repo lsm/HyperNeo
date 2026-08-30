@@ -1963,6 +1963,117 @@ describe('AgentSession', () => {
       expect(narrowSpy.mock.calls[0]).toEqual(['test-session-id', 'kick-only', ['kick-only']]);
     });
 
+    it('an ACP batch publishes tool-result consumption for trailing members but not the kickoff', async () => {
+      const toolResultContent = [{ type: 'tool_result', tool_use_id: 'toolu-01', content: 'ok' }];
+      const plainText = [{ type: 'text', text: 'member text' }];
+      const rows: Record<string, unknown> = {};
+      const getMessageByStatusAndUuid = mock((_sessionId: string, status: string, uuid: string) =>
+        status === 'consumed' && rows[uuid] ? rows[uuid] : null
+      );
+      mockDb.getMessageByStatusAndUuid = getMessageByStatusAndUuid;
+      const published: Array<Record<string, unknown>> = [];
+      mockInternalEventBus = {
+        publish: mock(async (topic: string, payload: Record<string, unknown>) => {
+          if (topic === 'sdk.toolUse.consumed') published.push(payload);
+        }),
+        publishAsync: mock(() => {}),
+        subscribe: mock(() => () => {}),
+      } as unknown as InternalEventBus<any>;
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sid: string, uuid: string) => ({
+          content: uuid === 'kick-acp' ? 'kickoff' : 'member text',
+          sendStatus: 'enqueued',
+        })),
+        markDeliveryConsumedByUuids: mock((_sessionId: string, uuids: string[]) => {
+          for (const uuid of uuids) {
+            rows[uuid] = {
+              dbId: `db-${uuid}`,
+              uuid,
+              type: 'user',
+              timestamp: 1,
+              message: {
+                role: 'user',
+                content: uuid === 'member-acp-tool' ? toolResultContent : plainText,
+              },
+            };
+          }
+          return uuids.map((uuid) => `db-${uuid}`);
+        }),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        updateDeliveryBatchUuidsFenced: mock(() => ({
+          applied: true,
+          priorBatchUuids: ['kick-acp', 'member-acp-tool'],
+          priorDroppedBatchUuids: [],
+        })),
+      }));
+      const acpSession = new AgentSession(
+        { ...mockSession, config: { ...mockSession.config, provider: 'acp' } as SessionConfig },
+        mockDb,
+        mockMessageHub,
+        mockInternalEventBus,
+        mockGetApiKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { autoReplayPendingMessages: false }
+      );
+      acpSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (acpSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const kickoffAck = Promise.withResolvers<void>();
+      const memberToolMessage = {
+        dbId: 'db-member-acp-tool',
+        uuid: 'member-acp-tool',
+        type: 'user',
+        timestamp: 1,
+        message: { role: 'user', content: toolResultContent },
+      };
+      rows['kick-acp'] = {
+        dbId: 'db-kick-acp',
+        uuid: 'kick-acp',
+        type: 'user',
+        timestamp: 1,
+        message: { role: 'user', content: plainText },
+      };
+      (acpSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => Promise.resolve()),
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => false),
+        size: mock(() => 0),
+      };
+
+      let driveError: unknown = null;
+      const drive = acpSession
+        .driveDeliveryTurn(
+          'kick-acp',
+          'estimate',
+          null,
+          false,
+          () => true,
+          ['kick-acp', 'member-acp-tool'],
+          undefined,
+          undefined,
+          'claim-acp-1'
+        )
+        .catch((error: unknown) => {
+          driveError = error;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      rows['member-acp-tool'] = memberToolMessage;
+      kickoffAck.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      signalDeliveryConsumed('test-session-id', 'kick-acp');
+      await drive;
+      expect(driveError).toBeNull();
+
+      const toolUseIds = published.map((p) => p.toolUseId);
+      expect(toolUseIds).toContain('toolu-01');
+      expect(toolUseIds.filter((id) => id === 'toolu-01')).toHaveLength(1);
+    });
+
     it('driveDeliveryTurn narrows the batch claim-fenced when a delivery claim token is present', async () => {
       const fencedSpy = mock(() => ({
         applied: true,
@@ -2069,8 +2180,9 @@ describe('AgentSession', () => {
       expect(admitSpy).not.toHaveBeenCalled();
     });
 
-    it('driveDeliveryTurn neutralizes reused acknowledgment when batch narrowing aborts', async () => {
+    it('driveDeliveryTurn removes the stale pending entry when batch narrowing aborts', async () => {
       const catchSpy = mock(() => Promise.resolve());
+      const removeSpy = mock(() => true);
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock((_sid: string, uuid: string) =>
           uuid === 'kick-reused'
@@ -2092,6 +2204,8 @@ describe('AgentSession', () => {
           acknowledgment: { catch: catchSpy } as unknown as Promise<void>,
           content: 'kickoff',
         })),
+        hasYielded: mock(() => false),
+        remove: removeSpy,
         isRunning: mock(() => false),
         size: mock(() => 1),
       };
@@ -2106,7 +2220,8 @@ describe('AgentSession', () => {
       );
 
       expect(outcome).toEqual({ outcome: 'aborted' });
-      expect(catchSpy).toHaveBeenCalledTimes(1);
+      expect(removeSpy).toHaveBeenCalledWith('kick-reused');
+      expect(catchSpy).not.toHaveBeenCalled();
     });
 
     it('driveDeliveryTurn refuses to feed a reduced batch when narrowing cannot persist', async () => {

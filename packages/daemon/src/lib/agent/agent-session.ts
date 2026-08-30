@@ -2648,9 +2648,12 @@ export class AgentSession
                 this.logger.warn(
                   `delivery: could not narrow active batch for ${messageUuid} in session ${this.session.id}`
                 );
-                this.messageQueue
-                  .waitForPendingOrInFlight(messageUuid)
-                  ?.acknowledgment.catch(() => {});
+                const stale = this.messageQueue.waitForPendingOrInFlight(messageUuid);
+                if (stale && !this.messageQueue.hasYielded?.(messageUuid)) {
+                  this.messageQueue.remove?.(messageUuid);
+                } else {
+                  stale?.acknowledgment.catch(() => {});
+                }
                 return { outcome: 'aborted' };
               }
             }
@@ -2744,7 +2747,15 @@ export class AgentSession
     } catch (error) {
       if (ackTimedOut) {
         deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'ack_timeout');
-        if (!this.messageQueue.hasYielded?.(messageUuid)) {
+        if (this.messageQueue.hasYielded?.(messageUuid)) {
+          await withSessionLock(this.session.id, async () => {
+            this.markDeliveryBatchConsumed(admission.consumedUuids);
+            await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
+            for (const uuid of admission.consumedUuids) {
+              signalDeliveryConsumed(this.session.id, uuid);
+            }
+          });
+        } else {
           this.messageQueue.remove?.(messageUuid);
         }
       }
@@ -2758,7 +2769,7 @@ export class AgentSession
 
     await withSessionLock(this.session.id, async () => {
       this.markDeliveryBatchConsumed(admission.consumedUuids);
-      this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
+      await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
       for (const uuid of admission.consumedUuids) {
         signalDeliveryConsumed(this.session.id, uuid);
       }
@@ -2774,12 +2785,8 @@ export class AgentSession
 
   private async publishToolResultConsumed(sessionId: string, uuids: string[]): Promise<void> {
     if (this.session.config.provider === 'acp') {
-      const kickoffOnly = uuids.length === 1;
-      if (kickoffOnly) return;
-      for (const uuid of uuids.slice(1)) {
-        await this.publishToolResultConsumed(sessionId, [uuid]);
-      }
-      return;
+      if (uuids.length === 1) return;
+      uuids = uuids.slice(1);
     }
     for (const uuid of uuids) {
       const row = this.db.getMessageByStatusAndUuid?.(sessionId, 'consumed', uuid);
