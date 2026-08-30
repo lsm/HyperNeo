@@ -510,6 +510,7 @@ describe('applyRoleAdmission', () => {
 
   test('admits the registry-space families for the space roles', () => {
     const families = [
+      'agents',
       'sessions',
       'workflows',
       'tasks',
@@ -545,6 +546,7 @@ describe('applyRoleAdmission', () => {
 
   test('keeps coordinator-wide registry families out of worker admission', () => {
     const families = [
+      'agents',
       'sessions',
       'workflows',
       'tasks',

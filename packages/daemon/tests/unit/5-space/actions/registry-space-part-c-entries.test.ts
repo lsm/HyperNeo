@@ -135,6 +135,23 @@ const stubExternalEventStore = (record?: { eventId: string }) =>
   }) as unknown as ExternalEventStore;
 
 const EXPECTED_BASE: Array<[string, string, string]> = [
+  ['list_agents', 'agents', 'read'],
+  ['get_agent', 'agents', 'read'],
+  ['create_agent', 'agents', 'mutate'],
+  ['create_agent_from_template', 'agents', 'mutate'],
+  ['list_agent_templates', 'agents', 'read'],
+  ['update_agent', 'agents', 'mutate'],
+  ['pause_agent', 'agents', 'mutate'],
+  ['archive_agent', 'agents', 'mutate'],
+  ['assign_agent_to_goal', 'agents', 'mutate'],
+  ['unassign_agent_from_goal', 'agents', 'mutate'],
+  ['assign_agent_to_forge_scope', 'agents', 'mutate'],
+  ['unassign_agent_from_forge_scope', 'agents', 'mutate'],
+  ['create_agent_reminder', 'agents', 'mutate'],
+  ['list_agent_reminders', 'agents', 'read'],
+  ['subscribe_agent_event', 'agents', 'mutate'],
+  ['unsubscribe_agent_event', 'agents', 'mutate'],
+  ['list_agent_event_subscriptions', 'agents', 'read'],
   ['list_sessions', 'sessions', 'read'],
   ['get_session_detail', 'sessions', 'read'],
   ['get_session_messages', 'sessions', 'read'],

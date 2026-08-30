@@ -80,6 +80,7 @@ export interface DispatchActionCtx extends DispatchActionInput {
 
 const SPACE_ADMISSION_FAMILIES = [
   'space',
+  'agents',
   'sessions',
   'workflows',
   'tasks',

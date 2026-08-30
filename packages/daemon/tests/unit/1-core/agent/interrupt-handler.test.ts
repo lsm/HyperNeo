@@ -5,9 +5,15 @@ import {
 } from '../../../../src/lib/agent/interrupt-handler';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session, MessageHub } from '@hyperneo/shared';
-import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
+import {
+  MESSAGE_DELIVERY,
+  MESSAGE_DELIVERY_MAX_RETRIES,
+} from '../../../../src/lib/agent/message-delivery';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { Logger } from '../../../../src/lib/logger';
+import { createTestDb, createTestSession } from '../../../helpers/database';
 
 describe('InterruptHandler', () => {
   let handler: InterruptHandler;
@@ -856,6 +862,129 @@ describe('InterruptHandler', () => {
       await handler.handleInterrupt();
 
       expect(sdkCloseSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pre-acknowledgment interrupt against a real queue and real delivery rows', () => {
+    interface RealFixture {
+      db: Awaited<ReturnType<typeof createTestDb>>;
+      queue: MessageQueue;
+      handler: InterruptHandler;
+      published: Array<{ channel: string; payload: Record<string, unknown> }>;
+      sendStatusOf: (uuid: string) => string | null | undefined;
+    }
+
+    async function makeRealFixture(sessionId: string): Promise<RealFixture> {
+      const db = await createTestDb();
+      const session = createTestSession(sessionId);
+      db.createSession(session);
+      const queue = new MessageQueue();
+      const published: Array<{ channel: string; payload: Record<string, unknown> }> = [];
+      const bus = {
+        publish: mock(async (channel: string, payload: Record<string, unknown>) => {
+          published.push({ channel, payload });
+        }),
+        publishAsync: mock(async () => {}),
+      };
+      const handler = new InterruptHandler({
+        session,
+        messageHub: mockMessageHub,
+        messageQueue: queue,
+        stateManager: mockStateManager,
+        logger: mockLogger,
+        db,
+        internalEventBus: bus as unknown as InterruptHandlerContext['internalEventBus'],
+        queryObject: null,
+        queryPromise: null,
+        queryAbortController: new AbortController(),
+        processExitedPromise: null,
+      });
+      const sendStatusOf = (uuid: string): string | null | undefined =>
+        (
+          db
+            .getDatabase()
+            .prepare(
+              `SELECT send_status AS s FROM sdk_messages WHERE sdk_uuid = ? AND session_id = ?`
+            )
+            .get(uuid, sessionId) as { s: string | null } | undefined
+        )?.s;
+      return { db, queue, handler, published, sendStatusOf };
+    }
+
+    it('rejects pending entries and settles yielded in-flight entries when the interrupt clears the queue', async () => {
+      const f = await makeRealFixture('sess-int-queue');
+      try {
+        f.queue.start();
+        const inFlight = f.queue.enqueueWithId('int-first', 'in flight', false, { durable: true });
+        const stillQueued = f.queue.enqueueWithId('int-second', 'still queued');
+        const queuedOutcome = stillQueued.then(
+          () => 'resolved',
+          (error: Error) => error.message
+        );
+        const transport = f.queue.messageGenerator('sess-int-queue');
+        const step = await transport.next();
+        expect(step.value.message.uuid).toBe('int-first');
+
+        await f.handler.handleInterrupt();
+
+        await expect(inFlight).resolves.toBeUndefined();
+        expect(await queuedOutcome).toBe('Interrupted by user');
+        expect(f.queue.size()).toBe(0);
+      } finally {
+        f.db.close();
+      }
+    });
+
+    it('fails only enqueued, deferred, and submitted delivery rows and never downgrades a consumed row', async () => {
+      const f = await makeRealFixture('sess-int-routing');
+      try {
+        const sdkRepo = f.db.getSDKMessageRepo();
+        const jobRepo = f.db.getJobQueueRepo();
+        const cases: Array<[string, 'enqueued' | 'deferred' | 'submitted' | 'consumed']> = [
+          ['msg-int-enqueued', 'enqueued'],
+          ['msg-int-deferred', 'deferred'],
+          ['msg-int-submitted', 'submitted'],
+          ['msg-int-consumed', 'consumed'],
+        ];
+        for (const [uuid, sendStatus] of cases) {
+          sdkRepo.saveUserMessage(
+            'sess-int-routing',
+            {
+              type: 'user',
+              uuid,
+              message: { role: 'user', content: `text ${uuid}` },
+            } as unknown as SDKMessage,
+            sendStatus
+          );
+        }
+        jobRepo.enqueue({
+          queue: MESSAGE_DELIVERY,
+          payload: {
+            sessionId: 'sess-int-routing',
+            messageUuid: 'msg-int-enqueued',
+            role: 'turn',
+            origin: 'chat',
+            parentToolUseId: null,
+            batchUuids: cases.map(([uuid]) => uuid),
+          },
+          maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
+        });
+
+        await f.handler.handleInterrupt();
+
+        expect(f.sendStatusOf('msg-int-enqueued')).toBe('failed');
+        expect(f.sendStatusOf('msg-int-deferred')).toBe('failed');
+        expect(f.sendStatusOf('msg-int-submitted')).toBe('failed');
+        expect(f.sendStatusOf('msg-int-consumed')).toBe('consumed');
+        const statusEvents = f.published.filter(
+          (event) => event.channel === 'messages.statusChanged'
+        );
+        expect(statusEvents).toHaveLength(1);
+        expect((statusEvents[0].payload as { messageIds: string[] }).messageIds).toHaveLength(3);
+        expect((statusEvents[0].payload as { status: string }).status).toBe('failed');
+      } finally {
+        f.db.close();
+      }
     });
   });
 });

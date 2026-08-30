@@ -729,6 +729,51 @@ describe('JobQueueRepository', () => {
     });
   });
 
+  describe('claim tokens (dequeue fencing)', () => {
+    it('mints a distinct per-job claim token on dequeue that a fenced complete honors', () => {
+      repository.enqueue({ queue: 'test', payload: { action: 'a' } });
+      repository.enqueue({ queue: 'test', payload: { action: 'b' } });
+
+      const [first, second] = repository.dequeue('test', 2);
+
+      expect(typeof first!.claimToken).toBe('string');
+      expect(first!.claimToken!.length).toBeGreaterThan(0);
+      expect(second!.claimToken).not.toBe(first!.claimToken);
+      expect(repository.getJob(first!.id)?.claimToken).toBe(first!.claimToken);
+      expect(repository.getJob(second!.id)?.claimToken).toBe(second!.claimToken);
+
+      const completed = repository.complete(first!.id, { ok: true }, first!.claimToken);
+      expect(completed?.status).toBe('completed');
+    });
+
+    it('a stale claim cannot complete a job after reclaimStale returned it to pending, and a fresh dequeue mints a new token', () => {
+      const job = repository.enqueue({ queue: 'test', payload: { action: 'run' } });
+      const [claimed] = repository.dequeue('test', 1);
+      expect(claimed!.claimToken).not.toBeNull();
+
+      const threshold = Date.now() + 1000;
+      const reclaimed = repository.reclaimStale(threshold);
+      expect(reclaimed).toHaveLength(1);
+      expect(reclaimed[0].jobId).toBe(job.id);
+      expect(reclaimed[0].claimToken).toBe(claimed!.claimToken);
+      expect(repository.getJob(job.id)?.status).toBe('pending');
+
+      expect(repository.complete(job.id, { ok: true }, claimed!.claimToken)).toBeNull();
+      expect(repository.getJob(job.id)?.status).toBe('pending');
+
+      const [reclaimedJob] = repository.dequeue('test', 1);
+      expect(reclaimedJob!.id).toBe(job.id);
+      expect(reclaimedJob!.claimToken).not.toBeNull();
+      expect(reclaimedJob!.claimToken).not.toBe(claimed!.claimToken);
+      expect(repository.getJob(job.id)?.status).toBe('processing');
+
+      expect(repository.complete(job.id, { ok: true }, claimed!.claimToken)).toBeNull();
+      expect(repository.getJob(job.id)?.status).toBe('processing');
+      const completed = repository.complete(job.id, { ok: true }, reclaimedJob!.claimToken);
+      expect(completed?.status).toBe('completed');
+    });
+  });
+
   describe('reschedulePending', () => {
     it("moves a pending job's run_at (the stale-reclaim jitter seam)", () => {
       const job = repository.enqueue({ queue: 'test', payload: {} });

@@ -613,4 +613,100 @@ describe('delivery-turn admission pipeline (A4b)', () => {
       f.db.close();
     }
   });
+
+  it('TODO(message-delivery redesign): a durable kickoff settled by the queue yield timeout is currently marked consumed exactly like a real send acceptance — tripwire: rewrite when the timeout stops counting as acceptance', async () => {
+    const f = await makeFixture();
+    try {
+      const kickoff = 'msg-timeout-acceptance';
+      saveDeliveryRow(f.sdkRepo, kickoff, 'kickoff text');
+      setQueryPromise(f.agentSession);
+      f.agentSession.messageQueue.overrideTimeoutMsForTest(25);
+      const abort = new AbortController();
+
+      const drive = f.agentSession.driveDeliveryTurn(
+        kickoff,
+        'kickoff text',
+        null,
+        false,
+        () => true,
+        undefined,
+        abort.signal
+      );
+      await until(() => f.startup.calls > 0, 'startup reached');
+      f.startup.resolve('started');
+      await until(() => f.admitLog.length > 0, 'admission');
+
+      f.agentSession.messageQueue.start();
+      const transport = f.agentSession.messageQueue.messageGenerator(SESSION, {
+        suppressPreYieldCallback: true,
+        queryGeneration: 1,
+      });
+      const yielded = await transport.next();
+      expect(yielded.value.message.uuid).toBe(kickoff);
+      expect(statusOf(f.db, kickoff)).toBe('enqueued');
+
+      await until(() => statusOf(f.db, kickoff) === 'consumed', 'timeout acceptance flip', 2000);
+
+      abort.abort();
+      await expect(drive).rejects.toBeInstanceOf(Error);
+    } finally {
+      f.db.close();
+    }
+  });
+
+  it('TODO(message-delivery redesign, #1686): a pre-ack query restart currently re-feeds a consumed kickoff through the production requeue path — flip duplicateFed to false when the redesign fixes it', async () => {
+    const f = await makeFixture();
+    try {
+      const kickoff = 'msg-consumed-requeue';
+      saveDeliveryRow(f.sdkRepo, kickoff, 'kickoff text');
+      let resolveQueryEnd!: () => void;
+      (f.agentSession as unknown as { queryPromise: Promise<void> }).queryPromise =
+        new Promise<void>((resolve) => {
+          resolveQueryEnd = resolve;
+        });
+      const driveSettled = f.agentSession
+        .driveDeliveryTurn(kickoff, 'kickoff text', null, false, () => true)
+        .then(
+          () => 'resolved',
+          (error: unknown) => error
+        );
+      await until(() => f.startup.calls > 0, 'startup reached');
+      f.startup.resolve('started');
+      await until(() => f.admitLog.length > 0, 'admission');
+
+      f.agentSession.messageQueue.start();
+      const firstTransport = f.agentSession.messageQueue.messageGenerator(SESSION, {
+        suppressPreYieldCallback: true,
+        queryGeneration: 1,
+      });
+      const firstSubmission = await firstTransport.next();
+      expect(firstSubmission.value.message.uuid).toBe(kickoff);
+      expect(f.sdkRepo.markDeliveryConsumedByUuid(SESSION, kickoff)).not.toBeNull();
+
+      resolveQueryEnd();
+      await until(
+        () => statusOf(f.db, kickoff) === 'enqueued',
+        'delivery turn reopened the consumed kickoff'
+      );
+
+      const secondTransport = f.agentSession.messageQueue.messageGenerator(SESSION, {
+        suppressPreYieldCallback: true,
+        queryGeneration: 2,
+      });
+      const secondSubmission = await Promise.race([
+        secondTransport.next(),
+        new Promise<{ done: true; value: undefined }>((resolve) =>
+          setTimeout(() => resolve({ done: true, value: undefined }), 250)
+        ),
+      ]);
+      const duplicateFed = !(
+        secondSubmission.done === true && secondSubmission.value === undefined
+      );
+      expect(duplicateFed).toBe(true);
+
+      expect(await driveSettled).toBeInstanceOf(Error);
+    } finally {
+      f.db.close();
+    }
+  });
 });

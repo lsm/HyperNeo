@@ -8,7 +8,9 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {
+  SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS,
   SPACE_AGENT_TOOL_SCHEMAS,
+  type SpaceAgentLifecycleToolName,
   type SpaceAgentToolName,
   UpdateSessionStateSchema,
 } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
@@ -107,12 +109,30 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
     taskManager: new SpaceTaskManager(db, SPACE_ID),
     spaceAgentManager,
     taskAgentManager: stubTaskAgentManager,
+    longHorizonAgentRepo,
     ...overrides,
   };
   return { db, config, workflowManager, workflowRunRepo, taskRepo };
 }
 
 const EXPECTED_ENTRIES: ReadonlyArray<readonly [string, string, string]> = [
+  ['list_agents', 'agents', 'read'],
+  ['get_agent', 'agents', 'read'],
+  ['create_agent', 'agents', 'mutate'],
+  ['create_agent_from_template', 'agents', 'mutate'],
+  ['list_agent_templates', 'agents', 'read'],
+  ['update_agent', 'agents', 'mutate'],
+  ['pause_agent', 'agents', 'mutate'],
+  ['archive_agent', 'agents', 'mutate'],
+  ['assign_agent_to_goal', 'agents', 'mutate'],
+  ['unassign_agent_from_goal', 'agents', 'mutate'],
+  ['assign_agent_to_forge_scope', 'agents', 'mutate'],
+  ['unassign_agent_from_forge_scope', 'agents', 'mutate'],
+  ['create_agent_reminder', 'agents', 'mutate'],
+  ['list_agent_reminders', 'agents', 'read'],
+  ['subscribe_agent_event', 'agents', 'mutate'],
+  ['unsubscribe_agent_event', 'agents', 'mutate'],
+  ['list_agent_event_subscriptions', 'agents', 'read'],
   ['list_sessions', 'sessions', 'read'],
   ['get_session_detail', 'sessions', 'read'],
   ['get_session_messages', 'sessions', 'read'],
@@ -161,9 +181,16 @@ describe('createSpaceRegistryEntries — composition', () => {
     try {
       const entries = createSpaceRegistryEntries(ctx.config);
       expect(entries).toHaveLength(EXPECTED_ENTRIES.length);
-      expect(EXPECTED_ENTRIES.length).toBe(Object.keys(SPACE_AGENT_TOOL_SCHEMAS).length);
+      expect(EXPECTED_ENTRIES.length).toBe(
+        Object.keys(SPACE_AGENT_TOOL_SCHEMAS).length +
+          Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS).length
+      );
       for (const entry of entries) {
-        expect(entry.paramsSchema).toBe(SPACE_AGENT_TOOL_SCHEMAS[entry.name as SpaceAgentToolName]);
+        const expected =
+          SPACE_AGENT_TOOL_SCHEMAS[entry.name as SpaceAgentToolName] ??
+          SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS[entry.name as SpaceAgentLifecycleToolName];
+        expect(expected).toBeDefined();
+        expect(entry.paramsSchema).toBe(expected);
       }
     } finally {
       ctx.db.close();
@@ -175,6 +202,8 @@ describe('createSpaceRegistryEntries — composition', () => {
     try {
       const registry = createActionRegistry(createSpaceRegistryEntries(ctx.config));
       expect(registry.entries).toHaveLength(EXPECTED_ENTRIES.length);
+      expect(registry.get('list_agents')?.family).toBe('agents');
+      expect(registry.get('archive_agent')?.safetyClass).toBe('mutate');
       expect(registry.get('list_workflows')?.family).toBe('workflows');
       expect(registry.get('interrupt_session')?.safetyClass).toBe('destructive');
       expect(registry.get('list_tasks')?.family).toBe('tasks');
@@ -503,12 +532,13 @@ describe('createSpaceRegistryEntries — composition', () => {
 });
 
 describe('createSpaceRegistryEntries — conditional entries', () => {
-  test('omits every sessions entry when db is absent', () => {
+  test('omits every agents and sessions entry when db is absent', () => {
     const ctx = makeCtx({ db: undefined });
     try {
       const entries = createSpaceRegistryEntries(ctx.config);
+      expect(entries.filter((entry) => entry.family === 'agents')).toEqual([]);
       expect(entries.filter((entry) => entry.family === 'sessions')).toEqual([]);
-      expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 6);
+      expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 23);
       expect(entries.map((entry) => entry.name)).toContain('list_tasks');
     } finally {
       ctx.db.close();
@@ -671,6 +701,93 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
           params: { task_id: openTask.id, approved: true },
           success: false,
         },
+      ];
+
+      for (const { name, params, success } of cases) {
+        const entry = byName.get(name);
+        if (!entry) throw new Error(`entry missing: ${name}`);
+        const result = (await entry.handler(entry.paramsSchema.parse(params))) as {
+          content: Array<{ text: string }>;
+        };
+        const payload = JSON.parse(result.content[0].text) as { success: boolean };
+        expect(payload.success).toBe(success);
+      }
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  test('round-trips every agents-family entry through its underlying handler', async () => {
+    const ctx = makeCtx();
+    try {
+      const repo = ctx.config.longHorizonAgentRepo;
+      if (!repo) throw new Error('longHorizonAgentRepo missing');
+      const seeded = repo.create({
+        spaceId: SPACE_ID,
+        handle: '@registry-agent',
+        displayName: 'Registry Agent',
+      });
+
+      const entries = createSpaceRegistryEntries(ctx.config);
+      const byName = new Map(entries.map((entry) => [entry.name, entry]));
+      const cases: Array<{ name: string; params: Record<string, unknown>; success: boolean }> = [
+        { name: 'list_agents', params: {}, success: true },
+        { name: 'get_agent', params: { agent_id: seeded.id }, success: true },
+        {
+          name: 'create_agent',
+          params: { name: 'Created via the registry' },
+          success: true,
+        },
+        { name: 'create_agent_from_template', params: { template_name: 'QA' }, success: true },
+        { name: 'list_agent_templates', params: {}, success: true },
+        {
+          name: 'update_agent',
+          params: { agent_id: seeded.id, description: 'Updated via the registry' },
+          success: true,
+        },
+        {
+          name: 'assign_agent_to_goal',
+          params: { agent_id: seeded.id, goal_id: 'goal-1' },
+          success: false,
+        },
+        {
+          name: 'unassign_agent_from_goal',
+          params: { agent_id: seeded.id, goal_id: 'goal-1' },
+          success: false,
+        },
+        {
+          name: 'assign_agent_to_forge_scope',
+          params: { agent_id: seeded.id, scope_id: 'scope-1' },
+          success: false,
+        },
+        {
+          name: 'unassign_agent_from_forge_scope',
+          params: { agent_id: seeded.id, scope_id: 'scope-1' },
+          success: false,
+        },
+        {
+          name: 'create_agent_reminder',
+          params: { agent_id: seeded.id, message: 'Check in', remind_at: Date.now() + 60_000 },
+          success: true,
+        },
+        { name: 'list_agent_reminders', params: { agent_id: seeded.id }, success: true },
+        {
+          name: 'subscribe_agent_event',
+          params: { agent_id: seeded.id, topic_pattern: 'github/*/*/pull_request/*' },
+          success: true,
+        },
+        {
+          name: 'list_agent_event_subscriptions',
+          params: { agent_id: seeded.id },
+          success: true,
+        },
+        {
+          name: 'unsubscribe_agent_event',
+          params: { agent_id: seeded.id, topic_pattern: 'github/*/*/pull_request/*' },
+          success: true,
+        },
+        { name: 'pause_agent', params: { agent_id: seeded.id }, success: true },
+        { name: 'archive_agent', params: { agent_id: seeded.id }, success: true },
       ];
 
       for (const { name, params, success } of cases) {
