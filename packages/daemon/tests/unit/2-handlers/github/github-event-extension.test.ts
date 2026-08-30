@@ -10953,6 +10953,35 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
+  test('a failed identity refresh throttles subsequent refreshes', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response('{"message": "server error"}', { status: 500 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      selfEchoLoginRefresh: Promise<void> | null;
+    };
+    const { published, ext, context } = publishCapture(extension);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await aware.selfEchoLoginRefresh;
+    expect(userCalls).toBe(1);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await Promise.resolve();
+    expect(userCalls).toBe(1);
+    expect(published).toHaveLength(3);
+    await extension.stop();
+  });
+
   test('publishEvent suppresses the identity refresh while rate-limited', async () => {
     const db = setupDb();
     let userCalls = 0;

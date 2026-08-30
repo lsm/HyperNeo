@@ -66,6 +66,7 @@ const RATE_LIMIT_MIN_BACKOFF_MS = 60_000;
 const HEALTH_RECENT_ERROR_WINDOW_MS = 24 * 60 * 60 * 1000;
 const TOKEN_VALIDATION_TIMEOUT_MS = 5_000;
 const TOKEN_STATUS_CACHE_TTL_MS = 5 * 60 * 1000;
+const SELF_ECHO_LOGIN_RETRY_MS = 30_000;
 const GITHUB_POLL_REQUEST_TIMEOUT_MS = 30_000;
 const GITHUB_WEBHOOK_REQUEST_TIMEOUT_MS = 30_000;
 const DEPLOYMENT_PR_RESOLUTION_TIMEOUT_MS = 5_000;
@@ -1365,12 +1366,16 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private selfEchoLoginRefresh: Promise<void> | null = null;
+  private selfEchoLoginRetryAt = 0;
 
   private triggerSelfEchoLoginRefresh(): void {
     if (this.selfEchoLoginRefresh) return;
     if (Date.now() < this.rateLimitedUntil) return;
+    if (Date.now() < this.selfEchoLoginRetryAt) return;
     this.selfEchoLoginRefresh = this.resolveTokenStatus(false)
-      .then(() => undefined)
+      .then((status) => {
+        this.selfEchoLoginRetryAt = status.login ? 0 : Date.now() + SELF_ECHO_LOGIN_RETRY_MS;
+      })
       .finally(() => {
         this.selfEchoLoginRefresh = null;
       });
