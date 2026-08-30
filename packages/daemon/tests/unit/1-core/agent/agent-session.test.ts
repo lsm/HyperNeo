@@ -1537,11 +1537,13 @@ describe('AgentSession', () => {
 
     it('cancelRateLimitRetry settles every bundled message of a batched turn', async () => {
       const cancelDelivery = mock(() => true);
+      const rescheduleSessionDeliveries = mock(() => true);
       const markDeliveryFailedByUuid = mock((uuid: string) => `db-${uuid}`);
       mockDb.getJobQueueRepo = mock(
         () =>
           ({
             cancelDelivery,
+            rescheduleSessionDeliveries,
             getActiveDeliveryBatchUuids: mock(() => ['msg-owning-turn', 'msg-bundled']),
           }) as never
       );
@@ -1558,6 +1560,10 @@ describe('AgentSession', () => {
       expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
       expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-owning-turn');
       expect(markDeliveryFailedByUuid).toHaveBeenCalledWith('test-session-id', 'msg-bundled');
+      expect(rescheduleSessionDeliveries).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.any(Number)
+      );
     });
 
     it('retryNowAfterRateLimit reports failure when the session-wide release misses', async () => {
