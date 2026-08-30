@@ -1323,12 +1323,39 @@ describe('MessageQueue', () => {
       q.noteResultForCompactionRecovery(3);
       expect(q.canRecoverBufferedCompaction()).toBe(false);
 
+      q.noteCompactOutcome();
       q.noteResultForCompactionRecovery(0);
       expect(q.canRecoverBufferedCompaction()).toBe(true);
 
       q.acknowledgeCompactionsAwaitingBoundary();
       expect(q.canRecoverBufferedCompaction()).toBe(false);
       expect(q.hasBufferedInternalCompaction()).toBe(false);
+      q.stop();
+    });
+
+    it('does not let the user compact trailing zero-turn result authorize recovery of the buffered daemon compact', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'user-compact',
+        content: '/compact',
+        internal: false,
+      } as never);
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      q.noteCompactOutcome();
+      q.consumeCompactionBoundary();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+
+      q.noteResultForCompactionRecovery(0);
+      expect(q.canRecoverBufferedCompaction()).toBe(false);
+
+      q.noteCompactOutcome();
+      q.noteResultForCompactionRecovery(0);
+      expect(q.canRecoverBufferedCompaction()).toBe(true);
       q.stop();
     });
 

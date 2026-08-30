@@ -276,7 +276,12 @@ export class MessageQueue {
 
   noteResultForCompactionRecovery(numTurns: number): void {
     this.daemonFrontTerminalResult =
-      numTurns === 0 && this.outstandingCompactionBoundaries[0]?.kind === 'daemon';
+      numTurns === 0 &&
+      this.outstandingCompactionBoundaries[0]?.kind === 'daemon' &&
+      this.unboundedCompactOutcome;
+    if (this.daemonFrontTerminalResult) {
+      this.unboundedCompactOutcome = false;
+    }
   }
 
   canRecoverBufferedCompaction(): boolean {
