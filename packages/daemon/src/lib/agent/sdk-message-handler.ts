@@ -1122,6 +1122,10 @@ export class SDKMessageHandler {
         );
       }
 
+      if (isSDKCompactBoundary(message)) {
+        this.applyCompactBoundaryOwnership(message, invocationGeneration);
+      }
+
       const observesArmedClearResult = this.matchesArmedClearResult(message);
       const preRecoveryPlan = isSDKResultMessage(message)
         ? this.routeResultTurnEnd({
@@ -1955,7 +1959,6 @@ export class SDKMessageHandler {
           `compaction(s) for session ${session.id}`
       );
     }
-    this.applyCompactBoundaryOwnership(message, invocationGeneration);
     this.ctx.messageQueue.noteBoundaryCompleted();
     const boundaryInfo = contextTracker.getContextInfo();
     const boundaryCapacity =

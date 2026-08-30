@@ -279,9 +279,7 @@ export class MessageQueue {
       numTurns === 0 &&
       this.outstandingCompactionBoundaries[0]?.kind === 'daemon' &&
       this.unboundedCompactOutcome;
-    if (this.daemonFrontTerminalResult) {
-      this.unboundedCompactOutcome = false;
-    }
+    this.unboundedCompactOutcome = false;
   }
 
   canRecoverBufferedCompaction(): boolean {

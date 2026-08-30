@@ -1376,6 +1376,33 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('consumes an orphaned compact outcome at the next top-level result', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteCompactOutcome();
+      q.noteResultForCompactionRecovery(3);
+      expect(q.canRecoverBufferedCompaction()).toBe(false);
+
+      q.noteInternalCompactionSent({
+        id: 'user-compact-later',
+        content: '/compact',
+        internal: false,
+      } as never);
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact-later',
+        content: '/compact',
+        internal: true,
+      } as never);
+
+      q.expireUserCompactionMarkerAtResult(0);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+
+      q.noteCompactOutcome();
+      q.expireUserCompactionMarkerAtResult(0);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+      q.stop();
+    });
+
     it('marks a user boundary for an argument-bearing compact command', () => {
       const q = new MessageQueue();
       q.start();
