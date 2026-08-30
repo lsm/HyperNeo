@@ -78,6 +78,17 @@ export function setupRewindHandlers(
   messageHub.onRequest('rewind.previewSelective', async (data) => {
     const { sessionId, messageIds } = data as SelectiveRewindRequest;
 
+    if (messageIds.length === 0) {
+      return {
+        preview: {
+          canRewind: false,
+          error: 'No messages selected',
+          messagesToDelete: 0,
+          filesToRevert: [],
+        },
+      };
+    }
+
     const agentSession = await sessionManager.getSessionAsync(sessionId, {
       replayPendingMessages: false,
     });
@@ -86,17 +97,6 @@ export function setupRewindHandlers(
         preview: {
           canRewind: false,
           error: 'Session not found',
-          messagesToDelete: 0,
-          filesToRevert: [],
-        },
-      };
-    }
-
-    if (messageIds.length === 0) {
-      return {
-        preview: {
-          canRewind: false,
-          error: 'No messages selected',
           messagesToDelete: 0,
           filesToRevert: [],
         },

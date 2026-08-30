@@ -196,6 +196,20 @@ describe('Rewind RPC Handlers', () => {
     });
   });
 
+  it('rejects an empty selective preview without provisioning', async () => {
+    const handler = messageHubData.handlers.get('rewind.previewSelective');
+    expect(handler).toBeDefined();
+
+    sessionManagerData.getSessionAsyncMock.mockClear();
+
+    const result = (await handler!({ sessionId: 'session-123', messageIds: [] }, {})) as {
+      preview: { canRewind: boolean; error: string };
+    };
+
+    expect(result.preview.error).toBe('No messages selected');
+    expect(sessionManagerData.getSessionAsyncMock).not.toHaveBeenCalled();
+  });
+
   it('previews provision dormant workers without replaying pending messages', async () => {
     const handler = messageHubData.handlers.get('rewind.preview');
     expect(handler).toBeDefined();
