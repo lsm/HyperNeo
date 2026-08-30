@@ -111,8 +111,8 @@ describe('SDKMessageHandler', () => {
   let hasBufferedInternalCompactionSpy: ReturnType<typeof mock>;
   let clearInternalCompactionBufferedSpy: ReturnType<typeof mock>;
   let expireUserCompactionMarkerAtResultSpy: ReturnType<typeof mock>;
-  let noteCompactionStartedSpy: ReturnType<typeof mock>;
-  let resetFrontCompactionStartedSpy: ReturnType<typeof mock>;
+  let noteCompactOutcomeSpy: ReturnType<typeof mock>;
+  let resetCompactOutcomeSpy: ReturnType<typeof mock>;
   let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
   let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
@@ -231,8 +231,8 @@ describe('SDKMessageHandler', () => {
     hasBufferedInternalCompactionSpy = mock(() => false);
     clearInternalCompactionBufferedSpy = mock(() => {});
     expireUserCompactionMarkerAtResultSpy = mock(() => {});
-    noteCompactionStartedSpy = mock(() => {});
-    resetFrontCompactionStartedSpy = mock(() => {});
+    noteCompactOutcomeSpy = mock(() => {});
+    resetCompactOutcomeSpy = mock(() => {});
     removePendingInternalCompactionsSpy = mock(() => 0);
     clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
@@ -261,8 +261,8 @@ describe('SDKMessageHandler', () => {
       hasBufferedInternalCompaction: hasBufferedInternalCompactionSpy,
       clearInternalCompactionBuffered: clearInternalCompactionBufferedSpy,
       expireUserCompactionMarkerAtResult: expireUserCompactionMarkerAtResultSpy,
-      noteCompactionStarted: noteCompactionStartedSpy,
-      resetFrontCompactionStarted: resetFrontCompactionStartedSpy,
+      noteCompactOutcome: noteCompactOutcomeSpy,
+      resetCompactOutcome: resetCompactOutcomeSpy,
       removePendingInternalCompactions: removePendingInternalCompactionsSpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
       noteBoundaryCompleted: mock(() => {}),
@@ -3929,8 +3929,22 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(message);
 
-      expect(noteCompactionStartedSpy).toHaveBeenCalledTimes(1);
       expect(clearInternalCompactionBufferedSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('notes the compact outcome from a compact_result status', async () => {
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'status',
+        uuid: 'test-uuid',
+        status: null,
+        compact_result: 'failed',
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(noteCompactOutcomeSpy).toHaveBeenCalledTimes(1);
     });
 
     it('ignores a stale runner compacting status so it cannot clear the current buffered guard', async () => {

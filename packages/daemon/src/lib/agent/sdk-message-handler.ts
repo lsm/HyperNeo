@@ -1071,7 +1071,9 @@ export class SDKMessageHandler {
         isSDKResultMessage(message) &&
         !this.isInvocationStale(invocationGeneration)
       ) {
-        this.ctx.messageQueue.expireUserCompactionMarkerAtResult?.();
+        this.ctx.messageQueue.expireUserCompactionMarkerAtResult?.(
+          (message as SDKResultMessage).num_turns
+        );
       }
       const stampsInternalCompactionTurn =
         isTopLevelResult &&
@@ -1895,16 +1897,19 @@ export class SDKMessageHandler {
 
     if (!isSDKStatusMessage(message)) return;
 
-    const statusMsg = message as { status: string | null };
-    if (statusMsg.status === 'compacting') {
+    const statusMsg = message as { status: string | null; compact_result?: string };
+    if (statusMsg.compact_result !== undefined) {
       if (!this.isInvocationStale(invocationGeneration)) {
-        this.ctx.messageQueue.noteCompactionStarted?.();
-        if (
-          this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
-          this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()
-        ) {
-          this.ctx.messageQueue.clearInternalCompactionBuffered();
-        }
+        this.ctx.messageQueue.noteCompactOutcome?.();
+      }
+    }
+    if (statusMsg.status === 'compacting') {
+      if (
+        !this.isInvocationStale(invocationGeneration) &&
+        this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
+        this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()
+      ) {
+        this.ctx.messageQueue.clearInternalCompactionBuffered();
       }
       await stateManager.setCompacting(true);
     }
@@ -1938,7 +1943,7 @@ export class SDKMessageHandler {
     } else if (manualBoundary) {
       this.ctx.messageQueue.consumeCompactionBoundary();
     } else {
-      this.ctx.messageQueue.resetFrontCompactionStarted?.();
+      this.ctx.messageQueue.resetCompactOutcome?.();
     }
     this.ctx.messageQueue.noteBoundaryCompleted();
     const boundaryInfo = contextTracker.getContextInfo();

@@ -31,6 +31,11 @@ function extractParentToolUseId(content: string | MessageContent[]): string | nu
   return toolResult?.tool_use_id ?? null;
 }
 
+function isUserCompactCommand(content: string): boolean {
+  const command = content.trim().split(/\s+/)[0];
+  return command === '/compact';
+}
+
 const MESSAGE_QUEUE_TIMEOUT_MS = 30_000;
 
 const MID_TURN_INTERRUPT_TIMEOUT_MS = 5_000;
@@ -134,7 +139,7 @@ export class MessageQueue {
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
   private internalCompactionResultAttributionArmed: boolean = false;
   private outstandingCompactionBoundaries: Array<{ kind: 'daemon' | 'user'; id?: string }> = [];
-  private frontCompactionStarted: boolean = false;
+  private unboundedCompactOutcome: boolean = false;
   private internalCompactionBuffered: boolean = false;
   private nonCompactionSentSinceBoundary: boolean = false;
   private recentSentPrompts: Map<string, string | MessageContent[]> = new Map();
@@ -181,7 +186,7 @@ export class MessageQueue {
           this.recentSentPrompts.delete(oldest);
         }
       }
-      if (typeof message.content === 'string' && message.content === '/compact') {
+      if (typeof message.content === 'string' && isUserCompactCommand(message.content)) {
         this.outstandingCompactionBoundaries.push({ kind: 'user' });
       }
     }
@@ -237,23 +242,25 @@ export class MessageQueue {
 
   consumeCompactionBoundary(): void {
     this.outstandingCompactionBoundaries.shift();
-    this.frontCompactionStarted = false;
+    this.unboundedCompactOutcome = false;
   }
 
-  noteCompactionStarted(): void {
-    if (this.outstandingCompactionBoundaries[0]?.kind === 'user') {
-      this.frontCompactionStarted = true;
-    }
+  noteCompactOutcome(): void {
+    this.unboundedCompactOutcome = true;
   }
 
-  resetFrontCompactionStarted(): void {
-    this.frontCompactionStarted = false;
+  resetCompactOutcome(): void {
+    this.unboundedCompactOutcome = false;
   }
 
-  expireUserCompactionMarkerAtResult(): void {
-    if (this.outstandingCompactionBoundaries[0]?.kind === 'user' && this.frontCompactionStarted) {
+  expireUserCompactionMarkerAtResult(numTurns: number): void {
+    if (
+      this.outstandingCompactionBoundaries[0]?.kind === 'user' &&
+      this.unboundedCompactOutcome &&
+      numTurns === 0
+    ) {
       this.outstandingCompactionBoundaries.shift();
-      this.frontCompactionStarted = false;
+      this.unboundedCompactOutcome = false;
     }
   }
 
@@ -493,6 +500,7 @@ export class MessageQueue {
     this.internalCompactionIdsAwaitingBoundary.clear();
     this.internalCompactionResultAttributionArmed = false;
     this.outstandingCompactionBoundaries = [];
+    this.unboundedCompactOutcome = false;
     this.internalCompactionBuffered = false;
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
@@ -717,6 +725,7 @@ export class MessageQueue {
     this.internalCompactionIdsAwaitingBoundary.clear();
     this.internalCompactionResultAttributionArmed = false;
     this.outstandingCompactionBoundaries = [];
+    this.unboundedCompactOutcome = false;
     this.internalCompactionBuffered = false;
     this.nonCompactionSentSinceBoundary = false;
     this.cancelInternalCompactionEntries(true, true);
