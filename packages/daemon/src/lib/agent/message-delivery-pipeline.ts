@@ -108,7 +108,6 @@ export type TurnEndFlushPlan =
 export interface TurnEndFlushCtx {
   messages: FlushMessage[];
   activeInJobQueue: ReadonlySet<string>;
-  pendingInMemoryUuids: ReadonlySet<string>;
   activeTurnInJobQueue: boolean;
   slotResetsContext: boolean;
   hasPriorContext: boolean;
@@ -130,7 +129,6 @@ export function applyFlushOwnershipGate(ctx: TurnEndFlushCtx): TurnEndFlushCtx {
     flushPlan: planFlushDelivery({
       messages: ctx.messages,
       activeInJobQueue: ctx.activeInJobQueue,
-      pendingInMemoryUuids: ctx.pendingInMemoryUuids,
       activeTurnInJobQueue: ctx.activeTurnInJobQueue,
     }),
   };

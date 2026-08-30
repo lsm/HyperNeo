@@ -1,13 +1,9 @@
 import { BATCH_DELIVERY_MAX_CHARS, type MessageDeliveryRole } from './message-delivery.ts';
 
-export type MessageOwnership = 'job_queue' | 'memory_queue' | 'unowned';
+export type MessageOwnership = 'job_queue' | 'unowned';
 
-export function resolveMessageOwnership(args: {
-  activeInJobQueue: boolean;
-  pendingInMemory: boolean;
-}): MessageOwnership {
+export function resolveMessageOwnership(args: { activeInJobQueue: boolean }): MessageOwnership {
   if (args.activeInJobQueue) return 'job_queue';
-  if (args.pendingInMemory) return 'memory_queue';
   return 'unowned';
 }
 
@@ -24,7 +20,7 @@ export function isTaskFlushInput(message: { isSynthetic?: boolean; inputKind?: s
   return message.isSynthetic === true;
 }
 
-export type FlushSkipOwnership = 'job_queue' | 'memory_queue' | 'not_user_message';
+export type FlushSkipOwnership = 'job_queue' | 'not_user_message';
 
 export interface FlushSkipEntry {
   uuid: string;
@@ -41,7 +37,6 @@ export type FlushDeliveryPlan =
 export function planFlushDelivery(args: {
   messages: FlushMessage[];
   activeInJobQueue: ReadonlySet<string>;
-  pendingInMemoryUuids: ReadonlySet<string>;
   activeTurnInJobQueue: boolean;
 }): FlushDeliveryPlan {
   const deliver: string[] = [];
@@ -50,7 +45,6 @@ export function planFlushDelivery(args: {
   for (const message of args.messages) {
     const ownership = resolveMessageOwnership({
       activeInJobQueue: args.activeInJobQueue.has(message.uuid),
-      pendingInMemory: args.pendingInMemoryUuids.has(message.uuid),
     });
     if (ownership !== 'unowned') {
       skip.push({ uuid: message.uuid, ownership });
@@ -66,11 +60,7 @@ export function planFlushDelivery(args: {
   if (deliver.length === 0) return { action: 'noop' };
 
   const allBatchable = args.messages
-    .filter(
-      (message) =>
-        message.isUserMessage &&
-        (!args.pendingInMemoryUuids.has(message.uuid) || args.activeInJobQueue.has(message.uuid))
-    )
+    .filter((message) => message.isUserMessage)
     .every(
       (message) =>
         message.flattenedText !== null &&
