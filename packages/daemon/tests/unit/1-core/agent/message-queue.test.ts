@@ -995,7 +995,7 @@ describe('MessageQueue', () => {
       expect(await settled).toMatchObject({ message: 'Interrupted by user' });
     });
 
-    it('the durable yield-timeout resolve records the feed as sent in the queue bookkeeping', async () => {
+    it('TODO(message-delivery redesign): the durable yield-timeout resolve currently records the feed as sent in the queue bookkeeping — tripwire: rewrite when the timeout stops counting as acceptance', async () => {
       const q = new MessageQueue();
       q.overrideTimeoutMsForTest(40);
       q.start();

@@ -614,7 +614,7 @@ describe('delivery-turn admission pipeline (A4b)', () => {
     }
   });
 
-  it('a durable kickoff settled by the queue yield timeout is marked consumed exactly like a real send acceptance (current behavior)', async () => {
+  it('TODO(message-delivery redesign): a durable kickoff settled by the queue yield timeout is currently marked consumed exactly like a real send acceptance — tripwire: rewrite when the timeout stops counting as acceptance', async () => {
     const f = await makeFixture();
     try {
       const kickoff = 'msg-timeout-acceptance';
