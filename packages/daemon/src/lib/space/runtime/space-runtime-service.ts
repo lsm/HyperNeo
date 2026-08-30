@@ -59,9 +59,9 @@ import { Logger } from '../../logger.ts';
 import { findInModels, getAvailableModels } from '../../model-service.ts';
 import { inferPersistableProviderForModel } from '../../providers/registry.ts';
 import type { SessionManager } from '../../session-manager.ts';
+import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import {
   createSpaceActionsMcpServer,
-  isSpaceActionsDispatcherEnabled,
   type SpaceActionsServerConfig,
 } from '../actions/space-actions-server.ts';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry.ts';

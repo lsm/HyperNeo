@@ -148,11 +148,6 @@ function createRegistryMetaEntries(getRegistry: () => ActionRegistry): ActionDef
   ];
 }
 
-export function isSpaceActionsDispatcherEnabled(): boolean {
-  const v = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
-  return v === '1' || v === 'true';
-}
-
 export interface SpaceActionsServerConfig {
   readonly role: SpaceMcpSessionRole;
   readonly nodeRole?: string | null;
