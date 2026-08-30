@@ -184,6 +184,9 @@ async function advanceCurrentHandoff(
       return { ...ctx, handoff: { dbId: entry.dbId, role: entry.role, changed: true } };
     }
   } else if (current.sendStatus === 'failed') {
+    if (ctx.sdkMessageRepo.hasConsumptionEvidence(ctx.sessionId, ctx.messageId)) {
+      return deliverableHandoff(ctx);
+    }
     const retried = await retryPrompt({
       db: ctx.db,
       jobQueue: ctx.jobQueue,
@@ -220,6 +223,9 @@ async function advanceStaleHandoff(
 
 async function applyRetryHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
   if (ctx.mechanism !== 'retry') return ctx;
+  if (ctx.sdkMessageRepo.hasConsumptionEvidence(ctx.sessionId, ctx.messageId)) {
+    return deliverableHandoff(ctx);
+  }
   const retried = await retryPrompt({
     db: ctx.db,
     jobQueue: ctx.jobQueue,

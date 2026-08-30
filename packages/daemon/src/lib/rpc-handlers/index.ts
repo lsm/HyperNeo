@@ -865,11 +865,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         const row = deps.db
           .getDatabase()
           .prepare(
-            `SELECT send_status FROM sdk_messages
+            `SELECT send_status, consumed_seq FROM sdk_messages
              WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
           )
-          .get(agent.sessionId, claimKey) as { send_status?: string | null } | null;
-        return row?.send_status === 'failed';
+          .get(agent.sessionId, claimKey) as {
+          send_status?: string | null;
+          consumed_seq?: number | null;
+        } | null;
+        if (row?.send_status !== 'failed') return false;
+        return row.consumed_seq === null || row.consumed_seq === undefined;
       },
       deliverNag: (args) =>
         spaceRuntimeService.deliverLongHorizonAgentNag({

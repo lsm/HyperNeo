@@ -326,6 +326,44 @@ describe('deliverInjectedMessage', () => {
     }
   });
 
+  it('does not retry a failed row whose consumption evidence proves it already ran', async () => {
+    const db = await makeDb();
+    try {
+      const { deps, publishStatusChanged } = makeBranchDeps(db);
+      const target = makeTargetSession();
+      db.saveUserMessage(SESSION_ID, makeSdkUserMessage(), 'enqueued');
+      const sdkRepo = db.getSDKMessageRepo();
+      const row = sdkRepo.getMessageByStatusAndUuid(SESSION_ID, 'enqueued', MESSAGE_ID);
+      if (!row) throw new Error('expected an enqueued row');
+      sdkRepo.updateMessageStatus([row.dbId], 'consumed');
+      sdkRepo.updateMessageStatus([row.dbId], 'failed');
+      publishStatusChanged.mockClear();
+
+      const dbId = await deliverInjectedMessage(deps, {
+        session: target.session,
+        sessionId: SESSION_ID,
+        messageId: MESSAGE_ID,
+        sdkUserMessage: makeSdkUserMessage(),
+        existing: { sendStatus: 'failed' },
+      });
+
+      expect(dbId).toBeTypeOf('string');
+      expect(sdkRepo.getDeliveryContent(SESSION_ID, MESSAGE_ID)?.sendStatus).toBe('failed');
+      expect(sdkRepo.hasConsumptionEvidence(SESSION_ID, MESSAGE_ID)).toBe(true);
+      expect(publishStatusChanged).not.toHaveBeenCalled();
+      const job = db
+        .getDatabase()
+        .prepare(
+          `SELECT id FROM job_queue WHERE queue = 'message_delivery'
+             AND json_extract(payload, '$.messageUuid') = ?`
+        )
+        .get(MESSAGE_ID);
+      expect(job).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   it('rejects a failed row reused with different content and preserves the stored message', async () => {
     const db = await makeDb();
     try {
