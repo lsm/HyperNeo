@@ -75,22 +75,42 @@ A `deno compile` of `packages/daemon/main.ts` is runnable for smoke checks; the 
 
 1. **Static imports only** — the computed dynamic import at `packages/daemon/src/lib/providers/factory.ts:298` (`import(`./anthropic-copilot/index.js?retry=${n}`)`) is replaced by a static specifier; the retry semantics are kept at the factory level (`copilotProviderModule = null` between attempts plus the existing `COPILOT_IMPORT_RETRY_BACKOFF_MS` window). Without the static specifier the bundler bails on `factory.ts` and the binary dies at runtime with `Module not found: .../providers/factory.js`. **Trade-off:** the runtime now returns its module-cache entry on retry (the old `?retry=${n}` query string was the runtime-cache buster), so a module whose top-level evaluation throws will keep throwing across attempts. The factory still recovers from per-attempt provider-construction failures by resetting `copilotProviderModule` and constructing a fresh `AnthropicToCopilotBridgeProvider` instance — which is the failure mode the existing retry logic was designed for.
 2. **`@types/node` available for typecheck** — `deno compile` resolves `node:` built-ins through `@types/node`. The dev-time choice was an `npm:@types/node` devDep in `packages/daemon/package.json` (Deno discovers it via the bun-installed `node_modules` BYONM; Bun's `tsconfig.json` `types: ["bun"]` keeps it out of Bun typechecks). `packages/daemon/deno.json` exists solely to layer a `compilerOptions` slice on top of the daemon `tsconfig.json` (DOM lib for `console`/`crypto` globals, `types: ["bun", "node"]`, the `@hyperneo/*` paths) — it does **not** change module resolution and the existing `package.json` exports remain authoritative.
-3. **`--bundle` + pruned embed** — without `--bundle`, the binary references per-file temp-dir paths that the runtime cannot resolve; with `--bundle`, every reachable module collapses into one `.deno_compile_bundle_*.mjs` and the binary boots cleanly. Size reduction then comes from excluding `node_modules` (`--exclude=node_modules --exclude=.deno`), which drops the binary from 1.7 GB to ~292 MB on the current macOS-x64 spike (vs. the 83 MB Bun reference; the gap is the Deno runtime + the unavoidably embedded daemon/web bundles).
+3. **`--bundle` + pruned embed** — without `--bundle`, the binary references per-file temp-dir paths that the runtime cannot resolve; with `--bundle`, every reachable module collapses into one `.deno_compile_bundle_*.mjs` and the binary boots cleanly. Size reduction then comes from excluding `node_modules` (`--exclude=node_modules --exclude=.deno`), which drops the binary from 1.7 GB to ~261 MB on the current macOS-x64 spike (vs. the 83 MB Bun reference). The remaining gap is the Deno runtime (~80 MB) plus the workspace npm deps that `deno install` pulls in via the daemon's path-mapped workspace neighbours (`@hyperneo/shared`, `@hyperneo/prompts`) and their transitive prodDeps (the worst offenders are `mermaid` 72.6 MB via `@hyperneo/web`'s prodDeps, `typescript` 23 MB, `lucide-preact` 18 MB, `@huggingface/transformers` 9 MB, `happy-dom` 8 MB). Hitting the issue's ~2x-of-Bun budget (~166 MB) requires restructuring the workspace so the daemon's resolution graph does not pull `@hyperneo/web`'s prodDeps — out of scope for this slice.
 
-Recommended command:
+Recommended command (the working set on the spike's macOS-x64 host):
 
 ```bash
 cd packages/daemon
 deno install --entrypoint main.ts                 # populate node_modules/.deno for resolution
 deno compile --bundle --no-check -A \
   --exclude=node_modules --exclude=.deno \
-  --include=npm:@huggingface/transformers \
   --output=dist/bin/hyperneo-deno-darwin-x64 main.ts
 ```
 
-The `--include=npm:@huggingface/transformers` keeps the agent-memory embedding runtime embedded even though `--exclude=node_modules` otherwise hides it — `agent-memory-transformers.ts` resolves it via `require.resolve` and dynamically imports `dist/transformers.web.js`, which the bundler cannot discover statically; without the include, the startup log only marks the prefetch as "non-fatal" and every later embedding silently fails.
+The recommended command does **not** pass `--include=npm:@huggingface/transformers`: that flag requires `nodeModulesDir: "auto"`, which makes deno re-populate `node_modules/.deno` with the full workspace prodDeps and balloons the binary back to 1.0 GB. The trade-off is that `agent-memory-transformers.ts`'s dynamic `require.resolve('@huggingface/transformers')` + `dist/transformers.web.js` import is unresolved at boot; the daemon marks the prefetch as "non-fatal" and every later embedding silently fails. The HTTP/WS/SIGTERM boot smoke is unaffected; the issue is memory-embeddings, not boot. Re-introducing `--include` after a future workspace restructure is the right move.
 
-Acceptance for a smoke binary: HTTP 200 on `/`, `/ws` handshake, migrations, graceful SIGTERM (`scripts/deno-smoke.sh` adapted to the binary path). The `--no-check` flag is forced by pre-existing typecheck errors that are out of the slice's merge contract (which limits changes to the factory.ts restructure + build tooling/config).
+Acceptance for a smoke binary: HTTP 200 on `/`, `/ws` handshake, migrations, graceful SIGTERM. `scripts/deno-smoke.sh` accepts `DENO_SMOKE_BIN=/path/to/binary` to boot the compiled binary against the same four assertions:
+
+```bash
+DENO_SMOKE_BIN=dist/bin/hyperneo-deno-darwin-x64 \
+  DENO_SMOKE_PORT=9283 ./scripts/deno-smoke.sh
+# [deno-smoke] booting pre-built binary: dist/bin/hyperneo-deno-darwin-x64
+# [deno-smoke] HTTP GET / -> 200
+# [deno-smoke] WebSocket /ws handshake OPEN
+# [deno-smoke] sqlite tables: 98 (> 80)
+# [deno-smoke] sending SIGTERM
+# [deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, migrations, graceful SIGTERM)
+```
+
+The `--no-check` flag is forced by 4 typecheck errors that the in-contract `deno.json` remedies could not clear. They are exactly the same 3 errors that surface on plain `dev` tip (`bun run typecheck` on a clean `dev` checkout) — i.e. pre-existing on the slice's base, not introduced here:
+
+| File | Line | Error |
+| --- | --- | --- |
+| `packages/daemon/src/lib/agent/query-mode-handler.ts` | 271 | `TS2345` `string \| ContentBlockParam[]` not assignable to `DeliveryContent` |
+| `packages/daemon/src/storage/repositories/sdk-message-projections.ts` | 104 | `TS2352` `BetaContentBlock` → `Record<string, unknown>` (add `as unknown`) |
+| `packages/web/src/components/sdk/SubagentBlock.tsx` | 289 | `TS2352` `BetaContentBlock` → `Record<string, unknown>` (add `as unknown`) |
+
+(`TS4114`/`TS4115` `override` errors on `sqlite-node.ts`/`in-process-transport.ts`/`channel-router.ts` clear with `"noImplicitOverride": false` in `packages/daemon/deno.json`; the `TS2322` `Uint8Array<ArrayBufferLike>`/`BlobPart` error and the `TS2769` URL-overload error are real code issues that need source edits.)
 
 ## Future work
 

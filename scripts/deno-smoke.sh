@@ -14,14 +14,20 @@
 # Usage: ./scripts/deno-smoke.sh
 # Env:   DENO_SMOKE_PORT          port to boot on        (default 9283)
 #        DENO_SMOKE_BOOT_TIMEOUT  HTTP readiness seconds (default 120)
+#        DENO_SMOKE_BIN           path to a pre-built `deno compile` binary;
+#                                 when set, the script boots that binary
+#                                 instead of `deno run -A main.ts` (the same
+#                                 four boot assertions are run unchanged
+#                                 against the binary's HTTP server).
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 PORT="${DENO_SMOKE_PORT:-9283}"
 BOOT_TIMEOUT="${DENO_SMOKE_BOOT_TIMEOUT:-120}"
+DENO_SMOKE_BIN="${DENO_SMOKE_BIN:-}"
 
-if ! command -v deno &> /dev/null; then
+if ! command -v deno &> /dev/null && [ -z "$DENO_SMOKE_BIN" ]; then
 	echo "Error: deno is not on PATH (CI pins 2.9.4 via denoland/setup-deno)."
 	exit 1
 fi
@@ -46,10 +52,18 @@ dump_log() {
 
 echo "[deno-smoke] $(deno --version | head -1)"
 echo "[deno-smoke] port=$PORT db=$DB_PATH"
+if [ -n "$DENO_SMOKE_BIN" ]; then
+	echo "[deno-smoke] booting pre-built binary: $DENO_SMOKE_BIN"
+fi
 
-cd "$REPO_ROOT/packages/daemon"
-HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
-	deno run -A main.ts > "$LOG_FILE" 2>&1 &
+if [ -n "$DENO_SMOKE_BIN" ]; then
+	HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
+		"$DENO_SMOKE_BIN" > "$LOG_FILE" 2>&1 &
+else
+	cd "$REPO_ROOT/packages/daemon"
+	HYPERNEO_PORT="$PORT" DB_PATH="$DB_PATH" \
+		deno run -A main.ts > "$LOG_FILE" 2>&1 &
+fi
 DAEMON_PID=$!
 
 CODE="000"

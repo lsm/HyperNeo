@@ -4,6 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    "noImplicitOverride": false,
     "skipLibCheck": true,
     "types": ["bun", "node"],
     "paths": {
