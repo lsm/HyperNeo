@@ -81,3 +81,8 @@ graphify-out/
 
 # Local scratch/debug output (review-round captures, e.g. r4d.out, r12b.out)
 /r*.out
+
+# Deno — managed by `deno install` during the `deno compile` smoke flow;
+# reproducible enough to regenerate, and the smoke binary is not on the release
+# pipeline (Bun stays the pinned release runtime).
+deno.lock
