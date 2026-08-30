@@ -120,6 +120,74 @@ export function buildJobQueueCandidateSelection(
   return { sql, params };
 }
 
+export interface SessionFifoDequeueOptions {
+  sessionIdPath?: string;
+  releasedPath?: string;
+  exclude?: PayloadMatch;
+  excludeIds?: string[];
+}
+
+export interface JobQueueSessionFifoSelectionInput {
+  queue: string;
+  now: number;
+  limit: number;
+  sessionIdPath?: string;
+  releasedPath?: string;
+  exclude?: PayloadMatch;
+  excludeIds?: string[];
+}
+
+export function buildJobQueueSessionFifoSelection(
+  input: JobQueueSessionFifoSelectionInput
+): JobQueueCandidateSelection {
+  const sessionIdPath = input.sessionIdPath ?? '$.sessionId';
+  const defaultSessionPath = sessionIdPath === '$.sessionId';
+  const sessionKeySql = defaultSessionPath
+    ? `json_extract(payload, '$.sessionId')`
+    : `json_extract(payload, ?)`;
+  const sessionPartitionSql = `PARTITION BY lane_key, COALESCE(lane_key, rid)`;
+  let sql = `WITH active_lanes AS (
+      SELECT rowid AS rid, status, created_at, ${sessionKeySql} AS lane_key
+        FROM job_queue
+       WHERE queue = ? AND status IN ('pending', 'processing')
+    ),
+    session_heads AS (
+      SELECT rid FROM (
+        SELECT rid,
+               ROW_NUMBER() OVER (
+                 ${sessionPartitionSql}
+                 ORDER BY created_at ASC, rid ASC
+               ) AS rn,
+               SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) OVER (
+                 ${sessionPartitionSql}
+               ) AS processing_count
+          FROM active_lanes
+      ) WHERE rn = 1 AND processing_count = 0
+    )
+    SELECT candidate.* FROM job_queue candidate
+      JOIN session_heads ON session_heads.rid = candidate.rowid
+     WHERE candidate.queue = ? AND candidate.status = 'pending' AND candidate.run_at <= ?`;
+  const params: Array<string | number> = [];
+  if (!defaultSessionPath) params.push(sessionIdPath);
+  params.push(input.queue, input.queue, input.now);
+  if (input.releasedPath) {
+    sql += ` AND COALESCE(json_extract(candidate.payload, ?), 1) = 1`;
+    params.push(input.releasedPath);
+  }
+  if (input.exclude) {
+    sql += ` AND COALESCE(json_extract(candidate.payload, ?), '') != ?`;
+    params.push(input.exclude.path, input.exclude.equals);
+  }
+  const excludeIds = input.excludeIds ?? [];
+  if (excludeIds.length > 0) {
+    sql += ` AND candidate.id NOT IN (${excludeIds.map(() => '?').join(',')})`;
+    params.push(...excludeIds);
+  }
+  sql += ` ORDER BY candidate.priority DESC, candidate.run_at ASC, candidate.created_at ASC, candidate.rowid ASC LIMIT ?`;
+  params.push(input.limit);
+  return { sql, params };
+}
+
 export class JobQueueRepository {
   constructor(private db: BunDatabase) {}
 
@@ -201,6 +269,27 @@ export class JobQueueRepository {
         requireEqual: spec,
         excludeIds,
         excludeSessionIds,
+      });
+      const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+      this.claimRows(rows, claimed);
+    }, 'immediate');
+
+    withBusyRetry(() => txn());
+    return claimed;
+  }
+
+  dequeueSessionFifo(queue: string, limit: number = 1, options?: SessionFifoDequeueOptions): Job[] {
+    const claimed: Job[] = [];
+
+    const txn = this.db.transaction(() => {
+      const { sql, params } = buildJobQueueSessionFifoSelection({
+        queue,
+        now: Date.now(),
+        limit,
+        sessionIdPath: options?.sessionIdPath,
+        releasedPath: options?.releasedPath,
+        exclude: options?.exclude,
+        excludeIds: options?.excludeIds,
       });
       const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
       this.claimRows(rows, claimed);
