@@ -214,6 +214,37 @@ describe('deliverInjectedMessage', () => {
     }
   });
 
+  it('treats a stale failed snapshot as an accepted handoff when the row is already active', async () => {
+    const db = await makeDb();
+    try {
+      const { deps, publishStatusChanged } = makeBranchDeps(db);
+      const target = makeTargetSession();
+      await deliverInjectedMessage(deps, {
+        session: target.session,
+        sessionId: SESSION_ID,
+        messageId: MESSAGE_ID,
+        sdkUserMessage: makeSdkUserMessage(),
+      });
+      publishStatusChanged.mockClear();
+
+      const dbId = await deliverInjectedMessage(deps, {
+        session: target.session,
+        sessionId: SESSION_ID,
+        messageId: MESSAGE_ID,
+        sdkUserMessage: makeSdkUserMessage(),
+        existing: { sendStatus: 'failed' },
+      });
+
+      expect(dbId).toBeTypeOf('string');
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, MESSAGE_ID)?.sendStatus).toBe(
+        'enqueued'
+      );
+      expect(publishStatusChanged).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
   it('reuses an existing enqueued row without re-publishing enqueued', async () => {
     const db = await makeDb();
     try {
