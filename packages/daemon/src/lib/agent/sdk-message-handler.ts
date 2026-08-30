@@ -1066,6 +1066,9 @@ export class SDKMessageHandler {
     }
 
     try {
+      if (isTopLevelResult && isSDKResultMessage(message)) {
+        this.ctx.messageQueue.expireUserCompactionMarkerAtResult();
+      }
       const stampsInternalCompactionTurn =
         isTopLevelResult &&
         isSDKResultMessage(message) &&

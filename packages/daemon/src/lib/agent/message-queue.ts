@@ -238,6 +238,12 @@ export class MessageQueue {
     this.outstandingCompactionBoundaries.shift();
   }
 
+  expireUserCompactionMarkerAtResult(): void {
+    if (this.outstandingCompactionBoundaries[0]?.kind === 'user') {
+      this.outstandingCompactionBoundaries.shift();
+    }
+  }
+
   hasBufferedInternalCompaction(): boolean {
     return this.internalCompactionBuffered;
   }

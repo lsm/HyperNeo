@@ -1199,6 +1199,32 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('expires a front user marker at a top-level result but never a daemon marker', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'user-compact-rejected',
+        content: '/compact',
+        internal: false,
+      } as never);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+
+      q.expireUserCompactionMarkerAtResult();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+      q.expireUserCompactionMarkerAtResult();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+      q.expireUserCompactionMarkerAtResult();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+      q.stop();
+    });
+
     it('keeps a yielded internal compaction outstanding across a compact boundary', async () => {
       const q = new MessageQueue();
       q.start();

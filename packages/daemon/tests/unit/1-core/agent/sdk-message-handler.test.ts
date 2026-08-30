@@ -110,6 +110,7 @@ describe('SDKMessageHandler', () => {
   let consumeCompactionBoundarySpy: ReturnType<typeof mock>;
   let hasBufferedInternalCompactionSpy: ReturnType<typeof mock>;
   let clearInternalCompactionBufferedSpy: ReturnType<typeof mock>;
+  let expireUserCompactionMarkerAtResultSpy: ReturnType<typeof mock>;
   let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
   let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
@@ -227,6 +228,7 @@ describe('SDKMessageHandler', () => {
     consumeCompactionBoundarySpy = mock(() => {});
     hasBufferedInternalCompactionSpy = mock(() => false);
     clearInternalCompactionBufferedSpy = mock(() => {});
+    expireUserCompactionMarkerAtResultSpy = mock(() => {});
     removePendingInternalCompactionsSpy = mock(() => 0);
     clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
@@ -254,6 +256,7 @@ describe('SDKMessageHandler', () => {
       consumeCompactionBoundary: consumeCompactionBoundarySpy,
       hasBufferedInternalCompaction: hasBufferedInternalCompactionSpy,
       clearInternalCompactionBuffered: clearInternalCompactionBufferedSpy,
+      expireUserCompactionMarkerAtResult: expireUserCompactionMarkerAtResultSpy,
       removePendingInternalCompactions: removePendingInternalCompactionsSpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
       noteBoundaryCompleted: mock(() => {}),
@@ -4063,6 +4066,12 @@ describe('SDKMessageHandler', () => {
 
       expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
       expectNoStampOption();
+    });
+
+    it('expires a front user compaction marker when a top-level result lands', async () => {
+      await handler.handleMessage(makeSuccessResult(3));
+
+      expect(expireUserCompactionMarkerAtResultSpy).toHaveBeenCalledTimes(1);
     });
 
     it('never stamps when no daemon-internal compaction boundary was acknowledged', async () => {
