@@ -46,6 +46,7 @@ function makeDb(): BunDatabase {
 		parent_tool_use_id TEXT,
 		task_id TEXT,
 		sdk_uuid TEXT,
+		consumed_seq INTEGER,
 		replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE TABLE IF NOT EXISTS sdk_message_replacements (

@@ -43,6 +43,7 @@ import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts'
 import type { AgentSession } from '../../agent/agent-session.ts';
 import { verifyPromptContent } from '../../agent/message-delivery-outbox.ts';
 import { handoffPromptToMailbox } from './injection-delivery-steps.ts';
+import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
@@ -186,6 +187,7 @@ export class SpaceRuntimeService {
   private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
   private readonly longTermAgentFlushes = new Map<string, Promise<void>>();
+  private readonly longTermInboxSettlements = new SpaceAgentLateSettlements();
   private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
   private provisioningPromise: Promise<void> | null = null;
 
@@ -639,6 +641,30 @@ export class SpaceRuntimeService {
           inboxRepo.markDelivered(row.id, sessionId);
         } else if (delivery === 'dead') {
           inboxRepo.markAttemptFailed(row.id, `mailbox delivery failed for message ${messageId}`);
+        } else {
+          this.longTermInboxSettlements.arm({
+            sessionId,
+            messageId,
+            onConsumed: (settledSessionId) => {
+              if (inboxRepo.getById(row.id)?.status !== 'pending') return;
+              inboxRepo.markDelivered(row.id, settledSessionId);
+            },
+            onFailed: () => {
+              if (inboxRepo.getById(row.id)?.status !== 'pending') return;
+              inboxRepo.markAttemptFailed(
+                row.id,
+                `mailbox delivery failed for message ${messageId}`
+              );
+            },
+            getSendStatus: () => {
+              const settled = this.classifyLongTermAgentDelivery(sessionId, messageId);
+              return settled === 'pending'
+                ? 'enqueued'
+                : settled === 'dead'
+                  ? 'failed'
+                  : 'consumed';
+            },
+          });
         }
       } catch (err) {
         inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
@@ -1485,6 +1511,7 @@ export class SpaceRuntimeService {
       await this.provisioningPromise;
       this.provisioningPromise = null;
     }
+    this.longTermInboxSettlements.dispose();
     await this.runtime.stop();
     for (const unsub of this.unsubscribers) {
       unsub();

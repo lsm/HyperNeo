@@ -4329,6 +4329,14 @@ export class TaskAgentManager {
       return messageId;
     }
     if (outcome.decision.action === 'defer') {
+      if (existing) {
+        verifyPromptContent({
+          db: this.config.db.getDatabase(),
+          sessionId,
+          messageUuid: messageId,
+          message: sdkUserMessage,
+        });
+      }
       if (outcome.reopenFailedDelivery) {
         await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
       }

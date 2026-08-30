@@ -78,7 +78,13 @@ async function makeManager(opts: {
   };
 }
 
-function seedDeliveryRow(db: Database, messageId: string, text: string, status: string): void {
+function seedDeliveryRow(
+  db: Database,
+  messageId: string,
+  text: string,
+  status: string,
+  inputKind: 'task' | 'human' = 'task'
+): void {
   db.saveUserMessage(
     SESSION_ID,
     {
@@ -86,8 +92,8 @@ function seedDeliveryRow(db: Database, messageId: string, text: string, status: 
       uuid: messageId,
       session_id: SESSION_ID,
       parent_tool_use_id: null,
-      isSynthetic: true,
-      inputKind: 'task',
+      isSynthetic: inputKind === 'task',
+      inputKind,
       message: { role: 'user', content: [{ type: 'text', text }] },
     },
     'enqueued'
@@ -452,7 +458,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
   it('a defer branch over an existing deferred row re-marks nothing and reuses the existing message id', async () => {
     const { manager, session, db } = await makeManager({});
     indexSession(manager, busySession(session, 'processing'));
-    seedDeliveryRow(db, 'msg-1', 'queue for next turn', 'deferred');
+    seedDeliveryRow(db, 'msg-1', 'queue for next turn', 'deferred', 'human');
 
     const dbId = await manager.injectSubSessionMessage(
       SESSION_ID,

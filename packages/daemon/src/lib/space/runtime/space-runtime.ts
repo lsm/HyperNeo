@@ -7279,10 +7279,6 @@ export class SpaceRuntime {
 
       const signature = this.computeTerminalErrorSignature(lastMessage);
 
-      if (state.lastContinueAt !== null && now - state.lastContinueAt < graceMs) {
-        continue;
-      }
-
       const lastPromptDelivery = this.classifyLastContinuePrompt(state);
       if (lastPromptDelivery === 'pending') {
         state.lastContinueParked = true;
@@ -7290,6 +7286,10 @@ export class SpaceRuntime {
           `Node ${execution.workflowNodeId} runtime-continue prompt is still awaiting consumption ` +
             `(execution=${execution.id}); not classifying the terminal result as recurrent yet`
         );
+        continue;
+      }
+
+      if (state.lastContinueAt !== null && now - state.lastContinueAt < graceMs) {
         continue;
       }
       if (lastPromptDelivery === 'consumed' && state.lastContinueParked) {
@@ -7394,7 +7394,7 @@ export class SpaceRuntime {
   ): 'consumed' | 'pending' | 'dead' {
     if (messageId === null || !sessionId) return 'consumed';
     const repo = this.getSdkMessageRepo();
-    if (repo.getMessageByStatusAndDbId(sessionId, 'consumed', messageId)) return 'consumed';
+    if (repo.hasConsumptionEvidence(sessionId, messageId)) return 'consumed';
     if (repo.getMessageByStatusAndDbId(sessionId, 'failed', messageId)) return 'dead';
     for (const pending of ['enqueued', 'submitted', 'deferred'] as const) {
       if (repo.getMessageByStatusAndDbId(sessionId, pending, messageId)) return 'pending';
