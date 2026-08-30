@@ -22,6 +22,10 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
 import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
+import {
+  throwIfDeliveryAborted,
+  waitForDeliveryAbort,
+} from '../../../lib/agent/message-delivery.ts';
 
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import type { Database } from '../../../storage/database.ts';
@@ -326,6 +330,9 @@ export class TaskAgentManager {
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
 
   private readonly sessionInjectLocks = new Map<string, Promise<unknown>>();
+
+  private static readonly INJECT_LOCK_ACQUIRE_TIMEOUT_MS = 8_000;
+  private static readonly INJECT_LOCK_LEAK_CEILING_MS = 900_000;
 
   private readonly rehydrateInFlight = new Map<string, Promise<AgentSession | null>>();
 
@@ -1872,20 +1879,59 @@ export class TaskAgentManager {
   }
 
   private async withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const hasPrev = this.sessionInjectLocks.has(sessionId);
     const prev = this.sessionInjectLocks.get(sessionId) ?? Promise.resolve();
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const tail = prev.then(() => held);
+    const tail = prev.then(
+      () => held,
+      () => held
+    );
     this.sessionInjectLocks.set(sessionId, tail);
-    await prev;
+    const signal = AbortSignal.timeout(TaskAgentManager.INJECT_LOCK_ACQUIRE_TIMEOUT_MS);
+    const aborted = waitForDeliveryAbort(signal);
+    let leakTimer: ReturnType<typeof setTimeout> | undefined;
+    let acquired = false;
     try {
+      if (hasPrev) {
+        leakTimer = setTimeout(() => {
+          if (this.sessionInjectLocks.get(sessionId) === tail) {
+            this.sessionInjectLocks.delete(sessionId);
+          }
+          release();
+        }, TaskAgentManager.INJECT_LOCK_LEAK_CEILING_MS);
+      }
+      await Promise.race([
+        prev.then(
+          () => 'acquired' as const,
+          () => 'acquired' as const
+        ),
+        aborted.promise.then(() => 'aborted' as const),
+      ]).then((winner) => {
+        if (winner === 'aborted') {
+          throwIfDeliveryAborted(signal);
+        }
+      });
+      acquired = true;
       return await fn();
     } finally {
-      release();
-      if (this.sessionInjectLocks.get(sessionId) === tail) {
-        this.sessionInjectLocks.delete(sessionId);
+      aborted.cancel();
+      if (acquired) {
+        if (leakTimer) clearTimeout(leakTimer);
+        release();
+        if (this.sessionInjectLocks.get(sessionId) === tail) {
+          this.sessionInjectLocks.delete(sessionId);
+        }
+      } else {
+        void prev.finally(() => {
+          if (leakTimer) clearTimeout(leakTimer);
+          release();
+          if (this.sessionInjectLocks.get(sessionId) === tail) {
+            this.sessionInjectLocks.delete(sessionId);
+          }
+        });
       }
     }
   }
@@ -1914,7 +1960,10 @@ export class TaskAgentManager {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const tail = prev.then(() => held);
+    const tail = prev.then(
+      () => held,
+      () => held
+    );
     this.sessionRestoreLocks.set(sessionId, tail);
     await prev;
     try {
