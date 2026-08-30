@@ -120,7 +120,7 @@ describe('instrumentTypedTelemetryAtMcpBoundary', () => {
     ).toBeTypeOf('function');
 
     const proxy = new AcpMcpProxyBridge({
-      'node-agent': { type: 'sdk', instance: mcpServer } as McpServerConfig,
+      'node-agent': { type: 'sdk', instance: mcpServer } as unknown as McpServerConfig,
     });
 
     const { events, unsubscribe } = collectStructuredLogEvents();
@@ -151,7 +151,7 @@ describe('instrumentTypedTelemetryAtMcpBoundary', () => {
     instrumentTypedTelemetryAtMcpBoundary({ instance: mcpServer }, telemetryConfig);
 
     const proxy = new AcpMcpProxyBridge({
-      'node-agent': { type: 'sdk', instance: mcpServer } as McpServerConfig,
+      'node-agent': { type: 'sdk', instance: mcpServer } as unknown as McpServerConfig,
     });
 
     const { events, unsubscribe } = collectStructuredLogEvents();
@@ -190,5 +190,29 @@ describe('instrumentTypedTelemetryAtMcpBoundary', () => {
       (mockMcpServer._registeredTools as { ping?: { emitTypedTelemetry?: unknown } }).ping
         ?.emitTypedTelemetry
     ).toBeTypeOf('function');
+  });
+
+  test('warns when neither registered tools nor protocol handlers are available', () => {
+    const mockMcpServer = {};
+    const { events, unsubscribe } = collectStructuredLogEvents();
+    try {
+      expect(() =>
+        instrumentTypedTelemetryAtMcpBoundary(
+          { instance: mockMcpServer as unknown as McpServer },
+          telemetryConfig
+        )
+      ).not.toThrow();
+
+      const warnings = events.filter(
+        (event) =>
+          event.level === 'warn' &&
+          event.module === 'hyperneo:daemon:space-actions.typed' &&
+          event.message.includes('typed telemetry boundary')
+      );
+      expect(warnings).toHaveLength(1);
+      expect((warnings[0]?.metadata as Record<string, unknown>)?.spaceId).toBe('space-1');
+    } finally {
+      unsubscribe();
+    }
   });
 });
