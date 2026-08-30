@@ -3,6 +3,7 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   awaitDeliveryConsumption,
+  deliveryConsumptionTimeoutOrDefault,
   buildBatchedDeliveryContent,
   type DriveTurnOutcome,
   deliverAndMarkQueued,
@@ -1407,6 +1408,37 @@ describe('message-delivery v2 — blocked steer requeue bound', () => {
       expect(next).toBeTruthy();
       current = next!;
     }
+  });
+});
+
+describe('deliveryConsumptionTimeoutOrDefault — timeout validation', () => {
+  const prev = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+
+  afterEach(() => {
+    if (prev === undefined) delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = prev;
+  });
+
+  it('defaults to 30s when unset', () => {
+    delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    expect(deliveryConsumptionTimeoutOrDefault()).toBe(30_000);
+  });
+
+  it('honors a positive explicit value', () => {
+    expect(deliveryConsumptionTimeoutOrDefault(1234)).toBe(1234);
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '5000';
+    expect(deliveryConsumptionTimeoutOrDefault()).toBe(5000);
+  });
+
+  it('rejects negative, zero, and non-finite values and falls back to 30s', () => {
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '-5';
+    expect(deliveryConsumptionTimeoutOrDefault()).toBe(30_000);
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '0';
+    expect(deliveryConsumptionTimeoutOrDefault()).toBe(30_000);
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = 'not-a-number';
+    expect(deliveryConsumptionTimeoutOrDefault()).toBe(30_000);
+    expect(deliveryConsumptionTimeoutOrDefault(-1)).toBe(30_000);
+    expect(deliveryConsumptionTimeoutOrDefault(Number.NaN)).toBe(30_000);
   });
 });
 

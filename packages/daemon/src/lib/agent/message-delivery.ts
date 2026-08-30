@@ -347,7 +347,9 @@ export function deliveryConsumptionTimeoutMs(provider?: string): number | undefi
 }
 
 export function deliveryConsumptionTimeoutOrDefault(timeoutMs?: number): number {
-  return timeoutMs ?? (Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS) || 30_000);
+  const explicit = timeoutMs ?? Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  return 30_000;
 }
 
 export async function awaitDeliveryConsumptionTolerant(args: {

@@ -2564,6 +2564,14 @@ export class AgentSession
             };
           }
 
+          if (args.role === 'steer' && this.stateManager.getState().status === 'queued') {
+            return {
+              outcome: 'blocked',
+              retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS,
+              reason: 'sdk_resume_choice',
+            };
+          }
+
           if (this.rateLimitWatchdog.isRecoveryPending()) {
             const retryAt = this.rateLimitWatchdog.isManualRecoveryPause()
               ? Date.now() + MANUAL_RECOVERY_PARK_MS
@@ -2584,6 +2592,7 @@ export class AgentSession
               };
             }
             throwIfDeliveryAborted(signal);
+            if (this.isCleaningUp()) return { outcome: 'aborted' };
             if (claimGuard && !claimGuard()) return { outcome: 'aborted' };
           }
 
@@ -2714,16 +2723,12 @@ export class AgentSession
       aborted.cancel();
     }
 
-    await withSessionLock(
-      this.session.id,
-      async () => {
-        this.markDeliveryBatchConsumed(admission.consumedUuids);
-        for (const uuid of admission.consumedUuids) {
-          signalDeliveryConsumed(this.session.id, uuid);
-        }
-      },
-      signal
-    );
+    await withSessionLock(this.session.id, async () => {
+      this.markDeliveryBatchConsumed(admission.consumedUuids);
+      for (const uuid of admission.consumedUuids) {
+        signalDeliveryConsumed(this.session.id, uuid);
+      }
+    });
 
     if (claimGuard && !claimGuard()) {
       return { outcome: 'aborted' };

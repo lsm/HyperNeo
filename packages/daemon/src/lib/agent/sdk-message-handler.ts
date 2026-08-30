@@ -895,6 +895,11 @@ export class SDKMessageHandler {
       })
       .catch(() => {});
 
+    this.publishToolResultConsumedEvents({
+      ...sdkMessage,
+      timestamp: consumedAt,
+    } as unknown as SDKMessage).catch(() => {});
+
     const jobQueue = db.getJobQueueRepo?.();
     if (
       session.config.provider !== 'acp' &&
@@ -915,11 +920,6 @@ export class SDKMessageHandler {
         status: 'consumed',
       })
       .catch(() => {});
-
-    this.publishToolResultConsumedEvents({
-      ...sdkMessage,
-      timestamp: consumedAt,
-    } as unknown as SDKMessage).catch(() => {});
   }
 
   async handleMessage(message: SDKMessage, runnerGeneration?: number): Promise<void> {

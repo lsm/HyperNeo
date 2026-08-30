@@ -1951,10 +1951,12 @@ describe('AgentSession', () => {
       };
 
       await agentSession.stateManager.setProcessing('kick-only');
-      void agentSession.driveDeliveryTurn('kick-only', 'estimate', null, false, () => true, [
-        'kick-only',
-        'tail-member',
-      ]);
+      void agentSession
+        .driveDeliveryTurn('kick-only', 'estimate', null, false, () => true, [
+          'kick-only',
+          'tail-member',
+        ])
+        .catch(() => {});
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(narrowSpy).toHaveBeenCalledTimes(1);
@@ -5965,6 +5967,7 @@ describe('AgentSession', () => {
       pending: boolean;
       claimGuard: 'held' | 'superseded';
       waitingForInput?: boolean;
+      queued?: boolean;
       lifecycle: 'started' | 'blocked';
       provider?: 'acp' | 'anthropic';
       expected: 'aborted' | 'blocked' | 'completed';
@@ -6026,6 +6029,9 @@ describe('AgentSession', () => {
           questions: [],
           askedAt: Date.now(),
         });
+      }
+      if (row.queued) {
+        await agentSession.stateManager.setQueued('turn-msg-uuid');
       }
       (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
         ensureQueryStarted: mock(async () => row.lifecycle),
@@ -6097,6 +6103,15 @@ describe('AgentSession', () => {
         claimGuard: 'held',
         waitingForInput: true,
         lifecycle: 'started',
+        expected: 'blocked',
+      },
+      {
+        name: 'a steer behind an already queued turn blocks instead of jumping ahead',
+        delivery: 'enqueued',
+        pending: false,
+        claimGuard: 'held',
+        lifecycle: 'started',
+        queued: true,
         expected: 'blocked',
       },
       {
@@ -6263,6 +6278,69 @@ describe('AgentSession', () => {
           () => true
         );
         expect(outcome).toEqual({ outcome: 'aborted' });
+        expect(db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe(
+          'enqueued'
+        );
+      } finally {
+        db.close();
+      }
+    });
+
+    it('aborts when cleanup starts during the asynchronous query startup', async () => {
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        db.getSDKMessageRepo().saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        agentSession.queryPromise = new Promise<void>(() => {});
+        let releaseStart!: () => void;
+        (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+          ensureQueryStarted: mock(
+            async () =>
+              new Promise<'started'>((resolve) => {
+                releaseStart = () => resolve('started');
+              })
+          ),
+          executeDeferredRestartIfPending: mock(async () => {}),
+        };
+        const queue = agentSession.messageQueue;
+        const originalAdmit = queue.admitWithId.bind(queue);
+        const admitSpy = mock(originalAdmit);
+        (queue as unknown as { admitWithId: MessageQueue['admitWithId'] }).admitWithId = admitSpy;
+        (queue as unknown as { isRunning: () => boolean }).isRunning = mock(() => false);
+        const steerPromise = agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        agentSession.setCleaningUp(true);
+        releaseStart();
+        const outcome = await steerPromise;
+        expect(outcome).toEqual({ outcome: 'aborted' });
+        expect(admitSpy).not.toHaveBeenCalled();
         expect(db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe(
           'enqueued'
         );

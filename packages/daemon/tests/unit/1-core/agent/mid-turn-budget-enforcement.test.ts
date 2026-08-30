@@ -55,6 +55,10 @@ function createAgentSession(): AgentSession {
       getUserMessageContentByUuid: mock(() => null),
       markDeliveryRetryableByUuid: mock(() => null),
     })),
+    getJobQueueRepo: mock(() => ({
+      getActiveDeliveryRole: mock(() => null),
+      enqueue: mock(() => {}),
+    })),
   } as unknown as Database;
 
   const session = new AgentSession(
