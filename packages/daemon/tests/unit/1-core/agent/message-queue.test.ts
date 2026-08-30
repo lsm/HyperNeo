@@ -1095,9 +1095,12 @@ describe('MessageQueue', () => {
         internal: true,
       } as never);
       expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+      expect(q.hasBufferedInternalCompaction()).toBe(false);
       expect(q.consumeInternalCompactionResultAttribution()).toBe(false);
       q.acknowledgeCompactionsAwaitingBoundary();
+      q.consumeCompactionBoundary();
       q.armInternalCompactionResultAttribution();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
       expect(q.consumeInternalCompactionResultAttribution()).toBe(true);
       q.stop();
     });
@@ -1120,6 +1123,48 @@ describe('MessageQueue', () => {
       q.consumeCompactionBoundary();
       expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
       q.stop();
+    });
+
+    it('marks a daemon compaction delivered behind a user compact as buffered and clears it on start', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'user-compact',
+        content: '/compact',
+        internal: false,
+      } as never);
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      expect(q.hasBufferedInternalCompaction()).toBe(true);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+      q.consumeCompactionBoundary();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(true);
+      q.clearInternalCompactionBuffered();
+      expect(q.hasBufferedInternalCompaction()).toBe(false);
+      q.stop();
+    });
+
+    it('clears boundary-ordering state when the queue stops', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'user-compact',
+        content: '/compact',
+        internal: false,
+      } as never);
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      expect(q.hasBufferedInternalCompaction()).toBe(true);
+
+      q.stop();
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+      expect(q.hasBufferedInternalCompaction()).toBe(false);
     });
 
     it('keeps a yielded internal compaction outstanding across a compact boundary', async () => {

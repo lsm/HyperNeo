@@ -241,6 +241,10 @@ export class MessageQueue {
     return this.internalCompactionBuffered;
   }
 
+  clearInternalCompactionBuffered(): void {
+    this.internalCompactionBuffered = false;
+  }
+
   removePendingInternalCompactions(): number {
     return this.cancelInternalCompactionEntries(false, false);
   }
@@ -686,6 +690,8 @@ export class MessageQueue {
     this.internalCompactionsAwaitingBoundary = 0;
     this.internalCompactionIdsAwaitingBoundary.clear();
     this.internalCompactionResultAttributionArmed = false;
+    this.outstandingCompactionBoundaries = [];
+    this.internalCompactionBuffered = false;
     this.nonCompactionSentSinceBoundary = false;
     this.cancelInternalCompactionEntries(true, true);
     this.deliveryGate = null;

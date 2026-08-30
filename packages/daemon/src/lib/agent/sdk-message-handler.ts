@@ -1887,6 +1887,12 @@ export class SDKMessageHandler {
 
     const statusMsg = message as { status: string | null };
     if (statusMsg.status === 'compacting') {
+      if (
+        this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
+        this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()
+      ) {
+        this.ctx.messageQueue.clearInternalCompactionBuffered();
+      }
       await stateManager.setCompacting(true);
     }
   }
@@ -1912,6 +1918,7 @@ export class SDKMessageHandler {
     if (manualBoundary && this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) {
       if (this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()) {
         this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+        this.ctx.messageQueue.consumeCompactionBoundary();
         this.ctx.messageQueue.armInternalCompactionResultAttribution();
       } else {
         this.ctx.messageQueue.consumeCompactionBoundary();
