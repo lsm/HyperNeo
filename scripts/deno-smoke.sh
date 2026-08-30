@@ -27,8 +27,12 @@ PORT="${DENO_SMOKE_PORT:-9283}"
 BOOT_TIMEOUT="${DENO_SMOKE_BOOT_TIMEOUT:-120}"
 DENO_SMOKE_BIN="${DENO_SMOKE_BIN:-}"
 
-if ! command -v deno &> /dev/null && [ -z "$DENO_SMOKE_BIN" ]; then
-	echo "Error: deno is not on PATH (CI pins 2.9.4 via denoland/setup-deno)."
+if ! command -v deno &> /dev/null; then
+	echo "Error: deno is not on PATH (CI pins 2.9.4 via denoland/setup-deno; required for the /ws WebSocket probe even when DENO_SMOKE_BIN is set)."
+	exit 1
+fi
+if [ -n "$DENO_SMOKE_BIN" ] && [ ! -x "$DENO_SMOKE_BIN" ]; then
+	echo "Error: DENO_SMOKE_BIN is set to '$DENO_SMOKE_BIN' but the file is not executable."
 	exit 1
 fi
 
@@ -50,8 +54,8 @@ dump_log() {
 	tail -n 50 "$LOG_FILE" || true
 }
 
-echo "[deno-smoke] $(deno --version | head -1)"
 echo "[deno-smoke] port=$PORT db=$DB_PATH"
+echo "[deno-smoke] $(deno --version | head -1)"
 if [ -n "$DENO_SMOKE_BIN" ]; then
 	echo "[deno-smoke] booting pre-built binary: $DENO_SMOKE_BIN"
 fi
