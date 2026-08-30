@@ -64,14 +64,17 @@ export interface RoleHotActionView {
   readonly hotActions: readonly string[];
 }
 
-export function buildWorkerDispatcherContractTools(nodeRole?: string | null): string[] {
+export function buildWorkerDispatcherContractTools(
+  nodeRole?: string | null,
+  availableActionNames?: ReadonlySet<string> | null
+): string[] {
   const { label, hotActions } = resolveRoleHotActionView('workflow_worker', nodeRole);
-  const suggested = [...hotActions, ...WORKER_NODE_HOT_FILL].map(
-    (name) => `call_action(name="${name}")`
-  );
+  const suggested = [...hotActions, ...WORKER_NODE_HOT_FILL]
+    .filter((name) => availableActionNames?.has(name) ?? false)
+    .map((name) => `call_action(name="${name}")`);
   return [
     `  - call_action({ name, params? }) on the space-actions server — one dispatcher for every action available to the ${label} role`,
-    `    Suggested: ${suggested.join(', ')}`,
+    ...(suggested.length > 0 ? [`    Suggested: ${suggested.join(', ')}`] : []),
     '  - call_action(name="list_actions") — the authoritative action catalog for this role; call_action(name="describe_action") for one action\'s params',
   ];
 }

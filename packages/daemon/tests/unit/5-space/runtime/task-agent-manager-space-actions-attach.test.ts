@@ -38,11 +38,11 @@ function makeManager(): TaskAgentManager {
   } as unknown as TaskAgentManagerConfig);
 }
 
-function buildServers(tam: TaskAgentManager): Record<string, McpServerConfig> {
+function buildServers(tam: TaskAgentManager, agentName = 'coder'): Record<string, McpServerConfig> {
   return tam.buildNodeAgentMcpServersForSession(
     TASK_ID,
     SUB_SESSION_ID,
-    'coder',
+    agentName,
     SPACE_ID,
     RUN_ID,
     '/tmp/ws',
@@ -79,22 +79,30 @@ function makeFakeSession() {
   return { agentSession: agentSession as unknown as AgentSession, state };
 }
 
-function contractOf(tam: TaskAgentManager): string {
+function contractOf(
+  tam: TaskAgentManager,
+  agentName = 'coder',
+  dispatcherActionNames?: ReadonlySet<string>
+): string {
   return (
     tam as unknown as {
       buildNodeExecutionRuntimeContract: (
         w: null,
         e: { agentName: string; workflowNodeId: string },
-        s: { autonomyLevel: number } | null
+        s: { autonomyLevel: number } | null,
+        names?: ReadonlySet<string>
       ) => string;
     }
   ).buildNodeExecutionRuntimeContract(
     null,
-    { agentName: 'coder', workflowNodeId: 'node-1' },
-    {
-      autonomyLevel: 1,
-    }
+    { agentName, workflowNodeId: 'node-1' },
+    { autonomyLevel: 1 },
+    dispatcherActionNames
   );
+}
+
+function registryNamesOf(server: SpaceActionsMcpServer): ReadonlySet<string> {
+  return new Set(server.registry.entries.map((entry) => entry.name));
 }
 
 describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', () => {
@@ -151,17 +159,50 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     expect(contract).not.toContain('call_action');
   });
 
-  test('flag on: contract renders the dispatcher variant with per-role availability', () => {
+  test('flag on: contract renders the dispatcher variant with registry-filtered availability', () => {
     process.env[FLAG] = '1';
-    const contract = contractOf(makeManager());
+    const tam = makeManager();
+    const servers = buildServers(tam);
+    const names = registryNamesOf(servers['space-actions'] as unknown as SpaceActionsMcpServer);
+    const contract = contractOf(tam, 'coder', names);
     expect(contract).toContain(
       'call_action({ name, params? }) on the space-actions server — one dispatcher for every action available to the Coder role'
     );
     expect(contract).toContain('call_action(name="list_actions")');
     expect(contract).toContain('call_action(name="restore_node_agent")');
+    expect(contract).toContain('call_action(name="create_standalone_task")');
+    expect(contract).not.toContain('call_action(name="update_task")');
     expect(contract).toContain(
       'Escalation: send_message({ target: "space-agent", message }) requests human/space-level judgment'
     );
     expect(contract).not.toContain('list_peers / list_reachable_agents — discovery');
+  });
+
+  test('flag on: every suggested contract action resolves through the attached worker registry', () => {
+    process.env[FLAG] = '1';
+    for (const agentName of ['coder', 'reviewer']) {
+      const tam = makeManager();
+      const servers = buildServers(tam, agentName);
+      const spaceActions = servers['space-actions'] as unknown as SpaceActionsMcpServer;
+      const names = registryNamesOf(spaceActions);
+      const contract = contractOf(tam, agentName, names);
+      const suggested = [...contract.matchAll(/call_action\(name="([a-z_]+)"\)/g)].map(
+        (match) => match[1]
+      );
+      expect(suggested.length).toBeGreaterThan(0);
+      for (const name of suggested) {
+        expect(names.has(name)).toBe(true);
+      }
+    }
+  });
+
+  test('flag on without registry names: contract omits suggestions instead of guessing', () => {
+    process.env[FLAG] = '1';
+    const contract = contractOf(makeManager(), 'coder', undefined);
+    expect(contract).toContain(
+      'call_action({ name, params? }) on the space-actions server — one dispatcher for every action available to the Coder role'
+    );
+    expect(contract).toContain('call_action(name="list_actions")');
+    expect(contract).not.toContain('Suggested:');
   });
 });

@@ -97,6 +97,7 @@ import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import {
   buildWorkerDispatcherContractTools,
   createSpaceActionsMcpServer,
+  type SpaceActionsMcpServer,
 } from '../actions/space-actions-server.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
@@ -649,6 +650,7 @@ export class TaskAgentManager {
       reservationHeld: boolean;
       reservedExecution: boolean;
       appliedSlot?: WorkflowNodeAgent;
+      dispatcherActionNames?: ReadonlySet<string>;
     } = { reservationHeld: false, reservedExecution: false };
     const outcome = await runSpawnExecutionFlow(this.buildSpawnExecutionFlowDeps(spawnState), {
       task,
@@ -768,6 +770,7 @@ export class TaskAgentManager {
     reservationHeld: boolean;
     reservedExecution: boolean;
     appliedSlot?: WorkflowNodeAgent;
+    dispatcherActionNames?: ReadonlySet<string>;
   }): SpawnExecutionFlowDeps {
     return {
       getFreshTask: (taskId) => this.config.taskRepo.getTask(taskId),
@@ -951,6 +954,12 @@ export class TaskAgentManager {
             request.workspacePath,
             request.execution.workflowNodeId
           );
+          const spaceActionsServer = nodeAgentMcpServers['space-actions'] as unknown as
+            | SpaceActionsMcpServer
+            | undefined;
+          spawnState.dispatcherActionNames = spaceActionsServer
+            ? new Set(spaceActionsServer.registry.entries.map((entry) => entry.name))
+            : undefined;
 
           init = assembleNodeAgentSessionInit({
             baseInit: init,
@@ -1083,7 +1092,8 @@ export class TaskAgentManager {
         const runtimeContract = this.buildNodeExecutionRuntimeContract(
           request.workflow,
           request.execution,
-          request.space
+          request.space,
+          spawnState.dispatcherActionNames
         );
         return runtimeContract ? `${initialMessage}\n\n${runtimeContract}` : initialMessage;
       },
@@ -3203,7 +3213,8 @@ export class TaskAgentManager {
   private buildNodeExecutionRuntimeContract(
     workflow: SpaceWorkflow | null,
     execution: NodeExecution,
-    space: Space | null
+    space: Space | null,
+    dispatcherActionNames?: ReadonlySet<string>
   ): string {
     const isEndNode = this.isTerminalNode(workflow, execution.workflowNodeId);
 
@@ -3230,7 +3241,7 @@ export class TaskAgentManager {
     };
 
     const dispatcherTools = isSpaceActionsDispatcherEnabled()
-      ? buildWorkerDispatcherContractTools(execution.agentName)
+      ? buildWorkerDispatcherContractTools(execution.agentName, dispatcherActionNames)
       : null;
 
     const fallback = [
