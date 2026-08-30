@@ -285,6 +285,8 @@ interface RateLimitSessionEntry {
 
 const RATE_LIMIT_FALLBACK_RESET_AT_MS = 60 * 60 * 1000;
 
+const WORKER_REINJECTABLE_MCP_SERVERS = ['node-agent', 'space-actions'] as const;
+
 const VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS = 500;
 
 const VERIFIED_STOP_ESCALATION_FORCE_KILL_MS = 2000;
@@ -1262,7 +1264,7 @@ export class TaskAgentManager {
                   workflowNodeId: reuseNodeId,
                 };
                 const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
-                const previousNodeAgentServer = this.captureNodeAgentServer(existing);
+                const previousWorkerMcpServers = this.captureWorkerMcpServers(existing);
                 const workspaceChanged =
                   !!reuseWorkspacePath && previousReuseWorkspacePath !== reuseWorkspacePath;
                 if (workspaceChanged) {
@@ -1274,7 +1276,7 @@ export class TaskAgentManager {
                   if (workspaceChanged) {
                     existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
                   }
-                  this.restoreNodeAgentServer(existing, previousNodeAgentServer);
+                  this.restoreWorkerMcpServers(existing, previousWorkerMcpServers);
                   throw err;
                 }
                 await this.ensureRequiredMcpServersAttached(existing, {
@@ -1892,21 +1894,27 @@ export class TaskAgentManager {
     return withSessionResetCoordination(sessionId, fn);
   }
 
-  private captureNodeAgentServer(session: AgentSession): McpServerConfig | undefined {
+  private captureWorkerMcpServers(session: AgentSession): Record<string, McpServerConfig> {
     const servers = session.session.config?.mcpServers as
       | Record<string, McpServerConfig>
       | undefined;
-    return servers?.['node-agent'];
+    const captured: Record<string, McpServerConfig> = {};
+    for (const name of WORKER_REINJECTABLE_MCP_SERVERS) {
+      if (servers?.[name]) captured[name] = servers[name];
+    }
+    return captured;
   }
 
-  private restoreNodeAgentServer(
+  private restoreWorkerMcpServers(
     session: AgentSession,
-    previous: McpServerConfig | undefined
+    previous: Record<string, McpServerConfig>
   ): void {
-    if (previous) {
-      session.mergeRuntimeMcpServers({ 'node-agent': previous });
-    } else {
-      session.detachRuntimeMcpServer('node-agent');
+    for (const name of WORKER_REINJECTABLE_MCP_SERVERS) {
+      if (previous[name]) {
+        session.mergeRuntimeMcpServers({ [name]: previous[name] });
+      } else {
+        session.detachRuntimeMcpServer(name);
+      }
     }
   }
 
@@ -2692,7 +2700,7 @@ export class TaskAgentManager {
               if (!live) return;
               const workspacePath = view.workspacePath!;
               const previousWorkspacePath = live.getSessionData().workspacePath;
-              const previousNodeAgentServer = this.captureNodeAgentServer(live);
+              const previousWorkerMcpServers = this.captureWorkerMcpServers(live);
               live.updateMetadata({ workspacePath });
               try {
                 await this.reinjectNodeAgentMcpServer(live, {
@@ -2708,7 +2716,7 @@ export class TaskAgentManager {
                 if (previousWorkspacePath !== undefined) {
                   live.updateMetadata({ workspacePath: previousWorkspacePath });
                 }
-                this.restoreNodeAgentServer(live, previousNodeAgentServer);
+                this.restoreWorkerMcpServers(live, previousWorkerMcpServers);
                 throw err;
               }
             },
@@ -3243,20 +3251,20 @@ export class TaskAgentManager {
     const dispatcherTools = isSpaceActionsDispatcherEnabled()
       ? buildWorkerDispatcherContractTools(execution.agentName, dispatcherActionNames)
       : null;
+    const typedTools = [
+      '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
+      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
+      ...endNodeContractLines('  '),
+      '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
+      '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
+    ];
 
     const fallback = [
       '## Runtime Execution Contract',
       `Role: "${execution.agentName}"`,
       'Tools available:',
-      ...(dispatcherTools
-        ? [...dispatcherTools, ...endNodeContractLines('  ')]
-        : [
-            '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
-            '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes. Do not re-narrate the chat thread into artifacts.',
-            ...endNodeContractLines('  '),
-            '  - list_artifacts({ nodeId?, type? }) — list artifacts for the current workflow run',
-            '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call returned "No such tool available", call this once and then retry the original tool',
-          ]),
+      ...(dispatcherTools ?? []),
+      ...typedTools,
       `Escalation: send_message({ target: "${WORKFLOW_ESCALATION_TARGET}", message }) requests human/space-level judgment (use for misrouted no-code tasks or hard blockers).`,
       'Only contact the task-agent via send_message if you are blocked or need human input.',
     ].join('\n');
@@ -3275,13 +3283,12 @@ export class TaskAgentManager {
       `Node: "${node.name}" (${node.id})`,
       `Agent: "${execution.agentName}"`,
       'Tools available:',
-      ...(dispatcherTools ?? [
-        '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
-        '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes.',
-        '  - list_artifacts ({ nodeId?, type? }) — list artifacts for the current workflow run',
-        '  - list_peers / list_reachable_agents — discovery',
-        '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
-      ]),
+      ...(dispatcherTools ?? []),
+      '  - send_message({ target, message, data? }) — communicate with peers; `data` is passed through to the target agent',
+      '  - save_artifact({ shape, kind?, key?, summary?, data? }) — persist a STRUCTURED FACT as a generic shape (link/commit_set/check/metric/decision/note) with a freeform `kind` hint. Use shape="note" for rolling status, shape="decision" for verdicts/outcomes.',
+      '  - list_artifacts ({ nodeId?, type? }) — list artifacts for the current workflow run',
+      '  - list_peers / list_reachable_agents — discovery',
+      '  - restore_node_agent({ reason? }) — self-heal fallback: if a previous mcp__node-agent__* call ever returned "No such tool available", call this once and then retry the original tool',
     ];
 
     lines.push(
@@ -4326,7 +4333,7 @@ export class TaskAgentManager {
                 agentSession.getSessionData().workspacePath !== healWorkspacePath
               ) {
                 const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
-                const previousNodeAgentServer = this.captureNodeAgentServer(agentSession);
+                const previousWorkerMcpServers = this.captureWorkerMcpServers(agentSession);
                 agentSession.updateMetadata({ workspacePath: healWorkspacePath });
                 try {
                   await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
@@ -4334,7 +4341,7 @@ export class TaskAgentManager {
                   if (previousHealWorkspacePath !== undefined) {
                     agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
                   }
-                  this.restoreNodeAgentServer(agentSession, previousNodeAgentServer);
+                  this.restoreWorkerMcpServers(agentSession, previousWorkerMcpServers);
                   throw err;
                 }
               }
@@ -4379,17 +4386,19 @@ export class TaskAgentManager {
       workflowNodeId: string;
     }
   ): Promise<void> {
-    session.mergeRuntimeMcpServers(
-      this.buildNodeAgentMcpServersForSession(
-        ctx.taskId,
-        ctx.subSessionId,
-        ctx.agentName,
-        ctx.spaceId,
-        ctx.workflowRunId,
-        ctx.workspacePath,
-        ctx.workflowNodeId
-      )
+    const rebuilt = this.buildNodeAgentMcpServersForSession(
+      ctx.taskId,
+      ctx.subSessionId,
+      ctx.agentName,
+      ctx.spaceId,
+      ctx.workflowRunId,
+      ctx.workspacePath,
+      ctx.workflowNodeId
     );
+    session.mergeRuntimeMcpServers(rebuilt);
+    if (!rebuilt['space-actions']) {
+      session.detachRuntimeMcpServer('space-actions');
+    }
 
     await session.restartQuery();
   }
@@ -4936,7 +4945,7 @@ export class TaskAgentManager {
         }).workspacePath;
         if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
           const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
-          const previousNodeAgentServer = this.captureNodeAgentServer(existing);
+          const previousWorkerMcpServers = this.captureWorkerMcpServers(existing);
           existing.updateMetadata({ workspacePath: reuseWorkspacePath });
           try {
             await this.reinjectNodeAgentMcpServer(existing, {
@@ -4952,7 +4961,7 @@ export class TaskAgentManager {
             if (previousReuseWorkspacePath !== undefined) {
               existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
             }
-            this.restoreNodeAgentServer(existing, previousNodeAgentServer);
+            this.restoreWorkerMcpServers(existing, previousWorkerMcpServers);
             throw err;
           }
         }

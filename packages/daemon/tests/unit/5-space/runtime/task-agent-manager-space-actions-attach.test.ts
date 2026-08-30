@@ -54,6 +54,7 @@ function makeFakeSession() {
   const state = {
     merged: [] as Array<Record<string, McpServerConfig>>,
     restarted: 0,
+    calls: [] as string[],
     session: {
       id: SUB_SESSION_ID,
       config: { mcpServers: {} as Record<string, McpServerConfig> | undefined },
@@ -70,7 +71,15 @@ function makeFakeSession() {
         mcpServers: { ...(state.session.config.mcpServers ?? {}), ...additional },
       };
     },
-
+    detachRuntimeMcpServer: (name: string) => {
+      state.calls.push(`detachRuntimeMcpServer:${name}`);
+      const servers = state.session.config.mcpServers;
+      if (servers && name in servers) {
+        const next = { ...servers };
+        delete next[name];
+        state.session.config = { ...state.session.config, mcpServers: next };
+      }
+    },
     restartQuery: async () => {
       state.restarted += 1;
     },
@@ -152,6 +161,26 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     expect(fake.state.restarted).toBe(1);
   });
 
+  test('flag off: reinject detaches a stale space-actions server merged under a previous flag-on era', async () => {
+    const tam = makeManager();
+    const fake = makeFakeSession();
+    fake.agentSession.mergeRuntimeMcpServers({
+      'space-actions': { __stale: true } as unknown as McpServerConfig,
+    });
+    await tam.reinjectNodeAgentMcpServer(fake.agentSession, {
+      taskId: TASK_ID,
+      subSessionId: SUB_SESSION_ID,
+      agentName: 'coder',
+      spaceId: SPACE_ID,
+      workflowRunId: RUN_ID,
+      workspacePath: '/tmp/ws',
+      workflowNodeId: 'node-coder',
+    });
+    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.session.config.mcpServers?.['space-actions']).toBeUndefined();
+    expect(fake.state.calls).toContain('detachRuntimeMcpServer:space-actions');
+  });
+
   test('flag off: contract keeps the typed tool list', () => {
     const contract = contractOf(makeManager());
     expect(contract).toContain('Tools available:');
@@ -159,7 +188,7 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     expect(contract).not.toContain('call_action');
   });
 
-  test('flag on: contract renders the dispatcher variant with registry-filtered availability', () => {
+  test('flag on: contract renders dispatcher guidance with registry-filtered availability above the typed fallback', () => {
     process.env[FLAG] = '1';
     const tam = makeManager();
     const servers = buildServers(tam);
@@ -172,10 +201,11 @@ describe('TaskAgentManager — space-actions dispatcher attach (flag-gated)', ()
     expect(contract).toContain('call_action(name="restore_node_agent")');
     expect(contract).toContain('call_action(name="create_standalone_task")');
     expect(contract).not.toContain('call_action(name="update_task")');
+    expect(contract).toContain('send_message({ target, message, data? })');
+    expect(contract).toContain('restore_node_agent({ reason? })');
     expect(contract).toContain(
       'Escalation: send_message({ target: "space-agent", message }) requests human/space-level judgment'
     );
-    expect(contract).not.toContain('list_peers / list_reachable_agents — discovery');
   });
 
   test('flag on: every suggested contract action resolves through the attached worker registry', () => {
