@@ -1197,9 +1197,7 @@ export function setupSessionHandlers(
     }
 
     const messageUuid = message.uuid;
-    const agentSession = isMessageDeliveryV2Enabled()
-      ? await sessionManager.getSessionForControl(targetSessionId)
-      : await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1286,9 +1284,7 @@ export function setupSessionHandlers(
     };
 
     try {
-      const agentSession = isMessageDeliveryV2Enabled()
-        ? await sessionManager.getSessionForControl(targetSessionId)
-        : await sessionManager.getSessionAsync(targetSessionId);
+      const agentSession = await sessionManager.getSessionForControl(targetSessionId);
       if (!agentSession) {
         throw new Error('Session not found');
       }

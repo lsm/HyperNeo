@@ -1,5 +1,5 @@
 import type { MessageHub } from '@hyperneo/shared';
-import { withSessionResetCoordination } from '../agent/message-delivery.ts';
+import { withSessionOperationLock } from '../agent/message-delivery.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { RewindMode, SelectiveRewindRequest } from '@hyperneo/shared';
@@ -66,7 +66,7 @@ export function setupRewindHandlers(
       };
     }
 
-    const result = await withSessionResetCoordination(sessionId, () =>
+    const result = await withSessionOperationLock(sessionId, () =>
       agentSession.executeRewind(checkpointId, mode)
     );
     if (agentSession.getSessionData().config.queryMode !== 'manual') {
@@ -139,7 +139,7 @@ export function setupRewindHandlers(
       };
     }
 
-    const result = await withSessionResetCoordination(sessionId, () =>
+    const result = await withSessionOperationLock(sessionId, () =>
       agentSession.executeSelectiveRewind(messageIds, mode)
     );
     if (agentSession.getSessionData().config.queryMode !== 'manual') {
