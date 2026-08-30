@@ -7,7 +7,6 @@ const DRIVE_OUTCOMES: DeliveryOutcome[] = [
   { outcome: 'blocked', retryAt: 1234 },
   { outcome: 'blocked', retryAt: 5678, reason: 'limit_recovery' },
   { outcome: 'aborted' },
-  { outcome: 'park', retryAt: 9999, reason: 'waiting_for_input' },
 ];
 
 describe('routeDriveTurnOutcome outcome gates', () => {

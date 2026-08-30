@@ -1732,6 +1732,18 @@ export class AgentSession
       },
       onSurvivorRequeued: (uuid) => {
         try {
+          const reopenedId = this.db
+            .getSDKMessageRepo()
+            .markDeliveryRetryableByUuid(this.session.id, uuid);
+          if (reopenedId) {
+            void this.internalEventBus
+              .publish('messages.statusChanged', {
+                sessionId: this.session.id,
+                messageIds: [reopenedId],
+                status: 'enqueued',
+              })
+              .catch(() => {});
+          }
           deliverMessage(this.db.getJobQueueRepo()!, this.session.id, uuid, { origin: 'recovery' });
         } catch (error) {
           this.logger.warn(
@@ -2482,7 +2494,7 @@ export class AgentSession
     batchUuids?: string[],
     signal?: AbortSignal,
     observer?: MessageDeliveryAttemptObserver,
-    _deliveryClaimToken?: string | null
+    deliveryClaimToken?: string | null
   ): Promise<DriveTurnOutcome> {
     return this.admitDelivery({
       messageUuid,
@@ -2492,6 +2504,7 @@ export class AgentSession
       batchUuids,
       signal,
       observer,
+      deliveryClaimToken,
     });
   }
 
@@ -2522,12 +2535,14 @@ export class AgentSession
     batchUuids?: string[];
     signal?: AbortSignal;
     observer?: MessageDeliveryAttemptObserver;
+    deliveryClaimToken?: string | null;
   }): Promise<DeliveryOutcome> {
     type DeliveryAdmissionResult =
       | DeliveryOutcome
       | { outcome: 'driving'; acknowledgment: Promise<void>; consumedUuids: string[] };
 
-    const { messageUuid, content, claimGuard, batchUuids, signal, observer } = args;
+    const { messageUuid, content, claimGuard, batchUuids, signal, observer, deliveryClaimToken } =
+      args;
 
     const boundary = await admitAcrossContextClearBoundary(this.session.id, signal, () =>
       withSessionLock(
@@ -2589,12 +2604,25 @@ export class AgentSession
             consumedUuids = rebuilt.admittedUuids ?? [messageUuid];
 
             const jobQueue = this.db.getJobQueueRepo?.();
-            if (jobQueue?.narrowActiveDeliveryBatchUuids) {
-              const narrowed = jobQueue.narrowActiveDeliveryBatchUuids(
-                this.session.id,
-                messageUuid,
-                consumedUuids
-              );
+            if (jobQueue) {
+              let narrowed: boolean;
+              if (deliveryClaimToken && jobQueue.updateDeliveryBatchUuidsFenced) {
+                narrowed = jobQueue.updateDeliveryBatchUuidsFenced({
+                  sessionId: this.session.id,
+                  kickoffUuid: messageUuid,
+                  claimToken: deliveryClaimToken,
+                  expectedBatchUuids: batchUuids,
+                  batchUuids: consumedUuids,
+                }).applied;
+              } else if (jobQueue.narrowActiveDeliveryBatchUuids) {
+                narrowed = jobQueue.narrowActiveDeliveryBatchUuids(
+                  this.session.id,
+                  messageUuid,
+                  consumedUuids
+                );
+              } else {
+                narrowed = true;
+              }
               if (!narrowed) {
                 this.logger.warn(
                   `delivery: could not narrow active batch for ${messageUuid} in session ${this.session.id}`
@@ -2670,6 +2698,9 @@ export class AgentSession
     } catch (error) {
       if (ackTimedOut) {
         deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'ack_timeout');
+        if (!this.messageQueue.hasYielded?.(messageUuid)) {
+          this.messageQueue.remove(messageUuid);
+        }
       }
       throw error;
     } finally {
@@ -2677,14 +2708,9 @@ export class AgentSession
       aborted.cancel();
     }
 
-    if (claimGuard && !claimGuard()) {
-      return { outcome: 'aborted' };
-    }
-
     await withSessionLock(
       this.session.id,
       async () => {
-        if (claimGuard && !claimGuard()) return;
         this.markDeliveryBatchConsumed(admission.consumedUuids);
         for (const uuid of admission.consumedUuids) {
           signalDeliveryConsumed(this.session.id, uuid);
@@ -2692,6 +2718,10 @@ export class AgentSession
       },
       signal
     );
+
+    if (claimGuard && !claimGuard()) {
+      return { outcome: 'aborted' };
+    }
 
     observer?.reportStage('sdk_admitted', { generation: this.getQueryGeneration() });
     return { outcome: 'completed' };

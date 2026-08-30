@@ -61,24 +61,10 @@ describe('routeDriveTurnOutcome', () => {
       drive: { outcome: 'aborted' },
       expected: { mutation: 'none', settleSkipped: true, result: { outcome: 'aborted' } },
     },
-    {
-      label: 'park',
-      drive: {
-        outcome: 'park',
-        retryAt: NOW + MESSAGE_DELIVERY_PARK_MS,
-        reason: 'waiting_for_input',
-      },
-      expected: {
-        mutation: 'requeue',
-        retryAt: NOW + MESSAGE_DELIVERY_PARK_MS,
-        settleSkipped: false,
-        result: { parked: 'waiting_for_input', retryAt: NOW + MESSAGE_DELIVERY_PARK_MS },
-      },
-    },
   ];
 
   it.each(DRIVE_OUTCOMES.map((row) => [row.label, row] as const))('%s', (_label, row) => {
-    const route = routeDriveTurnOutcome(row.drive, { now: NOW });
+    const route = routeDriveTurnOutcome(row.drive);
     noDeadLetter(route);
     expect(route).toEqual(row.expected);
   });
@@ -110,24 +96,10 @@ describe('routeFeedSteerOutcome', () => {
         result: { parked: 'sdk_resume_choice', retryAt: 1234 },
       },
     },
-    {
-      label: 'park',
-      feed: {
-        outcome: 'park',
-        retryAt: NOW + MESSAGE_DELIVERY_PARK_MS,
-        reason: 'waiting_for_input',
-      },
-      expected: {
-        mutation: 'requeue',
-        retryAt: NOW + MESSAGE_DELIVERY_PARK_MS,
-        settleSkipped: false,
-        result: { parked: 'waiting_for_input', retryAt: NOW + MESSAGE_DELIVERY_PARK_MS },
-      },
-    },
   ];
 
   it.each(FEED_OUTCOMES.map((row) => [row.label, row] as const))('%s', (_label, row) => {
-    const route = routeFeedSteerOutcome(row.feed, { now: NOW });
+    const route = routeFeedSteerOutcome(row.feed);
     noDeadLetter(route);
     expect(route).toEqual(row.expected);
   });

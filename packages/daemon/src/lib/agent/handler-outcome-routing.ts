@@ -1,4 +1,4 @@
-import { MESSAGE_DELIVERY_PARK_MS, type DeliveryOutcome } from './message-delivery.ts';
+import type { DeliveryOutcome } from './message-delivery.ts';
 
 export type HandlerJobResult =
   | { outcome: 'completed' }
@@ -14,10 +14,7 @@ export type HandlerOutcomeRoute =
       result: HandlerJobResult;
     };
 
-export function routeDriveTurnOutcome(
-  result: DeliveryOutcome,
-  args: { now: number } = { now: Date.now() }
-): HandlerOutcomeRoute {
+export function routeDriveTurnOutcome(result: DeliveryOutcome): HandlerOutcomeRoute {
   if (result.outcome === 'completed') {
     return { mutation: 'none', settleSkipped: false, result: { outcome: 'completed' } };
   }
@@ -38,22 +35,9 @@ export function routeDriveTurnOutcome(
       result: { parked, retryAt: result.retryAt },
     };
   }
-  if (result.outcome === 'park') {
-    const retryAt = result.retryAt ?? args.now + MESSAGE_DELIVERY_PARK_MS;
-    const parked = result.reason ?? 'turn_blocked';
-    return {
-      mutation: 'requeue',
-      retryAt,
-      settleSkipped: false,
-      result: { parked, retryAt },
-    };
-  }
   return { mutation: 'none', settleSkipped: false, result: { outcome: 'completed' } };
 }
 
-export function routeFeedSteerOutcome(
-  result: DeliveryOutcome,
-  args: { now: number } = { now: Date.now() }
-): HandlerOutcomeRoute {
-  return routeDriveTurnOutcome(result, args);
+export function routeFeedSteerOutcome(result: DeliveryOutcome): HandlerOutcomeRoute {
+  return routeDriveTurnOutcome(result);
 }

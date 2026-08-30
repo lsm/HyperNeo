@@ -636,7 +636,7 @@ describe('delivery transcript parity harness (A1a)', () => {
         );
         await expect(steerPromise).rejects.toThrow('Delivery not consumed within timeout');
         expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
-        expect(agentSession.messageQueue.hasPendingOrInFlight(steerUuid)).toBe(true);
+        expect(agentSession.messageQueue.hasPendingOrInFlight(steerUuid)).toBe(false);
       } finally {
         if (previousTimeout === undefined)
           delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;

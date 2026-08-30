@@ -254,8 +254,7 @@ export type DeliveryOutcome =
       outcome: 'blocked';
       retryAt: number;
       reason?: 'sdk_resume_choice' | 'context_clear_boundary' | 'limit_recovery';
-    }
-  | { outcome: 'park'; retryAt?: number; reason?: 'waiting_for_input' };
+    };
 
 export type DriveTurnOutcome = DeliveryOutcome;
 export type FeedSteerOutcome = DeliveryOutcome;

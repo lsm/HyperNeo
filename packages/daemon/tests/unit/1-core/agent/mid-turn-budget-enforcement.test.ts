@@ -506,14 +506,17 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     const harness = makeQuery();
     session.queryObject = harness.query;
     const jobEnqueueMock = mock(() => {});
+    const retryableMock = mock(() => 'db-reopened');
     (
       session.db as unknown as {
         getSDKMessageRepo: () => {
           getUserMessageContentByUuid: () => string | null;
+          markDeliveryRetryableByUuid: typeof retryableMock;
         };
       }
     ).getSDKMessageRepo = () => ({
       getUserMessageContentByUuid: () => 'db-recovered',
+      markDeliveryRetryableByUuid: retryableMock,
     });
     (
       session.db as unknown as {
@@ -535,6 +538,7 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       durable: true,
       prepend: true,
     });
+    expect(retryableMock).toHaveBeenCalledWith(session.session.id, 'uuid-lru-evicted');
     expect(jobEnqueueMock).toHaveBeenCalledWith({
       queue: 'message_delivery',
       payload: {

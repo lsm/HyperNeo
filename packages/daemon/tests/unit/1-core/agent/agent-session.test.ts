@@ -1960,6 +1960,112 @@ describe('AgentSession', () => {
       expect(narrowSpy.mock.calls[0]).toEqual(['test-session-id', 'kick-only', ['kick-only']]);
     });
 
+    it('driveDeliveryTurn narrows the batch claim-fenced when a delivery claim token is present', async () => {
+      const fencedSpy = mock(() => ({
+        applied: true,
+        priorBatchUuids: ['kick-fence', 'member-fence'],
+        priorDroppedBatchUuids: [],
+      }));
+      const legacySpy = mock(() => true);
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sid: string, uuid: string) => ({
+          content: uuid === 'kick-fence' ? 'kickoff' : 'member',
+          sendStatus: 'enqueued',
+        })),
+        markDeliveryConsumedByUuids: mock(() => ['db-kick-fence', 'db-member-fence']),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        updateDeliveryBatchUuidsFenced: fencedSpy,
+        narrowActiveDeliveryBatchUuids: legacySpy,
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      const existing = Promise.withResolvers<void>();
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: mock(() => Promise.resolve()),
+        waitForPendingOrInFlight: mock(() => ({
+          acknowledgment: existing.promise,
+          content: '--- message 1 of 2 ---\nkickoff\n\n--- message 2 of 2 ---\nmember',
+        })),
+        isRunning: mock(() => false),
+        size: mock(() => 1),
+      };
+
+      const drive = agentSession.driveDeliveryTurn(
+        'kick-fence',
+        'estimate',
+        null,
+        false,
+        () => true,
+        ['kick-fence', 'member-fence'],
+        undefined,
+        undefined,
+        'claim-token-1'
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(fencedSpy).toHaveBeenCalledTimes(1);
+      expect(fencedSpy.mock.calls[0]).toEqual([
+        {
+          sessionId: 'test-session-id',
+          kickoffUuid: 'kick-fence',
+          claimToken: 'claim-token-1',
+          expectedBatchUuids: ['kick-fence', 'member-fence'],
+          batchUuids: ['kick-fence', 'member-fence'],
+        },
+      ]);
+      expect(legacySpy).not.toHaveBeenCalled();
+
+      existing.resolve();
+      await expect(drive).resolves.toEqual({ outcome: 'completed' });
+    });
+
+    it('driveDeliveryTurn aborts when the fenced batch write reports a stale claim or moved batch', async () => {
+      const fencedSpy = mock(() => ({
+        applied: false,
+        priorBatchUuids: ['kick-stale', 'member-stale'],
+        priorDroppedBatchUuids: [],
+      }));
+      const admitSpy = mock(() => new Promise<void>(() => {}));
+      mockDb.getSDKMessageRepo = mock(() => ({
+        getDeliveryContent: mock((_sid: string, uuid: string) => ({
+          content: uuid === 'kick-stale' ? 'kickoff' : 'member',
+          sendStatus: 'enqueued',
+        })),
+      }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        updateDeliveryBatchUuidsFenced: fencedSpy,
+      }));
+      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
+      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
+        () => {}
+      );
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => false),
+        size: mock(() => 0),
+      };
+
+      const outcome = await agentSession.driveDeliveryTurn(
+        'kick-stale',
+        'estimate',
+        null,
+        false,
+        () => true,
+        ['kick-stale', 'member-stale'],
+        undefined,
+        undefined,
+        'claim-token-stale'
+      );
+
+      expect(fencedSpy).toHaveBeenCalledTimes(1);
+      expect(outcome).toEqual({ outcome: 'aborted' });
+      expect(admitSpy).not.toHaveBeenCalled();
+    });
+
     it('driveDeliveryTurn neutralizes reused acknowledgment when batch narrowing aborts', async () => {
       const catchSpy = mock(() => Promise.resolve());
       mockDb.getSDKMessageRepo = mock(() => ({
@@ -6320,7 +6426,7 @@ describe('AgentSession', () => {
         await waitForQueueEntry(queue);
         await expect(steerPromise).rejects.toThrow('Delivery not consumed within timeout');
         expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
-        expect(queue.hasPendingOrInFlight(steerUuid)).toBe(true);
+        expect(queue.hasPendingOrInFlight(steerUuid)).toBe(false);
       } finally {
         if (previousTimeout === undefined)
           delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
@@ -6552,7 +6658,7 @@ describe('AgentSession', () => {
       }
     });
 
-    it('a steer whose claim is superseded during the acknowledgment wait aborts instead of consuming', async () => {
+    it('a steer whose claim is superseded during the acknowledgment wait aborts but still records the SDK acknowledgment', async () => {
       const { db, agentSession } = await makeHardeningSession('sess-a3a-steer-superseded');
       try {
         const queue = agentSession.messageQueue;
@@ -6572,13 +6678,13 @@ describe('AgentSession', () => {
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-superseded', hardUuid)
             ?.sendStatus
-        ).toBe('enqueued');
+        ).toBe('consumed');
       } finally {
         db.close();
       }
     });
 
-    it('a turn whose claim is superseded during the acknowledgment wait never marks the batch consumed', async () => {
+    it('a turn whose claim is superseded during the acknowledgment wait aborts but still marks the batch consumed', async () => {
       const { db, agentSession } = await makeHardeningSession('sess-a3a-turn-superseded');
       try {
         agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
@@ -6601,7 +6707,7 @@ describe('AgentSession', () => {
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-superseded', hardUuid)
             ?.sendStatus
-        ).toBe('enqueued');
+        ).toBe('consumed');
       } finally {
         db.close();
       }

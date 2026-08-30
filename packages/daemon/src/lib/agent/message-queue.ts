@@ -623,9 +623,11 @@ export class MessageQueue {
 
   pruneYielded(predicate: (messageId: string) => boolean): string[] {
     const removed: string[] = [];
+    const settled: QueuedMessage[] = [];
     for (const message of this.yielded) {
       if (predicate(message.id)) {
         removed.push(message.id);
+        settled.push(message);
         if (message.timeoutId) {
           clearTimeout(message.timeoutId);
           message.timeoutId = undefined;
@@ -633,8 +635,9 @@ export class MessageQueue {
       }
     }
     this.yielded = new Set([...this.yielded].filter((message) => !removed.includes(message.id)));
-    for (const id of removed) {
-      this.forgetSentPrompt(id);
+    for (const message of settled) {
+      this.forgetSentPrompt(message.id);
+      message.resolve(message.id);
     }
     return removed;
   }
