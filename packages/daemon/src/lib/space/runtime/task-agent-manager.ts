@@ -4037,6 +4037,8 @@ export class TaskAgentManager {
         this.publishMessageStatusChanged(sessionId, dbId, status),
       saveUserMessage: (sessionId, message, sendStatus, origin) =>
         this.config.db.saveUserMessage(sessionId, message, sendStatus, origin),
+      getDeliverySendStatus: (sessionId, uuid) =>
+        this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, uuid)?.sendStatus,
       reopenDeliveryByUuid: (sessionId, uuid) =>
         this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, uuid),
       markDeliveryDeferredByUuid: (sessionId, uuid) =>

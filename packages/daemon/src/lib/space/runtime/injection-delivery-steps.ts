@@ -21,6 +21,7 @@ export interface InjectionDeliveryRowDeps {
     sendStatus: 'enqueued' | 'deferred',
     origin?: MessageOrigin
   ): string;
+  getDeliverySendStatus(sessionId: string, uuid: string): string | null | undefined;
   reopenDeliveryByUuid(sessionId: string, uuid: string): string | null;
   markDeliveryDeferredByUuid(sessionId: string, uuid: string): string | null;
   markDeliveryFailedByUuid(sessionId: string, uuid: string): string | null;
@@ -124,6 +125,7 @@ export async function deliverInjectedMessage(
       sessionId: args.sessionId,
       messageUuid: args.messageId,
       timeoutMs: deliveryConsumptionTimeoutMs(args.session.getSessionData?.().config?.provider),
+      getSendStatus: () => deps.getDeliverySendStatus(args.sessionId, args.messageId),
       deliver: () =>
         deliverAndMarkQueued({
           jobQueue: deps.jobQueue,
