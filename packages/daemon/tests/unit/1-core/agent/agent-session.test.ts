@@ -1285,21 +1285,26 @@ describe('AgentSession', () => {
         return true;
       });
       mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
+      let processingState = JSON.stringify({
+        status: 'rate_limit_cooldown',
+        retryAt: Date.now() + 60_000,
+        messageId: 'msg-persisted-episode',
+      });
       mockDb.getSession = mock(
         () =>
           ({
             id: 'test-session-id',
-            processingState: JSON.stringify({
-              status: 'rate_limit_cooldown',
-              retryAt: Date.now() + 60_000,
-              messageId: 'msg-persisted-episode',
-            }),
+            get processingState() {
+              return processingState;
+            },
           }) as never
       );
       const originalUpdateSession = mockDb.updateSession as ReturnType<typeof mock>;
       (mockDb.updateSession as ReturnType<typeof mock>) = mock((...args: unknown[]) => {
         order.push('persist-idle');
-        return originalUpdateSession(...args);
+        const result = originalUpdateSession(...args);
+        processingState = JSON.stringify({ status: 'idle' });
+        return result;
       });
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
@@ -1314,6 +1319,32 @@ describe('AgentSession', () => {
         processingState: JSON.stringify({ status: 'idle' }),
       });
       expect(order).toEqual(['persist-idle', 'reschedule']);
+    });
+
+    it('retryNowAfterRateLimit refuses to release when the cooldown row survives', async () => {
+      const rescheduleDelivery = mock(() => true);
+      mockDb.getJobQueueRepo = mock(() => ({ rescheduleDelivery }) as never);
+      mockDb.getSession = mock(
+        () =>
+          ({
+            id: 'test-session-id',
+            processingState: JSON.stringify({
+              status: 'rate_limit_cooldown',
+              retryAt: Date.now() + 60_000,
+              messageId: 'msg-persisted-episode',
+            }),
+          }) as never
+      );
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
+        retryNow: mock(() => true),
+        getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
+      } as never;
+
+      const resumed = await agentSession.retryNowAfterRateLimit();
+
+      expect(resumed).toBe(false);
+      expect(rescheduleDelivery).not.toHaveBeenCalled();
     });
 
     it('retryNowAfterRateLimit reports failure when the parked delivery is gone', async () => {

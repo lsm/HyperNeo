@@ -32,6 +32,10 @@ import { ErrorCategory, ErrorManager, type StructuredError } from '../error-mana
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { SettingsManager } from '../settings-manager.ts';
+import {
+  resolveRateLimitEpisodeDeliveryUuid,
+  runRateLimitManualRetry,
+} from './rate-limit-manual-retry.ts';
 
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
@@ -1210,7 +1214,11 @@ export class AgentSession
       }
     }
     const episodeMessageId = episodeMessage?.uuid ?? persistedEpisodeMessageId;
-    const owningTurnMessageId = this.resolveRateLimitEpisodeDeliveryUuid(episodeMessageId);
+    const owningTurnMessageId = resolveRateLimitEpisodeDeliveryUuid(
+      this.db,
+      this.session.id,
+      episodeMessageId
+    );
     if (owningTurnMessageId) {
       try {
         this.db.getJobQueueRepo()?.cancelDelivery(this.session.id, owningTurnMessageId);
@@ -1220,61 +1228,16 @@ export class AgentSession
     }
   }
 
-  private resolveRateLimitEpisodeDeliveryUuid(
-    episodeMessageId: string | undefined
-  ): string | undefined {
-    const jobQueue = this.db.getJobQueueRepo();
-    if (episodeMessageId === undefined) {
-      return jobQueue?.getActiveTurnDeliveryMessageUuid?.(this.session.id) ?? undefined;
-    }
-    if (jobQueue?.getActiveDeliveryRole?.(this.session.id, episodeMessageId) === 'steer') {
-      return jobQueue?.getActiveTurnDeliveryMessageUuid?.(this.session.id) ?? episodeMessageId;
-    }
-    return episodeMessageId;
-  }
-
   async retryNowAfterRateLimit(): Promise<boolean> {
     const persistedEpisodeMessageUuid = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
     if (persistedEpisodeMessageUuid !== null) {
       this.rateLimitWatchdog.cancel();
-      if (this.stateManager.getState().status === 'rate_limit_cooldown') {
-        await this.stateManager.setIdle();
-      } else {
-        const persistedState = this.db.getSession(this.session.id)?.processingState;
-        try {
-          const parsed = persistedState
-            ? (JSON.parse(persistedState) as { status?: string })
-            : null;
-          if (parsed?.status === 'rate_limit_cooldown') {
-            await this.stateManager.setIdle();
-          }
-        } catch {
-          this.logger.warn('Failed to clear the persisted rate-limit cooldown on retry-now.');
-        }
-      }
-      const owningTurnMessageId = this.resolveRateLimitEpisodeDeliveryUuid(
-        persistedEpisodeMessageUuid
-      );
-      if (owningTurnMessageId) {
-        try {
-          const released = this.db
-            .getJobQueueRepo()
-            ?.rescheduleDelivery?.(this.session.id, owningTurnMessageId, Date.now());
-          if (released === false) {
-            this.logger.warn(
-              'retryNowAfterRateLimit: the parked delivery for the persisted episode is gone.'
-            );
-            return false;
-          }
-        } catch (error) {
-          this.logger.warn(
-            'Failed to release the parked delivery for the persisted cooldown retry:',
-            error
-          );
-          return false;
-        }
-      }
-      return true;
+      return await runRateLimitManualRetry({
+        db: this.db,
+        sessionId: this.session.id,
+        episodeMessageUuid: persistedEpisodeMessageUuid,
+        clearCooldown: () => this.stateManager.setIdle(),
+      });
     }
     const fired = this.rateLimitWatchdog.retryNow();
     if (!fired) {
