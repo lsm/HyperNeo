@@ -81,7 +81,7 @@ const rateLimitManualRetryPipeline = (
 )
   .input(['ctx'])
   .pipe(clearPersistedCooldownStage, 'ctx', 'ctx')
-  .pipe('!cleared', 'ctx')
+  .pipe('cleared', 'ctx')
   .pipe(releaseOwningDeliveryStage, 'ctx', 'ctx')
   .endAsync('ctx');
 
