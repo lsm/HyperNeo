@@ -234,7 +234,7 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
     registerCompletionCallback: (...args: unknown[]) => void;
     injectMessageIntoSession: (...args: unknown[]) => Promise<string>;
     cancelBySessionId: (id: string) => void;
-    buildNodeAgentMcpServerForSession: (...args: unknown[]) => unknown;
+    buildNodeAgentMcpServersForSession: (...args: unknown[]) => unknown;
     spawningExecutionIds: Set<string>;
   };
   internal.createSubSession = async () => {
@@ -258,7 +258,7 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
   internal.cancelBySessionId = (id: string) => {
     cancels.push(id);
   };
-  internal.buildNodeAgentMcpServerForSession = () => ({ __role: 'node-agent' });
+  internal.buildNodeAgentMcpServersForSession = () => ({ 'node-agent': { __role: 'node-agent' } });
 
   const task = options.callerTask ?? makeTask(taskStatus);
   const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as unknown as Space;

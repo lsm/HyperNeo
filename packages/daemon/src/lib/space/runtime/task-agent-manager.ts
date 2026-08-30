@@ -4855,9 +4855,10 @@ export class TaskAgentManager {
       },
       hookEngine,
     };
+    const nodeAgent = createNodeAgentMcpServer(nodeConfig) as unknown as McpServerConfig;
     const spaceActions = this.buildSpaceActionsDispatcherServer(nodeConfig);
     return {
-      'node-agent': createNodeAgentMcpServer(nodeConfig) as unknown as McpServerConfig,
+      'node-agent': nodeAgent,
       ...(spaceActions ? { 'space-actions': spaceActions } : {}),
     };
   }
