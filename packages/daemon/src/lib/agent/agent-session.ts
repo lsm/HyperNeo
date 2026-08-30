@@ -1163,22 +1163,27 @@ export class AgentSession
   cancelRateLimitRetry(): void {
     const episodeMessage = this.rateLimitWatchdog.getState().lastUserMessage;
     this.rateLimitWatchdog.cancel(false);
+    let persistedEpisodeMessageId: string | undefined;
     if (this.stateManager.getState().status === 'rate_limit_cooldown') {
       void this.stateManager.setIdle();
     } else {
       const persistedState = this.db.getSession(this.session.id)?.processingState;
       try {
-        const parsed = persistedState ? (JSON.parse(persistedState) as { status?: string }) : null;
+        const parsed = persistedState
+          ? (JSON.parse(persistedState) as { status?: string; messageId?: string })
+          : null;
         if (parsed?.status === 'rate_limit_cooldown') {
+          persistedEpisodeMessageId = parsed.messageId;
           void this.stateManager.setIdle();
         }
       } catch {
         this.logger.warn('Failed to inspect the persisted rate-limit cooldown on cancel.');
       }
     }
-    if (episodeMessage) {
+    const episodeMessageId = episodeMessage?.uuid ?? persistedEpisodeMessageId;
+    if (episodeMessageId) {
       try {
-        this.db.getJobQueueRepo()?.cancelDelivery(this.session.id, episodeMessage.uuid);
+        this.db.getJobQueueRepo()?.cancelDelivery(this.session.id, episodeMessageId);
       } catch (error) {
         this.logger.warn('Failed to cancel the parked delivery for the retry episode:', error);
       }

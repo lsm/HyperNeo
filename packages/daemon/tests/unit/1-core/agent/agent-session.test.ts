@@ -1231,6 +1231,8 @@ describe('AgentSession', () => {
     });
 
     it('cancelRateLimitRetry clears a persisted cooldown left by a restart', async () => {
+      const cancelDelivery = mock(() => true);
+      mockDb.getJobQueueRepo = mock(() => ({ cancelDelivery }) as never);
       mockDb.getSession = mock(
         () =>
           ({
@@ -1238,6 +1240,7 @@ describe('AgentSession', () => {
             processingState: JSON.stringify({
               status: 'rate_limit_cooldown',
               retryAt: Date.now() + 60_000,
+              messageId: 'msg-persisted-episode',
             }),
           }) as never
       );
@@ -1252,6 +1255,7 @@ describe('AgentSession', () => {
       expect(mockDb.updateSession).toHaveBeenCalledWith('test-session-id', {
         processingState: JSON.stringify({ status: 'idle' }),
       });
+      expect(cancelDelivery).toHaveBeenCalledWith('test-session-id', 'msg-persisted-episode');
     });
 
     it('driveDeliveryTurn makes a terminal turn error non-retryable without reopening', async () => {

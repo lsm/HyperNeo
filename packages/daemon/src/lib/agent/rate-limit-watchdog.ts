@@ -381,6 +381,7 @@ export class RateLimitWatchdog {
                   retryCount: this.retryCount,
                   maxRetries: this.config.maxAutoRetries,
                   retryAt: this.currentRetryAt,
+                  messageId: this.lastUserMessage?.uuid,
                 },
                 queryGeneration
               )
@@ -417,6 +418,7 @@ export class RateLimitWatchdog {
         retryCount: displayRetryCount ?? this.retryCount,
         maxRetries: this.config.maxAutoRetries,
         retryAt,
+        messageId: this.lastUserMessage?.uuid,
       },
       queryGeneration
     );
@@ -558,6 +560,7 @@ export class RateLimitWatchdog {
           retryCount: this.retryCount,
           maxRetries: this.config.maxAutoRetries,
           retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
+          messageId: this.lastUserMessage?.uuid,
         },
         queryGeneration
       );
@@ -670,6 +673,7 @@ export class RateLimitWatchdog {
                 retryCount: this.retryCount,
                 maxRetries: this.config.maxAutoRetries,
                 retryAt: Date.now(),
+                messageId: this.lastUserMessage?.uuid,
               },
               queryGeneration
             );
@@ -759,6 +763,7 @@ export class RateLimitWatchdog {
         retryCount: this.retryCount,
         maxRetries: this.config.maxAutoRetries,
         retryAt: this.currentRetryAt,
+        messageId: this.lastUserMessage?.uuid,
       });
       return;
     }
@@ -767,6 +772,7 @@ export class RateLimitWatchdog {
         retryCount: this.retryCount,
         maxRetries: this.config.maxAutoRetries,
         retryAt: Date.now(),
+        messageId: this.lastUserMessage?.uuid,
       });
     }
   }

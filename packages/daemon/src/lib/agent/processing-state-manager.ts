@@ -314,6 +314,7 @@ export class ProcessingStateManager {
       retryCount: number;
       maxRetries: number;
       retryAt: number;
+      messageId?: string;
     },
     ownerGeneration?: number
   ): Promise<void> {
@@ -326,6 +327,7 @@ export class ProcessingStateManager {
       retryCount: state.retryCount,
       maxRetries: state.maxRetries,
       retryAt: state.retryAt,
+      ...(state.messageId !== undefined ? { messageId: state.messageId } : {}),
     };
     let writeError: unknown;
     try {
