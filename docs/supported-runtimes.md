@@ -81,13 +81,25 @@ Recommended command (the working set on the spike's macOS-x64 host):
 
 ```bash
 cd packages/daemon
+mkdir -p dist/bin                                   # the .gitignored dist/ does not exist on a clean checkout
 deno install --entrypoint main.ts                 # populate node_modules/.deno for resolution
 deno compile --bundle --no-check -A \
   --exclude=node_modules --exclude=.deno \
-  --output=dist/bin/hyperneo-deno-darwin-x64 main.ts
+  --output=dist/bin/hyperneo-deno main.ts
+# Rename to hyperneo-deno-${platform}-${arch} to mirror the Bun pipeline if the
+# artifact is being moved between machines; deno compile defaults to the host
+# target unless --target is supplied.
 ```
 
 The recommended command does **not** pass `--include=npm:@huggingface/transformers`: that flag requires `nodeModulesDir: "auto"`, which makes deno re-populate `node_modules/.deno` with the full workspace prodDeps and balloons the binary back to 1.0 GB. The trade-off is that `agent-memory-transformers.ts`'s dynamic `require.resolve('@huggingface/transformers')` + `dist/transformers.web.js` import is unresolved at boot; the daemon marks the prefetch as "non-fatal" and every later embedding silently fails. The HTTP/WS/SIGTERM boot smoke is unaffected; the issue is memory-embeddings, not boot. Re-introducing `--include` after a future workspace restructure is the right move.
+
+Other limitations of the working-set binary the user should know about (out of this slice's merge contract, logged as follow-up work where they are real):
+
+- **Copilot CLI not embedded.** The binary imports `@github/copilot-sdk`'s JS but `CopilotClient.start()` shells out to the platform-specific `copilot` executable from `@github/copilot` (lockfile records platform optional binaries). Without `--include` (which we cannot use without re-adding the workspace prodDeps balloon), the binary cannot start a Copilot session on a machine without `copilot` on PATH. The HTTP/WS/migration smoke is unaffected because the provider registration is lazy; the failure surfaces only when an `anthropic-copilot` model is selected.
+- **Space coordination skill asset not embedded.** `src/lib/space/skills/space-coordination/SKILL.md` is read from a path relative to `import.meta.url`; the bundler does not pick it up because nothing imports it. First-boot on a fresh data dir will log a "skill not found" warning; the smoke is unaffected.
+- **ACP proxy dispatch is Bun-specific.** `convertMcpServersForAcp` shells `process.execPath` and only the Bun-compiled binary is built with the `--hyperneo-acp-mcp-proxy` sibling-mode; the Deno-compiled binary will fail that path. The smoke does not exercise ACP, so it is unaffected.
+
+The recommended command deliberately omits `--include` for these and the `--target` cross-compile flag — adding them changes the size/duration trade-off enough that the working set on a single host (the smoke binary's intended use) is the cleaner story; cross-platform releases and runtime-asset embedding are the natural next slices.
 
 Acceptance for a smoke binary: HTTP 200 on `/`, `/ws` handshake, migrations, graceful SIGTERM. `scripts/deno-smoke.sh` accepts `DENO_SMOKE_BIN=/path/to/binary` to boot the compiled binary against the same four assertions:
 
