@@ -181,7 +181,7 @@ function ApiRetryMessage({ message }: { message: SDKAPIRetryMessage }) {
           {delayMs > 0 && <span class="text-fg-muted">• delay {delayMs}ms</span>}
         </div>
         {errorStatus && <div class="text-xs text-fg-muted">Status: {errorStatus}</div>}
-        <div class="text-xs text-warning font-mono break-words">{errorMessage}</div>
+        <div class="text-xs text-warning-soft font-mono break-words">{errorMessage}</div>
       </div>
     </OperationalSystemMessage>
   );
@@ -214,11 +214,11 @@ function ModelRefusalFallbackMessage({ message }: { message: SDKModelRefusalFall
       </div>
       <div>{message.content}</div>
       {refusalExplanation && (
-        <div class="mt-1 text-xs text-warning" data-testid="api-refusal-explanation">
+        <div class="mt-1 text-xs text-warning-soft" data-testid="api-refusal-explanation">
           {refusalExplanation}
         </div>
       )}
-      <div class="mt-2 text-xs text-warning">
+      <div class="mt-2 text-xs text-warning-soft">
         {message.original_model} → {message.fallback_model}
       </div>
     </div>

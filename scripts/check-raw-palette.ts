@@ -28,8 +28,9 @@ function walk(dir: string): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
+      if (entry === '__tests__') continue;
       out.push(...walk(full));
-    } else if (/\.(ts|tsx)$/.test(entry)) {
+    } else if (/\.(ts|tsx)$/.test(entry) && !/\.test\./.test(entry)) {
       out.push(full);
     }
   }

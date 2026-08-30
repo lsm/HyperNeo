@@ -3,13 +3,12 @@
   "areas": {
     "(root)": 1,
     "components": 77,
-    "components/__tests__": 4,
-    "components/sdk": 59,
+    "components/sdk": 48,
     "components/settings": 10,
     "components/space": 159,
-    "components/ui": 27,
+    "components/ui": 13,
     "components/voice": 1,
-    "hooks": 3,
+    "hooks": 2,
     "islands": 21,
     "lib": 9
   }

@@ -43,22 +43,44 @@ describe('provider-brand', () => {
   });
 
   describe('providerPillStyle', () => {
+    afterEach(() => {
+      resolvedTheme.value = 'dark';
+    });
+
     it('mixes the brand color into a translucent background + border', () => {
+      resolvedTheme.value = 'dark';
       const style = providerPillStyle('anthropic');
       expect(style.backgroundColor).toContain('#D97757');
       expect(style.backgroundColor).toContain('color-mix');
       expect(style.borderColor).toContain('#D97757');
     });
 
+    it('uses a darker tint in light mode for pale brands', () => {
+      resolvedTheme.value = 'light';
+      expect(providerPillStyle('anthropic-codex').borderColor).toContain('#3f3f46');
+    });
+
     it('uses the fallback gray for unknown providers', () => {
+      resolvedTheme.value = 'dark';
       expect(providerPillStyle('nope').backgroundColor).toContain('#9CA3AF');
     });
   });
 
   describe('providerLogoColor', () => {
-    it('lifts the brand hue toward white', () => {
+    afterEach(() => {
+      resolvedTheme.value = 'dark';
+    });
+
+    it('lifts the brand hue toward white in dark mode', () => {
+      resolvedTheme.value = 'dark';
       expect(providerLogoColor('glm')).toContain('#7DD3FC');
       expect(providerLogoColor('glm')).toContain('#ffffff');
+    });
+
+    it('uses the darker Light-mode variant directly', () => {
+      resolvedTheme.value = 'light';
+      expect(providerLogoColor('glm')).toBe('#0369a1');
+      expect(providerLogoColor('anthropic-codex')).toBe('#3f3f46');
     });
   });
 

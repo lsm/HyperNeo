@@ -40,7 +40,7 @@ export function providerPillStyle(provider: string | undefined | null): {
   backgroundColor: string;
   borderColor: string;
 } {
-  const brand = getProviderBrandColor(provider);
+  const brand = lightBrand(provider);
   return {
     backgroundColor: `color-mix(in srgb, ${brand} 14%, transparent)`,
     borderColor: `color-mix(in srgb, ${brand} 42%, transparent)`,
@@ -48,8 +48,15 @@ export function providerPillStyle(provider: string | undefined | null): {
 }
 
 export function providerLogoColor(provider: string | undefined | null): string {
-  const brand = getProviderBrandColor(provider);
-  return `color-mix(in srgb, ${brand} 80%, #ffffff 20%)`;
+  const light = resolvedTheme.value === 'light';
+  const brand = light ? getProviderBrandColorLight(provider) : getProviderBrandColor(provider);
+  return light ? brand : `color-mix(in srgb, ${brand} 80%, #ffffff 20%)`;
+}
+
+function lightBrand(provider: string | undefined | null): string {
+  return resolvedTheme.value === 'light'
+    ? getProviderBrandColorLight(provider)
+    : getProviderBrandColor(provider);
 }
 
 export function providerHeaderStyle(provider: string | undefined | null): {

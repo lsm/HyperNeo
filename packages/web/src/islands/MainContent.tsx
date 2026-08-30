@@ -228,7 +228,7 @@ function SpacesHome() {
                     <span class="text-xs font-semibold text-fg-muted uppercase tracking-wide">
                       Needs Attention
                     </span>
-                    <span class="ml-auto text-xs font-medium tabular-nums text-warning">
+                    <span class="ml-auto text-xs font-medium tabular-nums text-warning-soft">
                       {actionItems.length}
                     </span>
                   </div>
@@ -248,7 +248,7 @@ function SpacesHome() {
                           <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
                         </div>
                         <span
-                          class={`flex-shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded ${task.status === 'review' ? 'bg-cat-purple/20 text-cat-purple' : 'bg-warning/20 text-warning'}`}
+                          class={`flex-shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded ${task.status === 'review' ? 'bg-cat-purple/20 text-cat-purple' : 'bg-warning/20 text-warning-soft'}`}
                         >
                           {TASK_STATUS_LABEL[task.status] ?? task.status}
                         </span>
