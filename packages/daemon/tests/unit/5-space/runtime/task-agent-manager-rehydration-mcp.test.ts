@@ -92,6 +92,7 @@ function makeFakeAgentSession(
       }
     },
     getProcessingState: () => ({ status: 'idle' }),
+    isQueryActiveOrStarting: () => false,
     getSDKMessageCount: () => 0,
     replayPendingMessagesForImmediateMode: async () => {
       state.calls.push('replayPendingMessagesForImmediateMode');
@@ -280,6 +281,25 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
     expect(fake.state.calls).not.toContain('startStreamingQuery');
     expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
+  });
+
+  test('starts an indexed idle worker when a later default provisioning requests startup', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
+    ).config.workflowRunRepo.getRun = () => ({ id: RUN_ID, status: 'in_progress' });
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fake.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await tam.provisionWorkflowSession(fake.agentSession, { startQuery: false });
+    expect(fake.state.calls).not.toContain('startStreamingQuery');
+
+    await tam.provisionWorkflowSession(fake.agentSession, {});
+
+    expect(fake.state.calls.filter((call) => call === 'startStreamingQuery')).toHaveLength(1);
+    expect(fake.state.calls).toContain('replayPendingMessagesForImmediateMode');
   });
 
   test('provisioning with replayPendingMessages:false starts the query without replaying', async () => {

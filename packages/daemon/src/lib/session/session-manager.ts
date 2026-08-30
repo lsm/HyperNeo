@@ -79,6 +79,7 @@ export class SessionManager {
     { session: AgentSession; promise: Promise<void> }
   >();
   private workflowMcpProvisioned = new WeakSet<AgentSession>();
+  private workflowQueryStarted = new WeakSet<AgentSession>();
 
   constructor(
     private db: Database,
@@ -462,7 +463,9 @@ export class SessionManager {
     options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<void> {
     if (!this.isWorkflowSubSession(session)) return;
-    if (this.workflowMcpProvisioned.has(session)) return;
+    if (this.workflowMcpProvisioned.has(session)) {
+      if (options.startQuery === false || this.workflowQueryStarted.has(session)) return;
+    }
     if (session.getSessionData().status === 'archived') return;
 
     const provider = this.spaceRuntimeMcpProvider;
@@ -473,13 +476,15 @@ export class SessionManager {
     if (existing) {
       if (existing.session === session) {
         await existing.promise;
-        return;
-      }
-      await existing.promise.catch(() => {});
-      const cached = this.getCachedSession(sessionId);
-      if (cached !== session) {
-        if (cached) await this.provisionWorkflowMcpServers(cached, options);
-        return;
+        if (options.startQuery === false || this.workflowQueryStarted.has(session)) return;
+      } else {
+        await existing.promise.catch(() => {});
+        const cached = this.getCachedSession(sessionId);
+        if (cached !== session) {
+          if (cached) await this.provisionWorkflowMcpServers(cached, options);
+          return;
+        }
+        if (options.startQuery === false || this.workflowQueryStarted.has(session)) return;
       }
     }
 
@@ -492,6 +497,9 @@ export class SessionManager {
     await provisioning;
     if (session.getSessionData().config.mcpServers?.['node-agent']) {
       this.workflowMcpProvisioned.add(session);
+      if (options.startQuery !== false) {
+        this.workflowQueryStarted.add(session);
+      }
     }
   }
 

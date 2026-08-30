@@ -3618,7 +3618,15 @@ export class TaskAgentManager {
 
     const rehydrateTask = this.withSessionRestoreLock(subSessionId, async () => {
       const indexed = this.agentSessionIndex.get(subSessionId);
-      if (indexed && (indexed === suppliedSession || !suppliedSession)) return indexed;
+      if (indexed && (indexed === suppliedSession || !suppliedSession)) {
+        if (options.startQuery !== false && !indexed.isQueryActiveOrStarting()) {
+          await indexed.startStreamingQuery();
+          if (options.replayPendingMessages !== false) {
+            await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
+          }
+        }
+        return indexed;
+      }
       if (indexed) {
         await this.stopSessionPreserveDb(subSessionId, indexed, { preserveDeliveryJobs: true });
         this.detachSessionBookkeeping(subSessionId);

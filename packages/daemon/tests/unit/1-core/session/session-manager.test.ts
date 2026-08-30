@@ -315,10 +315,13 @@ describe('SessionManager', () => {
       const provider = {
         reattachMemberSpaceTools: mock(async () => {}),
         provisionWorkflowSession: mock(
-          () =>
+          (session: AgentSession) =>
             new Promise<void>((resolve) => {
               signalProvisioningStarted!();
-              releaseProvisioning = resolve;
+              releaseProvisioning = () => {
+                session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+                resolve();
+              };
             })
         ),
       };
@@ -331,6 +334,7 @@ describe('SessionManager', () => {
 
       releaseProvisioning!();
       await Promise.all([first, second]);
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(1);
     });
 
     it('forwards startQuery:false to the workflow provisioning provider', async () => {
@@ -415,6 +419,33 @@ describe('SessionManager', () => {
         cleanup: mock(async () => {}),
       } as unknown as AgentSession;
     };
+
+    it('upgrades a no-start provisioning when a later default lookup requests startup', async () => {
+      const mockSession: Session = {
+        id: 'space:s1:task:t1:exec:e10',
+        title: 'Worker',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+        context: { spaceId: 's1', taskId: 't1' },
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock(async (session: AgentSession) => {
+          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+        }),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      await sessionManager.getSessionAsync(mockSession.id, { startQuery: false });
+      await sessionManager.getSessionAsync(mockSession.id, {});
+
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(2);
+      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(2, expect.anything(), {});
+    });
 
     it('provisions the replacement instance when a reset swaps it during in-flight provisioning', async () => {
       const sessionId = 'space:s1:task:t1:exec:e5';
