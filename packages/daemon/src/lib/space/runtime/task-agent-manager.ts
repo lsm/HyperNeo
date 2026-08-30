@@ -2199,6 +2199,7 @@ export class TaskAgentManager {
     const workflowRun = this.config.workflowRunRepo.getRun(task.workflowRunId);
     if (!workflowRun || workflowRun.status === 'cancelled') return false;
     const space = await this.config.spaceManager.getSpace(task.spaceId);
+    if (session.getSessionData().status === 'archived') return false;
     if (!space || space.stopped || space.paused || space.status === 'archived') return false;
     const sessionId = session.getSessionData().id;
     if (sessionId.includes(':post-approval:')) {

@@ -171,12 +171,18 @@ function makeRestoreManager(input: {
   spacePaused?: boolean;
   sessionId?: string;
   executionStatus?: string | null;
+  archiveDuringAdmission?: boolean;
 }) {
   const startStreamingQuery = mock(async () => {});
   const replay = mock(async () => true);
   const sessionId = input.sessionId ?? SESSION_ID;
+  const data: { id: string; status: string; config: { queryMode?: string } } = {
+    id: sessionId,
+    status: 'active',
+    config: { queryMode: input.queryMode },
+  };
   const session = {
-    getSessionData: () => ({ id: sessionId, config: { queryMode: input.queryMode } }),
+    getSessionData: () => data,
     isQueryActiveOrStarting: () => false,
     startStreamingQuery,
     replayPendingMessagesForImmediateMode: replay,
@@ -196,12 +202,15 @@ function makeRestoreManager(input: {
         getRun: () => ({ id: 'run-1', status: input.runStatus ?? 'in_progress' }),
       },
       spaceManager: {
-        getSpace: async () => ({
-          id: 'space-1',
-          stopped: false,
-          paused: input.spacePaused ?? false,
-          status: 'active',
-        }),
+        getSpace: async () => {
+          if (input.archiveDuringAdmission) data.status = 'archived';
+          return {
+            id: 'space-1',
+            stopped: false,
+            paused: input.spacePaused ?? false,
+            status: 'active',
+          };
+        },
       },
       sessionManager: {
         cleanupState: input.cleanupState,
@@ -279,6 +288,17 @@ describe('TaskAgentManager restored worker query admission', () => {
   it('skips query startup when the task leaves approved during restoration', async () => {
     const { manager, startStreamingQuery, replay } = makeRestoreManager({
       taskStatus: 'cancelled',
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
+
+    expect(startStreamingQuery).not.toHaveBeenCalled();
+    expect(replay).not.toHaveBeenCalled();
+  });
+
+  it('skips query startup when the session archives during admission', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      archiveDuringAdmission: true,
     });
 
     await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
