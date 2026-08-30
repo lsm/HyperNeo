@@ -292,7 +292,7 @@ describe('SessionManager', () => {
 
       const session = await sessionManager.getSessionAsync(mockSession.id);
 
-      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(session);
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(session, {});
       expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
     });
 
@@ -331,6 +331,34 @@ describe('SessionManager', () => {
 
       releaseProvisioning!();
       await Promise.all([first, second]);
+    });
+
+    it('forwards startQuery:false to the workflow provisioning provider', async () => {
+      const mockSession: Session = {
+        id: 'space:s1:task:t1:exec:e4',
+        title: 'Worker',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+        context: { spaceId: 's1', taskId: 't1' },
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock(async (session: AgentSession) => {
+          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+        }),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const session = await sessionManager.getSessionAsync(mockSession.id, { startQuery: false });
+
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(session, {
+        startQuery: false,
+      });
+      expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
     });
   });
 

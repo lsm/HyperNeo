@@ -41,7 +41,10 @@ import { ReferenceResolver } from './reference-resolver.ts';
 export interface SpaceRuntimeMcpProvider {
   reattachMemberSpaceTools(sessionId: string): Promise<void>;
   reattachWorkflowMcpServers?(session: AgentSession, missing: string[]): Promise<void>;
-  provisionWorkflowSession?(session: AgentSession): Promise<void>;
+  provisionWorkflowSession?(
+    session: AgentSession,
+    options?: { startQuery?: boolean }
+  ): Promise<void>;
 }
 
 export enum CleanupState {
@@ -454,7 +457,10 @@ export class SessionManager {
     );
   }
 
-  private async provisionWorkflowMcpServers(session: AgentSession): Promise<void> {
+  private async provisionWorkflowMcpServers(
+    session: AgentSession,
+    options: { startQuery?: boolean } = {}
+  ): Promise<void> {
     if (!this.isWorkflowSubSession(session)) return;
     if (this.workflowMcpProvisioned.has(session)) return;
     if (session.getSessionData().status === 'archived') return;
@@ -469,7 +475,7 @@ export class SessionManager {
       return;
     }
 
-    const provisioning = provider.provisionWorkflowSession(session).finally(() => {
+    const provisioning = provider.provisionWorkflowSession(session, options).finally(() => {
       if (this.workflowMcpProvisioning.get(sessionId) === provisioning) {
         this.workflowMcpProvisioning.delete(sessionId);
       }
@@ -501,10 +507,13 @@ export class SessionManager {
     return this.worktreeManager;
   }
 
-  async getSessionAsync(sessionId: string): Promise<AgentSession | null> {
+  async getSessionAsync(
+    sessionId: string,
+    options: { startQuery?: boolean } = {}
+  ): Promise<AgentSession | null> {
     const session = await this.sessionCache.getAsync(sessionId);
     if (!session) return null;
-    await this.provisionWorkflowMcpServers(session);
+    await this.provisionWorkflowMcpServers(session, options);
     return session;
   }
 

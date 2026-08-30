@@ -83,6 +83,22 @@ describe('TaskAgentManager workflow session provisioning', () => {
     );
   });
 
+  it('forwards startQuery:false to the post-approval restore', async () => {
+    const { manager, restorePostApprovalWorkerSession } = makeManager({
+      taskStatus: 'approved',
+      runStatus: 'done',
+    });
+
+    await manager.provisionWorkflowSession(workflowSession(), { startQuery: false });
+
+    expect(restorePostApprovalWorkerSession).toHaveBeenCalledWith(
+      TASK_ID,
+      SESSION_ID,
+      expect.anything(),
+      { startQuery: false }
+    );
+  });
+
   it('leaves a cooling-down post-approval worker available to control paths', async () => {
     const { manager, restorePostApprovalWorkerSession } = makeManager({ cooldown: true });
 

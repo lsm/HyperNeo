@@ -1903,9 +1903,12 @@ export class SpaceRuntimeService {
     await this.taskAgentManager.mcpSelfHeal(session, missing);
   }
 
-  async provisionWorkflowSession(session: AgentSession): Promise<void> {
+  async provisionWorkflowSession(
+    session: AgentSession,
+    options: { startQuery?: boolean } = {}
+  ): Promise<void> {
     if (!this.taskAgentManager) return;
-    await this.taskAgentManager.provisionWorkflowSession(session);
+    await this.taskAgentManager.provisionWorkflowSession(session, options);
   }
 
   async setupSpaceAgentSession(

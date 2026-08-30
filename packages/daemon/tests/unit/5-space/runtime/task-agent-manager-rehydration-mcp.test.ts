@@ -229,6 +229,23 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     );
   });
 
+  test('provisioning with startQuery:false attaches node-agent without starting the query', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
+    ).config.workflowRunRepo.getRun = () => ({ id: RUN_ID, status: 'in_progress' });
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => makeFakeAgentSession('never').agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await tam.provisionWorkflowSession(fake.agentSession, { startQuery: false });
+
+    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
+    expect(restoreSpy).toHaveBeenCalledTimes(0);
+  });
+
   test('rehydrate adopts the SessionManager cached instance instead of restoring a duplicate', async () => {
     const { tam, registered } = makeManager();
     const cachedFake = makeFakeAgentSession(SUB_SESSION_ID);
