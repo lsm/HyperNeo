@@ -141,9 +141,9 @@ import {
   explicitTaskWorkspace,
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
-  taskIdFromSubSessionIdentity,
   resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution.ts';
+import { taskIdFromSubSessionIdentity } from '../../session/sub-session-identity.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
 import { stagedRun } from './staged-run.ts';
 import {
@@ -2176,7 +2176,7 @@ export class TaskAgentManager {
     taskId: string,
     hintSessionId?: string,
     suppliedSession?: AgentSession,
-    options: { startQuery?: boolean } = {}
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<string | null> {
     const identity = this.readPostApprovalWorkerIdentity(taskId, hintSessionId);
     if (!identity) return null;
@@ -2199,7 +2199,7 @@ export class TaskAgentManager {
     taskId: string,
     identity: { sessionId: string; agentName: string; nodeId?: string; agentId?: string },
     suppliedSession?: AgentSession,
-    options: { startQuery?: boolean } = {}
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<string | null> {
     const { sessionId, agentName, nodeId, agentId } = identity;
 
@@ -2338,7 +2338,9 @@ export class TaskAgentManager {
       this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
       if (options.startQuery !== false) {
         await agentSession.startStreamingQuery();
-        await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+        if (options.replayPendingMessages !== false) {
+          await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+        }
       }
     } catch (err) {
       this.subSessions.get(taskId)?.delete(sessionId);
@@ -2348,7 +2350,7 @@ export class TaskAgentManager {
       }
       throw err;
     }
-    if (options.startQuery !== false) {
+    if (options.startQuery !== false && options.replayPendingMessages !== false) {
       void this.flushPendingMessagesForTarget(task.workflowRunId, agentName, sessionId).catch(
         (err) => {
           log.warn(
@@ -3435,7 +3437,7 @@ export class TaskAgentManager {
 
   async provisionWorkflowSession(
     session: AgentSession,
-    options: { startQuery?: boolean } = {}
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<void> {
     interface WorkflowProvisioningState {
       sessionId: string;
@@ -3592,7 +3594,7 @@ export class TaskAgentManager {
   private async rehydrateSubSession(
     subSessionId: string,
     suppliedSession?: AgentSession,
-    options: { startQuery?: boolean } = {}
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<AgentSession | null> {
     const inFlight = this.rehydrateInFlight.get(subSessionId);
     if (inFlight) {
@@ -3624,7 +3626,7 @@ export class TaskAgentManager {
   private async performSubSessionRehydrate(
     subSessionId: string,
     suppliedSession?: AgentSession,
-    options: { startQuery?: boolean } = {}
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<AgentSession | null> {
     const alreadyIndexed = this.agentSessionIndex.get(subSessionId);
     if (alreadyIndexed && (alreadyIndexed === suppliedSession || !suppliedSession)) {
@@ -3819,7 +3821,9 @@ export class TaskAgentManager {
     try {
       if (options.startQuery !== false) {
         await agentSession.startStreamingQuery();
-        await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+        if (options.replayPendingMessages !== false) {
+          await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+        }
       }
     } catch (err) {
       this.detachSessionBookkeeping(subSessionId);
@@ -3833,7 +3837,7 @@ export class TaskAgentManager {
       throw err;
     }
 
-    if (options.startQuery !== false) {
+    if (options.startQuery !== false && options.replayPendingMessages !== false) {
       void this.flushPendingMessagesForTarget(
         workflowRunId,
         execution.agentName,

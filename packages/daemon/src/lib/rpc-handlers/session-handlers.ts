@@ -178,7 +178,7 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.listRuntimeMcpServers', async (data) => {
     const { sessionId } = data as ListRuntimeMcpServersRequest;
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
+    const agentSession = await sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       throw new Error(`Session not found: ${sessionId}`);
     }
@@ -260,7 +260,7 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.get', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
 
     if (!agentSession) {
       throw new Error('Session not found');
@@ -289,7 +289,7 @@ export function setupSessionHandlers(
   messageHub.onRequest('session.validate', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
     try {
-      const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+      const agentSession = await sessionManager.getSessionForControl(targetSessionId);
       return { valid: agentSession !== null, error: null };
     } catch (error) {
       return {
@@ -301,7 +301,7 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.getSkillMcpServers', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error(`Session not found: ${targetSessionId}`);
     }
@@ -595,7 +595,7 @@ export function setupSessionHandlers(
   messageHub.onRequest('session.model.get', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -656,7 +656,7 @@ export function setupSessionHandlers(
       coordinatorMode: boolean;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -841,7 +841,7 @@ export function setupSessionHandlers(
   messageHub.onRequest('agent.getState', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -962,7 +962,9 @@ export function setupSessionHandlers(
   messageHub.onRequest('session.restart', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId, {
+      startQuery: false,
+    });
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -989,7 +991,7 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.cancelRateLimitRetry', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1026,7 +1028,7 @@ export function setupSessionHandlers(
       status: 'deferred' | 'enqueued' | 'consumed';
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1057,7 +1059,7 @@ export function setupSessionHandlers(
       throw new Error('Invalid limit: must be an integer between 1 and 1000');
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }

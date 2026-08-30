@@ -246,6 +246,23 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(restoreSpy).toHaveBeenCalledTimes(0);
   });
 
+  test('provisioning with replayPendingMessages:false starts the query without replaying', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
+    ).config.workflowRunRepo.getRun = () => ({ id: RUN_ID, status: 'in_progress' });
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => makeFakeAgentSession('never').agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await tam.provisionWorkflowSession(fake.agentSession, { replayPendingMessages: false });
+
+    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers', 'startStreamingQuery']);
+    expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
+  });
+
   test('rehydrate adopts the SessionManager cached instance instead of restoring a duplicate', async () => {
     const { tam, registered } = makeManager();
     const cachedFake = makeFakeAgentSession(SUB_SESSION_ID);

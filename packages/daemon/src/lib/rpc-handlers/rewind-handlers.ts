@@ -11,7 +11,7 @@ export function setupRewindHandlers(
   messageHub.onRequest('rewind.checkpoints', async (data) => {
     const { sessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
+    const agentSession = await sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       return {
         rewindPoints: [],
@@ -26,7 +26,7 @@ export function setupRewindHandlers(
   messageHub.onRequest('rewind.preview', async (data) => {
     const { sessionId, checkpointId } = data as { sessionId: string; checkpointId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
+    const agentSession = await sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       return {
         preview: {
@@ -51,7 +51,9 @@ export function setupRewindHandlers(
       mode?: RewindMode;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
+    const agentSession = await sessionManager.getSessionAsync(sessionId, {
+      replayPendingMessages: false,
+    });
     if (!agentSession) {
       return {
         result: {
@@ -62,13 +64,16 @@ export function setupRewindHandlers(
     }
 
     const result = await agentSession.executeRewind(checkpointId, mode);
+    if (result.success && agentSession.getSessionData().config.queryMode !== 'manual') {
+      await agentSession.replayPendingMessagesForImmediateMode();
+    }
     return { result };
   });
 
   messageHub.onRequest('rewind.previewSelective', async (data) => {
     const { sessionId, messageIds } = data as SelectiveRewindRequest;
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
+    const agentSession = await sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       return {
         preview: {
@@ -102,7 +107,9 @@ export function setupRewindHandlers(
       mode = 'both',
     } = data as SelectiveRewindRequest & { mode?: RewindMode };
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
+    const agentSession = await sessionManager.getSessionAsync(sessionId, {
+      replayPendingMessages: false,
+    });
     if (!agentSession) {
       return {
         result: {
@@ -126,6 +133,9 @@ export function setupRewindHandlers(
     }
 
     const result = await agentSession.executeSelectiveRewind(messageIds, mode);
+    if (result.success && agentSession.getSessionData().config.queryMode !== 'manual') {
+      await agentSession.replayPendingMessagesForImmediateMode();
+    }
     return { result };
   });
 }

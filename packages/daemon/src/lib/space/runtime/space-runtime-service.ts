@@ -1905,7 +1905,7 @@ export class SpaceRuntimeService {
 
   async provisionWorkflowSession(
     session: AgentSession,
-    options: { startQuery?: boolean } = {}
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<void> {
     if (!this.taskAgentManager) return;
     await this.taskAgentManager.provisionWorkflowSession(session, options);

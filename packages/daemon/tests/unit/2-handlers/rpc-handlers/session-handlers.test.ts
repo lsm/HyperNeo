@@ -94,6 +94,7 @@ describe('Session RPC Handlers — session.messages.byStatus', () => {
     }));
     const sessionManager = {
       getSessionAsync,
+      getSessionForControl: getSessionAsync,
       getDatabase: () => ({ getUserMessagesByStatus }),
     } as unknown as SessionManager;
     const { setupSessionHandlers } = await import(
@@ -259,6 +260,13 @@ describe('Session RPC Handlers — models.list', () => {
           config: { model: 'opus', provider: 'anthropic' },
         }),
       }),
+      getSessionForControl: async () => ({
+        getCurrentModel: () => ({ id: 'opus' }),
+        getSessionData: () => ({
+          id: 'session-1',
+          config: { model: 'opus', provider: 'anthropic' },
+        }),
+      }),
     } as unknown as SessionManager;
     const { setupSessionHandlers: setupForModelGet } = await import(
       '../../../../src/lib/rpc-handlers/session-handlers'
@@ -287,6 +295,13 @@ describe('Session RPC Handlers — models.list', () => {
 
     const sessionManager = {
       getSessionAsync: async () => ({
+        getCurrentModel: () => ({ id: 'qwen3' }),
+        getSessionData: () => ({
+          id: 'session-2',
+          config: { model: 'qwen3', provider: 'ollama-test' },
+        }),
+      }),
+      getSessionForControl: async () => ({
         getCurrentModel: () => ({ id: 'qwen3' }),
         getSessionData: () => ({
           id: 'session-2',
@@ -712,6 +727,14 @@ describe('Session RPC Handlers — models.list', () => {
             worktree: { branch: 'feature', worktreePath: '/wt', mainRepoPath: '/repo' },
           }),
         })),
+        getSessionForControl: mock(async () => ({
+          getSessionData: () => ({
+            id: 'sess-1',
+            status: 'active',
+            context: { spaceId: 'space-1', roomId: 'room-1' },
+            worktree: { branch: 'feature', worktreePath: '/wt', mainRepoPath: '/repo' },
+          }),
+        })),
         getSessionFromDB: mock(() => ({
           id: 'sess-1',
           status: 'active',
@@ -833,6 +856,10 @@ describe('Session RPC Handlers — models.list', () => {
       };
       const sessionManager = {
         getSessionAsync: mock(async () => ({
+          getSessionData: () => ({ id: 'sess-1', status: 'active' }),
+          startQueryAndEnqueue: mock(async () => {}),
+        })),
+        getSessionForControl: mock(async () => ({
           getSessionData: () => ({ id: 'sess-1', status: 'active' }),
           startQueryAndEnqueue: mock(async () => {}),
         })),
@@ -977,6 +1004,10 @@ describe('Session RPC Handlers — models.list', () => {
           getSessionData: () => ({ id: 'sess-1', status: 'active' }),
           startQueryAndEnqueue: mock(async () => {}),
         }))),
+        getSessionForControl: mock(async () => ({
+          getSessionData: () => ({ id: 'sess-1', status: 'active' }),
+          startQueryAndEnqueue: mock(async () => {}),
+        })),
         getDatabase: () => dbFacade,
       } as unknown as SessionManager;
 
@@ -1698,6 +1729,7 @@ describe('Session RPC Handlers — session.get voice composition', () => {
     const sessionData = { id: 's1', metadata };
     sessionManager = {
       getSessionAsync: mock(async () => ({ getSessionData: () => sessionData })),
+      getSessionForControl: mock(async () => ({ getSessionData: () => sessionData })),
       updateSession: mock(async () => {}),
     } as unknown as SessionManager;
     const { setupSessionHandlers } = await import(

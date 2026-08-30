@@ -37,13 +37,14 @@ import {
 import { ToolsConfigManager } from './tools-config.ts';
 import { MessagePersistence } from './message-persistence.ts';
 import { ReferenceResolver } from './reference-resolver.ts';
+import { isWorkflowSubSessionIdentity } from './sub-session-identity.ts';
 
 export interface SpaceRuntimeMcpProvider {
   reattachMemberSpaceTools(sessionId: string): Promise<void>;
   reattachWorkflowMcpServers?(session: AgentSession, missing: string[]): Promise<void>;
   provisionWorkflowSession?(
     session: AgentSession,
-    options?: { startQuery?: boolean }
+    options?: { startQuery?: boolean; replayPendingMessages?: boolean }
   ): Promise<void>;
 }
 
@@ -453,16 +454,12 @@ export class SessionManager {
   }
 
   private isWorkflowSubSession(session: AgentSession): boolean {
-    const sessionId = session.getSessionData().id;
-    return (
-      sessionId.includes(':task:') &&
-      (sessionId.includes(':exec:') || sessionId.includes(':post-approval:'))
-    );
+    return isWorkflowSubSessionIdentity(session.getSessionData().id);
   }
 
   private async provisionWorkflowMcpServers(
     session: AgentSession,
-    options: { startQuery?: boolean } = {}
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<void> {
     if (!this.isWorkflowSubSession(session)) return;
     if (this.workflowMcpProvisioned.has(session)) return;
@@ -520,12 +517,16 @@ export class SessionManager {
 
   async getSessionAsync(
     sessionId: string,
-    options: { startQuery?: boolean } = {}
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<AgentSession | null> {
-    const session = await this.sessionCache.getAsync(sessionId);
-    if (!session) return null;
-    await this.provisionWorkflowMcpServers(session, options);
-    return session;
+    let session = await this.sessionCache.getAsync(sessionId);
+    while (session) {
+      await this.provisionWorkflowMcpServers(session, options);
+      const current = this.getCachedSession(sessionId);
+      if (current === session) return session;
+      session = current;
+    }
+    return null;
   }
 
   async getSessionForControl(sessionId: string): Promise<AgentSession | null> {

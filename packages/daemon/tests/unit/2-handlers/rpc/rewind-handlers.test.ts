@@ -95,6 +95,8 @@ function createMockAgentSession(): {
 
   const agentSession = {
     ...mocks,
+    getSessionData: mock(() => ({ id: 'rewind-session', config: {} })),
+    replayPendingMessagesForImmediateMode: mock(async () => {}),
   } as unknown as AgentSession;
 
   return { agentSession, mocks };
@@ -110,6 +112,7 @@ function createMockSessionManager(): {
 
   const sessionManager = {
     getSessionAsync: getSessionAsyncMock,
+    getSessionForControl: getSessionAsyncMock,
   } as unknown as SessionManager;
 
   return { sessionManager, getSessionAsyncMock };
@@ -201,6 +204,8 @@ describe('Rewind RPC Handlers', () => {
       const { mocks } = createMockAgentSession();
       sessionManagerData.getSessionAsyncMock.mockResolvedValue({
         ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: async () => {},
       } as unknown as AgentSession);
 
       const result = (await handler!(
@@ -224,6 +229,8 @@ describe('Rewind RPC Handlers', () => {
       });
       sessionManagerData.getSessionAsyncMock.mockResolvedValue({
         ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: async () => {},
       } as unknown as AgentSession);
 
       const result = (await handler!(
@@ -246,6 +253,8 @@ describe('Rewind RPC Handlers', () => {
       });
       sessionManagerData.getSessionAsyncMock.mockResolvedValue({
         ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: async () => {},
       } as unknown as AgentSession);
 
       const result = (await handler!(
@@ -322,6 +331,8 @@ describe('Rewind RPC Handlers', () => {
       const { mocks } = createMockAgentSession();
       sessionManagerData.getSessionAsyncMock.mockResolvedValue({
         ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: async () => {},
       } as unknown as AgentSession);
 
       const result = (await handler!(
@@ -346,6 +357,8 @@ describe('Rewind RPC Handlers', () => {
       });
       sessionManagerData.getSessionAsyncMock.mockResolvedValue({
         ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: async () => {},
       } as unknown as AgentSession);
 
       const result = (await handler!(
