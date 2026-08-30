@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 import { routeDriveTurnOutcome } from '../../../../src/lib/agent/handler-outcome-routing';
-import type { DriveTurnOutcome } from '../../../../src/lib/agent/message-delivery';
+import type { DeliveryOutcome } from '../../../../src/lib/agent/message-delivery';
 
-const DRIVE_OUTCOMES: DriveTurnOutcome[] = [
+const DRIVE_OUTCOMES: DeliveryOutcome[] = [
   { outcome: 'completed' },
   { outcome: 'blocked', retryAt: 1234 },
-  { outcome: 'recovery_pending', retryAt: 5678 },
+  { outcome: 'blocked', retryAt: 5678, reason: 'limit_recovery' },
   { outcome: 'aborted' },
-  { outcome: 'turn_terminated' },
+  { outcome: 'park', retryAt: 9999, reason: 'waiting_for_input' },
 ];
 
 describe('routeDriveTurnOutcome outcome gates', () => {
@@ -28,8 +28,10 @@ describe('routeDriveTurnOutcome outcome gates', () => {
     });
   });
 
-  it('recovery_pending requeues at its own retryAt, parked as limit_recovery', () => {
-    expect(routeDriveTurnOutcome({ outcome: 'recovery_pending', retryAt: 5678 })).toEqual({
+  it('limit_recovery requeues at its own retryAt, parked as limit_recovery', () => {
+    expect(
+      routeDriveTurnOutcome({ outcome: 'blocked', retryAt: 5678, reason: 'limit_recovery' })
+    ).toEqual({
       mutation: 'requeue',
       retryAt: 5678,
       settleSkipped: false,
@@ -45,28 +47,11 @@ describe('routeDriveTurnOutcome outcome gates', () => {
     });
   });
 
-  it('turn_terminated completes with the skip reclaimed', () => {
-    expect(routeDriveTurnOutcome({ outcome: 'turn_terminated' })).toEqual({
-      mutation: 'none',
-      settleSkipped: true,
-      reclaimSkip: 'turn_terminated',
-      result: { outcome: 'completed', skipped: 'turn_terminated' },
-    });
-  });
-
-  it('only aborted and turn_terminated settle the skipped delivery', () => {
+  it('only aborted settles the skipped delivery', () => {
     for (const drive of DRIVE_OUTCOMES) {
       const route = routeDriveTurnOutcome(drive);
       const settles = 'settleSkipped' in route && route.settleSkipped;
-      expect(settles).toBe(drive.outcome === 'aborted' || drive.outcome === 'turn_terminated');
-    }
-  });
-
-  it('turn_terminated is the only outcome that carries a reclaimSkip', () => {
-    for (const drive of DRIVE_OUTCOMES) {
-      const route = routeDriveTurnOutcome(drive);
-      const reclaims = 'reclaimSkip' in route && route.reclaimSkip === 'turn_terminated';
-      expect(reclaims).toBe(drive.outcome === 'turn_terminated');
+      expect(settles).toBe(drive.outcome === 'aborted');
     }
   });
 

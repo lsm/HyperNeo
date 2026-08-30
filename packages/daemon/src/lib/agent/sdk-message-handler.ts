@@ -148,10 +148,6 @@ export interface SDKMessageHandlerContext {
   getQueryGeneration?(): number;
 
   resetTaskNotificationRequery?(): void;
-
-  bumpDeliveryTurnActivity?(): void;
-  reportFirstDeliverySDKResponse?(responseType: string): void;
-  onDeliveryTurnAccepted?(): void;
 }
 
 type PersistedUserMessage = SDKMessage & { dbId: string; timestamp: number };
@@ -721,7 +717,15 @@ export class SDKMessageHandler {
   }
 
   markMessageSubmitted(messageId: string): boolean {
-    const persisted = this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
+    let persisted = this.transitionPersistedMessage(messageId, 'enqueued', 'submitted');
+    if (!persisted) {
+      const already = this.ctx.db.getMessageByStatusAndUuid(
+        this.ctx.session.id,
+        'submitted',
+        messageId
+      );
+      if (already) persisted = true;
+    }
     if (persisted) {
       this.submitBatchMembersWithKickoff(messageId);
     }
@@ -757,7 +761,6 @@ export class SDKMessageHandler {
     );
     if (consumed) {
       this.completeDeliveryAcceptance(messageId);
-      this.ctx.onDeliveryTurnAccepted?.();
     }
   }
 
@@ -872,19 +875,6 @@ export class SDKMessageHandler {
       return;
     }
 
-    this.withDbChangeBatch(() => {
-      db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
-      db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
-    });
-
-    internalEventBus
-      .publish('messages.statusChanged', {
-        sessionId: session.id,
-        messageIds: [enqueuedMessage.dbId],
-        status: 'consumed',
-      })
-      .catch(() => {});
-
     this.acknowledgedPersistedUserThisTurn = true;
 
     const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = enqueuedMessage;
@@ -904,6 +894,25 @@ export class SDKMessageHandler {
         message: { ...sdkMessage, timestamp: consumedAt } as unknown as SDKMessage,
       })
       .catch(() => {});
+
+    const jobQueue = db.getJobQueueRepo?.();
+    if (jobQueue?.getActiveDeliveryRole(session.id, messageId)) {
+      return;
+    }
+
+    this.withDbChangeBatch(() => {
+      db.updateMessageStatus([enqueuedMessage.dbId], 'consumed');
+      db.updateMessageTimestamp(enqueuedMessage.dbId, consumedAt);
+    });
+
+    internalEventBus
+      .publish('messages.statusChanged', {
+        sessionId: session.id,
+        messageIds: [enqueuedMessage.dbId],
+        status: 'consumed',
+      })
+      .catch(() => {});
+
     this.publishToolResultConsumedEvents({
       ...sdkMessage,
       timestamp: consumedAt,
@@ -913,9 +922,6 @@ export class SDKMessageHandler {
   async handleMessage(message: SDKMessage, runnerGeneration?: number): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
     const invocationGeneration = runnerGeneration ?? this.ctx.getQueryGeneration?.() ?? null;
-
-    this.ctx.bumpDeliveryTurnActivity?.();
-    this.ctx.reportFirstDeliverySDKResponse?.(message.type);
 
     if (isSDKStreamEvent(message)) {
       await stateManager.detectPhaseFromMessage(message);

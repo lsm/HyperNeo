@@ -505,17 +505,26 @@ describe('AgentSession mid-turn context budget enforcement', () => {
     const session = createAgentSession();
     const harness = makeQuery();
     session.queryObject = harness.query;
-    const retryMock = mock(() => null);
+    const jobEnqueueMock = mock(() => {});
     (
       session.db as unknown as {
         getSDKMessageRepo: () => {
           getUserMessageContentByUuid: () => string | null;
-          markDeliveryRetryableByUuid: typeof retryMock;
         };
       }
     ).getSDKMessageRepo = () => ({
       getUserMessageContentByUuid: () => 'db-recovered',
-      markDeliveryRetryableByUuid: retryMock,
+    });
+    (
+      session.db as unknown as {
+        getJobQueueRepo: () => {
+          getActiveDeliveryRole: () => string | null;
+          enqueue: typeof jobEnqueueMock;
+        };
+      }
+    ).getJobQueueRepo = () => ({
+      getActiveDeliveryRole: () => null,
+      enqueue: jobEnqueueMock,
     });
     const enqueueSpy = spyOn(session.messageQueue, 'enqueueWithId').mockResolvedValue(undefined);
     harness.setInterruptResult(async () => ({ still_queued: ['uuid-lru-evicted'] }));
@@ -526,7 +535,17 @@ describe('AgentSession mid-turn context budget enforcement', () => {
       durable: true,
       prepend: true,
     });
-    expect(retryMock).toHaveBeenCalledWith(expect.any(String), 'uuid-lru-evicted');
+    expect(jobEnqueueMock).toHaveBeenCalledWith({
+      queue: 'message_delivery',
+      payload: {
+        sessionId: session.session.id,
+        messageUuid: 'uuid-lru-evicted',
+        role: 'turn',
+        origin: 'recovery',
+        parentToolUseId: null,
+      },
+      maxRetries: expect.any(Number),
+    });
   });
 
   it('rebuilds evicted batched survivor content from the active batch', async () => {

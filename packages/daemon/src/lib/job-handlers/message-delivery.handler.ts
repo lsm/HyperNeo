@@ -1,18 +1,12 @@
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import {
-  routeDriveTurnOutcome,
-  routeFeedSteerOutcome,
-  routeSteerPromoteFallback,
-} from '../agent/handler-outcome-routing.ts';
+import { routeDriveTurnOutcome, routeFeedSteerOutcome } from '../agent/handler-outcome-routing.ts';
 import {
   asMessageDeliveryPayload,
   buildBatchedDeliveryContent,
   type DeliveryLoadResult,
   flattenDeliveryText,
-  MAX_ACP_STEER_PARKS,
   MAX_STEER_PARKS,
-  MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliverySession,
 } from '../agent/message-delivery.ts';
 import {
@@ -86,29 +80,15 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'no_content' };
     }
+
     const { content, sendStatus } = loaded;
 
-    if (sendStatus === 'consumed') metrics.recordReclaimSkip('alreadyConsumed');
-    else if (sendStatus === 'submitted') metrics.recordReclaimSkip('alreadySubmitted');
-
-    if (sendStatus === 'submitted' && payload.role === 'steer') {
-      if (deps.jobQueue.getParkCount(job.id) >= MAX_ACP_STEER_PARKS) {
-        throw new DeadLetterImmediatelyError(
-          'ACP steer awaited acceptance past its budget — subprocess never accepted'
-        );
-      }
-      const retryAt = Date.now() + MESSAGE_DELIVERY_PARK_MS;
-      deps.jobQueue.requeueParked(job.id, retryAt, job.claimToken);
-      return { parked: 'acp_awaiting_acceptance', retryAt };
+    if (sendStatus === 'consumed') {
+      return { outcome: 'completed' };
     }
-    if (sendStatus === 'deferred' || sendStatus === 'failed' || sendStatus === 'submitted') {
+    if (sendStatus === 'deferred' || sendStatus === 'failed') {
       await session.settleSkippedDelivery?.(payload.messageUuid);
       return { outcome: 'skipped', sendStatus };
-    }
-    const alreadyConsumed = sendStatus === 'consumed';
-
-    if (payload.role === 'steer' && alreadyConsumed) {
-      return { outcome: 'already_consumed' };
     }
 
     const stuckInitializingMs = session.stuckInitializingMs?.() ?? null;
@@ -156,24 +136,20 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
 
     if (payload.role === 'turn') {
       if (!claimCurrent()) return { outcome: 'stale_attempt' };
-      const turn = session.driveDeliveryTurn(
+      const result = await session.driveDeliveryTurn(
         payload.messageUuid,
         turnContent,
         payload.parentToolUseId,
-        alreadyConsumed,
+        false,
         claimCurrent,
         payload.batchUuids,
         signal,
         reportStage ? { reportStage } : undefined,
         job.claimToken
       );
-      const result = await turn;
       const route = routeDriveTurnOutcome(result);
       if ('deadLetter' in route) {
         throw new DeadLetterImmediatelyError(route.deadLetter);
-      }
-      if (route.reclaimSkip) {
-        metrics.recordReclaimSkip(route.reclaimSkip);
       }
       if (route.settleSkipped) {
         await session.settleSkippedDelivery?.(payload.messageUuid);
@@ -193,15 +169,7 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
       signal,
       reportStage ? { reportStage } : undefined
     );
-    const needsParkBudget =
-      result.outcome === 'park' ||
-      result.outcome === 'awaiting_acceptance' ||
-      result.outcome === 'ack_timeout';
-    const route = routeFeedSteerOutcome(result, {
-      parkCount: needsParkBudget ? deps.jobQueue.getParkCount(job.id) : 0,
-      waitingForInput: result.outcome === 'park' ? (session.isWaitingForInput?.() ?? false) : false,
-      now: Date.now(),
-    });
+    const route = routeFeedSteerOutcome(result);
     if ('deadLetter' in route) {
       throw new DeadLetterImmediatelyError(route.deadLetter);
     }
@@ -210,31 +178,6 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     }
     if (route.mutation === 'requeue' && route.retryAt !== undefined) {
       deps.jobQueue.requeue(job.id, route.retryAt, job.claimToken);
-    } else if (route.mutation === 'requeueParked' && route.retryAt !== undefined) {
-      deps.jobQueue.requeueParked(job.id, route.retryAt, job.claimToken);
-    } else if (route.mutation === 'requeueAs') {
-      try {
-        deps.jobQueue.requeueAs(
-          job.id,
-          route.requeueRole ?? 'turn',
-          route.retryAt ?? Date.now(),
-          job.claimToken
-        );
-        return route.result;
-      } catch (err) {
-        const fallback = routeSteerPromoteFallback(err, { now: Date.now() });
-        if (!fallback) throw err;
-        if ('deadLetter' in fallback) {
-          throw new DeadLetterImmediatelyError(fallback.deadLetter);
-        }
-        deps.jobQueue.requeueAs(
-          job.id,
-          fallback.requeueRole ?? 'steer',
-          fallback.retryAt ?? Date.now(),
-          job.claimToken
-        );
-        return fallback.result;
-      }
     }
     return route.result;
   };

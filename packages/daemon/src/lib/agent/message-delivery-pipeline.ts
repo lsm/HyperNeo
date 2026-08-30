@@ -188,10 +188,7 @@ export function decideTurnEndFlush(input: TurnEndFlushInput): TurnEndFlushPlan {
   return ctx.decision ?? { action: 'noop' };
 }
 
-export type { TurnCompletionInput, TurnCompletionOutcome } from './turn-outcome-classification.ts';
 export {
-  classifyTurnCompletion,
   decideReconcileAdmission,
   selectStrandedDeliveries,
-  shouldRearmSpuriousTurnEnd,
 } from './turn-outcome-classification.ts';

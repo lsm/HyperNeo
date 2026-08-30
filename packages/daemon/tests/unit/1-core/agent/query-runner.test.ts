@@ -1491,6 +1491,9 @@ describe('QueryRunner', () => {
       const realQueue = new MessageQueue();
       realQueue.start();
       const admission = realQueue.enqueueWithId('msg-real-ack', 'Hello', false, { durable: true });
+      void realQueue
+        .enqueueWithId('msg-real-next', 'Second', false, { durable: true })
+        .catch(() => {});
       let settled = false;
       void admission.then(() => {
         settled = true;
@@ -1504,11 +1507,29 @@ describe('QueryRunner', () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
       expect(settled).toBe(false);
 
-      realQueue.stop();
-      const done = await generator.next();
-      expect(done.done).toBe(true);
+      const second = await generator.next();
+      expect((second.value as { uuid?: string }).uuid).toBe('msg-real-next');
       await admission;
       expect(settled).toBe(true);
+
+      realQueue.stop();
+    });
+
+    it('rejects a durable yielded admission when the queue stops before the SDK advances (real queue)', async () => {
+      const realQueue = new MessageQueue();
+      realQueue.start();
+      const admission = realQueue.enqueueWithId('msg-real-stop', 'Hello', false, { durable: true });
+
+      runner = createRunner({ messageQueue: realQueue });
+
+      const generator = runner.createMessageGeneratorWrapper(0);
+      const first = await generator.next();
+      expect((first.value as { uuid?: string }).uuid).toBe('msg-real-stop');
+
+      realQueue.stop();
+      await expect(admission).rejects.toThrow('Interrupted by user');
+      const done = await generator.next();
+      expect(done.done).toBe(true);
     });
   });
 

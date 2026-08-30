@@ -33,26 +33,6 @@ import {
   createTestSession,
 } from '../../../helpers/database';
 
-type DeliveryResponseObserver = {
-  generation: number;
-  observer: { reportStage: (stage: string, details?: Record<string, unknown>) => void };
-  pendingStart?: boolean;
-};
-
-function getDeliveryResponseObserver(agentSession: AgentSession): DeliveryResponseObserver | null {
-  return (agentSession as unknown as { deliveryResponseObserver: DeliveryResponseObserver | null })
-    .deliveryResponseObserver;
-}
-
-function setDeliveryResponseObserver(
-  agentSession: AgentSession,
-  observer: DeliveryResponseObserver
-): void {
-  (
-    agentSession as unknown as { deliveryResponseObserver: DeliveryResponseObserver | null }
-  ).deliveryResponseObserver = observer;
-}
-
 describe('AgentSession', () => {
   describe('session data structure', () => {
     it('should have required session fields', () => {
@@ -970,6 +950,7 @@ describe('AgentSession', () => {
         countMessagesAfter: mock(() => 0),
         updateMessage: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
+        updateMessageTimestamp: mock(() => {}),
       } as unknown as Database;
 
       mockMessageHub = {
@@ -1030,49 +1011,6 @@ describe('AgentSession', () => {
         else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previous;
         clearContextClearBoundariesForTest();
       }
-    });
-
-    it('driveDeliveryTurn reopens a no-result consumed row for retry only while the claim is current', async () => {
-      const retrySpy = mock(() => 'db-1');
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
-        hasTerminalResultAfter: mock(() => false),
-        hasDeliveryTurnEnd: mock(() => false),
-        clearDeliveryTurnEnd: mock(() => {}),
-        getErrorTerminalResultSubtypeAfter: mock(() => null),
-        recordDeliveryTurnEnd: mock(() => {}),
-        markDeliveryRetryableByUuid: retrySpy,
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-
-      await agentSession.stateManager.setProcessing('uuid-reopen');
-      const live = agentSession.driveDeliveryTurn('uuid-reopen', 'hello', null, true, () => true);
-      await agentSession.stateManager.setIdle();
-      const error = await live.catch((caught) => caught);
-      expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
-      expect(error).toMatchObject({ message: 'Turn ended without a response' });
-      expect(retrySpy).toHaveBeenCalledTimes(1);
-
-      let claimAlive = true;
-      await agentSession.stateManager.setProcessing('uuid-reopen-2');
-      const cancelled = agentSession.driveDeliveryTurn(
-        'uuid-reopen-2',
-        'hello',
-        null,
-        true,
-        () => claimAlive
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      claimAlive = false;
-      await agentSession.stateManager.setIdle();
-      await expect(cancelled).rejects.toThrow();
-      expect(retrySpy).toHaveBeenCalledTimes(1);
     });
 
     it('an aborted delivery admission leaves the idle owner untouched (no phantom turn)', async () => {
@@ -1137,7 +1075,11 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setIdle();
       const result = await drive;
 
-      expect(result).toEqual({ outcome: 'recovery_pending', retryAt: cooldownRetryAt });
+      expect(result).toEqual({
+        outcome: 'blocked',
+        retryAt: cooldownRetryAt,
+        reason: 'limit_recovery',
+      });
       expect(retrySpy).not.toHaveBeenCalled();
     });
 
@@ -1181,38 +1123,10 @@ describe('AgentSession', () => {
       await agentSession.stateManager.setIdle();
       const result = (await drive) as { outcome: string; retryAt: number };
 
-      expect(result.outcome).toBe('recovery_pending');
+      expect(result.outcome).toBe('blocked');
       expect(result.retryAt).toBeGreaterThanOrEqual(before + 4 * 60_000);
+      expect(result).toMatchObject({ reason: 'limit_recovery' });
       expect(retrySpy).not.toHaveBeenCalled();
-    });
-
-    it('driveDeliveryTurn reopens a consumed reclaim immediately when no query or recovery owns it', async () => {
-      const retrySpy = mock(() => 'db-1');
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
-        hasTerminalResultAfter: mock(() => false),
-        hasRecoveryInterceptedResultAfter: mock(() => true),
-        hasDeliveryTurnEnd: mock(() => false),
-        clearDeliveryTurnEnd: mock(() => {}),
-        getErrorTerminalResultSubtypeAfter: mock(() => null),
-        recordDeliveryTurnEnd: mock(() => {}),
-        markDeliveryRetryableByUuid: retrySpy,
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-
-      await agentSession.stateManager.setProcessing('uuid-reclaim');
-      const drive = agentSession.driveDeliveryTurn('uuid-reclaim', 'hello', null, true, () => true);
-      const error = await drive.catch((caught) => caught);
-
-      expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
-      expect(error).toMatchObject({ message: 'Turn ended without a response' });
-      expect(retrySpy).toHaveBeenCalledTimes(1);
     });
 
     it('cancelRateLimitRetry cancels the parked delivery for the episode message', async () => {
@@ -1610,144 +1524,7 @@ describe('AgentSession', () => {
       );
     });
 
-    it('driveDeliveryTurn makes a terminal turn error non-retryable without reopening', async () => {
-      const retrySpy = mock(() => 'db-terminal');
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
-        hasTerminalResultAfter: mock(() => false),
-        hasDeliveryTurnEnd: mock(() => false),
-        clearDeliveryTurnEnd: mock(() => {}),
-        getErrorTerminalResultSubtypeAfter: mock(() => null),
-        recordDeliveryTurnEnd: mock(() => {}),
-        markDeliveryRetryableByUuid: retrySpy,
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-
-      await agentSession.stateManager.setProcessing('uuid-terminal-error');
-      const drive = agentSession.driveDeliveryTurn('uuid-terminal-error', 'hello', null, true);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      (
-        agentSession as unknown as {
-          lastTerminalError: { error: Record<string, unknown>; at: number };
-        }
-      ).lastTerminalError = {
-        error: {
-          category: 'authentication',
-          code: 'UNAUTHORIZED',
-          message: 'provider rejected credentials',
-          userMessage: 'Sign in again',
-          recoverable: true,
-          timestamp: new Date().toISOString(),
-        },
-        at: Date.now(),
-      };
-      await agentSession.stateManager.setIdle();
-
-      const error = await drive.catch((caught) => caught);
-      expect(error).toBeInstanceOf(MessageDeliveryTerminalTurnError);
-      expect(error).toMatchObject({ message: 'Sign in again', category: 'authentication' });
-      expect(retrySpy).not.toHaveBeenCalled();
-    });
-
-    it('driveDeliveryTurn treats a non-retryable persisted error subtype as terminal', async () => {
-      const retrySpy = mock(() => 'db-terminal-subtype');
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock(() => ({ content: 'x', sendStatus: 'consumed' })),
-        hasTerminalResultAfter: mock(() => false),
-        hasDeliveryTurnEnd: mock(() => false),
-        clearDeliveryTurnEnd: mock(() => {}),
-        getErrorTerminalResultSubtypeAfter: mock(() => 'error_max_budget_usd'),
-        recordDeliveryTurnEnd: mock(() => {}),
-        markDeliveryRetryableByUuid: retrySpy,
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-
-      await agentSession.stateManager.setProcessing('uuid-terminal-subtype');
-      const drive = agentSession.driveDeliveryTurn('uuid-terminal-subtype', 'hello', null, true);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      await agentSession.stateManager.setIdle();
-
-      const error = await drive.catch((caught) => caught);
-      expect(error).toBeInstanceOf(MessageDeliveryTerminalTurnError);
-      expect(error).toMatchObject({ category: 'error_max_budget_usd' });
-      expect(retrySpy).not.toHaveBeenCalled();
-    });
-
-    it('driveDeliveryTurn re-arms at most twice within the 250ms spurious turn-end grace', async () => {
-      let sendStatus = 'enqueued';
-      const retrySpy = mock(() => 'db-grace-cap');
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock(() => ({ content: 'x', sendStatus })),
-        hasTerminalResultAfter: mock(() => false),
-        hasDeliveryTurnEnd: mock(() => false),
-        clearDeliveryTurnEnd: mock(() => {}),
-        getErrorTerminalResultSubtypeAfter: mock(() => null),
-        recordDeliveryTurnEnd: mock(() => {}),
-        markDeliveryConsumedByUuids: mock(() => {
-          sendStatus = 'consumed';
-          return [];
-        }),
-        markDeliveryRetryableByUuid: retrySpy,
-      }));
-      mockDb.getJobQueueRepo = mock(() => ({
-        isProcessingDelivery: mock(() => true),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => 'ok' as never);
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: mock(() => Promise.resolve()),
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => false),
-        size: mock(() => 0),
-      };
-
-      await agentSession.stateManager.setProcessing('uuid-grace-cap');
-      const drive = agentSession.driveDeliveryTurn(
-        'uuid-grace-cap',
-        'hello',
-        null,
-        false,
-        () => true
-      );
-      let settled = false;
-      void drive.then(
-        () => {
-          settled = true;
-        },
-        () => {
-          settled = true;
-        }
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      for (let fire = 0; fire < 3; fire++) {
-        await agentSession.stateManager.setIdle();
-        if (fire < 2) {
-          await new Promise((resolve) => setTimeout(resolve, 10));
-          expect(settled).toBe(false);
-          await agentSession.stateManager.setProcessing('uuid-grace-cap');
-        }
-      }
-
-      const error = await drive.catch((caught) => caught);
-      expect(error).toBeInstanceOf(MessageDeliveryRecoverableTurnError);
-      expect(retrySpy).toHaveBeenCalledTimes(1);
-    });
-
-    it('driveDeliveryTurn re-arms through a spurious turn-end fired right after a fresh admission', async () => {
+    it('driveDeliveryTurn completes once a fresh admission acknowledgment resolves', async () => {
       let resultLanded = false;
       let sendStatus = 'enqueued';
       mockDb.getSDKMessageRepo = mock(() => ({
@@ -1794,7 +1571,7 @@ describe('AgentSession', () => {
       await expect(drive).resolves.toEqual({ outcome: 'completed' });
     });
 
-    it('driveDeliveryTurn re-arms through a spurious turn-end after reusing an acknowledgment', async () => {
+    it('driveDeliveryTurn completes once a reused admission acknowledgment resolves', async () => {
       let resultLanded = false;
       let sendStatus = 'enqueued';
       mockDb.getSDKMessageRepo = mock(() => ({
@@ -1844,173 +1621,6 @@ describe('AgentSession', () => {
       await expect(drive).resolves.toEqual({ outcome: 'completed' });
     });
 
-    it('driveDeliveryTurn aborts when startup consumes the pending queue entry', async () => {
-      let sendStatus = 'enqueued';
-      let queuePending = true;
-      const getPendingOrInFlightContentSpy = mock(() => (queuePending ? 'hello' : null));
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus })),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
-        queuePending = false;
-        sendStatus = 'consumed';
-        return 'ok' as never;
-      });
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      const admitSpy = mock(() => Promise.resolve());
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: admitSpy,
-        getPendingOrInFlightContent: getPendingOrInFlightContentSpy,
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => true),
-        size: mock(() => 0),
-      };
-
-      const result = await agentSession.driveDeliveryTurn(
-        'uuid-startup-consumed',
-        'hello',
-        null,
-        false,
-        () => true
-      );
-
-      expect(result).toEqual({ outcome: 'aborted' });
-      expect(getPendingOrInFlightContentSpy).toHaveBeenCalledTimes(1);
-      expect(admitSpy).not.toHaveBeenCalled();
-    });
-
-    it('driveDeliveryTurn aborts fresh admission when startup consumes an untracked row', async () => {
-      let sendStatus = 'enqueued';
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus })),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
-        sendStatus = 'consumed';
-        return 'ok' as never;
-      });
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      const admitSpy = mock(() => Promise.resolve());
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: admitSpy,
-        getPendingOrInFlightContent: mock(() => null),
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => true),
-        size: mock(() => 0),
-      };
-
-      const result = await agentSession.driveDeliveryTurn(
-        'uuid-startup-untracked',
-        'hello',
-        null,
-        false,
-        () => true
-      );
-
-      expect(result).toEqual({ outcome: 'aborted' });
-      expect(admitSpy).not.toHaveBeenCalled();
-    });
-
-    it('driveDeliveryTurn admits refreshed content after startup', async () => {
-      let content = 'before startup';
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock(() => ({ content, sendStatus: 'enqueued' })),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
-        content = 'after startup';
-        return 'ok' as never;
-      });
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      const admitSpy = mock(() => new Promise<void>(() => {}));
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: admitSpy,
-        getPendingOrInFlightContent: mock(() => null),
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => true),
-        size: mock(() => 0),
-      };
-
-      void agentSession.driveDeliveryTurn(
-        'uuid-startup-refreshed',
-        'before startup',
-        null,
-        false,
-        () => true
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      expect(admitSpy).toHaveBeenCalledWith('uuid-startup-refreshed', 'after startup', false, {
-        durable: true,
-      });
-    });
-
-    it('driveDeliveryTurn retries when a matching pending entry vanishes during startup', async () => {
-      let queuePending = true;
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock(() => ({ content: 'hello', sendStatus: 'enqueued' })),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
-        queuePending = false;
-        return 'ok' as never;
-      });
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      const admitSpy = mock(() => Promise.resolve());
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: admitSpy,
-        getPendingOrInFlightContent: mock(() => (queuePending ? 'hello' : null)),
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => true),
-        size: mock(() => 0),
-      };
-
-      await expect(
-        agentSession.driveDeliveryTurn('uuid-startup-vanished', 'hello', null, false, () => true)
-      ).rejects.toThrow('Pending queue entry disappeared before delivery admission');
-      expect(admitSpy).not.toHaveBeenCalled();
-    });
-
-    it('driveDeliveryTurn aborts when vanished pending content differs after startup', async () => {
-      let queuePending = true;
-      let content = 'before startup';
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock(() => ({ content, sendStatus: 'enqueued' })),
-      }));
-      agentSession.lifecycleManager.ensureQueryStarted = mock(async () => {
-        queuePending = false;
-        content = 'after startup';
-        return 'ok' as never;
-      });
-      (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
-        () => {}
-      );
-      const admitSpy = mock(() => Promise.resolve());
-      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: admitSpy,
-        getPendingOrInFlightContent: mock(() => (queuePending ? 'before startup' : null)),
-        waitForPendingOrInFlight: mock(() => null),
-        isRunning: mock(() => true),
-        size: mock(() => 0),
-      };
-
-      const result = await agentSession.driveDeliveryTurn(
-        'uuid-startup-changed',
-        'before startup',
-        null,
-        false,
-        () => true
-      );
-
-      expect(result).toEqual({ outcome: 'aborted' });
-      expect(admitSpy).not.toHaveBeenCalled();
-    });
-
     it('driveDeliveryTurn aborts when fresh batch rebuild omits the kickoff', async () => {
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock((_sessionId: string, uuid: string) =>
@@ -2055,18 +1665,12 @@ describe('AgentSession', () => {
     });
 
     it('driveDeliveryTurn reuses a pending batch acknowledgment on retry', async () => {
-      let resultLanded = false;
-      const markSubmittedSpy = mock(() => ['db-member']);
       const markConsumedSpy = mock(() => ['db-pending', 'db-member']);
       mockDb.getSDKMessageRepo = mock(() => ({
         getDeliveryContent: mock((_sessionId: string, uuid: string) => ({
           content: uuid === 'uuid-pending' ? 'kickoff' : 'member',
           sendStatus: 'enqueued',
         })),
-        hasTerminalResultAfter: mock(() => resultLanded),
-        getErrorTerminalResultSubtypeAfter: mock(() => null),
-        recordDeliveryTurnEnd: mock(() => {}),
-        markDeliverySubmittedByUuids: markSubmittedSpy,
         markDeliveryConsumedByUuids: markConsumedSpy,
       }));
       mockDb.getJobQueueRepo = mock(() => ({
@@ -2105,7 +1709,6 @@ describe('AgentSession', () => {
       );
       await new Promise((resolve) => setTimeout(resolve, 10));
       expect(admitSpy).not.toHaveBeenCalled();
-      expect(markSubmittedSpy).toHaveBeenCalledWith('test-session-id', ['uuid-member']);
       expect(markConsumedSpy).not.toHaveBeenCalled();
 
       existing.resolve();
@@ -2116,15 +1719,12 @@ describe('AgentSession', () => {
       ]);
       await expect(kickoffConsumed.promise).resolves.toBeUndefined();
       await expect(memberConsumed.promise).resolves.toBeUndefined();
-
-      resultLanded = true;
-      await agentSession.stateManager.setIdle();
       await expect(drive).resolves.toEqual({ outcome: 'completed' });
       kickoffConsumed.cancel();
       memberConsumed.cancel();
     });
 
-    it('driveDeliveryTurn rejects reused content that does not match the rebuilt batch', async () => {
+    it('driveDeliveryTurn replaces mismatched pending content with the rebuilt batch', async () => {
       const markSubmittedSpy = mock(() => ['db-member']);
       const markConsumedSpy = mock(() => ['db-pending', 'db-member']);
       mockDb.getSDKMessageRepo = mock(() => ({
@@ -2145,22 +1745,25 @@ describe('AgentSession', () => {
       (agentSession as unknown as { queryPromise: Promise<unknown> }).queryPromise = new Promise(
         () => {}
       );
-      const existing = Promise.withResolvers<void>();
       const removeSpy = mock(() => true);
+      const acknowledgeYieldedSpy = mock(() => false);
+      const admitPromise = Promise.withResolvers<void>();
+      const admitSpy = mock(() => admitPromise.promise);
       (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
-        admitWithId: mock(() => Promise.resolve()),
+        admitWithId: admitSpy,
         waitForPendingOrInFlight: mock(() => ({
-          acknowledgment: existing.promise,
+          acknowledgment: new Promise<void>(() => {}),
           content: 'kickoff',
         })),
         hasYielded: mock(() => false),
         remove: removeSpy,
+        acknowledgeYielded: acknowledgeYieldedSpy,
         isRunning: mock(() => false),
         size: mock(() => 1),
       };
 
       await agentSession.stateManager.setProcessing('uuid-pending');
-      const result = await agentSession.driveDeliveryTurn(
+      const drive = agentSession.driveDeliveryTurn(
         'uuid-pending',
         'hello',
         null,
@@ -2168,13 +1771,25 @@ describe('AgentSession', () => {
         () => true,
         ['uuid-pending', 'uuid-member']
       );
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(result).toEqual({ outcome: 'aborted' });
       expect(removeSpy).toHaveBeenCalledWith('uuid-pending');
+      expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('uuid-pending', expect.any(Number));
+      expect(admitSpy).toHaveBeenCalledWith(
+        'uuid-pending',
+        '--- message 1 of 2 ---\nkickoff\n\n--- message 2 of 2 ---\nmember',
+        false,
+        { durable: true }
+      );
       expect(markSubmittedSpy).not.toHaveBeenCalled();
       expect(markConsumedSpy).not.toHaveBeenCalled();
-      existing.reject(new Error('Interrupted by user'));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      admitPromise.resolve();
+      await expect(drive).resolves.toEqual({ outcome: 'completed' });
+      expect(markConsumedSpy).toHaveBeenCalledWith('test-session-id', [
+        'uuid-pending',
+        'uuid-member',
+      ]);
     });
 
     it('driveDeliveryTurn preserves yielded content that does not match a rebuilt batch', async () => {
@@ -2438,57 +2053,6 @@ describe('AgentSession', () => {
       expect(agentSession.isWaitingForInput()).toBe(true);
       unresolved = false;
       expect(agentSession.isWaitingForInput()).toBe(false);
-    });
-
-    it('sizes the stall watchdog to the ACP acceptance window until acceptance lands, then narrows (Codex P1)', async () => {
-      const statusByUuid: Record<string, string> = { 'acp-kick': 'submitted' };
-      mockDb.getSDKMessageRepo = mock(() => ({
-        getDeliveryContent: mock((_sid: string, uuid: string) => ({
-          content: 'x',
-          sendStatus: statusByUuid[uuid],
-        })),
-      }));
-
-      const acpSession = new AgentSession(
-        {
-          ...mockSession,
-          config: { ...mockSession.config, provider: 'acp' } as SessionConfig,
-        },
-        mockDb,
-        mockMessageHub,
-        mockInternalEventBus,
-        mockGetApiKey,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        { autoReplayPendingMessages: false }
-      );
-
-      await acpSession.stateManager.setProcessing('acp-kick');
-      const bridge = acpSession as unknown as {
-        armDeliveryTurnStall: () => Promise<void>;
-        clearDeliveryTurnStall: () => void;
-        deliveryTurnStall: { getTimeoutMs: () => number } | null;
-      };
-
-      let stalled = false;
-      (acpSession as unknown as { resetQuery: () => Promise<void> }).resetQuery = mock(async () => {
-        stalled = true;
-      });
-
-      bridge.armDeliveryTurnStall();
-      expect(bridge.deliveryTurnStall?.getTimeoutMs()).toBe(ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(stalled).toBe(false);
-
-      statusByUuid['acp-kick'] = 'consumed';
-      expect(() => acpSession.onDeliveryTurnAccepted()).not.toThrow();
-      expect(bridge.deliveryTurnStall?.getTimeoutMs()).toBe(3 * 60 * 1000);
-      bridge.clearDeliveryTurnStall();
-      expect(stalled).toBe(false);
-
-      expect(() => agentSession.onDeliveryTurnAccepted()).not.toThrow();
     });
 
     it('reconcileStrandedDeliveries skips processing, queued, and waiting_for_input', async () => {
@@ -3159,37 +2723,6 @@ describe('AgentSession', () => {
       const gen2 = agentSession.incrementQueryGeneration();
       expect(gen2).toBe(2);
       expect(agentSession.getQueryGeneration()).toBe(2);
-    });
-
-    it('incrementQueryGeneration claims a pending delivery observer', () => {
-      const reportStage = mock(() => {});
-      setDeliveryResponseObserver(agentSession, {
-        generation: 0,
-        observer: { reportStage },
-        pendingStart: true,
-      });
-
-      const next = agentSession.incrementQueryGeneration();
-
-      const observer = getDeliveryResponseObserver(agentSession);
-      expect(next).toBe(1);
-      expect(observer?.generation).toBe(1);
-      expect(observer?.pendingStart).toBe(false);
-    });
-
-    it('reportFirstDeliverySDKResponse ignores a pending (unclaimed) observer', () => {
-      const reportStage = mock(() => {});
-      setDeliveryResponseObserver(agentSession, {
-        generation: 0,
-        observer: { reportStage },
-        pendingStart: true,
-      });
-
-      agentSession.reportFirstDeliverySDKResponse('assistant');
-
-      const observer = getDeliveryResponseObserver(agentSession);
-      expect(observer).not.toBeNull();
-      expect(reportStage).not.toHaveBeenCalled();
     });
 
     it('setCleaningUp should update cleaning up state', () => {
@@ -6291,72 +5824,47 @@ describe('AgentSession', () => {
       expect(repo.hasDeliveryTurnEnd(sessionId, uuid)).toBe(true);
     });
 
-    it('a SUCCESS-terminated reclaim still completes (turn_terminated) without starting a query', async () => {
+    it('a SUCCESS-terminated reclaim aborts admission on the consumed row and never re-feeds it', async () => {
       await setupDriverail({ marker: true, successResult: true });
       const repo = db.getSDKMessageRepo();
       expect(repo.hasTerminalResultAfter(sessionId, uuid)).toBe(true);
 
-      const ensure = mock(async () => {
-        throw new Error('test: should not start a query on a terminated reclaim');
-      });
       (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
-        ensureQueryStarted: ensure,
+        ensureQueryStarted: mock(async () => 'started'),
+      };
+      const admitSpy = mock(() => new Promise<void>(() => {}));
+      (agentSession as unknown as { messageQueue: unknown }).messageQueue = {
+        admitWithId: admitSpy,
+        waitForPendingOrInFlight: mock(() => null),
+        isRunning: mock(() => false),
+        size: mock(() => 0),
       };
 
       const outcome = await agentSession.driveDeliveryTurn(uuid, 'hi', null, true);
-      expect(outcome).toEqual({ outcome: 'turn_terminated' });
-      expect(ensure).not.toHaveBeenCalled();
+      expect(outcome).toEqual({ outcome: 'aborted' });
+      expect(admitSpy).not.toHaveBeenCalled();
+      expect(repo.getDeliveryContent(sessionId, uuid)?.sendStatus).toBe('consumed');
     });
   });
 
-  describe('feedDeliverySteer — steer-ladder decision table (A1c)', () => {
+  describe('feedDeliverySteer — admission decision table (A1c)', () => {
     const steerUuid = 'steer-msg-uuid';
     const steerContent = 'steer-content';
     const sessionId = 'sess-steer-a1c';
 
     type SteerRow = {
       name: string;
-      status:
-        | 'idle'
-        | 'queued'
-        | 'processing'
-        | 'waiting_for_input'
-        | 'rate_limit_cooldown'
-        | 'interrupted';
-      delivery: 'enqueued' | 'consumed' | 'missing';
-      queryPromise: 'present' | 'absent';
-      provider: 'acp' | 'anthropic';
+      delivery: 'enqueued' | 'submitted' | 'consumed' | 'missing';
       pending: boolean;
       claimGuard: 'held' | 'superseded';
-      archived?: boolean;
-      expected: 'aborted' | 'park' | 'promote' | 'awaiting_acceptance' | 'consumed';
+      waitingForInput?: boolean;
+      lifecycle: 'started' | 'blocked';
+      provider?: 'acp' | 'anthropic';
+      expected: 'aborted' | 'blocked' | 'completed';
     };
 
-    function rowExpectsAdmission(row: Omit<SteerRow, 'name'>): boolean {
-      return (
-        row.expected === 'consumed' || (row.expected === 'awaiting_acceptance' && !row.pending)
-      );
-    }
-
-    async function settleFeedAck(
-      steerPromise: Promise<unknown>,
-      queue: MessageQueue,
-      expectsAdmission: boolean
-    ): Promise<void> {
-      if (!expectsAdmission) {
-        await steerPromise;
-        return;
-      }
-      for (let i = 0; i < 200; i++) {
-        const done = await Promise.race([
-          steerPromise.then(
-            () => true,
-            () => true
-          ),
-          Promise.resolve().then(() => queue.remove(steerUuid) || false),
-        ]);
-        if (done) return;
-      }
+    function rowExpectsFreshAdmission(row: SteerRow): boolean {
+      return row.expected === 'completed' && !row.pending;
     }
 
     async function waitForQueueEntry(queue: MessageQueue): Promise<void> {
@@ -6365,7 +5873,7 @@ describe('AgentSession', () => {
       }
     }
 
-    async function runSteerRow(row: Omit<SteerRow, 'name'>): Promise<{
+    async function runSteerRow(row: SteerRow): Promise<{
       db: Database;
       queue: MessageQueue;
       outcome: unknown;
@@ -6373,11 +5881,8 @@ describe('AgentSession', () => {
     }> {
       const db = await createTestDb();
       const session = createTestSession(sessionId);
-      session.config.provider = row.provider;
+      session.config.provider = row.provider ?? 'anthropic';
       db.createSession(session);
-      if (row.archived) {
-        db.updateSession(sessionId, { status: 'archived' });
-      }
       const repo = db.getSDKMessageRepo();
       if (row.delivery !== 'missing') {
         repo.saveUserMessage(
@@ -6391,6 +5896,8 @@ describe('AgentSession', () => {
         );
         if (row.delivery === 'consumed') {
           repo.markDeliveryConsumedByUuid(sessionId, steerUuid);
+        } else if (row.delivery === 'submitted') {
+          repo.markDeliverySubmittedByUuids(sessionId, [steerUuid]);
         }
       }
       const bus = await createTestInternalEventBus();
@@ -6406,40 +5913,25 @@ describe('AgentSession', () => {
         undefined,
         { autoReplayPendingMessages: false }
       );
-      const activeMessageId = 'active-msg-uuid';
-      if (row.status === 'processing') {
-        await agentSession.stateManager.setProcessing(activeMessageId);
-      } else if (row.status === 'queued') {
-        await agentSession.stateManager.setQueued(activeMessageId);
-      } else if (row.status === 'interrupted') {
-        await agentSession.stateManager.setInterrupted();
-      } else if (row.status === 'waiting_for_input') {
+      if (row.waitingForInput) {
         await agentSession.stateManager.setWaitingForInput({
           toolUseId: 'tool-ask-1',
           questions: [],
           askedAt: Date.now(),
         });
-      } else if (row.status === 'rate_limit_cooldown') {
-        await agentSession.stateManager.setRateLimitCooldown({
-          retryCount: 0,
-          maxRetries: 1,
-          retryAt: Date.now(),
-        });
       }
+      (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+        ensureQueryStarted: mock(async () => row.lifecycle),
+        executeDeferredRestartIfPending: mock(async () => {}),
+      };
       const queue = agentSession.messageQueue;
-      if (row.expected === 'awaiting_acceptance' && row.pending) {
+      if (row.pending) {
         queue.admitWithId(steerUuid, steerContent, false, { durable: true });
-      } else {
-        (
-          queue as unknown as { hasPendingOrInFlight: (id: string) => boolean }
-        ).hasPendingOrInFlight = mock((id: string) => id === steerUuid && row.pending);
       }
       const originalAdmit = queue.admitWithId.bind(queue);
       const admitWithId = mock(originalAdmit);
       (queue as unknown as { admitWithId: MessageQueue['admitWithId'] }).admitWithId = admitWithId;
-      if (row.queryPromise === 'present') {
-        agentSession.queryPromise = new Promise<void>(() => {});
-      }
+      agentSession.queryPromise = new Promise<void>(() => {});
       const claimGuard = row.claimGuard === 'held' ? () => true : () => false;
       const steerPromise = agentSession.feedDeliverySteer(
         steerUuid,
@@ -6447,326 +5939,112 @@ describe('AgentSession', () => {
         null,
         claimGuard
       );
-      if (row.expected === 'awaiting_acceptance' && row.provider === 'acp' && !row.pending) {
+      if (row.pending) {
+        for (let i = 0; i < 100; i++) {
+          await Promise.resolve();
+        }
+      } else {
         await waitForQueueEntry(queue);
-        repo.markDeliverySubmittedByUuids(sessionId, [steerUuid]);
       }
-      await settleFeedAck(steerPromise, queue, rowExpectsAdmission(row));
+      if (row.expected === 'completed') {
+        queue.remove(steerUuid);
+      }
       const outcome = await steerPromise;
       return { db, queue, outcome, admitWithId };
     }
 
     const rows: SteerRow[] = [
       {
-        name: 'superseded claim aborts at processing before the status ladder',
-        status: 'processing',
+        name: 'a superseded claim aborts before admission and leaves the row enqueued',
         delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
+        pending: false,
+        claimGuard: 'superseded',
+        lifecycle: 'started',
+        expected: 'aborted',
+      },
+      {
+        name: 'a superseded claim aborts even while the session waits for input',
+        delivery: 'enqueued',
+        pending: false,
+        claimGuard: 'superseded',
+        waitingForInput: true,
+        lifecycle: 'started',
+        expected: 'aborted',
+      },
+      {
+        name: 'a superseded claim aborts even with an already-pending steer',
+        delivery: 'enqueued',
         pending: true,
         claimGuard: 'superseded',
+        lifecycle: 'started',
         expected: 'aborted',
       },
       {
-        name: 'superseded claim aborts at processing ahead of ACP pending ownership',
-        status: 'processing',
+        name: 'waiting for input blocks admission with an sdk_resume_choice retry window',
         delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'acp',
-        pending: true,
-        claimGuard: 'superseded',
-        expected: 'aborted',
-      },
-      {
-        name: 'superseded claim aborts at queued before the status ladder',
-        status: 'queued',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
         pending: false,
-        claimGuard: 'superseded',
-        expected: 'aborted',
+        claimGuard: 'held',
+        waitingForInput: true,
+        lifecycle: 'started',
+        expected: 'blocked',
       },
       {
-        name: 'superseded claim aborts at idle before the status ladder',
-        status: 'idle',
+        name: 'a query that cannot start blocks admission with an sdk_resume_choice retry window',
         delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
         pending: false,
-        claimGuard: 'superseded',
-        expected: 'aborted',
+        claimGuard: 'held',
+        lifecycle: 'blocked',
+        expected: 'blocked',
       },
       {
-        name: 'superseded claim aborts at waiting_for_input before the status ladder',
-        status: 'waiting_for_input',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'superseded',
-        expected: 'aborted',
-      },
-      {
-        name: 'superseded claim aborts at rate_limit_cooldown before the status ladder',
-        status: 'rate_limit_cooldown',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'superseded',
-        expected: 'aborted',
-      },
-      {
-        name: 'superseded claim aborts at interrupted before the status ladder',
-        status: 'interrupted',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'superseded',
-        expected: 'aborted',
-      },
-      {
-        name: 'queued parks regardless of delivery validity, live query, ACP provider, and pending steer',
-        status: 'queued',
+        name: 'a consumed delivery row aborts admission',
         delivery: 'consumed',
-        queryPromise: 'present',
-        provider: 'acp',
-        pending: true,
-        claimGuard: 'held',
-        expected: 'park',
-      },
-      {
-        name: 'queued parks even with an absent query and a fresh valid delivery',
-        status: 'queued',
-        delivery: 'enqueued',
-        queryPromise: 'absent',
-        provider: 'anthropic',
         pending: false,
         claimGuard: 'held',
-        expected: 'park',
-      },
-      {
-        name: 'idle promotes regardless of delivery validity and absent query',
-        status: 'idle',
-        delivery: 'consumed',
-        queryPromise: 'absent',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'idle promotes even with a live ACP query and pending ownership',
-        status: 'idle',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'acp',
-        pending: true,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'waiting_for_input promotes through the fallback',
-        status: 'waiting_for_input',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'waiting_for_input promotes ahead of ACP pending ownership',
-        status: 'waiting_for_input',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'acp',
-        pending: true,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'rate_limit_cooldown promotes through the fallback',
-        status: 'rate_limit_cooldown',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'rate_limit_cooldown promotes ahead of ACP pending ownership',
-        status: 'rate_limit_cooldown',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'acp',
-        pending: true,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'interrupted promotes through the fallback',
-        status: 'interrupted',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'interrupted promotes ahead of ACP pending ownership',
-        status: 'interrupted',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'acp',
-        pending: true,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'waiting_for_input promotes past an invalid delivery',
-        status: 'waiting_for_input',
-        delivery: 'consumed',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'rate_limit_cooldown promotes past an invalid delivery',
-        status: 'rate_limit_cooldown',
-        delivery: 'consumed',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'interrupted promotes past an invalid delivery',
-        status: 'interrupted',
-        delivery: 'consumed',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'processing aborts on a consumed delivery row',
-        status: 'processing',
-        delivery: 'consumed',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
+        lifecycle: 'started',
         expected: 'aborted',
       },
       {
-        name: 'processing aborts on a missing delivery row',
-        status: 'processing',
+        name: 'a missing delivery row aborts admission',
         delivery: 'missing',
-        queryPromise: 'present',
-        provider: 'anthropic',
         pending: false,
         claimGuard: 'held',
+        lifecycle: 'started',
         expected: 'aborted',
       },
       {
-        name: 'processing aborts when the persisted session is archived despite an enqueued delivery',
-        status: 'processing',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
+        name: 'a submitted ACP delivery row is admitted and completes on the SDK ack',
+        delivery: 'submitted',
         pending: false,
         claimGuard: 'held',
-        archived: true,
-        expected: 'aborted',
-      },
-      {
-        name: 'processing aborts on an invalid delivery even when no query is live',
-        status: 'processing',
-        delivery: 'consumed',
-        queryPromise: 'absent',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'aborted',
-      },
-      {
-        name: 'processing promotes when no query is live',
-        status: 'processing',
-        delivery: 'enqueued',
-        queryPromise: 'absent',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'promote',
-      },
-      {
-        name: 'processing promotes an absent-query ACP steer ahead of ownership',
-        status: 'processing',
-        delivery: 'enqueued',
-        queryPromise: 'absent',
+        lifecycle: 'started',
         provider: 'acp',
+        expected: 'completed',
+      },
+      {
+        name: 'a fresh enqueued steer is admitted durably and completes on the SDK ack',
+        delivery: 'enqueued',
+        pending: false,
+        claimGuard: 'held',
+        lifecycle: 'started',
+        expected: 'completed',
+      },
+      {
+        name: 'an already-pending steer reuses the in-flight acknowledgment without re-admitting',
+        delivery: 'enqueued',
         pending: true,
         claimGuard: 'held',
-        expected: 'promote',
+        lifecycle: 'started',
+        expected: 'completed',
       },
       {
-        name: 'processing aborts an invalid ACP steer ahead of ownership',
-        status: 'processing',
-        delivery: 'consumed',
-        queryPromise: 'present',
-        provider: 'acp',
+        name: 'an already-pending ACP steer also reuses the in-flight acknowledgment',
+        delivery: 'enqueued',
         pending: true,
         claimGuard: 'held',
-        expected: 'aborted',
-      },
-      {
-        name: 'ACP with an already-pending steer returns awaiting_acceptance without admitting a fresh feed',
-        status: 'processing',
-        delivery: 'enqueued',
-        queryPromise: 'present',
+        lifecycle: 'started',
         provider: 'acp',
-        pending: true,
-        claimGuard: 'held',
-        expected: 'awaiting_acceptance',
-      },
-      {
-        name: 'non-ACP with an already-pending steer still admits a feed (ownership does not gate admission)',
-        status: 'processing',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: true,
-        claimGuard: 'held',
-        expected: 'consumed',
-      },
-      {
-        name: 'ACP with a fresh steer admits and returns awaiting_acceptance after the SDK ack',
-        status: 'processing',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'acp',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'awaiting_acceptance',
-      },
-      {
-        name: 'non-ACP with a fresh steer admits and returns consumed after the SDK ack',
-        status: 'processing',
-        delivery: 'enqueued',
-        queryPromise: 'present',
-        provider: 'anthropic',
-        pending: false,
-        claimGuard: 'held',
-        expected: 'consumed',
+        expected: 'completed',
       },
     ];
 
@@ -6774,35 +6052,113 @@ describe('AgentSession', () => {
       it(row.name, async () => {
         const { db, queue, outcome, admitWithId } = await runSteerRow(row);
         try {
-          expect(outcome).toEqual({ outcome: row.expected });
-          if (row.expected === 'consumed') {
+          if (row.expected === 'blocked') {
+            expect(outcome).toEqual({
+              outcome: 'blocked',
+              retryAt: expect.any(Number),
+              reason: 'sdk_resume_choice',
+            });
+          } else {
+            expect(outcome).toEqual({ outcome: row.expected });
+          }
+          if (row.expected === 'completed') {
             expect(
               db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
             ).toBe('consumed');
-          } else if (
-            row.expected === 'awaiting_acceptance' &&
-            row.provider === 'acp' &&
-            !row.pending
-          ) {
+            expect(queue.hasPendingOrInFlight(steerUuid)).toBe(false);
+          } else if (row.delivery === 'enqueued' || row.delivery === 'submitted') {
             expect(
               db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
-            ).toBe('submitted');
-          } else if (row.delivery === 'enqueued') {
-            expect(
-              db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus
-            ).toBe('enqueued');
+            ).toBe(row.delivery);
+            expect(queue.size()).toBe(row.pending ? 1 : 0);
           }
-          if (row.expected === 'awaiting_acceptance' && row.pending) {
-            expect(queue.hasPendingOrInFlight(steerUuid)).toBe(true);
-          } else {
-            expect(queue.size()).toBe(0);
-          }
-          expect(admitWithId).toHaveBeenCalledTimes(rowExpectsAdmission(row) ? 1 : 0);
+          expect(admitWithId).toHaveBeenCalledTimes(rowExpectsFreshAdmission(row) ? 1 : 0);
         } finally {
           db.close();
         }
       });
     }
+
+    it('rejects with a terminal error when the persisted session is archived', async () => {
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        db.updateSession(sessionId, { status: 'archived' });
+        db.getSDKMessageRepo().saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        agentSession.queryPromise = new Promise<void>(() => {});
+        await expect(
+          agentSession.feedDeliverySteer(steerUuid, steerContent, null, () => true)
+        ).rejects.toThrow('Session is archived');
+      } finally {
+        db.close();
+      }
+    });
+
+    it('aborts when the session is cleaning up', async () => {
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        db.getSDKMessageRepo().saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        agentSession.queryPromise = new Promise<void>(() => {});
+        agentSession.setCleaningUp(true);
+        const outcome = await agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        expect(outcome).toEqual({ outcome: 'aborted' });
+        expect(db.getSDKMessageRepo().getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe(
+          'enqueued'
+        );
+      } finally {
+        db.close();
+      }
+    });
 
     it('pins: a claim superseded while waiting for the session lock aborts after acquisition', async () => {
       const db = await createTestDb();
@@ -6856,64 +6212,7 @@ describe('AgentSession', () => {
       }
     });
 
-    it('pins: a live query ending after the steer was SDK-yielded and consumed reopens the delivery and throws', async () => {
-      const db = await createTestDb();
-      try {
-        const session = createTestSession(sessionId);
-        db.createSession(session);
-        const repo = db.getSDKMessageRepo();
-        repo.saveUserMessage(
-          sessionId,
-          {
-            type: 'user',
-            uuid: steerUuid,
-            message: { role: 'user', content: steerContent },
-          } as unknown as SDKMessage,
-          'enqueued'
-        );
-        const bus = await createTestInternalEventBus();
-        const agentSession = new AgentSession(
-          db.getSession(sessionId) ?? session,
-          db,
-          {} as MessageHub,
-          bus,
-          mock(async () => 'test-api-key'),
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          { autoReplayPendingMessages: false }
-        );
-        await agentSession.stateManager.setProcessing('active-msg-uuid');
-        let resolveQuery!: () => void;
-        agentSession.queryPromise = new Promise<void>((resolve) => {
-          resolveQuery = resolve;
-        });
-        const queue = agentSession.messageQueue;
-        const steerPromise = agentSession.feedDeliverySteer(
-          steerUuid,
-          steerContent,
-          null,
-          () => true
-        );
-        await waitForQueueEntry(queue);
-        queue.start();
-        const generator = queue.messageGenerator(sessionId, { suppressPreYieldCallback: true });
-        await generator.next();
-        repo.markDeliveryConsumedByUuid(sessionId, steerUuid);
-        resolveQuery();
-        await expect(steerPromise).rejects.toThrow(
-          'Steer target query ended before the SDK consumed the steer'
-        );
-        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
-        expect(queue.hasPendingOrClaimed(steerUuid)).toBe(true);
-        expect(queue.hasYielded(steerUuid)).toBe(false);
-      } finally {
-        db.close();
-      }
-    });
-
-    it('pins: an ACP steer already yielded to the SDK returns awaiting_acceptance without re-admitting', async () => {
+    it('pins: an already-yielded steer reuses the yielded acknowledgment without re-admitting', async () => {
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
@@ -6946,80 +6245,38 @@ describe('AgentSession', () => {
         agentSession.queryPromise = new Promise<void>(() => {});
         const queue = agentSession.messageQueue;
         queue.admitWithId(steerUuid, steerContent, false, { durable: true });
+        const originalAdmit = queue.admitWithId.bind(queue);
+        const admitWithId = mock(originalAdmit);
+        (queue as unknown as { admitWithId: MessageQueue['admitWithId'] }).admitWithId =
+          admitWithId;
         queue.start();
         const generator = queue.messageGenerator(sessionId, { suppressPreYieldCallback: true });
         await generator.next();
         expect(queue.hasYielded(steerUuid)).toBe(true);
-        const outcome = await agentSession.feedDeliverySteer(
-          steerUuid,
-          steerContent,
-          null,
-          () => true
-        );
-        expect(outcome).toEqual({ outcome: 'awaiting_acceptance' });
-        expect(queue.hasYielded(steerUuid)).toBe(true);
-        expect(queue.size()).toBe(1);
-        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
-      } finally {
-        db.close();
-      }
-    });
-
-    it('releases the worker slot and requeues when a hung query never acknowledges an unclaimed steer', async () => {
-      const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
-      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '25';
-      const db = await createTestDb();
-      try {
-        const session = createTestSession(sessionId);
-        db.createSession(session);
-        const repo = db.getSDKMessageRepo();
-        repo.saveUserMessage(
-          sessionId,
-          {
-            type: 'user',
-            uuid: steerUuid,
-            message: { role: 'user', content: steerContent },
-          } as unknown as SDKMessage,
-          'enqueued'
-        );
-        const bus = await createTestInternalEventBus();
-        const agentSession = new AgentSession(
-          db.getSession(sessionId) ?? session,
-          db,
-          {} as MessageHub,
-          bus,
-          mock(async () => 'test-api-key'),
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          { autoReplayPendingMessages: false }
-        );
-        await agentSession.stateManager.setProcessing('active-msg-uuid');
-        agentSession.queryPromise = new Promise<void>(() => {});
-        const queue = agentSession.messageQueue;
         const steerPromise = agentSession.feedDeliverySteer(
           steerUuid,
           steerContent,
           null,
           () => true
         );
-        await waitForQueueEntry(queue);
+        for (let i = 0; i < 100; i++) {
+          await Promise.resolve();
+        }
+        queue.acknowledgeYielded(steerUuid);
         const outcome = await steerPromise;
-        expect(outcome).toEqual({ outcome: 'ack_timeout' });
-        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
-        expect(queue.hasPendingOrInFlight(steerUuid)).toBe(false);
+        expect(outcome).toEqual({ outcome: 'completed' });
+        expect(admitWithId).toHaveBeenCalledTimes(0);
+        expect(queue.hasYielded(steerUuid)).toBe(false);
         expect(queue.size()).toBe(0);
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('consumed');
       } finally {
-        if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
-        else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
         db.close();
       }
     });
 
-    it('settles a yielded steer as acknowledged when a hung query never confirms it', async () => {
-      const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
-      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '25';
+    it('throws a recoverable admission timeout when a hung query never acknowledges an unclaimed steer', async () => {
+      const previousTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+      process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '25';
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
@@ -7049,7 +6306,67 @@ describe('AgentSession', () => {
         );
         await agentSession.stateManager.setProcessing('active-msg-uuid');
         agentSession.queryPromise = new Promise<void>(() => {});
+        (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+          ensureQueryStarted: mock(async () => 'started'),
+          executeDeferredRestartIfPending: mock(async () => {}),
+        };
         const queue = agentSession.messageQueue;
+        const steerPromise = agentSession.feedDeliverySteer(
+          steerUuid,
+          steerContent,
+          null,
+          () => true
+        );
+        await waitForQueueEntry(queue);
+        await expect(steerPromise).rejects.toThrow('Delivery not consumed within timeout');
+        expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('enqueued');
+        expect(queue.hasPendingOrInFlight(steerUuid)).toBe(true);
+      } finally {
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = previousTimeout;
+        db.close();
+      }
+    });
+
+    it('settles a yielded steer as acknowledged when the queue durable-yield timeout fires', async () => {
+      const previousTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+      process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '10000';
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(sessionId);
+        db.createSession(session);
+        const repo = db.getSDKMessageRepo();
+        repo.saveUserMessage(
+          sessionId,
+          {
+            type: 'user',
+            uuid: steerUuid,
+            message: { role: 'user', content: steerContent },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        const bus = await createTestInternalEventBus();
+        const agentSession = new AgentSession(
+          db.getSession(sessionId) ?? session,
+          db,
+          {} as MessageHub,
+          bus,
+          mock(async () => 'test-api-key'),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { autoReplayPendingMessages: false }
+        );
+        await agentSession.stateManager.setProcessing('active-msg-uuid');
+        agentSession.queryPromise = new Promise<void>(() => {});
+        (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+          ensureQueryStarted: mock(async () => 'started'),
+          executeDeferredRestartIfPending: mock(async () => {}),
+        };
+        const queue = agentSession.messageQueue;
+        queue.overrideTimeoutMsForTest(25);
         const steerPromise = agentSession.feedDeliverySteer(
           steerUuid,
           steerContent,
@@ -7062,20 +6379,21 @@ describe('AgentSession', () => {
         await generator.next();
         expect(queue.hasYielded(steerUuid)).toBe(true);
         const outcome = await steerPromise;
-        expect(outcome).toEqual({ outcome: 'consumed' });
+        expect(outcome).toEqual({ outcome: 'completed' });
         expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('consumed');
         expect(queue.hasYielded(steerUuid)).toBe(false);
         expect(queue.size()).toBe(0);
       } finally {
-        if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
-        else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = previousTimeout;
         db.close();
       }
     });
 
     it('an acknowledgment arriving before the timeout still consumes the steer', async () => {
-      const previousTimeout = process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
-      process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = '10000';
+      const previousTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+      process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '10000';
       const db = await createTestDb();
       try {
         const session = createTestSession(sessionId);
@@ -7105,6 +6423,10 @@ describe('AgentSession', () => {
         );
         await agentSession.stateManager.setProcessing('active-msg-uuid');
         agentSession.queryPromise = new Promise<void>(() => {});
+        (agentSession as unknown as Record<string, unknown>).lifecycleManager = {
+          ensureQueryStarted: mock(async () => 'started'),
+          executeDeferredRestartIfPending: mock(async () => {}),
+        };
         const queue = agentSession.messageQueue;
         const steerPromise = agentSession.feedDeliverySteer(
           steerUuid,
@@ -7115,11 +6437,12 @@ describe('AgentSession', () => {
         await waitForQueueEntry(queue);
         queue.remove(steerUuid);
         const outcome = await steerPromise;
-        expect(outcome).toEqual({ outcome: 'consumed' });
+        expect(outcome).toEqual({ outcome: 'completed' });
         expect(repo.getDeliveryContent(sessionId, steerUuid)?.sendStatus).toBe('consumed');
       } finally {
-        if (previousTimeout === undefined) delete process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS;
-        else process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS = previousTimeout;
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = previousTimeout;
         db.close();
       }
     });
@@ -7219,9 +6542,7 @@ describe('AgentSession', () => {
         expect(queue.hasYielded(hardUuid)).toBe(true);
         await agentSession.stateManager.setInterrupted();
         queue.clear();
-        await expect(steerPromise).rejects.toThrow(
-          'Steer was invalidated by session teardown before the SDK consumed it'
-        );
+        await expect(steerPromise).rejects.toThrow('Interrupted by user');
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-cleared', hardUuid)?.sendStatus
         ).toBe('enqueued');
@@ -7276,12 +6597,7 @@ describe('AgentSession', () => {
         await waitForQueueEntry(agentSession.messageQueue);
         claimHeld = false;
         agentSession.messageQueue.remove(hardUuid);
-        for (let i = 0; i < 100; i++) {
-          await Promise.resolve();
-        }
-        await agentSession.stateManager.setIdle();
-        resolveQuery();
-        await expect(drive).rejects.toThrow('Turn ended without a response');
+        await expect(drive).resolves.toEqual({ outcome: 'aborted' });
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-superseded', hardUuid)
             ?.sendStatus
@@ -7310,9 +6626,7 @@ describe('AgentSession', () => {
         await generator.next();
         agentSession.stateManager.beginTerminalIdle();
         queue.clear();
-        await expect(steerPromise).rejects.toThrow(
-          'Steer was invalidated by session teardown before the SDK consumed it'
-        );
+        await expect(steerPromise).rejects.toThrow('Interrupted by user');
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-terminal-idle', hardUuid)
             ?.sendStatus
@@ -7341,9 +6655,7 @@ describe('AgentSession', () => {
         await generator.next();
         expect(agentSession.stateManager.getState().status).toBe('processing');
         queue.clear();
-        await expect(steerPromise).rejects.toThrow(
-          'Steer was invalidated by session teardown before the SDK consumed it'
-        );
+        await expect(steerPromise).rejects.toThrow('Interrupted by user');
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-steer-bare-clear', hardUuid)
             ?.sendStatus
@@ -7421,18 +6733,11 @@ describe('AgentSession', () => {
         await agentSession.stateManager.setInterrupted();
         queue.clear();
         resolveQuery();
-        await expect(drive).rejects.toThrow('Turn ended without a response');
+        await expect(drive).rejects.toThrow('Interrupted by user');
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-interrupted', hardUuid)
             ?.sendStatus
         ).toBe('enqueued');
-        expect(
-          (
-            agentSession as unknown as {
-              zeroProgressDeliveryFailures: { messageUuid: string; count: number } | null;
-            }
-          ).zeroProgressDeliveryFailures
-        ).toBeNull();
       } finally {
         db.close();
       }
@@ -7462,23 +6767,11 @@ describe('AgentSession', () => {
         await generator.next();
         agentSession.stateManager.beginTerminalIdle();
         queue.clear();
-        for (let i = 0; i < 100; i++) {
-          await Promise.resolve();
-        }
-        await agentSession.stateManager.setIdle();
-        resolveQuery();
-        await expect(drive).rejects.toThrow('Turn ended without a response');
+        await expect(drive).rejects.toThrow('Interrupted by user');
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-terminal-idle', hardUuid)
             ?.sendStatus
         ).toBe('enqueued');
-        expect(
-          (
-            agentSession as unknown as {
-              zeroProgressDeliveryFailures: { messageUuid: string; count: number } | null;
-            }
-          ).zeroProgressDeliveryFailures
-        ).toBeNull();
       } finally {
         db.close();
       }
@@ -7508,23 +6801,11 @@ describe('AgentSession', () => {
         await generator.next();
         expect(agentSession.stateManager.getState().status).toBe('processing');
         queue.clear();
-        for (let i = 0; i < 100; i++) {
-          await Promise.resolve();
-        }
-        await agentSession.stateManager.setIdle();
-        resolveQuery();
-        await expect(drive).rejects.toThrow('Turn ended without a response');
+        await expect(drive).rejects.toThrow('Interrupted by user');
         expect(
           db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-bare-clear', hardUuid)
             ?.sendStatus
         ).toBe('enqueued');
-        expect(
-          (
-            agentSession as unknown as {
-              zeroProgressDeliveryFailures: { messageUuid: string; count: number } | null;
-            }
-          ).zeroProgressDeliveryFailures
-        ).toBeNull();
       } finally {
         db.close();
       }
@@ -7560,10 +6841,11 @@ describe('AgentSession', () => {
         await generator.next();
         db.getSDKMessageRepo().markDeliverySubmittedByUuids('sess-a3a-turn-submitted', [hardUuid]);
         queue.acknowledgeYielded(hardUuid);
-        await agentSession.stateManager.setIdle();
-        resolveQuery();
-        await expect(drive).rejects.toThrow('Turn ended without a response');
+        await expect(drive).resolves.toEqual({ outcome: 'completed' });
         expect(reportStage).toHaveBeenCalledWith('sdk_admitted', expect.anything());
+        expect(
+          db.getSDKMessageRepo().getDeliveryContent('sess-a3a-turn-submitted', hardUuid)?.sendStatus
+        ).toBe('consumed');
       } finally {
         db.close();
       }

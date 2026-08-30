@@ -50,21 +50,6 @@ export class ClearConversationCancelledError extends Error {
   }
 }
 
-const DELIVERY_TURN_NO_ACTIVITY_MS = (() => {
-  const env = Number(process.env.HYPERNEO_DELIVERY_NO_ACTIVITY_MS);
-  return Number.isFinite(env) && env >= 30_000 ? env : 3 * 60 * 1000;
-})();
-
-const ACP_DELIVERY_ACCEPTANCE_STALL_MS = (() => {
-  const env = Number(process.env.HYPERNEO_DELIVERY_ACP_ACCEPTANCE_MS);
-  return Number.isFinite(env) && env >= 30_000 ? env : ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS;
-})();
-
-const MAX_ZERO_PROGRESS_DELIVERY_FAILURES = (() => {
-  const env = Number(process.env.HYPERNEO_DELIVERY_ZERO_PROGRESS_MAX);
-  return Number.isFinite(env) && env > 0 ? env : 3;
-})();
-
 interface NoPidTrackedProcess {
   proc: TrackedAgentProcess;
   exitPromise?: Promise<void>;
@@ -157,12 +142,6 @@ import {
 import { runContextBudgetReevaluation } from './context-budget-enforcement.ts';
 import { ContextTracker } from './context-tracker.ts';
 import {
-  type DeliveryTurnAdmissionDeps,
-  runDeliveryTurnAdmission,
-} from './delivery-turn-admission-pipeline.ts';
-import { classifyAcknowledgedSteer, resolveSteerAdmission } from './delivery-turn-routing.ts';
-import { DeliveryTurnStallWatchdog } from './delivery-turn-stall-watchdog.ts';
-import {
   EventSubscriptionSetup,
   type EventSubscriptionSetupContext,
 } from './event-subscription-setup.ts';
@@ -172,13 +151,14 @@ import { InterruptHandler, type InterruptHandlerContext } from './interrupt-hand
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
 import {
-  ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   BATCH_DELIVERY_MAX_CHARS,
   admitAcrossContextClearBoundary,
   buildBatchedDeliveryContent,
-  classifyReclaimTermination,
+  type DeliveryOutcome,
   type DriveTurnOutcome,
   deliverMessage,
+  deliveryConsumptionTimeoutMs,
+  deliveryConsumptionTimeoutOrDefault,
   type FeedSteerOutcome,
   flattenDeliveryText,
   MANUAL_RECOVERY_PARK_MS,
@@ -187,20 +167,14 @@ import {
   MessageDeliveryRecoverableTurnError,
   MessageDeliveryTerminalTurnError,
   signalDeliveryConsumed,
-  steerAckTimeoutMs,
   throwIfDeliveryAborted,
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
   waitForDeliveryAbort,
   withSessionLock,
 } from './message-delivery.ts';
+import { decideReconcileAdmission, selectStrandedDeliveries } from './message-delivery-pipeline.ts';
 import { deliveryMetrics } from './message-delivery-metrics.ts';
-import {
-  classifyTurnCompletion,
-  decideReconcileAdmission,
-  selectStrandedDeliveries,
-  shouldRearmSpuriousTurnEnd,
-} from './message-delivery-pipeline.ts';
 import type { MidTurnBudgetInterruptOptions } from './message-queue.ts';
 import { MessageQueue } from './message-queue.ts';
 import { runMidTurnBudgetPipeline } from './mid-turn-budget-pipeline.ts';
@@ -321,15 +295,6 @@ export class AgentSession
   startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
   private lastTerminalError: { error: StructuredError; at: number } | null = null;
-
-  private deliveryTurnStall: DeliveryTurnStallWatchdog | null = null;
-  private deliveryTurnStalled = false;
-  private zeroProgressDeliveryFailures: { messageUuid: string; count: number } | null = null;
-  private deliveryResponseObserver: {
-    generation: number;
-    observer: MessageDeliveryAttemptObserver;
-    pendingStart?: boolean;
-  } | null = null;
 
   private taskNotificationRequeryAttempts = 0;
   private taskNotificationRequeryExhausted = false;
@@ -1765,7 +1730,16 @@ export class AgentSession
       onResumeClear: () => {
         this.pendingResumeAfterCompaction = false;
       },
-      onSurvivorRequeued: (uuid) => this.reopenDeliveryForRetry(uuid),
+      onSurvivorRequeued: (uuid) => {
+        try {
+          deliverMessage(this.db.getJobQueueRepo()!, this.session.id, uuid, { origin: 'recovery' });
+        } catch (error) {
+          this.logger.warn(
+            `mid-turn survivor requeue for ${uuid} in session ${this.session.id} failed:`,
+            error
+          );
+        }
+      },
       getDurableMessageContent: (uuid) => {
         const repo = this.db.getSDKMessageRepo();
         const kickoff = repo.getUserMessageContentByUuid(this.session.id, uuid);
@@ -1906,10 +1880,6 @@ export class AgentSession
     this.stateManager.noteQueryOwnerGeneration(next);
     this.taskNotificationRequeryAwaitingSdkIdle = false;
     this.taskNotificationRequeryBusyInterruptGeneration = null;
-    if (this.deliveryResponseObserver?.pendingStart) {
-      this.deliveryResponseObserver.generation = next;
-      this.deliveryResponseObserver.pendingStart = false;
-    }
     return next;
   }
 
@@ -2507,576 +2477,22 @@ export class AgentSession
     messageUuid: string,
     content: string | MessageContent[],
     _parentToolUseId?: string | null,
-    alreadyConsumed = false,
+    _alreadyConsumed = false,
     claimGuard?: () => boolean,
     batchUuids?: string[],
     signal?: AbortSignal,
     observer?: MessageDeliveryAttemptObserver,
-    deliveryClaimToken?: string | null
+    _deliveryClaimToken?: string | null
   ): Promise<DriveTurnOutcome> {
-    this.logger.debug(
-      `delivery-turn: driving (uuid=${messageUuid} alreadyConsumed=${alreadyConsumed} ` +
-        `queueRunning=${this.messageQueue.isRunning()} queueSize=${this.messageQueue.size()} ` +
-        `trackedPids=[${this.snapshotTrackedAgentProcesses()
-          .map(([pid]) => pid)
-          .join(',')}] sdkSessionId=${this.session.sdkSessionId ?? 'none'})`
-    );
-    const recordTurnEndMarker = (): void => {
-      try {
-        const repo = this.db.getSDKMessageRepo();
-        const jobQueue = this.db.getJobQueueRepo?.();
-        if (!repo || !jobQueue) return;
-        if (!jobQueue.isProcessingDelivery(this.session.id, messageUuid)) return;
-        const loaded = repo.getDeliveryContent(this.session.id, messageUuid);
-        if (!loaded || loaded.sendStatus !== 'consumed') return;
-        this.recordDeliveryTurnEnd(messageUuid);
-      } catch (error) {
-        this.logger.warn('Failed to record delivery turn-end marker at turn end:', error);
-      }
-    };
-    let turnStartedAt = Date.now();
-    const boundary = await admitAcrossContextClearBoundary(this.session.id, signal, () =>
-      withSessionLock(
-        this.session.id,
-        () => {
-          turnStartedAt = Date.now();
-          return runDeliveryTurnAdmission(
-            this.buildDeliveryTurnAdmissionDeps(
-              recordTurnEndMarker,
-              claimGuard,
-              deliveryClaimToken ?? undefined
-            ),
-            {
-              messageUuid,
-              content,
-              alreadyConsumed,
-              batchUuids,
-              signal,
-              attemptObserver: observer,
-              claimToken: deliveryClaimToken ?? undefined,
-            }
-          );
-        },
-        signal
-      )
-    );
-    if (boundary.kind === 'boundary_wait') {
-      this.logger.warn(
-        `delivery-turn: waiting for the context-clear boundary (uuid=${messageUuid}); parking job`
-      );
-      void this.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
-      return {
-        outcome: 'blocked',
-        retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS,
-        reason: 'context_clear_boundary',
-      };
-    }
-    const started = boundary.result;
-    if (started.kind === 'blocked') {
-      this.logger.warn(
-        `delivery-turn: blocked on sdk_resume_choice (uuid=${messageUuid}); parking job`
-      );
-      await this.stateManager.setQueued(messageUuid);
-      return { outcome: 'blocked', retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS };
-    }
-    if (started.kind === 'turn_terminated') {
-      this.zeroProgressDeliveryFailures = null;
-      return { outcome: 'turn_terminated' };
-    }
-    if (started.kind === 'aborted') {
-      return { outcome: 'aborted' };
-    }
-    if (
-      alreadyConsumed &&
-      !this.rateLimitWatchdog.isRecoveryPending() &&
-      this.db.getSDKMessageRepo()?.hasRecoveryInterceptedResultAfter?.(this.session.id, messageUuid)
-    ) {
-      this.logger.info(
-        `delivery-turn: reclaiming recovery-intercepted row directly (uuid=${messageUuid}); ` +
-          `the parked recovery episode no longer owns its retry.`
-      );
-      started.turnEnd.cancel();
-      if (started.responseObserver && this.deliveryResponseObserver === started.responseObserver) {
-        this.deliveryResponseObserver = null;
-      }
-      if (!claimGuard || claimGuard()) {
-        this.reopenDeliveryForRetry(messageUuid);
-      }
-      throw new MessageDeliveryRecoverableTurnError('Turn ended without a response');
-    }
-    this.deliveryTurnStalled = false;
-    this.outstandingToolUseIds.clear();
-    let stallPromise: Promise<void> = new Promise<void>(() => {});
-    let stallWatchdog: DeliveryTurnStallWatchdog | null = null;
-    let activeTurnEnd = started.turnEnd;
-    const responseObserver = started.responseObserver;
-    let kickoffAcknowledged = false;
-    let kickoffDiedBeforeConsumption = false;
-    let kickoffAckInvalidated = false;
-    try {
-      if (started.acknowledgment) {
-        const aborted = waitForDeliveryAbort(signal);
-        let kickoffWinner: 'acknowledged' | 'query_ended' = 'query_ended';
-        try {
-          kickoffWinner = await Promise.race([
-            started.acknowledgment.then(() => 'acknowledged' as const),
-            started.queryPromise.catch(() => {}).then(() => 'query_ended' as const),
-            aborted.promise,
-          ]);
-        } catch (error) {
-          if (signal?.aborted) {
-            if (!started.freshFeed) throw error;
-            if (this.messageQueue.remove(messageUuid)) throw error;
-            await started.acknowledgment;
-            kickoffWinner = 'acknowledged';
-          } else {
-            if (this.peekTerminalTurnError(turnStartedAt)) throw error;
-            const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
-            throw terminal ?? error;
-          }
-        } finally {
-          aborted.cancel();
-        }
-        if (kickoffWinner === 'query_ended') {
-          this.logger.warn(
-            `delivery-turn: query ended before the SDK consumed the kickoff ` +
-              `(uuid=${messageUuid}, generation=${started.generation}); requeueing the ` +
-              `kickoff, reopening it for retry, and classifying the turn outcome`
-          );
-          this.messageQueue.requeueYielded(messageUuid);
-          this.reopenDeliveryForRetry(messageUuid);
-          kickoffDiedBeforeConsumption = true;
-        }
-        const kickoffStatus = this.stateManager.getState().status;
-        const kickoffAcknowledgementValid =
-          !kickoffDiedBeforeConsumption &&
-          (kickoffStatus === 'processing' || kickoffStatus === 'idle') &&
-          !this.stateManager.isTerminalIdlePending() &&
-          (this.messageQueue.getClearEpoch?.() ?? 0) === started.clearEpoch &&
-          (!claimGuard || claimGuard()) &&
-          this.acknowledgedDeliveryStillOwned(messageUuid);
-        if (kickoffWinner === 'acknowledged' && !kickoffAcknowledgementValid) {
-          kickoffAckInvalidated = true;
-        }
-        if (kickoffAcknowledgementValid) {
-          kickoffAcknowledged = true;
-          this.zeroProgressDeliveryFailures = null;
-          this.logger.debug(
-            `delivery-turn: kickoff consumed by SDK ` +
-              `(${Date.now() - turnStartedAt}ms since turn start, uuid=${messageUuid})`
-          );
-          deliveryMetrics.recordFeed(messageUuid);
-          observer?.reportStage('sdk_admitted', { generation: started.generation });
-          if (this.session.config.provider !== 'acp') {
-            const consumeSignalMs = Date.now();
-            this.markDeliveryBatchConsumed(started.admittedBatchUuids ?? [messageUuid]);
-            deliveryMetrics.recordResidualWindow(Date.now() - consumeSignalMs);
-            signalDeliveryConsumed(this.session.id, messageUuid);
-            if (started.admittedBatchUuids) {
-              for (const memberUuid of started.admittedBatchUuids) {
-                if (memberUuid === messageUuid) continue;
-                signalDeliveryConsumed(this.session.id, memberUuid);
-              }
-            }
-          }
-        }
-      }
-      throwIfDeliveryAborted(signal);
-      stallPromise = this.armDeliveryTurnStall(signal, claimGuard);
-      stallWatchdog = this.deliveryTurnStall;
-      const SPURIOUS_TURN_END_GRACE_MS = 250;
-      const feedAcknowledged = started.acknowledgment !== null;
-      let raceArmedAt = Date.now();
-      let graceRearms = 0;
-      let turnEndFired = false;
-      let queryEnded = false;
-      void activeTurnEnd.promise.then(() => {
-        turnEndFired = true;
-      });
-      void started.queryPromise
-        .catch(() => {})
-        .then(() => {
-          queryEnded = true;
-        });
-      while (true) {
-        const aborted = waitForDeliveryAbort(signal);
-        try {
-          await Promise.race([
-            activeTurnEnd.promise,
-            started.queryPromise.catch(() => {}),
-            stallPromise,
-            aborted.promise,
-          ]);
-        } finally {
-          aborted.cancel();
-        }
-        const turnResultRepo = this.db.getSDKMessageRepo();
-        const hasAnyTerminalResult =
-          !!turnResultRepo?.hasTerminalResultAfter(this.session.id, messageUuid) ||
-          !!turnResultRepo?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
-        const spuriousFire = shouldRearmSpuriousTurnEnd({
-          feedAcknowledged,
-          turnEndFired,
-          queryEnded,
-          withinGraceMs: Date.now() - raceArmedAt <= SPURIOUS_TURN_END_GRACE_MS,
-          graceRearms,
-          hasTerminalResult: hasAnyTerminalResult,
-        });
-        if (!spuriousFire) break;
-        graceRearms++;
-        activeTurnEnd.cancel();
-        const rearmedTurnEnd = this.stateManager.waitForIdleTransition(
-          this.rateLimitWatchdog.getGeneration(),
-          recordTurnEndMarker,
-          started.idleOwner
-        );
-        activeTurnEnd = {
-          promise: rearmedTurnEnd.promise,
-          cancel: rearmedTurnEnd.cancel,
-          idleOwner: started.idleOwner,
-        };
-        raceArmedAt = Date.now();
-        turnEndFired = false;
-        void activeTurnEnd.promise.then(() => {
-          turnEndFired = true;
-        });
-      }
-    } finally {
-      activeTurnEnd.cancel();
-      if (this.deliveryTurnStall === stallWatchdog) {
-        this.clearDeliveryTurnStall();
-      }
-      if (responseObserver && this.deliveryResponseObserver === responseObserver) {
-        this.deliveryResponseObserver = null;
-      }
-    }
-    const producedResult = !!this.db
-      .getSDKMessageRepo()
-      ?.hasTerminalResultAfter(this.session.id, messageUuid);
-    if (!producedResult) {
-      if (this.rateLimitWatchdog.isRecoveryPending()) {
-        const cooldownRetryAt = this.rateLimitWatchdog.getState().retryAt;
-        const retryAt = this.rateLimitWatchdog.isManualRecoveryPause()
-          ? Date.now() + MANUAL_RECOVERY_PARK_MS
-          : Math.max(Date.now() + MESSAGE_DELIVERY_PARK_MS, cooldownRetryAt ?? 0);
-        this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
-        this.logger.info(
-          `delivery-turn: parking job while limit recovery is pending ` +
-            `(uuid=${messageUuid}, retryAt=${new Date(retryAt).toISOString()})`
-        );
-        return { outcome: 'recovery_pending', retryAt };
-      }
-      const turnError = this.consumeTerminalTurnError(turnStartedAt);
-      this.db.getSDKMessageRepo()?.clearDeliveryTurnEnd(this.session.id, messageUuid);
-      const errorResultSubtype = this.db
-        .getSDKMessageRepo()
-        ?.getErrorTerminalResultSubtypeAfter(this.session.id, messageUuid);
-      const completion = classifyTurnCompletion({
-        producedResult,
-        turnError,
-        errorResultSubtype,
-        deliveryTurnStalled: this.deliveryTurnStalled,
-        claimGuardHeld: claimGuard ? claimGuard() : undefined,
-      });
-      if (completion.outcome === 'terminal_error') {
-        throw new MessageDeliveryTerminalTurnError(completion.detail, completion.category);
-      }
-      if (completion.outcome === 'recoverable_error') {
-        if (!kickoffAcknowledged && !kickoffAckInvalidated && !alreadyConsumed) {
-          const terminal = await this.escalateZeroProgressDeliveryFailure(messageUuid);
-          if (terminal) throw terminal;
-        }
-        if (completion.reopenForRetry) {
-          this.reopenDeliveryForRetry(messageUuid);
-        }
-        throw new MessageDeliveryRecoverableTurnError(completion.detail, completion.category);
-      }
-    }
-    this.zeroProgressDeliveryFailures = null;
-    return { outcome: 'completed' };
-  }
-
-  private buildDeliveryTurnAdmissionDeps(
-    recordTurnEndMarker: () => void,
-    claimGuard: (() => boolean) | undefined,
-    claimToken: string | undefined
-  ): DeliveryTurnAdmissionDeps {
-    const jobQueue = this.db.getJobQueueRepo?.();
-    return {
-      logDebug: (message: string): void => {
-        this.logger.debug(message);
-      },
-      sessionArchived: (): boolean => this.db.getSession(this.session.id)?.status === 'archived',
-      loadDeliveryRow: (messageUuid) =>
-        this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid),
-      deliveryValid: (messageUuid, alreadyConsumed) =>
-        this.messageDeliveryValid(messageUuid, alreadyConsumed),
-      hasClaimGuard: (): boolean => claimGuard !== undefined,
-      claimCurrent: (): boolean => claimGuard?.() ?? true,
-      reclaimCheck: (messageUuid) => this.reclaimDeliveryTurnState(messageUuid),
-      recordTurnEndUnguarded: (messageUuid) => this.recordDeliveryTurnEnd(messageUuid),
-      generation: () => this.getQueryGeneration(),
-      cleaningUp: () => this.isCleaningUp(),
-      armResponseObserver: (attemptObserver) => {
-        const armed = {
-          generation: this.getQueryGeneration(),
-          observer: attemptObserver,
-          pendingStart: true,
-        };
-        this.deliveryResponseObserver = armed;
-        return armed;
-      },
-      disarmResponseObserver: (armed) => {
-        if (this.deliveryResponseObserver === armed) this.deliveryResponseObserver = null;
-      },
-      startQuery: (signal) => this.lifecycleManager.ensureQueryStarted(signal),
-      currentQueryPromise: () => this.queryPromise,
-      pendingContentSnapshot: (messageUuid) =>
-        this.messageQueue.getPendingOrInFlightContent?.(messageUuid) ?? null,
-      waitForTurnEnd: () => {
-        const idleOwner = this.stateManager.admitDeliveryTurn();
-        const { promise, cancel } = this.stateManager.waitForIdleTransition(
-          this.rateLimitWatchdog.getGeneration(),
-          recordTurnEndMarker,
-          idleOwner
-        );
-        return { promise, cancel, idleOwner };
-      },
-      existingQueueEntry: (messageUuid) => this.messageQueue.waitForPendingOrInFlight(messageUuid),
-      removeQueueEntry: (messageUuid) => this.messageQueue.remove(messageUuid),
-      queueEntryYielded: (messageUuid) => this.messageQueue.hasYielded(messageUuid),
-      queueClearEpoch: () => this.messageQueue.getClearEpoch?.() ?? 0,
-      rebuildBatch: (kickoffUuid, kickoffContent, batchUuids) =>
-        this.rebuildBatchDeliveryContent(kickoffUuid, kickoffContent, batchUuids),
-      contentMatches: (queued, expected) => this.deliveryContentMatches(queued, expected),
-      reserveAdmission: jobQueue
-        ? (messageUuid) => {
-            if (!claimToken) return null;
-            return jobQueue.reserveDeliveryAdmission({
-              sessionId: this.session.id,
-              kickoffUuid: messageUuid,
-              claimToken,
-              messageUuid,
-            });
-          }
-        : () => null,
-      narrowBatchFenced: jobQueue
-        ? (kickoffUuid, expectedBatchUuids, batchUuids) => {
-            if (!claimToken) return null;
-            return jobQueue.updateDeliveryBatchUuidsFenced({
-              sessionId: this.session.id,
-              kickoffUuid,
-              claimToken,
-              expectedBatchUuids,
-              batchUuids,
-            });
-          }
-        : () => null,
-      narrowBatchLegacy: jobQueue
-        ? (kickoffUuid, admitted) =>
-            jobQueue.narrowActiveDeliveryBatchUuids(this.session.id, kickoffUuid, admitted)
-        : () => false,
-      submitMembersFenced: jobQueue
-        ? (kickoffUuid, uuids) => {
-            if (!claimToken) return [];
-            return jobQueue.transitionDeliverySendStatusFenced({
-              sessionId: this.session.id,
-              kickoffUuid,
-              claimToken,
-              uuids,
-              fromStatus: 'enqueued',
-              toStatus: 'submitted',
-            });
-          }
-        : () => [],
-      submitMembersLegacy: (uuids) => this.markDeliveryBatchSubmitted(uuids),
-      restoreBatchFenced: jobQueue
-        ? (kickoffUuid, writtenBatchUuids, priorBatchUuids, priorDroppedBatchUuids) => {
-            if (!claimToken) return false;
-            return jobQueue.updateDeliveryBatchUuidsFenced({
-              sessionId: this.session.id,
-              kickoffUuid,
-              claimToken,
-              expectedBatchUuids: writtenBatchUuids,
-              batchUuids: priorBatchUuids,
-              droppedBatchUuids: priorDroppedBatchUuids,
-            }).applied;
-          }
-        : () => false,
-      unsubmitMembersFenced: jobQueue
-        ? (kickoffUuid, uuids) => {
-            if (!claimToken) return [];
-            return jobQueue.transitionDeliverySendStatusFenced({
-              sessionId: this.session.id,
-              kickoffUuid,
-              claimToken,
-              uuids,
-              fromStatus: 'submitted',
-              toStatus: 'enqueued',
-            });
-          }
-        : () => [],
-      resolveMessageIds: (uuids) =>
-        this.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(this.session.id, uuids),
-      publishSubmitted: (messageDbIds) => {
-        if (messageDbIds.length === 0) return;
-        void this.internalEventBus
-          .publish('messages.statusChanged', {
-            sessionId: this.session.id,
-            messageIds: messageDbIds,
-            status: 'submitted',
-          })
-          .catch(() => {});
-      },
-      admitToQueue: (messageUuid, feedContent) =>
-        this.messageQueue.admitWithId(messageUuid, feedContent, false, { durable: true }),
-    };
-  }
-
-  private armDeliveryTurnStall(signal?: AbortSignal, claimGuard?: () => boolean): Promise<void> {
-    this.clearDeliveryTurnStall();
-    this.deliveryTurnStalled = false;
-    const awaitingAcpAcceptance = this.isAcpSession() && !this.hasDeliveryTurnBeenAccepted();
-    this.deliveryTurnStall = new DeliveryTurnStallWatchdog(
-      awaitingAcpAcceptance ? ACP_DELIVERY_ACCEPTANCE_STALL_MS : DELIVERY_TURN_NO_ACTIVITY_MS,
-      () => this.outstandingToolUseIds.size > 0,
-      async () => {
-        if (signal?.aborted || (claimGuard && !claimGuard())) return;
-        this.deliveryTurnStalled = true;
-        try {
-          await this.resetQuery({ restartQuery: false });
-        } catch {}
-      },
-      () => this.stateManager.getState().status === 'rate_limit_cooldown'
-    );
-    return this.deliveryTurnStall.arm();
-  }
-
-  onDeliveryTurnAccepted(): void {
-    if (!this.isAcpSession() || !this.deliveryTurnStall) return;
-    this.deliveryTurnStall.resizeTimeoutMs(DELIVERY_TURN_NO_ACTIVITY_MS);
-  }
-
-  private isAcpSession(): boolean {
-    return this.session.config.provider === 'acp';
-  }
-
-  private hasDeliveryTurnBeenAccepted(): boolean {
-    const state = this.stateManager.getState();
-    const promptUuid = state.status === 'processing' ? state.messageId : undefined;
-    if (!promptUuid) return true;
-    const loaded = this.db.getSDKMessageRepo()?.getDeliveryContent(this.session.id, promptUuid);
-    if (!loaded) return true;
-    return loaded.sendStatus === 'consumed';
-  }
-
-  bumpDeliveryTurnActivity(): void {
-    this.deliveryTurnStall?.bump();
-  }
-
-  reportFirstDeliverySDKResponse(responseType: string): void {
-    const active = this.deliveryResponseObserver;
-    if (!active || active.pendingStart || active.generation !== this.getQueryGeneration()) return;
-    this.deliveryResponseObserver = null;
-    active.observer.reportStage('first_sdk_response', {
-      generation: active.generation,
-      responseType,
+    return this.admitDelivery({
+      messageUuid,
+      content,
+      role: 'turn',
+      claimGuard,
+      batchUuids,
+      signal,
+      observer,
     });
-  }
-
-  private clearDeliveryTurnStall(): void {
-    this.deliveryTurnStall?.cancel();
-    this.deliveryTurnStall = null;
-  }
-
-  private async escalateZeroProgressDeliveryFailure(
-    messageUuid: string
-  ): Promise<MessageDeliveryTerminalTurnError | null> {
-    if (this.zeroProgressDeliveryFailures?.messageUuid !== messageUuid) {
-      this.zeroProgressDeliveryFailures = { messageUuid, count: 0 };
-    }
-    this.zeroProgressDeliveryFailures.count += 1;
-    if (this.zeroProgressDeliveryFailures.count < MAX_ZERO_PROGRESS_DELIVERY_FAILURES) {
-      return null;
-    }
-    this.zeroProgressDeliveryFailures = null;
-    const detail =
-      `Delivery for ${messageUuid} failed ${MAX_ZERO_PROGRESS_DELIVERY_FAILURES} consecutive ` +
-      `times with zero SDK progress — every query backing the turn died before the message ` +
-      `was consumed (startup-gate admission aborts under retry pressure). Failing the message ` +
-      `and resetting the session instead of retrying.`;
-    this.logger.error(
-      `delivery-turn: zero-progress delivery livelock detected for session ${this.session.id} ` +
-        `(uuid=${messageUuid}, queueRunning=${this.messageQueue.isRunning()}, ` +
-        `liveQuery=${this.hasLiveQuery()}, generation=${this.getQueryGeneration()}); ` +
-        `resetting the session and terminalizing the delivery`
-    );
-    deliveryMetrics.recordZeroProgressWedge();
-    const teardownOk = await withSessionLock(this.session.id, async () => {
-      try {
-        const resetResult = await this.resetQuery({ restartQuery: false });
-        if (resetResult.success) return true;
-        this.logger.warn(
-          `delivery-turn: wedge recovery reset reported failure: ${resetResult.error ?? 'unknown'}`
-        );
-      } catch (resetError) {
-        this.logger.warn('delivery-turn: wedge recovery reset failed:', resetError);
-      }
-      try {
-        await this.lifecycleManager.stop({ catchQueryErrors: true });
-        return true;
-      } catch (stopError) {
-        this.logger.warn('delivery-turn: wedge recovery forced stop failed:', stopError);
-        return false;
-      }
-    });
-    if (!teardownOk) {
-      this.logger.warn(
-        `delivery-turn: cannot prove teardown for ${messageUuid}; keeping the delivery ` +
-          `retryable instead of terminalizing`
-      );
-      return null;
-    }
-    return new MessageDeliveryTerminalTurnError(detail, 'delivery_zero_progress');
-  }
-
-  async clearStuckProcessingState(messageUuid: string): Promise<boolean> {
-    return await withSessionLock(this.session.id, async () => {
-      const state = this.stateManager.getState();
-      if (state.status !== 'processing' || state.messageId !== messageUuid) return false;
-      if (this.hasLiveQuery()) return false;
-      this.logger.warn(
-        `delivery: clearing stuck processing state (messageId=${messageUuid}) after terminal ` +
-          `delivery failure — no live query owns the turn; resetting so the session accepts ` +
-          `new messages`
-      );
-      try {
-        const resetResult = await this.resetQuery({ restartQuery: false });
-        if (!resetResult.success) {
-          this.logger.warn(
-            `delivery: stuck-state reset reported failure: ${resetResult.error ?? 'unknown'}`
-          );
-          return false;
-        }
-      } catch (resetError) {
-        this.logger.warn('delivery: stuck-state reset failed:', resetError);
-        return false;
-      }
-      return true;
-    });
-  }
-
-  private peekTerminalTurnError(turnStartedAt: number): StructuredError | null {
-    const entry = this.lastTerminalError;
-    if (!entry || entry.at < turnStartedAt) return null;
-    return entry.error;
-  }
-
-  private consumeTerminalTurnError(turnStartedAt: number): StructuredError | null {
-    const entry = this.lastTerminalError;
-    if (!entry || entry.at < turnStartedAt) return null;
-    this.lastTerminalError = null;
-    return entry.error;
   }
 
   async feedDeliverySteer(
@@ -3087,140 +2503,198 @@ export class AgentSession
     signal?: AbortSignal,
     observer?: MessageDeliveryAttemptObserver
   ): Promise<FeedSteerOutcome> {
+    return this.admitDelivery({
+      messageUuid,
+      content,
+      role: 'steer',
+      claimGuard,
+      signal,
+      observer,
+    });
+  }
+
+  private async admitDelivery(args: {
+    messageUuid: string;
+    content: string | MessageContent[];
+    role: 'turn' | 'steer';
+    parentToolUseId?: string | null;
+    claimGuard?: () => boolean;
+    batchUuids?: string[];
+    signal?: AbortSignal;
+    observer?: MessageDeliveryAttemptObserver;
+  }): Promise<DeliveryOutcome> {
+    type DeliveryAdmissionResult =
+      | DeliveryOutcome
+      | { outcome: 'driving'; acknowledgment: Promise<void>; consumedUuids: string[] };
+
+    const { messageUuid, content, claimGuard, batchUuids, signal, observer } = args;
+
     const boundary = await admitAcrossContextClearBoundary(this.session.id, signal, () =>
       withSessionLock(
         this.session.id,
-        async () => {
-          const decision = resolveSteerAdmission({
-            claimCurrent: claimGuard ? claimGuard() : true,
-            status: this.stateManager.getState().status,
-            deliveryValid: this.messageDeliveryValid(messageUuid),
-            hasLiveQuery: !!this.queryPromise,
-            provider: this.session.config.provider ?? '',
-            queueOwnsMessage: this.messageQueue.hasPendingOrInFlight(messageUuid),
-          });
-          if (decision.action === 'aborted') return { kind: 'aborted' as const };
-          if (decision.action === 'park') return { kind: 'park' as const };
-          if (decision.action === 'promote') return { kind: 'promote' as const };
-          const generation = this.getQueryGeneration();
-          observer?.reportStage('query_ready', { generation });
-          if (decision.action === 'awaiting_acceptance') {
-            return { kind: 'awaiting_acceptance' as const };
+        async (): Promise<DeliveryAdmissionResult> => {
+          throwIfDeliveryAborted(signal);
+          if (this.db.getSession(this.session.id)?.status === 'archived') {
+            throw new MessageDeliveryTerminalTurnError('Session is archived');
           }
-          const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
-            durable: true,
-          });
-          return {
-            kind: 'feed' as const,
-            acknowledgment,
-            generation,
-            clearEpoch: this.messageQueue.getClearEpoch?.() ?? 0,
-          };
+          if (this.isCleaningUp()) return { outcome: 'aborted' };
+          if (claimGuard && !claimGuard()) return { outcome: 'aborted' };
+
+          if (this.isWaitingForInput()) {
+            return {
+              outcome: 'blocked',
+              retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS,
+              reason: 'sdk_resume_choice',
+            };
+          }
+
+          if (this.rateLimitWatchdog.isRecoveryPending()) {
+            const retryAt = this.rateLimitWatchdog.isManualRecoveryPause()
+              ? Date.now() + MANUAL_RECOVERY_PARK_MS
+              : Math.max(
+                  Date.now() + MESSAGE_DELIVERY_PARK_MS,
+                  this.rateLimitWatchdog.getState().retryAt ?? 0
+                );
+            return { outcome: 'blocked', retryAt, reason: 'limit_recovery' };
+          }
+
+          if (!this.messageQueue.isRunning()) {
+            const startResult = await this.lifecycleManager.ensureQueryStarted(signal);
+            if (startResult === 'blocked') {
+              return {
+                outcome: 'blocked',
+                retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS,
+                reason: 'sdk_resume_choice',
+              };
+            }
+            throwIfDeliveryAborted(signal);
+            if (claimGuard && !claimGuard()) return { outcome: 'aborted' };
+          }
+
+          const loaded = this.db
+            .getSDKMessageRepo()
+            .getDeliveryContent(this.session.id, messageUuid);
+          if (!loaded || (loaded.sendStatus !== 'enqueued' && loaded.sendStatus !== 'submitted')) {
+            return { outcome: 'aborted' };
+          }
+
+          let feedContent: string | MessageContent[] = content;
+          let consumedUuids: string[] = [messageUuid];
+          if (batchUuids && batchUuids.length > 1) {
+            const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, content, batchUuids);
+            feedContent = rebuilt.content;
+            if (!rebuilt.admittedUuids?.includes(messageUuid)) {
+              return { outcome: 'aborted' };
+            }
+            consumedUuids = rebuilt.admittedUuids ?? [messageUuid];
+
+            const jobQueue = this.db.getJobQueueRepo?.();
+            if (jobQueue?.narrowActiveDeliveryBatchUuids) {
+              const narrowed = jobQueue.narrowActiveDeliveryBatchUuids(
+                this.session.id,
+                messageUuid,
+                consumedUuids
+              );
+              if (!narrowed) {
+                this.logger.warn(
+                  `delivery: could not narrow active batch for ${messageUuid} in session ${this.session.id}`
+                );
+                this.messageQueue
+                  .waitForPendingOrInFlight(messageUuid)
+                  ?.acknowledgment.catch(() => {});
+                return { outcome: 'aborted' };
+              }
+            }
+          }
+
+          const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
+          let acknowledgment: Promise<void>;
+          if (existing && this.deliveryContentMatches(existing.content, feedContent)) {
+            acknowledgment = existing.acknowledgment;
+          } else if (existing && this.messageQueue.hasYielded(messageUuid)) {
+            return { outcome: 'aborted' };
+          } else {
+            if (existing) {
+              this.messageQueue.remove(messageUuid);
+              this.messageQueue.acknowledgeYielded(messageUuid, this.getQueryGeneration());
+            }
+            acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
+              durable: true,
+            });
+          }
+
+          observer?.reportStage('query_ready', { generation: this.getQueryGeneration() });
+          return { outcome: 'driving', acknowledgment, consumedUuids };
         },
         signal
       )
     );
+
     if (boundary.kind === 'boundary_wait') {
-      this.logger.warn(
-        `delivery-steer: waiting for the context-clear boundary (uuid=${messageUuid}); parking`
-      );
-      return { outcome: 'park' };
+      return {
+        outcome: 'blocked',
+        retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS,
+        reason: 'context_clear_boundary',
+      };
     }
-    const action = boundary.result;
-    if (action.kind === 'promote') {
-      return { outcome: 'promote' };
+
+    const admission = boundary.result;
+    if (admission.outcome !== 'driving') {
+      return admission;
     }
-    if (action.kind === 'park') {
-      return { outcome: 'park' };
-    }
-    if (action.kind === 'aborted') {
-      return { outcome: 'aborted' };
-    }
-    if (action.kind === 'awaiting_acceptance') {
-      return { outcome: 'awaiting_acceptance' };
-    }
-    const aborted = waitForDeliveryAbort(signal);
-    const steerQueryEnded: Promise<'query_ended'> = this.queryPromise
-      ? this.queryPromise.catch(() => {}).then(() => 'query_ended' as const)
-      : Promise.resolve('query_ended');
+
+    const timeoutMs = deliveryConsumptionTimeoutOrDefault(
+      deliveryConsumptionTimeoutMs(this.session.config.provider)
+    );
     const ackWaitStartedAt = Date.now();
-    const ackTimeoutMs = steerAckTimeoutMs();
-    let ackTimeoutId: ReturnType<typeof setTimeout> | undefined;
-    const steerAckTimeout = new Promise<'ack_timeout'>((resolve) => {
-      ackTimeoutId = setTimeout(() => resolve('ack_timeout' as const), ackTimeoutMs);
-    });
-    let steerWinner: 'acknowledged' | 'query_ended' | 'ack_timeout' = 'query_ended';
+    let ackTimedOut = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const aborted = waitForDeliveryAbort(signal);
     try {
-      steerWinner = await Promise.race([
-        action.acknowledgment.then(() => 'acknowledged' as const),
-        steerQueryEnded,
-        steerAckTimeout,
+      await Promise.race([
+        admission.acknowledgment,
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            ackTimedOut = true;
+            reject(
+              new MessageDeliveryRecoverableTurnError(
+                'Delivery not consumed within timeout',
+                'admission_timeout'
+              )
+            );
+          }, timeoutMs);
+        }),
         aborted.promise,
       ]);
+      deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'acknowledged');
     } catch (error) {
-      if (signal?.aborted) {
-        if (this.messageQueue.remove(messageUuid)) throw error;
-        await action.acknowledgment;
-        steerWinner = 'acknowledged';
-      } else {
-        throw error;
+      if (ackTimedOut) {
+        deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'ack_timeout');
       }
+      throw error;
     } finally {
+      clearTimeout(timeoutId);
       aborted.cancel();
-      if (ackTimeoutId !== undefined) clearTimeout(ackTimeoutId);
     }
-    if (steerWinner === 'acknowledged' || steerWinner === 'ack_timeout') {
-      deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, steerWinner);
-    }
-    if (steerWinner === 'query_ended') {
-      this.messageQueue.requeueYielded(messageUuid);
-      this.reopenDeliveryForRetry(messageUuid);
-      throw new Error('Steer target query ended before the SDK consumed the steer');
-    }
-    if (steerWinner === 'ack_timeout') {
-      if (this.messageQueue.hasYielded(messageUuid)) {
-        this.logger.warn(
-          `delivery-steer: acknowledgment wait timed out after ${ackTimeoutMs}ms with the ` +
-            `steer already yielded to the SDK (uuid=${messageUuid}, ` +
-            `session=${this.session.id}); settling it as acknowledged like the queue's own ` +
-            `durable yield timeout instead of requeueing content the live query may still execute`
-        );
-        this.messageQueue.acknowledgeYielded(messageUuid);
-      } else {
-        this.logger.warn(
-          `delivery-steer: the SDK did not acknowledge the steer within ${ackTimeoutMs}ms ` +
-            `(uuid=${messageUuid}, session=${this.session.id}); releasing the worker slot, ` +
-            `dropping the unconsumed queue admission, and requeueing the steer`
-        );
-        if (!this.messageQueue.remove(messageUuid)) {
-          this.messageQueue.acknowledgeYielded(messageUuid);
-        }
-        this.reopenDeliveryForRetry(messageUuid);
-        return { outcome: 'ack_timeout' };
-      }
-    }
+
     if (claimGuard && !claimGuard()) {
       return { outcome: 'aborted' };
     }
-    if (
-      this.stateManager.getState().status !== 'processing' ||
-      this.stateManager.isTerminalIdlePending() ||
-      (this.messageQueue.getClearEpoch?.() ?? 0) !== action.clearEpoch
-    ) {
-      this.reopenDeliveryForRetry(messageUuid);
-      throw new Error('Steer was invalidated by session teardown before the SDK consumed it');
-    }
-    deliveryMetrics.recordFeed(messageUuid);
-    observer?.reportStage('sdk_admitted', { generation: action.generation });
-    const acknowledged = classifyAcknowledgedSteer({
-      provider: this.session.config.provider ?? '',
-    });
-    if (acknowledged === 'consumed') {
-      this.markDeliveryConsumed(messageUuid);
-      signalDeliveryConsumed(this.session.id, messageUuid);
-      return { outcome: 'consumed' };
-    }
-    return { outcome: 'awaiting_acceptance' };
+
+    await withSessionLock(
+      this.session.id,
+      async () => {
+        if (claimGuard && !claimGuard()) return;
+        this.markDeliveryBatchConsumed(admission.consumedUuids);
+        for (const uuid of admission.consumedUuids) {
+          signalDeliveryConsumed(this.session.id, uuid);
+        }
+      },
+      signal
+    );
+
+    observer?.reportStage('sdk_admitted', { generation: this.getQueryGeneration() });
+    return { outcome: 'completed' };
   }
 
   async settleSkippedDelivery(messageUuid: string): Promise<void> {
@@ -3294,87 +2768,20 @@ export class AgentSession
     });
   }
 
-  private messageDeliveryValid(messageUuid: string, alreadyConsumed = false): boolean {
-    if (this.db.getSession(this.session.id)?.status === 'archived') return false;
-    const loaded = this.db.getSDKMessageRepo().getDeliveryContent(this.session.id, messageUuid);
-    return (
-      loaded !== null &&
-      (loaded.sendStatus === 'enqueued' || (alreadyConsumed && loaded.sendStatus === 'consumed'))
-    );
-  }
-
-  private acknowledgedDeliveryStillOwned(messageUuid: string): boolean {
-    if (this.db.getSession(this.session.id)?.status === 'archived') return false;
-    const sendStatus = this.db
-      .getSDKMessageRepo()
-      .getDeliveryContent(this.session.id, messageUuid)?.sendStatus;
-    return sendStatus === 'enqueued' || sendStatus === 'submitted' || sendStatus === 'consumed';
-  }
-
-  private reclaimDeliveryTurnState(messageUuid: string): {
-    terminated: boolean;
-    clearedTurnEndMarker: boolean;
-  } {
-    const repo = this.db.getSDKMessageRepo();
-    if (!repo) return { terminated: false, clearedTurnEndMarker: false };
-    const decision = classifyReclaimTermination({
-      successResult: repo.hasTerminalResultAfter(this.session.id, messageUuid),
-      markerExists: repo.hasDeliveryTurnEnd(this.session.id, messageUuid),
-      terminalIdleInFlight: this.stateManager.isTerminalIdleInFlight(),
-    });
-    if (decision === 'redrive') {
-      repo.clearDeliveryTurnEnd(this.session.id, messageUuid);
-      return { terminated: false, clearedTurnEndMarker: true };
-    }
-    return { terminated: decision === 'terminated', clearedTurnEndMarker: false };
-  }
-
-  recordDeliveryTurnEnd(messageUuid: string): void {
-    this.db
-      .getSDKMessageRepo()
-      .recordDeliveryTurnEnd(this.session.id, messageUuid, new Date().toISOString());
-  }
-
-  private markDeliveryConsumed(messageUuid: string): void {
-    const dbId = this.db
-      .getSDKMessageRepo()
-      .markDeliveryConsumedByUuid(this.session.id, messageUuid);
-    if (dbId) {
-      void this.internalEventBus
-        .publish('messages.statusChanged', {
-          sessionId: this.session.id,
-          messageIds: [dbId],
-          status: 'consumed',
-        })
-        .catch(() => {});
-    }
-  }
-
   private markDeliveryBatchConsumed(uuids: string[]): void {
     const flippedIds = this.db
       .getSDKMessageRepo()
       .markDeliveryConsumedByUuids(this.session.id, uuids);
     if (flippedIds.length > 0) {
+      const now = Date.now();
+      for (const dbId of flippedIds) {
+        this.db.updateMessageTimestamp(dbId, now);
+      }
       void this.internalEventBus
         .publish('messages.statusChanged', {
           sessionId: this.session.id,
           messageIds: flippedIds,
           status: 'consumed',
-        })
-        .catch(() => {});
-    }
-  }
-
-  private markDeliveryBatchSubmitted(uuids: string[]): void {
-    const flippedIds = this.db
-      .getSDKMessageRepo()
-      .markDeliverySubmittedByUuids(this.session.id, uuids);
-    if (flippedIds.length > 0) {
-      void this.internalEventBus
-        .publish('messages.statusChanged', {
-          sessionId: this.session.id,
-          messageIds: flippedIds,
-          status: 'submitted',
         })
         .catch(() => {});
     }
@@ -3423,7 +2830,13 @@ export class AgentSession
     for (const uuid of batchUuids) {
       const row = repo.getDeliveryContent(this.session.id, uuid);
       if (!row) continue;
-      if (row.sendStatus === 'deferred' || row.sendStatus === 'failed') continue;
+      if (
+        row.sendStatus === 'deferred' ||
+        row.sendStatus === 'failed' ||
+        row.sendStatus === 'consumed'
+      ) {
+        continue;
+      }
       const text = flattenDeliveryText(row.content);
       if (text === null) continue;
       const cost = text.length + 32;
@@ -3440,22 +2853,6 @@ export class AgentSession
       return { content: kickoffRaw ?? kickoffContent, admittedUuids: admitted };
     }
     return { content: buildBatchedDeliveryContent(texts), admittedUuids: admitted };
-  }
-
-  private reopenDeliveryForRetry(messageUuid: string): void {
-    deliveryMetrics.forgetFeed(messageUuid);
-    const dbId = this.db
-      .getSDKMessageRepo()
-      ?.markDeliveryRetryableByUuid(this.session.id, messageUuid);
-    if (dbId) {
-      void this.internalEventBus
-        .publish('messages.statusChanged', {
-          sessionId: this.session.id,
-          messageIds: [dbId],
-          status: 'enqueued',
-        })
-        .catch(() => {});
-    }
   }
 
   async reconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
@@ -3718,13 +3115,38 @@ export class AgentSession
     clearModelsCache(this.session.id);
   }
 
+  async clearStuckProcessingState(messageUuid: string): Promise<boolean> {
+    return await withSessionLock(this.session.id, async () => {
+      const state = this.stateManager.getState();
+      if (state.status !== 'processing' || state.messageId !== messageUuid) return false;
+      if (this.hasLiveQuery()) return false;
+      this.logger.warn(
+        `delivery: clearing stuck processing state (messageId=${messageUuid}) after terminal ` +
+          `delivery failure — no live query owns the turn; resetting so the session accepts ` +
+          `new messages`
+      );
+      try {
+        const resetResult = await this.resetQuery({ restartQuery: false });
+        if (!resetResult.success) {
+          this.logger.warn(
+            `delivery: stuck-state reset reported failure: ${resetResult.error ?? 'unknown'}`
+          );
+          return false;
+        }
+      } catch (resetError) {
+        this.logger.warn('delivery: stuck-state reset failed:', resetError);
+        return false;
+      }
+      return true;
+    });
+  }
+
   async cleanup(): Promise<void> {
     if (this.reconcileTimer) {
       clearInterval(this.reconcileTimer);
       this.reconcileTimer = null;
     }
     this.messageHandler.cancelSuppressedResultWait();
-    this.clearDeliveryTurnStall();
     this.resetTaskNotificationRequery();
     for (const unsub of this.deliveryErrorSubs) {
       try {

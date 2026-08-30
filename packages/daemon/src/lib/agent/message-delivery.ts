@@ -247,20 +247,18 @@ export function steerAckTimeoutMs(): number {
   return STEER_ACK_TIMEOUT_MS;
 }
 
-export type DriveTurnOutcome =
+export type DeliveryOutcome =
   | { outcome: 'completed' }
-  | { outcome: 'blocked'; retryAt: number; reason?: 'sdk_resume_choice' | 'context_clear_boundary' }
-  | { outcome: 'recovery_pending'; retryAt: number }
   | { outcome: 'aborted' }
-  | { outcome: 'turn_terminated' };
+  | {
+      outcome: 'blocked';
+      retryAt: number;
+      reason?: 'sdk_resume_choice' | 'context_clear_boundary' | 'limit_recovery';
+    }
+  | { outcome: 'park'; retryAt?: number; reason?: 'waiting_for_input' };
 
-export type FeedSteerOutcome =
-  | { outcome: 'consumed' }
-  | { outcome: 'awaiting_acceptance' }
-  | { outcome: 'promote' }
-  | { outcome: 'park' }
-  | { outcome: 'aborted' }
-  | { outcome: 'ack_timeout' };
+export type DriveTurnOutcome = DeliveryOutcome;
+export type FeedSteerOutcome = DeliveryOutcome;
 
 export interface MessageDeliveryAttemptObserver {
   reportStage(

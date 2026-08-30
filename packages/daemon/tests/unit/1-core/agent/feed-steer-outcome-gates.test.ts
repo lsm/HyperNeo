@@ -1,169 +1,77 @@
 import { describe, expect, it } from 'bun:test';
-import {
-  type HandlerOutcomeRoute,
-  routeFeedSteerOutcome,
-} from '../../../../src/lib/agent/handler-outcome-routing';
-import {
-  MAX_ACP_STEER_PARKS,
-  MAX_STEER_PARKS,
-  MESSAGE_DELIVERY_PARK_MS,
-} from '../../../../src/lib/agent/message-delivery';
+import { routeFeedSteerOutcome } from '../../../../src/lib/agent/handler-outcome-routing';
+import { MESSAGE_DELIVERY_PARK_MS } from '../../../../src/lib/agent/message-delivery';
 
 const NOW = 1_000_000;
-const PARK_AT = NOW + MESSAGE_DELIVERY_PARK_MS;
 
-const STEER_PARK_DEAD_LETTER = 'Steer parked past its budget — owning turn never unblocked';
-const ACP_DEAD_LETTER = 'ACP steer awaited acceptance past its budget — subprocess never accepted';
-const ACK_DEAD_LETTER =
-  'Steer acknowledgment timed out past its budget — query never consumed the steer';
-
-const deadLetter = (reason: string): HandlerOutcomeRoute => ({ deadLetter: reason });
-
-const requeueParkedAs = (
-  parked: 'turn_blocked' | 'acp_awaiting_acceptance' | 'steer_ack_timeout'
-): HandlerOutcomeRoute => ({
-  mutation: 'requeueParked',
-  retryAt: PARK_AT,
-  settleSkipped: false,
-  result: { parked, retryAt: PARK_AT },
-});
-
-const requeueGateOpen = (): HandlerOutcomeRoute => ({
-  mutation: 'requeue',
-  retryAt: PARK_AT,
-  settleSkipped: false,
-  result: { parked: 'turn_blocked_gate_open', retryAt: PARK_AT },
-});
-
-describe('routeFeedSteerOutcome budget boundary gates', () => {
-  const ROWS = [
-    {
-      label: 'park at the steer budget dead-letters',
-      feed: { outcome: 'park' },
-      parkCount: MAX_STEER_PARKS,
-      waitingForInput: false,
-      expected: deadLetter(STEER_PARK_DEAD_LETTER),
-    },
-    {
-      label: 'park over the steer budget still dead-letters',
-      feed: { outcome: 'park' },
-      parkCount: MAX_STEER_PARKS + 1,
-      waitingForInput: false,
-      expected: deadLetter(STEER_PARK_DEAD_LETTER),
-    },
-    {
-      label: 'park while waiting for input at the budget bypasses the dead-letter',
-      feed: { outcome: 'park' },
-      parkCount: MAX_STEER_PARKS,
-      waitingForInput: true,
-      expected: requeueGateOpen(),
-    },
-    {
-      label: 'park while waiting for input over the budget still bypasses',
-      feed: { outcome: 'park' },
-      parkCount: MAX_STEER_PARKS + 1,
-      waitingForInput: true,
-      expected: requeueGateOpen(),
-    },
-    {
-      label: 'park at the far larger ACP budget does not get the ACP budget',
-      feed: { outcome: 'park' },
-      parkCount: MAX_ACP_STEER_PARKS,
-      waitingForInput: false,
-      expected: deadLetter(STEER_PARK_DEAD_LETTER),
-    },
-    {
-      label: 'awaiting_acceptance at the steer budget is under the ACP budget and parks',
-      feed: { outcome: 'awaiting_acceptance' },
-      parkCount: MAX_STEER_PARKS,
-      waitingForInput: false,
-      expected: requeueParkedAs('acp_awaiting_acceptance'),
-    },
-    {
-      label: 'awaiting_acceptance at the ACP budget dead-letters',
-      feed: { outcome: 'awaiting_acceptance' },
-      parkCount: MAX_ACP_STEER_PARKS,
-      waitingForInput: false,
-      expected: deadLetter(ACP_DEAD_LETTER),
-    },
-    {
-      label: 'awaiting_acceptance over the ACP budget still dead-letters',
-      feed: { outcome: 'awaiting_acceptance' },
-      parkCount: MAX_ACP_STEER_PARKS + 1,
-      waitingForInput: false,
-      expected: deadLetter(ACP_DEAD_LETTER),
-    },
-    {
-      label: 'awaiting_acceptance while waiting for input does not bypass the ACP budget',
-      feed: { outcome: 'awaiting_acceptance' },
-      parkCount: MAX_ACP_STEER_PARKS,
-      waitingForInput: true,
-      expected: deadLetter(ACP_DEAD_LETTER),
-    },
-    {
-      label: 'ack_timeout at the steer budget dead-letters',
-      feed: { outcome: 'ack_timeout' },
-      parkCount: MAX_STEER_PARKS,
-      waitingForInput: false,
-      expected: deadLetter(ACK_DEAD_LETTER),
-    },
-    {
-      label: 'ack_timeout over the steer budget still dead-letters',
-      feed: { outcome: 'ack_timeout' },
-      parkCount: MAX_STEER_PARKS + 1,
-      waitingForInput: false,
-      expected: deadLetter(ACK_DEAD_LETTER),
-    },
-    {
-      label: 'ack_timeout while waiting for input does not bypass the steer budget',
-      feed: { outcome: 'ack_timeout' },
-      parkCount: MAX_STEER_PARKS,
-      waitingForInput: true,
-      expected: deadLetter(ACK_DEAD_LETTER),
-    },
-    {
-      label: 'aborted over the steer budget still aborts without dead-lettering',
-      feed: { outcome: 'aborted' },
-      parkCount: MAX_STEER_PARKS + 1,
-      waitingForInput: false,
-      expected: { mutation: 'none', settleSkipped: true, result: { outcome: 'aborted' } },
-    },
-    {
-      label: 'consumed over the steer budget still completes without a queue mutation',
-      feed: { outcome: 'consumed' },
-      parkCount: MAX_STEER_PARKS + 1,
-      waitingForInput: false,
-      expected: { mutation: 'none', settleSkipped: false, result: { outcome: 'consumed' } },
-    },
-    {
-      label: 'promote over the steer budget still promotes to a turn requeued immediately',
-      feed: { outcome: 'promote' },
-      parkCount: MAX_STEER_PARKS + 1,
-      waitingForInput: false,
-      expected: {
-        mutation: 'requeueAs',
-        requeueRole: 'turn',
-        retryAt: NOW,
-        settleSkipped: false,
-        result: { outcome: 'superseded', promoted: 'turn' },
-      },
-    },
-  ];
-
-  it.each(ROWS.map((row) => [row.label, row] as const))('%s', (_label, row) => {
-    expect(
-      routeFeedSteerOutcome(row.feed, {
-        parkCount: row.parkCount,
-        waitingForInput: row.waitingForInput,
-        now: NOW,
-      })
-    ).toEqual(row.expected);
+describe('routeFeedSteerOutcome', () => {
+  it('completed returns a plain completion', () => {
+    expect(routeFeedSteerOutcome({ outcome: 'completed' }, { now: NOW })).toEqual({
+      mutation: 'none',
+      settleSkipped: false,
+      result: { outcome: 'completed' },
+    });
   });
 
-  it('waiting for input switches a park from the parked queue to a plain requeue', () => {
-    const route = (waitingForInput: boolean) =>
-      routeFeedSteerOutcome({ outcome: 'park' }, { parkCount: 0, waitingForInput, now: NOW });
-    expect(route(true)).toEqual(requeueGateOpen());
-    expect(route(false)).toEqual(requeueParkedAs('turn_blocked'));
+  it('aborted settles and does not requeue', () => {
+    expect(routeFeedSteerOutcome({ outcome: 'aborted' }, { now: NOW })).toEqual({
+      mutation: 'none',
+      settleSkipped: true,
+      result: { outcome: 'aborted' },
+    });
+  });
+
+  it('blocked requeues at the supplied retryAt', () => {
+    expect(
+      routeFeedSteerOutcome(
+        { outcome: 'blocked', retryAt: 1234, reason: 'sdk_resume_choice' },
+        { now: NOW }
+      )
+    ).toEqual({
+      mutation: 'requeue',
+      retryAt: 1234,
+      settleSkipped: false,
+      result: { parked: 'sdk_resume_choice', retryAt: 1234 },
+    });
+  });
+
+  it('park requeues at its retryAt', () => {
+    expect(
+      routeFeedSteerOutcome(
+        { outcome: 'park', retryAt: NOW + MESSAGE_DELIVERY_PARK_MS, reason: 'waiting_for_input' },
+        { now: NOW }
+      )
+    ).toEqual({
+      mutation: 'requeue',
+      retryAt: NOW + MESSAGE_DELIVERY_PARK_MS,
+      settleSkipped: false,
+      result: { parked: 'waiting_for_input', retryAt: NOW + MESSAGE_DELIVERY_PARK_MS },
+    });
+  });
+
+  it('park with no reason falls back to turn_blocked', () => {
+    expect(
+      routeFeedSteerOutcome(
+        { outcome: 'park', retryAt: NOW + MESSAGE_DELIVERY_PARK_MS },
+        { now: NOW }
+      )
+    ).toEqual({
+      mutation: 'requeue',
+      retryAt: NOW + MESSAGE_DELIVERY_PARK_MS,
+      settleSkipped: false,
+      result: { parked: 'turn_blocked', retryAt: NOW + MESSAGE_DELIVERY_PARK_MS },
+    });
+  });
+
+  it('no feed-steer outcome dead-letters', () => {
+    const outcomes = [
+      { outcome: 'completed' },
+      { outcome: 'aborted' },
+      { outcome: 'blocked', retryAt: 1234 },
+      { outcome: 'park', retryAt: NOW + MESSAGE_DELIVERY_PARK_MS },
+    ];
+    for (const feed of outcomes) {
+      expect('deadLetter' in routeFeedSteerOutcome(feed, { now: NOW })).toBe(false);
+    }
   });
 });

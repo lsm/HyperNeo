@@ -549,7 +549,11 @@ export class MessageQueue {
       if (msg.timeoutId) {
         clearTimeout(msg.timeoutId);
       }
-      msg.resolve(msg.id);
+      if (msg.durable === true && !msg.internal) {
+        msg.reject(new Error('Interrupted by user'));
+      } else {
+        msg.resolve(msg.id);
+      }
     }
     this.yielded.clear();
     if (deliveredCompactions || yieldedCompactions.length > 0 || rejectedCompactions) {
@@ -615,6 +619,24 @@ export class MessageQueue {
       if (message.id === messageId) return true;
     }
     return false;
+  }
+
+  pruneYielded(predicate: (messageId: string) => boolean): string[] {
+    const removed: string[] = [];
+    for (const message of this.yielded) {
+      if (predicate(message.id)) {
+        removed.push(message.id);
+        if (message.timeoutId) {
+          clearTimeout(message.timeoutId);
+          message.timeoutId = undefined;
+        }
+      }
+    }
+    this.yielded = new Set([...this.yielded].filter((message) => !removed.includes(message.id)));
+    for (const id of removed) {
+      this.forgetSentPrompt(id);
+    }
+    return removed;
   }
 
   ownsYieldedGeneration(messageId: string, generation: number | null | undefined): boolean {
@@ -753,6 +775,18 @@ export class MessageQueue {
     this.internalCompactionBuffered = false;
     this.nonCompactionSentSinceBoundary = false;
     this.cancelInternalCompactionEntries(true, true);
+    this.yielded = new Set(
+      [...this.yielded].filter((msg) => {
+        if (msg.durable === true && !msg.internal) {
+          if (msg.timeoutId) {
+            clearTimeout(msg.timeoutId);
+          }
+          msg.reject(new Error('Interrupted by user'));
+          return false;
+        }
+        return true;
+      })
+    );
     this.deliveryGate = null;
     this.midTurnCompactionQueued = false;
     this.internalCompactionDeliveryHolds = 0;

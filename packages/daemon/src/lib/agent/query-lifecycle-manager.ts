@@ -289,6 +289,13 @@ export class QueryLifecycleManager {
       this.ctx.resetTaskNotificationRequery?.();
       await internalEventBus.publish('session.errorClear', { sessionId: session.id });
 
+      const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
+      if (sdkRepo) {
+        this.ctx.messageQueue.pruneYielded(
+          (uuid) => sdkRepo.getDeliveryContent(this.ctx.session.id, uuid)?.sendStatus === 'consumed'
+        );
+      }
+
       await this.stop();
 
       await this.ctx.stateManager.setIdle({ suppressDeliveryWaiters: true });
