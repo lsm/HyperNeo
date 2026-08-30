@@ -10,19 +10,15 @@ import type { RenderPendingDigestOutcome } from '../../../../src/lib/space/runti
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Logger } from '../../../../src/lib/logger';
 import type { Database } from '../../../../src/storage/database';
-import { Database as DatabaseImpl } from '../../../../src/storage/sqlite-compat';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { createTestDb } from '../../../helpers/database';
 
 const SESSION_ID = 'session-digest';
 
 function deferredRow(
-  dbId: string,
   uuid: string,
-  text: string
-): SDKUserMessage & {
-  dbId: string;
-  timestamp: number;
-} {
+  text: string,
+  extra?: { externalEventTaskId?: string }
+): SDKUserMessage {
   return {
     type: 'user',
     uuid,
@@ -30,59 +26,54 @@ function deferredRow(
     parent_tool_use_id: null,
     isSynthetic: true,
     inputKind: 'system',
-    dbId,
-    timestamp: 0,
+    externalEventTaskId: extra?.externalEventTaskId,
     message: { role: 'user', content: [{ type: 'text', text }] },
-  } as unknown as SDKUserMessage & { dbId: string; timestamp: number };
+  } as unknown as SDKUserMessage;
 }
 
 interface EnqueuedJob {
   uuid: string;
   role: string;
-  batchUuids?: string[];
 }
 
 describe('QueryModeHandler deferred external-event digest flush', () => {
   let handler: QueryModeHandler;
   let handlerContext: QueryModeHandlerContext;
-  let deferredRows: Array<SDKUserMessage & { dbId: string; timestamp: number }>;
-  let savedRows: Array<{ message: SDKUserMessage; sendStatus: string }>;
-  let statusUpdates: Array<{ dbIds: string[]; status: string }>;
+  let db: Database;
   let published: Array<{ messageIds: string[]; status: string }>;
   let warnMessages: unknown[];
-  let jobsDb: DatabaseImpl;
-  let jobQueue: JobQueueRepository;
 
-  beforeEach(() => {
-    deferredRows = [];
-    savedRows = [];
-    statusUpdates = [];
+  function seedDeferred(row: SDKUserMessage): void {
+    db.saveUserMessage(SESSION_ID, row, 'deferred');
+  }
+
+  function enqueued(): EnqueuedJob[] {
+    return (
+      db
+        .getDatabase()
+        .prepare(
+          `SELECT json_extract(payload, '$.messageUuid') AS messageUuid,
+                  json_extract(payload, '$.role') AS role
+             FROM job_queue
+            WHERE queue = 'message_delivery'
+            ORDER BY created_at ASC, rowid ASC`
+        )
+        .all() as Array<{ messageUuid: string | null; role: string | null }>
+    ).map((row) => ({ uuid: row.messageUuid ?? '', role: row.role ?? '' }));
+  }
+
+  function sendStatusByUuid(uuid: string): string | undefined {
+    const row = db
+      .getDatabase()
+      .prepare(`SELECT send_status FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
+      .get(SESSION_ID, uuid) as { send_status: string } | undefined;
+    return row?.send_status;
+  }
+
+  beforeEach(async () => {
     published = [];
     warnMessages = [];
-
-    jobsDb = new DatabaseImpl(':memory:');
-    jobsDb.exec(`
-      CREATE TABLE job_queue (
-        id TEXT PRIMARY KEY,
-        queue TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        payload TEXT NOT NULL DEFAULT '{}',
-        result TEXT, error TEXT,
-        priority INTEGER NOT NULL DEFAULT 0,
-        max_retries INTEGER NOT NULL DEFAULT 3,
-        retry_count INTEGER NOT NULL DEFAULT 0,
-        run_at INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        started_at INTEGER,
-        heartbeat_at INTEGER, completed_at INTEGER
-      );
-      CREATE UNIQUE INDEX uq_message_delivery_active_turn
-        ON job_queue (queue, json_extract(payload, '$.sessionId'))
-        WHERE queue = 'message_delivery'
-          AND json_extract(payload, '$.role') = 'turn'
-          AND status IN ('pending', 'processing');
-    `);
-    jobQueue = new JobQueueRepository(jobsDb as never);
+    db = await createTestDb();
 
     const session = {
       id: SESSION_ID,
@@ -101,24 +92,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         toolCallCount: 0,
       },
     } as unknown as Session;
-
-    const db = {
-      getUserMessagesByStatus: mock((_sessionId: string, _status: string) => ({
-        messages: deferredRows,
-        total: deferredRows.length,
-      })),
-      updateMessageStatus: mock((dbIds: string[], status: string) => {
-        statusUpdates.push({ dbIds, status });
-      }),
-      saveUserMessage: mock((_sessionId: string, message: SDKUserMessage, sendStatus: string) => {
-        savedRows.push({ message, sendStatus });
-        return `db-digest-${savedRows.length}`;
-      }),
-      getSDKMessageRepo: () => ({
-        getMessageByStatusAndUuid: () => null,
-      }),
-      getJobQueueRepo: () => jobQueue,
-    } as unknown as Database;
+    db.createSession(session);
 
     const messageQueue = {
       enqueueWithId: mock(async () => {}),
@@ -162,44 +136,22 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
   });
 
   afterEach(() => {
-    jobsDb.close();
+    db.getDatabase().close();
   });
 
-  function enqueued(): EnqueuedJob[] {
-    return (
-      jobsDb
-        .prepare(
-          `SELECT json_extract(payload, '$.messageUuid') AS messageUuid,
-                  json_extract(payload, '$.batchUuids') AS batchUuids,
-                  json_extract(payload, '$.role') AS role
-             FROM job_queue
-            WHERE queue = 'message_delivery'
-            ORDER BY created_at ASC`
-        )
-        .all() as Array<{
-        messageUuid: string | null;
-        batchUuids: string | null;
-        role: string | null;
-      }>
-    ).map((row) => ({
-      uuid: row.messageUuid ?? '',
-      role: row.role ?? '',
-      batchUuids: row.batchUuids ? (JSON.parse(row.batchUuids) as string[]) : undefined,
-    }));
-  }
-
   it('delivers a subsequent normal deferred message without a digest', async () => {
-    deferredRows = [deferredRow('db-human', 'uuid-human', 'a human follow-up')];
+    seedDeferred(deferredRow('uuid-human', 'a human follow-up'));
 
     const result = await handler.handleQueryTrigger();
 
     expect(result.success).toBe(true);
     expect(result.messageCount).toBe(1);
-    expect(statusUpdates).toEqual([{ dbIds: ['db-human'], status: 'enqueued' }]);
+    expect(sendStatusByUuid('uuid-human')).toBe('enqueued');
     const jobs = enqueued();
     expect(jobs).toHaveLength(1);
     expect(jobs[0]?.uuid).toBe('uuid-human');
-    expect(jobs[0]?.batchUuids).toBeUndefined();
+    expect(jobs[0]?.role).toBe('turn');
+    expect(published).toEqual([{ messageIds: [expect.any(String)], status: 'enqueued' }]);
   });
 
   describe('turn-end digest pull', () => {
@@ -211,9 +163,8 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       pullCalls = [];
       pullError = null;
       pullImpl = async () => {
-        deferredRows.push(
+        seedDeferred(
           deferredRow(
-            'db-pulled-digest',
             'uuid-pulled-digest',
             'External events while you were working (2 events, PR #2828):'
           )
@@ -226,6 +177,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
           eventIds: [],
           deliveryKeys: [],
           replayed: false,
+          taskId: 'task-digest',
         };
       };
       handlerContext.renderPendingDigest = async (sessionId) => {
@@ -235,24 +187,26 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       };
     });
 
-    it('appends the pulled digest to the flush batch without touching the task input', async () => {
-      deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
+    it('appends the pulled digest to the flush without saving another row', async () => {
+      seedDeferred(deferredRow('uuid-task', '─── Message from coder ───'));
 
       const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(2);
       expect(pullCalls).toEqual([SESSION_ID]);
-      expect(savedRows).toHaveLength(0);
       const jobs = enqueued();
-      expect(jobs).toHaveLength(1);
+      expect(jobs).toHaveLength(2);
       expect(jobs[0]?.uuid).toBe('uuid-task');
-      expect(jobs[0]?.batchUuids).toEqual(['uuid-task', 'uuid-pulled-digest']);
+      expect(jobs[0]?.role).toBe('turn');
+      expect(jobs[1]?.uuid).toBe('uuid-pulled-digest');
+      expect(jobs[1]?.role).toBe('steer');
+      expect(sendStatusByUuid('uuid-pulled-digest')).toBe('enqueued');
     });
 
     it('a failing digest pull logs and flushes without the digest', async () => {
       pullError = new Error('ledger unavailable');
-      deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
+      seedDeferred(deferredRow('uuid-task', '─── Message from coder ───'));
 
       const result = await handler.handleQueryTrigger();
 
@@ -272,7 +226,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         stage: 'markDeliveries',
         error: new Error('db locked'),
       });
-      deferredRows = [deferredRow('db-task', 'uuid-task', '─── Message from coder ───')];
+      seedDeferred(deferredRow('uuid-task', '─── Message from coder ───'));
 
       const result = await handler.handleQueryTrigger();
 
@@ -288,10 +242,8 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
 
     it('a null digest-pull result excludes deterministic digest rows from the flush', async () => {
       pullImpl = async () => null as unknown as RenderPendingDigestOutcome;
-      deferredRows = [
-        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        deferredRow('db-digest', 'digest-00000000-0000-0000-0000-000000000000', 'stale digest'),
-      ];
+      seedDeferred(deferredRow('uuid-task', '─── Message from coder ───'));
+      seedDeferred(deferredRow('digest-00000000-0000-0000-0000-000000000000', 'stale digest'));
 
       const result = await handler.handleQueryTrigger();
 
@@ -301,6 +253,7 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       const jobs = enqueued();
       expect(jobs).toHaveLength(1);
       expect(jobs[0]?.uuid).toBe('uuid-task');
+      expect(sendStatusByUuid('digest-00000000-0000-0000-0000-000000000000')).toBe('deferred');
     });
 
     it('a delivered outcome only flushes its certified digest row', async () => {
@@ -314,37 +267,30 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         replayed: false,
         taskId: 'task-certified',
       });
-      deferredRows = [
-        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        deferredRow('db-certified', 'digest-certified-0001', 'certified digest'),
-        deferredRow('db-stale', 'digest-stale-0002', 'stale digest'),
-      ];
+      seedDeferred(deferredRow('uuid-task', '─── Message from coder ───'));
+      seedDeferred(deferredRow('digest-certified-0001', 'certified digest'));
+      seedDeferred(deferredRow('digest-stale-0002', 'stale digest'));
 
       const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(2);
       const jobs = enqueued();
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0]?.uuid).toBe('uuid-task');
-      expect(jobs[0]?.batchUuids).toEqual(['uuid-task', 'digest-certified-0001']);
+      expect(jobs.map((job) => job.uuid)).toEqual(['uuid-task', 'digest-certified-0001']);
+      expect(sendStatusByUuid('digest-stale-0002')).toBe('deferred');
     });
 
     it('a safe skip outcome flushes deferred digest rows', async () => {
       pullImpl = async () => ({ action: 'skip', reason: 'no_pending_events' });
-      deferredRows = [
-        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        deferredRow('db-digest', 'digest-owed-0003', 'owed digest'),
-      ];
+      seedDeferred(deferredRow('uuid-task', '─── Message from coder ───'));
+      seedDeferred(deferredRow('digest-owed-0003', 'owed digest'));
 
       const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(2);
       const jobs = enqueued();
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0]?.uuid).toBe('uuid-task');
-      expect(jobs[0]?.batchUuids).toEqual(['uuid-task', 'digest-owed-0003']);
+      expect(jobs.map((job) => job.uuid)).toEqual(['uuid-task', 'digest-owed-0003']);
     });
 
     it('a safe skip scopes flushed digest rows to the admitted task', async () => {
@@ -352,26 +298,21 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
       (handlerContext.session as { context?: { taskId?: string } }).context = {
         taskId: 'task-admitted',
       };
-      const scoped = deferredRow('db-scoped', 'digest-scoped-0005', 'scoped digest');
-      (scoped as { externalEventTaskId?: string }).externalEventTaskId = 'task-admitted';
-      const otherTask = deferredRow('db-other', 'digest-other-0006', 'other task digest');
-      (otherTask as { externalEventTaskId?: string }).externalEventTaskId = 'task-other';
-      const legacy = deferredRow('db-legacy', 'digest-legacy-0007', 'legacy digest');
-      deferredRows = [
-        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        scoped,
-        otherTask,
-        legacy,
-      ];
+      seedDeferred(deferredRow('uuid-task', '─── Message from coder ───'));
+      seedDeferred(
+        deferredRow('digest-scoped-0005', 'scoped digest', { externalEventTaskId: 'task-admitted' })
+      );
+      seedDeferred(
+        deferredRow('digest-other-0006', 'other task digest', { externalEventTaskId: 'task-other' })
+      );
+      seedDeferred(deferredRow('digest-legacy-0007', 'legacy digest'));
 
       const result = await handler.handleQueryTrigger();
 
       expect(result.success).toBe(true);
       expect(result.messageCount).toBe(2);
       const jobs = enqueued();
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0]?.uuid).toBe('uuid-task');
-      expect(jobs[0]?.batchUuids).toEqual(['uuid-task', 'digest-scoped-0005']);
+      expect(jobs.map((job) => job.uuid)).toEqual(['uuid-task', 'digest-scoped-0005']);
     });
 
     it('an unsafe skip outcome excludes deterministic digest rows', async () => {
@@ -379,10 +320,8 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         action: 'skip',
         reason: 'session_interrupted',
       });
-      deferredRows = [
-        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        deferredRow('db-digest', 'digest-00000000-0000-0000-0000-000000000000', 'stale digest'),
-      ];
+      seedDeferred(deferredRow('uuid-task', '─── Message from coder ───'));
+      seedDeferred(deferredRow('digest-00000000-0000-0000-0000-000000000000', 'stale digest'));
 
       const result = await handler.handleQueryTrigger();
 
@@ -401,10 +340,8 @@ describe('QueryModeHandler deferred external-event digest flush', () => {
         dbId: 'db-held',
         error: new Error('mailbox full'),
       });
-      deferredRows = [
-        deferredRow('db-task', 'uuid-task', '─── Message from coder ───'),
-        deferredRow('db-digest', 'digest-held-0004', 'held digest text'),
-      ];
+      seedDeferred(deferredRow('uuid-task', '─── Message from coder ───'));
+      seedDeferred(deferredRow('digest-held-0004', 'held digest text'));
 
       const result = await handler.handleQueryTrigger();
 

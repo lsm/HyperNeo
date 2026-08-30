@@ -20,7 +20,7 @@ import {
   normalizeThinkingLevel,
 } from '@hyperneo/shared';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
-import { deliverAndMarkQueued } from '../agent/message-delivery.ts';
+import { activatePrompts, retryPrompt } from '../agent/message-delivery-outbox.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import {
@@ -1205,37 +1205,26 @@ export function setupSessionHandlers(
       throw new Error('Session not found');
     }
 
-    db.updateMessageStatus([message.dbId], 'enqueued');
-    await internalEventBus.publish('messages.statusChanged', {
+    const { activated } = await activatePrompts({
+      db: db.getDatabase(),
+      jobQueue: db.getJobQueueRepo(),
       sessionId: targetSessionId,
-      messageIds: [message.dbId],
-      status: 'enqueued',
-    });
-
-    const rollbackToDeferred = async () => {
-      const rolledBack = db
-        .getSDKMessageRepo()
-        .transitionMessageSendStatus(message.dbId, 'enqueued', 'deferred');
-      if (rolledBack) {
-        await internalEventBus.publish('messages.statusChanged', {
+      messageUuids: [messageUuid],
+      dbIds: [message.dbId],
+      origin: 'chat',
+      publishStatusChanged: (messageIds) =>
+        internalEventBus.publish('messages.statusChanged', {
           sessionId: targetSessionId,
-          messageIds: [message.dbId],
-          status: 'deferred',
-        });
-      }
-    };
-
-    try {
-      await deliverAndMarkQueued({
-        jobQueue: db.getJobQueueRepo(),
-        stateManager: agentSession.stateManager,
-        sessionId: targetSessionId,
-        messageUuid,
-        origin: 'chat',
-      });
-    } catch (err) {
-      await rollbackToDeferred();
-      throw err;
+          messageIds,
+          status: 'enqueued',
+        }),
+    });
+    const activatedEntry = activated[0];
+    if (!activatedEntry) {
+      return { promoted: false };
+    }
+    if (activatedEntry.role === 'turn') {
+      await agentSession.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
     }
 
     return {
@@ -1266,53 +1255,38 @@ export function setupSessionHandlers(
     if (!message || !isSDKUserMessage(message) || !message.uuid) {
       return { retried: false };
     }
-
-    const reopenedId = db.getSDKMessageRepo().reopenDeliveryByUuid(targetSessionId, message.uuid);
-    if (!reopenedId) {
-      return { retried: false };
-    }
     const messageUuid = message.uuid;
 
-    const rollbackToFailed = async () => {
-      const rolledBack = db
-        .getSDKMessageRepo()
-        .markDeliveryFailedByUuid(targetSessionId, messageUuid);
-      if (rolledBack) {
-        await internalEventBus.publish('messages.statusChanged', {
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
+    if (!agentSession) {
+      throw new Error('Session not found');
+    }
+
+    const retried = await retryPrompt({
+      db: db.getDatabase(),
+      jobQueue: db.getJobQueueRepo(),
+      sdkMessageRepo: db.getSDKMessageRepo(),
+      sessionId: targetSessionId,
+      messageUuid,
+      dbId: message.dbId,
+      origin: 'chat',
+      publishStatusChanged: (messageIds) =>
+        internalEventBus.publish('messages.statusChanged', {
           sessionId: targetSessionId,
-          messageIds: [rolledBack],
-          status: 'failed',
-        });
-      }
-    };
-
-    try {
-      const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-      if (!agentSession) {
-        throw new Error('Session not found');
-      }
-
-      await internalEventBus.publish('messages.statusChanged', {
-        sessionId: targetSessionId,
-        messageIds: [reopenedId],
-        status: 'enqueued',
-      });
-
-      await deliverAndMarkQueued({
-        jobQueue: db.getJobQueueRepo(),
-        stateManager: agentSession.stateManager,
-        sessionId: targetSessionId,
-        messageUuid,
-        origin: 'chat',
-      });
-    } catch (err) {
-      await rollbackToFailed();
-      throw err;
+          messageIds,
+          status: 'enqueued',
+        }),
+    });
+    if (!retried) {
+      return { retried: false };
+    }
+    if (retried.role === 'turn') {
+      await agentSession.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
     }
 
     return {
       retried: true,
-      messageId: reopenedId,
+      messageId: retried.dbId,
       status: 'enqueued',
     };
   });
