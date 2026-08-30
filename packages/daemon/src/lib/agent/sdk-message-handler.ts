@@ -1099,6 +1099,9 @@ export class SDKMessageHandler {
         this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
         releaseTurnEndGate?.();
         releaseTurnEndGate = null;
+        if (isSDKCompactBoundary(message)) {
+          this.applyCompactBoundaryOwnership(message, invocationGeneration);
+        }
         if (this.matchesArmedClearResult(message)) {
           this.clearIdleSuppression();
         }
@@ -1915,6 +1918,33 @@ export class SDKMessageHandler {
     }
   }
 
+  private applyCompactBoundaryOwnership(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): void {
+    if (this.isInvocationStale(invocationGeneration)) return;
+    const manualBoundary =
+      (message as SDKCompactBoundaryMessage).compact_metadata?.trigger === 'manual';
+    if (manualBoundary && this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) {
+      if (this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()) {
+        this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+        this.ctx.messageQueue.armInternalCompactionResultAttribution();
+      } else {
+        this.ctx.messageQueue.consumeCompactionBoundary();
+      }
+    } else if (manualBoundary) {
+      this.ctx.messageQueue.consumeCompactionBoundary();
+    } else {
+      this.ctx.messageQueue.resetCompactOutcome?.();
+      if (
+        this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
+        this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()
+      ) {
+        this.ctx.messageQueue.restoreInternalCompactionBuffered?.();
+      }
+    }
+  }
+
   private async handleCompactBoundary(
     message: SDKMessage,
     invocationGeneration: number | null
@@ -1931,20 +1961,7 @@ export class SDKMessageHandler {
           `compaction(s) for session ${session.id}`
       );
     }
-    const manualBoundary =
-      (message as SDKCompactBoundaryMessage).compact_metadata?.trigger === 'manual';
-    if (manualBoundary && this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) {
-      if (this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()) {
-        this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
-        this.ctx.messageQueue.armInternalCompactionResultAttribution();
-      } else {
-        this.ctx.messageQueue.consumeCompactionBoundary();
-      }
-    } else if (manualBoundary) {
-      this.ctx.messageQueue.consumeCompactionBoundary();
-    } else {
-      this.ctx.messageQueue.resetCompactOutcome?.();
-    }
+    this.applyCompactBoundaryOwnership(message, invocationGeneration);
     this.ctx.messageQueue.noteBoundaryCompleted();
     const boundaryInfo = contextTracker.getContextInfo();
     const boundaryCapacity =

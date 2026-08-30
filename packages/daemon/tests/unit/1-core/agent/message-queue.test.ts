@@ -1277,6 +1277,48 @@ describe('MessageQueue', () => {
       q.stop();
     });
 
+    it('a daemon boundary ack binds its compact outcome so the daemon result cannot expire the next user marker', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      q.noteInternalCompactionSent({
+        id: 'user-compact-behind',
+        content: '/compact',
+        internal: false,
+      } as never);
+      q.noteCompactOutcome();
+
+      q.acknowledgeCompactionsAwaitingBoundary();
+      q.expireUserCompactionMarkerAtResult(0);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+
+      q.noteCompactOutcome();
+      q.expireUserCompactionMarkerAtResult(0);
+      expect(q.nextCompactionBoundaryIsDaemon()).toBe(false);
+      q.stop();
+    });
+
+    it('restores the buffered guard only while a daemon compaction still awaits its boundary', () => {
+      const q = new MessageQueue();
+      q.start();
+      q.restoreInternalCompactionBuffered();
+      expect(q.hasBufferedInternalCompaction()).toBe(false);
+
+      q.noteInternalCompactionSent({
+        id: 'daemon-compact',
+        content: '/compact',
+        internal: true,
+      } as never);
+      q.clearInternalCompactionBuffered();
+      q.restoreInternalCompactionBuffered();
+      expect(q.hasBufferedInternalCompaction()).toBe(true);
+      q.stop();
+    });
+
     it('marks a user boundary for an argument-bearing compact command', () => {
       const q = new MessageQueue();
       q.start();

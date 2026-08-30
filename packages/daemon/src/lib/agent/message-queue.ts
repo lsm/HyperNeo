@@ -220,6 +220,7 @@ export class MessageQueue {
         this.internalCompactionIdsAwaitingBoundary.delete(acknowledged);
       }
       this.outstandingCompactionBoundaries.shift();
+      this.unboundedCompactOutcome = false;
     }
     this.removePendingInternalCompactions();
     this.recentSentPrompts.clear();
@@ -270,6 +271,12 @@ export class MessageQueue {
 
   clearInternalCompactionBuffered(): void {
     this.internalCompactionBuffered = false;
+  }
+
+  restoreInternalCompactionBuffered(): void {
+    if (this.internalCompactionsAwaitingBoundary > 0) {
+      this.internalCompactionBuffered = true;
+    }
   }
 
   removePendingInternalCompactions(): number {
