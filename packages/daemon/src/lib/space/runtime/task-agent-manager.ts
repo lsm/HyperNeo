@@ -2226,7 +2226,8 @@ export class TaskAgentManager {
       this.agentSessionIndex.get(sessionId) ??
       this.config.sessionManager.getCachedSession?.(sessionId) ??
       null;
-    if (session?.getRateLimitWatchdogState().retryAt != null) return null;
+    const watchdog = session?.getRateLimitWatchdogState();
+    if (watchdog?.retryAt != null && !watchdog.persistedCooldown) return null;
     return cooldown.retryAt;
   }
 

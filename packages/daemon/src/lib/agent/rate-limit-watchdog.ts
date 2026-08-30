@@ -43,6 +43,7 @@ export interface RateLimitWatchdogState {
   fallbackChain: FallbackModelEntry[] | null;
   fallbackPending: boolean;
   limitKind: 'rate_limit' | 'usage_limit' | null;
+  persistedCooldown: boolean;
 }
 
 export interface RateLimitPausePayload {
@@ -103,6 +104,7 @@ export class RateLimitWatchdog {
   private retryCallbackAttemptSeq = 0;
   private cooldownQueryGeneration: number | undefined = undefined;
   private activePauseQueryGeneration: number | undefined = undefined;
+  private persistedCooldownArm = false;
 
   constructor(
     sessionId: string,
@@ -136,7 +138,28 @@ export class RateLimitWatchdog {
       fallbackChain: this.chain,
       fallbackPending: this.fallbackPending,
       limitKind: this.limitKind,
+      persistedCooldown: this.persistedCooldownArm,
     };
+  }
+
+  armPersistedCooldown(retryAt: number): void {
+    if (this.cooldownTimer !== null) return;
+    const remaining = Math.max(0, retryAt - Date.now());
+    this.currentRetryAt = retryAt;
+    this.persistedCooldownArm = true;
+    this.cooldownTimer = setTimeout(() => {
+      this.cooldownTimer = null;
+      this.currentRetryAt = null;
+      this.persistedCooldownArm = false;
+      this.notifyResume();
+    }, remaining);
+    if (
+      this.cooldownTimer &&
+      typeof this.cooldownTimer === 'object' &&
+      'unref' in this.cooldownTimer
+    ) {
+      this.cooldownTimer.unref();
+    }
   }
 
   private querySuperseded(queryGeneration?: number): boolean {
@@ -447,6 +470,7 @@ export class RateLimitWatchdog {
     });
 
     this.cancelCooldownTimer();
+    this.persistedCooldownArm = false;
     this.cooldownQueryGeneration = queryGeneration;
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
@@ -748,6 +772,7 @@ export class RateLimitWatchdog {
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
       this.currentRetryAt = null;
+      this.persistedCooldownArm = false;
       this.cooldownQueryGeneration = undefined;
       this.logger.info('Cancelled pending rate limit cooldown.');
     }

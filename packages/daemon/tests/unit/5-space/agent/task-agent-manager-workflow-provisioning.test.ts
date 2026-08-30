@@ -483,9 +483,15 @@ describe('TaskAgentManager ordinary worker startup revalidation', () => {
   });
 });
 
-function makeCooldownManager(input: { watchdogRetryAt?: number | null }) {
+function makeCooldownManager(input: {
+  watchdogRetryAt?: number | null;
+  watchdogPersisted?: boolean;
+}) {
   const session = {
-    getRateLimitWatchdogState: () => ({ retryAt: input.watchdogRetryAt ?? null }),
+    getRateLimitWatchdogState: () => ({
+      retryAt: input.watchdogRetryAt ?? null,
+      persistedCooldown: input.watchdogPersisted ?? false,
+    }),
   } as unknown as AgentSession;
   const manager = Object.create(TaskAgentManager.prototype) as TaskAgentManager;
   Object.defineProperty(manager, 'config', {
@@ -509,6 +515,12 @@ describe('TaskAgentManager restored rate-limit cooldown lookup', () => {
     const manager = makeCooldownManager({ watchdogRetryAt: 5678 });
 
     expect(manager.getRestoredRateLimitRetryAt(SESSION_ID)).toBeNull();
+  });
+
+  it('parks on the persisted retry time when the watchdog arm was restored from storage', () => {
+    const manager = makeCooldownManager({ watchdogRetryAt: 5678, watchdogPersisted: true });
+
+    expect(manager.getRestoredRateLimitRetryAt(SESSION_ID)).toBe(1234);
   });
 });
 

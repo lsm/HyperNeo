@@ -321,6 +321,32 @@ describe('Rewind RPC Handlers', () => {
       expect(result.result.error).toBe('Session not found');
     });
 
+    it('skips replay when workflow provisioning was skipped', async () => {
+      const handler = messageHubData.handlers.get('rewind.execute');
+      expect(handler).toBeDefined();
+
+      const { mocks } = createMockAgentSession();
+      mocks.executeRewind.mockResolvedValueOnce({
+        success: false,
+        error: 'no active query',
+        filesReverted: [],
+      });
+      const replay = mock(async () => {});
+      sessionManagerData.getSessionAsyncMock.mockResolvedValue({
+        ...mocks,
+        getSessionData: () => ({ id: 'space:s1:task:t1:exec:e1', config: {} }),
+        replayPendingMessagesForImmediateMode: replay,
+      } as unknown as AgentSession);
+
+      const result = (await handler!(
+        { sessionId: 'space:s1:task:t1:exec:e1', checkpointId: 'checkpoint-1' },
+        {}
+      )) as { result: { success: boolean } };
+
+      expect(result.result.success).toBe(false);
+      expect(replay).not.toHaveBeenCalled();
+    });
+
     it('reconciles pending messages after a failed rewind', async () => {
       const handler = messageHubData.handlers.get('rewind.execute');
       expect(handler).toBeDefined();

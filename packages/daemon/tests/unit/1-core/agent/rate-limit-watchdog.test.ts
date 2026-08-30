@@ -2099,3 +2099,32 @@ describe('RateLimitWatchdog', () => {
     });
   });
 });
+
+describe('RateLimitWatchdog persisted cooldown arming', () => {
+  it('reports a cooling state and retry time for an armed persisted cooldown', () => {
+    const watchdog = new RateLimitWatchdog('s', createMockStateManager(), createMockDeps());
+    watchdog.armPersistedCooldown(Date.now() + 60_000);
+    const state = watchdog.getState();
+
+    expect(state.retryAt).not.toBeNull();
+    expect(state.persistedCooldown).toBe(true);
+    watchdog.cancel();
+  });
+
+  it('clears the persisted arm when the timer fires', async () => {
+    const watchdog = new RateLimitWatchdog('s', createMockStateManager(), createMockDeps());
+    watchdog.armPersistedCooldown(Date.now() + 20);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(watchdog.getState().retryAt).toBeNull();
+    expect(watchdog.getState().persistedCooldown).toBe(false);
+  });
+
+  it('allows an immediate retry while only the persisted arm is active', () => {
+    const watchdog = new RateLimitWatchdog('s', createMockStateManager(), createMockDeps());
+    watchdog.armPersistedCooldown(Date.now() + 60_000);
+
+    expect(watchdog.retryNow()).toBe(true);
+    expect(watchdog.getState().retryAt).toBeNull();
+  });
+});

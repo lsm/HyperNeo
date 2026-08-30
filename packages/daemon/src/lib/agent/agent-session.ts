@@ -568,6 +568,7 @@ export class AgentSession
       void this.reevaluateContextBudgetAfterModelSwitch();
     }
     this.stateManager.restoreFromDatabase();
+    this.armPersistedRateLimitCooldown();
 
     this.eventSubscriptionSetup.setup();
 
@@ -793,6 +794,23 @@ export class AgentSession
       this.queryRunner = wantsAcp ? new AcpQueryRunner(this) : new QueryRunner(this);
     }
     await this.queryRunner.start();
+  }
+
+  private armPersistedRateLimitCooldown(): void {
+    const persistedState = this.db.getSession(this.session.id)?.processingState;
+    if (!persistedState) return;
+    try {
+      const parsed = JSON.parse(persistedState) as { status?: string; retryAt?: unknown };
+      if (
+        parsed.status === 'rate_limit_cooldown' &&
+        typeof parsed.retryAt === 'number' &&
+        parsed.retryAt > Date.now()
+      ) {
+        this.rateLimitWatchdog.armPersistedCooldown(parsed.retryAt);
+      }
+    } catch {
+      this.logger.warn('Failed to restore the persisted rate-limit cooldown.');
+    }
   }
 
   private scheduleInitialPendingMessageReplay(): void {

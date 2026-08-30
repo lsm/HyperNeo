@@ -1,8 +1,16 @@
 import type { MessageHub } from '@hyperneo/shared';
 import { withSessionOperationLock } from '../agent/message-delivery.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { isWorkflowSubSessionIdentity } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { RewindMode, SelectiveRewindRequest } from '@hyperneo/shared';
+
+function workflowReplayAdmitted(data: {
+  id: string;
+  config: { mcpServers?: Record<string, unknown> };
+}): boolean {
+  return !isWorkflowSubSessionIdentity(data.id) || Boolean(data.config.mcpServers?.['node-agent']);
+}
 
 export function setupRewindHandlers(
   messageHub: MessageHub,
@@ -69,7 +77,8 @@ export function setupRewindHandlers(
     const result = await withSessionOperationLock(sessionId, () =>
       agentSession.executeRewind(checkpointId, mode)
     );
-    if (agentSession.getSessionData().config.queryMode !== 'manual') {
+    const rewindData = agentSession.getSessionData();
+    if (workflowReplayAdmitted(rewindData) && rewindData.config.queryMode !== 'manual') {
       await agentSession.replayPendingMessagesForImmediateMode();
     }
     return { result };
@@ -142,7 +151,8 @@ export function setupRewindHandlers(
     const result = await withSessionOperationLock(sessionId, () =>
       agentSession.executeSelectiveRewind(messageIds, mode)
     );
-    if (agentSession.getSessionData().config.queryMode !== 'manual') {
+    const rewindData = agentSession.getSessionData();
+    if (workflowReplayAdmitted(rewindData) && rewindData.config.queryMode !== 'manual') {
       await agentSession.replayPendingMessagesForImmediateMode();
     }
     return { result };
