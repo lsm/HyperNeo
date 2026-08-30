@@ -41,7 +41,10 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { AgentSession } from '../../agent/agent-session.ts';
-import { verifyPromptContent } from '../../agent/message-delivery-outbox.ts';
+import {
+  PromptContentConflictError,
+  verifyPromptContent,
+} from '../../agent/message-delivery-outbox.ts';
 import { handoffPromptToMailbox } from './injection-delivery-steps.ts';
 import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
@@ -421,7 +424,10 @@ export class SpaceRuntimeService {
         return consumed ? 'terminal_failure_after_consumption' : 'terminal_failure';
       }
       return 'accepted';
-    } catch {
+    } catch (error) {
+      if (error instanceof PromptContentConflictError) {
+        return 'pre_admission_failure';
+      }
       const row = this.config.reactiveDb?.db
         .getSDKMessageRepo()
         .getDeliveryContent(sessionId, args.idempotencyKey);

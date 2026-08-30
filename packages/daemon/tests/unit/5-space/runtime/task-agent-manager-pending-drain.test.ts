@@ -1202,7 +1202,7 @@ describe('pending drain through the v2 injection shell', () => {
     };
   }
 
-  it('a drain retry over a failed delivery row reopens it and re-enqueues without a duplicate row', async () => {
+  it('a drain retry over a failed delivery row re-enqueues and settles on consumption', async () => {
     const h = await makeV2Harness({ sendStatus: 'failed' });
 
     await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
@@ -1218,6 +1218,16 @@ describe('pending drain through the v2 injection shell', () => {
       )
       .get();
     expect(job).toBeDefined();
+    expect(h.markDelivered).not.toHaveBeenCalled();
+
+    const row = h.db
+      .getSDKMessageRepo()
+      .getMessageByStatusAndUuid(V2_SESSION_ID, 'enqueued', 'row-v2');
+    if (!row) throw new Error('expected an enqueued row');
+    h.db.getSDKMessageRepo().updateMessageStatus([row.dbId], 'consumed');
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
     h.db.close();
   });

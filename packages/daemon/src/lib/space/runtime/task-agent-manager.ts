@@ -1474,6 +1474,31 @@ export class TaskAgentManager {
           row.id
         );
         this.recordActivityForSession(sessionId);
+        const sdkRepo = this.config.db.getSDKMessageRepo?.();
+        const sendStatus = sdkRepo?.getDeliveryContent(sessionId, row.id)?.sendStatus;
+        if (sendStatus === 'failed' && !sdkRepo?.hasConsumptionEvidence(sessionId, row.id)) {
+          repo.markAttemptFailed(row.id, 'mailbox delivery failed for message ' + row.id);
+          continue;
+        }
+        if (sendStatus === 'enqueued' || sendStatus === 'submitted' || sendStatus === 'deferred') {
+          this.lateSettlements.arm({
+            sessionId,
+            messageId: row.id,
+            onConsumed: (settledSessionId) => {
+              if (repo.getById(row.id)?.status !== 'pending') return;
+              repo.markDelivered(row.id, settledSessionId);
+              this.emitPendingDelivered(row.id, settledSessionId, row);
+            },
+            onFailed: () => {
+              if (repo.getById(row.id)?.status !== 'pending') return;
+              repo.markAttemptFailed(row.id, 'mailbox delivery failed for message ' + row.id);
+            },
+            getSendStatus: () =>
+              this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)
+                ?.sendStatus,
+          });
+          continue;
+        }
         repo.markDelivered(row.id, sessionId);
         this.emitPendingDelivered(row.id, sessionId, row);
       } catch (err) {
@@ -1545,8 +1570,12 @@ export class TaskAgentManager {
     const drainDeps: SpaceAgentPendingDrainDeps = {
       repo,
       resolveReplySession,
-      probeDeliveryStatus: (sessionId, messageId) =>
-        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+      probeDeliveryStatus: (sessionId, messageId) => {
+        const sdkRepo = this.config.db.getSDKMessageRepo?.();
+        if (!sdkRepo) return undefined;
+        if (sdkRepo.hasConsumptionEvidence?.(sessionId, messageId)) return 'consumed';
+        return sdkRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
+      },
       onSettled: (row, deliveredSessionId) =>
         this.emitPendingDelivered(row.id, deliveredSessionId, row),
       onFailed: () => this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId),
@@ -1556,8 +1585,12 @@ export class TaskAgentManager {
           replyToSession && replyToSession !== spaceChatSessionId
             ? [replyToSession, spaceChatSessionId]
             : [spaceChatSessionId];
-        const probe = (sessionId: string) =>
-          this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
+        const probe = (sessionId: string) => {
+          const sdkRepo = this.config.db.getSDKMessageRepo?.();
+          if (!sdkRepo) return undefined;
+          if (sdkRepo.hasConsumptionEvidence?.(sessionId, row.id)) return 'consumed';
+          return sdkRepo.getDeliveryContent(sessionId, row.id)?.sendStatus;
+        };
         const handles: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementHandle[] =
           [];
         let done = false;
@@ -1664,9 +1697,10 @@ export class TaskAgentManager {
         const settledSessionId = outcome.sessionId;
         const probeDeliveryStatus = (): string | null | undefined => {
           try {
-            return this.config.db
-              .getSDKMessageRepo?.()
-              ?.getDeliveryContent(settledSessionId, row.id)?.sendStatus;
+            const sdkRepo = this.config.db.getSDKMessageRepo?.();
+            if (!sdkRepo) return undefined;
+            if (sdkRepo.hasConsumptionEvidence?.(settledSessionId, row.id)) return 'consumed';
+            return sdkRepo.getDeliveryContent(settledSessionId, row.id)?.sendStatus;
           } catch {
             return undefined;
           }
@@ -1745,8 +1779,12 @@ export class TaskAgentManager {
       workflowRunId,
       spaceChatSessionId: `space:chat:${this.config.workflowRunRepo?.getRun?.(workflowRunId)?.spaceId ?? ''}`,
       resolveReplySession: (row) => this.resolveSpaceAgentReplySession(row),
-      probeDeliveryStatus: (sessionId, messageId) =>
-        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+      probeDeliveryStatus: (sessionId, messageId) => {
+        const sdkRepo = this.config.db.getSDKMessageRepo?.();
+        if (!sdkRepo) return undefined;
+        if (sdkRepo.hasConsumptionEvidence?.(sessionId, messageId)) return 'consumed';
+        return sdkRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
+      },
     });
   }
 
