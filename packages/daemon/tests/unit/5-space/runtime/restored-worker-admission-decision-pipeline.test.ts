@@ -5,11 +5,8 @@ import {
   applyManualQueryModeGate,
   applyTaskGate,
   decideRestoredWorkerAdmission,
-  decideRestoredWorkerPreSpaceAdmission,
   type RestoredWorkerAdmissionCtx,
   type RestoredWorkerAdmissionInput,
-  type RestoredWorkerPreSpaceCtx,
-  type RestoredWorkerPreSpaceInput,
 } from '../../../../src/lib/space/runtime/restored-worker-admission-decision-pipeline';
 
 const POST_APPROVAL_SESSION_ID = 'space:space-1:task:task-1:post-approval:worker';
@@ -49,25 +46,14 @@ function makeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {
   } as NodeExecution;
 }
 
-function undecidedPreSpace(
-  input: Partial<RestoredWorkerPreSpaceInput> = {}
-): RestoredWorkerPreSpaceCtx {
+function undecided(input: Partial<RestoredWorkerAdmissionInput> = {}): RestoredWorkerAdmissionCtx {
   return {
     settleReplayProvisioning: false,
     queryMode: undefined,
     daemonCleaningUp: false,
     task: makeTask(),
     workflowRun: makeRun(),
-    ...input,
-    decision: null,
-  };
-}
-
-function undecided(input: Partial<RestoredWorkerAdmissionInput> = {}): RestoredWorkerAdmissionCtx {
-  return {
-    task: makeTask(),
-    workflowRun: makeRun(),
-    space: makeSpace(),
+    fetchSpace: async () => makeSpace(),
     sessionId: EXECUTION_SESSION_ID,
     sessionStatus: 'active',
     execution: makeExecution(),
@@ -77,186 +63,232 @@ function undecided(input: Partial<RestoredWorkerAdmissionInput> = {}): RestoredW
   };
 }
 
-describe('restored worker pre-space admission gates', () => {
-  test('non-deciding gates pass the ctx through by reference', () => {
-    const ctx = undecidedPreSpace();
+describe('restored worker admission decisionRun gates', () => {
+  test('non-deciding sync gates pass the ctx through by reference', () => {
+    const ctx = undecided();
     expect(applyManualQueryModeGate(ctx)).toBe(ctx);
     expect(applyDaemonCleanupGate(ctx)).toBe(ctx);
     expect(applyTaskGate(ctx)).toBe(ctx);
   });
 
-  test('manual query mode denies unless replay provisioning is settling', () => {
-    expect(decideRestoredWorkerPreSpaceAdmission(undecidedPreSpace({ queryMode: 'manual' }))).toBe(
+  test('manual query mode denies unless replay provisioning is settling', async () => {
+    await expect(decideRestoredWorkerAdmission(undecided({ queryMode: 'manual' }))).resolves.toBe(
       false
     );
-    expect(
-      decideRestoredWorkerPreSpaceAdmission(
-        undecidedPreSpace({ queryMode: 'manual', settleReplayProvisioning: true })
+    await expect(
+      decideRestoredWorkerAdmission(
+        undecided({ queryMode: 'manual', settleReplayProvisioning: true })
       )
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
-  test('daemon cleanup denies', () => {
-    expect(
-      decideRestoredWorkerPreSpaceAdmission(undecidedPreSpace({ daemonCleaningUp: true }))
-    ).toBe(false);
+  test('daemon cleanup denies', async () => {
+    await expect(
+      decideRestoredWorkerAdmission(undecided({ daemonCleaningUp: true }))
+    ).resolves.toBe(false);
   });
 
-  test('missing task, missing run binding, or terminal task denies', () => {
-    expect(decideRestoredWorkerPreSpaceAdmission(undecidedPreSpace({ task: null }))).toBe(false);
-    expect(
-      decideRestoredWorkerPreSpaceAdmission(
-        undecidedPreSpace({ task: makeTask({ workflowRunId: null }) })
-      )
-    ).toBe(false);
-    expect(
-      decideRestoredWorkerPreSpaceAdmission(
-        undecidedPreSpace({ task: makeTask({ status: 'cancelled' }) })
-      )
-    ).toBe(false);
-    expect(
-      decideRestoredWorkerPreSpaceAdmission(
-        undecidedPreSpace({ task: makeTask({ status: 'archived' }) })
-      )
-    ).toBe(false);
+  test('missing task, missing run binding, or terminal task denies', async () => {
+    await expect(decideRestoredWorkerAdmission(undecided({ task: null }))).resolves.toBe(false);
+    await expect(
+      decideRestoredWorkerAdmission(undecided({ task: makeTask({ workflowRunId: null }) }))
+    ).resolves.toBe(false);
+    await expect(
+      decideRestoredWorkerAdmission(undecided({ task: makeTask({ status: 'cancelled' }) }))
+    ).resolves.toBe(false);
+    await expect(
+      decideRestoredWorkerAdmission(undecided({ task: makeTask({ status: 'archived' }) }))
+    ).resolves.toBe(false);
   });
 
-  test('missing or cancelled workflow run denies', () => {
-    expect(decideRestoredWorkerPreSpaceAdmission(undecidedPreSpace({ workflowRun: null }))).toBe(
+  test('missing or cancelled workflow run denies', async () => {
+    await expect(decideRestoredWorkerAdmission(undecided({ workflowRun: null }))).resolves.toBe(
       false
     );
-    expect(
-      decideRestoredWorkerPreSpaceAdmission(
-        undecidedPreSpace({ workflowRun: makeRun({ status: 'cancelled' }) })
-      )
-    ).toBe(false);
+    await expect(
+      decideRestoredWorkerAdmission(undecided({ workflowRun: makeRun({ status: 'cancelled' }) }))
+    ).resolves.toBe(false);
   });
 
-  test('early denies never read the lazy task or run facts', () => {
-    let taskReads = 0;
-    let runReads = 0;
-    const input: RestoredWorkerPreSpaceInput = {
-      ...undecidedPreSpace({ queryMode: 'manual' }),
-      task: () => {
-        taskReads += 1;
-        return makeTask();
-      },
-      workflowRun: () => {
-        runReads += 1;
-        return makeRun();
-      },
-    };
-    expect(decideRestoredWorkerPreSpaceAdmission(input)).toBe(false);
-    expect(taskReads).toBe(0);
-    expect(runReads).toBe(0);
+  test('stopped, paused, archived, or missing space denies', async () => {
+    for (const space of [
+      makeSpace({ stopped: true }),
+      makeSpace({ paused: true }),
+      makeSpace({ status: 'archived' }),
+      null,
+    ]) {
+      await expect(
+        decideRestoredWorkerAdmission(undecided({ fetchSpace: async () => space }))
+      ).resolves.toBe(false);
+    }
   });
 
-  test('a terminal task denies before the workflow run fact is read', () => {
-    let runReads = 0;
-    const input: RestoredWorkerPreSpaceInput = {
-      ...undecidedPreSpace({ task: makeTask({ status: 'cancelled' }) }),
-      workflowRun: () => {
-        runReads += 1;
-        return makeRun();
-      },
-    };
-    expect(decideRestoredWorkerPreSpaceAdmission(input)).toBe(false);
-    expect(runReads).toBe(0);
-  });
-});
-
-describe('restored worker admission decisionRun gates', () => {
-  test('archived or ended session status denies', () => {
-    expect(decideRestoredWorkerAdmission(undecided({ sessionStatus: 'archived' }))).toBe(false);
-    expect(decideRestoredWorkerAdmission(undecided({ sessionStatus: 'ended' }))).toBe(false);
+  test('archived or ended session status denies', async () => {
+    await expect(
+      decideRestoredWorkerAdmission(undecided({ sessionStatus: 'archived' }))
+    ).resolves.toBe(false);
+    await expect(
+      decideRestoredWorkerAdmission(undecided({ sessionStatus: 'ended' }))
+    ).resolves.toBe(false);
   });
 
-  test('stopped, paused, archived, or missing space denies', () => {
-    expect(decideRestoredWorkerAdmission(undecided({ space: makeSpace({ stopped: true }) }))).toBe(
-      false
-    );
-    expect(decideRestoredWorkerAdmission(undecided({ space: makeSpace({ paused: true }) }))).toBe(
-      false
-    );
-    expect(
-      decideRestoredWorkerAdmission(undecided({ space: makeSpace({ status: 'archived' }) }))
-    ).toBe(false);
-    expect(decideRestoredWorkerAdmission(undecided({ space: null }))).toBe(false);
-  });
-
-  test('post-approval sessions admit exactly when the task is approved', () => {
+  test('post-approval sessions admit exactly when the task is approved', async () => {
     const approved = undecided({
       sessionId: POST_APPROVAL_SESSION_ID,
       task: makeTask({ status: 'approved' }),
       workflowRun: makeRun({ status: 'done' }),
     });
-    expect(decideRestoredWorkerAdmission(approved)).toBe(true);
-    expect(
+    await expect(decideRestoredWorkerAdmission(approved)).resolves.toBe(true);
+    await expect(
       decideRestoredWorkerAdmission(
         undecided({ sessionId: POST_APPROVAL_SESSION_ID, task: makeTask({ status: 'done' }) })
       )
-    ).toBe(false);
+    ).resolves.toBe(false);
   });
 
-  test('terminal task or finished run denies ordinary workers', () => {
-    expect(decideRestoredWorkerAdmission(undecided({ task: makeTask({ status: 'done' }) }))).toBe(
+  test('terminal task or finished run denies ordinary workers', async () => {
+    await expect(
+      decideRestoredWorkerAdmission(undecided({ task: makeTask({ status: 'done' }) }))
+    ).resolves.toBe(false);
+    await expect(
+      decideRestoredWorkerAdmission(undecided({ workflowRun: makeRun({ status: 'done' }) }))
+    ).resolves.toBe(false);
+  });
+
+  test('missing or non-resumable execution denies ordinary workers', async () => {
+    await expect(decideRestoredWorkerAdmission(undecided({ execution: null }))).resolves.toBe(
       false
     );
-    expect(
-      decideRestoredWorkerAdmission(undecided({ workflowRun: makeRun({ status: 'done' }) }))
-    ).toBe(false);
-  });
-
-  test('missing or non-resumable execution denies ordinary workers', () => {
-    expect(decideRestoredWorkerAdmission(undecided({ execution: null }))).toBe(false);
-    expect(
+    await expect(
       decideRestoredWorkerAdmission(undecided({ execution: makeExecution({ status: 'idle' }) }))
-    ).toBe(false);
-    expect(
+    ).resolves.toBe(false);
+    await expect(
       decideRestoredWorkerAdmission(
         undecided({ execution: makeExecution({ status: 'cancelled' }) })
       )
-    ).toBe(false);
-    expect(
+    ).resolves.toBe(false);
+    await expect(
       decideRestoredWorkerAdmission(undecided({ execution: makeExecution({ status: 'blocked' }) }))
-    ).toBe(true);
-    expect(
+    ).resolves.toBe(true);
+    await expect(
       decideRestoredWorkerAdmission({
         ...undecided({ execution: makeExecution({ status: 'idle' }) }),
         hasQueuedRetryableHookAction: true,
       })
-    ).toBe(true);
+    ).resolves.toBe(true);
+  });
+});
+
+describe('restored worker admission fact-read ordering', () => {
+  function countingInput(input: Partial<RestoredWorkerAdmissionInput> = {}): {
+    input: RestoredWorkerAdmissionInput;
+    reads: Record<string, number>;
+  } {
+    const reads: Record<string, number> = {
+      daemonCleaningUp: 0,
+      task: 0,
+      workflowRun: 0,
+      fetchSpace: 0,
+      sessionStatus: 0,
+      execution: 0,
+      hasQueuedRetryableHookAction: 0,
+    };
+    const wrap =
+      <T>(key: string, fn: () => T): (() => T) =>
+      () => {
+        reads[key] += 1;
+        return fn();
+      };
+    return {
+      reads,
+      input: undecided({
+        daemonCleaningUp: wrap('daemonCleaningUp', () => false),
+        task: wrap('task', () => makeTask()),
+        workflowRun: wrap('workflowRun', () => makeRun()),
+        fetchSpace: wrap('fetchSpace', async () => makeSpace()),
+        sessionStatus: wrap('sessionStatus', () => 'active'),
+        execution: wrap('execution', () => makeExecution()),
+        hasQueuedRetryableHookAction: wrap('hasQueuedRetryableHookAction', () => false),
+        ...input,
+      }),
+    };
+  }
+
+  test('a manual-mode deny reads no other facts', async () => {
+    const { input, reads } = countingInput({ queryMode: 'manual' });
+    await expect(decideRestoredWorkerAdmission(input)).resolves.toBe(false);
+    expect(reads).toEqual({
+      daemonCleaningUp: 0,
+      task: 0,
+      workflowRun: 0,
+      fetchSpace: 0,
+      sessionStatus: 0,
+      execution: 0,
+      hasQueuedRetryableHookAction: 0,
+    });
   });
 
-  test('later gates never read lazy inputs once an earlier gate denies', () => {
-    let executionReads = 0;
-    let hookReads = 0;
-    const input: RestoredWorkerAdmissionInput = {
-      ...undecided({ sessionStatus: 'archived' }),
-      execution: () => {
-        executionReads += 1;
-        return makeExecution();
-      },
-      hasQueuedRetryableHookAction: () => {
-        hookReads += 1;
-        return true;
-      },
-    };
-    expect(decideRestoredWorkerAdmission(input)).toBe(false);
-    expect(executionReads).toBe(0);
-    expect(hookReads).toBe(0);
+  test('a terminal-task deny reads no run, space, session, or execution facts', async () => {
+    const { input, reads } = countingInput({ task: () => makeTask({ status: 'cancelled' }) });
+    await expect(decideRestoredWorkerAdmission(input)).resolves.toBe(false);
+    expect(reads.workflowRun).toBe(0);
+    expect(reads.fetchSpace).toBe(0);
+    expect(reads.sessionStatus).toBe(0);
+    expect(reads.execution).toBe(0);
   });
 
-  test('the queued retryable hook action fact is only read after the execution status gate', () => {
-    let hookReads = 0;
-    const input: RestoredWorkerAdmissionInput = {
-      ...undecided({ execution: makeExecution({ status: 'in_progress' }) }),
-      hasQueuedRetryableHookAction: () => {
-        hookReads += 1;
-        return false;
+  test('a cancelled-run deny never awaits the space lookup', async () => {
+    const { input, reads } = countingInput({
+      workflowRun: () => makeRun({ status: 'cancelled' }),
+    });
+    await expect(decideRestoredWorkerAdmission(input)).resolves.toBe(false);
+    expect(reads.fetchSpace).toBe(0);
+    expect(reads.sessionStatus).toBe(0);
+  });
+
+  test('the session status is read only after the space lookup resolves', async () => {
+    const order: string[] = [];
+    const input: RestoredWorkerAdmissionInput = undecided({
+      fetchSpace: async () => {
+        order.push('fetchSpace');
+        return makeSpace();
       },
-    };
-    expect(decideRestoredWorkerAdmission(input)).toBe(true);
-    expect(hookReads).toBe(0);
+      sessionStatus: () => {
+        order.push('sessionStatus');
+        return 'active';
+      },
+    });
+    await expect(decideRestoredWorkerAdmission(input)).resolves.toBe(true);
+    expect(order).toEqual(['fetchSpace', 'sessionStatus']);
+  });
+
+  test('a session archiving while the space lookup is in flight denies admission', async () => {
+    let sessionStatus = 'active';
+    const input: RestoredWorkerAdmissionInput = undecided({
+      fetchSpace: async () => {
+        sessionStatus = 'archived';
+        return makeSpace();
+      },
+      sessionStatus: () => sessionStatus,
+    });
+    await expect(decideRestoredWorkerAdmission(input)).resolves.toBe(false);
+  });
+
+  test('a space-gate deny skips the session, execution, and hook facts', async () => {
+    const { input, reads } = countingInput({
+      fetchSpace: async () => makeSpace({ paused: true }),
+    });
+    await expect(decideRestoredWorkerAdmission(input)).resolves.toBe(false);
+    expect(reads.sessionStatus).toBe(0);
+    expect(reads.execution).toBe(0);
+    expect(reads.hasQueuedRetryableHookAction).toBe(0);
+  });
+
+  test('the queued retryable hook action fact is only read after the execution status gate', async () => {
+    const { input, reads } = countingInput({
+      execution: () => makeExecution({ status: 'in_progress' }),
+    });
+    await expect(decideRestoredWorkerAdmission(input)).resolves.toBe(true);
+    expect(reads.hasQueuedRetryableHookAction).toBe(0);
   });
 });

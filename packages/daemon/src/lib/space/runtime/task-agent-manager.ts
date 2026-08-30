@@ -131,10 +131,7 @@ import {
 } from './pending-envelope.ts';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
-import {
-  decideRestoredWorkerAdmission,
-  decideRestoredWorkerPreSpaceAdmission,
-} from './restored-worker-admission-decision-pipeline.ts';
+import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
 import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
 import {
@@ -2214,6 +2211,7 @@ export class TaskAgentManager {
     options: { settleReplayProvisioning?: boolean } = {}
   ): Promise<boolean> {
     const settleReplayProvisioning = options.settleReplayProvisioning ?? false;
+    const sessionId = session.getSessionData().id;
     let task: SpaceTask | null | undefined;
     const resolveTask = (): SpaceTask | null => {
       if (task === undefined) task = this.config.taskRepo.getTask(taskId);
@@ -2229,31 +2227,23 @@ export class TaskAgentManager {
       }
       return workflowRun;
     };
-    if (
-      !decideRestoredWorkerPreSpaceAdmission({
-        settleReplayProvisioning,
-        queryMode: settleReplayProvisioning
-          ? undefined
-          : session.getSessionData().config?.queryMode,
-        daemonCleaningUp: this.sessionManagerCleaningUp(),
-        task: resolveTask,
-        workflowRun: resolveWorkflowRun,
-      })
-    ) {
-      return false;
-    }
-    const boundTask = resolveTask();
-    const space = boundTask ? await this.config.spaceManager.getSpace(boundTask.spaceId) : null;
-    const sessionId = session.getSessionData().id;
     let execution: NodeExecution | null | undefined;
     const resolveExecution = (): NodeExecution | null => {
       if (execution === undefined) execution = this.resolveNodeExecutionForSubSession(sessionId);
       return execution;
     };
     return decideRestoredWorkerAdmission({
-      task: boundTask,
-      workflowRun: resolveWorkflowRun(),
-      space,
+      settleReplayProvisioning,
+      queryMode: settleReplayProvisioning ? undefined : session.getSessionData().config?.queryMode,
+      daemonCleaningUp: () => this.sessionManagerCleaningUp(),
+      task: resolveTask,
+      workflowRun: resolveWorkflowRun,
+      fetchSpace: () => {
+        const boundTask = resolveTask();
+        return boundTask
+          ? this.config.spaceManager.getSpace(boundTask.spaceId)
+          : Promise.resolve(null);
+      },
       sessionId,
       sessionStatus: () => session.getSessionData().status,
       execution: resolveExecution,
