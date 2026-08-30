@@ -40,6 +40,7 @@ import type { SessionManager } from '../session-manager.ts';
 import { validateImageSizes } from '../session/message-persistence.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import { isWorkflowSubSessionIdentity } from '../session/sub-session-identity.ts';
 
 const log = new Logger('session-handlers');
 
@@ -968,6 +969,15 @@ export function setupSessionHandlers(
     if (!agentSession) {
       throw new Error('Session not found');
     }
+    const restartData = agentSession.getSessionData();
+    if (
+      isWorkflowSubSessionIdentity(restartData.id) &&
+      !restartData.config.mcpServers?.['node-agent']
+    ) {
+      throw new Error(
+        `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
+      );
+    }
 
     try {
       await agentSession.restart();
@@ -1339,17 +1349,37 @@ export function setupSessionHandlers(
       if (!current) {
         throw new Error(`Session not found: ${targetSessionId}`);
       }
+      const currentData = current.getSessionData();
+      if (
+        isWorkflowSubSessionIdentity(currentData.id) &&
+        !currentData.config.mcpServers?.['node-agent']
+      ) {
+        throw new Error(
+          `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
+        );
+      }
+      if (choice === 'start_fresh') {
+        currentData.sdkSessionId = undefined;
+        currentData.sdkOriginPath = undefined;
+      }
       await current.restart();
-      if (current.getSessionData().config.queryMode !== 'manual') {
+      if (currentData.config.queryMode !== 'manual') {
         await current.replayPendingMessagesForImmediateMode();
       }
     } catch (err) {
       log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
       const errorText = err instanceof Error ? err.message : String(err);
-      db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, {
+      const failedMessage: HyperNeoActionMessage = {
         ...resolvedMessage,
+        resolved: false,
         error: errorText,
-      });
+      };
+      db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, failedMessage);
+      messageHub.event(
+        'state.sdkMessages.delta',
+        { added: [failedMessage], timestamp: Date.now() },
+        { channel: `session:${targetSessionId}` }
+      );
       return {
         success: false,
         error: errorText,

@@ -1989,5 +1989,89 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('Session not found');
+    expect(db.updateHyperNeoActionMessageByUuid).toHaveBeenLastCalledWith(
+      'gone-session',
+      'uuid-2',
+      expect.objectContaining({
+        resolved: false,
+        error: expect.stringContaining('Session not found'),
+      })
+    );
+  });
+
+  it('refuses to resume a workflow worker whose provisioning was skipped', async () => {
+    const worker = makeResumeFake('space:s1:task:t1:exec:e1');
+    worker.session.getSessionData = () => ({
+      id: 'space:s1:task:t1:exec:e1',
+      config: {},
+      status: 'active',
+    });
+    const db = makeResumeDb();
+    const sessionManager = {
+      getSessionForControl: mock(async () => worker.session),
+      getSessionAsync: mock(async () => worker.session),
+      getDatabase: () => db,
+    } as unknown as SessionManager;
+    const messageHubData = createMockMessageHub();
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+
+    const result = (await messageHubData.handlers.get('session.sdkResumeChoice')!(
+      { sessionId: 'space:s1:task:t1:exec:e1', choice: 'leave_as_is', messageUuid: 'uuid-3' },
+      {}
+    )) as { success: boolean; error?: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not resumable');
+    expect(worker.calls).toEqual([]);
+  });
+
+  it('clears the sdk identity on the provisioned instance for start_fresh', async () => {
+    const replacement = makeResumeFake('resume-session');
+    let data: Record<string, unknown> = {
+      id: 'resume-session',
+      config: {},
+      status: 'active',
+      sdkSessionId: 'sdk-old',
+      sdkOriginPath: '/old/origin',
+    };
+    replacement.session.getSessionData = () => data as never;
+    const db = makeResumeDb();
+    const sessionManager = {
+      getSessionForControl: mock(async () => makeResumeFake('resume-session').session),
+      getSessionAsync: mock(async () => replacement.session),
+      getDatabase: () => db,
+    } as unknown as SessionManager;
+    const messageHubData = createMockMessageHub();
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+
+    const result = (await messageHubData.handlers.get('session.sdkResumeChoice')!(
+      { sessionId: 'resume-session', choice: 'start_fresh', messageUuid: 'uuid-4' },
+      {}
+    )) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    expect(replacement.calls).toEqual(['restart', 'replay']);
+    expect(data.sdkSessionId).toBeUndefined();
+    expect(data.sdkOriginPath).toBeUndefined();
+    expect(db.updateSession).toHaveBeenCalledWith('resume-session', {
+      sdkSessionId: undefined,
+      sdkOriginPath: undefined,
+    });
   });
 });
