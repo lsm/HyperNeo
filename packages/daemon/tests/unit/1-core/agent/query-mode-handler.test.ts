@@ -378,6 +378,92 @@ describe('QueryModeHandler', () => {
       }
     });
 
+    it('a failed flush after re-deferral does not publish the re-deferred rows as enqueued', async () => {
+      const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+      process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
+      const rows = [
+        {
+          dbId: 'db-task',
+          uuid: 'uuid-task',
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: 'the older task row' },
+        },
+        {
+          dbId: 'db-human',
+          uuid: 'uuid-human',
+          type: 'user',
+          isSynthetic: false,
+          inputKind: 'human',
+          message: { role: 'user', content: 'an ordinary follow-up' },
+        },
+      ] as unknown as SDKMessage[];
+      const deferredDbIds = new Set(['db-task', 'db-human']);
+      getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+        byStatusResult(status === 'deferred' ? rows.filter((m) => deferredDbIds.has(m.dbId)) : [])
+      );
+      updateMessageStatusSpy.mockImplementation((ids: string[], status: string) => {
+        for (const id of ids) {
+          if (status === 'deferred') deferredDbIds.add(id);
+          else deferredDbIds.delete(id);
+        }
+      });
+      const enqueue = jobQueue.enqueue.bind(jobQueue);
+      try {
+        let releaseOuter!: () => void;
+        const outerGate = new Promise<void>((resolve) => {
+          releaseOuter = resolve;
+        });
+        const outerHolder = withContextClearBoundary('test-session-id', () => outerGate);
+        handler = new QueryModeHandler({
+          ...createContext(),
+          session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
+          slotResetsContext: () => true,
+          clearConversationContext: mock(async () => {}),
+        });
+        const flushing = handler.handleQueryTrigger();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        jobQueue.enqueue({
+          queue: 'message_delivery',
+          payload: {
+            sessionId: 'test-session-id',
+            messageUuid: 'uuid-live',
+            role: 'turn',
+            origin: 'chat',
+            parentToolUseId: null,
+          },
+          maxRetries: 8,
+        });
+        jobQueue.enqueue = mock(() => {
+          throw new Error('queue unavailable');
+        });
+
+        releaseOuter();
+        await outerHolder;
+        const result = await flushing;
+
+        expect(result).toMatchObject({ success: false, error: 'queue unavailable' });
+        expect(deferredDbIds.has('db-task')).toBe(true);
+        const enqueuedCalls = emitSpy.mock.calls.filter(
+          (call) => call[1]?.status === 'enqueued' && Array.isArray(call[1]?.messageIds)
+        );
+        expect(enqueuedCalls).toEqual([
+          [
+            'messages.statusChanged',
+            { sessionId: 'test-session-id', messageIds: ['db-human'], status: 'enqueued' },
+          ],
+        ]);
+      } finally {
+        jobQueue.enqueue = enqueue;
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previousTimeout;
+        clearContextClearBoundariesForTest();
+      }
+    });
+
     it('admissions wait behind the clear boundary until the flush delivery job is enqueued', async () => {
       const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
       process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
@@ -592,10 +678,19 @@ describe('QueryModeHandler', () => {
     });
 
     it('handleQueryTrigger publishes enqueued status when durable enqueue fails', async () => {
-      getUserMessagesByStatusSpy.mockReturnValue(
-        byStatusResult([
-          { dbId: 'db-1', uuid: 'uuid-1', type: 'user', message: { role: 'user', content: 'one' } },
-        ] as unknown as SDKMessage[])
+      getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+        byStatusResult(
+          status === 'deferred'
+            ? ([
+                {
+                  dbId: 'db-1',
+                  uuid: 'uuid-1',
+                  type: 'user',
+                  message: { role: 'user', content: 'one' },
+                },
+              ] as unknown as SDKMessage[])
+            : []
+        )
       );
       const enqueue = jobQueue.enqueue.bind(jobQueue);
       jobQueue.enqueue = mock(() => {

@@ -137,14 +137,15 @@ export class QueryModeHandler {
       db.updateMessageStatus(dbIds, 'enqueued');
       const flushMessages = this.toFlushMessages(backlog);
 
+      const settlement: { reDeferredDbIds: string[] } = { reDeferredDbIds: [] };
       let reDeferredDbIds: string[] = [];
       try {
-        const v2 = await this.deliverFlushUnderV2(flushMessages, 'recovery', options);
+        const v2 = await this.deliverFlushUnderV2(flushMessages, 'recovery', options, settlement);
         reDeferredDbIds = v2.reDeferredDbIds;
       } catch (error) {
         await internalEventBus.publish('messages.statusChanged', {
           sessionId: session.id,
-          messageIds: dbIds.filter((id) => !reDeferredDbIds.includes(id)),
+          messageIds: dbIds.filter((id) => !settlement.reDeferredDbIds.includes(id)),
           status: 'enqueued',
         });
         throw error;
@@ -255,13 +256,17 @@ export class QueryModeHandler {
       deliverIndividually?: boolean;
       skipContextReset?: boolean;
       pendingTaskInput?: boolean;
-    }
+    },
+    settlement?: { reDeferredDbIds: string[] }
   ): Promise<{ clearedContext: boolean; reDeferredDbIds: string[] }> {
     const jobQueue = this.ctx.db.getJobQueueRepo();
     const plan = this.planFlush(flushMessages, options);
     if (plan.action === 'noop') return { clearedContext: false, reDeferredDbIds: [] };
     let clearedContext = false;
     let reDeferredDbIds: string[] = [];
+    const syncSettlement = () => {
+      if (settlement) settlement.reDeferredDbIds = reDeferredDbIds;
+    };
     let planAction = plan.action;
     let deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
     let clearBoundaryOwner: ContextClearBoundaryOwner | null = null;
@@ -277,6 +282,7 @@ export class QueryModeHandler {
           deliverables = refreshed.action === 'batch' ? refreshed.uuids : refreshed.deliver;
           const deliverableSet = new Set(deliverables);
           reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
+          syncSettlement();
           deliverables = deliverables.filter((uuid) => {
             const message = flushMessages.find((entry) => entry.uuid === uuid);
             return message !== undefined && !message.isTaskInput;
@@ -301,6 +307,7 @@ export class QueryModeHandler {
             ) {
               const deliverableSet = new Set(deliverables);
               reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
+              syncSettlement();
               deliverables = deliverables.filter((uuid) => {
                 const message = flushMessages.find((entry) => entry.uuid === uuid);
                 return message !== undefined && !message.isTaskInput;
@@ -315,6 +322,7 @@ export class QueryModeHandler {
       ) {
         const deliverableSet = new Set(deliverables);
         reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
+        syncSettlement();
         deliverables = deliverables.filter((uuid) => {
           const message = flushMessages.find((entry) => entry.uuid === uuid);
           return message !== undefined && !message.isTaskInput;

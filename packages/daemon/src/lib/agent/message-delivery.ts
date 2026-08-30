@@ -534,10 +534,16 @@ export async function withSessionLock<T>(
 }
 
 const COORDINATION_ACQUIRE_TIMEOUT_MS = 8_000;
+const COORDINATION_LEAK_CEILING_MS = 900_000;
 
 export function getCoordinationAcquireTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = Number.parseInt(env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS ?? '', 10);
   return Number.isFinite(raw) && raw > 0 ? raw : COORDINATION_ACQUIRE_TIMEOUT_MS;
+}
+
+export function getCoordinationLeakCeilingMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number.parseInt(env.HYPERNEO_DELIVERY_COORDINATION_LEAK_CEILING_MS ?? '', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : COORDINATION_LEAK_CEILING_MS;
 }
 
 export class SessionCoordinationStallError extends Error {
@@ -811,19 +817,7 @@ const sessionOperationLockArmedAt = new Map<string, number>();
 
 const operationLockLog = createLogger('hyperneo:daemon:message-delivery.operation-lock');
 
-const OPERATION_LOCK_ACQUIRE_TIMEOUT_MS = 8_000;
-const OPERATION_LOCK_LEAK_CEILING_MS = 900_000;
 const OPERATION_LOCK_HOLD_WARN_MS = 30_000;
-
-function getSessionOperationLockAcquireTimeoutMs(): number {
-  const raw = Number.parseInt(process.env.HYPERNEO_OPERATION_LOCK_ACQUIRE_TIMEOUT_MS ?? '', 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : OPERATION_LOCK_ACQUIRE_TIMEOUT_MS;
-}
-
-function getSessionOperationLockLeakCeilingMs(): number {
-  const raw = Number.parseInt(process.env.HYPERNEO_OPERATION_LOCK_LEAK_CEILING_MS ?? '', 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : OPERATION_LOCK_LEAK_CEILING_MS;
-}
 
 type OperationLockCtx = {
   sessionId: string;
@@ -874,10 +868,7 @@ function currentOperationLockHolderArmedAt(sessionId: string): number | null {
 async function awaitOperationLockSlotStage(ctx: OperationLockCtx): Promise<OperationLockCtx> {
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<'deadline'>((resolve) => {
-    deadlineTimer = setTimeout(
-      () => resolve('deadline'),
-      getSessionOperationLockAcquireTimeoutMs()
-    );
+    deadlineTimer = setTimeout(() => resolve('deadline'), getCoordinationAcquireTimeoutMs());
   });
   const aborted = waitForDeliveryAbort(ctx.signal);
   try {
@@ -890,8 +881,7 @@ async function awaitOperationLockSlotStage(ctx: OperationLockCtx): Promise<Opera
       ctx.timedOut = true;
       const armedAt = currentOperationLockHolderArmedAt(ctx.sessionId);
       ctx.observedArmedAt = armedAt;
-      ctx.holderAgeMs =
-        armedAt === null ? getSessionOperationLockLeakCeilingMs() : Date.now() - armedAt;
+      ctx.holderAgeMs = armedAt === null ? getCoordinationLeakCeilingMs() : Date.now() - armedAt;
       return ctx;
     }
     throwIfDeliveryAborted(ctx.signal);
@@ -906,12 +896,12 @@ async function awaitOperationLockSlotStage(ctx: OperationLockCtx): Promise<Opera
 }
 
 async function reclaimLeakedOperationLockStage(ctx: OperationLockCtx): Promise<OperationLockCtx> {
-  if (!ctx.timedOut || ctx.holderAgeMs < getSessionOperationLockLeakCeilingMs()) return ctx;
+  if (!ctx.timedOut || ctx.holderAgeMs < getCoordinationLeakCeilingMs()) return ctx;
   if (sessionOperationLocks.get(ctx.sessionId) !== ctx.registeredTail) return ctx;
   if (currentOperationLockHolderArmedAt(ctx.sessionId) !== ctx.observedArmedAt) return ctx;
   operationLockLog.error(
     `message-delivery operation-lock: holder for session ${ctx.sessionId} exceeded ` +
-      `${getSessionOperationLockLeakCeilingMs()}ms (age ${ctx.holderAgeMs}ms); reclaiming the slot`
+      `${getCoordinationLeakCeilingMs()}ms (age ${ctx.holderAgeMs}ms); reclaiming the slot`
   );
   sessionOperationLocks.delete(ctx.sessionId);
   sessionOperationLockArmedAt.delete(ctx.sessionId);
@@ -989,7 +979,7 @@ export async function withSessionOperationLock<T>(
     if (settled.timedOut) {
       throw new DOMException(
         `Session ${sessionId} is still completing a prior operation ` +
-          `(waited ${Math.round(getSessionOperationLockAcquireTimeoutMs() / 1000)}s, ` +
+          `(waited ${Math.round(getCoordinationAcquireTimeoutMs() / 1000)}s, ` +
           `prior holder age ${Math.round(settled.holderAgeMs / 1000)}s). Try again shortly.`,
         'TimeoutError'
       );

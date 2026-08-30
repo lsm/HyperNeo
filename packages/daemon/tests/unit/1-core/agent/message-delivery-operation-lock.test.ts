@@ -7,8 +7,8 @@ import {
 const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const resetEnv = (): void => {
-  delete process.env.HYPERNEO_OPERATION_LOCK_ACQUIRE_TIMEOUT_MS;
-  delete process.env.HYPERNEO_OPERATION_LOCK_LEAK_CEILING_MS;
+  delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+  delete process.env.HYPERNEO_DELIVERY_COORDINATION_LEAK_CEILING_MS;
 };
 
 const slowResolve = (ms: number) =>
@@ -74,7 +74,7 @@ describe('withSessionOperationLock', () => {
   });
 
   it('times out when a prior holder does not settle', async () => {
-    process.env.HYPERNEO_OPERATION_LOCK_ACQUIRE_TIMEOUT_MS = '10';
+    process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '10';
 
     const slow = withSessionOperationLock('s', () => slowResolve(50));
     await tick(0);
@@ -86,8 +86,8 @@ describe('withSessionOperationLock', () => {
   });
 
   it('cleans up a timed-out waiter so the next operation can proceed', async () => {
-    process.env.HYPERNEO_OPERATION_LOCK_ACQUIRE_TIMEOUT_MS = '10';
-    process.env.HYPERNEO_OPERATION_LOCK_LEAK_CEILING_MS = '20';
+    process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '10';
+    process.env.HYPERNEO_DELIVERY_COORDINATION_LEAK_CEILING_MS = '20';
 
     const slow = withSessionOperationLock('s', () => slowResolve(50));
     await tick(0);
@@ -104,8 +104,8 @@ describe('withSessionOperationLock', () => {
   });
 
   it('a timed-out waiter with a successor does not reclaim the successor chain', async () => {
-    process.env.HYPERNEO_OPERATION_LOCK_ACQUIRE_TIMEOUT_MS = '20';
-    process.env.HYPERNEO_OPERATION_LOCK_LEAK_CEILING_MS = '60';
+    process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '20';
+    process.env.HYPERNEO_DELIVERY_COORDINATION_LEAK_CEILING_MS = '60';
 
     const stuck = withSessionOperationLock('s', () => new Promise<string>(() => {}));
     await tick(50);
