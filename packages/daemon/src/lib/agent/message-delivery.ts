@@ -342,6 +342,10 @@ export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 12 * 60 * 1000;
 export const MAX_ACP_STEER_PARKS =
   Math.ceil(ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS / MESSAGE_DELIVERY_PARK_MS) + MAX_STEER_PARKS;
 
+export function deliveryConsumptionTimeoutMs(provider?: string): number | undefined {
+  return provider === 'acp' ? ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS : undefined;
+}
+
 export function deliveryConsumptionTimeoutOrDefault(timeoutMs?: number): number {
   const explicit = timeoutMs ?? Number(process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS);
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
