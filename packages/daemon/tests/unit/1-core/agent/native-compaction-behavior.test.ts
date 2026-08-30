@@ -293,6 +293,8 @@ function driveCompactionRefresh(opts: {
     hasInFlightInternalCompaction: mock(() => false),
     pruneSentPrompts: mock(() => {}),
     acknowledgeCompactionsAwaitingBoundary: mock(() => {}),
+    armInternalCompactionResultAttribution: mock(() => {}),
+    consumeInternalCompactionResultAttribution: mock(() => false),
     clearNonCompactionSentSinceBoundary: mock(() => {}),
     isRunning: mock(() => true),
   } as unknown as MessageQueue;

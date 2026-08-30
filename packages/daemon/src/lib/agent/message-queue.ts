@@ -31,6 +31,16 @@ function extractParentToolUseId(content: string | MessageContent[]): string | nu
   return toolResult?.tool_use_id ?? null;
 }
 
+function isUserCompactCommand(content: string | MessageContent[]): boolean {
+  const text =
+    typeof content === 'string'
+      ? content
+      : (content.find((block) => block.type === 'text')?.text ?? '');
+  if (typeof text !== 'string' || text.length === 0) return false;
+  const command = text.trim().split(/\s+/)[0];
+  return command === '/compact';
+}
+
 const MESSAGE_QUEUE_TIMEOUT_MS = 30_000;
 
 const MID_TURN_INTERRUPT_TIMEOUT_MS = 5_000;
@@ -132,6 +142,11 @@ export class MessageQueue {
   private internalCompactionDeliveryHolds: number = 0;
   private internalCompactionsAwaitingBoundary: number = 0;
   private internalCompactionIdsAwaitingBoundary: Set<string> = new Set();
+  private internalCompactionResultAttributionArmed: boolean = false;
+  private outstandingCompactionBoundaries: Array<{ kind: 'daemon' | 'user'; id?: string }> = [];
+  private unboundedCompactOutcome: boolean = false;
+  private internalCompactionBuffered: boolean = false;
+  private daemonFrontTerminalResult: boolean = false;
   private nonCompactionSentSinceBoundary: boolean = false;
   private recentSentPrompts: Map<string, string | MessageContent[]> = new Map();
 
@@ -162,8 +177,11 @@ export class MessageQueue {
     if (this.isInternalCompaction(message)) {
       this.midTurnCompactionQueued = false;
       this.internalRestartFailed = false;
+      this.internalCompactionResultAttributionArmed = false;
       this.internalCompactionsAwaitingBoundary += 1;
       this.internalCompactionIdsAwaitingBoundary.add(message.id);
+      this.internalCompactionBuffered = this.outstandingCompactionBoundaries.length > 0;
+      this.outstandingCompactionBoundaries.push({ kind: 'daemon', id: message.id });
     } else {
       this.nonCompactionSentSinceBoundary = true;
       this.recentSentPrompts.delete(message.id);
@@ -173,6 +191,9 @@ export class MessageQueue {
         if (oldest !== undefined) {
           this.recentSentPrompts.delete(oldest);
         }
+      }
+      if (isUserCompactCommand(message.content)) {
+        this.outstandingCompactionBoundaries.push({ kind: 'user' });
       }
     }
   }
@@ -204,10 +225,73 @@ export class MessageQueue {
       if (acknowledged !== undefined) {
         this.internalCompactionIdsAwaitingBoundary.delete(acknowledged);
       }
+      this.outstandingCompactionBoundaries.shift();
+      this.unboundedCompactOutcome = false;
+      if (this.internalCompactionsAwaitingBoundary === 0) {
+        this.internalCompactionBuffered = false;
+      }
     }
+    this.daemonFrontTerminalResult = false;
     this.removePendingInternalCompactions();
     this.recentSentPrompts.clear();
     this.wakeWaiters();
+  }
+
+  armInternalCompactionResultAttribution(): void {
+    this.internalCompactionResultAttributionArmed = true;
+  }
+
+  consumeInternalCompactionResultAttribution(): boolean {
+    const armed = this.internalCompactionResultAttributionArmed;
+    this.internalCompactionResultAttributionArmed = false;
+    return armed;
+  }
+
+  nextCompactionBoundaryIsDaemon(): boolean {
+    return this.outstandingCompactionBoundaries[0]?.kind === 'daemon';
+  }
+
+  consumeCompactionBoundary(): void {
+    this.outstandingCompactionBoundaries.shift();
+    this.unboundedCompactOutcome = false;
+  }
+
+  noteCompactOutcome(): void {
+    this.unboundedCompactOutcome = true;
+  }
+
+  resetCompactOutcome(): void {
+    this.unboundedCompactOutcome = false;
+  }
+
+  expireUserCompactionMarkerAtResult(numTurns: number): void {
+    if (
+      this.outstandingCompactionBoundaries[0]?.kind === 'user' &&
+      this.unboundedCompactOutcome &&
+      numTurns === 0
+    ) {
+      this.outstandingCompactionBoundaries.shift();
+      this.unboundedCompactOutcome = false;
+    }
+  }
+
+  hasBufferedInternalCompaction(): boolean {
+    return this.internalCompactionBuffered;
+  }
+
+  noteResultForCompactionRecovery(numTurns: number): void {
+    if (
+      numTurns === 0 &&
+      this.outstandingCompactionBoundaries[0]?.kind === 'daemon' &&
+      this.unboundedCompactOutcome
+    ) {
+      this.daemonFrontTerminalResult = true;
+    }
+    this.unboundedCompactOutcome = false;
+  }
+
+  canRecoverBufferedCompaction(): boolean {
+    return this.daemonFrontTerminalResult;
   }
 
   removePendingInternalCompactions(): number {
@@ -220,6 +304,12 @@ export class MessageQueue {
       0,
       this.internalCompactionsAwaitingBoundary - 1
     );
+    const markerIndex = this.outstandingCompactionBoundaries.findIndex(
+      (entry) => entry.kind === 'daemon' && entry.id === messageId
+    );
+    if (markerIndex !== -1) {
+      this.outstandingCompactionBoundaries.splice(markerIndex, 1);
+    }
     return true;
   }
 
@@ -430,6 +520,11 @@ export class MessageQueue {
       [...this.claimed].some((message) => this.isInternalCompaction(message));
     this.internalCompactionsAwaitingBoundary = 0;
     this.internalCompactionIdsAwaitingBoundary.clear();
+    this.internalCompactionResultAttributionArmed = false;
+    this.outstandingCompactionBoundaries = [];
+    this.unboundedCompactOutcome = false;
+    this.daemonFrontTerminalResult = false;
+    this.internalCompactionBuffered = false;
     this.nonCompactionSentSinceBoundary = false;
     this.recentSentPrompts.clear();
     this.deliveryGate = null;
@@ -651,6 +746,11 @@ export class MessageQueue {
       [...this.yielded].some((message) => this.isInternalCompaction(message));
     this.internalCompactionsAwaitingBoundary = 0;
     this.internalCompactionIdsAwaitingBoundary.clear();
+    this.internalCompactionResultAttributionArmed = false;
+    this.outstandingCompactionBoundaries = [];
+    this.unboundedCompactOutcome = false;
+    this.daemonFrontTerminalResult = false;
+    this.internalCompactionBuffered = false;
     this.nonCompactionSentSinceBoundary = false;
     this.cancelInternalCompactionEntries(true, true);
     this.deliveryGate = null;

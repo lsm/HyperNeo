@@ -1,6 +1,7 @@
 import type { ContextInfo, MessageHub, Session } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type {
+  SDKCompactBoundaryMessage,
   SDKMessage,
   SDKRateLimitInfo,
   SDKResultMessage,
@@ -1065,9 +1066,29 @@ export class SDKMessageHandler {
     }
 
     try {
+      if (
+        isTopLevelResult &&
+        isSDKResultMessage(message) &&
+        !this.isInvocationStale(invocationGeneration)
+      ) {
+        const numTurns = (message as SDKResultMessage).num_turns;
+        this.ctx.messageQueue.expireUserCompactionMarkerAtResult?.(numTurns);
+        this.ctx.messageQueue.noteResultForCompactionRecovery?.(numTurns);
+      }
+      const stampsInternalCompactionTurn =
+        isTopLevelResult &&
+        isSDKResultMessage(message) &&
+        !this.isInvocationStale(invocationGeneration) &&
+        this.resolveInternalCompactionResultStamp(message) !== null;
       let deferredSuccessfully: boolean;
       try {
-        deferredSuccessfully = this.withDbChangeBatch(() => db.saveSDKMessage(session.id, message));
+        deferredSuccessfully = this.withDbChangeBatch(() =>
+          stampsInternalCompactionTurn
+            ? db.saveSDKMessage(session.id, message, undefined, {
+                stampInternalCompactionTurn: true,
+              })
+            : db.saveSDKMessage(session.id, message)
+        );
       } catch (error) {
         releaseTurnEndGate?.();
         releaseTurnEndGate = null;
@@ -1078,10 +1099,39 @@ export class SDKMessageHandler {
         this.logger.warn(`Failed to save message to DB (type: ${message.type})`);
         releaseTurnEndGate?.();
         releaseTurnEndGate = null;
+        if (isSDKCompactBoundary(message)) {
+          this.applyCompactBoundaryOwnership(message, invocationGeneration);
+        }
+        if (
+          isSDKStatusMessage(message) &&
+          (message as { compact_result?: string }).compact_result !== undefined &&
+          !this.isInvocationStale(invocationGeneration)
+        ) {
+          this.ctx.messageQueue.noteCompactOutcome?.();
+        }
         if (this.matchesArmedClearResult(message)) {
           this.clearIdleSuppression();
         }
         return;
+      }
+
+      if (stampsInternalCompactionTurn) {
+        this.logger.info(
+          `attributed the 0-turn terminal success to the internal compaction turn for ` +
+            `session ${session.id}; it cannot satisfy a work delivery`
+        );
+      }
+
+      if (isSDKCompactBoundary(message)) {
+        this.applyCompactBoundaryOwnership(message, invocationGeneration);
+      }
+
+      if (
+        isSDKStatusMessage(message) &&
+        (message as { compact_result?: string }).compact_result !== undefined &&
+        !this.isInvocationStale(invocationGeneration)
+      ) {
+        this.ctx.messageQueue.noteCompactOutcome?.();
       }
 
       const observesArmedClearResult = this.matchesArmedClearResult(message);
@@ -1458,6 +1508,15 @@ export class SDKMessageHandler {
         this.settleSuppressedResultWaiter('confirmed');
       }
     }
+  }
+
+  private resolveInternalCompactionResultStamp(message: SDKMessage): string | null {
+    const result = message as SDKResultMessage;
+    const armed = this.ctx.messageQueue.consumeInternalCompactionResultAttribution();
+    if (result.num_turns !== 0 || !result.uuid || !isSDKResultSuccess(message)) return null;
+    if (result.is_error === true) return null;
+    if (!armed) return null;
+    return result.uuid;
   }
 
   private assessResultLimitError(
@@ -1863,6 +1922,27 @@ export class SDKMessageHandler {
     }
   }
 
+  private applyCompactBoundaryOwnership(
+    message: SDKMessage,
+    invocationGeneration: number | null
+  ): void {
+    if (this.isInvocationStale(invocationGeneration)) return;
+    const manualBoundary =
+      (message as SDKCompactBoundaryMessage).compact_metadata?.trigger === 'manual';
+    if (manualBoundary && this.ctx.messageQueue.hasCompactionsAwaitingBoundary()) {
+      if (this.ctx.messageQueue.nextCompactionBoundaryIsDaemon()) {
+        this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
+        this.ctx.messageQueue.armInternalCompactionResultAttribution();
+      } else {
+        this.ctx.messageQueue.consumeCompactionBoundary();
+      }
+    } else if (manualBoundary) {
+      this.ctx.messageQueue.consumeCompactionBoundary();
+    } else {
+      this.ctx.messageQueue.resetCompactOutcome?.();
+    }
+  }
+
   private async handleCompactBoundary(
     message: SDKMessage,
     invocationGeneration: number | null
@@ -1879,7 +1959,6 @@ export class SDKMessageHandler {
           `compaction(s) for session ${session.id}`
       );
     }
-    this.ctx.messageQueue.acknowledgeCompactionsAwaitingBoundary();
     this.ctx.messageQueue.noteBoundaryCompleted();
     const boundaryInfo = contextTracker.getContextInfo();
     const boundaryCapacity =
@@ -1985,6 +2064,8 @@ export class SDKMessageHandler {
           this.ctx.messageQueue.hasCompactionsAwaitingBoundary() &&
           !this.ctx.messageQueue.hasQueuedInternalCompaction() &&
           !this.ctx.messageQueue.hasInFlightInternalCompaction() &&
+          (!this.ctx.messageQueue.hasBufferedInternalCompaction() ||
+            (this.ctx.messageQueue.canRecoverBufferedCompaction?.() ?? false)) &&
           !this.ctx.stateManager.getIsCompacting();
         if (this.compactionEnqueuedMidTurnGeneration !== undefined) {
           const deferralOwnsThisTurn =

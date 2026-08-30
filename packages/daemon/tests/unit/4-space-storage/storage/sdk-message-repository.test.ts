@@ -2827,6 +2827,46 @@ describe('SDKMessageRepository', () => {
       expect(repository.hasTerminalResultAfter('session-1', 'msg-uuid')).toBe(true);
     });
 
+    it("is FALSE for the internal compaction turn's stamped terminal success (#3389) — it cannot satisfy the work delivery", () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-compact-turn',
+        timestamp: '2026-08-29T14:19:35.003Z',
+      });
+      insertMessage('session-1', 'result', {
+        uuid: 'compact-result-uuid',
+        timestamp: '2026-08-29T14:20:13.326Z',
+        terminal: true,
+        subtype: 'success',
+        sdkMessage: JSON.stringify({ type: 'result', subtype: 'success', num_turns: 0 }),
+      });
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-compact-turn')).toBe(true);
+
+      repository.markResultInternalCompactionTurn('session-1', 'compact-result-uuid');
+
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-compact-turn')).toBe(false);
+    });
+
+    it('still completes on a later unstamped work success that follows the compact turn result', () => {
+      insertMessage('session-1', 'user', {
+        uuid: 'msg-after-compact',
+        timestamp: '2026-08-29T14:19:35.003Z',
+      });
+      insertMessage('session-1', 'result', {
+        uuid: 'compact-result-later',
+        timestamp: '2026-08-29T14:20:13.326Z',
+        terminal: true,
+        subtype: 'success',
+      });
+      repository.markResultInternalCompactionTurn('session-1', 'compact-result-later');
+      insertMessage('session-1', 'result', {
+        timestamp: '2026-08-29T14:22:00.000Z',
+        terminal: true,
+        subtype: 'success',
+      });
+
+      expect(repository.hasTerminalResultAfter('session-1', 'msg-after-compact')).toBe(true);
+    });
+
     it('is FALSE for an error result — a failed turn must retry, not complete (Codex #9)', () => {
       insertMessage('session-1', 'user', {
         uuid: 'msg-uuid',
@@ -3702,11 +3742,21 @@ describe('SDKMessageRepository', () => {
       );
     }
 
-    function insertTerminalResult(at: string, subtype: string): void {
+    function insertTerminalResult(at: string, subtype: string, uuid?: string): void {
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
-         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?)`
-      ).run(crypto.randomUUID(), 'session-1', 'result', subtype, '{}', at, 1, bumpSeq());
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`
+      ).run(
+        crypto.randomUUID(),
+        'session-1',
+        'result',
+        subtype,
+        '{}',
+        at,
+        1,
+        uuid ?? null,
+        bumpSeq()
+      );
     }
 
     function decisionFor(uuid: string): ReturnType<typeof classifyReclaimTermination> {
@@ -3803,6 +3853,21 @@ describe('SDKMessageRepository', () => {
       insertConsumedUser(uuid, '2026-08-11T17:20:00.000Z');
       insertTerminalResult('2026-08-11T17:20:53.000Z', 'error_during_execution');
       repository.recordDeliveryTurnEnd('session-1', uuid, '2026-08-11T17:20:54.000Z');
+      expect(repository.hasTerminalResultAfter('session-1', uuid)).toBe(false);
+      expect(decisionFor(uuid)).toBe('redrive');
+    });
+
+    it("#3389: the backstop compact turn's terminal success cannot terminate the interrupted work delivery", () => {
+      insertTerminalResult('2026-08-29T14:19:33.083Z', 'error_during_execution');
+      const uuid = 'msg-3389-kickoff';
+      insertConsumedUser(uuid, '2026-08-29T14:19:35.003Z');
+      insertTerminalResult('2026-08-29T14:20:13.326Z', 'success', 'compact-result-3389');
+      repository.recordDeliveryTurnEnd('session-1', uuid, '2026-08-29T14:20:13.400Z');
+      expect(repository.hasTerminalResultAfter('session-1', uuid)).toBe(true);
+      expect(decisionFor(uuid)).toBe('terminated');
+
+      repository.markResultInternalCompactionTurn('session-1', 'compact-result-3389');
+
       expect(repository.hasTerminalResultAfter('session-1', uuid)).toBe(false);
       expect(decisionFor(uuid)).toBe('redrive');
     });

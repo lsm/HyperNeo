@@ -83,6 +83,9 @@ describe('chat/thread lifecycle recovery — stale waiting_for_input', () => {
       enqueueWithId: mock(async () => {}),
       clear: mock(() => {}),
       setDeliveryGate: mock(() => {}),
+      armInternalCompactionResultAttribution: mock(() => {}),
+      consumeInternalCompactionResultAttribution: mock(() => false),
+      hasCompactionsAwaitingBoundary: mock(() => false),
       isRunning: mock(() => true),
     } as unknown as MessageQueue;
     const errorManager = { handleError: mock(async () => {}) } as unknown as ErrorManager;

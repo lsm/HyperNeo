@@ -118,6 +118,7 @@ export const HAS_TERMINAL_RESULT_AFTER_SQL = `SELECT 1
                WHERE m.session_id = ? AND m.sdk_uuid = ?
                ORDER BY m.consumed_seq IS NULL, m.consumed_seq DESC LIMIT 1
             )
+            AND COALESCE(json_extract(r.sdk_message, '$.internal_compaction_turn'), 0) = 0
             AND NOT (
               COALESCE(json_extract(r.sdk_message, '$.is_error'), 0) = 1
               AND COALESCE(json_extract(r.sdk_message, '$.recovery_intercepted'), 0) = 1
@@ -253,6 +254,7 @@ interface SaveSdkMessageInput {
   variant: MessageAdmissionVariant;
   sendStatus: SendStatus | null;
   origin?: MessageOrigin;
+  stampInternalCompactionTurn?: boolean;
 }
 
 interface SaveSdkMessageSnapshot extends SaveSdkMessageInput {
@@ -730,7 +732,12 @@ export class SDKMessageRepository {
     return row?.m ?? 0;
   }
 
-  saveSDKMessage(sessionId: string, message: SDKMessage, origin?: MessageOrigin): boolean {
+  saveSDKMessage(
+    sessionId: string,
+    message: SDKMessage,
+    origin?: MessageOrigin,
+    options?: { stampInternalCompactionTurn?: boolean }
+  ): boolean {
     try {
       const deps: SaveSdkMessageDeps = {
         saveSDKMessageWithAdmission: (ctx) => this.saveSDKMessageWithAdmission(ctx),
@@ -745,6 +752,7 @@ export class SDKMessageRepository {
         variant: 'sdk',
         sendStatus: null,
         origin,
+        stampInternalCompactionTurn: options?.stampInternalCompactionTurn === true,
         deps,
       });
       return true;
@@ -757,6 +765,8 @@ export class SDKMessageRepository {
 
   private saveSDKMessageWithAdmission(ctx: SaveSdkMessageAdmitted): { dbId: string } {
     const { sessionId, dbId, message, admission, badgeUpdate, origin } = ctx;
+    const stampInternalCompactionTurn =
+      ctx.stampInternalCompactionTurn === true && admission.isTerminal && message.type === 'result';
     const messageType = message.type;
     const messageSubtype = 'subtype' in message ? (message.subtype as string) : null;
     const timestamp = new Date().toISOString();
@@ -797,6 +807,15 @@ export class SDKMessageRepository {
             .prepare('UPDATE sdk_messages SET consumed_seq = ? WHERE id = ?')
             .run(resultSeq, dbId);
         }
+      }
+      if (stampInternalCompactionTurn) {
+        this.db
+          .prepare(
+            `UPDATE sdk_messages
+                SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)
+              WHERE id = ?`
+          )
+          .run(dbId);
       }
       this.saveReplacementEdges(dbId, sessionId, taskId, admission.replacementEdges);
       this.scheduleMessageSearchIndex(dbId);
@@ -1762,6 +1781,18 @@ export class SDKMessageRepository {
       .run(billingTerminal ? 1 : 0, sessionId, sdkUuid);
   }
 
+  markResultInternalCompactionTurn(sessionId: string, sdkUuid: string): void {
+    withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE sdk_messages
+              SET sdk_message = json_set(sdk_message, '$.internal_compaction_turn', 1)
+            WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'result'`
+        )
+        .run(sessionId, sdkUuid)
+    );
+  }
+
   hasRecoveryInterceptedResultAfter(sessionId: string, uuid: string): boolean {
     const row = this.db
       .prepare(HAS_RECOVERY_INTERCEPTED_RESULT_AFTER_SQL)
@@ -1864,6 +1895,7 @@ export class SDKMessageRepository {
              WHERE session_id = ? AND message_type = 'result' AND sdk_uuid = ?
                AND message_subtype = 'success' AND is_terminal = 1
                AND parent_tool_use_id IS NULL AND consumed_seq IS NOT NULL
+               AND COALESCE(json_extract(sdk_message, '$.internal_compaction_turn'), 0) = 0
              LIMIT 1`
         )
         .get(sessionId, resultUuid) as { consumed_seq: number } | undefined;

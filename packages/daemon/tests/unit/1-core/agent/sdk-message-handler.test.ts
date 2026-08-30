@@ -104,6 +104,16 @@ describe('SDKMessageHandler', () => {
   let hasCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
   let pruneSentPromptsSpy: ReturnType<typeof mock>;
   let acknowledgeCompactionsAwaitingBoundarySpy: ReturnType<typeof mock>;
+  let armInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
+  let consumeInternalCompactionResultAttributionSpy: ReturnType<typeof mock>;
+  let nextCompactionBoundaryIsDaemonSpy: ReturnType<typeof mock>;
+  let consumeCompactionBoundarySpy: ReturnType<typeof mock>;
+  let hasBufferedInternalCompactionSpy: ReturnType<typeof mock>;
+  let clearInternalCompactionBufferedSpy: ReturnType<typeof mock>;
+  let expireUserCompactionMarkerAtResultSpy: ReturnType<typeof mock>;
+  let noteCompactOutcomeSpy: ReturnType<typeof mock>;
+  let resetCompactOutcomeSpy: ReturnType<typeof mock>;
+  let noteResultForCompactionRecoverySpy: ReturnType<typeof mock>;
   let removePendingInternalCompactionsSpy: ReturnType<typeof mock>;
   let clearNonCompactionSentSinceBoundarySpy: ReturnType<typeof mock>;
   let getStateSpy: ReturnType<typeof mock>;
@@ -215,6 +225,16 @@ describe('SDKMessageHandler', () => {
     hasCompactionsAwaitingBoundarySpy = mock(() => false);
     pruneSentPromptsSpy = mock(() => {});
     acknowledgeCompactionsAwaitingBoundarySpy = mock(() => {});
+    armInternalCompactionResultAttributionSpy = mock(() => {});
+    consumeInternalCompactionResultAttributionSpy = mock(() => false);
+    nextCompactionBoundaryIsDaemonSpy = mock(() => true);
+    consumeCompactionBoundarySpy = mock(() => {});
+    hasBufferedInternalCompactionSpy = mock(() => false);
+    clearInternalCompactionBufferedSpy = mock(() => {});
+    expireUserCompactionMarkerAtResultSpy = mock(() => {});
+    noteCompactOutcomeSpy = mock(() => {});
+    resetCompactOutcomeSpy = mock(() => {});
+    noteResultForCompactionRecoverySpy = mock(() => {});
     removePendingInternalCompactionsSpy = mock(() => 0);
     clearNonCompactionSentSinceBoundarySpy = mock(() => {});
     mockMessageQueue = {
@@ -236,6 +256,16 @@ describe('SDKMessageHandler', () => {
       isRunning: mock(() => true),
       pruneSentPrompts: pruneSentPromptsSpy,
       acknowledgeCompactionsAwaitingBoundary: acknowledgeCompactionsAwaitingBoundarySpy,
+      armInternalCompactionResultAttribution: armInternalCompactionResultAttributionSpy,
+      consumeInternalCompactionResultAttribution: consumeInternalCompactionResultAttributionSpy,
+      nextCompactionBoundaryIsDaemon: nextCompactionBoundaryIsDaemonSpy,
+      consumeCompactionBoundary: consumeCompactionBoundarySpy,
+      hasBufferedInternalCompaction: hasBufferedInternalCompactionSpy,
+      clearInternalCompactionBuffered: clearInternalCompactionBufferedSpy,
+      expireUserCompactionMarkerAtResult: expireUserCompactionMarkerAtResultSpy,
+      noteCompactOutcome: noteCompactOutcomeSpy,
+      resetCompactOutcome: resetCompactOutcomeSpy,
+      noteResultForCompactionRecovery: noteResultForCompactionRecoverySpy,
       removePendingInternalCompactions: removePendingInternalCompactionsSpy,
       clearNonCompactionSentSinceBoundary: clearNonCompactionSentSinceBoundarySpy,
       noteBoundaryCompleted: mock(() => {}),
@@ -3823,7 +3853,7 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(resumeSpy).toHaveBeenCalledTimes(1);
-      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
       expect(clearNonCompactionSentSinceBoundarySpy).toHaveBeenCalledTimes(1);
     });
 
@@ -3840,7 +3870,7 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(removePendingInternalCompactionsSpy).toHaveBeenCalledTimes(1);
-      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
       expect(clearNonCompactionSentSinceBoundarySpy).toHaveBeenCalledTimes(1);
     });
 
@@ -3853,11 +3883,12 @@ describe('SDKMessageHandler', () => {
           })
       );
       mockContext.queryObject = null;
+      hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
       const message: SDKMessage = {
         type: 'system',
         subtype: 'compact_boundary',
         uuid: 'test-uuid',
-        compact_metadata: { trigger: 'auto', pre_tokens: 50000 },
+        compact_metadata: { trigger: 'manual', pre_tokens: 50000 },
       } as unknown as SDKMessage;
 
       const handled = handler.handleMessage(message);
@@ -3867,6 +3898,293 @@ describe('SDKMessageHandler', () => {
 
       releaseSetCompacting();
       await handled;
+    });
+
+    it('arms result attribution when the boundary acknowledges a daemon-internal compaction', async () => {
+      mockContext.queryObject = null;
+      hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: {
+          trigger: 'manual',
+          pre_tokens: 50000,
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(consumeCompactionBoundarySpy).not.toHaveBeenCalled();
+      expect(armInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the buffered guard untouched when the daemon compaction starts compacting', async () => {
+      mockContext.queryObject = null;
+      hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'status',
+        uuid: 'test-uuid',
+        status: 'compacting',
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(clearInternalCompactionBufferedSpy).not.toHaveBeenCalled();
+    });
+
+    it('notes the compact outcome from a compact_result status', async () => {
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'status',
+        uuid: 'test-uuid',
+        status: null,
+        compact_result: 'failed',
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(noteCompactOutcomeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('notes the compact outcome from a compact_result status even when persistence fails', async () => {
+      mockContext.queryObject = null;
+      saveSDKMessageSpy.mockImplementation(() => false);
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'status',
+        uuid: 'test-uuid',
+        status: null,
+        compact_result: 'failed',
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(noteCompactOutcomeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not arm result attribution for an SDK auto-compact boundary', async () => {
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: {
+          trigger: 'auto',
+          pre_tokens: 50000,
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+      expect(armInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not let an auto boundary steal a daemon compaction awaiting its manual boundary', async () => {
+      mockContext.queryObject = null;
+      hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: {
+          trigger: 'auto',
+          pre_tokens: 50000,
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+      expect(armInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
+    });
+
+    it('acks and arms attribution for a daemon boundary even when boundary persistence fails', async () => {
+      mockContext.queryObject = null;
+      hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+      saveSDKMessageSpy.mockImplementation(() => false);
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: {
+          trigger: 'manual',
+          pre_tokens: 50000,
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(armInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a user /compact boundary as the user command, not the daemon compaction', async () => {
+      mockContext.queryObject = null;
+      hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+      nextCompactionBoundaryIsDaemonSpy.mockImplementation(() => false);
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: {
+          trigger: 'manual',
+          pre_tokens: 50000,
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(consumeCompactionBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+      expect(armInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
+    });
+
+    it('consumes a completed user compact boundary even when no daemon compaction awaits', async () => {
+      mockContext.queryObject = null;
+      const message: SDKMessage = {
+        type: 'system',
+        subtype: 'compact_boundary',
+        uuid: 'test-uuid',
+        compact_metadata: {
+          trigger: 'manual',
+          pre_tokens: 50000,
+        },
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(consumeCompactionBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(acknowledgeCompactionsAwaitingBoundarySpy).not.toHaveBeenCalled();
+      expect(armInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('internal compaction turn result attribution', () => {
+    const makeSuccessResult = (numTurns: number): SDKMessage =>
+      ({
+        type: 'result',
+        subtype: 'success',
+        uuid: 'compact-turn-result-uuid',
+        num_turns: numTurns,
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        total_cost_usd: 0,
+        modelUsage: {},
+      }) as unknown as SDKMessage;
+
+    const expectStampOptionTrue = (): void => {
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith(
+        'test-session-id',
+        expect.anything(),
+        undefined,
+        { stampInternalCompactionTurn: true }
+      );
+    };
+
+    const expectNoStampOption = (): void => {
+      expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', expect.anything());
+    };
+
+    it('stamps the 0-turn terminal success as the internal compaction turn when the boundary armed attribution', async () => {
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+
+      await handler.handleMessage(makeSuccessResult(0));
+
+      expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+      expectStampOptionTrue();
+    });
+
+    it('consumes the arming without stamping when the terminal success ran model turns', async () => {
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+
+      await handler.handleMessage(makeSuccessResult(3));
+
+      expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+      expectNoStampOption();
+    });
+
+    it('expires a front user compaction marker when a top-level result lands', async () => {
+      await handler.handleMessage(makeSuccessResult(3));
+
+      expect(expireUserCompactionMarkerAtResultSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores a stale-generation result so it cannot expire the current user marker', async () => {
+      (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+
+      await handler.handleMessage(makeSuccessResult(3), 3);
+
+      expect(expireUserCompactionMarkerAtResultSpy).not.toHaveBeenCalled();
+    });
+
+    it('never stamps when no daemon-internal compaction boundary was acknowledged', async () => {
+      await handler.handleMessage(makeSuccessResult(0));
+
+      expectNoStampOption();
+    });
+
+    it('does not attribute a result merely because a compaction awaits its boundary', async () => {
+      hasCompactionsAwaitingBoundarySpy.mockImplementation(() => true);
+
+      await handler.handleMessage(makeSuccessResult(0));
+
+      expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+      expectNoStampOption();
+    });
+
+    it('decides the stamp before the sdk.message publication so a publication failure cannot strand an unstamped success', async () => {
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+      emitSpy.mockImplementation(async (topic: string) => {
+        if (topic === 'sdk.message') throw new Error('publication failed');
+      });
+
+      await expect(handler.handleMessage(makeSuccessResult(0))).rejects.toThrow(
+        'publication failed'
+      );
+
+      expectStampOptionTrue();
+    });
+
+    it('consumes the arming without stamping when result persistence fails', async () => {
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+      saveSDKMessageSpy.mockImplementation(() => false);
+
+      await handler.handleMessage(makeSuccessResult(0));
+
+      expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+      expectStampOptionTrue();
+    });
+
+    it('consumes the arming without stamping a success-shaped terminal error result', async () => {
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+
+      await handler.handleMessage({
+        ...makeSuccessResult(0),
+        is_error: true,
+        terminal_reason: 'blocking_limit',
+      } as unknown as SDKMessage);
+
+      expect(consumeInternalCompactionResultAttributionSpy).toHaveBeenCalledTimes(1);
+      expectNoStampOption();
+    });
+
+    it('ignores stale-generation results so a superseded query cannot consume the arming', async () => {
+      consumeInternalCompactionResultAttributionSpy.mockImplementation(() => true);
+      (mockContext as { getQueryGeneration?: () => number }).getQueryGeneration = mock(() => 7);
+
+      await handler.handleMessage(makeSuccessResult(0), 3);
+
+      expect(consumeInternalCompactionResultAttributionSpy).not.toHaveBeenCalled();
+      expectNoStampOption();
     });
   });
 

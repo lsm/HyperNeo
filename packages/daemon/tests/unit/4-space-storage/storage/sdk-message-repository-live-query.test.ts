@@ -130,3 +130,109 @@ describe('SDKMessageRepository → LiveQueryEngine reactivity (spaceSessions.byS
     expect(diffs[1].updated?.[0]?.messageCount).toBe(1);
   });
 });
+
+describe('SDKMessageRepository internal-compaction turn stamping (#3389)', () => {
+  let bunDb: BunDatabase;
+  let repo: SDKMessageRepository;
+
+  beforeEach(() => {
+    bunDb = new BunDatabase(':memory:');
+    createSpaceTables(bunDb);
+    repo = new SDKMessageRepository(
+      bunDb,
+      createReactiveDatabase({ getDatabase: () => bunDb } as never)
+    );
+    const iso = new Date().toISOString();
+    bunDb
+      .prepare(
+        `INSERT INTO sessions (id, title, created_at, last_active_at, status, config, metadata)
+         VALUES ('sess-3389', '', ?, ?, 'active', '{}', '{}')`
+      )
+      .run(iso, iso);
+  });
+
+  afterEach(() => {
+    bunDb.close();
+  });
+
+  function insertKickoff(uuid: string, sendStatus: string): void {
+    const seq = (
+      bunDb
+        .prepare(
+          `UPDATE delivery_consumed_seq SET next_seq = next_seq + 1 WHERE singleton = 1
+           RETURNING next_seq`
+        )
+        .get() as { next_seq: number }
+    ).next_seq;
+    bunDb
+      .prepare(
+        `INSERT INTO sdk_messages
+           (id, session_id, message_type, sdk_message, timestamp, send_status, is_terminal, sdk_uuid, consumed_seq)
+         VALUES (?, 'sess-3389', 'user', '{}', ?, ?, 0, ?, ?)`
+      )
+      .run(crypto.randomUUID(), new Date().toISOString(), sendStatus, uuid, seq);
+  }
+
+  const insertConsumedKickoff = (uuid: string): void => insertKickoff(uuid, 'consumed');
+
+  const zeroTurnSuccess = (): SDKMessage =>
+    ({
+      type: 'result',
+      subtype: 'success',
+      uuid: 'compact-save-uuid',
+      num_turns: 0,
+    }) as unknown as SDKMessage;
+
+  test('the stamp rides the save transaction so the compact turn result cannot satisfy the work delivery', () => {
+    insertConsumedKickoff('kickoff-3389');
+    expect(
+      repo.saveSDKMessage('sess-3389', zeroTurnSuccess(), undefined, {
+        stampInternalCompactionTurn: true,
+      })
+    ).toBe(true);
+    expect(repo.hasTerminalResultAfter('sess-3389', 'kickoff-3389')).toBe(false);
+  });
+
+  test('without the option the same zero-turn success still satisfies the delivery', () => {
+    insertConsumedKickoff('kickoff-3389-unstamped');
+    expect(repo.saveSDKMessage('sess-3389', zeroTurnSuccess())).toBe(true);
+    expect(repo.hasTerminalResultAfter('sess-3389', 'kickoff-3389-unstamped')).toBe(true);
+  });
+
+  test('a stamped compact turn result cannot consume a queued delivery at turn end', () => {
+    insertKickoff('kickoff-3389-queued', 'enqueued');
+    expect(
+      repo.saveSDKMessage('sess-3389', zeroTurnSuccess(), undefined, {
+        stampInternalCompactionTurn: true,
+      })
+    ).toBe(true);
+
+    const consumed = repo.markDeliveriesConsumedAtTurnEnd(
+      'sess-3389',
+      ['kickoff-3389-queued'],
+      'compact-save-uuid'
+    );
+
+    expect(consumed).toEqual({ ids: [], uuids: [] });
+    expect(
+      bunDb
+        .prepare(
+          `SELECT send_status FROM sdk_messages WHERE session_id = 'sess-3389' AND sdk_uuid = 'kickoff-3389-queued'`
+        )
+        .get()
+    ).toEqual({ send_status: 'enqueued' });
+  });
+
+  test('an unstamped work result still consumes the queued delivery at turn end', () => {
+    insertKickoff('kickoff-3389-queued-ok', 'enqueued');
+    expect(repo.saveSDKMessage('sess-3389', zeroTurnSuccess())).toBe(true);
+
+    const consumed = repo.markDeliveriesConsumedAtTurnEnd(
+      'sess-3389',
+      ['kickoff-3389-queued-ok'],
+      'compact-save-uuid'
+    );
+
+    expect(consumed.uuids).toEqual(['kickoff-3389-queued-ok']);
+  });
+});

@@ -234,8 +234,13 @@ export class Database {
     this.sessionRepo.deleteSession(id);
   }
 
-  saveSDKMessage(sessionId: string, message: SDKMessage, origin?: MessageOrigin): boolean {
-    return this.sdkMessageRepo.saveSDKMessage(sessionId, message, origin);
+  saveSDKMessage(
+    sessionId: string,
+    message: SDKMessage,
+    origin?: MessageOrigin,
+    options?: { stampInternalCompactionTurn?: boolean }
+  ): boolean {
+    return this.sdkMessageRepo.saveSDKMessage(sessionId, message, origin, options);
   }
 
   getSDKMessages(

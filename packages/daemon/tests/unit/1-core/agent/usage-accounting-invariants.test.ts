@@ -437,6 +437,9 @@ function createHandler(): {
     enqueueWithId: mock(async () => {}),
     clear: mock(() => {}),
     setDeliveryGate: mock(() => {}),
+    armInternalCompactionResultAttribution: mock(() => {}),
+    consumeInternalCompactionResultAttribution: mock(() => false),
+    hasCompactionsAwaitingBoundary: mock(() => false),
     isRunning: mock(() => true),
   } as unknown as MessageQueue;
 
