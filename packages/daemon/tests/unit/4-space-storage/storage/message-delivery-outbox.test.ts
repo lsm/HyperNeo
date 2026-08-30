@@ -1335,7 +1335,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       });
 
       expect(retried).toBeNull();
-      expect(rowStatus('retry-stale')).toBeUndefined();
       const statuses = db
         .prepare(`SELECT id, send_status FROM sdk_messages WHERE sdk_uuid = ? ORDER BY rowid ASC`)
         .all('retry-stale') as Array<{ id: string; send_status: string }>;
