@@ -68,9 +68,20 @@ Prefer unit/component tests; add E2E coverage only when explicitly requested or 
 - Credential discovery in `packages/daemon/src/lib/config.ts`: environment → `~/.claude/.credentials.json` → macOS Keychain → `~/.claude/settings.json` environment block.
 - Online tests requiring credentials must fail when secrets are missing; do not add silent skip guards.
 
-## Change decomposition (ADR 0004) — binding
+## Change decomposition (ADR 0004) — tenets
 
-Read `docs/decomposition-playbook.md` before decomposing any feature, refactor, removal, or change request into tasks/PRs. It carries the binding rules: the slice ladder (pin → extract → build → wire → delete), bricks-not-construction-site-fabrication (build slices make parts, wire slices only assemble them), measure-first, one issue/one purpose/one task/one PR, per-slice merge contracts and budgets (block on overrun), and the standing review/idle rules. Reference implementation: the external-events delivery redesign (issues #3013–#3027).
+The law in eight lines:
+
+1. Nothing is a budget until it is counted — description-derived numbers are intentions; tests are half the diff, count them too.
+2. The seam decides the size, so the cut must name the seam — allowed and forbidden files, and the dev parts it composes.
+3. Build bricks; wire only assembles — a wire slice needing a missing part cuts the build slice first.
+4. Growth is stopped, never absorbed in place — overruns are decision points; machinery-adding findings become slices; only the owner rules.
+5. Deferred cost is scheduled, not removed — deferring creates the priced successor task now.
+6. Re-cut on a new axis or accept the loop — a second same-axis re-cut means decompose the epic.
+7. The diff is the only witness — the gate measures at PR open and every push; PR-body numbers are not measurements.
+8. One purpose, one artifact — no "and" titles, no unpriced "or" in task text.
+
+A task with an incomplete contract is not dispatchable; no task, no PR.
 
 ## Architecture
 
