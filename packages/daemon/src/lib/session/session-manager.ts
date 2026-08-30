@@ -497,7 +497,7 @@ export class SessionManager {
     await provisioning;
     if (session.getSessionData().config.mcpServers?.['node-agent']) {
       this.workflowMcpProvisioned.add(session);
-      if (options.startQuery !== false) {
+      if (options.startQuery !== false && session.isQueryActiveOrStarting()) {
         this.workflowQueryStarted.add(session);
       }
     }

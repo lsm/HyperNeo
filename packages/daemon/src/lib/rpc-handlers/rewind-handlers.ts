@@ -40,6 +40,9 @@ export function setupRewindHandlers(
     }
 
     const preview = await agentSession.previewRewind(checkpointId);
+    if (agentSession.getSessionData().config.queryMode !== 'manual') {
+      await agentSession.replayPendingMessagesForImmediateMode();
+    }
     return { preview };
   });
 
@@ -104,6 +107,9 @@ export function setupRewindHandlers(
     }
 
     const preview = await agentSession.previewSelectiveRewind(messageIds);
+    if (agentSession.getSessionData().config.queryMode !== 'manual') {
+      await agentSession.replayPendingMessagesForImmediateMode();
+    }
     return { preview };
   });
 

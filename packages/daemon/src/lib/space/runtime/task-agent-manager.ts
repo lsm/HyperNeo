@@ -2186,7 +2186,15 @@ export class TaskAgentManager {
 
     return this.withSessionRestoreLock(identity.sessionId, async () => {
       const indexed = this.agentSessionIndex.get(identity.sessionId);
-      if (indexed && (indexed === suppliedSession || !suppliedSession)) return identity.sessionId;
+      if (indexed && (indexed === suppliedSession || !suppliedSession)) {
+        if (options.startQuery !== false && !indexed.isQueryActiveOrStarting()) {
+          await indexed.startStreamingQuery();
+          if (options.replayPendingMessages !== false) {
+            await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
+          }
+        }
+        return identity.sessionId;
+      }
       if (indexed) {
         await this.stopSessionPreserveDb(identity.sessionId, indexed, {
           preserveDeliveryJobs: true,

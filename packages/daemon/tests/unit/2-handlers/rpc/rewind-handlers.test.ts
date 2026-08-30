@@ -196,6 +196,26 @@ describe('Rewind RPC Handlers', () => {
     });
   });
 
+  it('reconciles pending replay after a preview', async () => {
+    const handler = messageHubData.handlers.get('rewind.preview');
+    expect(handler).toBeDefined();
+
+    const { agentSession, mocks } = createMockAgentSession();
+    const replay = mock(async () => {});
+    (agentSession as unknown as Record<string, unknown>).replayPendingMessagesForImmediateMode =
+      replay;
+    (agentSession as unknown as Record<string, unknown>).getSessionData = () => ({
+      id: 'session-123',
+      config: {},
+    });
+    sessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
+
+    await handler!({ sessionId: 'session-123', checkpointId: 'checkpoint-1' }, {});
+
+    expect(mocks.previewRewind).toHaveBeenCalledTimes(1);
+    expect(replay).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects an empty selective preview without provisioning', async () => {
     const handler = messageHubData.handlers.get('rewind.previewSelective');
     expect(handler).toBeDefined();

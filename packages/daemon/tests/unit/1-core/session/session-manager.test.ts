@@ -327,8 +327,8 @@ describe('SessionManager', () => {
       };
       sessionManager.setSpaceRuntimeMcpProvider(provider);
 
-      const first = sessionManager.getSessionAsync(mockSession.id);
-      const second = sessionManager.getSessionAsync(mockSession.id);
+      const first = sessionManager.getSessionAsync(mockSession.id, { startQuery: false });
+      const second = sessionManager.getSessionAsync(mockSession.id, { startQuery: false });
       await provisioningStarted;
       expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(1);
 
@@ -413,12 +413,46 @@ describe('SessionManager', () => {
             mcpServers: { ...(data.config.mcpServers ?? {}), ...additional },
           };
         }),
+        isQueryActiveOrStarting: mock(() => true),
         updateMetadata: mock((updates: Record<string, unknown>) => {
           if (typeof updates.status === 'string') data.status = updates.status;
         }),
         cleanup: mock(async () => {}),
       } as unknown as AgentSession;
     };
+
+    it('re-requests startup when the provider attaches MCPs without starting', async () => {
+      const mockSession: Session = {
+        id: 'space:s1:task:t1:post-approval:coder',
+        title: 'Worker',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+        context: { spaceId: 's1', taskId: 't1' },
+      };
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(mockSession);
+
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock(async (session: AgentSession) => {
+          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+        }),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const session = await sessionManager.getSessionAsync(mockSession.id, {
+        startQuery: false,
+      });
+      session!.getSessionData() as { isQueryActiveOrStarting?: unknown } & Record<string, unknown>;
+      (session as unknown as { isQueryActiveOrStarting: () => boolean }).isQueryActiveOrStarting =
+        () => false;
+
+      await sessionManager.getSessionAsync(mockSession.id, {});
+      await sessionManager.getSessionAsync(mockSession.id, {});
+
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(3);
+    });
 
     it('upgrades a no-start provisioning when a later default lookup requests startup', async () => {
       const mockSession: Session = {
