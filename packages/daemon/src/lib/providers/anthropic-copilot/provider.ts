@@ -13,6 +13,7 @@ import type {
 import type { ModelInfo } from '@hyperneo/shared';
 import { CopilotClient, type ModelInfo as CopilotSdkModelInfo } from '@github/copilot-sdk';
 import { startEmbeddedServer, type EmbeddedServer } from './server.js';
+import { resolveCopilotCliPath } from './copilot-cli-resolver.ts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
@@ -900,7 +901,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       }
       let client: CopilotClient;
       try {
+        const cliPath = resolveCopilotCliPath(env);
         client = new CopilotClient({
+          ...(cliPath ? { cliPath } : {}),
           useStdio: true,
           logLevel: 'error',
           env,
