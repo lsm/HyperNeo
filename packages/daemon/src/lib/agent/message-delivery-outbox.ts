@@ -184,7 +184,6 @@ type ActivatePromptsCtx = ActivatePromptsArgs & {
 
 type ActivatePromptsCommittedCtx = ActivatePromptsCtx & {
   activated: ActivatedPromptEntry[];
-  claimsToRearm: string[];
 };
 
 type RetryPromptCtx = RetryPromptArgs & {
@@ -224,10 +223,24 @@ const REVIVE_DELIVERY_JOB_SQL = `UPDATE job_queue
   SET status = 'pending', run_at = ?, retry_count = 0, error = NULL, result = NULL,
       started_at = NULL, heartbeat_at = NULL, completed_at = NULL,
       payload = json_remove(
-        json_set(json_set(payload, '$.role', ?), '$.released', json('true')),
+        json_set(
+          json_set(
+            json_set(json_set(payload, '$.role', ?), '$.released', json('true')),
+            '$.origin', ?
+          ),
+          '$.parentToolUseId', ?
+        ),
         '$.__claimToken', '$.__parkCount', '$.batchUuids', '$.droppedBatchUuids'
       )
   WHERE id = ?`;
+
+const REQUEUE_HELD_CLAIM_SQL = `UPDATE job_queue
+  SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
+      payload = json_remove(
+        json_set(payload, '$.released', json('true')),
+        '$.__claimToken', '$.__parkCount'
+      )
+  WHERE id = ? AND status = 'processing'`;
 
 const ACTIVATE_PROMPT_ROW_SQL = `UPDATE sdk_messages
   SET send_status = 'enqueued'
@@ -249,8 +262,8 @@ const RETRY_PROMPT_ROW_SQL = `UPDATE sdk_messages
   )
   RETURNING id AS db_id`;
 
-const PROMPT_ROW_BY_UUID_SQL = `SELECT id AS db_id, sdk_message,
-    COALESCE(send_status, 'consumed') AS send_status
+const PROMPT_ROW_BY_UUID_SQL = `SELECT id AS "dbId", sdk_message AS "sdkMessage",
+    COALESCE(send_status, 'consumed') AS "sendStatus"
   FROM sdk_messages
   WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
   ORDER BY timestamp ASC, rowid ASC
@@ -325,7 +338,9 @@ function reviveDeliveryJob(
   jobId: string
 ): MessageDeliveryRole {
   const reviveAs = (role: MessageDeliveryRole) =>
-    db.prepare(REVIVE_DELIVERY_JOB_SQL).run(Date.now(), role, jobId);
+    db
+      .prepare(REVIVE_DELIVERY_JOB_SQL)
+      .run(Date.now(), role, basePayload.origin, basePayload.parentToolUseId ?? null, jobId);
   try {
     if (reviveAs('turn').changes === 0) {
       return enqueueArbitratedDeliveryJob(jobQueue, basePayload);
@@ -340,17 +355,41 @@ function reviveDeliveryJob(
   }
 }
 
+function requeueHeldClaim(
+  db: BunDatabase,
+  jobQueue: JobQueueRepository,
+  basePayload: ReleasedDeliveryPayload,
+  active: { jobId: string; role: MessageDeliveryRole | null }
+): MessageDeliveryRole {
+  const res = db.prepare(REQUEUE_HELD_CLAIM_SQL).run(Date.now(), active.jobId);
+  if (res.changes > 0) return active.role ?? 'turn';
+  return enqueueArbitratedDeliveryJob(jobQueue, basePayload);
+}
+
+function releaseActiveDeliveryJob(
+  db: BunDatabase,
+  jobQueue: JobQueueRepository,
+  basePayload: ReleasedDeliveryPayload,
+  active: NonNullable<ReturnType<typeof findActiveDeliveryJob>>,
+  desiredReleased: boolean
+): MessageDeliveryRole {
+  if (active.processing && !active.released) {
+    return requeueHeldClaim(db, jobQueue, basePayload, active);
+  }
+  if (active.processing) return active.role ?? 'turn';
+  if (active.released !== desiredReleased)
+    setDeliveryJobReleased(db, active.jobId, desiredReleased);
+  return active.role ?? 'turn';
+}
+
 function ensureReleasedDeliveryJob(
   db: BunDatabase,
   jobQueue: JobQueueRepository,
   basePayload: ReleasedDeliveryPayload
-): { role: MessageDeliveryRole; processingClaim: boolean } {
+): MessageDeliveryRole {
   const active = findActiveDeliveryJob(db, basePayload.sessionId, basePayload.messageUuid);
-  if (active) {
-    if (!active.released) setDeliveryJobReleased(db, active.jobId, true);
-    return { role: active.role ?? 'turn', processingClaim: active.processing };
-  }
-  return { role: enqueueArbitratedDeliveryJob(jobQueue, basePayload), processingClaim: false };
+  if (active) return releaseActiveDeliveryJob(db, jobQueue, basePayload, active, true);
+  return enqueueArbitratedDeliveryJob(jobQueue, basePayload);
 }
 
 function rePendingDeliveryJob(
@@ -359,10 +398,7 @@ function rePendingDeliveryJob(
   basePayload: ReleasedDeliveryPayload
 ): MessageDeliveryRole {
   const active = findActiveDeliveryJob(db, basePayload.sessionId, basePayload.messageUuid);
-  if (active) {
-    if (!active.released) setDeliveryJobReleased(db, active.jobId, true);
-    return active.role ?? 'turn';
-  }
+  if (active) return releaseActiveDeliveryJob(db, jobQueue, basePayload, active, true);
   const latest = db
     .prepare(LATEST_DELIVERY_JOB_SQL)
     .get(basePayload.sessionId, basePayload.messageUuid) as { job_id: string } | undefined;
@@ -537,6 +573,14 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
         );
         return { dbId: ctx.existing.dbId, role, released, countsTowardsBadge: false };
       }
+      if (active.processing) {
+        return {
+          dbId: ctx.existing.dbId,
+          role: active.role,
+          released: active.released,
+          countsTowardsBadge: false,
+        };
+      }
       if (active.released !== released) setDeliveryJobReleased(ctx.db, active.jobId, released);
       return { dbId: ctx.existing.dbId, role: active.role, released, countsTowardsBadge: false };
     }
@@ -628,14 +672,13 @@ function normalizeActivateUuids(ctx: ActivatePromptsArgs): ActivatePromptsCtx {
 
 function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommittedCtx {
   const activated: ActivatedPromptEntry[] = [];
-  const claimsToRearm: string[] = [];
   const txn = ctx.db.transaction(() => {
     const rowStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_SQL);
     for (const messageUuid of ctx.uuids) {
       const rows = rowStmt.all(ctx.sessionId, messageUuid) as Array<{ db_id: string }>;
       const row = rows[0];
       if (!row) continue;
-      const { role, processingClaim } = ensureReleasedDeliveryJob(
+      const role = ensureReleasedDeliveryJob(
         ctx.db,
         ctx.jobQueue,
         buildReleasedPayload({
@@ -646,12 +689,11 @@ function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommitte
           released: true,
         })
       );
-      if (processingClaim) claimsToRearm.push(messageUuid);
       activated.push({ dbId: row.db_id, messageUuid, role });
     }
   }, 'immediate');
   withBusyRetry(() => txn());
-  return { ...ctx, activated, claimsToRearm };
+  return { ...ctx, activated };
 }
 
 async function publishActivatedPrompts(
@@ -667,38 +709,11 @@ async function publishActivatedPrompts(
   return ctx;
 }
 
-async function rearmSettledClaims(
-  ctx: ActivatePromptsCommittedCtx
-): Promise<ActivatePromptsCommittedCtx> {
-  if (ctx.claimsToRearm.length === 0) return ctx;
-  const settled = ctx.claimsToRearm.filter(
-    (messageUuid) => findActiveDeliveryJob(ctx.db, ctx.sessionId, messageUuid) === null
-  );
-  if (settled.length === 0) return ctx;
-  const txn = ctx.db.transaction(() => {
-    for (const messageUuid of settled) {
-      enqueueArbitratedDeliveryJob(
-        ctx.jobQueue,
-        buildReleasedPayload({
-          sessionId: ctx.sessionId,
-          messageUuid,
-          origin: ctx.origin,
-          parentToolUseId: ctx.parentToolUseId,
-          released: true,
-        })
-      );
-    }
-  }, 'immediate');
-  withBusyRetry(() => txn());
-  return ctx;
-}
-
 const runActivatePrompts = (superpipe({})('activate-prompts') as PipelineAPI)
   .input(['ctx'])
   .pipe(normalizeActivateUuids, 'ctx', 'ctx')
   .pipe(commitActivatePrompts, 'ctx', 'ctx')
   .pipe(publishActivatedPrompts, 'ctx', 'ctx')
-  .pipe(rearmSettledClaims, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: ActivatePromptsArgs) => Promise<ActivatePromptsCommittedCtx>;
 
 export async function activatePrompts(args: ActivatePromptsArgs): Promise<ActivatePromptsResult> {

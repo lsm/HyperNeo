@@ -458,7 +458,9 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
           `SELECT id, status, json_extract(payload, '$.role') AS role,
                   COALESCE(json_extract(payload, '$.released'), 1) AS released, retry_count AS retryCount
              FROM job_queue
-            WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?
+            WHERE queue = ?
+              AND json_extract(payload, '$.sessionId') = ?
+              AND json_extract(payload, '$.messageUuid') = ?
             ORDER BY created_at ASC, rowid ASC`
         )
         .all(MESSAGE_DELIVERY, SESSION, uuid) as Array<{
@@ -931,8 +933,8 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
           sessionId: SESSION,
           messageUuid: 'retry-strip',
           role: 'turn',
-          origin: 'chat',
-          parentToolUseId: null,
+          origin: 'space_inject',
+          parentToolUseId: 'toolu_1',
           released: true,
           __parkCount: 12,
           __claimToken: 'stale-claim',
@@ -960,6 +962,8 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(payload?.droppedBatchUuids).toBeUndefined();
       expect(payload?.released).toBe(true);
       expect(payload?.role).toBe('turn');
+      expect(payload?.origin).toBe('chat');
+      expect(payload?.parentToolUseId).toBeNull();
       const job = jobsFor('retry-strip')[0];
       expect(job.retryCount).toBe(0);
       expect(job.status).toBe('pending');
@@ -989,17 +993,19 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(bookkeeping).toEqual([[['db-retry-book'], 'enqueued', 'enqueued']]);
     });
 
-    it('activatePrompts re-arms ownership when a processing held claim settles as skipped', async () => {
-      insertStatusRow('claim-settled', 'deferred');
+    it('activatePrompts requeues a processing held claim in place instead of trusting it', async () => {
+      insertStatusRow('claim-held', 'deferred');
       const heldJob = jobQueue.enqueue({
         queue: MESSAGE_DELIVERY,
         payload: {
           sessionId: SESSION,
-          messageUuid: 'claim-settled',
+          messageUuid: 'claim-held',
           role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
           released: false,
+          __claimToken: 'live-claim',
+          __parkCount: 3,
         },
       });
       db.prepare(`UPDATE job_queue SET status = 'processing' WHERE id = ?`).run(heldJob.id);
@@ -1008,51 +1014,53 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         db: db as never,
         jobQueue,
         sessionId: SESSION,
-        messageUuids: ['claim-settled'],
+        messageUuids: ['claim-held'],
         origin: 'recovery',
-        publishStatusChanged: () => {
-          db.prepare(
-            `UPDATE job_queue SET status = 'completed', completed_at = ? WHERE id = ?`
-          ).run(Date.now(), heldJob.id);
-        },
       });
 
       expect(activated).toHaveLength(1);
       expect(activated[0].role).toBe('turn');
-      expect(rowStatus('claim-settled')).toBe('enqueued');
-      const jobs = jobsFor('claim-settled');
-      expect(jobs).toHaveLength(2);
-      expect(jobs.map((job) => job.status).sort()).toEqual(['completed', 'pending']);
-      expect(jobs.find((job) => job.status === 'pending')?.released).toBe(1);
+      expect(rowStatus('claim-held')).toBe('enqueued');
+      const jobs = jobsFor('claim-held');
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].id).toBe(heldJob.id);
+      expect(jobs[0].status).toBe('pending');
+      expect(jobs[0].released).toBe(1);
+      const payload = jobPayload(db, SESSION, 'claim-held');
+      expect(payload?.__claimToken).toBeUndefined();
+      expect(payload?.__parkCount).toBeUndefined();
     });
 
-    it('activatePrompts leaves a still-processing claim alone instead of double-owning', async () => {
-      insertStatusRow('claim-live', 'deferred');
-      const heldJob = jobQueue.enqueue({
+    it('activatePrompts leaves a released processing claim delivering instead of revoking it', async () => {
+      insertStatusRow('claim-released', 'enqueued');
+      const liveJob = jobQueue.enqueue({
         queue: MESSAGE_DELIVERY,
         payload: {
           sessionId: SESSION,
-          messageUuid: 'claim-live',
+          messageUuid: 'claim-released',
           role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
-          released: false,
+          released: true,
+          __claimToken: 'live-claim',
         },
       });
-      db.prepare(`UPDATE job_queue SET status = 'processing' WHERE id = ?`).run(heldJob.id);
+      db.prepare(`UPDATE job_queue SET status = 'processing' WHERE id = ?`).run(liveJob.id);
 
       await activatePrompts({
         db: db as never,
         jobQueue,
         sessionId: SESSION,
-        messageUuids: ['claim-live'],
+        messageUuids: ['claim-released'],
         origin: 'recovery',
       });
 
-      const jobs = jobsFor('claim-live');
+      const jobs = jobsFor('claim-released');
       expect(jobs).toHaveLength(1);
+      expect(jobs[0].id).toBe(liveJob.id);
       expect(jobs[0].status).toBe('processing');
       expect(jobs[0].released).toBe(1);
+      expect(jobPayload(db, SESSION, 'claim-released')?.__claimToken).toBe('live-claim');
     });
   });
 });
