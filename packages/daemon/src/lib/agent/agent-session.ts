@@ -813,6 +813,7 @@ export class AgentSession
 
   async sendEnqueuedMessagesOnTurnEnd(options?: {
     pendingTaskInput?: boolean;
+    skipResetCoordination?: boolean;
   }): Promise<{ replayedWork: boolean; clearedContext: boolean; replayFailed: boolean }> {
     return this.queryModeHandler.sendEnqueuedMessagesOnTurnEnd(options);
   }
@@ -1463,6 +1464,7 @@ export class AgentSession
     deliverIndividually?: boolean;
     excludeMessageUuid?: string;
     skipContextReset?: boolean;
+    skipResetCoordination?: boolean;
     pendingTaskInput?: boolean;
   }): Promise<{ success: boolean; messageCount: number; error?: string }> {
     return this.queryModeHandler.handleQueryTrigger(options);

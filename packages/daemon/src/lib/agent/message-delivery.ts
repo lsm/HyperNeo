@@ -1,5 +1,6 @@
-import type { MessageContent } from '@hyperneo/shared';
+import { createLogger, type MessageContent } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
@@ -529,6 +530,199 @@ export async function withSessionLock<T>(
     };
     if (acquired) releaseLock();
     else void prev.finally(releaseLock);
+  }
+}
+
+const sessionOperationLocks = new Map<string, Promise<unknown>>();
+
+const sessionOperationLockArmedAt = new Map<string, number>();
+
+const operationLockLog = createLogger('hyperneo:daemon:message-delivery.operation-lock');
+
+const OPERATION_LOCK_ACQUIRE_TIMEOUT_MS = 8_000;
+const OPERATION_LOCK_LEAK_CEILING_MS = 900_000;
+const OPERATION_LOCK_HOLD_WARN_MS = 30_000;
+
+function getSessionOperationLockAcquireTimeoutMs(): number {
+  const raw = Number.parseInt(process.env.HYPERNEO_OPERATION_LOCK_ACQUIRE_TIMEOUT_MS ?? '', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : OPERATION_LOCK_ACQUIRE_TIMEOUT_MS;
+}
+
+function getSessionOperationLockLeakCeilingMs(): number {
+  const raw = Number.parseInt(process.env.HYPERNEO_OPERATION_LOCK_LEAK_CEILING_MS ?? '', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : OPERATION_LOCK_LEAK_CEILING_MS;
+}
+
+type OperationLockCtx = {
+  sessionId: string;
+  fn: () => Promise<unknown>;
+  signal?: AbortSignal;
+  prev: Promise<unknown>;
+  registeredTail: Promise<unknown>;
+  release: () => void;
+  armedAt: number;
+  observedArmedAt: number | null;
+  acquired: boolean;
+  timedOut: boolean;
+  holderAgeMs: number;
+  result: unknown;
+};
+
+function armOperationLock(sessionId: string): {
+  prev: Promise<unknown>;
+  tail: Promise<unknown>;
+  release: () => void;
+} {
+  const prev = sessionOperationLocks.get(sessionId) ?? Promise.resolve();
+  let releaseHeld!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseHeld = resolve;
+  });
+  const tail = prev.then(
+    () => held,
+    () => held
+  );
+  sessionOperationLocks.set(sessionId, tail);
+  return {
+    prev,
+    tail,
+    release: () => {
+      releaseHeld();
+      if (sessionOperationLocks.get(sessionId) === tail) {
+        sessionOperationLocks.delete(sessionId);
+      }
+    },
+  };
+}
+
+function currentOperationLockHolderArmedAt(sessionId: string): number | null {
+  return sessionOperationLockArmedAt.get(sessionId) ?? null;
+}
+
+async function awaitOperationLockSlotStage(ctx: OperationLockCtx): Promise<OperationLockCtx> {
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<'deadline'>((resolve) => {
+    deadlineTimer = setTimeout(
+      () => resolve('deadline'),
+      getSessionOperationLockAcquireTimeoutMs()
+    );
+  });
+  const aborted = waitForDeliveryAbort(ctx.signal);
+  try {
+    const winner = await Promise.race([
+      ctx.prev.then(() => 'acquired' as const),
+      deadline,
+      aborted.promise.then(() => 'aborted' as const),
+    ]);
+    if (winner === 'deadline') {
+      ctx.timedOut = true;
+      const armedAt = currentOperationLockHolderArmedAt(ctx.sessionId);
+      ctx.observedArmedAt = armedAt;
+      ctx.holderAgeMs =
+        armedAt === null ? getSessionOperationLockLeakCeilingMs() : Date.now() - armedAt;
+      return ctx;
+    }
+    throwIfDeliveryAborted(ctx.signal);
+    ctx.acquired = true;
+    ctx.armedAt = Date.now();
+    sessionOperationLockArmedAt.set(ctx.sessionId, ctx.armedAt);
+    return ctx;
+  } finally {
+    clearTimeout(deadlineTimer);
+    aborted.cancel();
+  }
+}
+
+async function reclaimLeakedOperationLockStage(ctx: OperationLockCtx): Promise<OperationLockCtx> {
+  if (!ctx.timedOut || ctx.holderAgeMs < getSessionOperationLockLeakCeilingMs()) return ctx;
+  if (currentOperationLockHolderArmedAt(ctx.sessionId) !== ctx.observedArmedAt) return ctx;
+  operationLockLog.error(
+    `message-delivery operation-lock: holder for session ${ctx.sessionId} exceeded ` +
+      `${getSessionOperationLockLeakCeilingMs()}ms (age ${ctx.holderAgeMs}ms); reclaiming the slot`
+  );
+  sessionOperationLocks.delete(ctx.sessionId);
+  sessionOperationLockArmedAt.delete(ctx.sessionId);
+  const armed = armOperationLock(ctx.sessionId);
+  ctx.prev = armed.prev;
+  ctx.registeredTail = armed.tail;
+  ctx.release = () => {
+    armed.release();
+    if (sessionOperationLockArmedAt.get(ctx.sessionId) === ctx.armedAt) {
+      sessionOperationLockArmedAt.delete(ctx.sessionId);
+    }
+  };
+  ctx.acquired = true;
+  ctx.timedOut = false;
+  ctx.armedAt = Date.now();
+  sessionOperationLockArmedAt.set(ctx.sessionId, ctx.armedAt);
+  return ctx;
+}
+
+async function runExclusiveOperationLockStage(ctx: OperationLockCtx): Promise<OperationLockCtx> {
+  const warnTimer = setTimeout(() => {
+    operationLockLog.warn(
+      `message-delivery operation-lock: session ${ctx.sessionId} has held the slot for ` +
+        `${OPERATION_LOCK_HOLD_WARN_MS}ms (notice-only)`
+    );
+  }, OPERATION_LOCK_HOLD_WARN_MS);
+  try {
+    ctx.result = await ctx.fn();
+    return ctx;
+  } finally {
+    clearTimeout(warnTimer);
+  }
+}
+
+const isOperationLockTimedOut = (ctx: OperationLockCtx) => ctx.timedOut;
+
+const runOperationLockPipeline = (
+  superpipe({ isOperationLockTimedOut })('message-delivery-operation-lock') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(awaitOperationLockSlotStage, 'ctx', 'ctx')
+  .pipe(reclaimLeakedOperationLockStage, 'ctx', 'ctx')
+  .pipe('!isOperationLockTimedOut', 'ctx')
+  .pipe(runExclusiveOperationLockStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: OperationLockCtx) => Promise<OperationLockCtx>;
+
+export async function withSessionOperationLock<T>(
+  sessionId: string,
+  fn: () => Promise<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  throwIfDeliveryAborted(signal);
+  const armed = armOperationLock(sessionId);
+  const ctx: OperationLockCtx = {
+    sessionId,
+    fn,
+    signal,
+    prev: armed.prev,
+    registeredTail: armed.tail,
+    release: armed.release,
+    armedAt: 0,
+    observedArmedAt: null,
+    acquired: false,
+    timedOut: false,
+    holderAgeMs: 0,
+    result: undefined,
+  };
+  try {
+    const settled = await runOperationLockPipeline(ctx);
+    if (settled.timedOut) {
+      throw new DOMException(
+        `Session ${sessionId} is still completing a prior operation ` +
+          `(waited ${Math.round(getSessionOperationLockAcquireTimeoutMs() / 1000)}s, ` +
+          `prior holder age ${Math.round(settled.holderAgeMs / 1000)}s). Try again shortly.`,
+        'TimeoutError'
+      );
+    }
+    return settled.result as T;
+  } finally {
+    if (ctx.acquired) {
+      ctx.release();
+    } else {
+      void ctx.prev.finally(ctx.release);
+    }
   }
 }
 

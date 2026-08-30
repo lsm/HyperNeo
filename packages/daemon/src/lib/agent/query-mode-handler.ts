@@ -14,6 +14,7 @@ import {
   deliverBatchAndMarkQueued,
   flattenDeliveryText,
   type MessageDeliveryOrigin,
+  withSessionOperationLock,
 } from './message-delivery.ts';
 import { decideTurnEndFlush, type TurnEndFlushPlan } from './message-delivery-pipeline.ts';
 import { type FlushMessage, isTaskFlushInput } from './message-ownership-gates.ts';
@@ -46,6 +47,7 @@ export class QueryModeHandler {
     deliverIndividually?: boolean;
     excludeMessageUuid?: string;
     skipContextReset?: boolean;
+    skipResetCoordination?: boolean;
     pendingTaskInput?: boolean;
   }): Promise<{
     success: boolean;
@@ -158,7 +160,9 @@ export class QueryModeHandler {
     };
 
     try {
-      const messageCount = await runFlush();
+      const messageCount = options?.skipResetCoordination
+        ? await runFlush()
+        : await withSessionOperationLock(session.id, runFlush);
       return { success: true, messageCount };
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
@@ -288,7 +292,10 @@ export class QueryModeHandler {
     return { clearedContext, reDeferredDbIds };
   }
 
-  async sendEnqueuedMessagesOnTurnEnd(options?: { pendingTaskInput?: boolean }): Promise<{
+  async sendEnqueuedMessagesOnTurnEnd(options?: {
+    pendingTaskInput?: boolean;
+    skipResetCoordination?: boolean;
+  }): Promise<{
     replayedWork: boolean;
     clearedContext: boolean;
     replayFailed: boolean;
@@ -316,7 +323,9 @@ export class QueryModeHandler {
     };
 
     try {
-      await runReplay();
+      await (options?.skipResetCoordination
+        ? runReplay()
+        : withSessionOperationLock(this.ctx.session.id, runReplay));
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
       replayFailed = true;
