@@ -116,21 +116,22 @@ DENO_SMOKE_BIN="$REPO_ROOT/packages/daemon/dist/bin/hyperneo-deno" \
 # [deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, migrations, graceful SIGTERM)
 ```
 
-The `--no-check` flag is forced by 4 typecheck errors that the in-contract `deno.json` remedies could not clear. They are exactly the same 3 errors that surface on plain `dev` tip (`bun run typecheck` on a clean `dev` checkout) — i.e. pre-existing on the slice's base, not introduced here:
+The `--no-check` flag is forced by 4 errors that surface **only under `deno compile`'s own typecheck** (Deno's resolver with this slice's `deno.json` applied), in files this PR does not touch — all four are byte-identical to the slice's merge base. Bun's own typecheck is clean: `bun run typecheck` exits 0 on this head and on plain `dev` tip (verified in a fresh clean checkout of `dev`), which is why the repo's `Lint, Knip, Format & Type Check` CI job is green. These are `deno check` artifacts of typechecking a dual-runtime codebase under the `bun-types` + `@types/node` + DOM-lib combination, not pre-existing `bun run typecheck` errors:
 
-| File | Line | Error |
+| File (untouched by this PR) | Line | Error |
 | --- | --- | --- |
-| `packages/daemon/src/lib/agent/query-mode-handler.ts` | 271 | `TS2345` `string \| ContentBlockParam[]` not assignable to `DeliveryContent` |
-| `packages/daemon/src/storage/repositories/sdk-message-projections.ts` | 104 | `TS2352` `BetaContentBlock` → `Record<string, unknown>` (add `as unknown`) |
-| `packages/web/src/components/sdk/SubagentBlock.tsx` | 289 | `TS2352` `BetaContentBlock` → `Record<string, unknown>` (add `as unknown`) |
+| `packages/daemon/src/lib/acp/acp-query-runner.ts` | 213 | `TS2345` DOM `URL` not assignable to `node:url` `URL` — the error trace itself points at `bun-types/overrides.d.ts` |
+| `packages/daemon/src/lib/agent/query-mode-handler.ts` | 271 | `TS2345` SDK `ContentBlockParam[]` vs shared `MessageContent` (`ImageBlockParam.source`) |
+| `packages/daemon/src/lib/voice/transcribe-pipeline.ts` | 314 | `TS2322` `Uint8Array<ArrayBufferLike>` vs DOM `BlobPart` |
+| `packages/daemon/src/storage/repositories/sdk-message-projections.ts` | 104 | `TS2352` `BetaContentBlock` → `Record<string, unknown>` |
 
-(`TS4114`/`TS4115` `override` errors on `sqlite-node.ts`/`in-process-transport.ts`/`channel-router.ts` clear with `"noImplicitOverride": false` in `packages/daemon/deno.json`; the `TS2322` `Uint8Array<ArrayBufferLike>`/`BlobPart` error and the `TS2769` URL-overload error are real code issues that need source edits.)
+In-contract `deno.json` remedies are exhausted: `"noImplicitOverride": false` clears the earlier `TS4114`/`TS4115` override family, `types: ["node"]` alone is strictly worse (`Bun.*` globals vanish, 9 × `TS2304`), and dropping DOM from `lib` is strictly worse (37 × `TS2584` — `console`/`crypto` need DOM). Clearing the remaining four requires source edits outside this slice's merge contract (factory.ts + build tooling/config).
 
 ## Future work
 
 - `deno check` type coverage in CI (the `bun-types` vs Deno types gap is real and untested).
 - Port the remaining direct `Bun.spawn` call sites — the dialog folder picker above — onto `runtime-spawn`.
 - Flip `deno-boot-smoke` from `continue-on-error` to a required check once it has been green for a sustained stretch.
-- Resolving the remaining `deno compile` typecheck errors so `--no-check` can be dropped (currently blocked by pre-existing `override` / `URL` / `BlobPart` issues in the daemon and shared packages).
+- Resolving the four `deno check`-only errors listed above so `--no-check` can be dropped — they need source edits (URL/BlobPart casts, SDK type reconciliation) in files untouched by the deno-compile slice.
 - Closing the Deno-binary vs. Bun-binary size gap (the Deno runtime alone is ~80 MB, leaving little headroom under a 2x-of-Bun budget once the daemon + web bundles are embedded).
 - Adding a CI gate that runs `deno compile --bundle --no-check -A --exclude=node_modules --exclude=.deno packages/daemon/main.ts` and boots the binary against the same boot smoke contract, so `--bundle` / `--exclude` regressions cannot merge unnoticed.
