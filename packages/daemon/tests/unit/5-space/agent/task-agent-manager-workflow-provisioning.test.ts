@@ -167,12 +167,16 @@ function makeRestoreManager(input: {
   queryMode?: string;
   cleanupState?: string;
   taskStatus?: string;
+  runStatus?: string;
   spacePaused?: boolean;
+  sessionId?: string;
+  executionStatus?: string | null;
 }) {
   const startStreamingQuery = mock(async () => {});
   const replay = mock(async () => true);
+  const sessionId = input.sessionId ?? SESSION_ID;
   const session = {
-    getSessionData: () => ({ id: SESSION_ID, config: { queryMode: input.queryMode } }),
+    getSessionData: () => ({ id: sessionId, config: { queryMode: input.queryMode } }),
     isQueryActiveOrStarting: () => false,
     startStreamingQuery,
     replayPendingMessagesForImmediateMode: replay,
@@ -189,7 +193,7 @@ function makeRestoreManager(input: {
         }),
       },
       workflowRunRepo: {
-        getRun: () => ({ id: 'run-1', status: 'in_progress' }),
+        getRun: () => ({ id: 'run-1', status: input.runStatus ?? 'in_progress' }),
       },
       spaceManager: {
         getSpace: async () => ({
@@ -208,14 +212,23 @@ function makeRestoreManager(input: {
       },
     },
   });
+  Object.defineProperty(manager, 'resolveNodeExecutionForSubSession', {
+    value: () =>
+      input.executionStatus === null
+        ? null
+        : { workflowRunId: 'run-1', status: input.executionStatus ?? 'in_progress' },
+  });
+  Object.defineProperty(manager, 'hasQueuedRetryableHookAction', {
+    value: () => false,
+  });
   Object.defineProperty(manager, 'readPostApprovalWorkerIdentity', {
-    value: () => ({ sessionId: SESSION_ID, agentName: 'worker' }),
+    value: () => ({ sessionId, agentName: 'worker' }),
   });
   Object.defineProperty(manager, 'withSessionRestoreLock', {
     value: (_sessionId: string, run: () => Promise<string | null>) => run(),
   });
   Object.defineProperty(manager, 'agentSessionIndex', {
-    value: new Map([[SESSION_ID, session]]),
+    value: new Map([[sessionId, session]]),
   });
   return { manager, startStreamingQuery, replay };
 }
@@ -269,6 +282,84 @@ describe('TaskAgentManager restored worker query admission', () => {
     });
 
     await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
+
+    expect(startStreamingQuery).not.toHaveBeenCalled();
+    expect(replay).not.toHaveBeenCalled();
+  });
+
+  it('starts an approved post-approval worker after workflow completion', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      runStatus: 'done',
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
+
+    expect(startStreamingQuery).toHaveBeenCalledTimes(1);
+    expect(replay).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TaskAgentManager ordinary worker startup revalidation', () => {
+  const WORKER_SESSION_ID = 'space:space-1:task:task-1:exec:e9';
+
+  it('starts an ordinary worker whose execution is still resumable', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      sessionId: WORKER_SESSION_ID,
+      taskStatus: 'in_progress',
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, WORKER_SESSION_ID);
+
+    expect(startStreamingQuery).toHaveBeenCalledTimes(1);
+    expect(replay).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start an ordinary worker whose task finished', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      sessionId: WORKER_SESSION_ID,
+      taskStatus: 'done',
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, WORKER_SESSION_ID);
+
+    expect(startStreamingQuery).not.toHaveBeenCalled();
+    expect(replay).not.toHaveBeenCalled();
+  });
+
+  it('does not start an ordinary worker whose run completed', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      sessionId: WORKER_SESSION_ID,
+      taskStatus: 'in_progress',
+      runStatus: 'done',
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, WORKER_SESSION_ID);
+
+    expect(startStreamingQuery).not.toHaveBeenCalled();
+    expect(replay).not.toHaveBeenCalled();
+  });
+
+  it('does not start an ordinary worker whose execution is no longer resumable', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      sessionId: WORKER_SESSION_ID,
+      taskStatus: 'in_progress',
+      executionStatus: 'completed',
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, WORKER_SESSION_ID);
+
+    expect(startStreamingQuery).not.toHaveBeenCalled();
+    expect(replay).not.toHaveBeenCalled();
+  });
+
+  it('does not start an ordinary worker whose execution cannot be resolved', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      sessionId: WORKER_SESSION_ID,
+      taskStatus: 'in_progress',
+      executionStatus: null,
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, WORKER_SESSION_ID);
 
     expect(startStreamingQuery).not.toHaveBeenCalled();
     expect(replay).not.toHaveBeenCalled();

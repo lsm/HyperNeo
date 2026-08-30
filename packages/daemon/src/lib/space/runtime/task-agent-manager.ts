@@ -2197,10 +2197,23 @@ export class TaskAgentManager {
     if (!task?.workflowRunId) return false;
     if (task.status === 'cancelled' || task.status === 'archived') return false;
     const workflowRun = this.config.workflowRunRepo.getRun(task.workflowRunId);
-    if (workflowRun?.status === 'cancelled') return false;
+    if (!workflowRun || workflowRun.status === 'cancelled') return false;
     const space = await this.config.spaceManager.getSpace(task.spaceId);
     if (!space || space.stopped || space.paused || space.status === 'archived') return false;
-    if (session.getSessionData().id.includes(':post-approval:') && task.status !== 'approved') {
+    const sessionId = session.getSessionData().id;
+    if (sessionId.includes(':post-approval:')) {
+      return task.status === 'approved';
+    }
+    if (isCanonicalTaskTerminalForSpawn(task.status) || workflowRun.status === 'done') {
+      return false;
+    }
+    const execution = this.resolveNodeExecutionForSubSession(sessionId);
+    if (!execution) return false;
+    if (
+      execution.status !== 'in_progress' &&
+      execution.status !== 'blocked' &&
+      !this.hasQueuedRetryableHookAction(execution.workflowRunId, execution)
+    ) {
       return false;
     }
     return true;
