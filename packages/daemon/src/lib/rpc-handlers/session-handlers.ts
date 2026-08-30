@@ -179,7 +179,9 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.listRuntimeMcpServers', async (data) => {
     const { sessionId } = data as ListRuntimeMcpServersRequest;
-    const agentSession = await sessionManager.getSessionForControl(sessionId);
+    const agentSession = await sessionManager.getSessionAsync(sessionId, {
+      startQuery: false,
+    });
     if (!agentSession) {
       throw new Error(`Session not found: ${sessionId}`);
     }
